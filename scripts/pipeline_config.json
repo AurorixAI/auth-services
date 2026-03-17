@@ -1,0 +1,49 @@
+{
+    "database_url": "${DATABASE_URL}",
+    "cache_dir": ".pipeline_cache",
+
+    "mathpix": {
+        "app_id": "${MATHPIX_APP_ID}",
+        "app_key": "${MATHPIX_APP_KEY}"
+    },
+
+    "gemini": {
+        "api_key": "${GEMINI_API_KEY}",
+        "flash_model": "gemini-2.5-flash-preview-04-17",
+        "pro_model": "gemini-2.5-pro-preview-05-06"
+    },
+
+    "textbook": {
+        "id": "",
+        "title": "Математика 5 класс",
+        "authors": ["Виленкин Н.Я."],
+        "class_level": 5,
+        "isbn": ""
+    },
+
+    "pipeline": {
+        "batch_size": 10,
+        "retry_count": 3,
+        "retry_delay_seconds": 5,
+        "skip_ocr": false,
+        "skip_sympy": false,
+        "skip_enrichment": false,
+        "skip_distractors": false,
+        "skip_mapping": false
+    },
+
+    "irt_defaults": {
+        "A": { "discrimination": 1.0, "difficulty": -1.0, "guessing": 0.0 },
+        "B": { "discrimination": 1.0, "difficulty":  0.5, "guessing": 0.0 },
+        "C": { "discrimination": 1.0, "difficulty":  1.5, "guessing": 0.0 }
+    },
+
+    "task_id_prefix": "G5_TB",
+
+    "notes": [
+        "Замените ${...} реальными значениями или задайте через переменные окружения",
+        "database_url: postgresql://algo:algo@localhost:5432/algo_v1",
+        "gemini.api_key: получить на https://aistudio.google.com/apikey",
+        "mathpix: получить на https://accounts.mathpix.com"
+    ]
+}

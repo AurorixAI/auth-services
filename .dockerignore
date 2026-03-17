@@ -1,0 +1,45 @@
+# ==============================================================================
+# ALGO V1 - Root .dockerignore (for API Dockerfile)
+# ==============================================================================
+
+# Frontend & Landing (separate Docker builds)
+frontend/
+Elite-Assets/
+
+# Nginx config (mounted as volume)
+nginx/
+
+# Git
+.git/
+.github/
+.gitignore
+
+# Environment files
+.env
+.env.*
+
+# Docker files
+docker-compose*.yml
+Dockerfile*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# Tests (not needed in production image)
+tests/
+
+# Misc
+*.md
+*.zip
+*.tar.gz
+monitoring/
+attached_assets/

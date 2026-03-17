@@ -1,0 +1,145 @@
+# ==============================================================================
+# ALGO V1 - Docker Compose Configuration
+# Development and Production environments
+# ==============================================================================
+
+services:
+  # ============================================================================
+  # APPLICATION
+  # ============================================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: algo-api
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://algo:algo_password@postgres:5432/algo_v1
+      - REDIS_URL=redis://redis:6379/0
+      - APP_ENV=${APP_ENV:-production}
+      - SECRET_KEY=${SECRET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - MATHPIX_APP_ID=${MATHPIX_APP_ID}
+      - MATHPIX_APP_KEY=${MATHPIX_APP_KEY}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - SENTRY_DSN=${SENTRY_DSN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - algo-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ============================================================================
+  # DATABASE
+  # ============================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: algo-postgres
+    environment:
+      POSTGRES_USER: algo
+      POSTGRES_PASSWORD: algo_password
+      POSTGRES_DB: algo_v1
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U algo -d algo_v1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - algo-network
+
+  # ============================================================================
+  # CACHE & SESSIONS
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: algo-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - algo-network
+
+  # ============================================================================
+  # MONITORING (Optional)
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: algo-prometheus
+    profiles:
+      - monitoring
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    networks:
+      - algo-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: algo-grafana
+    profiles:
+      - monitoring
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - algo-network
+
+# ==============================================================================
+# VOLUMES
+# ==============================================================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# ==============================================================================
+# NETWORKS
+# ==============================================================================
+networks:
+  algo-network:
+    driver: bridge

@@ -1,0 +1,45 @@
+# ==============================================================================
+# ALGO V1 - Development Dockerfile
+# Hot reload enabled for faster development
+# ==============================================================================
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Install development tools
+RUN pip install --no-cache-dir \
+    watchfiles \
+    debugpy \
+    ipython
+
+# Copy application code
+COPY . .
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    APP_ENV=development
+
+# Expose ports (8000 for API, 5678 for debugger)
+EXPOSE 8000 5678
+
+# Run with hot reload
+CMD ["uvicorn", "src.api.main_v2:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--reload", \
+     "--reload-dir", "src"]
