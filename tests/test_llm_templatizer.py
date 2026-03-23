@@ -3,14 +3,12 @@ ALGO V1 — Tests for LLM Templatizer + Template Models
 
 Covers:
   1. template_models — TaskTemplate, ParamInfo dataclasses
-  2. llm_templatizer — prompt building, response parsing, verification, 
+  2. llm_templatizer — prompt building, response parsing, verification,
                        TEMPLATABLE_TYPES filter
   3. Integration with mocked Gemini calls
 """
 
-import math
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from src.exam_builder.template_models import TaskTemplate, ParamInfo
 from src.exam_builder.llm_templatizer import (
@@ -26,6 +24,7 @@ from src.exam_builder.llm_templatizer import (
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _make_param(name, val, mn=-50, mx=50):
     return ParamInfo(name=name, original_value=val, min_val=mn, max_val=mx)
 
@@ -36,8 +35,20 @@ def _sample_gemini_response():
         "task_type": "arithmetic",
         "text_template": "Вычислите {a} + {b}",
         "params": {
-            "a": {"original_value": 15, "min": 1, "max": 100, "type": "int", "exclude": []},
-            "b": {"original_value": 27, "min": 1, "max": 100, "type": "int", "exclude": []},
+            "a": {
+                "original_value": 15,
+                "min": 1,
+                "max": 100,
+                "type": "int",
+                "exclude": [],
+            },
+            "b": {
+                "original_value": 27,
+                "min": 1,
+                "max": 100,
+                "type": "int",
+                "exclude": [],
+            },
         },
         "answer_formula": "a + b",
         "constraints": ["a > 0", "b > 0"],
@@ -48,8 +59,8 @@ def _sample_gemini_response():
 # 1. Template Models
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestTemplateModels:
 
+class TestTemplateModels:
     def test_param_info_defaults(self):
         p = ParamInfo(name="x", original_value=5)
         assert p.min_val == -50
@@ -58,8 +69,14 @@ class TestTemplateModels:
         assert p.exclude == []
 
     def test_param_info_custom(self):
-        p = ParamInfo(name="a", original_value=3.14, min_val=1, max_val=10,
-                      value_type="float", exclude=[0])
+        p = ParamInfo(
+            name="a",
+            original_value=3.14,
+            min_val=1,
+            max_val=10,
+            value_type="float",
+            exclude=[0],
+        )
         assert p.original_value == 3.14
         assert p.exclude == [0]
 
@@ -92,8 +109,8 @@ class TestTemplateModels:
 # 2. TEMPLATABLE_TYPES
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestTemplatableTypes:
 
+class TestTemplatableTypes:
     def test_exact_number_is_templatable(self):
         assert "exact_number" in TEMPLATABLE_TYPES
 
@@ -117,8 +134,8 @@ class TestTemplatableTypes:
 # 3. Prompt building
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestBuildPrompt:
 
+class TestBuildPrompt:
     def test_contains_task_text(self):
         p = _build_prompt("Вычислите 15 + 27", "", "42", "exact_number")
         assert "Вычислите 15 + 27" in p
@@ -140,8 +157,8 @@ class TestBuildPrompt:
 # 4. Response parsing
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestParseResponse:
 
+class TestParseResponse:
     def test_valid_response(self):
         data = _sample_gemini_response()
         tpl = _parse_response(data)
@@ -196,8 +213,8 @@ class TestParseResponse:
 # 5. Verification
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestVerifyFormula:
 
+class TestVerifyFormula:
     def test_addition_passes(self):
         assert _verify_formula("a + b", {"a": 15, "b": 27}, 42.0) is True
 
@@ -225,8 +242,8 @@ class TestVerifyFormula:
 # 6. Full templatize_via_llm (mocked Gemini)
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestTemplatizeViaLLM:
 
+class TestTemplatizeViaLLM:
     @patch("src.pipeline.gemini_client.get_model", return_value="test-model")
     @patch("src.pipeline.gemini_client.parse_json_response")
     @patch("src.pipeline.gemini_client.call_gemini")

@@ -84,8 +84,19 @@ _SAFE_FUNCTIONS = {
 
 # math.* функции
 _MATH_ATTRS = {
-    "sqrt", "floor", "ceil", "log", "log10", "sin", "cos", "tan",
-    "pi", "e", "inf", "fabs", "gcd",
+    "sqrt",
+    "floor",
+    "ceil",
+    "log",
+    "log10",
+    "sin",
+    "cos",
+    "tan",
+    "pi",
+    "e",
+    "inf",
+    "fabs",
+    "gcd",
 }
 
 
@@ -160,7 +171,9 @@ class _SafeEvaluator(ast.NodeVisitor):
     def visit_BoolOp(self, node: ast.BoolOp) -> Any:
         op_func = _BOOL_OPS.get(type(node.op))
         if op_func is None:
-            raise ValueError(f"Запрещённый логический оператор: {type(node.op).__name__}")
+            raise ValueError(
+                f"Запрещённый логический оператор: {type(node.op).__name__}"
+            )
         values = [self.visit(v) for v in node.values]
         return op_func(values)
 

@@ -13,8 +13,7 @@ Endpoints:
   GET  /api/v1/textbook-exams/textbooks/{id}/coverage — покрытие учебника
 """
 
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -35,6 +34,7 @@ router = APIRouter(prefix="/textbook-exams", tags=["Textbook Exams"])
 # ============================================================================
 # RESPONSE MODELS
 # ============================================================================
+
 
 class TextbookInfo(BaseModel):
     textbook_id: str
@@ -99,8 +99,7 @@ class ExamRequest(BaseModel):
     toc_ids: List[int] = Field(..., description="ID параграфов из textbook_toc")
     tasks_count: int = Field(10, ge=1, le=50)
     difficulty_distribution: Dict[str, float] = Field(
-        default={"A": 0.3, "B": 0.5, "C": 0.2},
-        description="Пропорция сложности: A/B/C"
+        default={"A": 0.3, "B": 0.5, "C": 0.2}, description="Пропорция сложности: A/B/C"
     )
     time_minutes: int = Field(45, ge=5, le=180)
     shuffle_tasks: bool = True
@@ -119,6 +118,7 @@ class CoverageItem(BaseModel):
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
+
 
 @router.get("/textbooks", response_model=List[TextbookInfo])
 async def list_textbooks(
@@ -162,7 +162,8 @@ async def get_textbook_toc(
     db: Session = Depends(get_db),
 ):
     """Дерево оглавления учебника (flat list, клиент строит дерево по parent_id)"""
-    rows = db.execute(text("""
+    rows = db.execute(
+        text("""
         SELECT toc.id, toc.parent_id, toc.level, toc.number, toc.title,
                toc.page_start, toc.sort_order,
                COALESCE(tc.cnt, 0) AS tasks_count
@@ -175,15 +176,22 @@ async def get_textbook_toc(
         ) tc ON tc.toc_id = toc.id
         WHERE toc.textbook_id = :tb_id
         ORDER BY toc.sort_order
-    """), {"tb_id": textbook_id}).fetchall()
+    """),
+        {"tb_id": textbook_id},
+    ).fetchall()
 
     if not rows:
         raise HTTPException(404, "Учебник не найден или пуст")
 
     return [
         TocNode(
-            id=r[0], parent_id=r[1], level=r[2], number=r[3],
-            title=r[4], page_start=r[5], sort_order=r[6],
+            id=r[0],
+            parent_id=r[1],
+            level=r[2],
+            number=r[3],
+            title=r[4],
+            page_start=r[5],
+            sort_order=r[6],
             tasks_count=r[7],
         )
         for r in rows
@@ -196,7 +204,8 @@ async def get_toc_skills(
     db: Session = Depends(get_db),
 ):
     """Навыки, привязанные к параграфу"""
-    rows = db.execute(text("""
+    rows = db.execute(
+        text("""
         SELECT kh.id, kh.name_ru, tsm.role, tsm.confidence, tsm.is_main,
                COUNT(tm.id) AS tasks_count
         FROM textbook_skill_map tsm
@@ -206,12 +215,18 @@ async def get_toc_skills(
         WHERE tsm.toc_id = :toc_id
         GROUP BY kh.id, kh.name_ru, tsm.role, tsm.confidence, tsm.is_main
         ORDER BY tsm.is_main DESC, tsm.role
-    """), {"toc_id": toc_id}).fetchall()
+    """),
+        {"toc_id": toc_id},
+    ).fetchall()
 
     return [
         SkillInParagraph(
-            skill_id=r[0], skill_name=r[1], role=r[2],
-            confidence=float(r[3]), is_main=bool(r[4]), tasks_count=r[5],
+            skill_id=r[0],
+            skill_name=r[1],
+            role=r[2],
+            confidence=float(r[3]),
+            is_main=bool(r[4]),
+            tasks_count=r[5],
         )
         for r in rows
     ]
@@ -244,7 +259,8 @@ async def generate_textbook_exam(
     for difficulty, count in [("A", count_a), ("B", count_b), ("C", count_c)]:
         if count <= 0:
             continue
-        rows = db.execute(text("""
+        rows = db.execute(
+            text("""
             SELECT tm.id, tm.skill_id, kh.name_ru, tm.difficulty,
                    tm.question_text, tm.question_latex, tm.question_image_url,
                    tm.answer_type, toc.title AS toc_title
@@ -257,24 +273,34 @@ async def generate_textbook_exam(
               AND tm.difficulty = :diff
             ORDER BY RANDOM()
             LIMIT :lim
-        """), {"toc_ids": toc_ids_expanded, "diff": difficulty, "lim": count}).fetchall()
+        """),
+            {"toc_ids": toc_ids_expanded, "diff": difficulty, "lim": count},
+        ).fetchall()
         all_tasks.extend(rows)
 
     if not all_tasks:
-        raise HTTPException(400, "Нет задач для выбранных параграфов. Оцифруйте учебник.")
+        raise HTTPException(
+            400, "Нет задач для выбранных параграфов. Оцифруйте учебник."
+        )
 
     # Shuffle
     if request.shuffle_tasks:
         import random
+
         random.shuffle(all_tasks)
 
     # Build response
     tasks_resp = [
         ExamTaskResponse(
-            task_id=r[0], skill_id=r[1], skill_name=r[2],
-            difficulty=r[3], question_text=r[4],
-            question_latex=r[5], question_image_url=r[6],
-            answer_type=r[7], toc_title=r[8],
+            task_id=r[0],
+            skill_id=r[1],
+            skill_name=r[2],
+            difficulty=r[3],
+            question_text=r[4],
+            question_latex=r[5],
+            question_image_url=r[6],
+            answer_type=r[7],
+            toc_title=r[8],
         )
         for r in all_tasks
     ]
@@ -344,7 +370,8 @@ async def get_textbook_coverage(
     db: Session = Depends(get_db),
 ):
     """Покрытие учебника: сколько навыков / задач по каждому параграфу"""
-    rows = db.execute(text("""
+    rows = db.execute(
+        text("""
         SELECT toc.id, toc.level, toc.number, toc.title,
                COUNT(DISTINCT tsm.skill_id) AS skills_mapped,
                COUNT(DISTINCT tm.id) AS tasks_available,
@@ -355,12 +382,18 @@ async def get_textbook_coverage(
         WHERE toc.textbook_id = :tb_id
         GROUP BY toc.id, toc.level, toc.number, toc.title, toc.is_digitized
         ORDER BY toc.sort_order
-    """), {"tb_id": textbook_id}).fetchall()
+    """),
+        {"tb_id": textbook_id},
+    ).fetchall()
 
     return [
         CoverageItem(
-            toc_id=r[0], level=r[1], number=r[2], title=r[3],
-            skills_mapped=r[4], tasks_available=r[5],
+            toc_id=r[0],
+            level=r[1],
+            number=r[2],
+            title=r[3],
+            skills_mapped=r[4],
+            tasks_available=r[5],
             is_digitized=bool(r[6]),
         )
         for r in rows
@@ -371,11 +404,13 @@ async def get_textbook_coverage(
 # HELPERS
 # ============================================================================
 
+
 def _expand_toc_ids(db: Session, toc_ids: List[int]) -> List[int]:
     """
     Расширяет список toc_ids: если выбрана глава, включает все её параграфы.
     """
-    rows = db.execute(text("""
+    rows = db.execute(
+        text("""
         WITH RECURSIVE children AS (
             SELECT id FROM textbook_toc WHERE id = ANY(:ids)
             UNION ALL
@@ -383,6 +418,8 @@ def _expand_toc_ids(db: Session, toc_ids: List[int]) -> List[int]:
             JOIN children c ON t.parent_id = c.id
         )
         SELECT DISTINCT id FROM children
-    """), {"ids": toc_ids}).fetchall()
+    """),
+        {"ids": toc_ids},
+    ).fetchall()
 
     return [r[0] for r in rows]

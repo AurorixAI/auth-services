@@ -13,6 +13,7 @@ from typing import Type
 
 # ── Base ──────────────────────────────────────────────────────────────────────
 
+
 class AlgoException(Exception):
     """Base application exception. All ALGO errors inherit from this."""
 
@@ -27,58 +28,72 @@ class AlgoException(Exception):
 
 # ── Domain Exceptions ─────────────────────────────────────────────────────────
 
+
 class NotFoundError(AlgoException):
     """Resource does not exist."""
+
     def __init__(self, entity: str, entity_id: str = "") -> None:
-        detail = f"{entity} not found" if not entity_id else f"{entity} '{entity_id}' not found"
+        detail = (
+            f"{entity} not found"
+            if not entity_id
+            else f"{entity} '{entity_id}' not found"
+        )
         super().__init__(detail, "NOT_FOUND")
 
 
 class ConflictError(AlgoException):
     """Resource already exists or state conflict."""
+
     def __init__(self, message: str) -> None:
         super().__init__(message, "CONFLICT")
 
 
 class ForbiddenError(AlgoException):
     """Caller lacks permission for the action."""
+
     def __init__(self, message: str = "Access denied") -> None:
         super().__init__(message, "FORBIDDEN")
 
 
 class UnauthorizedError(AlgoException):
     """Caller is not authenticated."""
+
     def __init__(self, message: str = "Authentication required") -> None:
         super().__init__(message, "UNAUTHORIZED")
 
 
 class ValidationError(AlgoException):
     """Business-level validation failure (distinct from Pydantic schema errors)."""
+
     def __init__(self, message: str) -> None:
         super().__init__(message, "VALIDATION_ERROR")
 
 
 class ServiceUnavailableError(AlgoException):
     """External dependency (Redis, Gemini, etc.) is unavailable."""
+
     def __init__(self, service: str) -> None:
         super().__init__(f"Service unavailable: {service}", "SERVICE_UNAVAILABLE")
 
 
 class RateLimitError(AlgoException):
     """Request rate limit exceeded."""
+
     def __init__(self) -> None:
-        super().__init__("Rate limit exceeded. Please slow down.", "RATE_LIMIT_EXCEEDED")
+        super().__init__(
+            "Rate limit exceeded. Please slow down.", "RATE_LIMIT_EXCEEDED"
+        )
 
 
 # ── HTTP Status Mapping ───────────────────────────────────────────────────────
 # Used by the central exception handler in src/main.py
 
 EXCEPTION_STATUS_MAP: dict[Type[AlgoException], int] = {
-    NotFoundError:          http_status.HTTP_404_NOT_FOUND,
-    ConflictError:          http_status.HTTP_409_CONFLICT,
-    ForbiddenError:         http_status.HTTP_403_FORBIDDEN,
-    UnauthorizedError:      http_status.HTTP_401_UNAUTHORIZED,
-    ValidationError:        http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+    NotFoundError: http_status.HTTP_404_NOT_FOUND,
+    ConflictError: http_status.HTTP_409_CONFLICT,
+    ForbiddenError: http_status.HTTP_403_FORBIDDEN,
+    UnauthorizedError: http_status.HTTP_401_UNAUTHORIZED,
+    ValidationError: http_status.HTTP_422_UNPROCESSABLE_ENTITY,
     ServiceUnavailableError: http_status.HTTP_503_SERVICE_UNAVAILABLE,
-    RateLimitError:         http_status.HTTP_429_TOO_MANY_REQUESTS,
+    RateLimitError: http_status.HTTP_429_TOO_MANY_REQUESTS,
 }

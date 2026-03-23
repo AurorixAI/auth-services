@@ -14,7 +14,6 @@ Key differences fixed:
 """
 
 import pytest
-import math
 from datetime import datetime
 from src.graph.learning_updater import (
     LearningGraphUpdater,
@@ -30,6 +29,7 @@ from src.graph.learning_updater import (
 # ==============================================================================
 # SkillPairStats Tests
 # ==============================================================================
+
 
 class TestSkillPairStats:
     """Tests for skill pair statistics"""
@@ -50,7 +50,8 @@ class TestSkillPairStats:
     def test_phi_coefficient_perfect_positive(self):
         """Test phi coefficient = 1.0 for perfect positive correlation"""
         stats = SkillPairStats(
-            skill_a="a", skill_b="b",
+            skill_a="a",
+            skill_b="b",
             both_correct=50,
             a_correct_b_wrong=0,
             a_wrong_b_correct=0,
@@ -62,7 +63,8 @@ class TestSkillPairStats:
     def test_phi_coefficient_perfect_negative(self):
         """Test phi coefficient = -1.0 for perfect negative correlation"""
         stats = SkillPairStats(
-            skill_a="a", skill_b="b",
+            skill_a="a",
+            skill_b="b",
             both_correct=0,
             a_correct_b_wrong=50,
             a_wrong_b_correct=50,
@@ -74,7 +76,8 @@ class TestSkillPairStats:
     def test_phi_no_correlation(self):
         """Test phi coefficient ≈ 0 for independent skills"""
         stats = SkillPairStats(
-            skill_a="a", skill_b="b",
+            skill_a="a",
+            skill_b="b",
             both_correct=25,
             a_correct_b_wrong=25,
             a_wrong_b_correct=25,
@@ -86,7 +89,8 @@ class TestSkillPairStats:
     def test_phi_zero_denominator(self):
         """Test phi returns 0 when denominator is 0"""
         stats = SkillPairStats(
-            skill_a="a", skill_b="b",
+            skill_a="a",
+            skill_b="b",
             both_correct=0,
             a_correct_b_wrong=0,
             a_wrong_b_correct=0,
@@ -98,13 +102,16 @@ class TestSkillPairStats:
     def test_conditional_probability(self):
         """Test conditional probability P(B|A)"""
         stats = SkillPairStats(
-            skill_a="a", skill_b="b",
+            skill_a="a",
+            skill_b="b",
             both_correct=40,
             a_correct_b_wrong=10,
             a_wrong_b_correct=20,
             both_wrong=30,
         )
-        p_b_given_a_correct, p_b_given_a_wrong = stats.conditional_probability_b_given_a()
+        p_b_given_a_correct, p_b_given_a_wrong = (
+            stats.conditional_probability_b_given_a()
+        )
         # P(B correct | A correct) = 40 / (40 + 10) = 0.8
         assert p_b_given_a_correct == pytest.approx(0.8)
         # P(B correct | A wrong) = 20 / (20 + 30) = 0.4
@@ -120,7 +127,8 @@ class TestSkillPairStats:
     def test_total_calculation(self):
         """Test total sample size calculation"""
         stats = SkillPairStats(
-            skill_a="a", skill_b="b",
+            skill_a="a",
+            skill_b="b",
             both_correct=10,
             a_correct_b_wrong=20,
             a_wrong_b_correct=30,
@@ -132,6 +140,7 @@ class TestSkillPairStats:
 # ==============================================================================
 # DiscoveredCorrelation Tests
 # ==============================================================================
+
 
 class TestDiscoveredCorrelation:
     """Tests for discovered correlations with actual field names"""
@@ -162,7 +171,8 @@ class TestDiscoveredCorrelation:
         """Test correlation significance threshold"""
         # Significant correlation (|phi| > 0.3, n >= 100)
         significant = DiscoveredCorrelation(
-            skill_a="a", skill_b="b",
+            skill_a="a",
+            skill_b="b",
             correlation=0.45,
             p_value=0.01,
             sample_size=100,
@@ -177,7 +187,8 @@ class TestDiscoveredCorrelation:
 
         # Not significant — below threshold
         weak = DiscoveredCorrelation(
-            skill_a="a", skill_b="b",
+            skill_a="a",
+            skill_b="b",
             correlation=0.15,
             p_value=0.3,
             sample_size=50,
@@ -207,6 +218,7 @@ class TestDiscoveredCorrelation:
 # ==============================================================================
 # ErrorPattern Tests
 # ==============================================================================
+
 
 class TestErrorPattern:
     """Tests for error pattern detection with actual field names"""
@@ -255,6 +267,7 @@ class TestErrorPattern:
 # ==============================================================================
 # LearningGraphUpdater Tests
 # ==============================================================================
+
 
 class TestLearningGraphUpdater:
     """Tests for learning graph updater with correct constructor signature"""
@@ -318,6 +331,7 @@ class TestLearningGraphUpdater:
 # AnswerEvent Tests
 # ==============================================================================
 
+
 class TestAnswerEvent:
     """Tests for answer event data structure"""
 
@@ -358,6 +372,7 @@ class TestAnswerEvent:
 # ==============================================================================
 # Integration Tests
 # ==============================================================================
+
 
 class TestIntegration:
     """Integration tests for graph updates"""

@@ -6,12 +6,16 @@ Extracted from src/auth/service.py — student management operations.
 
 from __future__ import annotations
 
-from typing import List, Optional
-from uuid import UUID, uuid4
+from typing import List
+from uuid import UUID
 
-from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+from src.core.exceptions import ConflictError, ForbiddenError
 from src.models.auth import DiagnosticInvite, Student
-from src.repositories.student_repo import DiagnosticInviteRepo, StudentRepo, StudentDiagnosticResultRepo
+from src.repositories.student_repo import (
+    DiagnosticInviteRepo,
+    StudentRepo,
+    StudentDiagnosticResultRepo,
+)
 
 
 class StudentService:
@@ -116,5 +120,7 @@ class StudentService:
 
 
 def _gen_invite_code(length: int = 8) -> str:
-    import random, string
+    import random
+    import string
+
     return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))

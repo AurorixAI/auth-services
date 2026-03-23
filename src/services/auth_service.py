@@ -12,10 +12,9 @@ JWT/password functions are in src.core.security.
 
 from __future__ import annotations
 
-from typing import Optional
 from uuid import UUID
 
-from src.core.exceptions import ForbiddenError, NotFoundError, UnauthorizedError
+from src.core.exceptions import ForbiddenError, UnauthorizedError
 from src.core.security import hash_password, issue_token_pair, verify_password
 from src.repositories.user_repo import UserRepo, OrgMemberRepo
 
@@ -56,6 +55,7 @@ class AuthService:
 
         # Store hash of refresh token for rotation validation
         from src.core.security import hash_password as _h
+
         self.user_repo.set_refresh_token_hash(user, _h(tokens["refresh_token"]))
 
         return {**tokens, "user": user.to_dict()}
@@ -80,7 +80,9 @@ class AuthService:
             raise UnauthorizedError("User not found or deactivated")
 
         tokens = issue_token_pair(str(user.id), user.role)
-        self.user_repo.set_refresh_token_hash(user, hash_password(tokens["refresh_token"]))
+        self.user_repo.set_refresh_token_hash(
+            user, hash_password(tokens["refresh_token"])
+        )
         return {**tokens, "user": user.to_dict()}
 
     # ── Logout ────────────────────────────────────────────────────────────

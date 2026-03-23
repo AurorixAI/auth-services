@@ -70,7 +70,9 @@ class HybridDifficultyAssessor:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _algorithmic(task_data: Dict[str, Any], solution: Optional[str]) -> Dict[str, Any]:
+    def _algorithmic(
+        task_data: Dict[str, Any], solution: Optional[str]
+    ) -> Dict[str, Any]:
         latex = task_data.get("latex", "")
         text = task_data.get("text", "")
 
@@ -81,7 +83,11 @@ class HybridDifficultyAssessor:
         has_abs = "|" in text or "\\left|" in latex
         num_vars = len(set(re.findall(r"[a-z]", latex.lower())) - {"i", "n", "e"})
 
-        steps = (solution.count("=") + solution.count("→") + 1) if solution else max(1, num_ops // 2)
+        steps = (
+            (solution.count("=") + solution.count("→") + 1)
+            if solution
+            else max(1, num_ops // 2)
+        )
 
         numbers = re.findall(r"\d+", text + latex)
         max_digits = max((len(n) for n in numbers), default=1)
@@ -117,7 +123,9 @@ class HybridDifficultyAssessor:
     # 2. AI correction
     # ------------------------------------------------------------------
 
-    def _ai_correction(self, task_data: Dict[str, Any], algo: Dict[str, Any]) -> Dict[str, Any]:
+    def _ai_correction(
+        self, task_data: Dict[str, Any], algo: Dict[str, Any]
+    ) -> Dict[str, Any]:
         if not self.api_key:
             return {}
         try:

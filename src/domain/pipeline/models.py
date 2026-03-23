@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 # ExtractedTask — центральная единица конвейера
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ExtractedTask:
     """Задача, извлечённая из текста учебника."""
@@ -31,10 +32,10 @@ class ExtractedTask:
     # equation_solution, set, coordinate, inequality
     answer_options: Optional[List[str]] = None
 
-    difficulty: str = "B"               # A, B, C
-    cognitive_load: str = "apply"       # recall, apply, analyze
-    is_star: bool = False               # ★ задача
-    task_marker: str = ""               # оригинальный символ-маркер
+    difficulty: str = "B"  # A, B, C
+    cognitive_load: str = "apply"  # recall, apply, analyze
+    is_star: bool = False  # ★ задача
+    task_marker: str = ""  # оригинальный символ-маркер
     task_category: str = "standard"
     # standard, advanced, olympiad, oral, research, project, with_drawing
     image_description: str = ""
@@ -47,7 +48,9 @@ class ExtractedTask:
     hints: Optional[List[str]] = None
     common_mistakes: Optional[List[Dict]] = None
     distractors: Optional[List[str]] = None
-    distractor_meta: Optional[List[Dict]] = None  # [{value, error_type, explanation, plausibility, broken_step}]
+    distractor_meta: Optional[List[Dict]] = (
+        None  # [{value, error_type, explanation, plausibility, broken_step}]
+    )
 
     # --- Дуальный маппинг ---
     # skill_id может быть None — задачи без маппинга на ядро (textbook-only)
@@ -61,19 +64,21 @@ class ExtractedTask:
 # DistractorResult
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DistractorResult:
     """Результат генерации одного дистрактора с метаданными."""
 
     value: str
-    error_type: str          # sign_error, off_by_one, transfer_error, …
-    explanation: str         # Почему ученик мог так ответить
-    plausibility: float      # 0–1, насколько правдоподобный
+    error_type: str  # sign_error, off_by_one, transfer_error, …
+    explanation: str  # Почему ученик мог так ответить
+    plausibility: float  # 0–1, насколько правдоподобный
 
 
 # ---------------------------------------------------------------------------
 # TemplateResult
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class TemplateResult:

@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 log = logging.getLogger("sympy_engine")
@@ -27,31 +27,33 @@ log = logging.getLogger("sympy_engine")
 # Data models
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class SolutionStep:
     """Один шаг решения."""
 
     step_number: int
-    description: str       # "Подставим значения", "Перенесём b вправо"
-    expression: str         # "3x + 5 = 17"  (текст)
-    result: str             # "3x = 12"  (текст после выполнения шага)
-    sympy_repr: str = ""    # srepr() SymPy-выражения для программного доступа
+    description: str  # "Подставим значения", "Перенесём b вправо"
+    expression: str  # "3x + 5 = 17"  (текст)
+    result: str  # "3x = 12"  (текст после выполнения шага)
+    sympy_repr: str = ""  # srepr() SymPy-выражения для программного доступа
 
 
 @dataclass
 class Distractor:
     """Дистрактор, сгенерированный через нарушение шага."""
 
-    value: str              # числовой/текстовый ответ
-    error_type: str         # sign_error, wrong_op, partial_result, coeff_error, ...
-    broken_step: int        # номер шага, в котором допущена ошибка
-    plausibility: float     # 0-1, чем позже шаг — тем выше
-    explanation: str        # "Забыл поменять знак при переносе"
+    value: str  # числовой/текстовый ответ
+    error_type: str  # sign_error, wrong_op, partial_result, coeff_error, ...
+    broken_step: int  # номер шага, в котором допущена ошибка
+    plausibility: float  # 0-1, чем позже шаг — тем выше
+    explanation: str  # "Забыл поменять знак при переносе"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Step Solver
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class StepSolver:
     """
@@ -94,6 +96,7 @@ class StepSolver:
         """Вычисляет числовой ответ по формуле с подстановкой."""
         try:
             from sympy import sympify, N as sympy_N
+
             expr = sympify(formula_text)
             syms = {k: sympify(v) for k, v in values.items()}
             result = float(sympy_N(expr.subs(syms)))
@@ -107,6 +110,7 @@ class StepSolver:
 # ═══════════════════════════════════════════════════════════════════════════
 # Per-type step solvers
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _steps_generic(
     formula_text: str,
@@ -124,31 +128,37 @@ def _steps_generic(
             problem = text_template.format(**values)
         except Exception:
             problem = text_template
-        steps.append(SolutionStep(
-            step_number=0,
-            description="Условие задачи",
-            expression=problem,
-            result=problem,
-        ))
+        steps.append(
+            SolutionStep(
+                step_number=0,
+                description="Условие задачи",
+                expression=problem,
+                result=problem,
+            )
+        )
 
     # Step 1: запишем формулу
-    steps.append(SolutionStep(
-        step_number=1,
-        description="Формула",
-        expression=formula_text,
-        result=formula_text,
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=1,
+            description="Формула",
+            expression=formula_text,
+            result=formula_text,
+        )
+    )
 
     # Step 2: подставим значения
     substituted = formula_text
     for k, v in values.items():
         substituted = substituted.replace(k, str(v))
-    steps.append(SolutionStep(
-        step_number=2,
-        description="Подставим значения",
-        expression=substituted,
-        result=substituted,
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=2,
+            description="Подставим значения",
+            expression=substituted,
+            result=substituted,
+        )
+    )
 
     # Step 3: вычислим
     try:
@@ -156,13 +166,15 @@ def _steps_generic(
         syms = {k: sympify(v) for k, v in values.items()}
         result = sympy_N(expr.subs(syms))
         result_str = _format_number(float(result))
-        steps.append(SolutionStep(
-            step_number=3,
-            description="Вычислим результат",
-            expression=substituted,
-            result=result_str,
-            sympy_repr=srepr(result),
-        ))
+        steps.append(
+            SolutionStep(
+                step_number=3,
+                description="Вычислим результат",
+                expression=substituted,
+                result=result_str,
+                sympy_repr=srepr(result),
+            )
+        )
     except Exception:
         pass
 
@@ -175,7 +187,7 @@ def _steps_linear(
     text_template: str = "",
 ) -> List[SolutionStep]:
     """Линейное уравнение: ax + b = c → x = (c-b)/a."""
-    from sympy import sympify, N as sympy_N, srepr
+    from sympy import sympify, srepr
 
     steps: List[SolutionStep] = []
     pnames = list(values.keys())
@@ -187,41 +199,49 @@ def _steps_linear(
     a_val, b_val, c_val = values[a_name], values[b_name], values[c_name]
 
     # Step 0: условие
-    steps.append(SolutionStep(
-        step_number=0,
-        description="Запишем уравнение",
-        expression=f"{a_val}x + ({b_val}) = {c_val}",
-        result=f"{a_val}x + ({b_val}) = {c_val}",
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=0,
+            description="Запишем уравнение",
+            expression=f"{a_val}x + ({b_val}) = {c_val}",
+            result=f"{a_val}x + ({b_val}) = {c_val}",
+        )
+    )
 
     # Step 1: перенесём свободный член
     rhs = c_val - b_val
-    steps.append(SolutionStep(
-        step_number=1,
-        description=f"Перенесём {b_val} вправо (меняем знак)",
-        expression=f"{a_val}x = {c_val} - ({b_val})",
-        result=f"{a_val}x = {rhs}",
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=1,
+            description=f"Перенесём {b_val} вправо (меняем знак)",
+            expression=f"{a_val}x = {c_val} - ({b_val})",
+            result=f"{a_val}x = {rhs}",
+        )
+    )
 
     # Step 2: разделим на коэффициент
     if a_val != 0:
         x_val = rhs / a_val
         x_str = _format_number(x_val)
-        steps.append(SolutionStep(
-            step_number=2,
-            description=f"Разделим обе части на {a_val}",
-            expression=f"x = {rhs} / {a_val}",
-            result=f"x = {x_str}",
-        ))
+        steps.append(
+            SolutionStep(
+                step_number=2,
+                description=f"Разделим обе части на {a_val}",
+                expression=f"x = {rhs} / {a_val}",
+                result=f"x = {x_str}",
+            )
+        )
 
         # Step 3: ответ
-        steps.append(SolutionStep(
-            step_number=3,
-            description="Ответ",
-            expression=f"x = {x_str}",
-            result=x_str,
-            sympy_repr=srepr(sympify(x_val)),
-        ))
+        steps.append(
+            SolutionStep(
+                step_number=3,
+                description="Ответ",
+                expression=f"x = {x_str}",
+                result=x_str,
+                sympy_repr=srepr(sympify(x_val)),
+            )
+        )
 
     return steps
 
@@ -232,7 +252,6 @@ def _steps_quadratic(
     text_template: str = "",
 ) -> List[SolutionStep]:
     """Квадратное уравнение: дискриминант → корни."""
-    from sympy import sympify, sqrt as sym_sqrt, N as sympy_N, srepr
 
     steps: List[SolutionStep] = []
     pnames = list(values.keys())
@@ -251,61 +270,75 @@ def _steps_quadratic(
         eq_str = f"x² + ({b_val})x + ({c_val}) = 0"
     else:
         eq_str = f"{a_val}x² + ({b_val})x + ({c_val}) = 0"
-    steps.append(SolutionStep(
-        step_number=0,
-        description="Запишем уравнение",
-        expression=eq_str,
-        result=eq_str,
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=0,
+            description="Запишем уравнение",
+            expression=eq_str,
+            result=eq_str,
+        )
+    )
 
     # Step 1: дискриминант
     D = b_val * b_val - 4 * a_val * c_val
-    steps.append(SolutionStep(
-        step_number=1,
-        description="Вычислим дискриминант D = b² − 4ac",
-        expression=f"D = ({b_val})² − 4·{a_val}·({c_val})",
-        result=f"D = {_format_number(D)}",
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=1,
+            description="Вычислим дискриминант D = b² − 4ac",
+            expression=f"D = ({b_val})² − 4·{a_val}·({c_val})",
+            result=f"D = {_format_number(D)}",
+        )
+    )
 
     if D < 0:
-        steps.append(SolutionStep(
-            step_number=2,
-            description="D < 0, уравнение не имеет действительных корней",
-            expression=f"D = {_format_number(D)} < 0",
-            result="Нет действительных корней",
-        ))
+        steps.append(
+            SolutionStep(
+                step_number=2,
+                description="D < 0, уравнение не имеет действительных корней",
+                expression=f"D = {_format_number(D)} < 0",
+                result="Нет действительных корней",
+            )
+        )
         return steps
 
     # Step 2: sqrt(D)
     sqrt_D = math.sqrt(D)
-    steps.append(SolutionStep(
-        step_number=2,
-        description="Вычислим √D",
-        expression=f"√D = √{_format_number(D)}",
-        result=f"√D = {_format_number(sqrt_D)}",
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=2,
+            description="Вычислим √D",
+            expression=f"√D = √{_format_number(D)}",
+            result=f"√D = {_format_number(sqrt_D)}",
+        )
+    )
 
     # Step 3: корни
     x1 = (-b_val + sqrt_D) / (2 * a_val)
     x2 = (-b_val - sqrt_D) / (2 * a_val)
-    steps.append(SolutionStep(
-        step_number=3,
-        description="Найдём корни по формуле x = (−b ± √D) / 2a",
-        expression=f"x₁ = (−({b_val}) + {_format_number(sqrt_D)}) / (2·{a_val})",
-        result=f"x₁ = {_format_number(x1)}, x₂ = {_format_number(x2)}",
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=3,
+            description="Найдём корни по формуле x = (−b ± √D) / 2a",
+            expression=f"x₁ = (−({b_val}) + {_format_number(sqrt_D)}) / (2·{a_val})",
+            result=f"x₁ = {_format_number(x1)}, x₂ = {_format_number(x2)}",
+        )
+    )
 
     # Step 4: ответ
     answer = f"x₁ = {_format_number(min(x1, x2))}, x₂ = {_format_number(max(x1, x2))}"
-    steps.append(SolutionStep(
-        step_number=4,
-        description="Ответ",
-        expression=answer,
-        result=_format_number(min(x1, x2)) if "Min" in formula_text or "min" in formula_text
-               else _format_number(D) if "**2 - 4" in formula_text
-               else _format_number(max(x1, x2)),
-        sympy_repr=str(min(x1, x2)),
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=4,
+            description="Ответ",
+            expression=answer,
+            result=_format_number(min(x1, x2))
+            if "Min" in formula_text or "min" in formula_text
+            else _format_number(D)
+            if "**2 - 4" in formula_text
+            else _format_number(max(x1, x2)),
+            sympy_repr=str(min(x1, x2)),
+        )
+    )
 
     return steps
 
@@ -326,12 +359,14 @@ def _steps_geometry(
             problem = text_template.format(**values)
         except Exception:
             problem = text_template
-        steps.append(SolutionStep(
-            step_number=0,
-            description="Условие задачи",
-            expression=problem,
-            result=problem,
-        ))
+        steps.append(
+            SolutionStep(
+                step_number=0,
+                description="Условие задачи",
+                expression=problem,
+                result=problem,
+            )
+        )
 
     # Step 1: формула
     desc = "Запишем формулу"
@@ -342,23 +377,27 @@ def _steps_geometry(
     elif "*" in formula_text and "+" in formula_text:
         desc = "Формула периметра: P = 2(a + b)"
 
-    steps.append(SolutionStep(
-        step_number=1,
-        description=desc,
-        expression=formula_text,
-        result=formula_text,
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=1,
+            description=desc,
+            expression=formula_text,
+            result=formula_text,
+        )
+    )
 
     # Step 2: подставим
     substituted = formula_text
     for k, v in values.items():
         substituted = substituted.replace(k, str(v))
-    steps.append(SolutionStep(
-        step_number=2,
-        description="Подставим значения",
-        expression=substituted,
-        result=substituted,
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=2,
+            description="Подставим значения",
+            expression=substituted,
+            result=substituted,
+        )
+    )
 
     # Step 3: вычислим
     try:
@@ -366,13 +405,15 @@ def _steps_geometry(
         syms = {k: sympify(v) for k, v in values.items()}
         result = float(sympy_N(expr.subs(syms)))
         result_str = _format_number(result)
-        steps.append(SolutionStep(
-            step_number=3,
-            description="Вычислим результат",
-            expression=substituted,
-            result=result_str,
-            sympy_repr=srepr(sympify(result)),
-        ))
+        steps.append(
+            SolutionStep(
+                step_number=3,
+                description="Вычислим результат",
+                expression=substituted,
+                result=result_str,
+                sympy_repr=srepr(sympify(result)),
+            )
+        )
     except Exception:
         pass
 
@@ -394,43 +435,51 @@ def _steps_logarithm(
             problem = text_template.format(**values)
         except Exception:
             problem = text_template
-        steps.append(SolutionStep(
-            step_number=0,
-            description="Условие",
-            expression=problem,
-            result=problem,
-        ))
+        steps.append(
+            SolutionStep(
+                step_number=0,
+                description="Условие",
+                expression=problem,
+                result=problem,
+            )
+        )
 
-    steps.append(SolutionStep(
-        step_number=1,
-        description="Применим определение логарифма: logₐ(b) = c ⟺ aᶜ = b",
-        expression=formula_text,
-        result=formula_text,
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=1,
+            description="Применим определение логарифма: logₐ(b) = c ⟺ aᶜ = b",
+            expression=formula_text,
+            result=formula_text,
+        )
+    )
 
     # Подстановка
     substituted = formula_text
     for k, v in values.items():
         substituted = substituted.replace(k, str(v))
 
-    steps.append(SolutionStep(
-        step_number=2,
-        description="Подставим значения",
-        expression=substituted,
-        result=substituted,
-    ))
+    steps.append(
+        SolutionStep(
+            step_number=2,
+            description="Подставим значения",
+            expression=substituted,
+            result=substituted,
+        )
+    )
 
     try:
         expr = sympify(formula_text)
         syms = {k: sympify(v) for k, v in values.items()}
         result = float(sympy_N(expr.subs(syms)))
-        steps.append(SolutionStep(
-            step_number=3,
-            description="Вычислим",
-            expression=substituted,
-            result=_format_number(result),
-            sympy_repr=srepr(sympify(result)),
-        ))
+        steps.append(
+            SolutionStep(
+                step_number=3,
+                description="Вычислим",
+                expression=substituted,
+                result=_format_number(result),
+                sympy_repr=srepr(sympify(result)),
+            )
+        )
     except Exception:
         pass
 
@@ -441,13 +490,14 @@ def _steps_logarithm(
 # Fraction solver (5-6 класс)
 # ─────────────────────────────────────────────────────────────
 
+
 def _steps_fraction(
     formula_text: str,
     values: Dict[str, Any],
     text_template: str = "",
 ) -> List[SolutionStep]:
     """Дроби: приведение к общему знаменателю → операция → сокращение."""
-    from sympy import sympify, N as sympy_N, srepr, Rational, gcd
+    from sympy import Rational
 
     steps: List[SolutionStep] = []
 
@@ -464,25 +514,32 @@ def _steps_fraction(
         a, b, c, d = (values[pnames[i]] for i in range(4))
         if b != 0 and d != 0:
             # Step 1: записать дроби
-            steps.append(SolutionStep(
-                1, "Запишем дроби",
-                f"{a}/{b} и {c}/{d}",
-                f"{a}/{b} и {c}/{d}",
-            ))
+            steps.append(
+                SolutionStep(
+                    1,
+                    "Запишем дроби",
+                    f"{a}/{b} и {c}/{d}",
+                    f"{a}/{b} и {c}/{d}",
+                )
+            )
 
             # Step 2: общий знаменатель
             from math import gcd as math_gcd
+
             lcm_bd = abs(b * d) // math_gcd(abs(int(b)), abs(int(d)))
             mult_1 = lcm_bd // int(b)
             mult_2 = lcm_bd // int(d)
             new_a = int(a) * mult_1
             new_c = int(c) * mult_2
 
-            steps.append(SolutionStep(
-                2, f"Приведём к общему знаменателю {lcm_bd}",
-                f"{a}×{mult_1}/{b}×{mult_1} и {c}×{mult_2}/{d}×{mult_2}",
-                f"{new_a}/{lcm_bd} и {new_c}/{lcm_bd}",
-            ))
+            steps.append(
+                SolutionStep(
+                    2,
+                    f"Приведём к общему знаменателю {lcm_bd}",
+                    f"{a}×{mult_1}/{b}×{mult_1} и {c}×{mult_2}/{d}×{mult_2}",
+                    f"{new_a}/{lcm_bd} и {new_c}/{lcm_bd}",
+                )
+            )
 
             # Step 3: выполним операцию
             # Определяем операцию из формулы
@@ -495,32 +552,45 @@ def _steps_fraction(
                 op_desc = "Сложим числители"
                 op_sym = "+"
 
-            steps.append(SolutionStep(
-                3, op_desc,
-                f"({new_a} {op_sym} {new_c}) / {lcm_bd}",
-                f"{result_num}/{lcm_bd}",
-            ))
+            steps.append(
+                SolutionStep(
+                    3,
+                    op_desc,
+                    f"({new_a} {op_sym} {new_c}) / {lcm_bd}",
+                    f"{result_num}/{lcm_bd}",
+                )
+            )
 
             # Step 4: сократим
-            from math import gcd as math_gcd2
+
             g = math_gcd(abs(result_num), abs(int(lcm_bd)))
             final_num = result_num // g
             final_den = int(lcm_bd) // g
 
             if g > 1:
-                steps.append(SolutionStep(
-                    4, f"Сократим на {g}",
-                    f"{result_num}/{lcm_bd} = {final_num}/{final_den}",
-                    f"{final_num}/{final_den}" if final_den != 1 else str(final_num),
-                    sympy_repr=str(Rational(final_num, final_den)),
-                ))
+                steps.append(
+                    SolutionStep(
+                        4,
+                        f"Сократим на {g}",
+                        f"{result_num}/{lcm_bd} = {final_num}/{final_den}",
+                        f"{final_num}/{final_den}"
+                        if final_den != 1
+                        else str(final_num),
+                        sympy_repr=str(Rational(final_num, final_den)),
+                    )
+                )
             else:
-                steps.append(SolutionStep(
-                    4, "Ответ",
-                    f"{result_num}/{lcm_bd}",
-                    f"{final_num}/{final_den}" if final_den != 1 else str(final_num),
-                    sympy_repr=str(Rational(final_num, final_den)),
-                ))
+                steps.append(
+                    SolutionStep(
+                        4,
+                        "Ответ",
+                        f"{result_num}/{lcm_bd}",
+                        f"{final_num}/{final_den}"
+                        if final_den != 1
+                        else str(final_num),
+                        sympy_repr=str(Rational(final_num, final_den)),
+                    )
+                )
 
             return steps
 
@@ -531,6 +601,7 @@ def _steps_fraction(
 # ─────────────────────────────────────────────────────────────
 # Power / Root solver (7-8 класс)
 # ─────────────────────────────────────────────────────────────
+
 
 def _steps_power_root(
     formula_text: str,
@@ -555,7 +626,11 @@ def _steps_power_root(
         rule_desc = "Правило: a^m · a^n = a^(m+n)"
     elif "**" in formula_text and "-" in formula_text:
         rule_desc = "Правило: a^m / a^n = a^(m−n)"
-    elif "sqrt" in formula_text.lower() or "**0.5" in formula_text or "**(1/2)" in formula_text:
+    elif (
+        "sqrt" in formula_text.lower()
+        or "**0.5" in formula_text
+        or "**(1/2)" in formula_text
+    ):
         rule_desc = "Правило: √(a^n) = a^(n/2)"
     elif "**" in formula_text:
         rule_desc = "Правило: (a^m)^n = a^(m·n)"
@@ -574,10 +649,15 @@ def _steps_power_root(
         syms = {k: sympify(v) for k, v in values.items()}
         result = float(sympy_N(expr.subs(syms)))
         result_str = _format_number(result)
-        steps.append(SolutionStep(
-            3, "Вычислим результат", substituted, result_str,
-            sympy_repr=srepr(sympify(result)),
-        ))
+        steps.append(
+            SolutionStep(
+                3,
+                "Вычислим результат",
+                substituted,
+                result_str,
+                sympy_repr=srepr(sympify(result)),
+            )
+        )
     except Exception:
         pass
 
@@ -588,13 +668,13 @@ def _steps_power_root(
 # System of equations solver (7-9 класс)
 # ─────────────────────────────────────────────────────────────
 
+
 def _steps_system(
     formula_text: str,
     values: Dict[str, Any],
     text_template: str = "",
 ) -> List[SolutionStep]:
     """Система уравнений: метод подстановки."""
-    from sympy import sympify, N as sympy_N, srepr, symbols, solve
 
     steps: List[SolutionStep] = []
 
@@ -613,53 +693,71 @@ def _steps_system(
         a2, b2, c2 = values[pnames[3]], values[pnames[4]], values[pnames[5]]
 
         # Step 1: записать систему
-        steps.append(SolutionStep(
-            1, "Система уравнений",
-            f"{a1}x + {b1}y = {c1}\n{a2}x + {b2}y = {c2}",
-            f"{a1}x + {b1}y = {c1}, {a2}x + {b2}y = {c2}",
-        ))
+        steps.append(
+            SolutionStep(
+                1,
+                "Система уравнений",
+                f"{a1}x + {b1}y = {c1}\n{a2}x + {b2}y = {c2}",
+                f"{a1}x + {b1}y = {c1}, {a2}x + {b2}y = {c2}",
+            )
+        )
 
         # Step 2: выразить y из первого
         if b1 != 0:
-            steps.append(SolutionStep(
-                2, f"Выразим y из первого уравнения",
-                f"{b1}y = {c1} − {a1}x",
-                f"y = ({c1} − {a1}x) / {b1}",
-            ))
+            steps.append(
+                SolutionStep(
+                    2,
+                    "Выразим y из первого уравнения",
+                    f"{b1}y = {c1} − {a1}x",
+                    f"y = ({c1} − {a1}x) / {b1}",
+                )
+            )
 
             # Step 3: подставить во второе
             # a2*x + b2*((c1 - a1*x)/b1) = c2
-            steps.append(SolutionStep(
-                3, "Подставим во второе уравнение",
-                f"{a2}x + {b2}·({c1} − {a1}x)/{b1} = {c2}",
-                f"Решаем относительно x",
-            ))
+            steps.append(
+                SolutionStep(
+                    3,
+                    "Подставим во второе уравнение",
+                    f"{a2}x + {b2}·({c1} − {a1}x)/{b1} = {c2}",
+                    "Решаем относительно x",
+                )
+            )
 
             # Step 4: найти x
             det = a1 * b2 - a2 * b1
             if det != 0:
                 x_val = (c1 * b2 - c2 * b1) / det
                 y_val = (a1 * c2 - a2 * c1) / det
-                steps.append(SolutionStep(
-                    4, "Решаем: x = (c₁b₂ − c₂b₁) / (a₁b₂ − a₂b₁)",
-                    f"x = ({c1}·{b2} − {c2}·{b1}) / ({a1}·{b2} − {a2}·{b1})",
-                    f"x = {_format_number(x_val)}",
-                ))
+                steps.append(
+                    SolutionStep(
+                        4,
+                        "Решаем: x = (c₁b₂ − c₂b₁) / (a₁b₂ − a₂b₁)",
+                        f"x = ({c1}·{b2} − {c2}·{b1}) / ({a1}·{b2} − {a2}·{b1})",
+                        f"x = {_format_number(x_val)}",
+                    )
+                )
 
                 # Step 5: найти y
-                steps.append(SolutionStep(
-                    5, "Найдём y подстановкой",
-                    f"y = ({c1} − {a1}·{_format_number(x_val)}) / {b1}",
-                    f"y = {_format_number(y_val)}",
-                ))
+                steps.append(
+                    SolutionStep(
+                        5,
+                        "Найдём y подстановкой",
+                        f"y = ({c1} − {a1}·{_format_number(x_val)}) / {b1}",
+                        f"y = {_format_number(y_val)}",
+                    )
+                )
 
                 # Step 6: ответ
-                steps.append(SolutionStep(
-                    6, "Ответ",
-                    f"x = {_format_number(x_val)}, y = {_format_number(y_val)}",
-                    f"({_format_number(x_val)}; {_format_number(y_val)})",
-                    sympy_repr=f"({x_val}, {y_val})",
-                ))
+                steps.append(
+                    SolutionStep(
+                        6,
+                        "Ответ",
+                        f"x = {_format_number(x_val)}, y = {_format_number(y_val)}",
+                        f"({_format_number(x_val)}; {_format_number(y_val)})",
+                        sympy_repr=f"({x_val}, {y_val})",
+                    )
+                )
 
                 return steps
 
@@ -670,13 +768,13 @@ def _steps_system(
 # Inequality solver (8-9 класс)
 # ─────────────────────────────────────────────────────────────
 
+
 def _steps_inequality(
     formula_text: str,
     values: Dict[str, Any],
     text_template: str = "",
 ) -> List[SolutionStep]:
     """Неравенство: перенос → деление (с учётом знака!)."""
-    from sympy import sympify, N as sympy_N, srepr
 
     steps: List[SolutionStep] = []
 
@@ -700,47 +798,64 @@ def _steps_inequality(
                 ineq_sign = sign
                 break
 
-        steps.append(SolutionStep(
-            1, "Запишем неравенство",
-            f"{a_val}x + ({b_val}) {ineq_sign} {c_val}",
-            f"{a_val}x + ({b_val}) {ineq_sign} {c_val}",
-        ))
+        steps.append(
+            SolutionStep(
+                1,
+                "Запишем неравенство",
+                f"{a_val}x + ({b_val}) {ineq_sign} {c_val}",
+                f"{a_val}x + ({b_val}) {ineq_sign} {c_val}",
+            )
+        )
 
         # Step 2: перенос
         rhs = c_val - b_val
-        steps.append(SolutionStep(
-            2, f"Перенесём {b_val} вправо (меняем знак)",
-            f"{a_val}x {ineq_sign} {c_val} − ({b_val})",
-            f"{a_val}x {ineq_sign} {_format_number(rhs)}",
-        ))
+        steps.append(
+            SolutionStep(
+                2,
+                f"Перенесём {b_val} вправо (меняем знак)",
+                f"{a_val}x {ineq_sign} {c_val} − ({b_val})",
+                f"{a_val}x {ineq_sign} {_format_number(rhs)}",
+            )
+        )
 
         # Step 3: деление — КЛЮЧЕВОЙ МОМЕНТ
         if a_val != 0:
             x_val = rhs / a_val
             # При делении на отрицательное — знак переворачивается!
             if a_val < 0:
-                flipped = {"<": ">", ">": "<", "<=": ">=", ">=": "<="}.get(ineq_sign, ineq_sign)
-                steps.append(SolutionStep(
-                    3, f"Делим на {a_val} — число отрицательное, ПЕРЕВОРАЧИВАЕМ знак!",
-                    f"x {flipped} {_format_number(rhs)} / ({a_val})",
-                    f"x {flipped} {_format_number(x_val)}",
-                ))
+                flipped = {"<": ">", ">": "<", "<=": ">=", ">=": "<="}.get(
+                    ineq_sign, ineq_sign
+                )
+                steps.append(
+                    SolutionStep(
+                        3,
+                        f"Делим на {a_val} — число отрицательное, ПЕРЕВОРАЧИВАЕМ знак!",
+                        f"x {flipped} {_format_number(rhs)} / ({a_val})",
+                        f"x {flipped} {_format_number(x_val)}",
+                    )
+                )
                 final_sign = flipped
             else:
-                steps.append(SolutionStep(
-                    3, f"Делим обе части на {a_val}",
-                    f"x {ineq_sign} {_format_number(rhs)} / {a_val}",
-                    f"x {ineq_sign} {_format_number(x_val)}",
-                ))
+                steps.append(
+                    SolutionStep(
+                        3,
+                        f"Делим обе части на {a_val}",
+                        f"x {ineq_sign} {_format_number(rhs)} / {a_val}",
+                        f"x {ineq_sign} {_format_number(x_val)}",
+                    )
+                )
                 final_sign = ineq_sign
 
             # Step 4: ответ
-            steps.append(SolutionStep(
-                4, "Ответ",
-                f"x {final_sign} {_format_number(x_val)}",
-                _format_number(x_val),
-                sympy_repr=str(x_val),
-            ))
+            steps.append(
+                SolutionStep(
+                    4,
+                    "Ответ",
+                    f"x {final_sign} {_format_number(x_val)}",
+                    _format_number(x_val),
+                    sympy_repr=str(x_val),
+                )
+            )
 
             return steps
 
@@ -751,13 +866,14 @@ def _steps_inequality(
 # Trigonometry solver (9-11 класс)
 # ─────────────────────────────────────────────────────────────
 
+
 def _steps_trigonometry(
     formula_text: str,
     values: Dict[str, Any],
     text_template: str = "",
 ) -> List[SolutionStep]:
     """Тригонометрия: определить четверть → базовый угол → знак → ответ."""
-    from sympy import sympify, N as sympy_N, srepr, pi, sin, cos, tan
+    from sympy import sympify, N as sympy_N, srepr
 
     steps: List[SolutionStep] = []
 
@@ -775,22 +891,28 @@ def _steps_trigonometry(
             func_name = fn
             break
 
-    steps.append(SolutionStep(
-        1, f"Определим тригонометрическую функцию: {func_name}",
-        formula_text,
-        formula_text,
-    ))
+    steps.append(
+        SolutionStep(
+            1,
+            f"Определим тригонометрическую функцию: {func_name}",
+            formula_text,
+            formula_text,
+        )
+    )
 
     # Step 2: подставить значения
     substituted = formula_text
     for k, v in values.items():
         substituted = substituted.replace(k, str(v))
 
-    steps.append(SolutionStep(
-        2, "Подставим значения угла",
-        substituted,
-        substituted,
-    ))
+    steps.append(
+        SolutionStep(
+            2,
+            "Подставим значения угла",
+            substituted,
+            substituted,
+        )
+    )
 
     # Step 3: определить четверть (если угол в градусах)
     pnames = list(values.keys())
@@ -801,11 +923,14 @@ def _steps_trigonometry(
             quadrant = 1 + int((angle_val % 360) // 90)
             if quadrant > 4:
                 quadrant = 4
-            steps.append(SolutionStep(
-                3, f"Угол {_format_number(angle_val)}° находится в {quadrant}-й четверти",
-                f"Четверть: {quadrant}",
-                f"Четверть: {quadrant}",
-            ))
+            steps.append(
+                SolutionStep(
+                    3,
+                    f"Угол {_format_number(angle_val)}° находится в {quadrant}-й четверти",
+                    f"Четверть: {quadrant}",
+                    f"Четверть: {quadrant}",
+                )
+            )
         except (ValueError, TypeError):
             pass
 
@@ -815,12 +940,15 @@ def _steps_trigonometry(
         syms = {k: sympify(v) for k, v in values.items()}
         result = float(sympy_N(expr.subs(syms)))
         result_str = _format_number(result)
-        steps.append(SolutionStep(
-            4, "Вычислим значение",
-            substituted,
-            result_str,
-            sympy_repr=srepr(sympify(result)),
-        ))
+        steps.append(
+            SolutionStep(
+                4,
+                "Вычислим значение",
+                substituted,
+                result_str,
+                sympy_repr=srepr(sympify(result)),
+            )
+        )
     except Exception:
         pass
 
@@ -830,6 +958,7 @@ def _steps_trigonometry(
 # ─────────────────────────────────────────────────────────────
 # Derivative solver (10-11 класс)
 # ─────────────────────────────────────────────────────────────
+
 
 def _steps_derivative(
     formula_text: str,
@@ -853,11 +982,14 @@ def _steps_derivative(
     for k, v in values.items():
         substituted = substituted.replace(k, str(v))
 
-    steps.append(SolutionStep(
-        1, "Запишем функцию f(x)",
-        f"f(x) = {substituted}",
-        f"f(x) = {substituted}",
-    ))
+    steps.append(
+        SolutionStep(
+            1,
+            "Запишем функцию f(x)",
+            f"f(x) = {substituted}",
+            f"f(x) = {substituted}",
+        )
+    )
 
     # Step 2: определить правило дифференцирования
     rule = "Применим правила дифференцирования"
@@ -876,44 +1008,56 @@ def _steps_derivative(
 
     # Step 3: вычислить производную через SymPy
     try:
-        x = symbols('x')
+        x = symbols("x")
         expr = sympify(substituted)
         deriv = diff(expr, x)
         deriv_str = str(deriv)
 
-        steps.append(SolutionStep(
-            3, "Вычислим производную",
-            f"f'(x) = d/dx [{substituted}]",
-            f"f'(x) = {deriv_str}",
-        ))
+        steps.append(
+            SolutionStep(
+                3,
+                "Вычислим производную",
+                f"f'(x) = d/dx [{substituted}]",
+                f"f'(x) = {deriv_str}",
+            )
+        )
 
         # Step 4: если нужно вычислить в точке
         if "x0" in values or "point" in values:
             x0 = values.get("x0", values.get("point", 0))
             result_val = float(sympy_N(deriv.subs(x, x0)))
-            steps.append(SolutionStep(
-                4, f"Вычислим f'({x0})",
-                f"f'({x0}) = {deriv_str} при x={x0}",
-                _format_number(result_val),
-                sympy_repr=srepr(sympify(result_val)),
-            ))
+            steps.append(
+                SolutionStep(
+                    4,
+                    f"Вычислим f'({x0})",
+                    f"f'({x0}) = {deriv_str} при x={x0}",
+                    _format_number(result_val),
+                    sympy_repr=srepr(sympify(result_val)),
+                )
+            )
         else:
             # Финальный ответ — формула производной
             try:
                 result_val = float(sympy_N(deriv))
-                steps.append(SolutionStep(
-                    4, "Ответ",
-                    f"f'(x) = {deriv_str}",
-                    _format_number(result_val),
-                    sympy_repr=srepr(deriv),
-                ))
+                steps.append(
+                    SolutionStep(
+                        4,
+                        "Ответ",
+                        f"f'(x) = {deriv_str}",
+                        _format_number(result_val),
+                        sympy_repr=srepr(deriv),
+                    )
+                )
             except Exception:
-                steps.append(SolutionStep(
-                    4, "Ответ",
-                    f"f'(x) = {deriv_str}",
-                    deriv_str,
-                    sympy_repr=srepr(deriv),
-                ))
+                steps.append(
+                    SolutionStep(
+                        4,
+                        "Ответ",
+                        f"f'(x) = {deriv_str}",
+                        deriv_str,
+                        sympy_repr=srepr(deriv),
+                    )
+                )
     except Exception:
         pass
 
@@ -923,6 +1067,7 @@ def _steps_derivative(
 # ─────────────────────────────────────────────────────────────
 # Integral solver (11 класс)
 # ─────────────────────────────────────────────────────────────
+
 
 def _steps_integral(
     formula_text: str,
@@ -945,11 +1090,14 @@ def _steps_integral(
     for k, v in values.items():
         substituted = substituted.replace(k, str(v))
 
-    steps.append(SolutionStep(
-        1, "Запишем подынтегральное выражение",
-        f"∫ {substituted} dx",
-        f"∫ {substituted} dx",
-    ))
+    steps.append(
+        SolutionStep(
+            1,
+            "Запишем подынтегральное выражение",
+            f"∫ {substituted} dx",
+            f"∫ {substituted} dx",
+        )
+    )
 
     # Step 2: правило интегрирования
     rule = "Применим правила интегрирования"
@@ -965,7 +1113,7 @@ def _steps_integral(
     steps.append(SolutionStep(2, rule, substituted, substituted))
 
     try:
-        x = symbols('x')
+        x = symbols("x")
         expr = sympify(substituted)
 
         # Определённый интеграл (если есть пределы)
@@ -977,44 +1125,63 @@ def _steps_integral(
             antideriv = integrate(expr, x)
             antideriv_str = str(antideriv)
 
-            steps.append(SolutionStep(
-                3, "Найдём первообразную F(x)",
-                f"F(x) = {antideriv_str}",
-                f"F(x) = {antideriv_str}",
-            ))
+            steps.append(
+                SolutionStep(
+                    3,
+                    "Найдём первообразную F(x)",
+                    f"F(x) = {antideriv_str}",
+                    f"F(x) = {antideriv_str}",
+                )
+            )
 
             # Step 4: подставить пределы
             f_upper = float(sympy_N(antideriv.subs(x, upper)))
             f_lower = float(sympy_N(antideriv.subs(x, lower)))
             result_val = f_upper - f_lower
 
-            steps.append(SolutionStep(
-                4, f"Подставим пределы: F({upper}) − F({lower})",
-                f"{_format_number(f_upper)} − ({_format_number(f_lower)})",
-                _format_number(result_val),
-                sympy_repr=srepr(sympify(result_val)),
-            ))
+            steps.append(
+                SolutionStep(
+                    4,
+                    f"Подставим пределы: F({upper}) − F({lower})",
+                    f"{_format_number(f_upper)} − ({_format_number(f_lower)})",
+                    _format_number(result_val),
+                    sympy_repr=srepr(sympify(result_val)),
+                )
+            )
         else:
             # Неопределённый интеграл
             result = integrate(expr, x)
             result_str = f"{result} + C"
 
-            steps.append(SolutionStep(
-                3, "Найдём первообразную",
-                f"∫ {substituted} dx",
-                result_str,
-                sympy_repr=srepr(result),
-            ))
+            steps.append(
+                SolutionStep(
+                    3,
+                    "Найдём первообразную",
+                    f"∫ {substituted} dx",
+                    result_str,
+                    sympy_repr=srepr(result),
+                )
+            )
 
             try:
                 result_val = float(sympy_N(result))
-                steps.append(SolutionStep(
-                    4, "Ответ", result_str, _format_number(result_val),
-                ))
+                steps.append(
+                    SolutionStep(
+                        4,
+                        "Ответ",
+                        result_str,
+                        _format_number(result_val),
+                    )
+                )
             except Exception:
-                steps.append(SolutionStep(
-                    4, "Ответ", result_str, result_str,
-                ))
+                steps.append(
+                    SolutionStep(
+                        4,
+                        "Ответ",
+                        result_str,
+                        result_str,
+                    )
+                )
     except Exception:
         pass
 
@@ -1024,6 +1191,7 @@ def _steps_integral(
 # ─────────────────────────────────────────────────────────────
 # Limit solver (10-11 класс)
 # ─────────────────────────────────────────────────────────────
+
 
 def _steps_limit(
     formula_text: str,
@@ -1050,14 +1218,17 @@ def _steps_limit(
     x0 = values.get("x0", values.get("point", 0))
     to_inf = str(x0).lower() in ("inf", "oo", "infinity")
 
-    steps.append(SolutionStep(
-        1, f"Найдём предел при x → {'∞' if to_inf else x0}",
-        f"lim (x→{'∞' if to_inf else x0}) [{substituted}]",
-        f"lim (x→{'∞' if to_inf else x0}) [{substituted}]",
-    ))
+    steps.append(
+        SolutionStep(
+            1,
+            f"Найдём предел при x → {'∞' if to_inf else x0}",
+            f"lim (x→{'∞' if to_inf else x0}) [{substituted}]",
+            f"lim (x→{'∞' if to_inf else x0}) [{substituted}]",
+        )
+    )
 
     try:
-        x = symbols('x')
+        x = symbols("x")
         expr = sympify(substituted)
 
         # Step 2: попробуем прямую подстановку
@@ -1065,49 +1236,68 @@ def _steps_limit(
             try:
                 direct = float(sympy_N(expr.subs(x, x0)))
                 if math.isfinite(direct):
-                    steps.append(SolutionStep(
-                        2, f"Подставим x = {x0} напрямую",
-                        f"f({x0}) = {substituted} при x={x0}",
-                        _format_number(direct),
-                    ))
-                    steps.append(SolutionStep(
-                        3, "Прямая подстановка дала конечный результат",
-                        _format_number(direct),
-                        _format_number(direct),
-                        sympy_repr=srepr(sympify(direct)),
-                    ))
+                    steps.append(
+                        SolutionStep(
+                            2,
+                            f"Подставим x = {x0} напрямую",
+                            f"f({x0}) = {substituted} при x={x0}",
+                            _format_number(direct),
+                        )
+                    )
+                    steps.append(
+                        SolutionStep(
+                            3,
+                            "Прямая подстановка дала конечный результат",
+                            _format_number(direct),
+                            _format_number(direct),
+                            sympy_repr=srepr(sympify(direct)),
+                        )
+                    )
                     return steps
                 else:
-                    steps.append(SolutionStep(
-                        2, f"Прямая подстановка x = {x0} даёт неопределённость",
-                        "0/0 или ∞/∞",
-                        "Нужно раскрыть неопределённость",
-                    ))
+                    steps.append(
+                        SolutionStep(
+                            2,
+                            f"Прямая подстановка x = {x0} даёт неопределённость",
+                            "0/0 или ∞/∞",
+                            "Нужно раскрыть неопределённость",
+                        )
+                    )
             except Exception:
-                steps.append(SolutionStep(
-                    2, "Прямая подстановка невозможна",
-                    "Неопределённость",
-                    "Применим правило Лопиталя или алгебраические преобразования",
-                ))
+                steps.append(
+                    SolutionStep(
+                        2,
+                        "Прямая подстановка невозможна",
+                        "Неопределённость",
+                        "Применим правило Лопиталя или алгебраические преобразования",
+                    )
+                )
 
         # Step 3: вычислить через SymPy limit
         point = oo if to_inf else sympify(x0)
         result = sym_limit(expr, x, point)
         result_val = float(sympy_N(result))
 
-        steps.append(SolutionStep(
-            3, "Вычислим предел" + (" (правило Лопиталя)" if not to_inf else " (при x→∞)"),
-            f"lim = {result}",
-            _format_number(result_val),
-            sympy_repr=srepr(result),
-        ))
+        steps.append(
+            SolutionStep(
+                3,
+                "Вычислим предел"
+                + (" (правило Лопиталя)" if not to_inf else " (при x→∞)"),
+                f"lim = {result}",
+                _format_number(result_val),
+                sympy_repr=srepr(result),
+            )
+        )
 
-        steps.append(SolutionStep(
-            4, "Ответ",
-            _format_number(result_val),
-            _format_number(result_val),
-            sympy_repr=srepr(result),
-        ))
+        steps.append(
+            SolutionStep(
+                4,
+                "Ответ",
+                _format_number(result_val),
+                _format_number(result_val),
+                sympy_repr=srepr(result),
+            )
+        )
 
     except Exception:
         pass
@@ -1117,25 +1307,26 @@ def _steps_limit(
 
 # Solver registry
 _STEP_SOLVERS = {
-    "arithmetic":   _steps_generic,
-    "linear":       _steps_linear,
-    "quadratic":    _steps_quadratic,
-    "geometry":     _steps_geometry,
-    "logarithm":    _steps_logarithm,
-    "fraction":     _steps_fraction,
-    "power_root":   _steps_power_root,
-    "system":       _steps_system,
-    "inequality":   _steps_inequality,
+    "arithmetic": _steps_generic,
+    "linear": _steps_linear,
+    "quadratic": _steps_quadratic,
+    "geometry": _steps_geometry,
+    "logarithm": _steps_logarithm,
+    "fraction": _steps_fraction,
+    "power_root": _steps_power_root,
+    "system": _steps_system,
+    "inequality": _steps_inequality,
     "trigonometry": _steps_trigonometry,
-    "derivative":   _steps_derivative,
-    "integral":     _steps_integral,
-    "limit":        _steps_limit,
+    "derivative": _steps_derivative,
+    "integral": _steps_integral,
+    "limit": _steps_limit,
 }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Step-Based Distractor Engine
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class StepDistractorEngine:
     """
@@ -1240,7 +1431,11 @@ class StepDistractorEngine:
             try:
                 distractors = strategy(steps, correct_answer, task_type, total_steps)
                 for d in distractors:
-                    norm = _format_number(float(d.value)) if _is_number(d.value) else d.value
+                    norm = (
+                        _format_number(float(d.value))
+                        if _is_number(d.value)
+                        else d.value
+                    )
                     if norm not in seen_values:
                         seen_values.add(norm)
                         results.append(d)
@@ -1251,7 +1446,9 @@ class StepDistractorEngine:
 
         # Fallback: арифметические дистракторы
         if len(results) < count:
-            fallbacks = self._arithmetic_fallback(correct_answer, count - len(results), seen_values)
+            fallbacks = self._arithmetic_fallback(
+                correct_answer, count - len(results), seen_values
+            )
             results.extend(fallbacks)
 
         results.sort(key=lambda d: d.plausibility, reverse=True)
@@ -1273,28 +1470,35 @@ class StepDistractorEngine:
 
         # Находим шаги с переносом
         for step in steps:
-            if "перенес" in step.description.lower() or "знак" in step.description.lower():
+            if (
+                "перенес" in step.description.lower()
+                or "знак" in step.description.lower()
+            ):
                 # Обратный знак
                 wrong = -correct if correct != 0 else 1
                 plaus = 0.5 + 0.5 * (step.step_number / total)
-                results.append(Distractor(
-                    value=_format_number(wrong),
-                    error_type="sign_transfer_error",
-                    broken_step=step.step_number,
-                    plausibility=min(plaus, 0.95),
-                    explanation="Забыл поменять знак при переносе слагаемого через «=»",
-                ))
+                results.append(
+                    Distractor(
+                        value=_format_number(wrong),
+                        error_type="sign_transfer_error",
+                        broken_step=step.step_number,
+                        plausibility=min(plaus, 0.95),
+                        explanation="Забыл поменять знак при переносе слагаемого через «=»",
+                    )
+                )
                 break
 
         # Также: -answer (универсальная ошибка знака)
         if correct != 0:
-            results.append(Distractor(
-                value=_format_number(-correct),
-                error_type="sign_error",
-                broken_step=max(total - 2, 1),
-                plausibility=0.85,
-                explanation="Ошибка знака в итоговом ответе",
-            ))
+            results.append(
+                Distractor(
+                    value=_format_number(-correct),
+                    error_type="sign_error",
+                    broken_step=max(total - 2, 1),
+                    plausibility=0.85,
+                    explanation="Ошибка знака в итоговом ответе",
+                )
+            )
 
         return results
 
@@ -1317,20 +1521,22 @@ class StepDistractorEngine:
             desc = step.description.lower()
             if "раздел" in desc or "дел" in desc:
                 # Вместо деления — умножение
-                nums = re.findall(r'[-+]?\d+(?:\.\d+)?', step.expression)
+                nums = re.findall(r"[-+]?\d+(?:\.\d+)?", step.expression)
                 if len(nums) >= 2:
                     try:
                         a, b = float(nums[0]), float(nums[1])
                         if b != 0:
                             wrong = a * b  # умножил вместо деления
                             plaus = 0.5 + 0.5 * (step.step_number / total)
-                            results.append(Distractor(
-                                value=_format_number(wrong),
-                                error_type="wrong_operation",
-                                broken_step=step.step_number,
-                                plausibility=min(plaus, 0.90),
-                                explanation="Умножил вместо деления",
-                            ))
+                            results.append(
+                                Distractor(
+                                    value=_format_number(wrong),
+                                    error_type="wrong_operation",
+                                    broken_step=step.step_number,
+                                    plausibility=min(plaus, 0.90),
+                                    explanation="Умножил вместо деления",
+                                )
+                            )
                     except Exception:
                         pass
                 break
@@ -1355,20 +1561,22 @@ class StepDistractorEngine:
             if step.step_number == 0:
                 continue
             # Ищем числа в result
-            nums = re.findall(r'[-+]?\d+(?:\.\d+)?', step.result)
+            nums = re.findall(r"[-+]?\d+(?:\.\d+)?", step.result)
             for num_str in nums:
                 try:
                     val = float(num_str)
                     if val != correct and val != 0 and abs(val) < abs(correct) * 100:
                         plaus = 0.4 + 0.3 * (step.step_number / total)
-                        results.append(Distractor(
-                            value=_format_number(val),
-                            error_type="partial_result",
-                            broken_step=step.step_number,
-                            plausibility=min(plaus, 0.80),
-                            explanation=f"Остановился на шаге {step.step_number}: "
-                                        f"записал промежуточный результат как ответ",
-                        ))
+                        results.append(
+                            Distractor(
+                                value=_format_number(val),
+                                error_type="partial_result",
+                                broken_step=step.step_number,
+                                plausibility=min(plaus, 0.80),
+                                explanation=f"Остановился на шаге {step.step_number}: "
+                                f"записал промежуточный результат как ответ",
+                            )
+                        )
                 except Exception:
                     continue
 
@@ -1391,13 +1599,15 @@ class StepDistractorEngine:
         for coeff, desc in [(2, "забыл разделить на 2"), (0.5, "забыл умножить на 2")]:
             wrong = correct * coeff
             if wrong != correct:
-                results.append(Distractor(
-                    value=_format_number(wrong),
-                    error_type="coefficient_error",
-                    broken_step=max(total - 1, 1),
-                    plausibility=0.80,
-                    explanation=f"Ошибка коэффициента: {desc}",
-                ))
+                results.append(
+                    Distractor(
+                        value=_format_number(wrong),
+                        error_type="coefficient_error",
+                        broken_step=max(total - 1, 1),
+                        plausibility=0.80,
+                        explanation=f"Ошибка коэффициента: {desc}",
+                    )
+                )
 
         return results
 
@@ -1418,21 +1628,26 @@ class StepDistractorEngine:
         if task_type == "quadratic":
             # Ищем шаг с дискриминантом
             for step in steps:
-                if "дискриминант" in step.description.lower() or "D =" in step.expression:
-                    nums = re.findall(r'[-+]?\d+(?:\.\d+)?', step.result)
+                if (
+                    "дискриминант" in step.description.lower()
+                    or "D =" in step.expression
+                ):
+                    nums = re.findall(r"[-+]?\d+(?:\.\d+)?", step.result)
                     if nums:
                         try:
                             d_val = float(nums[-1])
                             # D = b²+4ac вместо b²−4ac → D' = D + 8ac
                             # Проще: инвертировать знак 4ac
                             wrong_d = -d_val if d_val != 0 else 4
-                            results.append(Distractor(
-                                value=_format_number(wrong_d),
-                                error_type="formula_error",
-                                broken_step=step.step_number,
-                                plausibility=0.88,
-                                explanation="Использовал D = b²+4ac вместо D = b²−4ac",
-                            ))
+                            results.append(
+                                Distractor(
+                                    value=_format_number(wrong_d),
+                                    error_type="formula_error",
+                                    broken_step=step.step_number,
+                                    plausibility=0.88,
+                                    explanation="Использовал D = b²+4ac вместо D = b²−4ac",
+                                )
+                            )
                         except Exception:
                             pass
                     break
@@ -1456,13 +1671,15 @@ class StepDistractorEngine:
         for delta in [1, -1, 2]:
             wrong = correct + delta
             if wrong != correct:
-                results.append(Distractor(
-                    value=_format_number(wrong),
-                    error_type="simplification_error",
-                    broken_step=max(total - 1, 1),
-                    plausibility=0.65,
-                    explanation=f"Ошибка при упрощении: ответ ±{abs(delta)}",
-                ))
+                results.append(
+                    Distractor(
+                        value=_format_number(wrong),
+                        error_type="simplification_error",
+                        broken_step=max(total - 1, 1),
+                        plausibility=0.65,
+                        explanation=f"Ошибка при упрощении: ответ ±{abs(delta)}",
+                    )
+                )
 
         return results
 
@@ -1498,46 +1715,66 @@ class StepDistractorEngine:
         # 1. Перевернуть дробь
         if num != 0 and num != den:
             inv = PyFraction(den, num)
-            candidates.append((
-                str(inv), "inverted_fraction", 0.88,
-                "Перепутал числитель и знаменатель",
-            ))
+            candidates.append(
+                (
+                    str(inv),
+                    "inverted_fraction",
+                    0.88,
+                    "Перепутал числитель и знаменатель",
+                )
+            )
 
         # 2. Не сократить — показать несокращённый вариант (×2, ×3)
         for mult in (2, 3):
             unsimplified = f"{num * mult}/{den * mult}"
-            candidates.append((
-                unsimplified, "unsimplified_fraction", 0.82,
-                f"Забыл сократить дробь (×{mult})",
-            ))
+            candidates.append(
+                (
+                    unsimplified,
+                    "unsimplified_fraction",
+                    0.82,
+                    f"Забыл сократить дробь (×{mult})",
+                )
+            )
 
         # 3. Ошибка в числителе ±1
         for delta in (1, -1):
             wrong_num = num + delta
             if wrong_num != 0:
                 wrong = PyFraction(wrong_num, den)
-                candidates.append((
-                    str(wrong), "numerator_error", 0.78,
-                    f"Ошибка в числителе: {num}{'+' if delta > 0 else ''}{delta}",
-                ))
+                candidates.append(
+                    (
+                        str(wrong),
+                        "numerator_error",
+                        0.78,
+                        f"Ошибка в числителе: {num}{'+' if delta > 0 else ''}{delta}",
+                    )
+                )
 
         # 4. Ошибка в знаменателе ±1
         for delta in (1, -1):
             wrong_den = den + delta
             if wrong_den > 0:
                 wrong = PyFraction(num, wrong_den)
-                candidates.append((
-                    str(wrong), "denominator_error", 0.75,
-                    f"Ошибка в знаменателе: {den}{'+' if delta > 0 else ''}{delta}",
-                ))
+                candidates.append(
+                    (
+                        str(wrong),
+                        "denominator_error",
+                        0.75,
+                        f"Ошибка в знаменателе: {den}{'+' if delta > 0 else ''}{delta}",
+                    )
+                )
 
         # 5. Ошибка знака
         if frac != 0:
             neg = -frac
-            candidates.append((
-                str(neg), "sign_error", 0.85,
-                "Ошибка знака дроби",
-            ))
+            candidates.append(
+                (
+                    str(neg),
+                    "sign_error",
+                    0.85,
+                    "Ошибка знака дроби",
+                )
+            )
 
         for val_str, etype, plaus, expl in candidates:
             if len(results) >= count:
@@ -1545,13 +1782,15 @@ class StepDistractorEngine:
             norm = val_str.replace(" ", "")
             if norm not in seen:
                 seen.add(norm)
-                results.append(Distractor(
-                    value=val_str,
-                    error_type=etype,
-                    broken_step=0,
-                    plausibility=plaus,
-                    explanation=expl,
-                ))
+                results.append(
+                    Distractor(
+                        value=val_str,
+                        error_type=etype,
+                        broken_step=0,
+                        plausibility=plaus,
+                        explanation=expl,
+                    )
+                )
 
         results.sort(key=lambda d: d.plausibility, reverse=True)
         return results[:count]
@@ -1571,8 +1810,7 @@ class StepDistractorEngine:
         4. Ошибка в степени (x² → x³)
         5. Раскрытие скобок с ошибкой знака
         """
-        from sympy import parse_expr, symbols, Poly, Add, Mul, Pow, degree, Symbol
-        from sympy import srepr
+        from sympy import parse_expr, Poly, Add
 
         results: List[Distractor] = []
         seen: set = {correct.replace(" ", "")}
@@ -1597,10 +1835,14 @@ class StepDistractorEngine:
 
         # 1. Изменить знак: −expr
         neg_expr = -expr
-        candidates.append((
-            str(neg_expr), "sign_error", 0.85,
-            "Ошибка знака всего выражения",
-        ))
+        candidates.append(
+            (
+                str(neg_expr),
+                "sign_error",
+                0.85,
+                "Ошибка знака всего выражения",
+            )
+        )
 
         # 2. Если выражение — сумма, поменять знак одного члена
         terms = Add.make_args(expr)
@@ -1609,18 +1851,26 @@ class StepDistractorEngine:
                 new_terms = list(terms)
                 new_terms[i] = -term
                 wrong = Add(*new_terms)
-                candidates.append((
-                    str(wrong), "term_sign_error", 0.88,
-                    f"Ошибка знака в члене: {term} → {-term}",
-                ))
+                candidates.append(
+                    (
+                        str(wrong),
+                        "term_sign_error",
+                        0.88,
+                        f"Ошибка знака в члене: {term} → {-term}",
+                    )
+                )
 
         # 3. Потерять последний член
         if len(terms) > 1:
             partial = Add(*terms[:-1])
-            candidates.append((
-                str(partial), "lost_term", 0.80,
-                f"Потерял член: {terms[-1]}",
-            ))
+            candidates.append(
+                (
+                    str(partial),
+                    "lost_term",
+                    0.80,
+                    f"Потерял член: {terms[-1]}",
+                )
+            )
 
         # 4. Ошибка в коэффициенте старшего члена ±1
         try:
@@ -1633,11 +1883,17 @@ class StepDistractorEngine:
                     if new_coeffs[0] != 0:
                         # Восстанавливаем выражение из коэффициентов
                         deg = len(coeffs) - 1
-                        wrong = sum(c * x**p for p, c in zip(range(deg, -1, -1), new_coeffs))
-                        candidates.append((
-                            str(wrong), "coefficient_error", 0.82,
-                            f"Ошибка в старшем коэффициенте: {coeffs[0]} → {coeffs[0] + delta}",
-                        ))
+                        wrong = sum(
+                            c * x**p for p, c in zip(range(deg, -1, -1), new_coeffs)
+                        )
+                        candidates.append(
+                            (
+                                str(wrong),
+                                "coefficient_error",
+                                0.82,
+                                f"Ошибка в старшем коэффициенте: {coeffs[0]} → {coeffs[0] + delta}",
+                            )
+                        )
         except Exception:
             pass
 
@@ -1646,16 +1902,24 @@ class StepDistractorEngine:
             poly = Poly(expr, x)
             deg_val = poly.degree()
             if deg_val >= 2:
-                wrong = expr.subs(x**deg_val, x**(deg_val + 1))
-                candidates.append((
-                    str(wrong), "degree_error", 0.75,
-                    f"Ошибка в степени: x^{deg_val} → x^{deg_val + 1}",
-                ))
-                wrong2 = expr.subs(x**deg_val, x**(deg_val - 1))
-                candidates.append((
-                    str(wrong2), "degree_error", 0.72,
-                    f"Ошибка в степени: x^{deg_val} → x^{deg_val - 1}",
-                ))
+                wrong = expr.subs(x**deg_val, x ** (deg_val + 1))
+                candidates.append(
+                    (
+                        str(wrong),
+                        "degree_error",
+                        0.75,
+                        f"Ошибка в степени: x^{deg_val} → x^{deg_val + 1}",
+                    )
+                )
+                wrong2 = expr.subs(x**deg_val, x ** (deg_val - 1))
+                candidates.append(
+                    (
+                        str(wrong2),
+                        "degree_error",
+                        0.72,
+                        f"Ошибка в степени: x^{deg_val} → x^{deg_val - 1}",
+                    )
+                )
         except Exception:
             pass
 
@@ -1665,13 +1929,15 @@ class StepDistractorEngine:
             norm = val_str.replace(" ", "")
             if norm not in seen:
                 seen.add(norm)
-                results.append(Distractor(
-                    value=val_str,
-                    error_type=etype,
-                    broken_step=0,
-                    plausibility=plaus,
-                    explanation=expl,
-                ))
+                results.append(
+                    Distractor(
+                        value=val_str,
+                        error_type=etype,
+                        broken_step=0,
+                        plausibility=plaus,
+                        explanation=expl,
+                    )
+                )
 
         results.sort(key=lambda d: d.plausibility, reverse=True)
         return results[:count]
@@ -1680,7 +1946,9 @@ class StepDistractorEngine:
     # Non-numeric distractors: MULTIPLE VALUES
     # ─────────────────────────────────────────────────────────
 
-    def _multi_value_distractors(self, correct: str, count: int = 3) -> List[Distractor]:
+    def _multi_value_distractors(
+        self, correct: str, count: int = 3
+    ) -> List[Distractor]:
         """
         Дистракторы для множественных значений (x1=-2, x2=3 / -2; 3 / -2, 3)
 
@@ -1693,9 +1961,10 @@ class StepDistractorEngine:
 
         # Парсим значения: "x1=-2, x2=3" / "-2; 3" / "-2, 3"
         import re
+
         raw = correct.replace(";", ",")
         # Извлекаем числа из строки
-        numbers = re.findall(r'[-+]?\d+(?:\.\d+)?(?:/\d+)?', raw)
+        numbers = re.findall(r"[-+]?\d+(?:\.\d+)?(?:/\d+)?", raw)
         if len(numbers) < 2:
             return []
 
@@ -1706,10 +1975,14 @@ class StepDistractorEngine:
 
         # 1. Потерять один корень — записать только первый или второй
         for i, num in enumerate(numbers):
-            candidates.append((
-                num, "lost_root", 0.85,
-                f"Нашёл только один корень: {num} (потерял остальные)",
-            ))
+            candidates.append(
+                (
+                    num,
+                    "lost_root",
+                    0.85,
+                    f"Нашёл только один корень: {num} (потерял остальные)",
+                )
+            )
 
         # 2. Ошибка знака одного корня
         for i, num_str in enumerate(numbers):
@@ -1719,10 +1992,14 @@ class StepDistractorEngine:
                     new_nums = list(numbers)
                     new_nums[i] = _format_number(-val)
                     wrong = separator.join(new_nums)
-                    candidates.append((
-                        wrong, "sign_error_in_root", 0.88,
-                        f"Ошибка знака в корне: {num_str} → {_format_number(-val)}",
-                    ))
+                    candidates.append(
+                        (
+                            wrong,
+                            "sign_error_in_root",
+                            0.88,
+                            f"Ошибка знака в корне: {num_str} → {_format_number(-val)}",
+                        )
+                    )
             except ValueError:
                 pass
 
@@ -1733,10 +2010,14 @@ class StepDistractorEngine:
                 new_nums = list(numbers)
                 new_nums[i] = _format_number(val + 1)
                 wrong = separator.join(new_nums)
-                candidates.append((
-                    wrong, "arithmetic_error_root", 0.75,
-                    f"Арифметическая ошибка в корне: {num_str} → {_format_number(val + 1)}",
-                ))
+                candidates.append(
+                    (
+                        wrong,
+                        "arithmetic_error_root",
+                        0.75,
+                        f"Арифметическая ошибка в корне: {num_str} → {_format_number(val + 1)}",
+                    )
+                )
             except ValueError:
                 pass
 
@@ -1746,13 +2027,15 @@ class StepDistractorEngine:
             norm = val_str.replace(" ", "")
             if norm not in seen:
                 seen.add(norm)
-                results.append(Distractor(
-                    value=val_str,
-                    error_type=etype,
-                    broken_step=0,
-                    plausibility=plaus,
-                    explanation=expl,
-                ))
+                results.append(
+                    Distractor(
+                        value=val_str,
+                        error_type=etype,
+                        broken_step=0,
+                        plausibility=plaus,
+                        explanation=expl,
+                    )
+                )
 
         results.sort(key=lambda d: d.plausibility, reverse=True)
         return results[:count]
@@ -1785,13 +2068,15 @@ class StepDistractorEngine:
             norm = _format_number(val)
             if norm not in seen:
                 seen.add(norm)
-                results.append(Distractor(
-                    value=norm,
-                    error_type=etype,
-                    broken_step=0,
-                    plausibility=0.40,
-                    explanation=explain,
-                ))
+                results.append(
+                    Distractor(
+                        value=norm,
+                        error_type=etype,
+                        broken_step=0,
+                        plausibility=0.40,
+                        explanation=explain,
+                    )
+                )
 
         return results
 
@@ -1799,6 +2084,7 @@ class StepDistractorEngine:
 # ═══════════════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _format_number(val: float) -> str:
     """Форматирует число: целое если возможно, иначе 4 значащие цифры."""

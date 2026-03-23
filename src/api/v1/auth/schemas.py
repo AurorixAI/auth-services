@@ -12,6 +12,7 @@ from datetime import datetime
 
 # ── Requests ──────────────────────────────────────────────────────────────────
 
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=6)
@@ -26,7 +27,9 @@ class ApplyOrgRequest(BaseModel):
 
     # Organisation info
     org_name: str = Field(..., min_length=2, max_length=300)
-    org_type: str = Field(..., pattern="^(center|private_school|university|tutoring_center|tutor|other)$")
+    org_type: str = Field(
+        ..., pattern="^(center|private_school|university|tutoring_center|tutor|other)$"
+    )
     city: Optional[str] = None
     org_email: Optional[str] = None
     phone: Optional[str] = None
@@ -40,6 +43,7 @@ class AcceptInvitationRequest(BaseModel):
 
 
 # ── Responses ─────────────────────────────────────────────────────────────────
+
 
 class UserResponse(BaseModel):
     model_config = {"from_attributes": True}

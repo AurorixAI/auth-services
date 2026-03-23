@@ -29,6 +29,7 @@ from src.models.dataclasses import (
 # DiagnosticPhase Tests
 # ==============================================================================
 
+
 class TestDiagnosticPhase:
     """Tests for diagnostic phase transitions"""
 
@@ -55,6 +56,7 @@ class TestDiagnosticPhase:
 # ==============================================================================
 # MasteryLevel Tests
 # ==============================================================================
+
 
 class TestMasteryLevel:
     """Tests for mastery level enum"""
@@ -97,6 +99,7 @@ class TestMasteryLevel:
 # ==============================================================================
 # SkillNode Tests
 # ==============================================================================
+
 
 class TestSkillNode:
     """Tests for skill node structure"""
@@ -175,6 +178,7 @@ class TestSkillNode:
 # TaskCandidate Tests
 # ==============================================================================
 
+
 class TestTaskCandidate:
     """Tests for task candidate selection"""
 
@@ -190,7 +194,7 @@ class TestTaskCandidate:
         candidate = TaskCandidate(
             task_id="task_1",
             skill_id="algebra_linear",
-            difficulty="B",   # A, B, C — not a float
+            difficulty="B",  # A, B, C — not a float
             irt_params=irt_params,
             information_gain=0.8,
             priority_score=0.75,
@@ -208,12 +212,18 @@ class TestTaskCandidate:
         irt2 = IRTTaskParams(task_id="t2", skill_id="s2")
 
         c1 = TaskCandidate(
-            task_id="t1", skill_id="s1", difficulty="A",
-            irt_params=irt1, priority_score=0.6,
+            task_id="t1",
+            skill_id="s1",
+            difficulty="A",
+            irt_params=irt1,
+            priority_score=0.6,
         )
         c2 = TaskCandidate(
-            task_id="t2", skill_id="s2", difficulty="B",
-            irt_params=irt2, priority_score=0.8,
+            task_id="t2",
+            skill_id="s2",
+            difficulty="B",
+            irt_params=irt2,
+            priority_score=0.8,
         )
         assert c2.priority_score > c1.priority_score
 
@@ -221,6 +231,7 @@ class TestTaskCandidate:
 # ==============================================================================
 # SessionState Tests
 # ==============================================================================
+
 
 class TestSessionState:
     """Tests for session state management"""
@@ -271,6 +282,7 @@ class TestSessionState:
 # DiagnosticResult Tests
 # ==============================================================================
 
+
 class TestDiagnosticResult:
     """Tests for diagnostic result structure"""
 
@@ -318,6 +330,7 @@ class TestDiagnosticResult:
 # ==============================================================================
 # ProfessionalDiagnosticEngine Tests
 # ==============================================================================
+
 
 class TestProfessionalDiagnosticEngine:
     """Tests for the main diagnostic engine"""
@@ -391,6 +404,7 @@ class TestProfessionalDiagnosticEngine:
 # Integration Tests
 # ==============================================================================
 
+
 class TestIntegration:
     """Integration tests for diagnostic flow"""
 
@@ -444,6 +458,7 @@ class TestIntegration:
 # Prerequisite Filter Tests
 # ==============================================================================
 
+
 class TestPrereqFilter:
     """Tests for prerequisite-aware task selection in LIFT/ADAPTIVE phases"""
 
@@ -479,7 +494,10 @@ class TestPrereqFilter:
                 name_ru="Квадратные уравнения",
                 level="L4",
                 prerequisites=["linear_eq", "fractions"],
-                prerequisite_weights={"linear_eq": 9.0, "fractions": 4.0},  # Hard + Soft
+                prerequisite_weights={
+                    "linear_eq": 9.0,
+                    "fractions": 4.0,
+                },  # Hard + Soft
             ),
             "geometry_basic": SkillNode(
                 skill_id="geometry_basic",
@@ -586,6 +604,7 @@ class TestPrereqFilter:
 # Exam Prerequisite Validation Tests
 # ==============================================================================
 
+
 class TestExamPrereqValidation:
     """Tests for exam generator prerequisite validation"""
 
@@ -608,7 +627,10 @@ class TestExamPrereqValidation:
     def test_generated_exam_has_warnings_field(self):
         """GeneratedExam includes prerequisite_warnings field"""
         from src.exam_builder.exam_generator import (
-            ExamGenerator, ExamConfig, ExamType, VariantMode
+            ExamGenerator,
+            ExamConfig,
+            ExamType,
+            VariantMode,
         )
 
         gen = ExamGenerator()

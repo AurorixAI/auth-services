@@ -17,13 +17,12 @@ Revision ID: 002_baseline
 Revises: 001_initial
 Create Date: 2026-02-19
 """
-from alembic import op
-import sqlalchemy as sa
+
 
 
 # revision identifiers
-revision = '002_baseline'
-down_revision = '001_initial'
+revision = "002_baseline"
+down_revision = "001_initial"
 branch_labels = None
 depends_on = None
 
@@ -31,10 +30,10 @@ depends_on = None
 def upgrade() -> None:
     """
     Пустая миграция — baseline stamp.
-    
+
     Все 28 ORM-моделей (17 core + 9 auth + 2 exam) уже существуют в БД,
     созданные через database/*.sql файлы.
-    
+
     Таблицы:
       Core: knowledge_hierarchy, skill_prerequisites, skill_benchmarks,
             tasks_master, textbooks, textbook_structure, textbook_tasks,

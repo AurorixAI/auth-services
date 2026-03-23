@@ -50,8 +50,10 @@ logger = logging.getLogger(__name__)
 # КОНФИГУРАЦИЯ
 # ============================================================================
 
+
 class Settings:
     """Настройки приложения (non-DB settings live here; DB is in database.py)"""
+
     MATHPIX_APP_ID: str = os.getenv("MATHPIX_APP_ID", "")
     MATHPIX_APP_KEY: str = os.getenv("MATHPIX_APP_KEY", "")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -65,18 +67,19 @@ settings = Settings()
 # LIFESPAN
 # ============================================================================
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle управление приложением"""
     # Startup
     logger.info("Starting ALGO V1 API...")
-    
+
     # Инициализация моделей (только если таблицы не существуют)
     # from src.models import Base
     # Base.metadata.create_all(bind=engine)
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down ALGO V1 API...")
 
@@ -91,7 +94,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # CORS
@@ -104,6 +107,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 def _cors_headers(request) -> dict:
     """Build CORS headers for error responses so the browser shows the real error."""
     origin = request.headers.get("origin", "")
@@ -114,6 +118,7 @@ def _cors_headers(request) -> dict:
         }
     return {}
 
+
 # Handle HTTPException with CORS headers (401, 403, 404 etc.)
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc: HTTPException):
@@ -122,6 +127,7 @@ async def http_exception_handler(request, exc: HTTPException):
         content={"detail": exc.detail},
         headers=_cors_headers(request),
     )
+
 
 # Global exception handler — show traceback in dev only
 @app.exception_handler(Exception)
@@ -132,6 +138,7 @@ async def global_exception_handler(request, exc):
     if settings.DEBUG:
         detail["traceback"] = tb[-3:]
     return JSONResponse(status_code=500, content=detail, headers=_cors_headers(request))
+
 
 # ─── Routers ───
 app.include_router(auth_router, prefix="/api/v1")
@@ -160,8 +167,10 @@ app.include_router(skills_router, prefix="/api/v1")
 # PYDANTIC МОДЕЛИ (только для оставшихся эндпоинтов)
 # ============================================================================
 
+
 class HealthResponse(BaseModel):
     """Проверка здоровья"""
+
     status: str
     version: str
     database: str
@@ -172,6 +181,7 @@ class HealthResponse(BaseModel):
 # ENDPOINTS: HEALTH
 # ============================================================================
 
+
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check(db: Session = Depends(get_db)):
     """Проверка здоровья сервиса"""
@@ -181,12 +191,12 @@ async def health_check(db: Session = Depends(get_db)):
         db_status = "connected"
     except Exception as e:
         db_status = f"error: {str(e)}"
-    
+
     return HealthResponse(
         status="healthy" if db_status == "connected" else "degraded",
         version="1.0.0",
         database=db_status,
-        timestamp=datetime.now()
+        timestamp=datetime.now(),
     )
 
 
@@ -196,9 +206,5 @@ async def health_check(db: Session = Depends(get_db)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=settings.DEBUG
-    )
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=settings.DEBUG)

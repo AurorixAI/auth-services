@@ -27,12 +27,12 @@ class TaskRepo(BaseRepository[TaskMaster]):
         skill_id: str,
         difficulty: Optional[str] = None,
         limit: int = 10,
-        exclude_ids: Optional[Set[str]] = None
+        exclude_ids: Optional[Set[str]] = None,
     ) -> List[TaskMaster]:
         stmt = select(TaskMaster).where(
             TaskMaster.skill_id == skill_id,
             TaskMaster.is_active.is_(True),
-            TaskMaster.verification_status == 'verified'
+            TaskMaster.verification_status == "verified",
         )
         if difficulty:
             stmt = stmt.where(TaskMaster.difficulty == difficulty)
@@ -51,13 +51,10 @@ class TaskRepo(BaseRepository[TaskMaster]):
             self.session.flush()
 
     def get_all_active_tasks(
-        self,
-        exclude_ids: Optional[Set[str]] = None,
-        limit: int = 500
+        self, exclude_ids: Optional[Set[str]] = None, limit: int = 500
     ) -> List[TaskMaster]:
         stmt = select(TaskMaster).where(
-            TaskMaster.is_active.is_(True),
-            TaskMaster.verification_status == 'verified'
+            TaskMaster.is_active.is_(True), TaskMaster.verification_status == "verified"
         )
         if exclude_ids:
             stmt = stmt.where(~TaskMaster.id.in_(exclude_ids))

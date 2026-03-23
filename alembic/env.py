@@ -21,8 +21,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from src.models import Base  # noqa: F401 — 17 core/presentation/analytics моделей
 from src.models.exam import GeneratedExam, ExamSession  # noqa: F401 — exam модели
 from src.auth.models import (  # noqa: F401 — auth/B2B модели
-    Organization, User, OrganizationMember, Invitation,
-    Student, Group, StudentGroup, DiagnosticInvite,
+    Organization,
+    User,
+    OrganizationMember,
+    Invitation,
+    Student,
+    Group,
+    StudentGroup,
+    DiagnosticInvite,
     StudentDiagnosticResult,
 )
 
@@ -31,8 +37,7 @@ config = context.config
 
 # Установка DATABASE_URL из переменной окружения
 database_url = os.getenv(
-    "DATABASE_URL",
-    "postgresql://postgres:password@localhost:5432/algo_v1"
+    "DATABASE_URL", "postgresql://postgres:password@localhost:5432/algo_v1"
 )
 config.set_main_option("sqlalchemy.url", database_url)
 
@@ -72,9 +77,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

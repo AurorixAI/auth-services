@@ -17,8 +17,10 @@ router = APIRouter(tags=["Skills"])
 # PYDANTIC МОДЕЛИ
 # ============================================================================
 
+
 class SkillNodeResponse(BaseModel):
     """Узел в графе навыков"""
+
     skill_id: str
     name: str
     name_ru: str
@@ -34,6 +36,7 @@ class SkillNodeResponse(BaseModel):
 # ENDPOINTS
 # ============================================================================
 
+
 @router.get(
     "/skills",
     response_model=List[SkillNodeResponse],
@@ -46,7 +49,6 @@ async def get_all_skills(
 ):
     """Получает все навыки из графа"""
     from src.repositories import KnowledgeRepo as KnowledgeRepository
-    from src.repositories import PrerequisiteRepo as PrerequisiteRepository
 
     repo = KnowledgeRepository(db)
 
@@ -65,7 +67,9 @@ async def get_all_skills(
             name_ru=s.name_ru,
             level=s.level,
             parent_id=s.parent_id,
-            prerequisites=[p.prerequisite_id for p in s.prerequisites] if hasattr(s, 'prerequisites') else [],
+            prerequisites=[p.prerequisite_id for p in s.prerequisites]
+            if hasattr(s, "prerequisites")
+            else [],
             class_level_start=s.class_level_start,
             class_level_end=s.class_level_end,
             importance=s.importance or 5,
@@ -82,7 +86,6 @@ async def get_all_skills(
 async def get_skill(skill_id: str, db: Session = Depends(get_db)):
     """Получает информацию о конкретном навыке"""
     from src.repositories import KnowledgeRepo as KnowledgeRepository
-    from src.repositories import PrerequisiteRepo as PrerequisiteRepository
 
     repo = KnowledgeRepository(db)
     skill = repo.get_skill_by_id(skill_id)

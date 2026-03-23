@@ -14,6 +14,7 @@ from unittest.mock import Mock, AsyncMock
 # PYTEST CONFIGURATION
 # ==============================================================================
 
+
 def pytest_configure(config):
     """Configure custom markers"""
     config.addinivalue_line("markers", "unit: Unit tests")
@@ -26,6 +27,7 @@ def pytest_configure(config):
 # ASYNC FIXTURES
 # ==============================================================================
 
+
 @pytest.fixture(scope="session")
 def event_loop() -> Generator:
     """Create event loop for async tests"""
@@ -37,6 +39,7 @@ def event_loop() -> Generator:
 # ==============================================================================
 # DATABASE FIXTURES (MOCKED)
 # ==============================================================================
+
 
 @pytest.fixture
 def mock_db_session():
@@ -82,6 +85,7 @@ def mock_session_repo():
 # ==============================================================================
 # IRT FIXTURES
 # ==============================================================================
+
 
 @pytest.fixture
 def sample_irt_params():
@@ -152,6 +156,7 @@ def sample_responses(sample_irt_params):
 # SKILL FIXTURES
 # ==============================================================================
 
+
 @pytest.fixture
 def sample_skill_graph():
     """Create sample skill graph for testing.
@@ -202,6 +207,7 @@ def sample_skill_graph():
 # ==============================================================================
 # API FIXTURES
 # ==============================================================================
+
 
 @pytest.fixture
 def test_client():

@@ -17,10 +17,10 @@ class ParamInfo:
     """Информация о параметре шаблона."""
 
     name: str
-    original_value: Any                 # число из оригинальной задачи
+    original_value: Any  # число из оригинальной задачи
     min_val: int = -50
     max_val: int = 50
-    value_type: str = "int"             # int, float
+    value_type: str = "int"  # int, float
     exclude: List[Any] = field(default_factory=list)
 
 
@@ -28,18 +28,18 @@ class ParamInfo:
 class TaskTemplate:
     """Результат шаблонизации одной задачи."""
 
-    task_type: str                      # linear, quadratic, arithmetic, ...
-    text_template: str                  # «Решите: {a}x + {b} = {c}»
+    task_type: str  # linear, quadratic, arithmetic, ...
+    text_template: str  # «Решите: {a}x + {b} = {c}»
 
-    params: Dict[str, ParamInfo]        # {name → ParamInfo}
-    original_values: Dict[str, Any]     # {name → original number}
+    params: Dict[str, ParamInfo]  # {name → ParamInfo}
+    original_values: Dict[str, Any]  # {name → original number}
 
-    answer_formula_repr: str            # srepr(answer_formula) для сериализации
-    answer_formula_text: str            # человеко-читаемая формула: "(c - b) / a"
+    answer_formula_repr: str  # srepr(answer_formula) для сериализации
+    answer_formula_text: str  # человеко-читаемая формула: "(c - b) / a"
 
-    constraints_repr: List[str]         # ["a != 0", "b**2 - 4*a*c >= 0", ...]
-    quality_score: float = 0.0          # 0-1 после валидации
-    sympy_expr_repr: str = ""           # srepr() символьного выражения задачи
+    constraints_repr: List[str]  # ["a != 0", "b**2 - 4*a*c >= 0", ...]
+    quality_score: float = 0.0  # 0-1 после валидации
+    sympy_expr_repr: str = ""  # srepr() символьного выражения задачи
 
     @property
     def param_names(self) -> List[str]:

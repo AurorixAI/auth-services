@@ -17,14 +17,13 @@ Annotated type aliases let route handlers declare deps cleanly:
 
 from __future__ import annotations
 
-from typing import Annotated, List, Optional
+from typing import Annotated, Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from src.core.database import get_db
-from src.core.exceptions import ForbiddenError, UnauthorizedError
 from src.core.security import decode_token
 
 _http_bearer = HTTPBearer(auto_error=False)
@@ -86,6 +85,7 @@ def get_optional_user(
 
 # ── RBAC ──────────────────────────────────────────────────────────────────────
 
+
 def require_roles(*allowed_roles: str):
     """
     Factory that returns a FastAPI dependency enforcing role membership.
@@ -94,6 +94,7 @@ def require_roles(*allowed_roles: str):
         @router.get("/admin", dependencies=[Depends(require_roles("admin", "owner"))])
         def admin_only(): ...
     """
+
     def _check(user: dict = Depends(get_current_user)) -> dict:
         role = user.get("role", "")
         if role not in allowed_roles:
@@ -102,6 +103,7 @@ def require_roles(*allowed_roles: str):
                 detail=f"Role '{role}' not permitted. Required: {list(allowed_roles)}",
             )
         return user
+
     return _check
 
 
@@ -118,6 +120,6 @@ require_org_teacher = require_roles("owner", "admin", "teacher")
 require_org_member = require_roles("owner", "admin", "teacher")
 require_superadmin = require_roles("superadmin")
 
+
 def require_any_auth(user: dict = Depends(get_current_user)) -> dict:
     return user
-

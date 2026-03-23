@@ -1,4 +1,4 @@
-﻿"""
+"""
 ALGO V1 - Exam Router
 Full exam lifecycle: generate в†’ save в†’ take в†’ submit в†’ results
 """
@@ -32,8 +32,10 @@ router = APIRouter(tags=["Exams"])
 # Request / Response schemas
 # ---------------------------------------------------------------------------
 
+
 class ExamTaskPublic(BaseModel):
     """Task shown to student (no correct_answer)"""
+
     task_id: str
     skill_id: str = ""
     skill_name: str = ""
@@ -47,6 +49,7 @@ class ExamTaskPublic(BaseModel):
 
 class ExamInfoResponse(BaseModel):
     """Public info about an exam (by access code)"""
+
     exam_id: str
     title: str
     subject: str
@@ -140,8 +143,10 @@ class SessionListItem(BaseModel):
 # Helper: generate access code
 # ---------------------------------------------------------------------------
 
+
 def _generate_access_code() -> str:
     import string
+
     chars = string.ascii_uppercase + string.digits
     code = "EX" + "".join(random.choices(chars, k=8))
     return code
@@ -150,6 +155,7 @@ def _generate_access_code() -> str:
 # ---------------------------------------------------------------------------
 # MC vs Open question selection logic
 # ---------------------------------------------------------------------------
+
 
 def should_show_as_mc(task: dict, mc_mode: str = "auto") -> bool:
     """
@@ -167,7 +173,9 @@ def should_show_as_mc(task: dict, mc_mode: str = "auto") -> bool:
     if mc_mode == "all_open":
         return False
 
-    has_options = bool(task.get("answer_options") or task.get("options") or task.get("distractors"))
+    has_options = bool(
+        task.get("answer_options") or task.get("options") or task.get("distractors")
+    )
 
     if mc_mode == "all_mc":
         return has_options
@@ -176,10 +184,20 @@ def should_show_as_mc(task: dict, mc_mode: str = "auto") -> bool:
     answer_type = task.get("answer_type", "exact_number")
     difficulty = task.get("difficulty", "medium").lower()
 
-    mc_eligible_types = {"exact_number", "decimal", "multiple_choice", "true_false", "fraction"}
+    mc_eligible_types = {
+        "exact_number",
+        "decimal",
+        "multiple_choice",
+        "true_false",
+        "fraction",
+    }
     mc_eligible_diffs = {"a", "b", "easy", "medium", "low", "normal"}
 
-    if answer_type in mc_eligible_types and difficulty in mc_eligible_diffs and has_options:
+    if (
+        answer_type in mc_eligible_types
+        and difficulty in mc_eligible_diffs
+        and has_options
+    ):
         return True
 
     # For answer_type=multiple_choice, always show as MC if options exist
@@ -216,12 +234,14 @@ def _build_mc_options(task: dict, correct_answer: str) -> List[str]:
 # Request model for exam generation
 # ---------------------------------------------------------------------------
 
+
 class GenerateExamRequest(BaseModel):
     """Request body from frontend exam-creation wizard"""
+
     title: str = Field(..., min_length=1, max_length=300)
     textbook_id: Optional[str] = None
-    skill_ids: List[str] = []           # "topics" mode
-    paragraph_ids: List[str] = []       # "textbook" mode (toc_ids)
+    skill_ids: List[str] = []  # "topics" mode
+    paragraph_ids: List[str] = []  # "textbook" mode (toc_ids)
     tasks_count: int = Field(10, ge=1, le=50)
     difficulty_distribution: Optional[Dict[str, float]] = None  # {easy,medium,hard} %
     time_minutes: int = Field(45, ge=5, le=180)
@@ -236,9 +256,11 @@ class GenerateExamRequest(BaseModel):
 # HELPER: expand toc_ids to include children (recursive CTE)
 # ---------------------------------------------------------------------------
 
+
 def _expand_toc_ids(db: Session, toc_ids: List[int]) -> List[int]:
     """Recursively expand selected toc_ids to include child paragraphs."""
-    rows = db.execute(sa_text("""
+    rows = db.execute(
+        sa_text("""
         WITH RECURSIVE children AS (
             SELECT id FROM textbook_toc WHERE id = ANY(:ids)
             UNION ALL
@@ -246,13 +268,16 @@ def _expand_toc_ids(db: Session, toc_ids: List[int]) -> List[int]:
             JOIN children c ON t.parent_id = c.id
         )
         SELECT DISTINCT id FROM children
-    """), {"ids": toc_ids}).fetchall()
+    """),
+        {"ids": toc_ids},
+    ).fetchall()
     return [r[0] for r in rows]
 
 
 # ---------------------------------------------------------------------------
 # TEACHER: Generate exam  (POST /exams/generate)
 # ---------------------------------------------------------------------------
+
 
 @router.post(
     "/exams/generate",
@@ -278,10 +303,12 @@ async def generate_exam(
     dist = req.difficulty_distribution or {"easy": 30, "medium": 50, "hard": 20}
 
     # Normalise keys: frontend sends easy/medium/hard, DB uses A/B/C
-    total_pct = (dist.get("easy", 0) + dist.get("medium", 0) + dist.get("hard", 0)) or 100
-    count_a = round(req.tasks_count * dist.get("easy", 30) / total_pct)   # A = easy
-    count_b = round(req.tasks_count * dist.get("medium", 50) / total_pct) # B = medium
-    count_c = req.tasks_count - count_a - count_b                          # C = hard
+    total_pct = (
+        dist.get("easy", 0) + dist.get("medium", 0) + dist.get("hard", 0)
+    ) or 100
+    count_a = round(req.tasks_count * dist.get("easy", 30) / total_pct)  # A = easy
+    count_b = round(req.tasks_count * dist.get("medium", 50) / total_pct)  # B = medium
+    count_c = req.tasks_count - count_a - count_b  # C = hard
     if count_c < 0:
         count_c = 0
         count_b = req.tasks_count - count_a
@@ -293,7 +320,8 @@ async def generate_exam(
         for difficulty, count in [("A", count_a), ("B", count_b), ("C", count_c)]:
             if count <= 0:
                 continue
-            rows = db.execute(sa_text("""
+            rows = db.execute(
+                sa_text("""
                 SELECT tm.id, tm.skill_id, kh.name_ru, tm.difficulty,
                        tm.question_text, tm.question_latex, tm.question_image_url,
                        tm.answer_type, tm.correct_answer, tm.answer_options,
@@ -305,13 +333,16 @@ async def generate_exam(
                   AND tm.difficulty = :diff
                 ORDER BY RANDOM()
                 LIMIT :lim
-            """), {"skill_ids": req.skill_ids, "diff": difficulty, "lim": count}).fetchall()
+            """),
+                {"skill_ids": req.skill_ids, "diff": difficulty, "lim": count},
+            ).fetchall()
             all_tasks.extend(rows)
 
         # If not enough tasks with strict difficulty, fill remainder
         if len(all_tasks) < req.tasks_count:
             existing_ids = [r[0] for r in all_tasks]
-            fill = db.execute(sa_text("""
+            fill = db.execute(
+                sa_text("""
                 SELECT tm.id, tm.skill_id, kh.name_ru, tm.difficulty,
                        tm.question_text, tm.question_latex, tm.question_image_url,
                        tm.answer_type, tm.correct_answer, tm.answer_options,
@@ -323,11 +354,13 @@ async def generate_exam(
                   AND tm.id != ALL(:used)
                 ORDER BY RANDOM()
                 LIMIT :lim
-            """), {
-                "skill_ids": req.skill_ids,
-                "used": existing_ids or [""],
-                "lim": req.tasks_count - len(all_tasks),
-            }).fetchall()
+            """),
+                {
+                    "skill_ids": req.skill_ids,
+                    "used": existing_ids or [""],
+                    "lim": req.tasks_count - len(all_tasks),
+                },
+            ).fetchall()
             all_tasks.extend(fill)
 
     # ── Branch B: by paragraph_ids (textbook toc) ───────────────────────
@@ -348,7 +381,8 @@ async def generate_exam(
         for difficulty, count in [("A", count_a), ("B", count_b), ("C", count_c)]:
             if count <= 0:
                 continue
-            rows = db.execute(sa_text("""
+            rows = db.execute(
+                sa_text("""
                 SELECT tm.id, tm.skill_id, kh.name_ru, tm.difficulty,
                        tm.question_text, tm.question_latex, tm.question_image_url,
                        tm.answer_type, tm.correct_answer, tm.answer_options,
@@ -360,13 +394,16 @@ async def generate_exam(
                   AND tm.difficulty = :diff
                 ORDER BY RANDOM()
                 LIMIT :lim
-            """), {"toc_ids": toc_ids_expanded, "diff": difficulty, "lim": count}).fetchall()
+            """),
+                {"toc_ids": toc_ids_expanded, "diff": difficulty, "lim": count},
+            ).fetchall()
             all_tasks.extend(rows)
 
         # Fill remainder
         if len(all_tasks) < req.tasks_count:
             existing_ids = [r[0] for r in all_tasks]
-            fill = db.execute(sa_text("""
+            fill = db.execute(
+                sa_text("""
                 SELECT tm.id, tm.skill_id, kh.name_ru, tm.difficulty,
                        tm.question_text, tm.question_latex, tm.question_image_url,
                        tm.answer_type, tm.correct_answer, tm.answer_options,
@@ -378,11 +415,13 @@ async def generate_exam(
                   AND tm.id != ALL(:used)
                 ORDER BY RANDOM()
                 LIMIT :lim
-            """), {
-                "toc_ids": toc_ids_expanded,
-                "used": existing_ids or [""],
-                "lim": req.tasks_count - len(all_tasks),
-            }).fetchall()
+            """),
+                {
+                    "toc_ids": toc_ids_expanded,
+                    "used": existing_ids or [""],
+                    "lim": req.tasks_count - len(all_tasks),
+                },
+            ).fetchall()
             all_tasks.extend(fill)
 
     if not all_tasks:
@@ -430,7 +469,9 @@ async def generate_exam(
         if not td["answer_options"] and td["distractor_meta"] and td["correct_answer"]:
             dms = td["distractor_meta"]
             if isinstance(dms, list) and len(dms) > 0:
-                opts = [td["correct_answer"]] + [str(d.get("value", "")) for d in dms[:3]]
+                opts = [td["correct_answer"]] + [
+                    str(d.get("value", "")) for d in dms[:3]
+                ]
                 random.shuffle(opts)
                 td["answer_options"] = opts
 
@@ -467,6 +508,7 @@ async def generate_exam(
     if req.generate_variants and req.variants_count > 1:
         try:
             from src.domain.exam_builder.variant_orchestrator import VariantOrchestrator
+
             orch = VariantOrchestrator(db=db)
             report = orch.generate_variants(
                 draft_tasks=variant_tasks,
@@ -481,7 +523,9 @@ async def generate_exam(
                 f"({report.tasks_templatized} templatized, {report.tasks_fallback} fallback)"
             )
         except Exception as exc:
-            logger.warning(f"Variant generation failed for {exam_id}, keeping single variant: {exc}")
+            logger.warning(
+                f"Variant generation failed for {exam_id}, keeping single variant: {exc}"
+            )
             db.rollback()
             # Re-add exam after rollback since the previous add was lost
             db.add(exam)
@@ -502,10 +546,11 @@ async def generate_exam(
 # PUBLIC: Get exam info by code
 # ---------------------------------------------------------------------------
 
+
 @router.get(
     "/exams/by-code/{code}",
     response_model=ExamInfoResponse,
-    summary="РџРѕР»СѓС‡РёС‚СЊ РёРЅС„РѕСЂРјР°С†РёСЋ РѕР± СЌРєР·Р°РјРµРЅРµ РїРѕ РєРѕРґСѓ"
+    summary="РџРѕР»СѓС‡РёС‚СЊ РёРЅС„РѕСЂРјР°С†РёСЋ РѕР± СЌРєР·Р°РјРµРЅРµ РїРѕ РєРѕРґСѓ",
 )
 async def get_exam_by_code(code: str, db: Session = Depends(get_db)):
     exam = db.query(GeneratedExam).filter(GeneratedExam.access_code == code).first()
@@ -533,10 +578,11 @@ async def get_exam_by_code(code: str, db: Session = Depends(get_db)):
 # PUBLIC: Start exam session
 # ---------------------------------------------------------------------------
 
+
 @router.post(
     "/exams/by-code/{code}/start",
     response_model=StartExamResponse,
-    summary="РќР°С‡Р°С‚СЊ СЌРєР·Р°РјРµРЅ"
+    summary="РќР°С‡Р°С‚СЊ СЌРєР·Р°РјРµРЅ",
 )
 async def start_exam_session(
     code: str,
@@ -547,13 +593,17 @@ async def start_exam_session(
     if not exam:
         raise HTTPException(status_code=404, detail="Р­РєР·Р°РјРµРЅ РЅРµ РЅР°Р№РґРµРЅ")
     if exam.status == "draft":
-        raise HTTPException(status_code=403, detail="Р­РєР·Р°РјРµРЅ РµС‰С‘ РЅРµ РѕРїСѓР±Р»РёРєРѕРІР°РЅ")
+        raise HTTPException(
+            status_code=403, detail="Р­РєР·Р°РјРµРЅ РµС‰С‘ РЅРµ РѕРїСѓР±Р»РёРєРѕРІР°РЅ"
+        )
     if exam.status not in ("active",):
         raise HTTPException(status_code=410, detail="Р­РєР·Р°РјРµРЅ Р·Р°РєСЂС‹С‚")
 
     variants = exam.variants or []
     if not variants:
-        raise HTTPException(status_code=400, detail="Р’ СЌРєР·Р°РјРµРЅРµ РЅРµС‚ РІР°СЂРёР°РЅС‚РѕРІ")
+        raise HTTPException(
+            status_code=400, detail="Р’ СЌРєР·Р°РјРµРЅРµ РЅРµС‚ РІР°СЂРёР°РЅС‚РѕРІ"
+        )
 
     # Assign random variant
     variant_idx = random.randint(0, len(variants) - 1)
@@ -595,7 +645,9 @@ async def start_exam_session(
 
         # Determine if this task should be MC
         if mc_pct is not None:
-            show_mc = random.randint(1, 100) <= mc_pct and bool(raw_options or t.get("distractors"))
+            show_mc = random.randint(1, 100) <= mc_pct and bool(
+                raw_options or t.get("distractors")
+            )
         else:
             show_mc = should_show_as_mc(t, mc_mode)
 
@@ -610,17 +662,19 @@ async def start_exam_session(
             if answer_type_val == "multiple_choice":
                 answer_type_val = "exact_number"
 
-        tasks_public.append(ExamTaskPublic(
-            task_id=t.get("task_id", ""),
-            skill_id=t.get("skill_id", ""),
-            skill_name=t.get("skill_name", ""),
-            difficulty=t.get("difficulty", "medium"),
-            text=t.get("question_text", t.get("text", "")),
-            options=options,
-            image_url=t.get("question_image_url", t.get("image_url")),
-            answer_type=answer_type_val,
-            points=10,
-        ))
+        tasks_public.append(
+            ExamTaskPublic(
+                task_id=t.get("task_id", ""),
+                skill_id=t.get("skill_id", ""),
+                skill_name=t.get("skill_name", ""),
+                difficulty=t.get("difficulty", "medium"),
+                text=t.get("question_text", t.get("text", "")),
+                options=options,
+                image_url=t.get("question_image_url", t.get("image_url")),
+                answer_type=answer_type_val,
+                points=10,
+            )
+        )
 
     return StartExamResponse(
         session_id=session_id,
@@ -634,10 +688,11 @@ async def start_exam_session(
 # PUBLIC: Submit exam
 # ---------------------------------------------------------------------------
 
+
 @router.post(
     "/exams/by-code/{code}/submit",
     response_model=SubmitExamResponse,
-    summary="РЎРґР°С‚СЊ СЌРєР·Р°РјРµРЅ"
+    summary="РЎРґР°С‚СЊ СЌРєР·Р°РјРµРЅ",
 )
 async def submit_exam(
     code: str,
@@ -680,7 +735,7 @@ async def submit_exam(
             is_correct = _check_answer(
                 student_answer,
                 task["correct_answer"],
-                task.get("answer_type", "multiple_choice")
+                task.get("answer_type", "multiple_choice"),
             )
             if is_correct:
                 correct_count += 1
@@ -690,16 +745,28 @@ async def submit_exam(
                 # Check if answer matches a known distractor
                 error_info = {"answer": student_answer, "correct": False}
                 distractor_meta = task.get("distractor_meta") or []
-                student_norm = student_answer.strip().lower().replace(",", ".").replace(" ", "")
+                student_norm = (
+                    student_answer.strip().lower().replace(",", ".").replace(" ", "")
+                )
                 for dm in distractor_meta:
-                    dm_val = str(dm.get("value", "")).strip().lower().replace(",", ".").replace(" ", "")
+                    dm_val = (
+                        str(dm.get("value", ""))
+                        .strip()
+                        .lower()
+                        .replace(",", ".")
+                        .replace(" ", "")
+                    )
                     if student_norm == dm_val:
                         error_info["error_type"] = dm.get("error_type", "unknown")
                         error_info["error_explanation"] = dm.get("explanation", "")
                         break
                 answers_detail[task_id] = error_info
         else:
-            answers_detail[task_id] = {"answer": student_answer, "correct": False, "skipped": not student_answer.strip()}
+            answers_detail[task_id] = {
+                "answer": student_answer,
+                "correct": False,
+                "skipped": not student_answer.strip(),
+            }
 
     total_tasks = len(tasks_by_id)
     answered = sum(1 for v in answers_map.values() if v.strip())
@@ -720,7 +787,9 @@ async def submit_exam(
         answered_count=answered,
         correct_count=correct_count,
         total_tasks=total_tasks,
-        percentage=round((correct_count / total_tasks * 100) if total_tasks > 0 else 0, 1),
+        percentage=round(
+            (correct_count / total_tasks * 100) if total_tasks > 0 else 0, 1
+        ),
     )
 
 
@@ -728,10 +797,11 @@ async def submit_exam(
 # PUBLIC: Get session result
 # ---------------------------------------------------------------------------
 
+
 @router.get(
     "/exams/sessions/{session_id}/result",
     response_model=SessionResultResponse,
-    summary="Р РµР·СѓР»СЊС‚Р°С‚ СЌРєР·Р°РјРµРЅР°"
+    summary="Р РµР·СѓР»СЊС‚Р°С‚ СЌРєР·Р°РјРµРЅР°",
 )
 async def get_session_result(session_id: str, db: Session = Depends(get_db)):
     session = db.query(ExamSession).filter(ExamSession.id == session_id).first()
@@ -769,24 +839,31 @@ async def get_session_result(session_id: str, db: Session = Depends(get_db)):
                     error_explanation = raw_ans.get("error_explanation")
                 else:
                     student_ans = raw_ans
-                    is_correct = _check_answer(
-                        student_ans or "", correct_ans,
-                        t.get("answer_type", "multiple_choice")
-                    ) if student_ans else False
+                    is_correct = (
+                        _check_answer(
+                            student_ans or "",
+                            correct_ans,
+                            t.get("answer_type", "multiple_choice"),
+                        )
+                        if student_ans
+                        else False
+                    )
                     error_type = None
                     error_explanation = None
 
-                task_results.append(TaskResultItem(
-                    task_id=tid,
-                    text=t.get("question_text", t.get("text", "")),
-                    options=t.get("answer_options", t.get("options", [])) or [],
-                    student_answer=student_ans,
-                    correct_answer=correct_ans,
-                    is_correct=is_correct,
-                    skill_name=t.get("skill_name", ""),
-                    error_type=error_type,
-                    error_explanation=error_explanation,
-                ))
+                task_results.append(
+                    TaskResultItem(
+                        task_id=tid,
+                        text=t.get("question_text", t.get("text", "")),
+                        options=t.get("answer_options", t.get("options", [])) or [],
+                        student_answer=student_ans,
+                        correct_answer=correct_ans,
+                        is_correct=is_correct,
+                        skill_name=t.get("skill_name", ""),
+                        error_type=error_type,
+                        error_explanation=error_explanation,
+                    )
+                )
 
     return SessionResultResponse(
         session_id=session.id,
@@ -811,28 +888,33 @@ async def get_session_result(session_id: str, db: Session = Depends(get_db)):
 # TEACHER: List exams
 # ---------------------------------------------------------------------------
 
+
 @router.get(
     "/exams",
     response_model=List[ExamListItem],
-    summary="РЎРїРёСЃРѕРє СЌРєР·Р°РјРµРЅРѕРІ РѕСЂРіР°РЅРёР·Р°С†РёРё"
+    summary="РЎРїРёСЃРѕРє СЌРєР·Р°РјРµРЅРѕРІ РѕСЂРіР°РЅРёР·Р°С†РёРё",
 )
 async def list_exams(db: Session = Depends(get_db)):
     exams = db.query(GeneratedExam).order_by(GeneratedExam.created_at.desc()).all()
     result = []
     for e in exams:
-        sessions_count = db.query(ExamSession).filter(ExamSession.exam_id == e.id).count()
+        sessions_count = (
+            db.query(ExamSession).filter(ExamSession.exam_id == e.id).count()
+        )
         variants = e.variants or []
         tasks_count = len(variants[0].get("tasks", [])) if variants else 0
-        result.append(ExamListItem(
-            exam_id=e.id,
-            title=e.title,
-            access_code=e.access_code,
-            status=e.status,
-            tasks_count=tasks_count,
-            variants_count=e.variants_count or 1,
-            sessions_count=sessions_count,
-            created_at=e.created_at,
-        ))
+        result.append(
+            ExamListItem(
+                exam_id=e.id,
+                title=e.title,
+                access_code=e.access_code,
+                status=e.status,
+                tasks_count=tasks_count,
+                variants_count=e.variants_count or 1,
+                sessions_count=sessions_count,
+                created_at=e.created_at,
+            )
+        )
     return result
 
 
@@ -840,15 +922,19 @@ async def list_exams(db: Session = Depends(get_db)):
 # TEACHER: List sessions for an exam
 # ---------------------------------------------------------------------------
 
+
 @router.get(
     "/exams/{exam_id}/sessions",
     response_model=List[SessionListItem],
-    summary="РЎРїРёСЃРѕРє СЃРґР°РІС€РёС… СЌРєР·Р°РјРµРЅ"
+    summary="РЎРїРёСЃРѕРє СЃРґР°РІС€РёС… СЌРєР·Р°РјРµРЅ",
 )
 async def list_exam_sessions(exam_id: str, db: Session = Depends(get_db)):
-    sessions = db.query(ExamSession).filter(
-        ExamSession.exam_id == exam_id
-    ).order_by(ExamSession.started_at.desc()).all()
+    sessions = (
+        db.query(ExamSession)
+        .filter(ExamSession.exam_id == exam_id)
+        .order_by(ExamSession.started_at.desc())
+        .all()
+    )
 
     return [
         SessionListItem(
@@ -869,6 +955,7 @@ async def list_exam_sessions(exam_id: str, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # TEACHER: Get exam draft (full data with answers)
 # ---------------------------------------------------------------------------
+
 
 class DraftTaskItem(BaseModel):
     task_id: str
@@ -908,7 +995,7 @@ class DraftResponse(BaseModel):
 @router.get(
     "/exams/{exam_id}/draft",
     response_model=DraftResponse,
-    summary="РџРѕР»СѓС‡РёС‚СЊ С‡РµСЂРЅРѕРІРёРє СЌРєР·Р°РјРµРЅР° (РґР»СЏ СѓС‡РёС‚РµР»СЏ)"
+    summary="РџРѕР»СѓС‡РёС‚СЊ С‡РµСЂРЅРѕРІРёРє СЌРєР·Р°РјРµРЅР° (РґР»СЏ СѓС‡РёС‚РµР»СЏ)",
 )
 async def get_exam_draft(exam_id: str, db: Session = Depends(get_db)):
     exam = db.query(GeneratedExam).filter(GeneratedExam.id == exam_id).first()
@@ -916,29 +1003,33 @@ async def get_exam_draft(exam_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Р­РєР·Р°РјРµРЅ РЅРµ РЅР°Р№РґРµРЅ")
 
     variants_data = []
-    for v in (exam.variants or []):
+    for v in exam.variants or []:
         tasks = []
         for t in v.get("tasks", []):
-            tasks.append(DraftTaskItem(
-                task_id=t.get("task_id", ""),
-                skill_id=t.get("skill_id", ""),
-                skill_name=t.get("skill_name", ""),
-                difficulty=t.get("difficulty", "B"),
-                question_text=t.get("question_text", ""),
-                question_latex=t.get("question_latex"),
-                question_image_url=t.get("question_image_url"),
-                answer_type=t.get("answer_type", "exact_number"),
-                correct_answer=t.get("correct_answer", ""),
-                answer_options=t.get("answer_options"),
-                distractor_meta=t.get("distractor_meta"),
-                is_template_generated=t.get("is_template_generated", False),
-            ))
-        variants_data.append(DraftVariantItem(
-            variant_id=v.get("variant_id", ""),
-            variant_number=v.get("variant_number", 1),
-            total_points=v.get("total_points", 0),
-            tasks=tasks,
-        ))
+            tasks.append(
+                DraftTaskItem(
+                    task_id=t.get("task_id", ""),
+                    skill_id=t.get("skill_id", ""),
+                    skill_name=t.get("skill_name", ""),
+                    difficulty=t.get("difficulty", "B"),
+                    question_text=t.get("question_text", ""),
+                    question_latex=t.get("question_latex"),
+                    question_image_url=t.get("question_image_url"),
+                    answer_type=t.get("answer_type", "exact_number"),
+                    correct_answer=t.get("correct_answer", ""),
+                    answer_options=t.get("answer_options"),
+                    distractor_meta=t.get("distractor_meta"),
+                    is_template_generated=t.get("is_template_generated", False),
+                )
+            )
+        variants_data.append(
+            DraftVariantItem(
+                variant_id=v.get("variant_id", ""),
+                variant_number=v.get("variant_number", 1),
+                total_points=v.get("total_points", 0),
+                tasks=tasks,
+            )
+        )
 
     return DraftResponse(
         exam_id=exam.id,
@@ -958,6 +1049,7 @@ async def get_exam_draft(exam_id: str, db: Session = Depends(get_db)):
 # TEACHER: Replace task in draft
 # ---------------------------------------------------------------------------
 
+
 class ReplaceTaskRequest(BaseModel):
     variant_number: int
     task_id: str
@@ -965,7 +1057,7 @@ class ReplaceTaskRequest(BaseModel):
 
 @router.post(
     "/exams/{exam_id}/draft/replace-task",
-    summary="Р—Р°РјРµРЅРёС‚СЊ Р·Р°РґР°С‡Сѓ РІ С‡РµСЂРЅРѕРІРёРєРµ"
+    summary="Р—Р°РјРµРЅРёС‚СЊ Р·Р°РґР°С‡Сѓ РІ С‡РµСЂРЅРѕРІРёРєРµ",
 )
 async def replace_task_in_draft(
     exam_id: str,
@@ -976,7 +1068,10 @@ async def replace_task_in_draft(
     if not exam:
         raise HTTPException(status_code=404, detail="Р­РєР·Р°РјРµРЅ РЅРµ РЅР°Р№РґРµРЅ")
     if exam.status != "draft":
-        raise HTTPException(status_code=400, detail="РњРѕР¶РЅРѕ СЂРµРґР°РєС‚РёСЂРѕРІР°С‚СЊ С‚РѕР»СЊРєРѕ С‡РµСЂРЅРѕРІРёРє")
+        raise HTTPException(
+            status_code=400,
+            detail="РњРѕР¶РЅРѕ СЂРµРґР°РєС‚РёСЂРѕРІР°С‚СЊ С‚РѕР»СЊРєРѕ С‡РµСЂРЅРѕРІРёРє",
+        )
 
     variants = exam.variants or []
     variant = None
@@ -999,31 +1094,47 @@ async def replace_task_in_draft(
             old_task = t
             break
     if old_task is None:
-        raise HTTPException(status_code=404, detail="Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР° РІ РІР°СЂРёР°РЅС‚Рµ")
+        raise HTTPException(
+            status_code=404,
+            detail="Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР° РІ РІР°СЂРёР°РЅС‚Рµ",
+        )
 
     # Find replacement: same skill + same difficulty, not used in this variant
-    from src.models import TaskMaster
+
     used_ids = {t.get("task_id") for t in tasks}
     skill_id = old_task.get("skill_id", "")
     difficulty = old_task.get("difficulty", "B")
 
-    candidates = db.query(TaskMaster).filter(
-        TaskMaster.skill_id == skill_id,
-        TaskMaster.difficulty == difficulty,
-        TaskMaster.is_active == True,
-        ~TaskMaster.id.in_(used_ids),
-    ).limit(10).all()
+    candidates = (
+        db.query(TaskMaster)
+        .filter(
+            TaskMaster.skill_id == skill_id,
+            TaskMaster.difficulty == difficulty,
+            TaskMaster.is_active,
+            ~TaskMaster.id.in_(used_ids),
+        )
+        .limit(10)
+        .all()
+    )
 
     if not candidates:
         # Try any difficulty
-        candidates = db.query(TaskMaster).filter(
-            TaskMaster.skill_id == skill_id,
-            TaskMaster.is_active == True,
-            ~TaskMaster.id.in_(used_ids),
-        ).limit(10).all()
+        candidates = (
+            db.query(TaskMaster)
+            .filter(
+                TaskMaster.skill_id == skill_id,
+                TaskMaster.is_active,
+                ~TaskMaster.id.in_(used_ids),
+            )
+            .limit(10)
+            .all()
+        )
 
     if not candidates:
-        raise HTTPException(status_code=404, detail="РќРµС‚ Р°Р»СЊС‚РµСЂРЅР°С‚РёРІРЅС‹С… Р·Р°РґР°С‡ РґР»СЏ СЌС‚РѕРіРѕ РЅР°РІС‹РєР°")
+        raise HTTPException(
+            status_code=404,
+            detail="РќРµС‚ Р°Р»СЊС‚РµСЂРЅР°С‚РёРІРЅС‹С… Р·Р°РґР°С‡ РґР»СЏ СЌС‚РѕРіРѕ РЅР°РІС‹РєР°",
+        )
 
     new_task = random.choice(candidates)
 
@@ -1045,7 +1156,11 @@ async def replace_task_in_draft(
     # Generate distractors if missing
     if not new_td["answer_options"]:
         try:
-            from src.domain.exam_builder.sympy_step_solver import StepSolver, StepDistractorEngine
+            from src.domain.exam_builder.sympy_step_solver import (
+                StepSolver,
+                StepDistractorEngine,
+            )
+
             solver = StepSolver()
             distractor_engine = StepDistractorEngine()
 
@@ -1063,7 +1178,9 @@ async def replace_task_in_draft(
                     {},  # no params
                     new_td["question_text"],
                 )
-                distractors = distractor_engine.generate(steps, answer_val, "arithmetic", count=3)
+                distractors = distractor_engine.generate(
+                    steps, answer_val, "arithmetic", count=3
+                )
                 if distractors:
                     opts = [answer_str] + [d.value for d in distractors[:3]]
                     random.shuffle(opts)
@@ -1088,6 +1205,7 @@ async def replace_task_in_draft(
     exam.variants = variants
 
     from sqlalchemy.orm.attributes import flag_modified
+
     flag_modified(exam, "variants")
     db.commit()
 
@@ -1098,9 +1216,10 @@ async def replace_task_in_draft(
 # TEACHER: Get alternative tasks for replacement
 # ---------------------------------------------------------------------------
 
+
 @router.get(
     "/exams/{exam_id}/draft/alternatives",
-    summary="РђР»СЊС‚РµСЂРЅР°С‚РёРІРЅС‹Рµ Р·Р°РґР°С‡Рё РґР»СЏ Р·Р°РјРµРЅС‹"
+    summary="РђР»СЊС‚РµСЂРЅР°С‚РёРІРЅС‹Рµ Р·Р°РґР°С‡Рё РґР»СЏ Р·Р°РјРµРЅС‹",
 )
 async def get_alternatives(
     exam_id: str,
@@ -1113,7 +1232,7 @@ async def get_alternatives(
         raise HTTPException(status_code=404, detail="Р­РєР·Р°РјРµРЅ РЅРµ РЅР°Р№РґРµРЅ")
 
     # Find current task to know skill + difficulty
-    for v in (exam.variants or []):
+    for v in exam.variants or []:
         if v.get("variant_number") == variant_number:
             for t in v.get("tasks", []):
                 if t.get("task_id") == task_id:
@@ -1122,14 +1241,21 @@ async def get_alternatives(
                     used_ids = {tt.get("task_id") for tt in v.get("tasks", [])}
 
                     from src.models import TaskMaster
-                    candidates = db.query(TaskMaster).filter(
-                        TaskMaster.skill_id == skill_id,
-                        TaskMaster.is_active == True,
-                        ~TaskMaster.id.in_(used_ids),
-                    ).order_by(
-                        # Same difficulty first
-                        (TaskMaster.difficulty != difficulty).asc()
-                    ).limit(10).all()
+
+                    candidates = (
+                        db.query(TaskMaster)
+                        .filter(
+                            TaskMaster.skill_id == skill_id,
+                            TaskMaster.is_active,
+                            ~TaskMaster.id.in_(used_ids),
+                        )
+                        .order_by(
+                            # Same difficulty first
+                            (TaskMaster.difficulty != difficulty).asc()
+                        )
+                        .limit(10)
+                        .all()
+                    )
 
                     return [
                         {
@@ -1149,6 +1275,7 @@ async def get_alternatives(
 # ---------------------------------------------------------------------------
 # TEACHER: Generate variants (SymPy engine)
 # ---------------------------------------------------------------------------
+
 
 class GenerateVariantsRequest(BaseModel):
     num_variants: int = Field(default=2, ge=1, le=30)
@@ -1198,13 +1325,17 @@ async def generate_variants(
 
     variants_jsonb = exam.variants or []
     if not variants_jsonb:
-        raise HTTPException(status_code=400, detail="РќРµС‚ Р·Р°РґР°С‡ РІ С‡РµСЂРЅРѕРІРёРєРµ")
+        raise HTTPException(
+            status_code=400, detail="РќРµС‚ Р·Р°РґР°С‡ РІ С‡РµСЂРЅРѕРІРёРєРµ"
+        )
 
     # Р‘РµСЂС‘Рј Р·Р°РґР°С‡Рё РёР· РїРµСЂРІРѕРіРѕ РІР°СЂРёР°РЅС‚Р° (РѕСЃРЅРѕРІРЅРѕР№ draft)
     base_variant = variants_jsonb[0] if isinstance(variants_jsonb, list) else {}
     draft_tasks = base_variant.get("tasks", [])
     if not draft_tasks:
-        raise HTTPException(status_code=400, detail="РќРµС‚ Р·Р°РґР°С‡ РІ С‡РµСЂРЅРѕРІРёРєРµ")
+        raise HTTPException(
+            status_code=400, detail="РќРµС‚ Р·Р°РґР°С‡ РІ С‡РµСЂРЅРѕРІРёРєРµ"
+        )
 
     # Р“РµРЅРµСЂРёСЂСѓРµРј РІР°СЂРёР°РЅС‚С‹
     from src.domain.exam_builder.variant_orchestrator import VariantOrchestrator
@@ -1216,7 +1347,7 @@ async def generate_variants(
         num_variants=body.num_variants,
         seed=body.seed,
     )
-    elapsed_ms = int((_time.perf_counter() - t0) * 1000)
+    int((_time.perf_counter() - t0) * 1000)
 
     # РЎРѕС…СЂР°РЅСЏРµРј РІР°СЂРёР°РЅС‚С‹ РІ JSONB
     new_variants = [v.to_dict() for v in report.variants]
@@ -1240,22 +1371,27 @@ async def generate_variants(
 # TEACHER: Publish draft в†’ active
 # ---------------------------------------------------------------------------
 
+
 @router.post(
     "/exams/{exam_id}/publish",
-    summary="РћРїСѓР±Р»РёРєРѕРІР°С‚СЊ С‡РµСЂРЅРѕРІРёРє СЌРєР·Р°РјРµРЅР°"
+    summary="РћРїСѓР±Р»РёРєРѕРІР°С‚СЊ С‡РµСЂРЅРѕРІРёРє СЌРєР·Р°РјРµРЅР°",
 )
 async def publish_exam(exam_id: str, db: Session = Depends(get_db)):
     exam = db.query(GeneratedExam).filter(GeneratedExam.id == exam_id).first()
     if not exam:
         raise HTTPException(status_code=404, detail="Р­РєР·Р°РјРµРЅ РЅРµ РЅР°Р№РґРµРЅ")
     if exam.status not in ("draft", "variants_ready"):
-        raise HTTPException(status_code=400, detail="Р­РєР·Р°РјРµРЅ СѓР¶Рµ РѕРїСѓР±Р»РёРєРѕРІР°РЅ")
+        raise HTTPException(
+            status_code=400, detail="Р­РєР·Р°РјРµРЅ СѓР¶Рµ РѕРїСѓР±Р»РёРєРѕРІР°РЅ"
+        )
 
     # Generate access code
     access_code = _generate_access_code()
 
     # Check uniqueness
-    while db.query(GeneratedExam).filter(GeneratedExam.access_code == access_code).first():
+    while (
+        db.query(GeneratedExam).filter(GeneratedExam.access_code == access_code).first()
+    ):
         access_code = _generate_access_code()
 
     exam.access_code = access_code
@@ -1274,10 +1410,8 @@ async def publish_exam(exam_id: str, db: Session = Depends(get_db)):
 # TEACHER: Close exam
 # ---------------------------------------------------------------------------
 
-@router.post(
-    "/exams/{exam_id}/close",
-    summary="Р—Р°РєСЂС‹С‚СЊ СЌРєР·Р°РјРµРЅ"
-)
+
+@router.post("/exams/{exam_id}/close", summary="Р—Р°РєСЂС‹С‚СЊ СЌРєР·Р°РјРµРЅ")
 async def close_exam(exam_id: str, db: Session = Depends(get_db)):
     exam = db.query(GeneratedExam).filter(GeneratedExam.id == exam_id).first()
     if not exam:
@@ -1291,6 +1425,7 @@ async def close_exam(exam_id: str, db: Session = Depends(get_db)):
 # TEACHER: Exam analytics (post-exam skill gap analysis)
 # ---------------------------------------------------------------------------
 
+
 @router.get(
     "/exams/{exam_id}/analytics",
     summary="Аналитика экзамена (skill gaps, дистрактор-анализ)",
@@ -1298,7 +1433,9 @@ async def close_exam(exam_id: str, db: Session = Depends(get_db)):
 )
 async def exam_analytics(
     exam_id: str,
-    session_id: Optional[str] = Query(None, description="Конкретная сессия (иначе аггрегация по всем)"),
+    session_id: Optional[str] = Query(
+        None, description="Конкретная сессия (иначе аггрегация по всем)"
+    ),
     db: Session = Depends(get_db),
 ):
     """
@@ -1346,15 +1483,17 @@ async def exam_analytics(
         # Build tasks_meta from variant tasks
         tasks_meta = []
         for t in variant.get("tasks", []):
-            tasks_meta.append({
-                "task_id": t.get("task_id", ""),
-                "skill_id": t.get("skill_id") or None,
-                "skill_name": t.get("skill_name", ""),
-                "correct_answer": t.get("correct_answer", ""),
-                "answer_type": t.get("answer_type", "text"),
-                "distractors": t.get("distractor_meta", []),
-                "common_mistakes": t.get("common_mistakes", []),
-            })
+            tasks_meta.append(
+                {
+                    "task_id": t.get("task_id", ""),
+                    "skill_id": t.get("skill_id") or None,
+                    "skill_name": t.get("skill_name", ""),
+                    "correct_answer": t.get("correct_answer", ""),
+                    "answer_type": t.get("answer_type", "text"),
+                    "distractors": t.get("distractor_meta", []),
+                    "common_mistakes": t.get("common_mistakes", []),
+                }
+            )
 
         # Build answers from session
         answers_raw = ses.answers or {}
@@ -1364,10 +1503,12 @@ async def exam_analytics(
                 student_text = ans_data.get("answer", "")
             else:
                 student_text = str(ans_data) if ans_data else ""
-            student_answers.append(StudentAnswer(
-                task_id=task_id,
-                student_answer=student_text,
-            ))
+            student_answers.append(
+                StudentAnswer(
+                    task_id=task_id,
+                    student_answer=student_text,
+                )
+            )
 
         report = analytics.analyze(
             exam_id=exam_id,

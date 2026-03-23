@@ -13,20 +13,37 @@ from .service import AuthService
 from src.api.rate_limit import rate_limit
 from .dependencies import AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME
 from .schemas import (
-    OrgApplicationRequest, LoginRequest, RefreshTokenRequest,
-    ChangePasswordRequest, UpdateProfileRequest,
-    InviteMemberRequest, AcceptInviteRequest,
-    StudentCreateRequest, StudentUpdateRequest, StudentResponse,
-    DiagnosticCreateRequest, DiagnosticQuickRequest,
-    DiagnosticInviteResponse, DiagnosticConfirmRequest,
-    GroupCreateRequest, GroupUpdateRequest, GroupResponse,
+    OrgApplicationRequest,
+    LoginRequest,
+    RefreshTokenRequest,
+    ChangePasswordRequest,
+    UpdateProfileRequest,
+    InviteMemberRequest,
+    AcceptInviteRequest,
+    StudentCreateRequest,
+    StudentUpdateRequest,
+    StudentResponse,
+    DiagnosticCreateRequest,
+    DiagnosticQuickRequest,
+    DiagnosticInviteResponse,
+    DiagnosticConfirmRequest,
+    GroupCreateRequest,
+    GroupUpdateRequest,
+    GroupResponse,
     OrgUpdateRequest,
-    AuthResponse, TokenPair, UserResponse, OrgResponse, MessageResponse,
+    AuthResponse,
+    TokenPair,
+    UserResponse,
+    OrgResponse,
+    MessageResponse,
 )
 from .dependencies import (
-    get_current_user_payload, get_optional_user,
-    require_org_owner, require_org_admin, require_org_teacher,
-    require_org_member, require_any_auth, require_superadmin,
+    get_current_user_payload,
+    require_org_owner,
+    require_org_admin,
+    require_org_teacher,
+    require_org_member,
+    require_superadmin,
 )
 
 from src.core.database import get_db
@@ -36,9 +53,9 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 # ----------- cookie / env helpers ----------- #
 
 _IS_PROD = os.getenv("ENVIRONMENT", "development") == "production"
-_COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)        # e.g. ".algo.kz"
-_ACCESS_MAX_AGE = 3600        # 1 hour
-_REFRESH_MAX_AGE = 30 * 86400 # 30 days
+_COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # e.g. ".algo.kz"
+_ACCESS_MAX_AGE = 3600  # 1 hour
+_REFRESH_MAX_AGE = 30 * 86400  # 30 days
 
 
 def _set_auth_cookies(
@@ -64,7 +81,7 @@ def _set_auth_cookies(
         secure=_IS_PROD,
         samesite="lax",
         max_age=_REFRESH_MAX_AGE,
-        path="/auth",           # refresh token only sent to /auth/*
+        path="/auth",  # refresh token only sent to /auth/*
         domain=_COOKIE_DOMAIN,
     )
     return response
@@ -93,6 +110,7 @@ def _svc(db: Session) -> AuthService:
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  PUBLIC ENDPOINTS (без JWT)                                              ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
+
 
 @router.post("/apply", response_model=AuthResponse, status_code=201)
 def apply_organization(
@@ -174,6 +192,7 @@ def logout():
 # ║  DIAGNOSTIC — PUBLIC (ученик без JWT переходит по QR/ссылке)             ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
+
 @router.get("/diagnostic/{code}")
 def get_diagnostic_info(code: str, db: Session = Depends(get_db)):
     """
@@ -188,9 +207,7 @@ def get_diagnostic_info(code: str, db: Session = Depends(get_db)):
 
 @router.post("/diagnostic/{code}/confirm")
 def confirm_diagnostic(
-    code: str,
-    request: DiagnosticConfirmRequest,
-    db: Session = Depends(get_db)
+    code: str, request: DiagnosticConfirmRequest, db: Session = Depends(get_db)
 ):
     """Ученик подтверждает своё имя — переход pending → confirmed"""
     try:
@@ -212,10 +229,10 @@ def start_diagnostic(code: str, db: Session = Depends(get_db)):
 # ║  PROFILE — для аутентифицированных пользователей                         ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
+
 @router.get("/me", response_model=UserResponse)
 def get_profile(
-    payload: dict = Depends(get_current_user_payload),
-    db: Session = Depends(get_db)
+    payload: dict = Depends(get_current_user_payload), db: Session = Depends(get_db)
 ):
     """Профиль текущего пользователя"""
     svc = _svc(db)
@@ -229,12 +246,14 @@ def get_profile(
 def update_profile(
     request: UpdateProfileRequest,
     payload: dict = Depends(get_current_user_payload),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Обновить профиль"""
     try:
         svc = _svc(db)
-        user = svc.update_profile(payload["sub"], **request.model_dump(exclude_none=True))
+        user = svc.update_profile(
+            payload["sub"], **request.model_dump(exclude_none=True)
+        )
         return svc._build_user_response(user)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -244,11 +263,13 @@ def update_profile(
 def change_password(
     request: ChangePasswordRequest,
     payload: dict = Depends(get_current_user_payload),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Сменить пароль"""
     try:
-        _svc(db).change_password(payload["sub"], request.old_password, request.new_password)
+        _svc(db).change_password(
+            payload["sub"], request.old_password, request.new_password
+        )
         return MessageResponse(message="Пароль успешно изменён")
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -256,8 +277,7 @@ def change_password(
 
 @router.post("/logout", response_model=MessageResponse)
 def logout(
-    payload: dict = Depends(get_current_user_payload),
-    db: Session = Depends(get_db)
+    payload: dict = Depends(get_current_user_payload), db: Session = Depends(get_db)
 ):
     """Выход — отзыв refresh token"""
     _svc(db).logout(payload["sub"])
@@ -268,10 +288,10 @@ def logout(
 # ║  ORGANIZATION — управление орг. (owner/admin)                            ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
+
 @router.get("/org", response_model=OrgResponse)
 def get_organization(
-    user: dict = Depends(require_org_member),
-    db: Session = Depends(get_db)
+    user: dict = Depends(require_org_member), db: Session = Depends(get_db)
 ):
     """Получить данные организации"""
     try:
@@ -282,8 +302,7 @@ def get_organization(
 
 @router.get("/org/stats")
 def get_org_stats(
-    user: dict = Depends(require_org_member),
-    db: Session = Depends(get_db)
+    user: dict = Depends(require_org_member), db: Session = Depends(get_db)
 ):
     """Статистика организации для dashboard"""
     return _svc(db).get_org_stats(user["org_id"])
@@ -293,7 +312,7 @@ def get_org_stats(
 def update_organization(
     request: OrgUpdateRequest,
     user: dict = Depends(require_org_owner),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Обновить данные организации (только owner)"""
     try:
@@ -307,11 +326,12 @@ def update_organization(
 # ║  INVITATIONS — приглашения сотрудников                                    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
+
 @router.post("/org/invitations")
 def create_invitation(
     request: InviteMemberRequest,
     user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Создать приглашение (owner/admin → admin/teacher)"""
     try:
@@ -322,8 +342,7 @@ def create_invitation(
 
 @router.get("/org/invitations")
 def list_invitations(
-    user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    user: dict = Depends(require_org_admin), db: Session = Depends(get_db)
 ):
     """Список приглашений организации"""
     return _svc(db).list_invitations(user["org_id"])
@@ -333,7 +352,7 @@ def list_invitations(
 def revoke_invitation(
     invite_id: str,
     user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Отозвать приглашение"""
     try:
@@ -347,10 +366,10 @@ def revoke_invitation(
 # ║  MEMBERS — сотрудники организации                                        ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
+
 @router.get("/org/members")
 def list_members(
-    user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    user: dict = Depends(require_org_admin), db: Session = Depends(get_db)
 ):
     """Список сотрудников организации"""
     return _svc(db).list_org_members(user["org_id"])
@@ -361,7 +380,7 @@ def update_member_role(
     member_id: str,
     role: str = Query(..., description="New role: admin or teacher"),
     user: dict = Depends(require_org_owner),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Изменить роль сотрудника (только owner)"""
     try:
@@ -374,7 +393,7 @@ def update_member_role(
 def remove_member(
     member_id: str,
     user: dict = Depends(require_org_owner),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Удалить сотрудника (только owner)"""
     try:
@@ -388,11 +407,12 @@ def remove_member(
 # ║  STUDENTS — ученики (без логина)                                          ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
+
 @router.post("/org/students", response_model=StudentResponse, status_code=201)
 def create_student(
     request: StudentCreateRequest,
     user: dict = Depends(require_org_member),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Добавить ученика"""
     return _svc(db).create_student(user["org_id"], request)
@@ -407,14 +427,17 @@ def list_students(
     limit: int = 100,
     offset: int = 0,
     user: dict = Depends(require_org_teacher),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Список учеников организации"""
     return _svc(db).list_students(
         user["org_id"],
-        class_level=class_level, group_id=group_id,
-        status=student_status, search=search,
-        limit=limit, offset=offset,
+        class_level=class_level,
+        group_id=group_id,
+        status=student_status,
+        search=search,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -422,7 +445,7 @@ def list_students(
 def get_student(
     student_id: str,
     user: dict = Depends(require_org_teacher),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Данные одного ученика"""
     try:
@@ -436,7 +459,7 @@ def update_student(
     student_id: str,
     request: StudentUpdateRequest,
     user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Обновить ученика"""
     try:
@@ -449,28 +472,37 @@ def update_student(
 # ║  DIAGNOSTICS — создание тестирований                                      ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
-@router.post("/org/diagnostics", response_model=DiagnosticInviteResponse, status_code=201)
+
+@router.post(
+    "/org/diagnostics", response_model=DiagnosticInviteResponse, status_code=201
+)
 def create_diagnostic(
     request: DiagnosticCreateRequest,
     user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Создать диагностику для существующего ученика — возвращает код/QR"""
     try:
-        return _svc(db).create_diagnostic_invite(user["org_id"], user["user_id"], request)
+        return _svc(db).create_diagnostic_invite(
+            user["org_id"], user["user_id"], request
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
-@router.post("/org/diagnostics/quick", response_model=DiagnosticInviteResponse, status_code=201)
+@router.post(
+    "/org/diagnostics/quick", response_model=DiagnosticInviteResponse, status_code=201
+)
 def create_quick_diagnostic(
     request: DiagnosticQuickRequest,
     user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Быстро: создать ученика + диагностику за один запрос"""
     try:
-        return _svc(db).create_quick_diagnostic(user["org_id"], user["user_id"], request)
+        return _svc(db).create_quick_diagnostic(
+            user["org_id"], user["user_id"], request
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -480,21 +512,24 @@ def list_diagnostics(
     diagnostic_status: Optional[str] = Query(None, alias="status"),
     limit: int = 50,
     user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Список диагностик организации (live queue)"""
-    return _svc(db).list_diagnostic_invites(user["org_id"], status=diagnostic_status, limit=limit)
+    return _svc(db).list_diagnostic_invites(
+        user["org_id"], status=diagnostic_status, limit=limit
+    )
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  GROUPS — группы                                                          ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
+
 @router.post("/org/groups", response_model=GroupResponse, status_code=201)
 def create_group(
     request: GroupCreateRequest,
     user: dict = Depends(require_org_member),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Создать группу"""
     return _svc(db).create_group(user["org_id"], request)
@@ -505,10 +540,12 @@ def list_groups(
     teacher_id: Optional[str] = None,
     class_level: Optional[int] = None,
     user: dict = Depends(require_org_member),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Список групп организации"""
-    return _svc(db).list_groups(user["org_id"], teacher_id=teacher_id, class_level=class_level)
+    return _svc(db).list_groups(
+        user["org_id"], teacher_id=teacher_id, class_level=class_level
+    )
 
 
 @router.put("/org/groups/{group_id}", response_model=GroupResponse)
@@ -516,7 +553,7 @@ def update_group(
     group_id: str,
     request: GroupUpdateRequest,
     user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Обновить группу"""
     try:
@@ -530,7 +567,7 @@ def add_student_to_group(
     group_id: str,
     student_id: str,
     user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Добавить ученика в группу"""
     try:
@@ -539,12 +576,14 @@ def add_student_to_group(
         raise HTTPException(400, str(e))
 
 
-@router.delete("/org/groups/{group_id}/students/{student_id}", response_model=MessageResponse)
+@router.delete(
+    "/org/groups/{group_id}/students/{student_id}", response_model=MessageResponse
+)
 def remove_student_from_group(
     group_id: str,
     student_id: str,
     user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Убрать ученика из группы"""
     try:
@@ -558,13 +597,14 @@ def remove_student_from_group(
 # ║  ADMIN — superadmin endpoints                                            ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
+
 @router.get("/users", response_model=list[UserResponse])
 def list_users(
     role: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
     admin: dict = Depends(require_superadmin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Список всех пользователей (superadmin)"""
     svc = _svc(db)

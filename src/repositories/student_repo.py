@@ -58,7 +58,9 @@ class DiagnosticInviteRepo(BaseRepository[DiagnosticInvite]):
 class StudentDiagnosticResultRepo(BaseRepository[StudentDiagnosticResult]):
     model = StudentDiagnosticResult
 
-    def get_latest_for_student(self, student_id: UUID) -> Optional[StudentDiagnosticResult]:
+    def get_latest_for_student(
+        self, student_id: UUID
+    ) -> Optional[StudentDiagnosticResult]:
         stmt = (
             select(StudentDiagnosticResult)
             .where(StudentDiagnosticResult.student_id == student_id)
@@ -76,5 +78,7 @@ class StudentDiagnosticResultRepo(BaseRepository[StudentDiagnosticResult]):
         return list(self.session.scalars(stmt))
 
     def list_by_org(self, org_id: UUID) -> List[StudentDiagnosticResult]:
-        stmt = select(StudentDiagnosticResult).where(StudentDiagnosticResult.org_id == org_id)
+        stmt = select(StudentDiagnosticResult).where(
+            StudentDiagnosticResult.org_id == org_id
+        )
         return list(self.session.scalars(stmt))

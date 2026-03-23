@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import math
 import random
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
@@ -24,22 +23,27 @@ from src.utils.safe_eval import safe_eval
 # Dataclasses
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TemplateParams:
     """Параметры шаблона задачи"""
-    template_text: str          # "Решите: {a}x + {b} = {c}"
+
+    template_text: str  # "Решите: {a}x + {b} = {c}"
     template_latex: Optional[str]
-    parameters: List[str]       # ['a', 'b', 'c']
-    constraints: Dict[str, Dict[str, Any]]  # {'a': {'min': -10, 'max': 10, 'type': 'int', 'exclude': [0]}}
-    answer_formula: str         # "(c - b) / a"
+    parameters: List[str]  # ['a', 'b', 'c']
+    constraints: Dict[
+        str, Dict[str, Any]
+    ]  # {'a': {'min': -10, 'max': 10, 'type': 'int', 'exclude': [0]}}
+    answer_formula: str  # "(c - b) / a"
     original_values: Dict[str, int]  # {'a': 3, 'b': -7, 'c': 14}
 
 
 @dataclass
 class GeneratedVariantTask:
     """Задача, сгенерированная для нового варианта"""
-    task_id: str                # original or "GEN_xxx"
-    original_task_id: str       # ID оригинала в tasks_master
+
+    task_id: str  # original or "GEN_xxx"
+    original_task_id: str  # ID оригинала в tasks_master
     skill_id: str
     skill_name: str
     difficulty: str
@@ -56,6 +60,7 @@ class GeneratedVariantTask:
 # ---------------------------------------------------------------------------
 # VariantFactory
 # ---------------------------------------------------------------------------
+
 
 class VariantFactory:
     """
@@ -102,7 +107,11 @@ class VariantFactory:
             new_values = self._generate_values(template, rng)
             if new_values:
                 new_text = self._substitute(template.template_text, new_values)
-                new_latex = self._substitute(template.template_latex, new_values) if template.template_latex else None
+                new_latex = (
+                    self._substitute(template.template_latex, new_values)
+                    if template.template_latex
+                    else None
+                )
                 new_answer = self._compute_answer(template.answer_formula, new_values)
 
                 if new_answer is not None:
@@ -257,6 +266,7 @@ class VariantFactory:
             return None
         try:
             from sympy import sympify, N as sympy_N, parse_expr
+
             answer_expr = parse_expr(formula)
             syms = {k: sympify(v) for k, v in values.items()}
             result = float(sympy_N(answer_expr.subs(syms)))
@@ -267,7 +277,11 @@ class VariantFactory:
         # Fallback на safe_eval
         try:
             result = safe_eval(formula, values)
-            if isinstance(result, (int, float)) and not math.isnan(result) and not math.isinf(result):
+            if (
+                isinstance(result, (int, float))
+                and not math.isnan(result)
+                and not math.isinf(result)
+            ):
                 return float(result)
         except Exception:
             pass
@@ -291,9 +305,12 @@ class VariantFactory:
             from src.domain.exam_builder.sympy_step_solver import StepDistractorEngine
             from src.domain.exam_builder.llm_templatizer import templatize_via_llm
 
-            tpl = templatize_via_llm(question_text, question_latex or "", answer, "exact_number")
+            tpl = templatize_via_llm(
+                question_text, question_latex or "", answer, "exact_number"
+            )
             if tpl is not None:
                 from src.domain.exam_builder.sympy_step_solver import StepSolver
+
                 solver = StepSolver()
                 steps = solver.solve(
                     tpl.task_type,
@@ -304,7 +321,9 @@ class VariantFactory:
                 if steps:
                     dist_engine = StepDistractorEngine()
                     ans_float = float(answer.replace(",", "."))
-                    distractors = dist_engine.generate(steps, ans_float, tpl.task_type, count=3)
+                    distractors = dist_engine.generate(
+                        steps, ans_float, tpl.task_type, count=3
+                    )
                     if distractors:
                         opts = [answer] + [d.value for d in distractors]
                         random.shuffle(opts)
@@ -360,12 +379,24 @@ class VariantFactory:
             ]
             random.shuffle(opts)
             return opts, [
-                {"value": self._format_number(val + 1), "error_type": "off_by_one",
-                 "explanation": "Ошибка на +1", "plausibility": 0.65},
-                {"value": self._format_number(val - 1), "error_type": "off_by_one",
-                 "explanation": "Ошибка на −1", "plausibility": 0.65},
-                {"value": self._format_number(-val), "error_type": "sign_error",
-                 "explanation": "Ошибка знака", "plausibility": 0.80},
+                {
+                    "value": self._format_number(val + 1),
+                    "error_type": "off_by_one",
+                    "explanation": "Ошибка на +1",
+                    "plausibility": 0.65,
+                },
+                {
+                    "value": self._format_number(val - 1),
+                    "error_type": "off_by_one",
+                    "explanation": "Ошибка на −1",
+                    "plausibility": 0.65,
+                },
+                {
+                    "value": self._format_number(-val),
+                    "error_type": "sign_error",
+                    "explanation": "Ошибка знака",
+                    "plausibility": 0.80,
+                },
             ]
         except ValueError:
             return None, None
@@ -380,25 +411,29 @@ def generate_variant_json(
     возвращает готовый вариант JSONB dict.
     """
     factory = VariantFactory()
-    gen_tasks = factory.generate_variant_tasks(original_tasks, variant_seed=variant_number * 42)
+    gen_tasks = factory.generate_variant_tasks(
+        original_tasks, variant_seed=variant_number * 42
+    )
 
     tasks_json = []
     for t in gen_tasks:
-        tasks_json.append({
-            "task_id": t.task_id,
-            "original_task_id": t.original_task_id,
-            "skill_id": t.skill_id,
-            "skill_name": t.skill_name,
-            "difficulty": t.difficulty,
-            "question_text": t.question_text,
-            "question_latex": t.question_latex,
-            "question_image_url": t.question_image_url,
-            "answer_type": t.answer_type,
-            "correct_answer": t.correct_answer,
-            "answer_options": t.answer_options,
-            "distractor_meta": t.distractor_meta,
-            "is_template_generated": t.is_template_generated,
-        })
+        tasks_json.append(
+            {
+                "task_id": t.task_id,
+                "original_task_id": t.original_task_id,
+                "skill_id": t.skill_id,
+                "skill_name": t.skill_name,
+                "difficulty": t.difficulty,
+                "question_text": t.question_text,
+                "question_latex": t.question_latex,
+                "question_image_url": t.question_image_url,
+                "answer_type": t.answer_type,
+                "correct_answer": t.correct_answer,
+                "answer_options": t.answer_options,
+                "distractor_meta": t.distractor_meta,
+                "is_template_generated": t.is_template_generated,
+            }
+        )
 
     return {
         "variant_id": f"VAR_{uuid4().hex[:8]}",

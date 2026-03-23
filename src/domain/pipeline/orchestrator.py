@@ -22,7 +22,11 @@ from src.domain.pipeline.classification import SkeletonTextbookMapper
 from src.domain.pipeline.config import CFG
 from src.domain.pipeline.db_writer import DBWriter
 from src.domain.pipeline.enrichment import AIEnricher
-from src.domain.pipeline.extraction import LegendExtractor, ParagraphSplitter, TaskExtractor
+from src.domain.pipeline.extraction import (
+    LegendExtractor,
+    ParagraphSplitter,
+    TaskExtractor,
+)
 from src.domain.pipeline.models import ExtractedTask
 from src.domain.pipeline.ocr import MathpixOCR
 from src.domain.pipeline.validation import SymPySolver
@@ -115,24 +119,28 @@ class DigitizationPipeline:
         items = data if isinstance(data, list) else data.get("tasks", [])
         tasks: List[ExtractedTask] = []
         for item in items:
-            tasks.append(ExtractedTask(
-                temp_id=item.get("temp_id", ""),
-                exercise_number=str(item.get("exercise_number", "")),
-                paragraph_number=str(item.get("paragraph_number", "")),
-                paragraph_title=item.get("paragraph_title", ""),
-                question_text=item.get("question_text", ""),
-                question_latex=item.get("question_latex", ""),
-                answer_raw=str(item.get("answer_raw", item.get("correct_answer", ""))),
-                answer_type=item.get("answer_type", "exact_number"),
-                difficulty=item.get("difficulty", "B"),
-                cognitive_load=item.get("cognitive_load", "apply"),
-                is_star=bool(item.get("is_star", False)),
-                task_marker=item.get("task_marker", ""),
-                task_category=item.get("task_category", "standard"),
-                skill_id=item.get("skill_id", ""),
-                toc_id=item.get("toc_id"),
-                tags=item.get("tags", {}),
-            ))
+            tasks.append(
+                ExtractedTask(
+                    temp_id=item.get("temp_id", ""),
+                    exercise_number=str(item.get("exercise_number", "")),
+                    paragraph_number=str(item.get("paragraph_number", "")),
+                    paragraph_title=item.get("paragraph_title", ""),
+                    question_text=item.get("question_text", ""),
+                    question_latex=item.get("question_latex", ""),
+                    answer_raw=str(
+                        item.get("answer_raw", item.get("correct_answer", ""))
+                    ),
+                    answer_type=item.get("answer_type", "exact_number"),
+                    difficulty=item.get("difficulty", "B"),
+                    cognitive_load=item.get("cognitive_load", "apply"),
+                    is_star=bool(item.get("is_star", False)),
+                    task_marker=item.get("task_marker", ""),
+                    task_category=item.get("task_category", "standard"),
+                    skill_id=item.get("skill_id", ""),
+                    toc_id=item.get("toc_id"),
+                    tags=item.get("tags", {}),
+                )
+            )
 
         log.info("Загружено %d задач из JSON", len(tasks))
 
@@ -167,7 +175,11 @@ class DigitizationPipeline:
         try:
             # Lazy init
             if self._step_solver is None:
-                from src.domain.exam_builder.sympy_step_solver import StepSolver, StepDistractorEngine
+                from src.domain.exam_builder.sympy_step_solver import (
+                    StepSolver,
+                    StepDistractorEngine,
+                )
+
                 self._step_solver = StepSolver()
                 self._distractor_engine = StepDistractorEngine()
 
@@ -179,8 +191,13 @@ class DigitizationPipeline:
                     return task
 
             # ── SymPy-парсимые типы: fraction, expression, multiple_values ──
-            if answer_type in ("fraction", "expression", "multiple_values",
-                               "equation_solution", "inequality"):
+            if answer_type in (
+                "fraction",
+                "expression",
+                "multiple_values",
+                "equation_solution",
+                "inequality",
+            ):
                 distractors_list = self._distractor_engine.generate_for_answer(
                     correct_answer=answer,
                     answer_type=answer_type,
@@ -222,6 +239,7 @@ class DigitizationPipeline:
         # 1) templatize → точный тип и формула
         try:
             from src.domain.exam_builder.llm_templatizer import templatize_via_llm
+
             tpl = templatize_via_llm(
                 task.question_text or "",
                 task.question_latex or "",
@@ -253,6 +271,7 @@ class DigitizationPipeline:
         """Текстовые дистракторы через Gemini Pro."""
         try:
             from src.domain.pipeline.enrichment import AIDistractorGenerator
+
             gen = AIDistractorGenerator()
             meta = gen.generate(
                 question_text=task.question_text or "",
@@ -290,7 +309,10 @@ class DigitizationPipeline:
         log.info("§%s: извлечение задач", number)
 
         tasks = self.extractor.extract(
-            para["text"], number, para.get("title", ""), para.get("toc_id"),
+            para["text"],
+            number,
+            para.get("title", ""),
+            para.get("toc_id"),
         )
         if not tasks:
             return []
@@ -314,7 +336,10 @@ class DigitizationPipeline:
         mapped = sum(1 for t in tasks if t.skill_id)
         log.info(
             "   §%s: %d задач, %d верифицировано, %d привязано",
-            number, len(tasks), verified, mapped,
+            number,
+            len(tasks),
+            verified,
+            mapped,
         )
         return tasks
 
@@ -337,7 +362,13 @@ class DigitizationPipeline:
                     {"tb_id": self.textbook_id},
                 ).fetchall()
             return [
-                {"id": r[0], "number": r[1], "title": r[2], "page_start": r[3], "level": r[4]}
+                {
+                    "id": r[0],
+                    "number": r[1],
+                    "title": r[2],
+                    "page_start": r[3],
+                    "level": r[4],
+                }
                 for r in rows
             ]
         except Exception as e:

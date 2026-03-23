@@ -20,6 +20,7 @@ _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ── Password hashing ─────────────────────────────────────────────────────────
 
+
 def hash_password(plain: str) -> str:
     """Return bcrypt hash of plain-text password."""
     return _pwd_context.hash(plain)
@@ -31,6 +32,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 # ── JWT ───────────────────────────────────────────────────────────────────────
+
 
 def _base_payload(user_id: str, role: str, extra: dict = None) -> dict:
     payload = {"sub": user_id, "role": role}
@@ -47,7 +49,9 @@ def create_access_token(payload: dict) -> str:
     """
     s = get_settings()
     data = payload.copy()
-    data["exp"] = datetime.now(timezone.utc) + timedelta(minutes=s.access_token_expire_minutes)
+    data["exp"] = datetime.now(timezone.utc) + timedelta(
+        minutes=s.access_token_expire_minutes
+    )
     data["type"] = "access"
     return jwt.encode(data, s.secret_key, algorithm=s.algorithm)
 
@@ -60,7 +64,9 @@ def create_refresh_token(payload: dict) -> str:
     """
     s = get_settings()
     data = payload.copy()
-    data["exp"] = datetime.now(timezone.utc) + timedelta(days=s.refresh_token_expire_days)
+    data["exp"] = datetime.now(timezone.utc) + timedelta(
+        days=s.refresh_token_expire_days
+    )
     data["type"] = "refresh"
     return jwt.encode(data, s.secret_key, algorithm=s.algorithm)
 

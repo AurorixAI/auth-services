@@ -18,7 +18,6 @@ src/exam_builder/template_cache.py
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Dict, List, Optional
 
@@ -126,9 +125,7 @@ class TemplateCache:
             ID записи.
         """
         existing: Optional[TaskTemplateDB] = (
-            db.query(TaskTemplateDB)
-            .filter(TaskTemplateDB.id == template_id)
-            .first()
+            db.query(TaskTemplateDB).filter(TaskTemplateDB.id == template_id).first()
         )
 
         param_details = {
@@ -261,6 +258,7 @@ def _build_params(row: TaskTemplateDB) -> Dict[str, ParamInfo]:
 def _to_double_braces(text: str) -> str:
     """Конвертирует ``{a}`` → ``{{a}}`` для legacy-колонки ``template_text``."""
     import re
+
     return re.sub(r"\{(\w+)\}", r"{{\1}}", text)
 
 

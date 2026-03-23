@@ -11,8 +11,7 @@ src/pipeline/validation.py
 """
 
 import logging
-import re
-from typing import Any, Optional, Tuple
+from typing import Any, Tuple
 
 from src.domain.pipeline.models import ExtractedTask
 

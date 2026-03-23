@@ -6,11 +6,10 @@ CRUD для учебников, структуры (TOC), и задач учеб
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import Optional, List, Dict, Any
-from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
@@ -22,6 +21,7 @@ router = APIRouter(prefix="/textbooks", tags=["textbooks"])
 # ============================================================================
 # RESPONSE MODELS
 # ============================================================================
+
 
 class TextbookBrief(BaseModel):
     textbook_id: str
@@ -35,6 +35,7 @@ class TextbookBrief(BaseModel):
     digitization_progress: float = 0
     tasks_extracted: int = 0
 
+
 class TextbookDetail(TextbookBrief):
     isbn: Optional[str] = None
     edition: Optional[str] = None
@@ -42,6 +43,7 @@ class TextbookDetail(TextbookBrief):
     language: str = "ru"
     total_pages: Optional[int] = None
     is_active: bool = True
+
 
 class TOCNode(BaseModel):
     id: int
@@ -57,7 +59,8 @@ class TOCNode(BaseModel):
     mapped_topic_id: Optional[str] = None
     mapping_confidence: Optional[float] = None
     tasks_count: int = 0
-    children: List['TOCNode'] = []
+    children: List["TOCNode"] = []
+
 
 class TextbookTaskResponse(BaseModel):
     task_id: str
@@ -71,27 +74,30 @@ class TextbookTaskResponse(BaseModel):
     correct_answer: Optional[str] = None  # Скрыт для учеников
     has_template: bool = False
 
+
 class TextbookListResponse(BaseModel):
     textbooks: List[TextbookBrief]
     total: int
 
+
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
+
 
 @router.get("", response_model=TextbookListResponse)
 def list_textbooks(
     class_level: Optional[int] = Query(None, ge=1, le=11),
     country: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Список учебников с фильтрацией по классу, стране, статусу.
     """
     query = "SELECT * FROM textbooks WHERE is_active = TRUE"
     params = {}
-    
+
     if class_level:
         query += " AND class_level = :class_level"
         params["class_level"] = class_level
@@ -101,12 +107,12 @@ def list_textbooks(
     if status:
         query += " AND digitization_status = :status"
         params["status"] = status
-    
+
     query += " ORDER BY class_level, title"
-    
+
     result = db.execute(text(query), params)
     rows = result.mappings().all()
-    
+
     textbooks = [
         TextbookBrief(
             textbook_id=str(r["textbook_id"]),
@@ -122,13 +128,14 @@ def list_textbooks(
         )
         for r in rows
     ]
-    
+
     return TextbookListResponse(textbooks=textbooks, total=len(textbooks))
 
 
 # ============================================================================
 # SKILL TREE API (для режима "По программе") — MUST be above /{textbook_id}
 # ============================================================================
+
 
 class SkillTreeNode(BaseModel):
     id: str
@@ -139,14 +146,13 @@ class SkillTreeNode(BaseModel):
     class_level_start: Optional[int] = None
     class_level_end: Optional[int] = None
     importance: int = 5
-    children: List['SkillTreeNode'] = []
+    children: List["SkillTreeNode"] = []
     tasks_count: int = 0
 
 
 @router.get("/skills/tree", response_model=List[SkillTreeNode])
 def get_skill_tree(
-    class_level: Optional[int] = Query(None, ge=1, le=11),
-    db: Session = Depends(get_db)
+    class_level: Optional[int] = Query(None, ge=1, le=11), db: Session = Depends(get_db)
 ):
     """
     Дерево навыков (L1→L4) для режима "По программе".
@@ -198,7 +204,9 @@ def get_skill_tree(
     # If grade-specific L1 nodes exist (e.g. G5_NAT), exclude generic ones (ARITH, ALG, GEOM)
     if class_level:
         prefix = f"G{class_level}_"
-        has_grade_specific = any(r.level == "L1" and r.id.startswith(prefix) for r in roots)
+        has_grade_specific = any(
+            r.level == "L1" and r.id.startswith(prefix) for r in roots
+        )
         if has_grade_specific:
             roots = [r for r in roots if r.level != "L1" or r.id.startswith(prefix)]
 
@@ -209,13 +217,12 @@ def get_skill_tree(
 def get_textbook(textbook_id: str, db: Session = Depends(get_db)):
     """Полная информация об учебнике."""
     result = db.execute(
-        text("SELECT * FROM textbooks WHERE textbook_id = :id"),
-        {"id": textbook_id}
+        text("SELECT * FROM textbooks WHERE textbook_id = :id"), {"id": textbook_id}
     )
     row = result.mappings().first()
     if not row:
         raise HTTPException(404, "Учебник не найден")
-    
+
     return TextbookDetail(
         textbook_id=str(row["textbook_id"]),
         title=row["title"],
@@ -252,10 +259,10 @@ def get_textbook_toc(textbook_id: str, db: Session = Depends(get_db)):
             WHERE textbook_id = :textbook_id
             ORDER BY sort_order
         """),
-        {"textbook_id": textbook_id}
+        {"textbook_id": textbook_id},
     )
     rows = result.mappings().all()
-    
+
     nodes = [
         TOCNode(
             id=r["id"],
@@ -269,12 +276,14 @@ def get_textbook_toc(textbook_id: str, db: Session = Depends(get_db)):
             sort_order=r.get("sort_order", 0),
             mapped_skill_id=r.get("mapped_skill_id"),
             mapped_topic_id=r.get("mapped_topic_id"),
-            mapping_confidence=float(r["mapping_confidence"]) if r.get("mapping_confidence") else None,
+            mapping_confidence=float(r["mapping_confidence"])
+            if r.get("mapping_confidence")
+            else None,
             tasks_count=r.get("tasks_count", 0),
         )
         for r in rows
     ]
-    
+
     return nodes
 
 
@@ -289,13 +298,13 @@ def get_textbook_toc_tree(textbook_id: str, db: Session = Depends(get_db)):
 
 @router.get("/{textbook_id}/tasks", response_model=List[TextbookTaskResponse])
 def get_textbook_tasks(
-    textbook_id: str, 
+    textbook_id: str,
     structure_id: Optional[int] = Query(None, description="Фильтр по разделу TOC"),
     skill_id: Optional[str] = Query(None),
     difficulty: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Задачи из учебника с фильтрацией.
@@ -310,7 +319,7 @@ def get_textbook_tasks(
         AND tm.is_active = TRUE
     """
     params: Dict[str, Any] = {"textbook_id": textbook_id}
-    
+
     if structure_id:
         # Include children of this structure node
         query += """ AND (tt.structure_id = :structure_id 
@@ -319,22 +328,22 @@ def get_textbook_tasks(
                          WHERE parent_id = :structure_id
                      ))"""
         params["structure_id"] = structure_id
-    
+
     if skill_id:
         query += " AND tm.skill_id = :skill_id"
         params["skill_id"] = skill_id
-    
+
     if difficulty:
         query += " AND tm.difficulty = :difficulty"
         params["difficulty"] = difficulty
-    
+
     query += " ORDER BY tt.exercise_number LIMIT :limit OFFSET :offset"
     params["limit"] = limit
     params["offset"] = offset
-    
+
     result = db.execute(text(query), params)
     rows = result.mappings().all()
-    
+
     return [
         TextbookTaskResponse(
             task_id=r["task_id"],
@@ -355,15 +364,16 @@ def get_textbook_tasks(
 # HELPERS
 # ============================================================================
 
+
 def _build_tree(flat_nodes: List[TOCNode]) -> List[TOCNode]:
     """Строит вложенное дерево из плоского списка."""
     by_id = {n.id: n for n in flat_nodes}
     roots = []
-    
+
     for node in flat_nodes:
         if node.parent_id and node.parent_id in by_id:
             by_id[node.parent_id].children.append(node)
         else:
             roots.append(node)
-    
+
     return roots

@@ -22,28 +22,30 @@ import logging
 import math
 import random
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
 
-from src.domain.exam_builder.template_models import TaskTemplate, ParamInfo
-from src.domain.exam_builder.llm_templatizer import templatize_via_llm, TEMPLATABLE_TYPES
+from src.domain.exam_builder.template_models import TaskTemplate
+from src.domain.exam_builder.llm_templatizer import (
+    templatize_via_llm,
+    TEMPLATABLE_TYPES,
+)
 from src.domain.exam_builder.sympy_step_solver import (
     StepSolver,
     StepDistractorEngine,
-    SolutionStep,
-    Distractor,
 )
 from src.domain.exam_builder.template_cache import TemplateCache
 
 log = logging.getLogger("variant_orchestrator")
 
 MAX_VARIANTS = 30
-MAX_ATTEMPTS_PER_VARIANT = 200        # попыток подбора уникального набора параметров
+MAX_ATTEMPTS_PER_VARIANT = 200  # попыток подбора уникального набора параметров
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Data models
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class VariantTask:
@@ -66,8 +68,8 @@ class VariantTask:
     solution_steps: List[Dict[str, str]] = field(default_factory=list)
 
     # Источник
-    source_task_id: str = ""           # ID оригинальной задачи
-    is_original: bool = True           # False если сгенерирован из шаблона
+    source_task_id: str = ""  # ID оригинальной задачи
+    is_original: bool = True  # False если сгенерирован из шаблона
     param_values: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -110,8 +112,8 @@ class GenerationReport:
     """Отчёт о генерации вариантов."""
 
     total_variants: int
-    tasks_templatized: int             # задач успешно шаблонизированных
-    tasks_fallback: int                # задач оставленных оригинальными
+    tasks_templatized: int  # задач успешно шаблонизированных
+    tasks_fallback: int  # задач оставленных оригинальными
     tasks_total: int
     variants: List[GeneratedVariant] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
@@ -120,6 +122,7 @@ class GenerationReport:
 # ═══════════════════════════════════════════════════════════════════════════
 # Main Orchestrator
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class VariantOrchestrator:
     """
@@ -172,13 +175,15 @@ class VariantOrchestrator:
         # Pre-load cached templates in one batch query
         _cached_map: Dict[str, TaskTemplate] = {}
         if self.db is not None:
-            task_ids = [
-                t.get("task_id", "") for t in draft_tasks if t.get("task_id")
-            ]
+            task_ids = [t.get("task_id", "") for t in draft_tasks if t.get("task_id")]
             if task_ids:
                 try:
                     _cached_map = TemplateCache.get_cached_bulk(task_ids, self.db)
-                    log.info("Bulk cache: %d/%d templates found in DB", len(_cached_map), len(task_ids))
+                    log.info(
+                        "Bulk cache: %d/%d templates found in DB",
+                        len(_cached_map),
+                        len(task_ids),
+                    )
                 except Exception as exc:
                     log.warning("Bulk cache preload failed: %s", exc)
                     if self.db is not None:
@@ -199,7 +204,9 @@ class VariantOrchestrator:
 
         log.info(
             "Templatized %d/%d tasks (%d fallback)",
-            tasks_ok, len(draft_tasks), tasks_fb,
+            tasks_ok,
+            len(draft_tasks),
+            tasks_fb,
         )
 
         # Phase 2: генерация уникальных наборов параметров для каждого шаблона
@@ -230,19 +237,19 @@ class VariantOrchestrator:
                         vt = self._build_variant_task(task, tpl, pset, v_idx)
                         variant_tasks.append(vt)
                     except Exception as exc:
-                        errors.append(
-                            f"Variant {v_idx+1}, task {t_idx+1}: {exc}"
-                        )
+                        errors.append(f"Variant {v_idx + 1}, task {t_idx + 1}: {exc}")
                         variant_tasks.append(self._make_original_task(task))
                 else:
                     # Fallback: оригинальная задача
                     variant_tasks.append(self._make_original_task(task))
 
-            variants.append(GeneratedVariant(
-                variant_number=v_idx + 1,
-                tasks=variant_tasks,
-                seed=variant_seed,
-            ))
+            variants.append(
+                GeneratedVariant(
+                    variant_number=v_idx + 1,
+                    tasks=variant_tasks,
+                    seed=variant_seed,
+                )
+            )
 
         return GenerationReport(
             total_variants=num_variants,
@@ -277,7 +284,9 @@ class VariantOrchestrator:
 
         # ── 0. Фильтр: только числовые типы ───
         if answer_type not in TEMPLATABLE_TYPES:
-            log.debug("Skipping non-numeric task %s (answer_type=%s)", task_id, answer_type)
+            log.debug(
+                "Skipping non-numeric task %s (answer_type=%s)", task_id, answer_type
+            )
             return None
 
         # ── 1. Cache hit ──
@@ -285,7 +294,9 @@ class VariantOrchestrator:
             try:
                 cached = TemplateCache.get_cached(task_id, self.db)
                 if cached is not None:
-                    log.debug("Cache HIT for task %s (q=%.2f)", task_id, cached.quality_score)
+                    log.debug(
+                        "Cache HIT for task %s (q=%.2f)", task_id, cached.quality_score
+                    )
                     return cached
             except Exception as exc:
                 log.debug("Cache lookup failed for %s: %s", task_id, exc)
@@ -335,9 +346,7 @@ class VariantOrchestrator:
 
         answer_expr = parse_expr(tpl.answer_formula_text)
 
-        original_is_int = all(
-            isinstance(v, int) for v in tpl.original_values.values()
-        )
+        original_is_int = all(isinstance(v, int) for v in tpl.original_values.values())
 
         # Набор 0 = оригинальные значения
         results.append(dict(tpl.original_values))
@@ -473,7 +482,10 @@ class VariantOrchestrator:
 
         # 4. Генерируем дистракторы
         distractors = self.distractor_engine.generate(
-            steps, result, tpl.task_type, count=3,
+            steps,
+            result,
+            tpl.task_type,
+            count=3,
         )
         options = [answer_str] + [d.value for d in distractors]
         # Перемешиваем

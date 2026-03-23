@@ -48,7 +48,9 @@ class InvitationRepo(BaseRepository[Invitation]):
     model = Invitation
 
     def get_by_code(self, code: str) -> Optional[Invitation]:
-        stmt = select(Invitation).where(Invitation.code == code, Invitation.status == "pending")
+        stmt = select(Invitation).where(
+            Invitation.code == code, Invitation.status == "pending"
+        )
         return self.session.scalar(stmt)
 
     def list_by_org(self, org_id: UUID) -> List[Invitation]:

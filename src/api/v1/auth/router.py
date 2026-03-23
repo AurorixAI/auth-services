@@ -27,6 +27,7 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 
 # ── Dependency factories ───────────────────────────────────────────────────
 
+
 def _auth_service(db: DbDep) -> AuthService:
     return AuthService(
         user_repo=UserRepo(db),
@@ -44,6 +45,7 @@ def _org_service(db: DbDep) -> OrgService:
 
 
 # ── Auth endpoints ─────────────────────────────────────────────────────────
+
 
 @router.post("/login", response_model=LoginResponse)
 def login(
@@ -73,6 +75,7 @@ def get_me(user: CurrentUser, service: AuthService = Depends(_auth_service)):
 
 
 # ── Organisation endpoints ─────────────────────────────────────────────────
+
 
 @router.post("/apply", response_model=OrgResponse, status_code=201)
 def apply_org(payload: ApplyOrgRequest, service: OrgService = Depends(_org_service)):

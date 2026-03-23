@@ -10,11 +10,15 @@ src/pipeline/enrichment.py
 Генерирует AI-дистракторы для текстовых задач (open_text) через Gemini Pro.
 """
 
-import json
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict
 
-from src.domain.pipeline.gemini_client import call_gemini, get_api_key, get_model, parse_json_response
+from src.domain.pipeline.gemini_client import (
+    call_gemini,
+    get_api_key,
+    get_model,
+    parse_json_response,
+)
 from src.domain.pipeline.models import ExtractedTask
 
 log = logging.getLogger("pipeline")
@@ -40,7 +44,10 @@ class AIEnricher:
         )
         try:
             text = call_gemini(
-                prompt, api_key=self.api_key, temperature=0.2, max_tokens=2048,
+                prompt,
+                api_key=self.api_key,
+                temperature=0.2,
+                max_tokens=2048,
             )
             data = parse_json_response(text)
             if isinstance(data, dict):
@@ -123,24 +130,30 @@ class AIDistractorGenerator:
             if isinstance(data, list):
                 return self._validate_distractors(data, correct_answer, count)
             elif isinstance(data, dict) and "distractors" in data:
-                return self._validate_distractors(data["distractors"], correct_answer, count)
+                return self._validate_distractors(
+                    data["distractors"], correct_answer, count
+                )
 
         except Exception as e:
             log.warning("AIDistractorGenerator error: %s", e)
 
         return []
 
-    def _validate_distractors(
-        self, raw: list, correct: str, count: int
-    ) -> List[Dict]:
+    def _validate_distractors(self, raw: list, correct: str, count: int) -> List[Dict]:
         """Валидирует и нормализует сырые дистракторы от Gemini."""
         results: List[Dict] = []
         seen = {correct.strip().lower()}
 
         valid_types = {
-            "sign_error", "calculation_error", "conceptual_error",
-            "partial_answer", "misread_problem", "unit_error",
-            "formula_error", "simplification_error", "rounding_error",
+            "sign_error",
+            "calculation_error",
+            "conceptual_error",
+            "partial_answer",
+            "misread_problem",
+            "unit_error",
+            "formula_error",
+            "simplification_error",
+            "rounding_error",
             "unknown",
         }
 
@@ -163,12 +176,14 @@ class AIDistractorGenerator:
             expl = str(item.get("explanation", ""))
 
             seen.add(val.lower())
-            results.append({
-                "value": val,
-                "error_type": etype,
-                "explanation": expl,
-                "plausibility": plaus,
-            })
+            results.append(
+                {
+                    "value": val,
+                    "error_type": etype,
+                    "explanation": expl,
+                    "plausibility": plaus,
+                }
+            )
 
             if len(results) >= count:
                 break

@@ -13,8 +13,11 @@ from datetime import datetime, timezone
 
 from .models import Organization, User, OrganizationMember
 from .service import (
-    hash_password, create_access_token, create_refresh_token, hash_token,
-    AuthService, ACCESS_TOKEN_EXPIRE_MINUTES,
+    hash_password,
+    create_access_token,
+    create_refresh_token,
+    hash_token,
+    ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 from .schemas import AuthResponse, UserResponse, TokenPair, OrgResponse
 from .dependencies import AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME
@@ -62,7 +65,10 @@ def dev_login(
     Creates test users + org on first call.
     """
     if role not in DEV_USERS:
-        raise HTTPException(status_code=400, detail=f"Role must be one of: {', '.join(DEV_USERS.keys())}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Role must be one of: {', '.join(DEV_USERS.keys())}",
+        )
 
     config = DEV_USERS[role]
 
@@ -111,10 +117,14 @@ def dev_login(
         user.default_org_id = org.id
         user.role = config["role"]
         # Update membership
-        member = db.query(OrganizationMember).filter(
-            OrganizationMember.org_id == org.id,
-            OrganizationMember.user_id == user.id,
-        ).first()
+        member = (
+            db.query(OrganizationMember)
+            .filter(
+                OrganizationMember.org_id == org.id,
+                OrganizationMember.user_id == user.id,
+            )
+            .first()
+        )
         if not member:
             member = OrganizationMember(
                 org_id=org.id,

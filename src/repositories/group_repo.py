@@ -23,7 +23,9 @@ class GroupRepo(BaseRepository[Group]):
         return list(self.session.scalars(stmt))
 
     def list_by_teacher(self, teacher_id: UUID) -> List[Group]:
-        stmt = select(Group).where(Group.teacher_id == teacher_id, Group.status == "active")
+        stmt = select(Group).where(
+            Group.teacher_id == teacher_id, Group.status == "active"
+        )
         return list(self.session.scalars(stmt))
 
     def count_students(self, group_id: UUID) -> int:
@@ -37,7 +39,9 @@ class GroupRepo(BaseRepository[Group]):
 class StudentGroupRepo(BaseRepository[StudentGroup]):
     model = StudentGroup
 
-    def get_membership(self, student_id: UUID, group_id: UUID) -> Optional[StudentGroup]:
+    def get_membership(
+        self, student_id: UUID, group_id: UUID
+    ) -> Optional[StudentGroup]:
         stmt = select(StudentGroup).where(
             StudentGroup.student_id == student_id,
             StudentGroup.group_id == group_id,

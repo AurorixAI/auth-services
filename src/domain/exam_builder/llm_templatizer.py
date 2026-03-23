@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import math
 import string
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from src.domain.exam_builder.template_models import ParamInfo, TaskTemplate
 
@@ -96,6 +96,7 @@ def _build_prompt(
 # Verification via SymPy
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _verify_formula(
     formula_text: str,
     original_values: Dict[str, Any],
@@ -111,7 +112,11 @@ def _verify_formula(
             ns[k] = sympify(v)
 
         expr = parse_expr(formula_text, local_dict=ns)
-        result = float(sympy_N(expr.subs({sympify(k): sympify(v) for k, v in original_values.items()})))
+        result = float(
+            sympy_N(
+                expr.subs({sympify(k): sympify(v) for k, v in original_values.items()})
+            )
+        )
 
         if math.isnan(result) or math.isinf(result):
             return False
@@ -127,6 +132,7 @@ def _verify_formula(
 # ═══════════════════════════════════════════════════════════════════════════
 # Parse Gemini response -> TaskTemplate
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _parse_response(data: dict) -> Optional[TaskTemplate]:
     """Преобразует JSON-ответ Gemini в TaskTemplate."""
@@ -148,7 +154,9 @@ def _parse_response(data: dict) -> Optional[TaskTemplate]:
             vtype = pinfo.get("type", "int")
             params[pname] = ParamInfo(
                 name=pname,
-                original_value=int(orig) if vtype == "int" and orig == int(orig) else orig,
+                original_value=int(orig)
+                if vtype == "int" and orig == int(orig)
+                else orig,
                 min_val=int(pinfo.get("min", -50)),
                 max_val=int(pinfo.get("max", 50)),
                 value_type=vtype,
@@ -161,10 +169,10 @@ def _parse_response(data: dict) -> Optional[TaskTemplate]:
             text_template=text_template,
             params=params,
             original_values=original_values,
-            answer_formula_repr=answer_formula,   # LLM даёт текстовую формулу
+            answer_formula_repr=answer_formula,  # LLM даёт текстовую формулу
             answer_formula_text=answer_formula,
             constraints_repr=constraints,
-            quality_score=0.0,                    # будет обновлено после верификации
+            quality_score=0.0,  # будет обновлено после верификации
             sympy_expr_repr="",
         )
     except Exception as exc:
@@ -175,6 +183,7 @@ def _parse_response(data: dict) -> Optional[TaskTemplate]:
 # ═══════════════════════════════════════════════════════════════════════════
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def templatize_via_llm(
     task_text: str,
@@ -197,7 +206,11 @@ def templatize_via_llm(
     Returns:
         TaskTemplate если успешно, None если невозможно шаблонизировать.
     """
-    from src.domain.pipeline.gemini_client import call_gemini, get_model, parse_json_response
+    from src.domain.pipeline.gemini_client import (
+        call_gemini,
+        get_model,
+        parse_json_response,
+    )
 
     if not task_text or not correct_answer:
         return None
@@ -236,17 +249,20 @@ def templatize_via_llm(
                 tpl.quality_score = 0.95
                 log.info(
                     "LLM templatize OK (attempt %d): type=%s, params=%s",
-                    attempt + 1, tpl.task_type, list(tpl.params.keys()),
+                    attempt + 1,
+                    tpl.task_type,
+                    list(tpl.params.keys()),
                 )
                 return tpl
 
             log.debug(
                 "Attempt %d: formula verification failed for '%s'",
-                attempt + 1, tpl.answer_formula_text,
+                attempt + 1,
+                tpl.answer_formula_text,
             )
             # Добавляем подсказку для следующей попытки
             prompt += (
-                f"\n\n⚠️ Попытка {attempt+1} не прошла верификацию. "
+                f"\n\n⚠️ Попытка {attempt + 1} не прошла верификацию. "
                 f"Формула «{tpl.answer_formula_text}» с параметрами "
                 f"{tpl.original_values} даёт неправильный результат. "
                 f"Ожидаемый ответ: {correct_answer}. Исправь формулу."
@@ -255,5 +271,7 @@ def templatize_via_llm(
         except Exception as exc:
             log.warning("LLM call failed (attempt %d): %s", attempt + 1, exc)
 
-    log.info("LLM templatize FAILED after %d attempts for: %s", max_attempts, task_text[:80])
+    log.info(
+        "LLM templatize FAILED after %d attempts for: %s", max_attempts, task_text[:80]
+    )
     return None

@@ -10,10 +10,14 @@ src/pipeline/classification.py
 
 import json
 import logging
-from typing import Dict, List
+from typing import List
 
-from src.domain.pipeline.config import CFG
-from src.domain.pipeline.gemini_client import call_gemini, get_api_key, get_model, parse_json_response
+from src.domain.pipeline.gemini_client import (
+    call_gemini,
+    get_api_key,
+    get_model,
+    parse_json_response,
+)
 from src.domain.pipeline.models import ExtractedTask
 
 log = logging.getLogger("pipeline")
@@ -48,9 +52,13 @@ class SkeletonTextbookMapper:
 
             skills = [
                 {
-                    "id": r[0], "level": r[1], "parent_id": r[2],
-                    "name_ru": r[3], "description": r[4],
-                    "origin": r[7], "is_advanced": r[8],
+                    "id": r[0],
+                    "level": r[1],
+                    "parent_id": r[2],
+                    "name_ru": r[3],
+                    "description": r[4],
+                    "origin": r[7],
+                    "is_advanced": r[8],
                 }
                 for r in rows
             ]
@@ -74,8 +82,8 @@ class SkeletonTextbookMapper:
             f"  Сложность: {task.difficulty}\n"
             f"  Параграф: §{task.paragraph_number} «{task.paragraph_title}»\n\n"
             f"Скелет навыков:\n{self.skills_json[:6000]}\n\n"
-            "Определи ОДИН L4-навык (level=\"L4\").\n"
-            "Верни JSON: {\"skill_id\": \"...\", \"confidence\": 0.92, \"reasoning\": \"...\"}\n"
+            'Определи ОДИН L4-навык (level="L4").\n'
+            'Верни JSON: {"skill_id": "...", "confidence": 0.92, "reasoning": "..."}\n'
             "Только JSON."
         )
         try:
@@ -99,7 +107,8 @@ class SkeletonTextbookMapper:
                     task.mapping_confidence = 0.0
                     log.info(
                         "Task %s: textbook-only (no core mapping, confidence=%.2f)",
-                        task.temp_id, conf,
+                        task.temp_id,
+                        conf,
                     )
         except Exception as e:
             log.warning("Mapper error (%s): %s", task.temp_id, e)

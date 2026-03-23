@@ -11,7 +11,6 @@ Run:
 """
 
 import os
-import pytest
 
 # Ensure we're in development mode so dev_router is available
 os.environ.setdefault("APP_ENV", "development")
@@ -25,6 +24,7 @@ client = TestClient(app)
 # ============================================================================
 # HEALTH
 # ============================================================================
+
 
 class TestHealth:
     """Health endpoint."""
@@ -46,6 +46,7 @@ class TestHealth:
 # ============================================================================
 # SKILLS
 # ============================================================================
+
 
 class TestSkills:
     """Skill graph endpoints."""
@@ -89,6 +90,7 @@ class TestSkills:
 # EXAMS
 # ============================================================================
 
+
 class TestExams:
     """Exam CRUD endpoints."""
 
@@ -110,14 +112,18 @@ class TestExams:
 # CAT (Diagnostic)
 # ============================================================================
 
+
 class TestCAT:
     """CAT adaptive testing endpoints."""
 
     def test_start_cat_session(self):
-        r = client.post("/api/v1/cat/start", json={
-            "class_level": 7,
-            "max_items": 10,
-        })
+        r = client.post(
+            "/api/v1/cat/start",
+            json={
+                "class_level": 7,
+                "max_items": 10,
+            },
+        )
         # Should succeed or return 422 if no tasks for class 7
         assert r.status_code in (200, 201, 422)
 
@@ -130,6 +136,7 @@ class TestCAT:
 # AUTH
 # ============================================================================
 
+
 class TestAuth:
     """Authentication endpoints."""
 
@@ -138,10 +145,13 @@ class TestAuth:
         assert r.status_code == 422  # Validation error
 
     def test_login_wrong_credentials(self):
-        r = client.post("/api/v1/auth/login", json={
-            "email": "nonexistent@test.com",
-            "password": "wrong_password",
-        })
+        r = client.post(
+            "/api/v1/auth/login",
+            json={
+                "email": "nonexistent@test.com",
+                "password": "wrong_password",
+            },
+        )
         # Should return 401 or 404
         assert r.status_code in (401, 404)
 
@@ -149,6 +159,7 @@ class TestAuth:
 # ============================================================================
 # TEXTBOOKS
 # ============================================================================
+
 
 class TestTextbooks:
     """Textbook endpoints."""
@@ -165,6 +176,7 @@ class TestTextbooks:
 # ============================================================================
 # CORS
 # ============================================================================
+
 
 class TestCORS:
     """CORS headers on error responses."""

@@ -10,7 +10,6 @@ src/pipeline/cli.py
 """
 
 import argparse
-import json
 import logging
 import os
 
@@ -22,6 +21,7 @@ log = logging.getLogger("pipeline")
 # ------------------------------------------------------------------
 # CLI helpers
 # ------------------------------------------------------------------
+
 
 def audit_skeleton(class_level: int) -> None:
     """Проверяет покрытие скелета задачами."""
@@ -112,14 +112,14 @@ def show_status() -> None:
             )
         ).fetchall()
 
-    print(f"\nСтатус БД")
+    print("\nСтатус БД")
     print(f"  Задач: {tasks}")
     print(f"  L4-навыков: {skills}")
     print(f"  Учебников: {textbooks}")
-    print(f"\n  По источнику:")
+    print("\n  По источнику:")
     for prefix, cnt in by_source:
         print(f"    {prefix}*: {cnt}")
-    print(f"\n  По сложности:")
+    print("\n  По сложности:")
     label_map = {"A": "Лёгкий", "B": "Средний", "C": "Сложный"}
     for d, cnt in by_difficulty:
         print(f"    {d} ({label_map.get(d, d)}): {cnt}")
@@ -128,6 +128,7 @@ def show_status() -> None:
 # ------------------------------------------------------------------
 # main()
 # ------------------------------------------------------------------
+
 
 def main() -> None:
     """Entry-point для CLI конвейера оцифровки."""

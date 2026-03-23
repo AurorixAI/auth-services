@@ -24,6 +24,7 @@ _BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def get_api_key() -> str:
     """Возвращает API-ключ Gemini из конфигурации или окружения."""
     return CFG.get("gemini", {}).get("api_key", os.getenv("GEMINI_API_KEY", ""))
@@ -43,6 +44,7 @@ def get_model(variant: str = "flash") -> str:
 # ---------------------------------------------------------------------------
 # Main caller
 # ---------------------------------------------------------------------------
+
 
 def call_gemini(
     prompt: str,
@@ -91,10 +93,13 @@ def call_gemini(
             )
             # Retry on 429 (rate limit) and 5xx (server errors)
             if resp.status_code == 429 or resp.status_code >= 500:
-                wait = 2 ** attempt  # 1, 2, 4 seconds
+                wait = 2**attempt  # 1, 2, 4 seconds
                 log.warning(
                     "Gemini API %s (attempt %d/%d), retrying in %ds...",
-                    resp.status_code, attempt + 1, max_retries, wait,
+                    resp.status_code,
+                    attempt + 1,
+                    max_retries,
+                    wait,
                 )
                 time.sleep(wait)
                 last_exc = requests.HTTPError(response=resp)
@@ -105,10 +110,12 @@ def call_gemini(
             return data["candidates"][0]["content"]["parts"][0]["text"]
 
         except requests.ConnectionError as exc:
-            wait = 2 ** attempt
+            wait = 2**attempt
             log.warning(
                 "Gemini connection error (attempt %d/%d), retrying in %ds...",
-                attempt + 1, max_retries, wait,
+                attempt + 1,
+                max_retries,
+                wait,
             )
             time.sleep(wait)
             last_exc = exc
@@ -122,6 +129,7 @@ def call_gemini(
 # ---------------------------------------------------------------------------
 # JSON parser
 # ---------------------------------------------------------------------------
+
 
 def parse_json_response(text: str) -> object:
     """Парсит JSON из ответа Gemini, обрабатывая markdown code-blocks."""

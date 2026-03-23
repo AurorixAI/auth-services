@@ -3,9 +3,7 @@ ALGO V1 - Pydantic Schemas для аутентификации
 B2B модель: Organizations → Members → Students (no login)
 """
 
-from datetime import datetime
-from typing import Optional, List
-from uuid import UUID
+from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -14,29 +12,40 @@ from pydantic import BaseModel, Field, field_validator
 # ORG APPLICATION (заявка на регистрацию организации)
 # ============================================================================
 
+
 class OrgApplicationRequest(BaseModel):
     """Заявка на регистрацию организации + владелец"""
+
     # Организация
     org_name: str = Field(..., min_length=2, max_length=300)
-    org_type: str = Field(default="private_school")  # private_school, tutoring_center, other, center, university, tutor
+    org_type: str = Field(
+        default="private_school"
+    )  # private_school, tutoring_center, other, center, university, tutor
     city: Optional[str] = Field(None, max_length=200)
     phone: Optional[str] = Field(None, max_length=30)
-    
+
     # Владелец (первый пользователь)
     email: str = Field(..., min_length=5, max_length=255)
     password: str = Field(..., min_length=6, max_length=128)
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
     language: str = Field(default="ru")
-    
+
     @field_validator("org_type")
     @classmethod
     def validate_org_type(cls, v):
-        allowed = {"center", "private_school", "university", "tutoring_center", "tutor", "other"}
+        allowed = {
+            "center",
+            "private_school",
+            "university",
+            "tutoring_center",
+            "tutor",
+            "other",
+        }
         if v not in allowed:
             raise ValueError(f"org_type must be one of: {', '.join(sorted(allowed))}")
         return v
-    
+
     @field_validator("email")
     @classmethod
     def validate_email(cls, v):
@@ -49,10 +58,11 @@ class OrgApplicationRequest(BaseModel):
 # LOGIN (без изменений)
 # ============================================================================
 
+
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=255)
     password: str = Field(..., min_length=1, max_length=128)
-    
+
     @field_validator("email")
     @classmethod
     def normalize_email(cls, v):
@@ -79,11 +89,13 @@ class UpdateProfileRequest(BaseModel):
 # INVITATIONS (приглашения в организацию)
 # ============================================================================
 
+
 class InviteMemberRequest(BaseModel):
     """Пригласить сотрудника в организацию"""
+
     email: Optional[str] = Field(None, max_length=255)
     org_role: str = Field(default="teacher")
-    
+
     @field_validator("org_role")
     @classmethod
     def validate_role(cls, v):
@@ -94,12 +106,13 @@ class InviteMemberRequest(BaseModel):
 
 class AcceptInviteRequest(BaseModel):
     """Принять приглашение (создать аккаунт)"""
+
     code: str = Field(..., min_length=4, max_length=20)
     email: str = Field(..., min_length=5, max_length=255)
     password: str = Field(..., min_length=6, max_length=128)
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
-    
+
     @field_validator("email")
     @classmethod
     def normalize_email(cls, v):
@@ -110,8 +123,10 @@ class AcceptInviteRequest(BaseModel):
 # STUDENTS (ученики без логина)
 # ============================================================================
 
+
 class StudentCreateRequest(BaseModel):
     """Добавить ученика"""
+
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
     class_level: int = Field(..., ge=1, le=11)
@@ -121,6 +136,7 @@ class StudentCreateRequest(BaseModel):
 
 class StudentUpdateRequest(BaseModel):
     """Обновить данные ученика (после диагностики и т.д.)"""
+
     first_name: Optional[str] = Field(None, max_length=100)
     last_name: Optional[str] = Field(None, max_length=100)
     class_level: Optional[int] = Field(None, ge=1, le=11)
@@ -129,7 +145,7 @@ class StudentUpdateRequest(BaseModel):
     student_phone: Optional[str] = Field(None, max_length=30)
     comment: Optional[str] = None
     status: Optional[str] = None
-    
+
     @field_validator("status")
     @classmethod
     def validate_status(cls, v):
@@ -157,12 +173,14 @@ class StudentResponse(BaseModel):
 # DIAGNOSTIC INVITES
 # ============================================================================
 
+
 class DiagnosticCreateRequest(BaseModel):
     """Создать диагностику для ученика"""
+
     student_id: str
     class_level: int = Field(..., ge=1, le=11)
     diagnostic_type: str = Field(default="initial")
-    
+
     @field_validator("diagnostic_type")
     @classmethod
     def validate_type(cls, v):
@@ -173,6 +191,7 @@ class DiagnosticCreateRequest(BaseModel):
 
 class DiagnosticQuickRequest(BaseModel):
     """Быстрое создание: ученик + диагностика за раз"""
+
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
     class_level: int = Field(..., ge=1, le=11)
@@ -193,6 +212,7 @@ class DiagnosticInviteResponse(BaseModel):
 
 class DiagnosticConfirmRequest(BaseModel):
     """Ученик подтверждает своё имя перед стартом"""
+
     first_name: str
     last_name: str
 
@@ -200,6 +220,7 @@ class DiagnosticConfirmRequest(BaseModel):
 # ============================================================================
 # GROUPS
 # ============================================================================
+
 
 class GroupCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
@@ -235,6 +256,7 @@ class GroupResponse(BaseModel):
 # RESPONSE SCHEMAS
 # ============================================================================
 
+
 class UserResponse(BaseModel):
     id: str
     email: str
@@ -264,6 +286,7 @@ class OrgResponse(BaseModel):
 
 class OrgUpdateRequest(BaseModel):
     """Обновление данных организации"""
+
     name: Optional[str] = None
     city: Optional[str] = None
     phone: Optional[str] = None

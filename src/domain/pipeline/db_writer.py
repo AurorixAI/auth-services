@@ -54,9 +54,9 @@ class DBWriter:
                     continue
 
                 task_id = (
-                    f"{prefix}_{task.paragraph_number}_{task.exercise_number}"
-                    .replace(".", "_")
-                    .replace(" ", "")
+                    f"{prefix}_{task.paragraph_number}_{task.exercise_number}".replace(
+                        ".", "_"
+                    ).replace(" ", "")
                 )
 
                 irt_b = {"A": -1.0, "B": 0.5, "C": 1.5}.get(task.difficulty, 0.0)
@@ -109,23 +109,28 @@ class DBWriter:
                         "irt_c": irt_c,
                         "solution_steps": (
                             json.dumps(task.solution_steps, ensure_ascii=False)
-                            if task.solution_steps else None
+                            if task.solution_steps
+                            else None
                         ),
                         "hints": (
                             json.dumps(task.hints, ensure_ascii=False)
-                            if task.hints else None
+                            if task.hints
+                            else None
                         ),
                         "common_mistakes": (
                             json.dumps(task.common_mistakes, ensure_ascii=False)
-                            if task.common_mistakes else None
+                            if task.common_mistakes
+                            else None
                         ),
                         "distractor_meta": (
                             json.dumps(task.distractor_meta, ensure_ascii=False)
-                            if task.distractor_meta else None
+                            if task.distractor_meta
+                            else None
                         ),
                         "answer_options": (
                             json.dumps(task.distractors, ensure_ascii=False)
-                            if task.distractors else None
+                            if task.distractors
+                            else None
                         ),
                         "toc_id": task.toc_id,
                         "tags": json.dumps(task.tags, ensure_ascii=False),

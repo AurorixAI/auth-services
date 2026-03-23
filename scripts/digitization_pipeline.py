@@ -21,9 +21,9 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 # Re-export public API for backward compatibility
-from src.pipeline.models import ExtractedTask, DistractorResult        # noqa: F401,E402
-from src.pipeline.orchestrator import DigitizationPipeline             # noqa: F401,E402
-from src.pipeline.cli import main                                      # noqa: F401,E402
+from src.pipeline.models import ExtractedTask, DistractorResult  # noqa: F401,E402
+from src.pipeline.orchestrator import DigitizationPipeline  # noqa: F401,E402
+from src.pipeline.cli import main  # noqa: F401,E402
 
 if __name__ == "__main__":
     main()

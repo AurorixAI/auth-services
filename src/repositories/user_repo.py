@@ -37,6 +37,7 @@ class UserRepo(BaseRepository[User]):
 
     def update_last_login(self, user: User) -> None:
         from sqlalchemy.sql import func
+
         user.last_login_at = func.now()
         user.login_count = (user.login_count or 0) + 1
         self.session.flush()
@@ -49,7 +50,10 @@ class UserRepo(BaseRepository[User]):
         stmt = (
             select(User)
             .join(OrganizationMember, OrganizationMember.user_id == User.id)
-            .where(OrganizationMember.org_id == org_id, OrganizationMember.is_active.is_(True))
+            .where(
+                OrganizationMember.org_id == org_id,
+                OrganizationMember.is_active.is_(True),
+            )
         )
         if role:
             stmt = stmt.where(OrganizationMember.org_role == role)
@@ -59,7 +63,9 @@ class UserRepo(BaseRepository[User]):
 class OrgMemberRepo(BaseRepository[OrganizationMember]):
     model = OrganizationMember
 
-    def get_membership(self, org_id: UUID, user_id: UUID) -> Optional[OrganizationMember]:
+    def get_membership(
+        self, org_id: UUID, user_id: UUID
+    ) -> Optional[OrganizationMember]:
         stmt = select(OrganizationMember).where(
             OrganizationMember.org_id == org_id,
             OrganizationMember.user_id == user_id,

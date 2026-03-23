@@ -5,8 +5,16 @@ Tables: tasks_master, task_templates
 """
 
 from sqlalchemy import (
-    Column, String, Integer, Boolean, Text, ForeignKey,
-    DateTime, Numeric, Index, CheckConstraint, UniqueConstraint,
+    Column,
+    String,
+    Integer,
+    Boolean,
+    Text,
+    ForeignKey,
+    DateTime,
+    Numeric,
+    Index,
+    CheckConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -17,10 +25,11 @@ from src.models.base import Base
 
 class TaskMaster(Base):
     """Банк задач"""
-    __tablename__ = 'tasks_master'
+
+    __tablename__ = "tasks_master"
 
     id = Column(String(30), primary_key=True)
-    skill_id = Column(String(30), ForeignKey('knowledge_hierarchy.id'), nullable=True)
+    skill_id = Column(String(30), ForeignKey("knowledge_hierarchy.id"), nullable=True)
 
     question_text = Column(Text, nullable=False)
     question_latex = Column(Text)
@@ -37,7 +46,7 @@ class TaskMaster(Base):
     generation_function = Column(Text)
 
     # Сложность (SQL column name: 'difficulty', not 'difficulty_level')
-    difficulty = Column(String(1), default='B')
+    difficulty = Column(String(1), default="B")
     difficulty_score = Column(Numeric(3, 2))
     cognitive_load = Column(String(20))
 
@@ -54,7 +63,7 @@ class TaskMaster(Base):
     distractor_meta = Column(JSONB)
     sympy_solution = Column(Text)
 
-    verification_status = Column(String(20), default='pending')
+    verification_status = Column(String(20), default="pending")
     verified_by = Column(String(100))
     verified_at = Column(DateTime)
 
@@ -70,7 +79,7 @@ class TaskMaster(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # Расширения (миграция 009)
-    toc_id = Column(Integer, ForeignKey('textbook_toc.id'))
+    toc_id = Column(Integer, ForeignKey("textbook_toc.id"))
     tags = Column(JSONB, default={})
 
     skill = relationship("KnowledgeHierarchy", back_populates="tasks")
@@ -85,10 +94,12 @@ class TaskMaster(Base):
 
     __table_args__ = (
         CheckConstraint("difficulty IN ('A', 'B', 'C')"),
-        CheckConstraint("verification_status IN ('pending', 'verified', 'conflict', 'rejected', 'needs_review')"),
-        Index('idx_tm_skill', 'skill_id'),
-        Index('idx_tm_difficulty', 'difficulty'),
-        Index('idx_tm_active', 'is_active'),
+        CheckConstraint(
+            "verification_status IN ('pending', 'verified', 'conflict', 'rejected', 'needs_review')"
+        ),
+        Index("idx_tm_skill", "skill_id"),
+        Index("idx_tm_difficulty", "difficulty"),
+        Index("idx_tm_active", "is_active"),
     )
 
 
@@ -100,11 +111,12 @@ class TaskTemplateDB(Base):
     параметры и constraints.  SymPy использует эти данные только для
     подстановки новых чисел и верификации ответа.
     """
-    __tablename__ = 'task_templates'
+
+    __tablename__ = "task_templates"
 
     id = Column(String(30), primary_key=True)
-    original_task_id = Column(String(30), ForeignKey('tasks_master.id'), nullable=False)
-    skill_id = Column(String(30), ForeignKey('knowledge_hierarchy.id'), nullable=False)
+    original_task_id = Column(String(30), ForeignKey("tasks_master.id"), nullable=False)
+    skill_id = Column(String(30), ForeignKey("knowledge_hierarchy.id"), nullable=False)
 
     template_text = Column(Text, nullable=False)
     template_latex = Column(Text)
@@ -124,7 +136,7 @@ class TaskTemplateDB(Base):
     # Расширения из 012_variant_engine
     answer_formula_sympy = Column(Text)
     constraints_repr = Column(JSONB, default=[])
-    task_type = Column(String(30), default='arithmetic')
+    task_type = Column(String(30), default="arithmetic")
     text_template = Column(Text)
     original_values = Column(JSONB, default={})
     param_details = Column(JSONB, default={})
@@ -133,7 +145,7 @@ class TaskTemplateDB(Base):
     skill = relationship("KnowledgeHierarchy")
 
     __table_args__ = (
-        Index('idx_tt_skill', 'skill_id'),
-        Index('idx_tt_quality', quality_score.desc()),
-        Index('idx_tt_task_type', 'task_type'),
+        Index("idx_tt_skill", "skill_id"),
+        Index("idx_tt_quality", quality_score.desc()),
+        Index("idx_tt_task_type", "task_type"),
     )

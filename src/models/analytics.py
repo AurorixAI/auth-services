@@ -6,8 +6,18 @@ Tables: answer_events, skill_correlations, error_patterns,
 """
 
 from sqlalchemy import (
-    Column, String, Integer, Boolean, Text, ForeignKey,
-    DateTime, Numeric, BigInteger, Index, CheckConstraint, UniqueConstraint,
+    Column,
+    String,
+    Integer,
+    Boolean,
+    Text,
+    ForeignKey,
+    DateTime,
+    Numeric,
+    BigInteger,
+    Index,
+    CheckConstraint,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -18,15 +28,16 @@ from src.models.base import Base
 
 class AnswerEvent(Base):
     """Полная история ответов для ML"""
-    __tablename__ = 'answer_events'
+
+    __tablename__ = "answer_events"
 
     id = Column(BigInteger, primary_key=True)
 
     session_id = Column(UUID(as_uuid=True), nullable=False)
     student_id = Column(UUID(as_uuid=True))
 
-    task_id = Column(String(30), ForeignKey('tasks_master.id'), nullable=False)
-    skill_id = Column(String(30), ForeignKey('knowledge_hierarchy.id'), nullable=False)
+    task_id = Column(String(30), ForeignKey("tasks_master.id"), nullable=False)
+    skill_id = Column(String(30), ForeignKey("knowledge_hierarchy.id"), nullable=False)
 
     is_correct = Column(Boolean, nullable=False)
     student_answer = Column(Text)
@@ -57,21 +68,26 @@ class AnswerEvent(Base):
     skill = relationship("KnowledgeHierarchy")
 
     __table_args__ = (
-        Index('idx_ae_session', 'session_id'),
-        Index('idx_ae_student', 'student_id'),
-        Index('idx_ae_skill', 'skill_id'),
-        Index('idx_ae_submitted', 'submitted_at'),
+        Index("idx_ae_session", "session_id"),
+        Index("idx_ae_student", "student_id"),
+        Index("idx_ae_skill", "skill_id"),
+        Index("idx_ae_submitted", "submitted_at"),
     )
 
 
 class SkillCorrelation(Base):
     """Обнаруженные корреляции между навыками"""
-    __tablename__ = 'skill_correlations'
+
+    __tablename__ = "skill_correlations"
 
     id = Column(Integer, primary_key=True)
 
-    skill_a_id = Column(String(30), ForeignKey('knowledge_hierarchy.id'), nullable=False)
-    skill_b_id = Column(String(30), ForeignKey('knowledge_hierarchy.id'), nullable=False)
+    skill_a_id = Column(
+        String(30), ForeignKey("knowledge_hierarchy.id"), nullable=False
+    )
+    skill_b_id = Column(
+        String(30), ForeignKey("knowledge_hierarchy.id"), nullable=False
+    )
 
     correlation_coefficient = Column(Numeric(6, 4), nullable=False)
     p_value = Column(Numeric(10, 8))
@@ -96,20 +112,25 @@ class SkillCorrelation(Base):
     skill_b = relationship("KnowledgeHierarchy", foreign_keys=[skill_b_id])
 
     __table_args__ = (
-        CheckConstraint("relationship_type IN ('prerequisite', 'corequisite', 'diagnostic', 'transfer')"),
-        CheckConstraint("discovery_method IN ('expert_defined', 'statistical', 'ml_discovered', 'pattern_mining')"),
-        UniqueConstraint('skill_a_id', 'skill_b_id', 'relationship_type'),
-        Index('idx_sc_skill_a', 'skill_a_id'),
-        Index('idx_sc_skill_b', 'skill_b_id'),
+        CheckConstraint(
+            "relationship_type IN ('prerequisite', 'corequisite', 'diagnostic', 'transfer')"
+        ),
+        CheckConstraint(
+            "discovery_method IN ('expert_defined', 'statistical', 'ml_discovered', 'pattern_mining')"
+        ),
+        UniqueConstraint("skill_a_id", "skill_b_id", "relationship_type"),
+        Index("idx_sc_skill_a", "skill_a_id"),
+        Index("idx_sc_skill_b", "skill_b_id"),
     )
 
 
 class ErrorPattern(Base):
     """Паттерны ошибок"""
-    __tablename__ = 'error_patterns'
+
+    __tablename__ = "error_patterns"
 
     id = Column(Integer, primary_key=True)
-    skill_id = Column(String(30), ForeignKey('knowledge_hierarchy.id'), nullable=False)
+    skill_id = Column(String(30), ForeignKey("knowledge_hierarchy.id"), nullable=False)
 
     pattern_type = Column(String(30), nullable=False)
     pattern_description = Column(Text, nullable=False)
@@ -130,15 +151,18 @@ class ErrorPattern(Base):
     skill = relationship("KnowledgeHierarchy")
 
     __table_args__ = (
-        CheckConstraint("pattern_type IN ('sign_error', 'order_of_operations', 'formula_confusion', 'concept_gap', 'calculation_error', 'careless_mistake', 'time_pressure', 'partial_knowledge', 'misconception', 'other')"),
-        Index('idx_ep_skill', 'skill_id'),
-        Index('idx_ep_type', 'pattern_type'),
+        CheckConstraint(
+            "pattern_type IN ('sign_error', 'order_of_operations', 'formula_confusion', 'concept_gap', 'calculation_error', 'careless_mistake', 'time_pressure', 'partial_knowledge', 'misconception', 'other')"
+        ),
+        Index("idx_ep_skill", "skill_id"),
+        Index("idx_ep_type", "pattern_type"),
     )
 
 
 class SessionSummary(Base):
     """Сводка по диагностическим сессиям"""
-    __tablename__ = 'session_summaries'
+
+    __tablename__ = "session_summaries"
 
     session_id = Column(UUID(as_uuid=True), primary_key=True)
     student_id = Column(UUID(as_uuid=True))
@@ -160,7 +184,7 @@ class SessionSummary(Base):
     recommended_skills = Column(JSONB, default=[])
     priority_order = Column(JSONB, default=[])
 
-    session_type = Column(String(20), default='diagnostic')
+    session_type = Column(String(20), default="diagnostic")
 
     platform = Column(String(20))
     client_version = Column(String(20))
@@ -168,19 +192,22 @@ class SessionSummary(Base):
     created_at = Column(DateTime, default=func.now())
 
     __table_args__ = (
-        CheckConstraint("session_type IN ('diagnostic', 'quick_check', 'practice', 'exam')"),
-        Index('idx_ss_student', 'student_id'),
-        Index('idx_ss_started', 'started_at'),
+        CheckConstraint(
+            "session_type IN ('diagnostic', 'quick_check', 'practice', 'exam')"
+        ),
+        Index("idx_ss_student", "student_id"),
+        Index("idx_ss_started", "started_at"),
     )
 
 
 class StudentSkillState(Base):
     """Байесовское состояние навыков ученика"""
-    __tablename__ = 'student_skill_states'
+
+    __tablename__ = "student_skill_states"
 
     id = Column(Integer, primary_key=True)
     student_id = Column(UUID(as_uuid=True), nullable=False)
-    skill_id = Column(String(30), ForeignKey('knowledge_hierarchy.id'), nullable=False)
+    skill_id = Column(String(30), ForeignKey("knowledge_hierarchy.id"), nullable=False)
 
     mastery_probability = Column(Numeric(5, 4), nullable=False, default=0.5)
     learn_rate = Column(Numeric(5, 4), default=0.1)
@@ -199,7 +226,7 @@ class StudentSkillState(Base):
     consecutive_correct = Column(Integer, default=0)
     consecutive_incorrect = Column(Integer, default=0)
 
-    status = Column(String(20), default='unknown')
+    status = Column(String(20), default="unknown")
 
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
@@ -207,19 +234,24 @@ class StudentSkillState(Base):
 
     __table_args__ = (
         CheckConstraint("trend IN ('improving', 'stable', 'declining', 'unknown')"),
-        CheckConstraint("status IN ('mastered', 'learning', 'struggling', 'gap', 'unknown')"),
-        UniqueConstraint('student_id', 'skill_id'),
-        Index('idx_sss_student', 'student_id'),
-        Index('idx_sss_skill', 'skill_id'),
-        Index('idx_sss_status', 'status'),
+        CheckConstraint(
+            "status IN ('mastered', 'learning', 'struggling', 'gap', 'unknown')"
+        ),
+        UniqueConstraint("student_id", "skill_id"),
+        Index("idx_sss_student", "student_id"),
+        Index("idx_sss_skill", "skill_id"),
+        Index("idx_sss_status", "status"),
     )
 
 
 class SkillResponseTime(Base):
     """Статистика времени ответов по навыкам"""
-    __tablename__ = 'skill_response_times'
 
-    skill_id = Column(String(30), ForeignKey('knowledge_hierarchy.id'), primary_key=True)
+    __tablename__ = "skill_response_times"
+
+    skill_id = Column(
+        String(30), ForeignKey("knowledge_hierarchy.id"), primary_key=True
+    )
     difficulty_level = Column(String(1), primary_key=True)
 
     sample_size = Column(Integer, default=0)
@@ -241,6 +273,4 @@ class SkillResponseTime(Base):
 
     skill = relationship("KnowledgeHierarchy")
 
-    __table_args__ = (
-        CheckConstraint("difficulty_level IN ('A', 'B', 'C')"),
-    )
+    __table_args__ = (CheckConstraint("difficulty_level IN ('A', 'B', 'C')"),)

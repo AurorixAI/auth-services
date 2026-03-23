@@ -7,10 +7,8 @@ Manages operations on textbooks and textbook structures.
 
 from __future__ import annotations
 
-from typing import List, Optional
-from uuid import UUID
+from typing import List
 
-from src.core.exceptions import NotFoundError, ValidationError
 # from src.repositories.textbook_repo import TextbookRepo
 
 

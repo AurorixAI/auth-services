@@ -5,7 +5,6 @@ ALGO V1 — Answer Checking Utility
 Устраняет дублирование _check_answer() в main_v2, cat_router, exam_router.
 """
 
-from typing import Optional
 
 
 def check_answer(
@@ -40,6 +39,7 @@ def check_answer(
     elif answer_type == "fraction":
         try:
             from fractions import Fraction
+
             return Fraction(student) == Fraction(correct)
         except Exception:
             return student == correct
@@ -47,6 +47,7 @@ def check_answer(
     elif answer_type == "expression":
         try:
             from sympy import simplify, parse_expr
+
             return simplify(parse_expr(student) - parse_expr(correct)) == 0
         except Exception:
             return student == correct

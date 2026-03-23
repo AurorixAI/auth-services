@@ -6,7 +6,7 @@ Extracted from the monolithic src/auth/service.py.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List
 from uuid import UUID
 
 from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
@@ -94,13 +94,16 @@ class OrgService:
     def get_org(self, org_id: UUID) -> dict:
         return self.org_repo.get_by_id_or_raise(org_id, "Organization").to_dict()
 
-    def accept_invitation(self, code: str, first_name: str, last_name: str, password: str) -> dict:
+    def accept_invitation(
+        self, code: str, first_name: str, last_name: str, password: str
+    ) -> dict:
         """Create a new user account via an invitation code."""
         invite = self.invitation_repo.get_by_code(code)
         if not invite:
             raise NotFoundError("Invitation", code)
 
         from datetime import datetime, timezone
+
         if invite.expires_at < datetime.now(timezone.utc).replace(tzinfo=None):
             raise ForbiddenError("Invitation has expired")
 
@@ -119,6 +122,7 @@ class OrgService:
         self.invitation_repo.mark_accepted(invite, user.id)
 
         from src.models.auth import OrganizationMember
+
         member = OrganizationMember(
             org_id=invite.org_id,
             user_id=user.id,

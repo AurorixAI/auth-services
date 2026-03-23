@@ -7,12 +7,11 @@ Manages generated exams.
 
 from __future__ import annotations
 
-from typing import List, Optional
 from uuid import UUID
 
-from src.core.exceptions import NotFoundError, ValidationError
 # from src.models.exam import GeneratedExam, ExamSession
 # from src.repositories.exam_repo import ExamRepo
+
 
 class ExamService:
     def __init__(self, session) -> None:

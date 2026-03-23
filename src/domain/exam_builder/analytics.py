@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from src.utils.answer_check import check_answer as _shared_check_answer
 
@@ -54,9 +54,9 @@ class DistractorInsight:
     """Анализ одного дистрактора: почему ученик мог выбрать этот ответ."""
 
     distractor_value: str
-    error_type: str             # sign_error, off_by_one, transfer_error, …
-    explanation: str            # Человекочитаемое объяснение
-    matches_student: bool       # Совпадает ли с ответом ученика
+    error_type: str  # sign_error, off_by_one, transfer_error, …
+    explanation: str  # Человекочитаемое объяснение
+    matches_student: bool  # Совпадает ли с ответом ученика
 
 
 @dataclass
@@ -65,9 +65,9 @@ class SkillGap:
 
     skill_id: str
     skill_name: str
-    gap_type: str               # missing_prerequisite, weak_mastery, procedural_error
-    severity: float             # 0.0 — 1.0
-    recommendation: str         # Что нужно повторить
+    gap_type: str  # missing_prerequisite, weak_mastery, procedural_error
+    severity: float  # 0.0 — 1.0
+    recommendation: str  # Что нужно повторить
 
 
 @dataclass
@@ -85,8 +85,10 @@ class MappedTaskResult:
     # Полная диагностика
     distractor_insights: List[DistractorInsight] = field(default_factory=list)
     skill_gaps: List[SkillGap] = field(default_factory=list)
-    error_pattern: str = ""     # Описание паттерна ошибки
-    prerequisite_chain: List[str] = field(default_factory=list)  # skill_ids от пробела до цели
+    error_pattern: str = ""  # Описание паттерна ошибки
+    prerequisite_chain: List[str] = field(
+        default_factory=list
+    )  # skill_ids от пробела до цели
 
 
 @dataclass
@@ -232,7 +234,7 @@ class ExamAnalytics:
             ExamAnalyticsReport
         """
         meta_by_id: Dict[str, Dict[str, Any]] = {m["task_id"]: m for m in tasks_meta}
-        answer_by_id = {a.task_id: a for a in answers}
+        {a.task_id: a for a in answers}
 
         mapped_results: List[MappedTaskResult] = []
         basic_results: List[BasicTaskResult] = []
@@ -241,7 +243,9 @@ class ExamAnalytics:
             meta = meta_by_id.get(ans.task_id, {})
             correct_answer = meta.get("correct_answer", "")
             answer_type = meta.get("answer_type", "text")
-            is_correct = self._check_answer(ans.student_answer, correct_answer, answer_type)
+            is_correct = self._check_answer(
+                ans.student_answer, correct_answer, answer_type
+            )
             skill_id = meta.get("skill_id")
 
             if skill_id:
@@ -268,9 +272,8 @@ class ExamAnalytics:
             all_gaps.extend(r.skill_gaps)
         unique_gaps = self._deduplicate_gaps(all_gaps)
 
-        total_correct = (
-            sum(1 for r in mapped_results if r.correct)
-            + sum(1 for r in basic_results if r.correct)
+        total_correct = sum(1 for r in mapped_results if r.correct) + sum(
+            1 for r in basic_results if r.correct
         )
         total_tasks = len(answers)
 

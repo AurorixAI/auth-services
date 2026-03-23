@@ -7,9 +7,7 @@ Covers:
   3. VariantOrchestrator — full variant generation cycle
 """
 
-import math
-import pytest
-from typing import Dict, List, Optional
+from typing import Dict, List
 from unittest.mock import patch
 
 from src.exam_builder.template_models import TaskTemplate, ParamInfo
@@ -19,22 +17,31 @@ from src.exam_builder.template_models import TaskTemplate, ParamInfo
 # 1. StepSolver tests
 # ─────────────────────────────────────────────────────────────────
 
+
 class TestStepSolver:
     """Tests for src.exam_builder.sympy_step_solver.StepSolver"""
 
     def _solver(self):
         from src.exam_builder.sympy_step_solver import StepSolver
+
         return StepSolver()
 
     def test_solve_generic(self):
         solver = self._solver()
-        steps = solver.solve("arithmetic", "a + b", {"a": 3, "b": 5}, "Вычислите {a} + {b}")
+        steps = solver.solve(
+            "arithmetic", "a + b", {"a": 3, "b": 5}, "Вычислите {a} + {b}"
+        )
         assert len(steps) >= 2
         assert steps[-1].result == "8"
 
     def test_solve_linear(self):
         solver = self._solver()
-        steps = solver.solve("linear", "(c - b) / a", {"a": 3, "b": 7, "c": 19}, "Решите: {a}x + {b} = {c}")
+        steps = solver.solve(
+            "linear",
+            "(c - b) / a",
+            {"a": 3, "b": 7, "c": 19},
+            "Решите: {a}x + {b} = {c}",
+        )
         assert len(steps) >= 2
         # Последний шаг = ответ 4
         last_result = steps[-1].result
@@ -54,7 +61,7 @@ class TestStepSolver:
             "quadratic",
             "(-b + sqrt(b**2 - 4*a*c)) / (2*a)",
             {"a": 1, "b": -5, "c": 6},
-            "x² + {b}x + {c} = 0"
+            "x² + {b}x + {c} = 0",
         )
         assert len(steps) >= 2
 
@@ -68,15 +75,18 @@ class TestStepSolver:
 # 3. StepDistractorEngine tests
 # ─────────────────────────────────────────────────────────────────
 
+
 class TestStepDistractorEngine:
     """Tests for src.exam_builder.sympy_step_solver.StepDistractorEngine"""
 
     def _engine(self):
         from src.exam_builder.sympy_step_solver import StepDistractorEngine
+
         return StepDistractorEngine()
 
     def _make_steps(self):
         from src.exam_builder.sympy_step_solver import StepSolver
+
         solver = StepSolver()
         return solver.solve("arithmetic", "a + b", {"a": 10, "b": 25}, "{a} + {b}")
 
@@ -123,11 +133,13 @@ class TestStepDistractorEngine:
 # 4. VariantOrchestrator tests
 # ─────────────────────────────────────────────────────────────────
 
+
 class TestVariantOrchestrator:
     """Tests for src.exam_builder.variant_orchestrator.VariantOrchestrator"""
 
     def _orchestrator(self):
         from src.exam_builder.variant_orchestrator import VariantOrchestrator
+
         return VariantOrchestrator()
 
     def _sample_tasks(self) -> List[Dict]:
@@ -317,11 +329,13 @@ class TestVariantOrchestrator:
 # 5. Integration: VariantTask / GeneratedVariant serialization
 # ─────────────────────────────────────────────────────────────────
 
+
 class TestVariantSerialization:
     """Tests that VariantTask and GeneratedVariant serialize correctly."""
 
     def test_variant_task_to_dict(self):
         from src.exam_builder.variant_orchestrator import VariantTask
+
         vt = VariantTask(
             task_id="VT_abc",
             question_text="2 + 3",
@@ -338,6 +352,7 @@ class TestVariantSerialization:
 
     def test_generated_variant_to_dict(self):
         from src.exam_builder.variant_orchestrator import VariantTask, GeneratedVariant
+
         gv = GeneratedVariant(
             variant_number=1,
             tasks=[
@@ -353,6 +368,7 @@ class TestVariantSerialization:
 
     def test_generation_report_fields(self):
         from src.exam_builder.variant_orchestrator import GenerationReport
+
         report = GenerationReport(
             total_variants=5,
             tasks_templatized=3,

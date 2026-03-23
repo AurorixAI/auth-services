@@ -34,10 +34,17 @@ def _parse_rate(rate_string: str) -> Tuple[int, int]:
     count_s, period_s = rate_string.split("/")
     count = int(count_s)
     period_map = {
-        "second": 1, "sec": 1, "s": 1,
-        "minute": 60, "min": 60, "m": 60,
-        "hour": 3600, "hr": 3600, "h": 3600,
-        "day": 86400, "d": 86400,
+        "second": 1,
+        "sec": 1,
+        "s": 1,
+        "minute": 60,
+        "min": 60,
+        "m": 60,
+        "hour": 3600,
+        "hr": 3600,
+        "h": 3600,
+        "day": 86400,
+        "d": 86400,
     }
     window = period_map.get(period_s.strip().lower())
     if window is None:
@@ -48,7 +55,11 @@ def _parse_rate(rate_string: str) -> Tuple[int, int]:
 def _client_key(request: Request, endpoint: str) -> str:
     """Build a unique key from IP + endpoint."""
     forwarded = request.headers.get("x-forwarded-for")
-    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+    ip = (
+        forwarded.split(",")[0].strip()
+        if forwarded
+        else (request.client.host if request.client else "unknown")
+    )
     return f"rl:{endpoint}:{ip}"
 
 
@@ -56,10 +67,12 @@ def _client_key(request: Request, endpoint: str) -> str:
 # Core check functions
 # ---------------------------------------------------------------------------
 
+
 def _check_redis(key: str, max_requests: int, window: int) -> bool:
     """Return True if request is allowed. Uses Redis INCR + EXPIRE."""
     try:
         from src.api.redis_sessions import _get_redis
+
         r = _get_redis()
         if r is None:
             return _check_memory(key, max_requests, window)
@@ -90,6 +103,7 @@ def _check_memory(key: str, max_requests: int, window: int) -> bool:
 # ---------------------------------------------------------------------------
 # FastAPI Dependency
 # ---------------------------------------------------------------------------
+
 
 def rate_limit(rate_string: str, endpoint: str | None = None):
     """

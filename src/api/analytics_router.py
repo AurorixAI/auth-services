@@ -5,12 +5,13 @@ REST API: Student progress, Group analytics, Enrollment, Live queue
 """
 
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from typing import Optional
 
 from src.core.dependencies import (
-    require_org_owner, require_org_admin, require_org_teacher, require_org_member,
+    require_org_owner,
+    require_org_admin,
+    require_org_teacher,
     require_superadmin,
 )
 from src.domain.analytics.student_progress import StudentProgressService
@@ -25,11 +26,12 @@ router = APIRouter(prefix="/analytics", tags=["Analytics"])
 # ║  STUDENT PROGRESS — доступ: teacher и выше                           ║
 # ╚═══════════════════════════════════════════════════════════════════════╝
 
+
 @router.get("/students/{student_id}/skill-map")
 def student_skill_map(
     student_id: str,
     user: dict = Depends(require_org_teacher),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Карта навыков ученика — mastery по каждому навыку"""
     svc = StudentProgressService(db)
@@ -40,7 +42,7 @@ def student_skill_map(
 def student_timeline(
     student_id: str,
     user: dict = Depends(require_org_teacher),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Динамика θ ученика по времени"""
     svc = StudentProgressService(db)
@@ -51,7 +53,7 @@ def student_timeline(
 def student_weaknesses(
     student_id: str,
     user: dict = Depends(require_org_teacher),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Отчёт о слабых навыках ученика"""
     svc = StudentProgressService(db)
@@ -62,7 +64,7 @@ def student_weaknesses(
 def student_diagnostic_results(
     student_id: str,
     user: dict = Depends(require_org_teacher),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Все результаты диагностик ученика"""
     svc = StudentProgressService(db)
@@ -73,11 +75,12 @@ def student_diagnostic_results(
 # ║  GROUP ANALYTICS — доступ: teacher и выше                            ║
 # ╚═══════════════════════════════════════════════════════════════════════╝
 
+
 @router.get("/groups/{group_id}/overview")
 def group_overview(
     group_id: str,
     user: dict = Depends(require_org_teacher),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Обзор группы: средний θ, распределение, список учеников"""
     svc = GroupAnalyticsService(db)
@@ -88,7 +91,7 @@ def group_overview(
 def group_skill_heatmap(
     group_id: str,
     user: dict = Depends(require_org_teacher),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Тепловая карта навыков группы (students × skills)"""
     svc = GroupAnalyticsService(db)
@@ -99,7 +102,7 @@ def group_skill_heatmap(
 def group_problem_skills(
     group_id: str,
     user: dict = Depends(require_org_teacher),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Проблемные навыки группы — где больше всего gap/struggling"""
     svc = GroupAnalyticsService(db)
@@ -110,10 +113,10 @@ def group_problem_skills(
 # ║  ORG-LEVEL ANALYTICS — доступ: admin и выше                          ║
 # ╚═══════════════════════════════════════════════════════════════════════╝
 
+
 @router.get("/org/problem-skills")
 def org_problem_skills(
-    user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    user: dict = Depends(require_org_admin), db: Session = Depends(get_db)
 ):
     """Проблемные навыки по всей организации"""
     svc = GroupAnalyticsService(db)
@@ -124,7 +127,7 @@ def org_problem_skills(
 def org_enrollment(
     days: int = Query(30, ge=1, le=365),
     user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Аналитика потока: новые ученики, диагностики за период.
@@ -136,8 +139,7 @@ def org_enrollment(
 
 @router.get("/org/live-queue")
 def org_live_queue(
-    user: dict = Depends(require_org_admin),
-    db: Session = Depends(get_db)
+    user: dict = Depends(require_org_admin), db: Session = Depends(get_db)
 ):
     """
     Живая очередь диагностик.
@@ -151,37 +153,41 @@ def org_live_queue(
 # ║  OWNER OVERVIEW — доступ: owner                                      ║
 # ╚═══════════════════════════════════════════════════════════════════════╝
 
+
 @router.get("/org/overview")
 def org_overview(
-    user: dict = Depends(require_org_owner),
-    db: Session = Depends(get_db)
+    user: dict = Depends(require_org_owner), db: Session = Depends(get_db)
 ):
     """
     Обзор организации для владельца.
     Агрегация: группы, учителя, средний уровень, потенциальные проблемы.
     """
     from src.auth.service import AuthService
-    from src.models.auth import Group, Student, OrganizationMember
-    
+    from src.models.auth import Group
+
     org_id = user["org_id"]
     auth_svc = AuthService(db)
     stats = auth_svc.get_org_stats(org_id)
-    
+
     # Group summaries
     group_svc = GroupAnalyticsService(db)
-    groups = db.query(Group).filter(Group.org_id == org_id, Group.status == "active").all()
-    
+    groups = (
+        db.query(Group).filter(Group.org_id == org_id, Group.status == "active").all()
+    )
+
     group_summaries = []
     for g in groups:
         overview = group_svc.get_group_overview(org_id, str(g.id))
-        group_summaries.append({
-            "group_id": str(g.id),
-            "name": g.name,
-            "class_level": g.class_level,
-            "student_count": overview.get("student_count", 0),
-            "avg_theta": overview.get("avg_theta"),
-        })
-    
+        group_summaries.append(
+            {
+                "group_id": str(g.id),
+                "name": g.name,
+                "class_level": g.class_level,
+                "student_count": overview.get("student_count", 0),
+                "avg_theta": overview.get("avg_theta"),
+            }
+        )
+
     return {
         "org_id": org_id,
         **stats,
@@ -192,6 +198,7 @@ def org_overview(
 # ╔═══════════════════════════════════════════════════════════════════════╗
 # ║  GRAPH LEARNING — batch analysis (superadmin only)                    ║
 # ╚═══════════════════════════════════════════════════════════════════════╝
+
 
 @router.post("/graph/run-batch")
 def run_graph_batch(

@@ -80,11 +80,19 @@ class GroupService:
             existing.is_active = True
             existing.left_at = None
             self.student_group_repo.session.flush()
-            return {"student_id": str(student_id), "group_id": str(group_id), "status": "re-added"}
+            return {
+                "student_id": str(student_id),
+                "group_id": str(group_id),
+                "status": "re-added",
+            }
 
         membership = StudentGroup(student_id=student_id, group_id=group_id)
         self.student_group_repo.add(membership)
-        return {"student_id": str(student_id), "group_id": str(group_id), "status": "added"}
+        return {
+            "student_id": str(student_id),
+            "group_id": str(group_id),
+            "status": "added",
+        }
 
     def remove_student(self, group_id: UUID, student_id: UUID, org_id: UUID) -> None:
         group = self.group_repo.get_by_id_or_raise(group_id, "Group")
@@ -98,7 +106,4 @@ class GroupService:
         group = self.group_repo.get_by_id_or_raise(group_id, "Group")
         if group.org_id != org_id:
             raise ForbiddenError("Group does not belong to your organization")
-        return [
-            s.to_dict()
-            for s in self.student_repo.list_by_group(group_id)
-        ]
+        return [s.to_dict() for s in self.student_repo.list_by_group(group_id)]

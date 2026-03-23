@@ -5,19 +5,22 @@ ALGO V1 - Shared Dataclasses
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Tuple, TYPE_CHECKING
 from enum import Enum
 from datetime import datetime
 
-from src.domain.diagnostic.irt_engine import IRTTaskParams
+if TYPE_CHECKING:
+    from src.domain.diagnostic.irt_engine import IRTTaskParams
 
 
 # ============================================================================
 # Enums
 # ============================================================================
 
+
 class DiagnosticPhase(Enum):
     """Фазы диагностики"""
+
     LIFT = "lift"
     ADAPTIVE = "adaptive"
     DEEP_SCAN = "deep_scan"
@@ -27,6 +30,7 @@ class DiagnosticPhase(Enum):
 
 class MasteryLevel(Enum):
     """Уровни владения навыком"""
+
     MASTERED = "mastered"
     PROFICIENT = "proficient"
     DEVELOPING = "developing"
@@ -52,9 +56,11 @@ class MasteryLevel(Enum):
 # Dataclasses
 # ============================================================================
 
+
 @dataclass
 class SkillNode:
     """Узел навыка в графе"""
+
     skill_id: str
     name: str
     name_ru: str
@@ -84,12 +90,13 @@ class SkillNode:
 @dataclass
 class TaskCandidate:
     """Кандидат задачи для диагностики"""
+
     task_id: str
     skill_id: str
     difficulty: str  # A, B, C
 
     # IRT параметры
-    irt_params: IRTTaskParams
+    irt_params: "IRTTaskParams"
 
     # Метрики выбора
     information_gain: float = 0.0
@@ -103,6 +110,7 @@ class TaskCandidate:
 @dataclass
 class DiagnosticResult:
     """Результат диагностики"""
+
     session_id: str
     student_id: Optional[str]
 
