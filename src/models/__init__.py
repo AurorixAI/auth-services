@@ -61,7 +61,7 @@ __all__ = [
     "SkillResponseTime",
     # Graph
     "GraphUpdateLog",
-    "IrtCalibrationHistory",  # noqa: F405
+    "IRTCalibrationHistory",  # noqa: F405
     # Auth
     "Organization",
     "User",

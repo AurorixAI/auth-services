@@ -18,19 +18,9 @@ from alembic import context
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # Импорт моделей — ВСЕ модули, чтобы Base.metadata содержал полную схему
-from src.models import Base  # noqa: F401 — 17 core/presentation/analytics моделей
-from src.models.exam import GeneratedExam, ExamSession  # noqa: F401 — exam модели
-from src.auth.models import (  # noqa: F401 — auth/B2B модели
-    Organization,
-    User,
-    OrganizationMember,
-    Invitation,
-    Student,
-    Group,
-    StudentGroup,
-    DiagnosticInvite,
-    StudentDiagnosticResult,
-)
+# Импортируем из центрального __init__.py, который уже собирает все домены
+from src.models import *
+from src.models.exam import GeneratedExam, ExamSession  # noqa: F401
 
 # this is the Alembic Config object
 config = context.config
