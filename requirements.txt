@@ -4,6 +4,7 @@
 # Core
 python-dotenv>=1.0.0
 pydantic>=2.0.0
+pydantic-settings>=2.0.0      # Pydantic BaseSettings for typed config
 
 # Database
 psycopg2-binary>=2.9.9

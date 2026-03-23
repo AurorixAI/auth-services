@@ -29,7 +29,7 @@ from .dependencies import (
     require_org_member, require_any_auth, require_superadmin,
 )
 
-from src.api.database import get_db
+from src.core.database import get_db
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 

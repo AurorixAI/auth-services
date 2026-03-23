@@ -16,7 +16,8 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship, declarative_base, Session
 from sqlalchemy.sql import func
 
-Base = declarative_base()
+# Single source of truth — all model files use this Base
+from src.models.base import Base  # noqa: F401  (re-exported for backward compat)
 
 
 # =============================================================================

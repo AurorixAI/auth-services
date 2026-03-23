@@ -18,7 +18,7 @@ from sqlalchemy import text as sa_text
 from src.models.exam import GeneratedExam, ExamSession
 from src.models import TaskMaster
 from src.utils.answer_check import check_answer as _check_answer
-from src.api.database import get_db
+from src.core.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -466,7 +466,7 @@ async def generate_exam(
     # ── Optional: auto-generate variants ────────────────────────────────
     if req.generate_variants and req.variants_count > 1:
         try:
-            from src.exam_builder.variant_orchestrator import VariantOrchestrator
+            from src.domain.exam_builder.variant_orchestrator import VariantOrchestrator
             orch = VariantOrchestrator(db=db)
             report = orch.generate_variants(
                 draft_tasks=variant_tasks,
@@ -1045,7 +1045,7 @@ async def replace_task_in_draft(
     # Generate distractors if missing
     if not new_td["answer_options"]:
         try:
-            from src.exam_builder.sympy_step_solver import StepSolver, StepDistractorEngine
+            from src.domain.exam_builder.sympy_step_solver import StepSolver, StepDistractorEngine
             solver = StepSolver()
             distractor_engine = StepDistractorEngine()
 
@@ -1207,7 +1207,7 @@ async def generate_variants(
         raise HTTPException(status_code=400, detail="РќРµС‚ Р·Р°РґР°С‡ РІ С‡РµСЂРЅРѕРІРёРєРµ")
 
     # Р“РµРЅРµСЂРёСЂСѓРµРј РІР°СЂРёР°РЅС‚С‹
-    from src.exam_builder.variant_orchestrator import VariantOrchestrator
+    from src.domain.exam_builder.variant_orchestrator import VariantOrchestrator
 
     t0 = _time.perf_counter()
     orch = VariantOrchestrator(db=db)
@@ -1307,7 +1307,7 @@ async def exam_analytics(
     Если указан session_id — анализ одного ученика.
     Если не указан — агрегация по всем submitted сессиям экзамена.
     """
-    from src.exam_builder.analytics import ExamAnalytics, StudentAnswer
+    from src.domain.exam_builder.analytics import ExamAnalytics, StudentAnswer
 
     exam = db.query(GeneratedExam).filter(GeneratedExam.id == exam_id).first()
     if not exam:

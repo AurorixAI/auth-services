@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Tuple
 from enum import Enum
 from datetime import datetime
 
-from src.diagnostic.irt_engine import IRTTaskParams
+from src.domain.diagnostic.irt_engine import IRTTaskParams
 
 
 # ============================================================================

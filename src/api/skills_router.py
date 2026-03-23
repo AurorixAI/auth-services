@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy.orm import Session
 
-from src.api.database import get_db
+from src.core.database import get_db
 
 router = APIRouter(tags=["Skills"])
 
@@ -45,7 +45,8 @@ async def get_all_skills(
     db: Session = Depends(get_db),
 ):
     """Получает все навыки из графа"""
-    from src.models.repositories import KnowledgeRepository
+    from src.repositories import KnowledgeRepo as KnowledgeRepository
+    from src.repositories import PrerequisiteRepo as PrerequisiteRepository
 
     repo = KnowledgeRepository(db)
 
@@ -80,7 +81,8 @@ async def get_all_skills(
 )
 async def get_skill(skill_id: str, db: Session = Depends(get_db)):
     """Получает информацию о конкретном навыке"""
-    from src.models.repositories import KnowledgeRepository
+    from src.repositories import KnowledgeRepo as KnowledgeRepository
+    from src.repositories import PrerequisiteRepo as PrerequisiteRepository
 
     repo = KnowledgeRepository(db)
     skill = repo.get_skill_by_id(skill_id)

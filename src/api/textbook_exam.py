@@ -26,7 +26,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from src.api.database import get_db
+from src.core.database import get_db
 from src.models.exam import GeneratedExam
 
 router = APIRouter(prefix="/textbook-exams", tags=["Textbook Exams"])

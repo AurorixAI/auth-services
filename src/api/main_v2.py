@@ -4,42 +4,42 @@ ALGO V1 - FastAPI REST API (Production Ready)
 """
 
 from dotenv import load_dotenv
+
 load_dotenv()  # Загрузить .env до чтения os.getenv()
 
-from fastapi import FastAPI, HTTPException, Depends
+import logging
+import os
+import traceback
+from contextlib import asynccontextmanager
+from datetime import datetime
+
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import traceback
 from pydantic import BaseModel
-from typing import Optional
-from datetime import datetime
-from contextlib import asynccontextmanager
-import os
-import logging
-
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-
-# Centralised database config (single source of truth)
-from src.api.database import get_db, engine, SessionLocal
-
-# Auth
-from src.auth.router import router as auth_router
-
-# CAT Engine
-from src.api.cat_router import router as cat_router
-
-# Textbook API
-from src.api.textbook_router import router as textbook_router
-
-# Textbook Exam API (Module 2b)
-from src.api.textbook_exam import router as textbook_exam_router
 
 # Analytics
 from src.api.analytics_router import router as analytics_router
 
+# CAT Engine
+from src.api.cat_router import router as cat_router
+
+# Centralised database config (single source of truth)
+from src.core.database import get_db
+
+# Textbook Exam API (Module 2b)
+from src.api.textbook_exam import router as textbook_exam_router
+
+# Textbook API
+from src.api.textbook_router import router as textbook_router
+
 # Dev (quick login)
 from src.auth.dev_router import router as dev_router
+
+# Auth
+from src.auth.router import router as auth_router
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -147,10 +147,12 @@ if os.getenv("APP_ENV", "production") == "development":
 
 # ─── Exam Router ───
 from src.api.exam_router import router as exam_router
+
 app.include_router(exam_router, prefix="/api/v1")
 
 # ─── Skills Router ───
 from src.api.skills_router import router as skills_router
+
 app.include_router(skills_router, prefix="/api/v1")
 
 

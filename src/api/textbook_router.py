@@ -15,7 +15,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from src.api.database import get_db
+from src.core.database import get_db
 
 router = APIRouter(prefix="/textbooks", tags=["textbooks"])
 

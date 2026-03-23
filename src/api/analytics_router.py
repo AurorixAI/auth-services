@@ -9,14 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 
-from src.auth.dependencies import (
+from src.core.dependencies import (
     require_org_owner, require_org_admin, require_org_teacher, require_org_member,
     require_superadmin,
 )
-from src.analytics.student_progress import StudentProgressService
-from src.analytics.group_analytics import GroupAnalyticsService
+from src.domain.analytics.student_progress import StudentProgressService
+from src.domain.analytics.group_analytics import GroupAnalyticsService
 
-from src.api.database import get_db
+from src.core.database import get_db
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
@@ -161,7 +161,7 @@ def org_overview(
     Агрегация: группы, учителя, средний уровень, потенциальные проблемы.
     """
     from src.auth.service import AuthService
-    from src.auth.models import Group, Student, OrganizationMember
+    from src.models.auth import Group, Student, OrganizationMember
     
     org_id = user["org_id"]
     auth_svc = AuthService(db)
@@ -205,9 +205,9 @@ def run_graph_batch(
     Анализирует ответы за *days* дней, обнаруживает корреляции,
     обновляет / предлагает новые пререквизиты.
     """
-    from src.graph.pg_data_fetcher import PgDataFetcher
-    from src.graph.pg_graph_writer import PgGraphWriter
-    from src.graph.learning_updater import BatchGraphUpdater
+    from src.domain.graph.pg_data_fetcher import PgDataFetcher
+    from src.domain.graph.pg_graph_writer import PgGraphWriter
+    from src.domain.graph.learning_updater import BatchGraphUpdater
 
     fetcher = PgDataFetcher(db)
     writer = PgGraphWriter(db)

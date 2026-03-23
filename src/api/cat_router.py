@@ -11,28 +11,28 @@ from datetime import datetime
 from uuid import uuid4
 import logging
 
-from src.diagnostic.cat_engine import (
+from src.domain.diagnostic.cat_engine import (
     ShadowCATEngine, CATConfig, CATPhase, CATTask,
     ContentBlueprint, ExposureController, build_blueprint_from_skills
 )
-from src.diagnostic.integrity_service import (
+from src.domain.diagnostic.integrity_service import (
     IntegrityService, IntegrityReport
 )
-from src.diagnostic.irt_engine import IRTTaskParams
-from src.auth.dependencies import get_optional_user, require_org_teacher
+from src.domain.diagnostic.irt_engine import IRTTaskParams
+from src.core.dependencies import get_optional_user, require_org_teacher
 from src.auth.service import AuthService
 from src.utils.answer_check import check_answer as _check_answer
-from src.models.repositories import (
-    KnowledgeRepository as _KnowledgeRepo,
-    TaskRepository as _DBTaskRepo,
-    AnswerEventRepository,
-    SessionRepository,
-    StudentSkillRepository,
+from src.repositories import (
+    KnowledgeRepo as _KnowledgeRepo,
+    TaskRepo as _DBTaskRepo,
+    AnswerEventRepo as AnswerEventRepository,
+    SessionSummaryRepo as SessionRepository,
+    StudentSkillRepo as StudentSkillRepository,
 )
 
 logger = logging.getLogger(__name__)
 
-from src.api.database import get_db
+from src.core.database import get_db
 
 router = APIRouter(prefix="/cat", tags=["CAT - Adaptive Testing"])
 
@@ -663,7 +663,7 @@ def _build_mc_options(task: CATTask, count: int = 4) -> List[str]:
     # 2. Генерация на лету через StepDistractorEngine.generate_for_answer (ВСЕ типы)
     if len(distractors) < count - 1:
         try:
-            from src.exam_builder.sympy_step_solver import StepDistractorEngine
+            from src.domain.exam_builder.sympy_step_solver import StepDistractorEngine
             
             engine = StepDistractorEngine()
             gen_distractors = engine.generate_for_answer(
@@ -737,7 +737,7 @@ def _match_distractor(
     answer_type = (task.answer_type or "exact_number").lower().strip()
     if correct_str:
         try:
-            from src.exam_builder.sympy_step_solver import StepDistractorEngine
+            from src.domain.exam_builder.sympy_step_solver import StepDistractorEngine
             
             engine = StepDistractorEngine()
             distractors = engine.generate_for_answer(

@@ -19,7 +19,7 @@ from .service import (
 from .schemas import AuthResponse, UserResponse, TokenPair, OrgResponse
 from .dependencies import AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME
 
-from src.api.database import get_db
+from src.core.database import get_db
 
 router = APIRouter(prefix="/auth", tags=["Dev (Development Only)"])
 
