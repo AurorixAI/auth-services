@@ -46,7 +46,7 @@ class TaskMaster(Base):
     generation_function = Column(Text)
 
     # Сложность (SQL column name: 'difficulty', not 'difficulty_level')
-    difficulty = Column(String(1), default="B")
+    difficulty = Column(String(1), nullable=False, default="B")
     difficulty_score = Column(Numeric(3, 2))
     cognitive_load = Column(String(20))
 
@@ -116,7 +116,7 @@ class TaskTemplateDB(Base):
 
     id = Column(String(30), primary_key=True)
     original_task_id = Column(String(30), ForeignKey("tasks_master.id"), nullable=False)
-    skill_id = Column(String(30), ForeignKey("knowledge_hierarchy.id"), nullable=False)
+    skill_id = Column(String(30), ForeignKey("knowledge_hierarchy.id"), nullable=True)
 
     template_text = Column(Text, nullable=False)
     template_latex = Column(Text)

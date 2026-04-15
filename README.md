@@ -1,3 +1,80 @@
+# ALGO — Adaptive Learning & Gap Optimization
+
+Адаптивная платформа диагностики и обучения математике (5–11 класс).  
+IRT 3PL + Shadow CAT + DAG навыков + AI-оцифровка учебников.
+
+> Подробная документация, архитектура и roadmap — в [CONTEXT.md](CONTEXT.md)
+
+---
+
+## Быстрый старт
+
+### Требования
+
+- Python 3.11+, Node.js 18+, PostgreSQL 15+
+- Redis 7+ (опционально — есть in-memory fallback)
+
+### Backend
+
+```bash
+cd algo-back
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+pip install -r requirements.txt
+cp .env.example .env          # настроить DATABASE_URL, SECRET_KEY
+uvicorn src.api.main_v2:app --reload --port 8000
+```
+
+API docs: http://localhost:8000/docs
+
+### Frontend
+
+```bash
+cd algo-front
+npm install
+npm run dev
+```
+
+http://localhost:3000
+
+### Docker
+
+```bash
+cd algo-back
+docker-compose up -d                              # Production
+docker-compose -f docker-compose.dev.yml up       # Dev (hot reload + adminer)
+```
+
+---
+
+## Структура
+
+```
+ALGOV2/
+├── algo-back/          # FastAPI backend
+│   ├── src/            # Исходный код (~24K LOC Python)
+│   ├── database/       # SQL schema + seed (~31K LOC)
+│   ├── alembic/        # DB migrations (auto-applied on startup)
+│   ├── tests/          # pytest
+│   └── scripts/        # CLI utilities
+└── algo-front/         # Next.js 14 frontend (~8.5K LOC TypeScript)
+```
+
+## Стек
+
+| | Технология |
+|---|---|
+| Backend | FastAPI, SQLAlchemy 2.0, Pydantic v2 |
+| Frontend | Next.js 14, React 18, Zustand, Tailwind CSS |
+| DB | PostgreSQL + Alembic migrations |
+| AI | Gemini 2.5 (Flash + Pro), Mathpix OCR, SymPy |
+| Deploy | Docker + docker-compose |
+
+---
+
+## Лицензия
+
+MIT
 # 🎯 ALGO V1 - Adaptive Learning & Gap Optimization
 
 **Интеллектуальная платформа диагностики математических навыков**

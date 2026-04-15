@@ -38,6 +38,31 @@ if config.config_file_name is not None:
 # Метаданные моделей для autogenerate
 target_metadata = Base.metadata
 
+# Таблицы в БД, которые не имеют ORM-моделей (служебные, из SQL-скриптов)
+# Alembic не будет пытаться их удалить
+_UNMANAGED_TABLES = {
+    "audit_log",
+    "digitization_log",
+    "task_distractors",
+    "task_tags",
+    "topic_synonyms",
+    "exam_variant_cache",
+}
+
+
+def include_object(obj, name, type_, reflected, compare_to):
+    """Filter out unmanaged tables and their indexes/constraints."""
+    if type_ == "table" and name in _UNMANAGED_TABLES:
+        return False
+    if type_ == "index" and getattr(obj, "table", None) is not None:
+        if obj.table.name in _UNMANAGED_TABLES:
+            return False
+    # Ignore indexes that exist in DB but not in models (created by SQL scripts).
+    # Only track indexes explicitly declared in models.
+    if type_ == "index" and reflected and compare_to is None:
+        return False
+    return True
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
@@ -47,6 +72,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -67,7 +93,14 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
+            compare_type=True,
+            compare_server_default=False,
+            render_as_batch=False,
+        )
 
         with context.begin_transaction():
             context.run_migrations()

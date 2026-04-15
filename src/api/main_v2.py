@@ -74,9 +74,17 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting ALGO V1 API...")
 
-    # Инициализация моделей (только если таблицы не существуют)
-    # from src.models import Base
-    # Base.metadata.create_all(bind=engine)
+    # Применяем миграции Alembic (только новые, идемпотентно)
+    from alembic.config import Config
+    from alembic import command
+
+    alembic_cfg = Config("alembic.ini")
+    try:
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Alembic migrations applied (up to head).")
+    except Exception as e:
+        logger.error("Alembic migration failed: %s", e)
+        raise
 
     yield
 
@@ -97,8 +105,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS
-_allowed_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+# CORS — use core settings (handles JSON list from .env correctly)
+from src.core.config import get_settings as _get_settings
+_allowed_origins = _get_settings().cors_origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,

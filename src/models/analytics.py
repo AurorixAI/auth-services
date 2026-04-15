@@ -64,6 +64,8 @@ class AnswerEvent(Base):
     device_type = Column(String(20))
     client_version = Column(String(20))
 
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
+
     task = relationship("TaskMaster", back_populates="answer_events")
     skill = relationship("KnowledgeHierarchy")
 
@@ -191,6 +193,10 @@ class SessionSummary(Base):
 
     created_at = Column(DateTime, default=func.now())
 
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
+    integrity_report = Column(JSONB)
+    error_patterns = Column(JSONB)
+
     __table_args__ = (
         CheckConstraint(
             "session_type IN ('diagnostic', 'quick_check', 'practice', 'exam')"
@@ -229,6 +235,8 @@ class StudentSkillState(Base):
     status = Column(String(20), default="unknown")
 
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
 
     skill = relationship("KnowledgeHierarchy")
 
