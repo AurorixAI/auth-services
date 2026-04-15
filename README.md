@@ -83,13 +83,27 @@ copy .env.example .env
 
 ### 2. Настройка базы данных
 
-```bash
-# Создайте базу данных PostgreSQL
-createdb algo_db
+При запуске через Docker Compose (с чистым volume) база данных инициализируется **автоматически**:
+1. Создаются все таблицы (скрипты `001-013`.sql)
+2. Автоматически загружается граф навыков (L4), задачи и исправляются нулевые значения (скрипт `999_seed_data.sh`)
 
-# Примените миграции
-psql -d algo_db -f database/001_core_schema.sql
-psql -d algo_db -f database/002_presentation_schema.sql
+```bash
+# Запуск инфраструктуры (БД + Redis + API)
+docker-compose up -d
+
+# Если нужно сбросить БД и загрузить seed-данные заново:
+docker-compose down -v
+docker-compose up -d
+```
+
+**Ручная настройка (без Docker):**
+```bash
+createdb algo_v1
+psql -U algo -d algo_v1 -f database/001_core_schema.sql
+psql -U algo -d algo_v1 -f database/002_presentation_schema.sql
+# Загрузка графа навыков
+psql -U algo -d algo_v1 -f database/skeletons/grade_05.sql
+psql -U algo -d algo_v1 -f database/skeletons/grade_06.sql
 ```
 
 ### 3. Проверка установки
