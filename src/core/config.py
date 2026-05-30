@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     )
 
     # ── Application ───────────────────────────────────────────────────────────
-    app_name: str = "ALGO V1 API"
+    app_name: str = "ALGO Auth Service"
     app_version: str = "1.0.0"
     app_env: str = Field(
         default="production",

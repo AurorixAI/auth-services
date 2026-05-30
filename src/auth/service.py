@@ -897,7 +897,12 @@ class AuthService:
             f"Diagnostic completed: code={code}, theta={result_data.get('final_theta')}"
         )
 
-        return {"id": str(result.id), "status": "completed"}
+        return {
+            "id": str(result.id),
+            "status": "completed",
+            "student_id": str(invite.student_id),
+            "org_id": str(invite.org_id),
+        }
 
     def list_diagnostic_invites(
         self, org_id: str, status: Optional[str] = None, limit: int = 50

@@ -16,17 +16,6 @@ from src.repositories.student_repo import (
 )
 from src.repositories.group_repo import GroupRepo, StudentGroupRepo
 
-# Knowledge domain (migrated from models/repositories.py)
-from src.repositories.knowledge_repo import KnowledgeRepo, PrerequisiteRepo
-from src.repositories.task_repo import TaskRepo
-from src.repositories.analytics_repo import (
-    SessionSummaryRepo,
-    AnswerEventRepo,
-    StudentSkillRepo,
-    CorrelationRepo,
-)
-from src.repositories.graph_repo import GraphUpdateRepo
-
 __all__ = [
     "UserRepo",
     "OrgMemberRepo",
@@ -37,12 +26,4 @@ __all__ = [
     "StudentDiagnosticResultRepo",
     "GroupRepo",
     "StudentGroupRepo",
-    "KnowledgeRepo",
-    "PrerequisiteRepo",
-    "TaskRepo",
-    "SessionSummaryRepo",
-    "AnswerEventRepo",
-    "StudentSkillRepo",
-    "CorrelationRepo",
-    "GraphUpdateRepo",
 ]

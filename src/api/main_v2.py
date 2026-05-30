@@ -1,6 +1,6 @@
 """
-ALGO V1 - FastAPI REST API (Production Ready)
-Веб-API для платформы диагностики и тестирования с реальной интеграцией.
+ALGO Auth Service — FastAPI REST API
+Аутентификация, организации, студенты, группы, diagnostic invites.
 """
 
 from dotenv import load_dotenv
@@ -20,29 +20,19 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-# Analytics
-from src.api.analytics_router import router as analytics_router
-
-# CAT Engine
-from src.api.cat_router import router as cat_router
-
 # Centralised database config (single source of truth)
 from src.core.database import get_db
-
-# Textbook Exam API (Module 2b)
-from src.api.textbook_exam import router as textbook_exam_router
-
-# Textbook API
-from src.api.textbook_router import router as textbook_router
 
 # Dev (quick login)
 from src.auth.dev_router import router as dev_router
 
 # Auth
 from src.auth.router import router as auth_router
+from src.api.internal_router import router as internal_router
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
+# Настройка логирования через structlog
+from src.core.middleware import configure_logging, RequestIDMiddleware
+configure_logging(is_development=os.getenv("APP_ENV", "production") == "development")
 logger = logging.getLogger(__name__)
 
 
@@ -72,7 +62,7 @@ settings = Settings()
 async def lifespan(app: FastAPI):
     """Lifecycle управление приложением"""
     # Startup
-    logger.info("Starting ALGO V1 API...")
+    logger.info("Starting ALGO Auth Service...")
 
     # Применяем миграции Alembic (только новые, идемпотентно)
     from alembic.config import Config
@@ -89,25 +79,27 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    logger.info("Shutting down ALGO V1 API...")
+    logger.info("Shutting down ALGO Auth Service...")
 
 
 # ============================================================================
 # ПРИЛОЖЕНИЕ
 # ============================================================================
 
+_is_dev = os.getenv("APP_ENV", "production") == "development"
 app = FastAPI(
-    title="ALGO V1 API",
-    description="Профессиональный API для диагностики математических навыков и генерации тестов",
+    title="ALGO Auth Service",
+    description="Аутентификация, управление организациями, студентами, группами и diagnostic invites.",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if _is_dev else None,
+    redoc_url="/redoc" if _is_dev else None,
     lifespan=lifespan,
 )
 
 # CORS — use core settings (handles JSON list from .env correctly)
 from src.core.config import get_settings as _get_settings
 _allowed_origins = _get_settings().cors_origins
+app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -115,6 +107,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Prometheus metrics
+from prometheus_fastapi_instrumentator import Instrumentator
+Instrumentator(excluded_handlers=["/metrics", "/health/live", "/health/ready"]).instrument(app).expose(app)
 
 
 def _cors_headers(request) -> dict:
@@ -151,25 +147,12 @@ async def global_exception_handler(request, exc):
 
 # ─── Routers ───
 app.include_router(auth_router, prefix="/api/v1")
-app.include_router(cat_router, prefix="/api/v1")
-app.include_router(textbook_router, prefix="/api/v1")
-app.include_router(textbook_exam_router, prefix="/api/v1")
-app.include_router(analytics_router, prefix="/api/v1")
+app.include_router(internal_router, prefix="/api/v1")
+# analytics_router removed — analytics live in diagnostic-service (port 8002)
 
-# ─── Dev Router (quick login) — only in development ───
-if os.getenv("APP_ENV", "production") == "development":
-    app.include_router(dev_router, prefix="/api/v1")
-    logger.warning("⚠️  Dev router enabled — disable in production (APP_ENV=production)")
+# ─── Dev Router (quick login) ───
+app.include_router(dev_router, prefix="/api/v1")
 
-# ─── Exam Router ───
-from src.api.exam_router import router as exam_router
-
-app.include_router(exam_router, prefix="/api/v1")
-
-# ─── Skills Router ───
-from src.api.skills_router import router as skills_router
-
-app.include_router(skills_router, prefix="/api/v1")
 
 
 # ============================================================================
@@ -191,11 +174,34 @@ class HealthResponse(BaseModel):
 # ============================================================================
 
 
-@app.get("/health", response_model=HealthResponse, tags=["System"])
-async def health_check(db: Session = Depends(get_db)):
-    """Проверка здоровья сервиса"""
+@app.get("/health/live", tags=["System"], summary="Liveness probe")
+def health_live():
+    """Always 200 — no dependency checks."""
+    return {"status": "alive"}
+
+
+@app.get("/health/ready", tags=["System"], summary="Readiness probe")
+async def health_ready(db: Session = Depends(get_db)):
+    """Returns 200 if DB reachable, 503 otherwise."""
+    db_ok = True
     try:
-        # Проверяем подключение к БД
+        db.execute(text("SELECT 1"))
+    except Exception as exc:
+        logger.warning("Readiness DB check failed: %s", exc)
+        db_ok = False
+
+    payload = {
+        "status": "ready" if db_ok else "not_ready",
+        "version": "1.0.0",
+        "database": "ok" if db_ok else "error",
+    }
+    return JSONResponse(status_code=200 if db_ok else 503, content=payload)
+
+
+@app.get("/health", response_model=HealthResponse, tags=["System"], summary="Health check (legacy)")
+async def health_check(db: Session = Depends(get_db)):
+    """Backward-compatible health check."""
+    try:
         db.execute(text("SELECT 1"))
         db_status = "connected"
     except Exception as e:
@@ -207,11 +213,6 @@ async def health_check(db: Session = Depends(get_db)):
         database=db_status,
         timestamp=datetime.now(),
     )
-
-
-# ============================================================================
-
-# ============================================================================
 
 if __name__ == "__main__":
     import uvicorn

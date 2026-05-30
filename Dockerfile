@@ -76,5 +76,6 @@ CMD ["gunicorn", "src.api.main_v2:app", \
      "--bind", "0.0.0.0:8000", \
      "--timeout", "120", \
      "--keep-alive", "5", \
+     "--worker-tmp-dir", "/dev/shm", \
      "--access-logfile", "-", \
      "--error-logfile", "-"]

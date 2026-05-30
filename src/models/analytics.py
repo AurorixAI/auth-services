@@ -36,8 +36,8 @@ class AnswerEvent(Base):
     session_id = Column(UUID(as_uuid=True), nullable=False)
     student_id = Column(UUID(as_uuid=True))
 
-    task_id = Column(String(30), ForeignKey("tasks_master.id"), nullable=False)
-    skill_id = Column(String(30), ForeignKey("knowledge_hierarchy.id"), nullable=False)
+    task_id = Column(String(30), nullable=False)  # no FK — tasks_master lives in content DB
+    skill_id = Column(String(30), nullable=False)  # no FK — content DB is separate
 
     is_correct = Column(Boolean, nullable=False)
     student_answer = Column(Text)
@@ -66,9 +66,6 @@ class AnswerEvent(Base):
 
     org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
 
-    task = relationship("TaskMaster", back_populates="answer_events")
-    skill = relationship("KnowledgeHierarchy")
-
     __table_args__ = (
         Index("idx_ae_session", "session_id"),
         Index("idx_ae_student", "student_id"),
@@ -77,7 +74,8 @@ class AnswerEvent(Base):
     )
 
 
-class SkillCorrelation(Base):
+# SkillCorrelation removed — no active consumers (CorrelationRepo also removed)
+class _SkillCorrelationRemoved:
     """Обнаруженные корреляции между навыками"""
 
     __tablename__ = "skill_correlations"
@@ -126,13 +124,14 @@ class SkillCorrelation(Base):
     )
 
 
-class ErrorPattern(Base):
+# ErrorPattern ORM removed — no active consumers (learning_updater has its own dataclass)
+class _ErrorPatternRemoved:
     """Паттерны ошибок"""
 
     __tablename__ = "error_patterns"
 
     id = Column(Integer, primary_key=True)
-    skill_id = Column(String(30), ForeignKey("knowledge_hierarchy.id"), nullable=False)
+    skill_id = Column(String(30), nullable=False)  # FK removed — content DB is separate
 
     pattern_type = Column(String(30), nullable=False)
     pattern_description = Column(Text, nullable=False)
@@ -149,8 +148,6 @@ class ErrorPattern(Base):
 
     discovered_at = Column(DateTime, default=func.now())
     last_seen_at = Column(DateTime, default=func.now())
-
-    skill = relationship("KnowledgeHierarchy")
 
     __table_args__ = (
         CheckConstraint(
@@ -213,7 +210,7 @@ class StudentSkillState(Base):
 
     id = Column(Integer, primary_key=True)
     student_id = Column(UUID(as_uuid=True), nullable=False)
-    skill_id = Column(String(30), ForeignKey("knowledge_hierarchy.id"), nullable=False)
+    skill_id = Column(String(30), nullable=False)  # FK removed — content DB is separate
 
     mastery_probability = Column(Numeric(5, 4), nullable=False, default=0.5)
     learn_rate = Column(Numeric(5, 4), default=0.1)
@@ -238,8 +235,6 @@ class StudentSkillState(Base):
 
     org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
 
-    skill = relationship("KnowledgeHierarchy")
-
     __table_args__ = (
         CheckConstraint("trend IN ('improving', 'stable', 'declining', 'unknown')"),
         CheckConstraint(
@@ -252,7 +247,8 @@ class StudentSkillState(Base):
     )
 
 
-class SkillResponseTime(Base):
+# SkillResponseTime removed — no active consumers
+class _SkillResponseTimeRemoved:
     """Статистика времени ответов по навыкам"""
 
     __tablename__ = "skill_response_times"
@@ -278,7 +274,5 @@ class SkillResponseTime(Base):
     mean_time_incorrect_ms = Column(Integer)
 
     last_calculated_at = Column(DateTime, default=func.now())
-
-    skill = relationship("KnowledgeHierarchy")
 
     __table_args__ = (CheckConstraint("difficulty_level IN ('A', 'B', 'C')"),)

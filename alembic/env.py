@@ -17,10 +17,8 @@ from alembic import context
 # Добавляем корень проекта в sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-# Импорт моделей — ВСЕ модули, чтобы Base.metadata содержал полную схему
-# Импортируем из центрального __init__.py, который уже собирает все домены
-from src.models import *
-from src.models.exam import GeneratedExam, ExamSession  # noqa: F401
+# Импортируем только модели, принадлежащие auth-service
+from src.models import *  # noqa: F403  (Base + auth + analytics)
 
 # this is the Alembic Config object
 config = context.config

@@ -1,23 +1,24 @@
 # ==============================================================================
-# ALGO V1 - Docker Compose Configuration
-# Development and Production environments
+# ALGO Auth Service — Docker Compose Configuration
 # ==============================================================================
+
+name: algo-back   # keep project name so existing volumes (algo-back_*) are reused
 
 services:
   # ============================================================================
-  # APPLICATION
+  # AUTH SERVICE
   # ============================================================================
-  api:
+  auth:
     build:
       context: .
       dockerfile: Dockerfile
       target: production
-    container_name: algo-api
+    container_name: algo-auth
     ports:
       - "${PORT:-8000}:8000"
     environment:
-      - DATABASE_URL=postgresql+psycopg2://algo:algo_password@postgres:5432/algo_v1
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+psycopg2://algo:algo_password@postgres:5432/algo_auth
+      - REDIS_URL=redis://algo-redis:6379/0
       - APP_ENV=${APP_ENV:-production}
       - SECRET_KEY=${SECRET_KEY}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
@@ -26,14 +27,15 @@ services:
       - MATHPIX_APP_KEY=${MATHPIX_APP_KEY}
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - SENTRY_DSN=${SENTRY_DSN}
+      - EXAM_SERVICE_URL=http://exam-service:8003/api/v1
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3000","http://localhost:5173"]}
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     restart: unless-stopped
     networks:
-      - algo-network
+      - algo-network      # internal: reaches postgres
+      - shared-network    # shared: reachable by diagnostic-service, exam-service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -50,34 +52,14 @@ services:
     environment:
       POSTGRES_USER: algo
       POSTGRES_PASSWORD: algo_password
-      POSTGRES_DB: algo_v1
+      POSTGRES_DB: algo_auth
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U algo -d algo_v1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    networks:
-      - algo-network
-
-  # ============================================================================
-  # CACHE & SESSIONS
-  # ============================================================================
-  redis:
-    image: redis:7-alpine
-    container_name: algo-redis
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "pg_isready -U algo -d algo_auth"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -130,8 +112,6 @@ services:
 volumes:
   postgres_data:
     driver: local
-  redis_data:
-    driver: local
   prometheus_data:
     driver: local
   grafana_data:
@@ -142,4 +122,8 @@ volumes:
 # ==============================================================================
 networks:
   algo-network:
-    driver: bridge
+    external: true
+    name: algo-back_algo-network   # internal network: auth-service ↔ postgres
+  shared-network:
+    external: true
+    name: algo-network             # shared network: reachable by diagnostic/exam services
