@@ -301,10 +301,45 @@ class TokenPair(BaseModel):
 
 class AuthResponse(BaseModel):
     user: UserResponse
-    tokens: TokenPair
+    tokens: Optional[TokenPair] = None
     org: Optional[OrgResponse] = None
 
 
 class MessageResponse(BaseModel):
     message: str
     success: bool = True
+
+
+# ============================================================================
+# REGISTRATION FLOW — new schemas
+# ============================================================================
+
+
+class OrgApplicationPendingResponse(BaseModel):
+    """Returned when an organization registers — pending admin approval."""
+
+    message: str = "Заявка принята и ожидает подтверждения администратора."
+    org_id: str
+    org_name: str
+    status: str = "pending"
+    success: bool = True
+
+
+class AdminApproveRequest(BaseModel):
+    """Admin approves (or rejects) an organization application."""
+
+    action: str = Field(default="approve")  # "approve" or "reject"
+    rejection_reason: Optional[str] = None
+
+    @field_validator("action")
+    @classmethod
+    def validate_action(cls, v):
+        if v not in {"approve", "reject"}:
+            raise ValueError("action must be 'approve' or 'reject'")
+        return v
+
+
+class ActivateAccountRequest(BaseModel):
+    """Organization owner activates their account via emailed token."""
+
+    token: str = Field(..., min_length=10)

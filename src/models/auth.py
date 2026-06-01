@@ -54,6 +54,9 @@ class Organization(Base):
     approved_at = Column(DateTime)
     rejection_reason = Column(Text)
 
+    activation_token = Column(String(500), nullable=True)
+    activation_token_expires_at = Column(DateTime, nullable=True)
+
     settings = Column(JSONB, default={})
     max_students = Column(Integer, default=500)
     max_teachers = Column(Integer, default=50)
@@ -74,7 +77,7 @@ class Organization(Base):
         CheckConstraint(
             "org_type IN ('center', 'private_school', 'university', 'tutoring_center', 'tutor', 'other')"
         ),
-        CheckConstraint("status IN ('pending', 'active', 'suspended')"),
+        CheckConstraint("status IN ('pending', 'active', 'suspended', 'rejected')"),
     )
 
     def to_dict(self) -> dict:

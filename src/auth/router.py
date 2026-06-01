@@ -36,6 +36,9 @@ from .schemas import (
     UserResponse,
     OrgResponse,
     MessageResponse,
+    OrgApplicationPendingResponse,
+    AdminApproveRequest,
+    ActivateAccountRequest,
 )
 from .dependencies import (
     get_current_user_payload,
@@ -112,7 +115,7 @@ def _svc(db: Session) -> AuthService:
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 
-@router.post("/apply", response_model=AuthResponse, status_code=201)
+@router.post("/apply", response_model=OrgApplicationPendingResponse, status_code=201)
 def apply_organization(
     request: OrgApplicationRequest,
     db: Session = Depends(get_db),
@@ -120,13 +123,12 @@ def apply_organization(
 ):
     """
     Регистрация организации + владелец.
-    Создаёт орг, первого пользователя (owner) и возвращает JWT.
+    Создаёт орг со статусом pending. Токены не выдаются.
+    После одобрения администратором на email придёт ссылка активации.
     """
     try:
         result = _svc(db).apply_organization(request)
-        resp = _auth_response_with_cookies(result)
-        resp.status_code = 201
-        return resp
+        return JSONResponse(content=result.model_dump(mode="json"), status_code=201)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
@@ -186,6 +188,49 @@ def logout():
     resp.delete_cookie(AUTH_COOKIE_NAME, path="/", domain=_COOKIE_DOMAIN)
     resp.delete_cookie(REFRESH_COOKIE_NAME, path="/auth", domain=_COOKIE_DOMAIN)
     return resp
+
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  ADMIN APPROVAL & ACTIVATION                                            ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+
+
+@router.post("/admin/approve/{org_id}")
+def admin_approve_organization(
+    org_id: str,
+    request: AdminApproveRequest = AdminApproveRequest(),
+    admin: dict = Depends(require_superadmin),
+    db: Session = Depends(get_db),
+):
+    """
+    Одобрить или отклонить заявку организации (superadmin).
+    При одобрении на email владельца отправляется ссылка активации.
+    """
+    try:
+        result = _svc(db).approve_organization(
+            org_id,
+            action=request.action,
+            rejection_reason=request.rejection_reason,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+
+
+@router.post("/activate", response_model=AuthResponse)
+def activate_account(
+    request: ActivateAccountRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Активация аккаунта по токену из письма.
+    Активирует организацию и владельца, возвращает JWT.
+    """
+    try:
+        result = _svc(db).activate_account(request.token)
+        return _auth_response_with_cookies(result)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗

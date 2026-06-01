@@ -46,7 +46,9 @@ from .schemas import (
     GroupCreateRequest,
     GroupUpdateRequest,
     GroupResponse,
+    OrgApplicationPendingResponse,
 )
+from src.core.email import send_admin_new_application, send_activation_email
 
 logger = logging.getLogger(__name__)
 
@@ -235,27 +237,27 @@ class AuthService:
     # 1. ORG APPLICATION — заявка на регистрацию организации + владелец
     # ═══════════════════════════════════════════════════════════════════
 
-    def apply_organization(self, request: OrgApplicationRequest) -> AuthResponse:
-        """Создать организацию + первого пользователя (owner)"""
+    def apply_organization(self, request: OrgApplicationRequest) -> OrgApplicationPendingResponse:
+        """Создать организацию + первого пользователя (owner). Статус pending — ожидает одобрения."""
 
         # Уникальность email
         existing = self.db.query(User).filter(User.email == request.email).first()
         if existing:
             raise ValueError("Пользователь с таким email уже существует")
 
-        # Создание организации
+        # Создание организации (pending)
         org = Organization(
             name=request.org_name,
             org_type=request.org_type,
             city=request.city,
             phone=request.phone,
             email=request.email,
-            status="active",  # сразу активна (MVP)
+            status="pending",
         )
         self.db.add(org)
         self.db.flush()
 
-        # Создание пользователя-владельца
+        # Создание пользователя-владельца (is_active=False до активации)
         user = User(
             email=request.email,
             password_hash=hash_password(request.password),
@@ -264,6 +266,7 @@ class AuthService:
             role="owner",
             default_org_id=org.id,
             language=request.language,
+            is_active=False,
         )
         self.db.add(user)
         self.db.flush()
@@ -279,13 +282,124 @@ class AuthService:
         # Обновить владельца
         org.owner_id = user.id
 
-        tokens = self._create_tokens(user)
         self.db.commit()
 
-        logger.info(f"New org registered: {org.name} by {user.email}")
+        logger.info(f"New org application (pending): {org.name} by {user.email}")
+
+        # Best-effort admin notification — does not block registration
+        try:
+            send_admin_new_application(
+                org_name=org.name,
+                org_id=str(org.id),
+                owner_email=user.email,
+                owner_name=user.full_name,
+            )
+        except Exception:
+            logger.exception("Failed to send admin notification email")
+
+        return OrgApplicationPendingResponse(
+            org_id=str(org.id),
+            org_name=org.name,
+        )
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 1b. ADMIN APPROVAL — одобрение / отклонение заявки
+    # ═══════════════════════════════════════════════════════════════════
+
+    def approve_organization(self, org_id: str, action: str = "approve", rejection_reason: str | None = None) -> dict:
+        """Admin approves or rejects a pending organization."""
+        org = self.db.query(Organization).filter(Organization.id == org_id).first()
+        if not org:
+            raise ValueError("Организация не найдена")
+        if org.status != "pending":
+            raise ValueError(f"Организация уже обработана (статус: {org.status})")
+
+        if action == "reject":
+            org.status = "rejected"
+            org.rejection_reason = rejection_reason
+            self.db.commit()
+            logger.info(f"Org rejected: {org.name} (id={org_id})")
+            return {"org_id": str(org.id), "status": "rejected", "message": "Заявка отклонена"}
+
+        # Generate activation token
+        token = secrets.token_urlsafe(48)
+        org.activation_token = hash_token(token)
+        org.activation_token_expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+        org.approved_at = datetime.now(timezone.utc)
+        self.db.commit()
+
+        # Get owner
+        owner = self.db.query(User).filter(User.id == org.owner_id).first()
+        owner_email = owner.email if owner else org.email
+        owner_name = owner.full_name if owner else "Пользователь"
+
+        # Send activation email (best-effort)
+        try:
+            send_activation_email(
+                to=owner_email,
+                owner_name=owner_name,
+                org_name=org.name,
+                activation_token=token,
+            )
+        except Exception:
+            logger.exception("Failed to send activation email for org %s", org_id)
+
+        logger.info(f"Org approved: {org.name} (id={org_id}), activation email sent to {owner_email}")
+        return {
+            "org_id": str(org.id),
+            "status": "approved",
+            "message": f"Организация одобрена. Письмо отправлено на {owner_email}",
+        }
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 1c. ACTIVATION — активация аккаунта по токену из письма
+    # ═══════════════════════════════════════════════════════════════════
+
+    def activate_account(self, token: str) -> AuthResponse:
+        """Activate an org + owner account using the emailed token."""
+        token_hash = hash_token(token)
+
+        org = (
+            self.db.query(Organization)
+            .filter(
+                Organization.activation_token == token_hash,
+                Organization.status.in_(["pending", "active"]),
+            )
+            .first()
+        )
+        if not org:
+            raise ValueError("Невалидная или уже использованная ссылка активации")
+
+        # Check expiry
+        if org.activation_token_expires_at:
+            exp = (
+                org.activation_token_expires_at
+                if org.activation_token_expires_at.tzinfo
+                else org.activation_token_expires_at.replace(tzinfo=timezone.utc)
+            )
+            if exp < datetime.now(timezone.utc):
+                raise ValueError("Ссылка активации истекла. Обратитесь к администратору.")
+
+        # Activate org
+        org.status = "active"
+        org.activation_token = None
+        org.activation_token_expires_at = None
+
+        # Activate owner
+        owner = self.db.query(User).filter(User.id == org.owner_id).first()
+        if not owner:
+            raise ValueError("Владелец организации не найден")
+        owner.is_active = True
+        owner.is_verified = True
+
+        # Issue tokens
+        tokens = self._create_tokens(owner)
+        self.db.commit()
+
+        logger.info(f"Org activated: {org.name} by {owner.email}")
 
         return AuthResponse(
-            user=self._build_user_response(user),
+            user=self._build_user_response(owner),
             tokens=tokens,
             org=self._build_org_response(org),
         )
