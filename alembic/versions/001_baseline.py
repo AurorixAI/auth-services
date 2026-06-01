@@ -20,10 +20,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Nothing to do — tables already exist."""
-    pass
+    """Create baseline tables if they do not exist."""
+    from src.models import Base
+    from alembic import op
+    bind = op.get_bind()
+    tables_to_create = [
+        tbl for name, tbl in Base.metadata.tables.items()
+        if name not in ("answer_events", "session_summaries", "student_skill_states")
+    ]
+    Base.metadata.create_all(bind=bind, tables=tables_to_create)
 
 
 def downgrade() -> None:
-    """Cannot downgrade from baseline."""
-    raise RuntimeError("Cannot downgrade past the baseline migration.")
+    """Cannot downgrade past baseline."""
+    pass

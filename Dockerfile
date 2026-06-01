@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 FROM python:3.11-slim AS production
 
 # Security: run as non-root user
-RUN groupadd -r algo && useradd -r -g algo algo
+RUN groupadd -r algo && useradd -r -m -g algo algo
 
 WORKDIR /app
 
