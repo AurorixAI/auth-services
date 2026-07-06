@@ -19,17 +19,26 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add activation_token and activation_token_expires_at columns to organizations table
-    op.add_column('organizations', sa.Column('activation_token', sa.String(length=500), nullable=True))
-    op.add_column('organizations', sa.Column('activation_token_expires_at', sa.DateTime(), nullable=True))
-    
-    # Drop old status check constraint and create updated check constraint
-    op.drop_constraint('organizations_status_check', 'organizations', type_='check')
-    op.create_check_constraint(
-        'organizations_status_check',
-        'organizations',
-        sa.text("status IN ('pending', 'active', 'suspended', 'rejected')")
-    )
+    # The baseline migration creates organizations from the current model state,
+    # which already includes these columns. Use IF NOT EXISTS so this is a no-op
+    # when running on a fresh database where baseline already created them.
+    op.execute(sa.text(
+        "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS activation_token VARCHAR(500)"
+    ))
+    op.execute(sa.text(
+        "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS activation_token_expires_at TIMESTAMP"
+    ))
+
+    # The baseline uses SQLAlchemy's auto-naming for the check constraint (no
+    # explicit name), so the constraint may have a different name than expected.
+    # Drop whatever exists and recreate with the canonical name.
+    op.execute(sa.text(
+        "ALTER TABLE organizations DROP CONSTRAINT IF EXISTS organizations_status_check"
+    ))
+    op.execute(sa.text(
+        "ALTER TABLE organizations ADD CONSTRAINT organizations_status_check "
+        "CHECK (status IN ('pending', 'active', 'suspended', 'rejected'))"
+    ))
 
 
 def downgrade() -> None:
