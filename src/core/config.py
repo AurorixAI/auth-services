@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     app_env: str = Field(
         default="production",
-        pattern="^(development|production|testing)$",
+        pattern="^(development|staging|production|testing)$",
     )
     debug: bool = False
 
