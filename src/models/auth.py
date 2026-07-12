@@ -242,6 +242,17 @@ class Invitation(Base):
         CheckConstraint("status IN ('pending', 'accepted', 'expired', 'cancelled')"),
     )
 
+    def to_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "code": self.code,
+            "email": self.email,
+            "org_role": self.org_role,
+            "status": self.status,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
 
 # ============================================================================
 # STUDENT

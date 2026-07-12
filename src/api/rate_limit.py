@@ -69,7 +69,13 @@ def _client_key(request: Request, endpoint: str) -> str:
 
 
 def _check_redis(key: str, max_requests: int, window: int) -> bool:
-    """Return True if request is allowed. Uses Redis INCR + EXPIRE."""
+    """Return True if request is allowed. Uses Redis INCR + EXPIRE.
+
+    EXPIRE is only set on the first increment of a window — setting it on
+    every call would keep pushing the TTL out on each request (including
+    rejected ones), so a client that keeps retrying within the window would
+    never actually get un-blocked.
+    """
     try:
         from src.api.redis_sessions import _get_redis
 
@@ -77,11 +83,9 @@ def _check_redis(key: str, max_requests: int, window: int) -> bool:
         if r is None:
             return _check_memory(key, max_requests, window)
 
-        pipe = r.pipeline()
-        pipe.incr(key)
-        pipe.expire(key, window)
-        results = pipe.execute()
-        current = results[0]
+        current = r.incr(key)
+        if current == 1:
+            r.expire(key, window)
         return current <= max_requests
     except Exception as e:
         logger.warning("Rate limit Redis error, falling back to memory: %s", e)

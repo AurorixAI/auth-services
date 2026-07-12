@@ -134,6 +134,22 @@ async def http_exception_handler(request, exc: HTTPException):
     )
 
 
+# Handle domain/service errors (AccountNotFoundError, InvalidCredentialsError, etc.)
+# Detail is {code, message} so the frontend can branch on `code` instead of
+# pattern-matching the (Russian) message text.
+from src.core.exceptions import AlgoException, EXCEPTION_STATUS_MAP
+
+
+@app.exception_handler(AlgoException)
+async def algo_exception_handler(request, exc: AlgoException):
+    status_code = EXCEPTION_STATUS_MAP.get(type(exc), 400)
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": {"code": exc.code, "message": exc.message}},
+        headers=_cors_headers(request),
+    )
+
+
 # Global exception handler — show traceback in dev only
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
@@ -150,8 +166,9 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(internal_router, prefix="/api/v1")
 # analytics_router removed — analytics live in diagnostic-service (port 8002)
 
-# ─── Dev Router (quick login) ───
-app.include_router(dev_router, prefix="/api/v1")
+# ─── Dev Router (quick login) — dev environment only, never in staging/prod ───
+if _is_dev:
+    app.include_router(dev_router, prefix="/api/v1")
 
 
 

@@ -210,13 +210,6 @@ class DiagnosticInviteResponse(BaseModel):
     created_at: Optional[str] = None
 
 
-class DiagnosticConfirmRequest(BaseModel):
-    """Ученик подтверждает своё имя перед стартом"""
-
-    first_name: str
-    last_name: str
-
-
 # ============================================================================
 # GROUPS
 # ============================================================================
@@ -250,6 +243,10 @@ class GroupResponse(BaseModel):
     max_students: int = 30
     student_count: int = 0
     created_at: Optional[str] = None
+
+
+class BulkAddStudentsRequest(BaseModel):
+    student_ids: list[str] = Field(..., min_length=1)
 
 
 # ============================================================================

@@ -210,7 +210,7 @@ def dev_login(
         secure=_is_prod,
         samesite="lax",
         max_age=30 * 86400,
-        path="/auth",
+        path="/api/v1/auth",
         domain=_cookie_domain,
     )
     return resp

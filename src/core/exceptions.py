@@ -85,8 +85,29 @@ class RateLimitError(AlgoException):
         )
 
 
+class AccountNotFoundError(AlgoException):
+    """No user exists with the given email — distinct from a wrong password."""
+
+    def __init__(self, message: str = "Аккаунт с таким email не найден") -> None:
+        super().__init__(message, "ACCOUNT_NOT_FOUND")
+
+
+class InvalidCredentialsError(AlgoException):
+    """Email exists but the password does not match."""
+
+    def __init__(self, message: str = "Неверный пароль") -> None:
+        super().__init__(message, "INVALID_PASSWORD")
+
+
+class AccountInactiveError(AlgoException):
+    """Account exists but is deactivated/pending approval."""
+
+    def __init__(self, message: str = "Аккаунт заблокирован") -> None:
+        super().__init__(message, "ACCOUNT_INACTIVE")
+
+
 # ── HTTP Status Mapping ───────────────────────────────────────────────────────
-# Used by the central exception handler in src/main.py
+# Used by the central exception handler in src/api/main_v2.py
 
 EXCEPTION_STATUS_MAP: dict[Type[AlgoException], int] = {
     NotFoundError: http_status.HTTP_404_NOT_FOUND,
@@ -96,4 +117,7 @@ EXCEPTION_STATUS_MAP: dict[Type[AlgoException], int] = {
     ValidationError: http_status.HTTP_422_UNPROCESSABLE_ENTITY,
     ServiceUnavailableError: http_status.HTTP_503_SERVICE_UNAVAILABLE,
     RateLimitError: http_status.HTTP_429_TOO_MANY_REQUESTS,
+    AccountNotFoundError: http_status.HTTP_404_NOT_FOUND,
+    InvalidCredentialsError: http_status.HTTP_401_UNAUTHORIZED,
+    AccountInactiveError: http_status.HTTP_403_FORBIDDEN,
 }

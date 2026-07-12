@@ -26,10 +26,10 @@ from .schemas import (
     DiagnosticCreateRequest,
     DiagnosticQuickRequest,
     DiagnosticInviteResponse,
-    DiagnosticConfirmRequest,
     GroupCreateRequest,
     GroupUpdateRequest,
     GroupResponse,
+    BulkAddStudentsRequest,
     OrgUpdateRequest,
     AuthResponse,
     TokenPair,
@@ -84,7 +84,10 @@ def _set_auth_cookies(
         secure=_IS_PROD,
         samesite="lax",
         max_age=_REFRESH_MAX_AGE,
-        path="/auth",  # refresh token only sent to /auth/*
+        # Actual mount point is /api/v1/auth/* (see main_v2.py) — a plain
+        # "/auth" prefix would never match, so the browser would never send
+        # this cookie back to /api/v1/auth/refresh at all.
+        path="/api/v1/auth",
         domain=_COOKIE_DOMAIN,
     )
     return response
@@ -119,12 +122,11 @@ def _svc(db: Session) -> AuthService:
 def apply_organization(
     request: OrgApplicationRequest,
     db: Session = Depends(get_db),
-    _rl=Depends(rate_limit("3/minute")),
 ):
     """
     Регистрация организации + владелец.
     Создаёт орг со статусом pending. Токены не выдаются.
-    После одобрения администратором на email придёт ссылка активации.
+    После одобрения администратором владелец сможет войти со своим паролем.
     """
     try:
         result = _svc(db).apply_organization(request)
@@ -137,7 +139,6 @@ def apply_organization(
 def login(
     request: LoginRequest,
     db: Session = Depends(get_db),
-    _rl=Depends(rate_limit("5/minute")),
 ):
     """Вход в систему — возвращает JWT + org info"""
     try:
@@ -169,6 +170,15 @@ def refresh_tokens(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
 
 
+@router.get("/invite/{code}")
+def get_invite_info(code: str, db: Session = Depends(get_db)):
+    """Публичная информация о приглашении (орг + роль) — для экрана принятия."""
+    try:
+        return _svc(db).get_invitation_info(code)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+
+
 @router.post("/invite/accept", response_model=AuthResponse, status_code=201)
 def accept_invite(request: AcceptInviteRequest, db: Session = Depends(get_db)):
     """Принять приглашение в организацию — создаёт аккаунт"""
@@ -186,7 +196,7 @@ def logout():
     """Очистить httpOnly auth cookies."""
     resp = JSONResponse(content={"message": "logged out", "success": True})
     resp.delete_cookie(AUTH_COOKIE_NAME, path="/", domain=_COOKIE_DOMAIN)
-    resp.delete_cookie(REFRESH_COOKIE_NAME, path="/auth", domain=_COOKIE_DOMAIN)
+    resp.delete_cookie(REFRESH_COOKIE_NAME, path="/api/v1/auth", domain=_COOKIE_DOMAIN)
     return resp
 
 
@@ -251,12 +261,11 @@ def get_diagnostic_info(code: str, db: Session = Depends(get_db)):
 
 
 @router.post("/diagnostic/{code}/confirm")
-def confirm_diagnostic(
-    code: str, request: DiagnosticConfirmRequest, db: Session = Depends(get_db)
-):
-    """Ученик подтверждает своё имя — переход pending → confirmed"""
+def confirm_diagnostic(code: str, db: Session = Depends(get_db)):
+    """Подтверждение по коду — переход pending → confirmed. Код сам по себе
+    уникально определяет ученика, ввод имени не требуется."""
     try:
-        return _svc(db).confirm_diagnostic(code, request.first_name, request.last_name)
+        return _svc(db).confirm_diagnostic(code)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
@@ -593,6 +602,32 @@ def list_groups(
     )
 
 
+@router.get("/org/groups/{group_id}")
+def get_group(
+    group_id: str,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Детали группы + список учеников (с последним θ/уровнем, если есть)."""
+    try:
+        return _svc(db).get_group_detail(user["org_id"], group_id)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+
+
+@router.get("/org/groups/{group_id}/stats")
+def get_group_stats(
+    group_id: str,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Статистика по группе — диагностировано/среднее θ/распределение уровней."""
+    try:
+        return _svc(db).get_group_stats(user["org_id"], group_id)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+
+
 @router.put("/org/groups/{group_id}", response_model=GroupResponse)
 def update_group(
     group_id: str,
@@ -603,6 +638,24 @@ def update_group(
     """Обновить группу"""
     try:
         return _svc(db).update_group(user["org_id"], group_id, request)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/org/groups/{group_id}/students/bulk")
+def bulk_add_students(
+    group_id: str,
+    request: BulkAddStudentsRequest,
+    user: dict = Depends(require_org_admin),
+    db: Session = Depends(get_db),
+):
+    """Массово добавить учеников в группу.
+
+    Registered before /students/{student_id} — a generic path param would
+    otherwise greedily match the literal "bulk" segment first.
+    """
+    try:
+        return _svc(db).bulk_add_students(user["org_id"], group_id, request.student_ids)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

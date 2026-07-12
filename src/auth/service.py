@@ -48,7 +48,12 @@ from .schemas import (
     GroupResponse,
     OrgApplicationPendingResponse,
 )
-from src.core.email import send_admin_new_application, send_activation_email
+from src.core.email import send_admin_new_application
+from src.core.exceptions import (
+    AccountNotFoundError,
+    InvalidCredentialsError,
+    AccountInactiveError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +77,7 @@ if SECRET_KEY == _DEFAULT_SECRET and os.getenv("ENV", "dev").lower() not in (
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TTL_MINUTES", "60"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TTL_DAYS", "30"))
-DIAGNOSTIC_CODE_LENGTH = 6
+DIAGNOSTIC_CODE_LENGTH = 8
 INVITE_CODE_LENGTH = 8
 BASE_DIAGNOSTIC_URL = os.getenv("DIAGNOSTIC_BASE_URL", "http://localhost:3000/d")
 
@@ -96,8 +101,30 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def generate_code(length: int = 6, digits_only: bool = True) -> str:
-    charset = string.digits if digits_only else string.ascii_uppercase + string.digits
+def _theta_to_level(theta: float) -> str:
+    """Map IRT theta to a pedagogical level label.
+
+    Mirrors diagnostics-service's alpha_engine.theta_to_level() so a
+    student's level reads the same everywhere in the app.
+    """
+    if theta >= 1.0:
+        return "above_grade"
+    if theta >= -0.5:
+        return "at_grade"
+    return "below_grade"
+
+
+def generate_code(
+    length: int = 6, digits_only: bool = True, exclude_ambiguous: bool = False
+) -> str:
+    if digits_only:
+        charset = string.digits
+    elif exclude_ambiguous:
+        # No 0/O, 1/I/L — codes a student reads off a screen and may need to
+        # type or read aloud shouldn't hinge on telling those apart.
+        charset = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+    else:
+        charset = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(charset) for _ in range(length))
 
 
@@ -321,34 +348,29 @@ class AuthService:
             logger.info(f"Org rejected: {org.name} (id={org_id})")
             return {"org_id": str(org.id), "status": "rejected", "message": "Заявка отклонена"}
 
-        # Generate activation token
-        token = secrets.token_urlsafe(48)
-        org.activation_token = hash_token(token)
-        org.activation_token_expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+        # Approval activates the org and owner immediately — login works
+        # right away with the credentials they registered with. There is no
+        # separate "click the emailed link" step: SMTP isn't configured here
+        # and the admin is already manually vetting the application, so a
+        # second confirmation step would only be friction with no security
+        # benefit.
+        org.status = "active"
         org.approved_at = datetime.now(timezone.utc)
+
+        owner = self.db.query(User).filter(User.id == org.owner_id).first()
+        if not owner:
+            raise ValueError("Владелец организации не найден")
+        owner.is_active = True
+        owner.is_verified = True
+
         self.db.commit()
 
-        # Get owner
-        owner = self.db.query(User).filter(User.id == org.owner_id).first()
-        owner_email = owner.email if owner else org.email
-        owner_name = owner.full_name if owner else "Пользователь"
-
-        # Send activation email (best-effort)
-        try:
-            send_activation_email(
-                to=owner_email,
-                owner_name=owner_name,
-                org_name=org.name,
-                activation_token=token,
-            )
-        except Exception:
-            logger.exception("Failed to send activation email for org %s", org_id)
-
-        logger.info(f"Org approved: {org.name} (id={org_id}), activation email sent to {owner_email}")
+        logger.info(f"Org approved and activated: {org.name} (id={org_id})")
         return {
             "org_id": str(org.id),
-            "status": "approved",
-            "message": f"Организация одобрена. Письмо отправлено на {owner_email}",
+            "status": "active",
+            "owner_email": owner.email,
+            "message": f"Организация активирована. {owner.email} может входить со своим паролем.",
         }
 
     # ═══════════════════════════════════════════════════════════════════
@@ -411,11 +433,11 @@ class AuthService:
     def login(self, request: LoginRequest) -> AuthResponse:
         user = self.db.query(User).filter(User.email == request.email).first()
         if not user:
-            raise ValueError("Неверный email или пароль")
+            raise AccountNotFoundError()
         if not user.is_active:
-            raise ValueError("Аккаунт заблокирован")
+            raise AccountInactiveError()
         if not verify_password(request.password, user.password_hash):
-            raise ValueError("Неверный email или пароль")
+            raise InvalidCredentialsError()
 
         user.last_login_at = datetime.now(timezone.utc)
         user.login_count = (user.login_count or 0) + 1
@@ -611,9 +633,36 @@ class AuthService:
         )
         if not invite:
             raise ValueError("Приглашение не найдено")
-        invite.status = "revoked"
+        # "revoked" isn't a valid status per the DB check constraint — use
+        # "cancelled" (the constraint only allows pending/accepted/expired/cancelled).
+        invite.status = "cancelled"
         self.db.commit()
         return True
+
+    def get_invitation_info(self, code: str) -> dict:
+        """Публичная информация о приглашении — для экрана принятия (до аутентификации)."""
+        invite = (
+            self.db.query(Invitation)
+            .filter(Invitation.code == code, Invitation.status == "pending")
+            .first()
+        )
+        if not invite:
+            raise ValueError("Приглашение не найдено или уже использовано")
+        if invite.expires_at:
+            exp = (
+                invite.expires_at
+                if invite.expires_at.tzinfo
+                else invite.expires_at.replace(tzinfo=timezone.utc)
+            )
+            if exp < datetime.now(timezone.utc):
+                raise ValueError("Приглашение истекло")
+
+        org = self.db.query(Organization).filter(Organization.id == invite.org_id).first()
+        return {
+            "org_name": org.name if org else "",
+            "org_role": invite.org_role,
+            "email": invite.email,
+        }
 
     # ═══════════════════════════════════════════════════════════════════
     # 5. ORG MEMBERS — управление сотрудниками
@@ -796,7 +845,7 @@ class AuthService:
         if not student:
             raise ValueError("Ученик не найден")
 
-        code = generate_code(DIAGNOSTIC_CODE_LENGTH, digits_only=True)
+        code = generate_code(DIAGNOSTIC_CODE_LENGTH, digits_only=False, exclude_ambiguous=True)
 
         invite = DiagnosticInvite(
             org_id=org_id,
@@ -871,8 +920,16 @@ class AuthService:
             "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
         }
 
-    def confirm_diagnostic(self, code: str, first_name: str, last_name: str) -> dict:
-        """Ученик подтверждает имя — статус pending/confirmed → confirmed (idempotent)."""
+    def confirm_diagnostic(self, code: str) -> dict:
+        """Подтверждение перехода pending → confirmed (idempotent).
+
+        No name-matching: the code itself is the sole identity anchor —
+        it's already unique and bound 1:1 to one student_id at creation time.
+        Fuzzy-matching a typed name against the DB record used to be the
+        actual "who is this" check, which silently broke for students that
+        share a name (a false match/mismatch either way). Trusting the code
+        removes that failure mode and the typing step entirely.
+        """
         invite = (
             self.db.query(DiagnosticInvite)
             .filter(
@@ -895,43 +952,9 @@ class AuthService:
                 self.db.commit()
                 raise ValueError("Ссылка на диагностику истекла")
 
-        # Если уже confirmed — возвращаем успех без повторной проверки имени
-        if invite.status == "confirmed":
-            return {
-                "id": str(invite.id),
-                "status": "confirmed",
-                "class_level": invite.class_level,
-                "student_id": str(invite.student_id),
-                "org_id": str(invite.org_id),
-            }
-
-        # Проверка имени (только для pending)
-        student = self.db.query(Student).filter(Student.id == invite.student_id).first()
-        if student:
-            fn = first_name.lower().strip()
-            ln = last_name.lower().strip()
-            s_fn = student.first_name.lower().strip()
-            s_ln = student.last_name.lower().strip()
-
-            # Точное совпадение имени и фамилии
-            name_match = s_fn == fn and s_ln == ln
-
-            # Если фамилия не передана — проверяем только имя
-            if not name_match and not ln:
-                name_match = s_fn == fn
-
-            # Полное ФИО как одна строка ("Фамилия Имя" или "Имя Фамилия")
-            if not name_match:
-                entered_full = f"{fn} {ln}".strip()
-                name_match = (
-                    entered_full == f"{s_fn} {s_ln}" or entered_full == f"{s_ln} {s_fn}"
-                )
-
-            if not name_match:
-                raise ValueError("Имя и фамилия не совпадают с данными ученика")
-
-        invite.status = "confirmed"
-        self.db.commit()
+        if invite.status != "confirmed":
+            invite.status = "confirmed"
+            self.db.commit()
 
         return {
             "id": str(invite.id),
@@ -1099,9 +1122,9 @@ class AuthService:
         teacher_id: Optional[str] = None,
         class_level: Optional[int] = None,
     ) -> list[GroupResponse]:
-        query = self.db.query(Group).filter(
-            Group.org_id == org_id, Group.status == "active"
-        )
+        # No status filter here — the frontend has an "Архив" tab that needs
+        # archived groups back too; it filters by status client-side.
+        query = self.db.query(Group).filter(Group.org_id == org_id)
         if teacher_id:
             query = query.filter(Group.teacher_id == teacher_id)
         if class_level:
@@ -1109,6 +1132,123 @@ class AuthService:
 
         groups = query.order_by(Group.name).all()
         return [self._build_group_response(g) for g in groups]
+
+    def get_group_detail(self, org_id: str, group_id: str) -> dict:
+        group = (
+            self.db.query(Group)
+            .filter(Group.id == group_id, Group.org_id == org_id)
+            .first()
+        )
+        if not group:
+            raise ValueError("Группа не найдена")
+
+        memberships = (
+            self.db.query(StudentGroup)
+            .filter(StudentGroup.group_id == group_id, StudentGroup.is_active)
+            .all()
+        )
+        student_ids = [m.student_id for m in memberships]
+        students_by_id = {
+            s.id: s
+            for s in self.db.query(Student).filter(Student.id.in_(student_ids)).all()
+        } if student_ids else {}
+        latest_results = self._latest_diagnostic_results(student_ids)
+
+        students_out = []
+        for m in memberships:
+            s = students_by_id.get(m.student_id)
+            if not s:
+                continue
+            r = latest_results.get(s.id)
+            theta = float(r.final_theta) if r and r.final_theta is not None else None
+            students_out.append({
+                "id": str(s.id),
+                "first_name": s.first_name,
+                "last_name": s.last_name,
+                "full_name": f"{s.last_name} {s.first_name}",
+                "class_level": s.class_level,
+                "status": s.status,
+                "student_phone": s.student_phone,
+                "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+                "last_theta": theta,
+                "last_level": _theta_to_level(theta) if theta is not None else None,
+                "last_diagnosed_at": r.diagnosed_at.isoformat() if r and r.diagnosed_at else None,
+            })
+
+        result = self._build_group_response(group).model_dump()
+        result["students"] = students_out
+        return result
+
+    def get_group_stats(self, org_id: str, group_id: str) -> dict:
+        group = (
+            self.db.query(Group)
+            .filter(Group.id == group_id, Group.org_id == org_id)
+            .first()
+        )
+        if not group:
+            raise ValueError("Группа не найдена")
+
+        student_ids = [
+            m.student_id
+            for m in self.db.query(StudentGroup)
+            .filter(StudentGroup.group_id == group_id, StudentGroup.is_active)
+            .all()
+        ]
+        total_students = len(student_ids)
+        latest_results = self._latest_diagnostic_results(student_ids)
+        thetas = [
+            float(r.final_theta)
+            for r in latest_results.values()
+            if r.final_theta is not None
+        ]
+
+        dist = {"below_grade": 0, "at_grade": 0, "above_grade": 0}
+        for t in thetas:
+            dist[_theta_to_level(t)] += 1
+
+        return {
+            "group_id": str(group_id),
+            "total_students": total_students,
+            "diagnosed_count": len(thetas),
+            "undiagnosed_count": total_students - len(thetas),
+            "avg_theta": (sum(thetas) / len(thetas)) if thetas else None,
+            "theta_distribution": dist,
+            # Aggregated weak-topic analysis isn't built yet (would need to
+            # roll up identified_gaps/root_gaps across every student) — an
+            # empty list is a valid, honest state the UI already handles.
+            "weak_skills": [],
+        }
+
+    def _latest_diagnostic_results(
+        self, student_ids: list
+    ) -> dict:
+        """Most recent StudentDiagnosticResult per student_id."""
+        if not student_ids:
+            return {}
+        results = (
+            self.db.query(StudentDiagnosticResult)
+            .filter(StudentDiagnosticResult.student_id.in_(student_ids))
+            .order_by(StudentDiagnosticResult.diagnosed_at.desc())
+            .all()
+        )
+        latest: dict = {}
+        for r in results:
+            if r.student_id not in latest:
+                latest[r.student_id] = r
+        return latest
+
+    def bulk_add_students(
+        self, org_id: str, group_id: str, student_ids: list[str]
+    ) -> dict:
+        added = 0
+        skipped = 0
+        for student_id in student_ids:
+            try:
+                self.add_student_to_group(org_id, group_id, student_id)
+                added += 1
+            except ValueError:
+                skipped += 1
+        return {"group_id": str(group_id), "added": added, "skipped": skipped}
 
     def add_student_to_group(self, org_id: str, group_id: str, student_id: str) -> dict:
         group = (
