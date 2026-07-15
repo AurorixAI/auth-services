@@ -121,6 +121,10 @@ class User(Base):
     subjects = Column(JSONB, default=[])
     refresh_token_hash = Column(String(255))
 
+    # Set on accounts provisioned with a temporary password (bulk import) —
+    # the user must set their own password before using the app.
+    must_change_password = Column(Boolean, nullable=False, default=False)
+
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
 
@@ -170,6 +174,7 @@ class User(Base):
             "language": self.language,
             "is_active": self.is_active,
             "is_verified": self.is_verified,
+            "must_change_password": bool(self.must_change_password),
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -277,7 +282,7 @@ class Student(Base):
 
     group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="SET NULL"))
     student_number = Column(String(30))
-    student_phone = Column(String(30), nullable=False)
+    student_phone = Column(String(30))  # optional — bulk import may omit it
     comment = Column(Text)
 
     status = Column(String(20), nullable=False, default="new")

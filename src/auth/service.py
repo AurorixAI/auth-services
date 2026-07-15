@@ -48,6 +48,7 @@ from .schemas import (
     GroupResponse,
     OrgApplicationPendingResponse,
 )
+from src.core.config import get_settings
 from src.core.email import send_admin_new_application
 from src.core.exceptions import (
     AccountNotFoundError,
@@ -265,26 +266,37 @@ class AuthService:
     # ═══════════════════════════════════════════════════════════════════
 
     def apply_organization(self, request: OrgApplicationRequest) -> OrgApplicationPendingResponse:
-        """Создать организацию + первого пользователя (owner). Статус pending — ожидает одобрения."""
+        """Создать организацию + первого пользователя (owner).
+
+        Auto-approve is ON by default (settings.auto_approve_organizations) —
+        the org + owner are activated immediately so the owner can log in
+        right away with the email/password they just registered with. The
+        manual-review path (approve_organization / approve_org.sh) is left
+        fully intact for when this flag is turned back off.
+        """
+        settings = get_settings()
+        auto_approve = settings.auto_approve_organizations
 
         # Уникальность email
         existing = self.db.query(User).filter(User.email == request.email).first()
         if existing:
             raise ValueError("Пользователь с таким email уже существует")
 
-        # Создание организации (pending)
+        # Создание организации
         org = Organization(
             name=request.org_name,
             org_type=request.org_type,
             city=request.city,
             phone=request.phone,
             email=request.email,
-            status="pending",
+            status="active" if auto_approve else "pending",
         )
+        if auto_approve:
+            org.approved_at = datetime.now(timezone.utc)
         self.db.add(org)
         self.db.flush()
 
-        # Создание пользователя-владельца (is_active=False до активации)
+        # Создание пользователя-владельца
         user = User(
             email=request.email,
             password_hash=hash_password(request.password),
@@ -293,7 +305,8 @@ class AuthService:
             role="owner",
             default_org_id=org.id,
             language=request.language,
-            is_active=False,
+            is_active=auto_approve,
+            is_verified=auto_approve,
         )
         self.db.add(user)
         self.db.flush()
@@ -311,7 +324,10 @@ class AuthService:
 
         self.db.commit()
 
-        logger.info(f"New org application (pending): {org.name} by {user.email}")
+        logger.info(
+            f"New org application ({'auto-activated' if auto_approve else 'pending'}): "
+            f"{org.name} by {user.email}"
+        )
 
         # Best-effort admin notification — does not block registration
         try:
@@ -324,6 +340,13 @@ class AuthService:
         except Exception:
             logger.exception("Failed to send admin notification email")
 
+        if auto_approve:
+            return OrgApplicationPendingResponse(
+                org_id=str(org.id),
+                org_name=org.name,
+                status="active",
+                message="Организация активирована. Вы можете войти со своим email и паролем.",
+            )
         return OrgApplicationPendingResponse(
             org_id=str(org.id),
             org_name=org.name,
@@ -501,6 +524,7 @@ class AuthService:
             raise ValueError("Неверный текущий пароль")
         user.password_hash = hash_password(new_password)
         user.refresh_token_hash = None
+        user.must_change_password = False  # cleared once they set their own
         self.db.commit()
         return True
 

@@ -19,6 +19,20 @@ def _svc(db: Session) -> AuthService:
     return AuthService(db)
 
 
+# ── Cross-service org scoping ─────────────────────────────────────────────────
+# Lets diagnostic-service (and other services) resolve "which student IDs
+# belong to this org" without holding its own copy of org membership — used
+# to scope analytics queries to the caller's own organization.
+
+@router.get("/org/{org_id}/student-ids", response_model=List[str],
+            summary="[Internal] All student IDs belonging to an org")
+def internal_org_student_ids(org_id: str, db: Session = Depends(get_db)):
+    from src.models.auth import Student
+
+    rows = db.query(Student.id).filter(Student.org_id == org_id).all()
+    return [str(r[0]) for r in rows]
+
+
 # ── Diagnostic callbacks ──────────────────────────────────────────────────────
 
 class DiagStartCallback(BaseModel):

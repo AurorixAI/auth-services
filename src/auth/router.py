@@ -3,13 +3,15 @@ ALGO V1 - Auth Router
 REST API: org application, login, invitations, students, diagnostics, groups
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, UploadFile, File
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 from typing import Optional
 import os
 
 from .service import AuthService
+from . import import_service
+from .import_service import ImportPreviewResponse, ImportCommitResponse
 from src.api.rate_limit import rate_limit
 from .dependencies import AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME
 from .schemas import (
@@ -125,8 +127,11 @@ def apply_organization(
 ):
     """
     Регистрация организации + владелец.
-    Создаёт орг со статусом pending. Токены не выдаются.
-    После одобрения администратором владелец сможет войти со своим паролем.
+    По умолчанию (auto_approve_organizations=True) организация активируется
+    сразу — владелец может войти со своим email/паролем через /login. Токены
+    здесь не выдаются (это не логин), только подтверждение регистрации.
+    Ручной режим одобрения (approve_organization / approve_org.sh) остаётся
+    рабочим — если флаг выключить, поведение вернётся к статусу pending.
     """
     try:
         result = _svc(db).apply_organization(request)
@@ -689,6 +694,58 @@ def remove_student_from_group(
         return MessageResponse(message="Ученик удалён из группы")
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  BULK IMPORT — xlsx (owner/admin)                                          ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5 MB is plenty for a roster
+
+
+@router.get("/org/import/template")
+def download_import_template(user: dict = Depends(require_org_admin)):
+    """Скачать .xlsx-шаблон для массового импорта (Учителя/Группы/Ученики)."""
+    data = import_service.build_template_xlsx()
+    return Response(
+        content=data,
+        media_type=_XLSX_MIME,
+        headers={"Content-Disposition": 'attachment; filename="algo_import_template.xlsx"'},
+    )
+
+
+@router.post("/org/import/preview", response_model=ImportPreviewResponse)
+async def import_preview(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_org_admin),
+    db: Session = Depends(get_db),
+):
+    """Разобрать и проверить файл (dry-run) — ничего не записывается."""
+    data = await _read_import_upload(file)
+    return import_service.preview(user["org_id"], data, db)
+
+
+@router.post("/org/import/commit", response_model=ImportCommitResponse)
+async def import_commit(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_org_admin),
+    db: Session = Depends(get_db),
+):
+    """Записать данные из файла в базу транзакционно (всё или ничего)."""
+    data = await _read_import_upload(file)
+    return import_service.commit(user["org_id"], user["user_id"], data, db)
+
+
+async def _read_import_upload(file: UploadFile) -> bytes:
+    if file is None:
+        raise HTTPException(400, "Файл не передан.")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Файл пустой.")
+    if len(data) > _MAX_IMPORT_BYTES:
+        raise HTTPException(413, "Файл слишком большой (макс. 5 МБ).")
+    return data
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗

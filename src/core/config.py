@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     mathpix_app_key: str = ""
     gemini_api_key: str = ""
 
+    # ── Organization onboarding ───────────────────────────────────────────────
+    # When True, a new org application is activated immediately (owner can log
+    # in right away with the credentials they registered with) instead of
+    # sitting in "pending" for manual admin review. The manual review path
+    # (approve_organization / approve_org.sh) stays fully functional — flip
+    # this back to False to require it again, no code changes needed.
+    auto_approve_organizations: bool = Field(default=True)
+
     # ── CORS ──────────────────────────────────────────────────────────────────
     cors_origins: List[str] = [
         "http://localhost:3000",

@@ -267,6 +267,7 @@ class UserResponse(BaseModel):
     language: str = "ru"
     is_active: bool = True
     is_verified: bool = False
+    must_change_password: bool = False
     created_at: Optional[str] = None
 
 
