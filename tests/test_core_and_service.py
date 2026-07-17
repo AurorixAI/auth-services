@@ -189,7 +189,7 @@ class TestExceptions:
 
     def test_exception_status_map_has_all_types(self):
         from src.core.exceptions import EXCEPTION_STATUS_MAP, AlgoException
-        assert len(EXCEPTION_STATUS_MAP) == 7
+        assert len(EXCEPTION_STATUS_MAP) == 10
         for exc_type in EXCEPTION_STATUS_MAP:
             assert issubclass(exc_type, AlgoException)
 
@@ -532,27 +532,30 @@ class TestAuthServiceExtended:
 
     def test_login_user_not_found_raises_value_error(self):
         from src.auth.schemas import LoginRequest
+        from src.core.exceptions import AccountNotFoundError
         service, db = self._make_service()
         db.query.return_value.filter.return_value.first.return_value = None
-        with pytest.raises(ValueError, match="email"):
+        with pytest.raises(AccountNotFoundError, match="email"):
             service.login(LoginRequest(email="x@y.com", password="anypass"))
 
     def test_login_inactive_user_raises(self):
         from src.auth.schemas import LoginRequest
+        from src.core.exceptions import AccountInactiveError
         service, db = self._make_service()
         user = self._mock_user(is_active=False)
         db.query.return_value.filter.return_value.first.return_value = user
-        with pytest.raises(ValueError, match="заблокирован"):
+        with pytest.raises(AccountInactiveError, match="заблокирован"):
             service.login(LoginRequest(email="x@y.com", password="anypass"))
 
     def test_login_wrong_password_raises(self):
         from src.auth.service import hash_password
         from src.auth.schemas import LoginRequest
+        from src.core.exceptions import InvalidCredentialsError
         service, db = self._make_service()
         user = self._mock_user(is_active=True)
         user.password_hash = hash_password("correct_pw")
         db.query.return_value.filter.return_value.first.return_value = user
-        with pytest.raises(ValueError, match="пароль"):
+        with pytest.raises(InvalidCredentialsError, match="пароль"):
             service.login(LoginRequest(email="x@y.com", password="wrong_pw"))
 
     # ─── refresh_tokens failure paths ───────────────────────────────────
