@@ -51,7 +51,7 @@ SHEET_INSTRUCTIONS = "Инструкция"
 # Column headers per sheet. "*" marks required — stripped when matching.
 COLS_TEACHERS = ["Фамилия*", "Имя*", "Отчество", "Email*", "Предметы", "Роль (teacher/admin)"]
 COLS_GROUPS = ["Название группы*", "Класс (1-11)", "Email учителя", "Макс. учеников"]
-COLS_STUDENTS = ["Фамилия*", "Имя*", "Класс (1-11)*", "Телефон", "Группа", "Комментарий"]
+COLS_STUDENTS = ["Фамилия*", "Имя*", "Класс (1-11)*", "Телефон", "Группа*", "Комментарий"]
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -428,10 +428,11 @@ def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session) -> ImportPlan:
         d = r.data
         last = d.get(K_LAST, "")
         first = d.get(K_FIRST, "")
+        group_name = ""
+        phone = None
         if not last or not first:
             err(SHEET_STUDENTS, r.row, "Фамилия/Имя", "Фамилия и имя обязательны.")
             continue
-
         class_level = _parse_class_level(d.get(K_STUDENT_CLASS, ""))
         if class_level is None:
             err(SHEET_STUDENTS, r.row, "Класс", "Класс обязателен и должен быть числом 1–11.")
@@ -442,6 +443,9 @@ def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session) -> ImportPlan:
 
         phone = d.get(K_PHONE, "") or None
         group_name = d.get(K_GROUP, "")
+        if not group_name:
+            err(SHEET_STUDENTS, r.row, "Группа", "Группа обязательна")
+            continue
         if group_name:
             gk = group_name.lower()
             group_exists_db = (
