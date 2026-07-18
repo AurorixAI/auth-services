@@ -17,6 +17,7 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 
+from .student_id_service import assign_display_id
 from .models import (
     Organization,
     User,
@@ -847,6 +848,8 @@ class AuthService:
             class_level=student.class_level,
             group_id=str(student.group_id) if student.group_id else None,
             student_number=student.student_number,
+            display_id=student.display_id,
+            sequence_number=student.sequence_number,
             student_phone=student.student_phone,
             comment=student.comment,
             status=student.status or "new",
@@ -1192,6 +1195,7 @@ class AuthService:
                 "full_name": f"{s.last_name} {s.first_name}",
                 "class_level": s.class_level,
                 "status": s.status,
+                "display_id": s.display_id,
                 "student_phone": s.student_phone,
                 "joined_at": m.joined_at.isoformat() if m.joined_at else None,
                 "last_theta": theta,
@@ -1313,11 +1317,18 @@ class AuthService:
         if student.status in ("new", "diagnosed"):
             student.status = "active"
 
+        # Момент фактического зачисления → выдаём публичный Display-ID, если его
+        # ещё нет. Это тот самый вызов переиспользуемого сервиса из «assign to
+        # group» flow (реализация будущего контроллера AssignToGroup).
+        if not student.display_id:
+            assign_display_id(self.db, org_id, student)
+
         self.db.commit()
         return {
             "student_id": str(student_id),
             "group_id": str(group_id),
             "status": "added",
+            "display_id": student.display_id,
         }
 
     def remove_student_from_group(

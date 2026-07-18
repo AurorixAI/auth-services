@@ -61,6 +61,10 @@ class Organization(Base):
     max_students = Column(Integer, default=500)
     max_teachers = Column(Integer, default=50)
 
+    # Префикс для публичных ID учеников (display_id вида "AL15-001").
+    # Если не задан — выводится из name (см. student_id_service.resolve_prefix).
+    student_id_prefix = Column(String(16), nullable=True)
+
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
@@ -285,6 +289,14 @@ class Student(Base):
     student_phone = Column(String(30))  # optional — bulk import may omit it
     comment = Column(Text)
 
+    # Публичный человекочитаемый ID для «zero-friction» лобби.
+    # sequence_number — порядковый номер внутри организации (max+1).
+    # display_id      — форматированный ID, напр. "AL15-001".
+    # Оба заполняются в момент фактического зачисления (импорт / assign-to-group),
+    # а не при создании в буфере, поэтому nullable. См. student_id_service.py.
+    sequence_number = Column(Integer, nullable=True)
+    display_id = Column(String(32), nullable=True)
+
     status = Column(String(20), nullable=False, default="new")
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at = Column(DateTime, default=func.now())
@@ -307,6 +319,12 @@ class Student(Base):
         CheckConstraint("status IN ('new', 'diagnosed', 'active', 'archived')"),
         Index("idx_students_org", "org_id"),
         Index("idx_students_status", "status"),
+        Index("idx_students_display_id", "display_id"),
+        # Порядковый номер и публичный ID уникальны в пределах организации.
+        # NULL-ы в Postgres считаются различными → ученики в буфере (ещё без ID)
+        # ограничение не нарушают.
+        UniqueConstraint("org_id", "sequence_number", name="uq_student_org_sequence"),
+        UniqueConstraint("org_id", "display_id", name="uq_student_org_display_id"),
     )
 
     @property
@@ -323,6 +341,8 @@ class Student(Base):
             "class_level": self.class_level,
             "group_id": str(self.group_id) if self.group_id else None,
             "student_number": self.student_number,
+            "display_id": self.display_id,
+            "sequence_number": self.sequence_number,
             "student_phone": self.student_phone,
             "comment": self.comment,
             "status": self.status,

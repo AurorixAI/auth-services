@@ -41,6 +41,7 @@ from src.models.auth import (
 )
 
 from .service import generate_code, hash_password
+from .student_id_service import DisplayIdAllocator
 
 # ── Sheet + column names (the template we dictate) ──────────────────────────
 SHEET_TEACHERS = "Учителя"
@@ -617,6 +618,11 @@ def commit(org_id: str, creator_id: str, data: bytes, db: Session) -> ImportComm
             return str(grp.id) if grp else None
 
         # 3) Students ---------------------------------------------------------
+        # Онбординг центра: каждому НОВОМУ ученику выдаётся публичный Display-ID
+        # (напр. "AL15-001"). Существующие (action == "existing") пропускаются —
+        # их ID не перезаписывается. Аллокатор создаём лениво (только если есть
+        # что вставлять), он берёт блокировку строки организации один раз на пакет.
+        id_allocator: Optional[DisplayIdAllocator] = None
         for s in plan.students:
             if s.action == "existing":
                 continue
@@ -634,6 +640,9 @@ def commit(org_id: str, creator_id: str, data: bytes, db: Session) -> ImportComm
             )
             db.add(student)
             db.flush()
+            if id_allocator is None:
+                id_allocator = DisplayIdAllocator(db, org_id)
+            id_allocator.allocate(student)  # проставит sequence_number + display_id
             if group_id:
                 db.add(StudentGroup(student_id=student.id, group_id=group_id))
 

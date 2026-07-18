@@ -163,6 +163,8 @@ class StudentResponse(BaseModel):
     class_level: int
     group_id: Optional[str] = None
     student_number: Optional[str] = None
+    display_id: Optional[str] = None  # публичный ID вида "AL15-001" (может быть null в буфере)
+    sequence_number: Optional[int] = None  # порядковый номер в организации
     student_phone: Optional[str] = None
     comment: Optional[str] = None
     status: str
