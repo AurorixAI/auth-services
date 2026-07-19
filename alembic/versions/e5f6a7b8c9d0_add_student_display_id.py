@@ -6,21 +6,25 @@ Create Date: 2026-07-18
 
 Adds the public "Display-ID" for students (zero-friction test lobby):
 
-  * organizations.student_id_prefix — optional prefix (e.g. "AL15"). If NULL,
-    it's derived from the org name at generation time (see student_id_service).
+  * organizations.student_id_prefix — org prefix (initials, e.g. "NC"), UNIQUE
+    across organizations. Assigned lazily by student_id_service.ensure_org_prefix
+    (collision → NC1, NC2 …); an explicitly set value is respected.
   * students.sequence_number        — per-org running number (max+1).
-  * students.display_id             — formatted public ID, e.g. "AL15-001".
+  * students.display_id             — formatted public ID, e.g. "NC-001".
 
 Both student columns are nullable: a lead sitting in the diagnostic buffer has
 no ID until actual enrollment (import insert / assign-to-group).
 
-Uniqueness is per-organization, enforced with partial-free UNIQUE indexes
-(Postgres treats NULLs as distinct, so buffered students don't clash).
+Uniqueness:
+  * students — per organization, via UNIQUE(org_id, sequence_number) and
+    UNIQUE(org_id, display_id). Postgres treats NULLs as distinct, so buffered
+    students without IDs don't clash.
+  * organizations.student_id_prefix — UNIQUE across all orgs (NULLs distinct),
+    which is what makes the NC → NC1 collision-suffixing safe.
 
-Backfill: historical students (created before this feature) are numbered once,
-per org, ordered by created_at — so existing group lists aren't full of blanks.
-The SQL prefix derivation mirrors student_id_service._derive_prefix_from_name.
-Everything is idempotent / re-runnable.
+No data backfill: prefix assignment is collision-aware and lives in Python
+(student_id_service); historical students receive an ID the next time they are
+imported / enrolled. Everything here is idempotent / re-runnable.
 """
 from typing import Sequence, Union
 
@@ -48,7 +52,7 @@ def upgrade() -> None:
         "ALTER TABLE students ADD COLUMN IF NOT EXISTS display_id VARCHAR(32)"
     ))
 
-    # ── 2. Indexes / per-org uniqueness (NULLs are distinct in PG) ──────────
+    # ── 2. Student indexes / per-org uniqueness (NULLs distinct in PG) ──────
     op.execute(sa.text(
         "CREATE INDEX IF NOT EXISTS idx_students_display_id "
         "ON students (display_id)"
@@ -62,48 +66,15 @@ def upgrade() -> None:
         "ON students (org_id, display_id)"
     ))
 
-    # ── 3. One-time backfill of historical rows ─────────────────────────────
-    # prefix = COALESCE(explicit, <letters[:4]><digits[:4]>, 'ST')
-    # seq    = ROW_NUMBER() over each org, ordered by created_at (stable).
+    # ── 3. Org prefix uniqueness across organizations ───────────────────────
     op.execute(sa.text(
-        """
-        WITH numbered AS (
-            SELECT
-                s.id AS student_id,
-                ROW_NUMBER() OVER (
-                    PARTITION BY s.org_id
-                    ORDER BY s.created_at ASC, s.id ASC
-                ) AS rn,
-                COALESCE(
-                    NULLIF(UPPER(TRIM(o.student_id_prefix)), ''),
-                    NULLIF(
-                        COALESCE(
-                            NULLIF(UPPER(SUBSTRING(
-                                REGEXP_REPLACE(o.name, '[^A-Za-z]', '', 'g')
-                                FROM 1 FOR 4)), ''),
-                            ''
-                        )
-                        || SUBSTRING(
-                                REGEXP_REPLACE(o.name, '[^0-9]', '', 'g')
-                                FROM 1 FOR 4),
-                        ''
-                    ),
-                    'ST'
-                ) AS prefix
-            FROM students s
-            JOIN organizations o ON o.id = s.org_id
-            WHERE s.display_id IS NULL
-        )
-        UPDATE students t
-        SET sequence_number = n.rn,
-            display_id = n.prefix || '-' || LPAD(n.rn::text, 3, '0')
-        FROM numbered n
-        WHERE t.id = n.student_id
-        """
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_org_student_id_prefix "
+        "ON organizations (student_id_prefix)"
     ))
 
 
 def downgrade() -> None:
+    op.execute(sa.text("DROP INDEX IF EXISTS uq_org_student_id_prefix"))
     op.execute(sa.text("DROP INDEX IF EXISTS uq_student_org_display_id"))
     op.execute(sa.text("DROP INDEX IF EXISTS uq_student_org_sequence"))
     op.execute(sa.text("DROP INDEX IF EXISTS idx_students_display_id"))

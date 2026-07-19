@@ -2,7 +2,14 @@
 ALGO — Генерация публичных Display-ID учеников (переиспользуемый сервис).
 
 Display-ID — короткий человекочитаемый идентификатор, по которому ученик заходит
-в «zero-friction» лобби тестов. Формат:  ``<ПРЕФИКС_ОРГАНИЗАЦИИ>-<NNN>``  →  ``AL15-001``.
+в «zero-friction» лобби тестов. Формат:  ``<ПРЕФИКС_ОРГАНИЗАЦИИ>-<NNN>``  →  ``IN-001``.
+
+**Префикс организации** — инициалы названия (первые буквы первых двух слов), напр.
+``New Castle`` → ``NC``; для однословных — первые две буквы (``Algo`` → ``AL``).
+Кириллица транслитерируется в латиницу. Префикс **уникален между организациями**:
+если инициалы уже заняты другой организацией, добавляется числовой суффикс
+(``NC`` → ``NC1`` → ``NC2`` …). Один раз назначенный префикс за организацией
+закрепляется (хранится в ``Organization.student_id_prefix``) и больше не меняется.
 
 Бизнес-правило (см. тикет): ID выдаётся строго в момент *фактического зачисления*
 ученика, а не при его создании в буфере. Точки вызова:
@@ -12,20 +19,16 @@ Display-ID — короткий человекочитаемый идентиф�
   2. **AssignToGroup (задел на будущее)** — когда админ переводит прошедшего
      диагностику ученика из буфера в реальную группу.
 
-Нумерация — сквозная в пределах организации: ``sequence_number = max(существующих) + 1``.
-Чтобы это было безопасно при параллельных импортах, перед чтением максимума берём
-блокировку строки организации (``SELECT ... FOR UPDATE``) — два параллельных коммита
-не смогут выдать один и тот же номер.
+Нумерация ученика — сквозная в пределах организации: ``sequence_number = max(...) + 1``.
+Перед чтением максимума берётся блокировка строки организации (``SELECT ... FOR UPDATE``),
+поэтому два параллельных импорта не выдадут одинаковый номер.
 
-Модуль намеренно НЕ зависит от контроллеров/сервисов — только от ORM-моделей, чтобы
-его можно было переиспользовать из любого flow (AC: логика вынесена отдельно и не
-зашита в контроллер импорта).
+Модуль зависит только от ORM-моделей — переиспользуется из любого flow (AC: логика
+вынесена отдельно и не зашита в контроллер импорта).
 """
 from __future__ import annotations
 
 import re
-from typing import Optional
-from uuid import UUID
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -34,46 +37,91 @@ from src.models.auth import Organization, Student
 
 # Минимальная ширина порядкового номера: 001, 002, ... После 999 растёт сам (1000).
 SEQ_PAD = 3
-# Запасной префикс, если из названия организации ничего пригодного не выделилось.
+# Запасной префикс, если из названия не выделилось двух латинских букв.
 PREFIX_FALLBACK = "ST"
-# Ограничение длины префикса (совпадает с Organization.student_id_prefix VARCHAR(16)).
-PREFIX_MAXLEN = 16
+
+# Базовая транслитерация кириллицы → латиница (нужен только первый символ).
+_TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
 
 
-def _derive_prefix_from_name(name: str) -> str:
-    """Детерминированный префикс из названия, если организация не задала свой.
+def _latin_initial(ch: str) -> str:
+    """Первая латинская буква одного символа (с транслитерацией кириллицы).
 
-    Правило (совпадает с SQL-бэкофиллом в миграции):
-      * берём латинские буквы (до 4) в верхнем регистре,
-      * затем цифры (до 4),
-      * если ничего не осталось — ``PREFIX_FALLBACK``.
-
-    Примеры::
-
-        "Algo Learning"  -> "ALGO"
-        "Школа 15"        -> "15"     (кириллица отбрасывается, остаются цифры)
-        "AL15 Center"     -> "ALCENTER"? нет — буквы "ALCENTER"[:4]="ALCE" + ""   -> "ALCE"
-        ""                -> "ST"
-
-    Это лишь безопасный дефолт: рекомендуемый путь — явно задать
-    ``Organization.student_id_prefix`` (например, "AL15").
+    ``"N" → "N"``, ``"Ш" → "S"`` (sh→s), ``"5" → ""``.
     """
-    letters = re.sub(r"[^A-Za-z]", "", name or "")[:4].upper()
-    digits = re.sub(r"[^0-9]", "", name or "")[:4]
-    prefix = f"{letters}{digits}"
-    return (prefix[:PREFIX_MAXLEN]) if prefix else PREFIX_FALLBACK
+    if not ch:
+        return ""
+    mapped = _TRANSLIT.get(ch[:1].lower(), ch[:1])
+    mapped = re.sub(r"[^A-Za-z]", "", mapped)
+    return mapped[:1].upper()
 
 
-def resolve_prefix(org: Organization) -> str:
-    """Префикс организации: явный ``student_id_prefix`` или вывод из названия."""
-    explicit = (org.student_id_prefix or "").strip().upper()
-    if explicit:
-        return explicit[:PREFIX_MAXLEN]
-    return _derive_prefix_from_name(org.name or "")
+def _initials_from_name(name: str) -> str:
+    """Базовый 2-буквенный префикс из названия организации.
+
+    ``"Inter nation"``     → ``"IN"``
+    ``"New CastleSchool"`` → ``"NC"``
+    ``"Algo"``             → ``"AL"``   (одно слово → первые две буквы)
+    ``"Школа Знаний"``     → ``"SZ"``   (транслитерация)
+    пусто / без латиницы   → ``PREFIX_FALLBACK`` (``"ST"``).
+    """
+    words = [w for w in re.split(r"[^0-9A-Za-zА-Яа-яЁё]+", name or "") if w]
+    if len(words) >= 2:
+        base = _latin_initial(words[0][0]) + _latin_initial(words[1][0])
+    elif len(words) == 1:
+        w = words[0]
+        base = _latin_initial(w[0]) + _latin_initial(w[1] if len(w) > 1 else w[0])
+    else:
+        base = ""
+    base = re.sub(r"[^A-Z]", "", base.upper())
+    if len(base) < 2:
+        base = (base + PREFIX_FALLBACK)[:2]  # добить до 2 символов
+    return base
+
+
+def _unique_prefix(db: Session, base: str, exclude_org_id) -> str:
+    """base, если свободен среди других организаций; иначе base1, base2, …"""
+    taken = {
+        p
+        for (p,) in (
+            db.query(Organization.student_id_prefix)
+            .filter(
+                Organization.student_id_prefix.isnot(None),
+                Organization.id != exclude_org_id,
+            )
+            .all()
+        )
+        if p
+    }
+    if base not in taken:
+        return base
+    i = 1
+    while f"{base}{i}" in taken:
+        i += 1
+    return f"{base}{i}"
+
+
+def ensure_org_prefix(db: Session, org: Organization) -> str:
+    """Префикс организации; при отсутствии — назначает уникальный и сохраняет.
+
+    Уже заданный префикс (явно админом или ранее сгенерированный) не меняется.
+    """
+    if org.student_id_prefix:
+        return org.student_id_prefix
+    prefix = _unique_prefix(db, _initials_from_name(org.name or ""), org.id)
+    org.student_id_prefix = prefix
+    db.flush()
+    return prefix
 
 
 def format_display_id(prefix: str, seq: int) -> str:
-    """``("AL15", 1) -> "AL15-001"``; при seq > 999 ширина растёт естественно."""
+    """``("IN", 1) -> "IN-001"``; при seq > 999 ширина растёт естественно."""
     return f"{prefix}-{seq:0{SEQ_PAD}d}"
 
 
@@ -88,7 +136,7 @@ def _current_max_sequence(db: Session, org_id) -> int:
 
 
 def _lock_org(db: Session, org_id) -> Organization:
-    """Берём строку организации под ``FOR UPDATE`` — сериализуем выдачу номеров.
+    """Строка организации под ``FOR UPDATE`` — сериализуем выдачу номеров.
 
     Блокировка держится до конца транзакции вызывающего кода (commit/rollback).
     """
@@ -117,9 +165,10 @@ def assign_display_id(
     if student.display_id and not force:
         return student
     org = _lock_org(db, org_id)
+    prefix = ensure_org_prefix(db, org)
     seq = _current_max_sequence(db, org_id) + 1
     student.sequence_number = seq
-    student.display_id = format_display_id(resolve_prefix(org), seq)
+    student.display_id = format_display_id(prefix, seq)
     db.flush()
     return student
 
@@ -128,9 +177,9 @@ class DisplayIdAllocator:
     """Выдаёт последовательные Display-ID в пределах одной организации.
 
     Оптимизирован под пакетную выдачу (массовый импорт): блокирует строку
-    организации и читает максимум ОДИН раз при создании, далее каждый
-    ``allocate()`` инкрементирует локальный счётчик — без похода в БД за
-    максимумом на каждого ученика и без риска коллизии внутри пакета.
+    организации, назначает/читает префикс и максимум ОДИН раз при создании,
+    далее каждый ``allocate()`` инкрементирует локальный счётчик — без похода
+    в БД за максимумом на каждого ученика и без риска коллизии внутри пакета.
 
     Использовать внутри уже открытой транзакции (напр., ``import_service.commit``)::
 
@@ -142,7 +191,7 @@ class DisplayIdAllocator:
 
     def __init__(self, db: Session, org_id):
         org = _lock_org(db, org_id)
-        self._prefix = resolve_prefix(org)
+        self._prefix = ensure_org_prefix(db, org)
         self._next = _current_max_sequence(db, org_id) + 1
 
     def allocate(self, student: Student) -> Student:
