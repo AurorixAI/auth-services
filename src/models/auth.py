@@ -61,8 +61,9 @@ class Organization(Base):
     max_students = Column(Integer, default=500)
     max_teachers = Column(Integer, default=50)
 
-    # Префикс для публичных ID учеников (display_id вида "AL15-001").
-    # Если не задан — выводится из name (см. student_id_service.resolve_prefix).
+    # Префикс для публичных ID учеников (display_id вида "NC-001").
+    # Если не задан — инициалы из name, уникальные между орг-ми (NC → NC1 → NC2);
+    # см. student_id_service.ensure_org_prefix.
     student_id_prefix = Column(String(16), nullable=True)
 
     created_at = Column(DateTime, default=func.now())
@@ -82,6 +83,8 @@ class Organization(Base):
             "org_type IN ('center', 'private_school', 'university', 'tutoring_center', 'tutor', 'other')"
         ),
         CheckConstraint("status IN ('pending', 'active', 'suspended', 'rejected')"),
+        # Префикс для публичных ID уникален между организациями (NC → NC1 → NC2 …).
+        UniqueConstraint("student_id_prefix", name="uq_org_student_id_prefix"),
     )
 
     def to_dict(self) -> dict:
