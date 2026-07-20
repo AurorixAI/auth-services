@@ -82,6 +82,8 @@ class Organization(Base):
             "org_type IN ('center', 'private_school', 'university', 'tutoring_center', 'tutor', 'other')"
         ),
         CheckConstraint("status IN ('pending', 'active', 'suspended', 'rejected')"),
+        # Префикс для публичных ID уникален между организациями (NC → NC1 → NC2 …).
+        UniqueConstraint("student_id_prefix", name="uq_org_student_id_prefix"),
     )
 
     def to_dict(self) -> dict:
