@@ -266,7 +266,7 @@ class UserResponse(BaseModel):
     default_org_id: Optional[str] = None
     org_role: Optional[str] = None
     org_name: Optional[str] = None
-    language: str = "ru"
+    language: Optional[str] = "ru"
     is_active: bool = True
     is_verified: bool = False
     must_change_password: bool = False
