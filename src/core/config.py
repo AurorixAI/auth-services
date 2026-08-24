@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     mathpix_app_id: str = ""
     mathpix_app_key: str = ""
     gemini_api_key: str = ""
+    # Exam-service receives authoritative lifecycle notifications from this
+    # service after an attendance-backed lesson cancellation.
+    exam_service_url: str = "http://exam-service:8003/api/v1"
+    internal_service_token: str = ""
 
     # ── Organization onboarding ───────────────────────────────────────────────
     # When True, a new org application is activated immediately (owner can log
@@ -69,7 +73,9 @@ class Settings(BaseSettings):
     # ── CORS ──────────────────────────────────────────────────────────────────
     cors_origins: List[str] = [
         "http://localhost:3000",
+        "http://127.0.0.1:3000",
         "http://localhost:5173",
+        "http://127.0.0.1:5173",
     ]
 
     # ── Derived properties ────────────────────────────────────────────────────

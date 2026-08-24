@@ -14,6 +14,10 @@ from src.models.auth import (
     StudentGroup,
     DiagnosticInvite,
     StudentDiagnosticResult,
+    GroupAttendance,
+    GroupAttendanceAudit,
+    GroupScheduleOverride,
+    GroupScheduleAudit,
 )
 from src.models.analytics import (
     AnswerEvent,
@@ -33,6 +37,10 @@ __all__ = [
     "StudentGroup",
     "DiagnosticInvite",
     "StudentDiagnosticResult",
+    "GroupAttendance",
+    "GroupAttendanceAudit",
+    "GroupScheduleOverride",
+    "GroupScheduleAudit",
     # Analytics (skill states written by internal callback)
     "AnswerEvent",
     "SessionSummary",

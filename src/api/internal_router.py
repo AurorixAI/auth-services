@@ -4,15 +4,47 @@ NOT exposed externally; in production this should be behind network-level ACL.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+import secrets
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 
 from src.api.database import get_db
 from src.auth.service import AuthService
+from src.core.config import get_settings
 
-router = APIRouter(prefix="/internal", tags=["Internal"])
+
+def require_internal_service_token(
+    x_internal_service_token: Optional[str] = Header(None, alias="X-Internal-Service-Token"),
+) -> None:
+    """Authenticate only first-party service-to-service calls.
+
+    These endpoints mutate diagnostic state and must never be protected merely
+    by a Docker-network assumption.  A missing server-side secret fails closed
+    so a production misconfiguration cannot silently expose the callbacks.
+    """
+    expected = get_settings().internal_service_token
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Внутренняя связка сервисов не настроена",
+        )
+    if not x_internal_service_token or not secrets.compare_digest(
+        x_internal_service_token, expected
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Недействительный внутренний токен сервиса",
+        )
+
+
+router = APIRouter(
+    prefix="/internal",
+    tags=["Internal"],
+    dependencies=[Depends(require_internal_service_token)],
+)
 
 
 def _svc(db: Session) -> AuthService:
@@ -44,6 +76,7 @@ class DiagCompleteCallback(BaseModel):
     final_theta: Optional[float] = None
     se: Optional[float] = None
     total_items: Optional[int] = None
+    correct_answers: Optional[int] = None
     identified_gaps: Optional[List[str]] = None
     accuracy: Optional[float] = None
     # per-topic mastery breakdown: {topic_id: {"alpha": float, "level": str}}
@@ -71,9 +104,11 @@ def internal_complete_diagnostic(
     db: Session = Depends(get_db),
 ):
     result_data: Dict[str, Any] = {
+        "session_id": body.session_id,
         "final_theta": body.final_theta,
         "se": body.se,
         "total_items": body.total_items,
+        "correct_answers": body.correct_answers,
         "identified_gaps": body.identified_gaps or [],
         "accuracy": body.accuracy,
     }

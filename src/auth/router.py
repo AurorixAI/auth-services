@@ -7,9 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, U
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 from typing import Optional
+from datetime import datetime
 import os
 
 from .service import AuthService
+from .attendance_access import is_org_admin
 from . import import_service
 from .import_service import ImportPreviewResponse, ImportCommitResponse
 from src.api.rate_limit import rate_limit
@@ -41,6 +43,15 @@ from .schemas import (
     OrgApplicationPendingResponse,
     AdminApproveRequest,
     ActivateAccountRequest,
+    ScheduleLessonResponse,
+    ScheduleOccurrenceResponse,
+    CreateLessonRequest,
+    UpdateLessonRequest,
+    RescheduleLessonRequest,
+    ReviseRecurringLessonRequest,
+    StartAttendanceRequest,
+    SaveAttendanceRequest,
+    GroupAttendanceResponse,
 )
 from .dependencies import (
     get_current_user_payload,
@@ -52,6 +63,7 @@ from .dependencies import (
 )
 
 from src.core.database import get_db
+from src.api.internal_router import require_internal_service_token
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -275,13 +287,28 @@ def confirm_diagnostic(code: str, db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
 
-@router.post("/diagnostic/{code}/start")
-def start_diagnostic(code: str, db: Session = Depends(get_db)):
-    """Старт CAT — confirmed → in_progress (вызывается фронтендом/CAT)"""
-    try:
-        return _svc(db).start_diagnostic(code)
-    except ValueError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+@router.get("/public/groups/{group_id}/verify-student")
+def verify_group_student(
+    group_id: str,
+    q: Optional[str] = Query(default=None),
+    student_id: Optional[str] = Query(default=None),
+    student_name: Optional[str] = Query(default=None),
+    _: None = Depends(require_internal_service_token),
+    db: Session = Depends(get_db),
+):
+    """Внутренняя проверка принадлежности ученика к группе для exam-service.
+
+    Маршрут сохранён для совместимости с уже развёрнутым exam-service, но
+    больше не является публичным: UUID группы и ФИО нельзя использовать как
+    способ перечисления учеников.
+    """
+    return _svc(db).verify_group_student(
+        group_id=group_id,
+        query=q,
+        student_id=student_id,
+        student_name=student_name,
+    )
+
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
@@ -361,9 +388,9 @@ def get_organization(
 
 @router.get("/org/stats")
 def get_org_stats(
-    user: dict = Depends(require_org_member), db: Session = Depends(get_db)
+    user: dict = Depends(require_org_admin), db: Session = Depends(get_db)
 ):
-    """Статистика организации для dashboard"""
+    """Сводная статистика всей организации для owner/admin dashboard."""
     return _svc(db).get_org_stats(user["org_id"])
 
 
@@ -481,7 +508,9 @@ def create_student(
 def list_students(
     class_level: Optional[int] = None,
     group_id: Optional[str] = None,
+    has_group: Optional[bool] = Query(None),
     student_status: Optional[str] = Query(None, alias="status"),
+    exclude_status: Optional[str] = Query(None),
     search: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
@@ -493,10 +522,14 @@ def list_students(
         user["org_id"],
         class_level=class_level,
         group_id=group_id,
+        has_group=has_group,
         status=student_status,
+        exclude_status=exclude_status,
         search=search,
         limit=limit,
         offset=offset,
+        actor_id=user["user_id"],
+        is_org_admin=is_org_admin(user),
     )
 
 
@@ -508,9 +541,52 @@ def get_student(
 ):
     """Данные одного ученика"""
     try:
-        return _svc(db).get_student(user["org_id"], student_id)
+        return _svc(db).get_student(
+            user["org_id"],
+            student_id,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.get("/org/students/{student_id}/profile")
+def get_student_profile(
+    student_id: str,
+    user: dict = Depends(require_org_teacher),
+    db: Session = Depends(get_db),
+):
+    """Полный профиль ученика (группа, история диагностик, результаты)"""
+    try:
+        return _svc(db).get_student_profile(
+            user["org_id"],
+            student_id,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.get("/org/students/{student_id}/attendance")
+def get_student_attendance_summary(
+    student_id: str,
+    month: Optional[str] = Query(None, description="Месяц YYYY-MM"),
+    user: dict = Depends(require_org_admin),
+    db: Session = Depends(get_db),
+):
+    """Месячная посещаемость ученика по всем группам, включая прошлые."""
+    try:
+        return _svc(db).get_student_attendance_summary(
+            user["org_id"], student_id, month=month
+        )
+    except ValueError as e:
+        raise HTTPException(404 if str(e) == "Ученик не найден" else 400, str(e))
 
 
 @router.put("/org/students/{student_id}", response_model=StudentResponse)
@@ -569,14 +645,68 @@ def create_quick_diagnostic(
 @router.get("/org/diagnostics")
 def list_diagnostics(
     diagnostic_status: Optional[str] = Query(None, alias="status"),
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    include_meta: bool = Query(False),
     user: dict = Depends(require_org_admin),
     db: Session = Depends(get_db),
 ):
-    """Список диагностик организации (live queue)"""
-    return _svc(db).list_diagnostic_invites(
-        user["org_id"], status=diagnostic_status, limit=limit
+    """Список диагностик организации с безопасной опциональной пагинацией."""
+    items, total = _svc(db).list_diagnostic_invites(
+        user["org_id"],
+        status=diagnostic_status,
+        limit=limit,
+        offset=offset,
     )
+    if include_meta:
+        return {
+            "items": items,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+    # Preserve the original list contract for existing callers.
+    return items
+
+
+@router.get("/org/diagnostics/{diagnostic_id}")
+def get_diagnostic(
+    diagnostic_id: str,
+    user: dict = Depends(require_org_teacher),
+    db: Session = Depends(get_db),
+):
+    """One diagnostic report entry, scoped to the staff member's students."""
+    try:
+        return _svc(db).get_diagnostic_invite(
+            user["org_id"],
+            diagnostic_id,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.post("/org/diagnostics/{diagnostic_id}/acknowledge-report")
+def acknowledge_diagnostic_report(
+    diagnostic_id: str,
+    user: dict = Depends(require_org_teacher),
+    db: Session = Depends(get_db),
+):
+    """Mark an initial report as reviewed by the teacher of the current group."""
+    try:
+        return _svc(db).acknowledge_initial_diagnostic_report(
+            user["org_id"],
+            diagnostic_id,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
@@ -587,7 +717,7 @@ def list_diagnostics(
 @router.post("/org/groups", response_model=GroupResponse, status_code=201)
 def create_group(
     request: GroupCreateRequest,
-    user: dict = Depends(require_org_member),
+    user: dict = Depends(require_org_admin),
     db: Session = Depends(get_db),
 ):
     """Создать группу"""
@@ -603,7 +733,11 @@ def list_groups(
 ):
     """Список групп организации"""
     return _svc(db).list_groups(
-        user["org_id"], teacher_id=teacher_id, class_level=class_level
+        user["org_id"],
+        teacher_id=teacher_id,
+        class_level=class_level,
+        actor_id=user["user_id"],
+        is_org_admin=is_org_admin(user),
     )
 
 
@@ -615,7 +749,14 @@ def get_group(
 ):
     """Детали группы + список учеников (с последним θ/уровнем, если есть)."""
     try:
-        return _svc(db).get_group_detail(user["org_id"], group_id)
+        return _svc(db).get_group_detail(
+            user["org_id"],
+            group_id,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(e))
     except ValueError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
 
@@ -628,7 +769,14 @@ def get_group_stats(
 ):
     """Статистика по группе — диагностировано/среднее θ/распределение уровней."""
     try:
-        return _svc(db).get_group_stats(user["org_id"], group_id)
+        return _svc(db).get_group_stats(
+            user["org_id"],
+            group_id,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(e))
     except ValueError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
 
@@ -765,3 +913,227 @@ def list_users(
     svc = _svc(db)
     users = svc.list_users(role=role, limit=limit, offset=offset)
     return [svc._build_user_response(u) for u in users]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SCHEDULE & ATTENDANCE ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════
+
+
+@router.get("/org/schedule", response_model=list[ScheduleLessonResponse])
+def get_schedule(
+    teacher_id: Optional[str] = None,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Получить расписание уроков организации (или конкретного преподавателя)."""
+    # Teacher никогда не может подменить teacher_id параметром запроса.
+    tid = teacher_id if is_org_admin(user) else user["user_id"]
+
+    return _svc(db).get_schedule(user["org_id"], teacher_id=tid)
+
+
+@router.get("/org/schedule/occurrences", response_model=list[ScheduleOccurrenceResponse])
+def get_schedule_occurrences(
+    date_from: str = Query(..., description="Начало периода YYYY-MM-DD"),
+    date_to: str = Query(..., description="Конец периода YYYY-MM-DD"),
+    teacher_id: Optional[str] = None,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Конкретные уроки периода с учётом переносов и версий расписания."""
+    try:
+        start = datetime.strptime(date_from, "%Y-%m-%d").date()
+        end = datetime.strptime(date_to, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(400, "date_from и date_to должны иметь формат YYYY-MM-DD") from exc
+    tid = teacher_id if is_org_admin(user) else user["user_id"]
+    try:
+        return _svc(db).get_schedule_occurrences(
+            user["org_id"], date_from=start, date_to=end, teacher_id=tid
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/org/schedule/lessons", response_model=ScheduleLessonResponse, status_code=201)
+def create_lesson(
+    request: CreateLessonRequest,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Создать/добавить урок в расписание"""
+    try:
+        return _svc(db).create_lesson(
+            user["org_id"],
+            request,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.put("/org/schedule/lessons/{lesson_id}", response_model=ScheduleLessonResponse)
+def update_lesson(
+    lesson_id: str,
+    request: UpdateLessonRequest,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Отредактировать урок в расписании"""
+    try:
+        return _svc(db).update_lesson(
+            user["org_id"],
+            lesson_id,
+            request,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+
+
+@router.post("/org/schedule/lessons/{lesson_id}/reschedule", response_model=ScheduleOccurrenceResponse)
+def reschedule_lesson_occurrence(
+    lesson_id: str,
+    request: RescheduleLessonRequest,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Перенести сегодняшний экземпляр урока без изменения постоянного расписания."""
+    try:
+        return _svc(db).reschedule_lesson_occurrence(
+            user["org_id"],
+            lesson_id,
+            request,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.put("/org/schedule/lessons/{lesson_id}/recurrence", response_model=ScheduleLessonResponse)
+def revise_recurring_lesson(
+    lesson_id: str,
+    request: ReviseRecurringLessonRequest,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Изменить расписание будущих экземпляров урока с указанной даты."""
+    try:
+        return _svc(db).revise_recurring_lesson(
+            user["org_id"],
+            lesson_id,
+            request,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.delete("/org/schedule/lessons/{lesson_id}")
+def delete_lesson(
+    lesson_id: str,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Удалить урок из расписания"""
+    try:
+        deleted = _svc(db).delete_lesson(
+            user["org_id"],
+            lesson_id,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    if not deleted:
+        raise HTTPException(404, "Урок не найден")
+    return {"ok": True, "action": "deleted", "lesson_id": lesson_id}
+
+
+@router.get("/org/groups/{group_id}/attendance", response_model=GroupAttendanceResponse)
+def get_group_attendance(
+    group_id: str,
+    month: Optional[str] = Query(None, description="Месяц YYYY-MM"),
+    date_from: Optional[str] = Query(None, description="Начало периода YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="Конец периода YYYY-MM-DD"),
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Журнал посещаемости группы за месяц или указанный период."""
+    try:
+        return _svc(db).get_group_attendance(
+            user["org_id"],
+            group_id,
+            month=month,
+            date_from=date_from,
+            date_to=date_to,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/org/groups/{group_id}/attendance")
+def save_group_attendance(
+    group_id: str,
+    request: SaveAttendanceRequest,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Сохранить отметки посещаемости за урок/дату"""
+    try:
+        _svc(db).save_group_attendance(
+            user["org_id"],
+            group_id,
+            request,
+            marked_by=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+        return {"ok": True, "saved": True}
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+
+
+@router.post("/org/groups/{group_id}/attendance/start")
+def start_group_attendance(
+    group_id: str,
+    request: StartAttendanceRequest,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Explicitly begin a lesson before any attendance can be marked."""
+    try:
+        _svc(db).start_group_attendance(
+            user["org_id"],
+            group_id,
+            request,
+            started_by=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+        return {"ok": True, "started": True}
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))

@@ -397,6 +397,8 @@ class Group(Base):
             "name": self.name,
             "class_level": self.class_level,
             "teacher_id": str(self.teacher_id) if self.teacher_id else None,
+            "description": self.description,
+            "schedule": self.schedule or [],
             "status": self.status,
             "max_students": self.max_students,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -423,6 +425,13 @@ class StudentGroup(Base):
     is_active = Column(Boolean, default=True)
     joined_at = Column(DateTime, default=func.now())
     left_at = Column(DateTime)
+
+    # This acknowledgement belongs to the concrete membership, rather than
+    # to the student globally: a transfer must not silently hide the initial
+    # diagnostic from the teacher of the new group.
+    initial_diagnostic_reviewed_invite_id = Column(UUID(as_uuid=True))
+    initial_diagnostic_reviewed_at = Column(DateTime)
+    initial_diagnostic_reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
 
     student = relationship("Student", back_populates="group_memberships")
     group = relationship("Group", back_populates="student_memberships")
@@ -562,3 +571,180 @@ class StudentDiagnosticResult(Base):
             if self.diagnosed_at
             else None,
         }
+
+
+# ============================================================================
+# GROUP ATTENDANCE
+# ============================================================================
+
+
+class GroupAttendance(Base):
+    """Посещаемость уроков группы по датам"""
+
+    __tablename__ = "group_attendance"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    lesson_date = Column(String(10), nullable=False)  # "YYYY-MM-DD"
+    lesson_id = Column(String(100))
+    topic = Column(String(300))
+    status = Column(String(20), default="in_progress", nullable=False)  # "in_progress" | "completed" | "cancelled"
+    records = Column(JSONB, default={})  # { student_id: "present" | "absent" | "late" | "excused" }
+    # Immutable composition of the class at the moment the lesson begins.
+    # Membership can change later, but it must never rewrite past attendance.
+    roster_snapshot = Column(JSONB, nullable=True, default=list)
+    marked_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    # Server timestamp of the explicit teacher action "Start lesson".  It is
+    # deliberately distinct from ``created_at`` so future analytics never
+    # mistake a draft/scheduled occurrence for delivered teaching time.
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    cancellation_reason = Column(String(500), nullable=True)
+
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    group = relationship("Group")
+
+    __table_args__ = (
+        UniqueConstraint("group_id", "lesson_date", "lesson_id", name="uq_group_lesson_date_id"),
+        CheckConstraint(
+            "status IN ('in_progress', 'completed', 'cancelled')",
+            name="ck_group_attendance_status",
+        ),
+        Index("idx_attendance_group", "group_id"),
+        Index("idx_attendance_org", "org_id"),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "org_id": str(self.org_id),
+            "group_id": str(self.group_id),
+            "lesson_date": self.lesson_date,
+            "lesson_id": self.lesson_id,
+            "topic": self.topic,
+            "status": self.status or "completed",
+            "records": self.records or {},
+            "roster_snapshot": self.roster_snapshot or [],
+            "marked_by": str(self.marked_by) if self.marked_by else None,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "cancellation_reason": self.cancellation_reason,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class GroupAttendanceAudit(Base):
+    """Неизменяемый журнал создания и корректировок посещаемости."""
+
+    __tablename__ = "group_attendance_audit"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    attendance_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("group_attendance.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    org_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    action = Column(String(30), nullable=False)  # created | updated | corrected | cancelled
+    before_status = Column(String(20))
+    after_status = Column(String(20), nullable=False)
+    before_records = Column(JSONB)
+    after_records = Column(JSONB, nullable=False)
+    correction_reason = Column(String(500))
+    cancellation_reason = Column(String(500))
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('started', 'created', 'updated', 'corrected', 'cancelled')",
+            name="ck_group_attendance_audit_action",
+        ),
+        Index("idx_group_attendance_audit_attendance", "attendance_id"),
+        Index("idx_group_attendance_audit_group", "group_id"),
+    )
+
+
+class GroupScheduleOverride(Base):
+    """Версия постоянного расписания или перенос одного экземпляра урока.
+
+    Исходный ``Group.schedule`` остаётся базовым шаблоном. Эта таблица хранит
+    только изменения, поэтому завершённые занятия и их посещаемость никогда не
+    переписываются при переносе или изменении регулярного времени.
+    """
+
+    __tablename__ = "group_schedule_overrides"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    lesson_id = Column(String(100), nullable=False)
+    scope = Column(String(20), nullable=False)  # occurrence | recurring
+    effective_date = Column(String(10), nullable=False)  # YYYY-MM-DD
+    payload = Column(JSONB, nullable=False)
+    reason = Column(String(500), nullable=False)
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "group_id", "lesson_id", "scope", "effective_date",
+            name="uq_group_schedule_override_scope_date",
+        ),
+        CheckConstraint(
+            "scope IN ('occurrence', 'recurring')",
+            name="ck_group_schedule_override_scope",
+        ),
+        Index("idx_group_schedule_override_lookup", "group_id", "lesson_id", "effective_date"),
+        Index("idx_group_schedule_override_org", "org_id"),
+    )
+
+
+class GroupScheduleAudit(Base):
+    """Неизменяемый аудит переносов и изменений постоянного расписания."""
+
+    __tablename__ = "group_schedule_audit"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    override_id = Column(UUID(as_uuid=True), ForeignKey("group_schedule_overrides.id", ondelete="CASCADE"), nullable=False)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    lesson_id = Column(String(100), nullable=False)
+    scope = Column(String(20), nullable=False)
+    effective_date = Column(String(10), nullable=False)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    before_payload = Column(JSONB, nullable=True)
+    after_payload = Column(JSONB, nullable=False)
+    reason = Column(String(500), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "scope IN ('occurrence', 'recurring')",
+            name="ck_group_schedule_audit_scope",
+        ),
+        Index("idx_group_schedule_audit_group", "group_id", "effective_date"),
+        Index("idx_group_schedule_audit_override", "override_id"),
+    )

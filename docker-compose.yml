@@ -28,6 +28,7 @@ services:
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - SENTRY_DSN=${SENTRY_DSN}
       - EXAM_SERVICE_URL=http://exam-service:8003/api/v1
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-local-internal-service-token-change-in-production}
       - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3000","http://localhost:5173"]}
     depends_on:
       postgres:

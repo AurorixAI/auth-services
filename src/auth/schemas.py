@@ -3,7 +3,10 @@ ALGO V1 - Pydantic Schemas для аутентификации
 B2B модель: Organizations → Members → Students (no login)
 """
 
-from typing import Optional
+from datetime import date
+from enum import Enum
+from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -241,6 +244,8 @@ class GroupResponse(BaseModel):
     class_level: Optional[int] = None
     teacher_id: Optional[str] = None
     teacher_name: Optional[str] = None
+    description: Optional[str] = None
+    schedule: Optional[List[Dict[str, Any]]] = None
     status: str = "active"
     max_students: int = 30
     student_count: int = 0
@@ -249,6 +254,150 @@ class GroupResponse(BaseModel):
 
 class BulkAddStudentsRequest(BaseModel):
     student_ids: list[str] = Field(..., min_length=1)
+
+
+# ============================================================================
+# SCHEDULE & ATTENDANCE SCHEMAS
+# ============================================================================
+
+
+class ScheduleLessonResponse(BaseModel):
+    id: str
+    groupId: str
+    groupName: str
+    classLevel: int = 5
+    subject: str = "Математика"
+    dayOfWeek: int  # 1 (Mon) .. 7 (Sun)
+    startTime: str   # "14:00"
+    endTime: str     # "15:30"
+    room: str = "Кабинет 204"
+    format: str = "offline"  # "offline" | "online"
+    color: str = "blue"
+    topic: Optional[str] = None
+
+
+class CreateLessonRequest(BaseModel):
+    groupId: str
+    dayOfWeek: int = Field(..., ge=1, le=7)
+    startTime: str
+    endTime: str
+    subject: Optional[str] = "Математика"
+    room: Optional[str] = "Кабинет 204"
+    format: Optional[str] = "offline"
+    color: Optional[str] = "blue"
+    topic: Optional[str] = None
+
+
+class UpdateLessonRequest(BaseModel):
+    groupId: Optional[str] = None
+    dayOfWeek: Optional[int] = Field(None, ge=1, le=7)
+    startTime: Optional[str] = None
+    endTime: Optional[str] = None
+    subject: Optional[str] = None
+    room: Optional[str] = None
+    format: Optional[str] = None
+    color: Optional[str] = None
+    topic: Optional[str] = None
+
+
+class ScheduleOccurrenceResponse(ScheduleLessonResponse):
+    """Конкретное занятие на дату, уже с учётом всех переносов."""
+
+    occurrenceDate: str
+    isRescheduled: bool = False
+    originalStartTime: Optional[str] = None
+    originalEndTime: Optional[str] = None
+    originalRoom: Optional[str] = None
+    rescheduleReason: Optional[str] = None
+
+
+class RescheduleLessonRequest(BaseModel):
+    """Перенос только одного экземпляра урока на его текущую дату."""
+
+    lessonDate: date
+    startTime: Optional[str] = None
+    endTime: Optional[str] = None
+    room: Optional[str] = Field(None, max_length=200)
+    format: Optional[str] = None
+    topic: Optional[str] = Field(None, max_length=300)
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
+class ReviseRecurringLessonRequest(BaseModel):
+    """Изменение постоянного расписания, действующее с будущей даты."""
+
+    effectiveFrom: date
+    dayOfWeek: Optional[int] = Field(None, ge=1, le=7)
+    startTime: Optional[str] = None
+    endTime: Optional[str] = None
+    subject: Optional[str] = Field(None, max_length=200)
+    room: Optional[str] = Field(None, max_length=200)
+    format: Optional[str] = None
+    color: Optional[str] = None
+    topic: Optional[str] = Field(None, max_length=300)
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
+class LessonAttendanceStatus(str, Enum):
+    """Допустимые состояния экземпляра урока."""
+
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class StudentAttendanceStatus(str, Enum):
+    """Допустимые отметки ученика в журнале."""
+
+    PRESENT = "present"
+    ABSENT = "absent"
+    EXCUSED = "excused"
+    LATE = "late"
+
+
+class StartAttendanceRequest(BaseModel):
+    """Explicit start of one scheduled lesson occurrence."""
+
+    lessonDate: date
+    lessonId: str = Field(..., min_length=1, max_length=100)
+    topic: Optional[str] = Field(None, max_length=300)
+
+
+class SaveAttendanceRequest(BaseModel):
+    """Полный снимок отметок одного занятия.
+
+    `records` намеренно заменяет снимок на сервере, а не дополняет его: так
+    сброс отметки действительно удаляет ключ и не появляется после reload.
+    """
+
+    lessonDate: date
+    lessonId: str = Field(..., min_length=1, max_length=100)
+    topic: Optional[str] = Field(None, max_length=300)
+    status: LessonAttendanceStatus = LessonAttendanceStatus.IN_PROGRESS
+    records: Dict[UUID, StudentAttendanceStatus] = Field(default_factory=dict)
+    correctionReason: Optional[str] = Field(None, min_length=3, max_length=500)
+    cancellationReason: Optional[str] = Field(None, min_length=3, max_length=500)
+
+
+class GroupAttendanceResponse(BaseModel):
+    groupId: str
+    month: Optional[str] = None
+    lessons: List[Dict[str, Any]] = Field(default_factory=list)
+    records: Dict[str, Dict[str, str]] = Field(default_factory=dict)
+    statuses: Dict[str, str] = Field(default_factory=dict)  # { instance_key: status }
+    cancellationReasons: Dict[str, str] = Field(default_factory=dict)
+    # The students who belonged to each actual lesson, frozen when the lesson
+    # started. This keeps a transfer from altering the historical journal.
+    rosterStudentIds: Dict[str, List[str]] = Field(default_factory=dict)
+    # Students who were transferred out but have real attendance in the
+    # selected period. They are rendered separately from the active roster.
+    historicalStudents: List[Dict[str, Any]] = Field(default_factory=list)
+    # Only real transfers are returned here. A simple addition to a group is
+    # not a visual event in the attendance journal.
+    membershipEvents: List[Dict[str, Any]] = Field(default_factory=list)
+    # A student newly enrolled after an initial diagnostic stays flagged only
+    # until the teacher of the current group has opened that report.
+    diagnosticReportNotices: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 # ============================================================================

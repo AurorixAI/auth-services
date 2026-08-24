@@ -30,6 +30,7 @@ services:
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - SENTRY_DSN=${SENTRY_DSN:-}
       - EXAM_SERVICE_URL=${EXAM_SERVICE_URL:-http://algo-exam:8003/api/v1}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
       - CORS_ORIGINS=${CORS_ORIGINS}
     depends_on:
       postgres:

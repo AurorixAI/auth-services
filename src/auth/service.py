@@ -8,14 +8,18 @@ import os
 import hashlib
 import secrets
 import string
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+import httpx
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+from uuid import UUID, uuid4
 import logging
+from zoneinfo import ZoneInfo
 
 from jose import jwt, JWTError
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy import func, or_
 
 from .student_id_service import assign_display_id
 from .models import (
@@ -28,6 +32,10 @@ from .models import (
     StudentGroup,
     DiagnosticInvite,
     StudentDiagnosticResult,
+    GroupAttendance,
+    GroupAttendanceAudit,
+    GroupScheduleOverride,
+    GroupScheduleAudit,
 )
 from .schemas import (
     OrgApplicationRequest,
@@ -48,6 +56,16 @@ from .schemas import (
     GroupUpdateRequest,
     GroupResponse,
     OrgApplicationPendingResponse,
+    ScheduleLessonResponse,
+    ScheduleOccurrenceResponse,
+    CreateLessonRequest,
+    UpdateLessonRequest,
+    RescheduleLessonRequest,
+    ReviseRecurringLessonRequest,
+    StartAttendanceRequest,
+    SaveAttendanceRequest,
+    GroupAttendanceResponse,
+    LessonAttendanceStatus,
 )
 from src.core.config import get_settings
 from src.core.email import send_admin_new_application
@@ -58,6 +76,7 @@ from src.core.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+BUSINESS_TIMEZONE = ZoneInfo(os.getenv("BUSINESS_TIMEZONE", "Asia/Tashkent"))
 
 # ============================================================================
 # КОНФИГУРАЦИЯ
@@ -82,6 +101,7 @@ REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TTL_DAYS", "30"))
 DIAGNOSTIC_CODE_LENGTH = 8
 INVITE_CODE_LENGTH = 8
 BASE_DIAGNOSTIC_URL = os.getenv("DIAGNOSTIC_BASE_URL", "http://localhost:3000/d")
+_EXPIRABLE_DIAGNOSTIC_STATUSES = ("pending", "confirmed", "in_progress")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -792,14 +812,42 @@ class AuthService:
             raise ValueError("Ученик не найден")
 
         update_data = request.model_dump(exclude_none=True)
+        requested_group_id = update_data.pop("group_id", None)
+        if (
+            requested_group_id is not None
+            and str(requested_group_id) != str(student.group_id or "")
+        ):
+            # The generic profile edit is deliberately not a transfer API:
+            # it has no target-capacity, live-lesson or roster-history guards.
+            # All group changes must go through add_student_to_group.
+            raise ValueError(
+                "Для перевода используйте действие «Перевести в другую группу»"
+            )
         for key, value in update_data.items():
             if hasattr(student, key):
                 setattr(student, key, value)
 
+        if student.group_id or student.status == "active":
+            if not student.display_id:
+                assign_display_id(self.db, org_id, student)
+
         self.db.commit()
         return self._build_student_response(student)
 
-    def get_student(self, org_id: str, student_id: str) -> StudentResponse:
+    def _require_student_visibility(
+        self,
+        org_id: str,
+        student_id: str,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> Student:
+        """Return a student only when the staff actor may view their data.
+
+        Owner/admin may view every student in their organisation.  A teacher
+        may view only a current member of a group assigned to that teacher.
+        This guard is shared by profile and diagnostic-report integrations.
+        """
         student = (
             self.db.query(Student)
             .filter(Student.id == student_id, Student.org_id == org_id)
@@ -807,26 +855,411 @@ class AuthService:
         )
         if not student:
             raise ValueError("Ученик не найден")
+        if is_org_admin:
+            return student
+        if not actor_id:
+            raise PermissionError("Нет доступа к данным ученика")
+
+        is_primary_group_teacher = bool(
+            student.group_id
+            and self.db.query(Group.id)
+            .filter(Group.id == student.group_id, Group.teacher_id == actor_id)
+            .first()
+        )
+        is_current_group_teacher = bool(
+            self.db.query(StudentGroup.id)
+            .join(Group, Group.id == StudentGroup.group_id)
+            .filter(
+                StudentGroup.student_id == student.id,
+                StudentGroup.is_active.is_(True),
+                StudentGroup.left_at.is_(None),
+                Group.teacher_id == actor_id,
+            )
+            .first()
+        )
+        if not (is_primary_group_teacher or is_current_group_teacher):
+            raise PermissionError("Нет доступа к данным ученика")
+        return student
+
+    def get_student(
+        self,
+        org_id: str,
+        student_id: str,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> StudentResponse:
+        student = self._require_student_visibility(
+            org_id, student_id, actor_id=actor_id, is_org_admin=is_org_admin
+        )
         return self._build_student_response(student)
+
+    def get_student_profile(
+        self,
+        org_id: str,
+        student_id: str,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> dict:
+        self._require_student_visibility(
+            org_id, student_id, actor_id=actor_id, is_org_admin=is_org_admin
+        )
+        student = (
+            self.db.query(Student)
+            .options(
+                joinedload(Student.primary_group).joinedload(Group.teacher)
+            )
+            .filter(Student.id == student_id, Student.org_id == org_id)
+            .first()
+        )
+        if not student:
+            raise ValueError("Ученик не найден")
+
+        # 1. Ensure display_id
+        if (student.group_id or student.status == "active") and not student.display_id:
+            assign_display_id(self.db, org_id, student)
+            self.db.commit()
+
+        # 2. Current group & teacher
+        primary_group = student.primary_group
+        group_info = None
+        if primary_group:
+            teacher_name = None
+            if primary_group.teacher:
+                teacher_name = f"{primary_group.teacher.first_name} {primary_group.teacher.last_name}".strip()
+            group_info = {
+                "id": str(primary_group.id),
+                "name": primary_group.name,
+                "class_level": primary_group.class_level,
+                "teacher_id": str(primary_group.teacher_id) if primary_group.teacher_id else None,
+                "teacher_name": teacher_name,
+                "description": primary_group.description,
+            }
+
+        # 3. Diagnostic history
+        invites = (
+            self.db.query(DiagnosticInvite)
+            .filter(
+                DiagnosticInvite.student_id == student_id,
+                DiagnosticInvite.org_id == org_id,
+            )
+            .order_by(DiagnosticInvite.created_at.desc())
+            .all()
+        )
+        results = (
+            self.db.query(StudentDiagnosticResult)
+            .filter(
+                StudentDiagnosticResult.student_id == student_id,
+                StudentDiagnosticResult.org_id == org_id,
+            )
+            .order_by(StudentDiagnosticResult.diagnosed_at.desc())
+            .all()
+        )
+        results_list = []
+        results_by_invite = {}
+        for r in results:
+            theta = float(r.final_theta) if r.final_theta is not None else None
+            gaps = r.identified_gaps if isinstance(r.identified_gaps, list) else []
+
+            res_obj = {
+                "id": str(r.id),
+                "invite_id": str(r.invite_id) if r.invite_id else None,
+                "session_id": str(r.session_id) if r.session_id else None,
+                "theta": theta,
+                "accuracy": float(r.accuracy) if r.accuracy is not None else None,
+                "recommended_level": _theta_to_level(theta) if theta is not None else None,
+                "total_questions": r.total_tasks,
+                "correct_answers": r.correct_answers,
+                "duration_seconds": int((r.total_duration_ms or 0) / 1000) if r.total_duration_ms else None,
+                "diagnosed_at": r.diagnosed_at.isoformat() if r.diagnosed_at else None,
+                "identified_gaps": gaps,
+            }
+            results_list.append(res_obj)
+            if r.invite_id:
+                results_by_invite[str(r.invite_id)] = res_obj
+
+        diagnostics_list = []
+        for inv in invites:
+            matching_res = results_by_invite.get(str(inv.id))
+            if matching_res:
+                matching_res = dict(matching_res)
+
+            if matching_res:
+                # Derive duration only from this invite's real timestamps.
+                # Do not invent a default duration/question count or borrow
+                # another attempt's result: that would make the profile and
+                # a future re-diagnostic silently point to the wrong attempt.
+                if not matching_res.get("duration_seconds") and inv.started_at and inv.completed_at:
+                    matching_res["duration_seconds"] = max(60, int((inv.completed_at - inv.started_at).total_seconds()))
+
+                total_q = matching_res.get("total_questions")
+                if matching_res.get("correct_answers") is None and total_q:
+                    acc = matching_res.get("accuracy")
+                    if acc is not None:
+                        matching_res["correct_answers"] = int(round(acc * total_q))
+
+                theta = matching_res.get("theta")
+                level = matching_res.get("recommended_level")
+                if level == "below_grade" or (theta is not None and theta < -0.5):
+                    matching_res["recommended_load"] = "Усиленный курс (3–4 ч/нед) для закрытия пробелов"
+                elif level == "above_grade" or (theta is not None and theta >= 1.0):
+                    matching_res["recommended_load"] = "Продвинутый курс (2 ч/нед) с углублённой программой"
+                else:
+                    matching_res["recommended_load"] = "Стандартный курс (2–3 ч/нед) по программе класса"
+
+            diagnostics_list.append({
+                "invite_id": str(inv.id),
+                "code": inv.code,
+                "class_level": inv.class_level,
+                "diagnostic_type": inv.diagnostic_type,
+                "status": inv.status,
+                "session_id": str(inv.cat_session_id) if inv.cat_session_id else None,
+                "created_at": inv.created_at.isoformat() if inv.created_at else None,
+                "started_at": inv.started_at.isoformat() if inv.started_at else None,
+                "completed_at": inv.completed_at.isoformat() if inv.completed_at else None,
+                "result": matching_res,
+            })
+
+        # 4. Group memberships history
+        memberships = (
+            self.db.query(StudentGroup)
+            .options(joinedload(StudentGroup.group))
+            .filter(StudentGroup.student_id == student_id)
+            .order_by(StudentGroup.joined_at.desc())
+            .all()
+        )
+        group_history = []
+        for m in memberships:
+            group_history.append({
+                "group_id": str(m.group_id),
+                "group_name": m.group.name if m.group else "—",
+                "class_level": m.group.class_level if m.group else None,
+                "is_active": m.is_active,
+                "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+                "left_at": m.left_at.isoformat() if m.left_at else None,
+            })
+
+        return {
+            "student": self._build_student_response(student).model_dump(),
+            "group": group_info,
+            "group_history": group_history,
+            "diagnostics": diagnostics_list,
+            "diagnostic_results": results_list,
+            "exams": [],
+        }
+
+    def get_student_attendance_summary(
+        self,
+        org_id: str,
+        student_id: str,
+        *,
+        month: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Return one student's attendance across every group for one month.
+
+        Attendance belongs to a concrete lesson and its frozen roster, not to
+        the student's current group.  This is why a mid-month transfer keeps
+        the four lessons in the old group and starts counting in the new one
+        only from the first lesson after the transfer.
+        """
+        student = (
+            self.db.query(Student)
+            .filter(Student.id == student_id, Student.org_id == org_id)
+            .first()
+        )
+        if not student:
+            raise ValueError("Ученик не найден")
+
+        selected_month = month or datetime.now(BUSINESS_TIMEZONE).strftime("%Y-%m")
+        try:
+            period_start = datetime.strptime(selected_month + "-01", "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise ValueError("month должен иметь формат YYYY-MM") from exc
+        if period_start.strftime("%Y-%m") != selected_month:
+            raise ValueError("month должен иметь формат YYYY-MM")
+        period_end = (
+            date(period_start.year + 1, 1, 1)
+            if period_start.month == 12
+            else date(period_start.year, period_start.month + 1, 1)
+        ) - timedelta(days=1)
+
+        attendance_rows = (
+            self.db.query(GroupAttendance, Group)
+            .join(Group, Group.id == GroupAttendance.group_id)
+            .filter(
+                GroupAttendance.org_id == org_id,
+                GroupAttendance.lesson_date >= period_start.isoformat(),
+                GroupAttendance.lesson_date <= period_end.isoformat(),
+                GroupAttendance.status != LessonAttendanceStatus.CANCELLED.value,
+            )
+            .order_by(GroupAttendance.lesson_date, GroupAttendance.created_at)
+            .all()
+        )
+        teacher_ids = {group.teacher_id for _, group in attendance_rows if group.teacher_id}
+        teachers_by_id = {
+            teacher.id: teacher
+            for teacher in self.db.query(User).filter(User.id.in_(teacher_ids)).all()
+        } if teacher_ids else {}
+
+        tracked_statuses = {"present", "late", "absent", "excused"}
+        counts = {status: 0 for status in tracked_statuses}
+        not_marked = 0
+        groups: dict[str, dict[str, Any]] = {}
+        lessons: list[dict[str, Any]] = []
+        student_key = str(student.id)
+
+        for attendance, group in attendance_rows:
+            records = dict(attendance.records or {})
+            roster_ids = self._roster_ids_from_snapshot(attendance.roster_snapshot)
+            # Legacy rows did not have a frozen roster. A record is still a
+            # durable fact, but absence from such a row must not be guessed.
+            if roster_ids and student_key not in roster_ids:
+                continue
+            if not roster_ids and student_key not in records:
+                continue
+
+            status = records.get(student_key)
+            if status not in tracked_statuses:
+                status = "not_marked"
+                not_marked += 1
+            else:
+                counts[status] += 1
+
+            group_key = str(group.id)
+            if group_key not in groups:
+                teacher = teachers_by_id.get(group.teacher_id)
+                groups[group_key] = {
+                    "group_id": group_key,
+                    "group_name": group.name,
+                    "class_level": group.class_level,
+                    "teacher_name": (
+                        f"{teacher.first_name} {teacher.last_name}".strip()
+                        if teacher
+                        else None
+                    ),
+                    "total_lessons": 0,
+                    "present": 0,
+                    "late": 0,
+                    "absent": 0,
+                    "excused": 0,
+                    "not_marked": 0,
+                }
+            group_summary = groups[group_key]
+            group_summary["total_lessons"] += 1
+            group_summary[status] += 1
+            lessons.append({
+                "lesson_id": attendance.lesson_id,
+                "date": attendance.lesson_date,
+                "topic": attendance.topic or "Занятие",
+                "group_id": group_key,
+                "group_name": group.name,
+                "status": status,
+                "attendance_status": attendance.status,
+            })
+
+        for group_summary in groups.values():
+            accountable = (
+                group_summary["present"]
+                + group_summary["late"]
+                + group_summary["absent"]
+            )
+            group_summary["attendance_rate"] = (
+                round(
+                    (group_summary["present"] + group_summary["late"])
+                    / accountable
+                    * 100,
+                    1,
+                )
+                if accountable
+                else None
+            )
+
+        accountable_total = counts["present"] + counts["late"] + counts["absent"]
+        return {
+            "student_id": str(student.id),
+            "period": {
+                "month": selected_month,
+                "date_from": period_start.isoformat(),
+                "date_to": period_end.isoformat(),
+            },
+            "totals": {
+                "total_lessons": len(lessons),
+                **counts,
+                "not_marked": not_marked,
+                "attended": counts["present"] + counts["late"],
+                "attendance_rate": (
+                    round((counts["present"] + counts["late"]) / accountable_total * 100, 1)
+                    if accountable_total
+                    else None
+                ),
+            },
+            "groups": sorted(groups.values(), key=lambda item: item["group_name"].lower()),
+            "lessons": lessons,
+        }
 
     def list_students(
         self,
         org_id: str,
         class_level: Optional[int] = None,
         group_id: Optional[str] = None,
+        has_group: Optional[bool] = None,
         status: Optional[str] = None,
+        exclude_status: Optional[str] = None,
         search: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
     ) -> list[StudentResponse]:
         query = self.db.query(Student).filter(Student.org_id == org_id)
+
+        if not is_org_admin:
+            if not actor_id:
+                return []
+            taught_group_ids = [
+                group_id
+                for (group_id,) in self.db.query(Group.id)
+                .filter(Group.org_id == org_id, Group.teacher_id == actor_id)
+                .all()
+            ]
+            if not taught_group_ids:
+                return []
+            active_member_ids = (
+                self.db.query(StudentGroup.student_id)
+                .filter(
+                    StudentGroup.group_id.in_(taught_group_ids),
+                    StudentGroup.is_active.is_(True),
+                    StudentGroup.left_at.is_(None),
+                )
+            )
+            query = query.filter(
+                or_(
+                    Student.group_id.in_(taught_group_ids),
+                    Student.id.in_(active_member_ids),
+                )
+            )
 
         if class_level:
             query = query.filter(Student.class_level == class_level)
         if group_id:
             query = query.filter(Student.group_id == group_id)
+        if has_group is True:
+            active_memberships = self.db.query(StudentGroup.student_id).filter(StudentGroup.is_active == True)
+            query = query.filter(
+                (Student.group_id.isnot(None)) | (Student.id.in_(active_memberships))
+            )
+        elif has_group is False:
+            active_memberships = self.db.query(StudentGroup.student_id).filter(StudentGroup.is_active == True)
+            query = query.filter(
+                Student.group_id.is_(None),
+                ~Student.id.in_(active_memberships),
+            )
         if status:
             query = query.filter(Student.status == status)
+        if exclude_status:
+            query = query.filter(Student.status != exclude_status)
         if search:
             pattern = f"%{search}%"
             query = query.filter(
@@ -923,6 +1356,48 @@ class AuthService:
         )
         return self.create_diagnostic_invite(org_id, creator_id, diag_request)
 
+    @staticmethod
+    def _diagnostic_invite_is_expired(
+        invite: DiagnosticInvite, now: Optional[datetime] = None
+    ) -> bool:
+        """Whether an unfinished invite has passed its hard expiry time."""
+        if invite.status not in _EXPIRABLE_DIAGNOSTIC_STATUSES or not invite.expires_at:
+            return False
+        expires_at = (
+            invite.expires_at
+            if invite.expires_at.tzinfo
+            else invite.expires_at.replace(tzinfo=timezone.utc)
+        )
+        return expires_at < (now or datetime.now(timezone.utc))
+
+    def _expire_diagnostic_invite_if_due(self, invite: DiagnosticInvite) -> bool:
+        """Persist expiry before returning an invite through any read path."""
+        if not self._diagnostic_invite_is_expired(invite):
+            return False
+        invite.status = "expired"
+        self.db.commit()
+        return True
+
+    def _expire_due_diagnostic_invites(self, org_id: str) -> int:
+        """Reconcile stale unfinished invites before organisation-level counts/lists.
+
+        The database uses a timezone-naive ``DateTime`` column, hence UTC is
+        deliberately passed as a naive value for this bulk predicate.  Public
+        and detail reads use the timezone-safe helper above.
+        """
+        updated = (
+            self.db.query(DiagnosticInvite)
+            .filter(
+                DiagnosticInvite.org_id == org_id,
+                DiagnosticInvite.status.in_(_EXPIRABLE_DIAGNOSTIC_STATUSES),
+                DiagnosticInvite.expires_at < datetime.utcnow(),
+            )
+            .update({"status": "expired"}, synchronize_session=False)
+        )
+        if updated:
+            self.db.commit()
+        return int(updated or 0)
+
     def get_diagnostic_by_code(self, code: str) -> Optional[dict]:
         """Получить диагностику по коду (публичный, без JWT)"""
         invite = (
@@ -932,6 +1407,8 @@ class AuthService:
         )
         if not invite:
             return None
+
+        self._expire_diagnostic_invite_if_due(invite)
 
         student = self.db.query(Student).filter(Student.id == invite.student_id).first()
 
@@ -981,6 +1458,7 @@ class AuthService:
 
         if invite.status != "confirmed":
             invite.status = "confirmed"
+            invite.confirmed_at = datetime.now(timezone.utc)
             self.db.commit()
 
         return {
@@ -992,55 +1470,133 @@ class AuthService:
         }
 
     def start_diagnostic(self, code: str, cat_session_id: Optional[str] = None) -> dict:
-        """Перевод confirmed/pending/in_progress → in_progress (вызывается из CAT router).
-        Idempotent: повторный вызов для in_progress возвращает успех."""
+        """Atomically claim an invite for exactly one diagnostic session.
+
+        Retrying the same callback is safe.  A different session may never
+        replace an already bound ``cat_session_id`` — that would make one
+        invite point at two attempts and corrupt the report/placement flow.
+        """
+        if not cat_session_id:
+            raise ValueError("Не передан идентификатор сессии диагностики")
+        try:
+            requested_session_id = UUID(str(cat_session_id))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Некорректный идентификатор сессии диагностики") from exc
+
         invite = (
             self.db.query(DiagnosticInvite)
             .filter(
                 DiagnosticInvite.code == code,
-                DiagnosticInvite.status.in_(["confirmed", "pending", "in_progress"]),
+                DiagnosticInvite.status.in_(["confirmed", "in_progress"]),
             )
+            .with_for_update()
             .first()
         )
         if not invite:
             raise ValueError("Диагностика не найдена или уже завершена")
 
-        # Если уже in_progress — idempotent, обновляем только cat_session_id
-        if invite.status != "in_progress":
+        if invite.expires_at:
+            expires_at = (
+                invite.expires_at
+                if invite.expires_at.tzinfo
+                else invite.expires_at.replace(tzinfo=timezone.utc)
+            )
+            if expires_at < datetime.now(timezone.utc):
+                invite.status = "expired"
+                self.db.commit()
+                raise ValueError("Ссылка на диагностику истекла")
+
+        if invite.status == "in_progress":
+            if invite.cat_session_id and invite.cat_session_id != requested_session_id:
+                raise ValueError("По этому приглашению уже запущена другая сессия диагностики")
+        else:
             invite.status = "in_progress"
             invite.started_at = datetime.now(timezone.utc)
-        if cat_session_id:
-            invite.cat_session_id = cat_session_id
+        invite.cat_session_id = requested_session_id
         self.db.commit()
 
-        return {"id": str(invite.id), "status": "in_progress"}
+        return {
+            "id": str(invite.id),
+            "status": "in_progress",
+            "session_id": str(invite.cat_session_id),
+        }
 
     def complete_diagnostic(self, code: str, result_data: dict) -> dict:
         """Завершение диагностики — сохранение результатов"""
+        session_value = result_data.get("session_id")
+        if not session_value:
+            raise ValueError("Не передан идентификатор завершённой сессии")
+        try:
+            completed_session_id = UUID(str(session_value))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Некорректный идентификатор завершённой сессии") from exc
+
         invite = (
             self.db.query(DiagnosticInvite)
             .filter(
-                DiagnosticInvite.code == code, DiagnosticInvite.status == "in_progress"
+                DiagnosticInvite.code == code,
+                DiagnosticInvite.status.in_(["in_progress", "completed"]),
             )
+            .with_for_update()
             .first()
         )
         if not invite:
             raise ValueError("Диагностика не найдена или не начата")
 
+        if invite.cat_session_id != completed_session_id:
+            raise ValueError("Сессия не соответствует приглашению на диагностику")
+
+        existing_result = (
+            self.db.query(StudentDiagnosticResult)
+            .filter(StudentDiagnosticResult.invite_id == invite.id)
+            .order_by(StudentDiagnosticResult.diagnosed_at.desc())
+            .first()
+        )
+        if invite.status == "completed":
+            if existing_result and existing_result.session_id == completed_session_id:
+                return {
+                    "id": str(existing_result.id),
+                    "status": "completed",
+                    "student_id": str(invite.student_id),
+                    "org_id": str(invite.org_id),
+                }
+            raise ValueError("Диагностика уже завершена другой сессией")
+
         invite.status = "completed"
         invite.completed_at = datetime.now(timezone.utc)
 
         # Сохранить результат
+        correct_cnt = next(
+            (
+                result_data[key]
+                for key in ("correct_answers", "correct_count", "questions_correct")
+                if result_data.get(key) is not None
+            ),
+            None,
+        )
+        total_cnt = next(
+            (
+                result_data[key]
+                for key in ("total_items", "total_tasks", "total_questions")
+                if result_data.get(key) is not None
+            ),
+            None,
+        )
+        accuracy_val = result_data.get("accuracy")
+        if accuracy_val is None and total_cnt and correct_cnt is not None:
+            accuracy_val = round(float(correct_cnt) / float(total_cnt), 4)
+
         result = StudentDiagnosticResult(
             student_id=invite.student_id,
             org_id=invite.org_id,
             invite_id=invite.id,
-            session_id=invite.cat_session_id,
+            session_id=completed_session_id,
             diagnostic_type=invite.diagnostic_type,
             final_theta=result_data.get("final_theta"),
             se=result_data.get("se"),
-            accuracy=result_data.get("accuracy"),
-            total_tasks=result_data.get("total_items"),
+            accuracy=accuracy_val,
+            total_tasks=total_cnt,
+            correct_answers=correct_cnt,
             identified_gaps=result_data.get("identified_gaps"),
             root_gaps=result_data.get("root_gaps"),
             error_summary=result_data.get("error_summary"),
@@ -1069,21 +1625,52 @@ class AuthService:
         }
 
     def list_diagnostic_invites(
-        self, org_id: str, status: Optional[str] = None, limit: int = 50
-    ) -> list:
-        """Список диагностик организации (для admin dashboard / live queue)"""
+        self,
+        org_id: str,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list, int]:
+        """Список диагностик организации и точное число строк в выборке."""
+        self._expire_due_diagnostic_invites(org_id)
         query = (
             self.db.query(DiagnosticInvite)
-            .options(joinedload(DiagnosticInvite.student))
+            .options(
+                joinedload(DiagnosticInvite.student).joinedload(Student.primary_group)
+            )
             .filter(DiagnosticInvite.org_id == org_id)
         )
         if status:
             query = query.filter(DiagnosticInvite.status == status)
-        invites = query.order_by(DiagnosticInvite.created_at.desc()).limit(limit).all()
+        total = query.count()
+        invites = (
+            query
+            .order_by(DiagnosticInvite.created_at.desc(), DiagnosticInvite.id.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        results_by_invite = self._diagnostic_results_by_invite([inv.id for inv in invites])
 
         result = []
         for inv in invites:
             student = inv.student
+            group = student.primary_group if student else None
+            group_id = str(student.group_id) if (student and student.group_id) else None
+            group_name = group.name if group else None
+            is_assigned = bool(student and (student.group_id is not None or student.status == "active"))
+
+            r = results_by_invite.get(inv.id)
+            res_dict = None
+            if r:
+                theta = float(r.final_theta) if r.final_theta is not None else None
+                res_dict = {
+                    "theta": theta,
+                    "accuracy": float(r.accuracy) if r.accuracy is not None else None,
+                    "recommended_level": _theta_to_level(theta) if theta is not None else None,
+                }
+
             result.append(
                 {
                     "id": str(inv.id),
@@ -1095,6 +1682,14 @@ class AuthService:
                     "class_level": inv.class_level,
                     "diagnostic_type": inv.diagnostic_type,
                     "status": inv.status,
+                    "session_id": str(r.session_id or inv.cat_session_id)
+                    if r and (r.session_id or inv.cat_session_id)
+                    else str(inv.cat_session_id) if inv.cat_session_id else None,
+                    "student_status": student.status if student else None,
+                    "group_id": group_id,
+                    "group_name": group_name,
+                    "is_assigned": is_assigned,
+                    "result": res_dict,
                     "created_at": inv.created_at.isoformat()
                     if inv.created_at
                     else None,
@@ -1106,7 +1701,7 @@ class AuthService:
                     else None,
                 }
             )
-        return result
+        return result, total
 
     # ═══════════════════════════════════════════════════════════════════
     # 8. GROUPS — группы
@@ -1148,10 +1743,19 @@ class AuthService:
         org_id: str,
         teacher_id: Optional[str] = None,
         class_level: Optional[int] = None,
+        *,
+        actor_id: Optional[str] = None,
+        is_org_admin: bool = False,
     ) -> list[GroupResponse]:
         # No status filter here — the frontend has an "Архив" tab that needs
         # archived groups back too; it filters by status client-side.
         query = self.db.query(Group).filter(Group.org_id == org_id)
+        if not is_org_admin:
+            if not actor_id:
+                raise PermissionError("Нет доступа к группам")
+            if teacher_id and str(teacher_id) != str(actor_id):
+                raise PermissionError("Нет доступа к группам другого преподавателя")
+            query = query.filter(Group.teacher_id == actor_id)
         if teacher_id:
             query = query.filter(Group.teacher_id == teacher_id)
         if class_level:
@@ -1160,18 +1764,25 @@ class AuthService:
         groups = query.order_by(Group.name).all()
         return [self._build_group_response(g) for g in groups]
 
-    def get_group_detail(self, org_id: str, group_id: str) -> dict:
-        group = (
-            self.db.query(Group)
-            .filter(Group.id == group_id, Group.org_id == org_id)
-            .first()
+    def get_group_detail(
+        self,
+        org_id: str,
+        group_id: str,
+        *,
+        actor_id: Optional[str] = None,
+        is_org_admin: bool = False,
+    ) -> dict:
+        group = self._require_group_access(
+            org_id,
+            group_id,
+            actor_id=actor_id,
+            is_org_admin=is_org_admin,
         )
-        if not group:
-            raise ValueError("Группа не найдена")
+        group_uuid = group.id
 
         memberships = (
             self.db.query(StudentGroup)
-            .filter(StudentGroup.group_id == group_id, StudentGroup.is_active)
+            .filter(StudentGroup.group_id == group_uuid, StudentGroup.is_active)
             .all()
         )
         student_ids = [m.student_id for m in memberships]
@@ -1182,10 +1793,14 @@ class AuthService:
         latest_results = self._latest_diagnostic_results(student_ids)
 
         students_out = []
+        needs_commit = False
         for m in memberships:
             s = students_by_id.get(m.student_id)
             if not s:
                 continue
+            if not s.display_id:
+                assign_display_id(self.db, org_id, s)
+                needs_commit = True
             r = latest_results.get(s.id)
             theta = float(r.final_theta) if r and r.final_theta is not None else None
             students_out.append({
@@ -1203,23 +1818,33 @@ class AuthService:
                 "last_diagnosed_at": r.diagnosed_at.isoformat() if r and r.diagnosed_at else None,
             })
 
+        if needs_commit:
+            self.db.commit()
+
         result = self._build_group_response(group).model_dump()
         result["students"] = students_out
         return result
 
-    def get_group_stats(self, org_id: str, group_id: str) -> dict:
-        group = (
-            self.db.query(Group)
-            .filter(Group.id == group_id, Group.org_id == org_id)
-            .first()
+    def get_group_stats(
+        self,
+        org_id: str,
+        group_id: str,
+        *,
+        actor_id: Optional[str] = None,
+        is_org_admin: bool = False,
+    ) -> dict:
+        group = self._require_group_access(
+            org_id,
+            group_id,
+            actor_id=actor_id,
+            is_org_admin=is_org_admin,
         )
-        if not group:
-            raise ValueError("Группа не найдена")
+        group_uuid = group.id
 
         student_ids = [
             m.student_id
             for m in self.db.query(StudentGroup)
-            .filter(StudentGroup.group_id == group_id, StudentGroup.is_active)
+            .filter(StudentGroup.group_id == group_uuid, StudentGroup.is_active)
             .all()
         ]
         total_students = len(student_ids)
@@ -1247,6 +1872,163 @@ class AuthService:
             "weak_skills": [],
         }
 
+    def verify_group_student(
+        self,
+        group_id: str,
+        query: Optional[str] = None,
+        student_id: Optional[str] = None,
+        student_name: Optional[str] = None,
+    ) -> dict:
+        """Проверить принадлежность ученика к группе по ID/ФИО с валидацией обоих полей при их наличии."""
+        group = self.db.query(Group).filter(Group.id == group_id).first()
+        if not group:
+            return {
+                "enrolled": False,
+                "group_name": "",
+                "message": "Группа не найдена",
+            }
+
+        memberships = (
+            self.db.query(StudentGroup)
+            .filter(StudentGroup.group_id == group_id, StudentGroup.is_active)
+            .all()
+        )
+        student_ids = {m.student_id for m in memberships}
+        primary_students = (
+            self.db.query(Student)
+            .filter(Student.group_id == group_id)
+            .all()
+        )
+        for ps in primary_students:
+            student_ids.add(ps.id)
+
+        if not student_ids:
+            return {
+                "enrolled": False,
+                "group_name": group.name,
+                "message": f"В группе «{group.name}» нет зарегистрированных учеников. Обратитесь к преподавателю.",
+            }
+
+        students = self.db.query(Student).filter(Student.id.in_(list(student_ids))).all()
+
+        s_id_input = (student_id or "").strip()
+        s_name_input = (student_name or "").strip()
+
+        # If only query is passed, determine if it might be an ID or Name or both
+        if not s_id_input and not s_name_input and query:
+            q_clean = query.strip()
+            # If query starts with AL- or matches any student's display_id
+            if any(q_clean.lower() == (s.display_id or "").lower() for s in students):
+                s_id_input = q_clean
+            else:
+                s_name_input = q_clean
+
+        # CASE 1: Student ID is provided (and optionally Student Name)
+        if s_id_input:
+            id_norm = s_id_input.lower()
+            matched_by_id = None
+            for s in students:
+                s_disp = (s.display_id or "").strip().lower()
+                s_num = (s.student_number or "").strip().lower()
+                s_id_str = str(s.id).lower()
+                if id_norm in (s_disp, s_num, s_id_str) or (s_disp and s_disp.endswith(id_norm)) or (id_norm.endswith(s_disp) and len(s_disp) >= 3):
+                    matched_by_id = s
+                    break
+
+            if not matched_by_id:
+                return {
+                    "enrolled": False,
+                    "group_name": group.name,
+                    "message": f"Ученик с ID «{s_id_input}» не найден в группе «{group.name}». Пожалуйста, перепроверьте данные или обратитесь к преподавателю.",
+                }
+
+            # If name was also provided, verify that the name matches the student with this ID
+            if s_name_input:
+                name_tokens = [tok.lower() for tok in s_name_input.split() if len(tok) >= 2]
+                s_fn = (matched_by_id.first_name or "").strip().lower()
+                s_ln = (matched_by_id.last_name or "").strip().lower()
+
+                # Each token provided must match either first_name or last_name
+                mismatch = False
+                for token in name_tokens:
+                    token_match = (
+                        (s_fn and (token in s_fn or s_fn.startswith(token) or token.startswith(s_fn))) or
+                        (s_ln and (token in s_ln or s_ln.startswith(token) or token.startswith(s_ln)))
+                    )
+                    if not token_match:
+                        mismatch = True
+                        break
+
+                if mismatch:
+                    return {
+                        "enrolled": False,
+                        "group_name": group.name,
+                        "message": "Введённое имя (ФИО) или Student ID не соответствуют ученику в этой группе. Пожалуйста, перепроверьте данные или обратитесь к преподавателю.",
+                    }
+
+            return {
+                "enrolled": True,
+                "group_name": group.name,
+                "student": {
+                    "id": str(matched_by_id.id),
+                    "first_name": matched_by_id.first_name,
+                    "last_name": matched_by_id.last_name,
+                    "full_name": f"{matched_by_id.last_name} {matched_by_id.first_name}".strip(),
+                    "display_id": matched_by_id.display_id,
+                    "class_level": matched_by_id.class_level,
+                },
+            }
+
+        # CASE 2: Only Student Name is provided
+        if s_name_input:
+            name_tokens = [tok.lower() for tok in s_name_input.split() if len(tok) >= 2]
+            candidates = []
+            for s in students:
+                s_fn = (s.first_name or "").strip().lower()
+                s_ln = (s.last_name or "").strip().lower()
+                s_full = f"{s_fn} {s_ln}".strip()
+                s_full_rev = f"{s_ln} {s_fn}".strip()
+
+                # Exact match
+                if s_name_input.lower() in (s_full, s_full_rev, s_fn, s_ln):
+                    candidates.append(s)
+                    continue
+
+                # Token matching
+                if name_tokens and all(
+                    (s_fn and (tok in s_fn or s_fn.startswith(tok))) or
+                    (s_ln and (tok in s_ln or s_ln.startswith(tok)))
+                    for tok in name_tokens
+                ):
+                    candidates.append(s)
+
+            if candidates:
+                matched_student = candidates[0]
+                return {
+                    "enrolled": True,
+                    "group_name": group.name,
+                    "student": {
+                        "id": str(matched_student.id),
+                        "first_name": matched_student.first_name,
+                        "last_name": matched_student.last_name,
+                        "full_name": f"{matched_student.last_name} {matched_student.first_name}".strip(),
+                        "display_id": matched_student.display_id,
+                        "class_level": matched_student.class_level,
+                    },
+                }
+
+            return {
+                "enrolled": False,
+                "group_name": group.name,
+                "message": f"Ученик с именем «{s_name_input}» не найден в группе «{group.name}». Пожалуйста, перепроверьте написание или обратитесь к преподавателю.",
+            }
+
+        return {
+            "enrolled": False,
+            "group_name": group.name,
+            "message": "Пожалуйста, укажите имя (ФИО) или Student ID ученика.",
+        }
+
     def _latest_diagnostic_results(
         self, student_ids: list
     ) -> dict:
@@ -1265,6 +2047,27 @@ class AuthService:
                 latest[r.student_id] = r
         return latest
 
+    def _diagnostic_results_by_invite(self, invite_ids: list) -> dict:
+        """Return the result generated by each exact diagnostic invite.
+
+        A student-level latest result is useful on the profile timeline, but
+        is invalid for a registry row or a report opened from a concrete
+        invite: those screens must preserve attempt identity.
+        """
+        if not invite_ids:
+            return {}
+        rows = (
+            self.db.query(StudentDiagnosticResult)
+            .filter(StudentDiagnosticResult.invite_id.in_(invite_ids))
+            .order_by(StudentDiagnosticResult.diagnosed_at.desc())
+            .all()
+        )
+        by_invite: dict = {}
+        for row in rows:
+            if row.invite_id not in by_invite:
+                by_invite[row.invite_id] = row
+        return by_invite
+
     def bulk_add_students(
         self, org_id: str, group_id: str, student_ids: list[str]
     ) -> dict:
@@ -1279,6 +2082,22 @@ class AuthService:
         return {"group_id": str(group_id), "added": added, "skipped": skipped}
 
     def add_student_to_group(self, org_id: str, group_id: str, student_id: str) -> dict:
+        # Serialize every membership change for this student.  Without this
+        # row lock, two concurrent admin requests could both observe the old
+        # group and create two active memberships despite the service rule.
+        student = (
+            self.db.query(Student)
+            .filter(Student.id == student_id, Student.org_id == org_id)
+            .with_for_update()
+            .first()
+        )
+        if not student:
+            raise ValueError("Ученик не найден")
+        if student.status == "archived":
+            raise ValueError("Архивного ученика нельзя перевести в группу")
+
+        # Resolve the target first. All involved groups are locked below in a
+        # stable ID order, so two opposite transfers cannot deadlock.
         group = (
             self.db.query(Group)
             .filter(Group.id == group_id, Group.org_id == org_id)
@@ -1286,33 +2105,88 @@ class AuthService:
         )
         if not group:
             raise ValueError("Группа не найдена")
-        student = (
-            self.db.query(Student)
-            .filter(Student.id == student_id, Student.org_id == org_id)
-            .first()
-        )
-        if not student:
-            raise ValueError("Ученик не найден")
+        if group.status != "active":
+            raise ValueError("Нельзя зачислить ученика в архивную группу")
 
-        # Проверить дубликат
+        # A request to add a student to the group they already actively belong
+        # to is not a transfer.  Treat it as an explicit no-op before touching
+        # any membership history.  The client uses this state to avoid showing
+        # a false "successfully transferred" confirmation; direct API callers
+        # still get a safe, idempotent response.
         existing = (
             self.db.query(StudentGroup)
             .filter(
                 StudentGroup.student_id == student_id,
                 StudentGroup.group_id == group_id,
-                StudentGroup.is_active,
             )
+            .with_for_update()
             .first()
         )
+        if existing and existing.is_active:
+            if str(student.group_id) != str(group.id):
+                # Do not silently repair contradictory legacy memberships from
+                # a normal transfer action.  It must be investigated instead.
+                raise ValueError("У ученика обнаружена несогласованность текущей группы")
+            return {
+                "student_id": str(student_id),
+                "group_id": str(group_id),
+                "status": "unchanged",
+                "reason": "already_in_target_group",
+                "display_id": student.display_id,
+            }
+
+        now_dt = datetime.now(timezone.utc)
+
+        # 1. Бизнес-правило: один ученик может состоять только в одной группе.
+        # Деактивируем все предыдущие активные группы ученика
+        other_active_memberships = (
+            self.db.query(StudentGroup)
+            .filter(
+                StudentGroup.student_id == student_id,
+                StudentGroup.group_id != group_id,
+                StudentGroup.is_active.is_(True),
+            )
+            .with_for_update()
+            .all()
+        )
+        # A transfer changes the roster of both the previous and destination
+        # groups. It must not rewrite the facts of an already started lesson.
+        affected_group_ids = [
+            group.id,
+            *(membership.group_id for membership in other_active_memberships),
+        ]
+        self._lock_groups_for_membership_change(org_id, affected_group_ids)
+        self._assert_no_open_attendance_for_groups(org_id, affected_group_ids)
+        for om in other_active_memberships:
+            om.is_active = False
+            om.left_at = now_dt
+
+        # 2. Target membership is either a historical inactive record that
+        # will be reactivated, or a new record.  The active case returned
+        # above, so it must count towards capacity in both remaining cases.
+        active_count = (
+            self.db.query(StudentGroup)
+            .filter(
+                StudentGroup.group_id == group_id,
+                StudentGroup.is_active.is_(True),
+            )
+            .count()
+        )
+        if group.max_students is not None and active_count >= group.max_students:
+            raise ValueError("В группе достигнут лимит учеников")
+
         if existing:
-            raise ValueError("Ученик уже в этой группе")
+            existing.is_active = True
+            # Returning to a historical group starts a new membership period;
+            # the already recorded attendance remains tied to past lessons.
+            existing.joined_at = now_dt
+            existing.left_at = None
+        else:
+            sg = StudentGroup(student_id=student_id, group_id=group_id, is_active=True)
+            self.db.add(sg)
 
-        sg = StudentGroup(student_id=student_id, group_id=group_id)
-        self.db.add(sg)
-
-        # Обновить основную группу в student если нет
-        if not student.group_id:
-            student.group_id = group_id
+        # 3. Синхронизируем основную группу в Student
+        student.group_id = group_id
 
         if student.status in ("new", "diagnosed"):
             student.status = "active"
@@ -1334,19 +2208,43 @@ class AuthService:
     def remove_student_from_group(
         self, org_id: str, group_id: str, student_id: str
     ) -> bool:
+        # Resolve both primary entities through the caller's organization
+        # before touching membership.  IDs are global UUIDs, so a membership
+        # lookup alone is not a tenant boundary.
+        student = (
+            self.db.query(Student)
+            .filter(Student.id == student_id, Student.org_id == org_id)
+            .with_for_update()
+            .first()
+        )
+        group = (
+            self.db.query(Group)
+            .filter(Group.id == group_id, Group.org_id == org_id)
+            .with_for_update()
+            .first()
+        )
+        if not student or not group:
+            raise ValueError("Ученик или группа не найдены")
         sg = (
             self.db.query(StudentGroup)
             .filter(
-                StudentGroup.student_id == student_id,
-                StudentGroup.group_id == group_id,
-                StudentGroup.is_active,
+                StudentGroup.student_id == student.id,
+                StudentGroup.group_id == group.id,
+                StudentGroup.is_active.is_(True),
             )
+            .with_for_update()
             .first()
         )
         if not sg:
             raise ValueError("Ученик не в этой группе")
+        self._lock_groups_for_membership_change(org_id, [group.id])
+        self._assert_no_open_attendance_for_groups(org_id, [group.id])
         sg.is_active = False
         sg.left_at = datetime.now(timezone.utc)
+
+        if str(student.group_id or "") == str(group.id):
+            student.group_id = None
+
         self.db.commit()
         return True
 
@@ -1370,6 +2268,8 @@ class AuthService:
             class_level=group.class_level,
             teacher_id=str(group.teacher_id) if group.teacher_id else None,
             teacher_name=teacher_name,
+            description=group.description,
+            schedule=group.schedule or [],
             status=group.status or "active",
             max_students=group.max_students or 30,
             student_count=student_count,
@@ -1398,6 +2298,7 @@ class AuthService:
 
     def get_org_stats(self, org_id: str) -> dict:
         """Краткая статистика организации для dashboard"""
+        self._expire_due_diagnostic_invites(org_id)
         student_count = (
             self.db.query(func.count(Student.id))
             .filter(Student.org_id == org_id)
@@ -1459,3 +2360,1807 @@ class AuthService:
         if role:
             query = query.filter(User.role == role)
         return query.order_by(User.created_at.desc()).offset(offset).limit(limit).all()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 10. SCHEDULE & ATTENDANCE
+    # ═══════════════════════════════════════════════════════════════════
+
+    def get_schedule(
+        self, org_id: str, teacher_id: Optional[str] = None
+    ) -> List[ScheduleLessonResponse]:
+        """Вернуть только уже настроенное расписание.
+
+        Read endpoint не имеет права создавать демо-слоты: иначе посещаемость
+        начинает ссылаться на уроки, которых учебный центр не утверждал.
+        """
+        query = self.db.query(Group).filter(
+            Group.org_id == org_id, Group.status == "active"
+        )
+        if teacher_id:
+            query = query.filter(Group.teacher_id == teacher_id)
+
+        groups = query.order_by(Group.name).all()
+        lessons_out: List[ScheduleLessonResponse] = []
+        today = datetime.now(BUSINESS_TIMEZONE).date()
+
+        for g in groups:
+            recurring, _ = self._schedule_overrides_for_group(g, until=today)
+            slots = list(g.schedule or [])
+            for s in slots:
+                if not isinstance(s, dict):
+                    continue
+                lesson_id = self._lesson_id_for_slot(g, s)
+                payload = self._slot_payload(s)
+                for revision in recurring.get(str(lesson_id), []):
+                    if revision.effective_date <= today.isoformat():
+                        payload = dict(revision.payload or payload)
+                lessons_out.append(
+                    ScheduleLessonResponse(
+                        id=str(lesson_id),
+                        groupId=str(g.id),
+                        groupName=g.name,
+                        classLevel=g.class_level or 5,
+                        **payload,
+                    )
+                )
+
+        return lessons_out
+
+    def _require_group_access(
+        self,
+        org_id: str,
+        group_id: str,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> Group:
+        """Вернуть группу, если actor имеет право работать с её журналом/расписанием."""
+        group = (
+            self.db.query(Group)
+            .filter(Group.id == group_id, Group.org_id == org_id)
+            .first()
+        )
+        if not group:
+            raise ValueError("Группа не найдена")
+        if is_org_admin:
+            return group
+        if not actor_id or not group.teacher_id or str(group.teacher_id) != str(actor_id):
+            raise PermissionError("Нет доступа к этой группе")
+        return group
+
+    @staticmethod
+    def _lesson_time_minutes(value: Any, field_name: str) -> int:
+        """Parse strict HH:MM time used by the recurring schedule."""
+        if not isinstance(value, str):
+            raise ValueError(f"{field_name} должен иметь формат HH:MM")
+        try:
+            parsed = datetime.strptime(value, "%H:%M")
+        except ValueError as exc:
+            raise ValueError(f"{field_name} должен иметь формат HH:MM") from exc
+        if parsed.strftime("%H:%M") != value:
+            raise ValueError(f"{field_name} должен иметь формат HH:MM")
+        return parsed.hour * 60 + parsed.minute
+
+    @classmethod
+    def _validate_lesson_time_range(cls, start_time: Any, end_time: Any) -> tuple[int, int]:
+        start_minutes = cls._lesson_time_minutes(start_time, "Время начала")
+        end_minutes = cls._lesson_time_minutes(end_time, "Время окончания")
+        if end_minutes <= start_minutes:
+            raise ValueError("Время окончания должно быть позже времени начала")
+        return start_minutes, end_minutes
+
+    @staticmethod
+    def _slot_payload(slot: Dict[str, Any]) -> Dict[str, Any]:
+        """Нормализовать шаблон занятия к единому формату override-таблицы."""
+        return {
+            "dayOfWeek": int(slot.get("dayOfWeek") or slot.get("day_of_week") or 1),
+            "startTime": slot.get("startTime") or slot.get("start_time") or "10:00",
+            "endTime": slot.get("endTime") or slot.get("end_time") or "11:30",
+            "subject": slot.get("subject") or "Математика",
+            "room": slot.get("room") or "Кабинет 204",
+            "format": slot.get("format") or "offline",
+            "color": slot.get("color") or "blue",
+            "topic": slot.get("topic"),
+        }
+
+    @staticmethod
+    def _lesson_id_for_slot(group: Group, slot: Dict[str, Any]) -> str:
+        """Stable ID also for imported legacy slots that predate ``id``."""
+        return str(
+            slot.get("id")
+            or f"lesson-{group.id}-{slot.get('day_of_week') or slot.get('dayOfWeek', 1)}-"
+            f"{slot.get('start_time') or slot.get('startTime', '10:00')}"
+        )
+
+    @classmethod
+    def _validate_schedule_payload(cls, payload: Dict[str, Any]) -> None:
+        day = payload.get("dayOfWeek")
+        if not isinstance(day, int) or not 1 <= day <= 7:
+            raise ValueError("День недели должен быть от 1 до 7")
+        cls._validate_lesson_time_range(payload.get("startTime"), payload.get("endTime"))
+        if payload.get("format") not in {"offline", "online"}:
+            raise ValueError("Формат урока должен быть offline или online")
+
+    @staticmethod
+    def _apply_schedule_patch(payload: Dict[str, Any], request: Any) -> Dict[str, Any]:
+        fields = (
+            "dayOfWeek", "startTime", "endTime", "subject",
+            "room", "format", "color", "topic",
+        )
+        result = {field: payload.get(field) for field in fields}
+        for field in fields:
+            value = getattr(request, field, None)
+            if value is not None:
+                result[field] = value
+        return result, total
+
+    def get_diagnostic_invite(
+        self,
+        org_id: str,
+        diagnostic_id: str,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> dict:
+        """Return one diagnostic invite after student-level visibility checks."""
+        invite = (
+            self.db.query(DiagnosticInvite)
+            .options(joinedload(DiagnosticInvite.student))
+            .filter(DiagnosticInvite.id == diagnostic_id, DiagnosticInvite.org_id == org_id)
+            .first()
+        )
+        if not invite or not invite.student_id:
+            raise ValueError("Диагностика не найдена")
+        self._expire_diagnostic_invite_if_due(invite)
+        student = self._require_student_visibility(
+            org_id,
+            str(invite.student_id),
+            actor_id=actor_id,
+            is_org_admin=is_org_admin,
+        )
+        exact_result = self._diagnostic_results_by_invite([invite.id]).get(invite.id)
+        result = None
+        if exact_result:
+            theta = float(exact_result.final_theta) if exact_result.final_theta is not None else None
+            result = {
+                "theta": theta,
+                "accuracy": float(exact_result.accuracy) if exact_result.accuracy is not None else None,
+                "recommended_level": _theta_to_level(theta) if theta is not None else None,
+            }
+        return {
+            "id": str(invite.id),
+            "code": invite.code,
+            "student_id": str(invite.student_id),
+            "student_name": f"{student.first_name} {student.last_name}",
+            "class_level": invite.class_level,
+            "diagnostic_type": invite.diagnostic_type,
+            "status": invite.status,
+            "session_id": str(exact_result.session_id or invite.cat_session_id)
+            if exact_result and (exact_result.session_id or invite.cat_session_id)
+            else str(invite.cat_session_id) if invite.cat_session_id else None,
+            "student_status": student.status,
+            "result": result,
+            "created_at": invite.created_at.isoformat() if invite.created_at else None,
+            "started_at": invite.started_at.isoformat() if invite.started_at else None,
+            "completed_at": invite.completed_at.isoformat() if invite.completed_at else None,
+        }
+
+    def acknowledge_initial_diagnostic_report(
+        self,
+        org_id: str,
+        diagnostic_id: str,
+        *,
+        actor_id: str,
+        is_org_admin: bool,
+    ) -> dict:
+        """Record that the current group teacher has seen an initial report.
+
+        The acknowledgement is stored on the active group membership, so it
+        cannot remove the notice after a later transfer to another teacher.
+        It is intentionally idempotent because the report page may reload.
+        """
+        invite = (
+            self.db.query(DiagnosticInvite)
+            .filter(DiagnosticInvite.id == diagnostic_id, DiagnosticInvite.org_id == org_id)
+            .first()
+        )
+        if not invite or not invite.student_id:
+            raise ValueError("Диагностика не найдена")
+        self._require_student_visibility(
+            org_id,
+            str(invite.student_id),
+            actor_id=actor_id,
+            is_org_admin=is_org_admin,
+        )
+        if invite.diagnostic_type != "initial" or invite.status != "completed":
+            return {"acknowledged": False}
+
+        membership = (
+            self.db.query(StudentGroup)
+            .join(Group, Group.id == StudentGroup.group_id)
+            .filter(
+                StudentGroup.student_id == invite.student_id,
+                StudentGroup.is_active.is_(True),
+                StudentGroup.left_at.is_(None),
+                Group.org_id == org_id,
+                Group.teacher_id == actor_id,
+            )
+            .with_for_update()
+            .first()
+        )
+        if not membership:
+            # An administrator can read reports but cannot acknowledge one
+            # on behalf of the teacher; a report of an unassigned student has
+            # no group-level notice to clear.
+            return {"acknowledged": False}
+
+        membership.initial_diagnostic_reviewed_invite_id = invite.id
+        membership.initial_diagnostic_reviewed_at = datetime.now(timezone.utc)
+        membership.initial_diagnostic_reviewed_by = UUID(actor_id)
+        self.db.commit()
+        return {"acknowledged": True}
+
+    def _find_schedule_slot(self, group: Group, lesson_id: str) -> Dict[str, Any]:
+        for slot in group.schedule or []:
+            if isinstance(slot, dict) and self._lesson_id_for_slot(group, slot) == lesson_id:
+                return slot
+        raise ValueError("Урок не принадлежит расписанию этой группы")
+
+    def _schedule_overrides_for_group(
+        self,
+        group: Group,
+        *,
+        until: date,
+    ) -> tuple[Dict[str, List[GroupScheduleOverride]], Dict[tuple[str, str], GroupScheduleOverride]]:
+        lesson_ids = [
+            self._lesson_id_for_slot(group, slot)
+            for slot in (group.schedule or [])
+            if isinstance(slot, dict)
+        ]
+        if not lesson_ids:
+            return {}, {}
+        overrides = (
+            self.db.query(GroupScheduleOverride)
+            .filter(
+                GroupScheduleOverride.group_id == group.id,
+                GroupScheduleOverride.lesson_id.in_(lesson_ids),
+                GroupScheduleOverride.effective_date <= until.isoformat(),
+            )
+            .order_by(GroupScheduleOverride.effective_date, GroupScheduleOverride.created_at)
+            .all()
+        )
+        recurring: Dict[str, List[GroupScheduleOverride]] = {}
+        occurrences: Dict[tuple[str, str], GroupScheduleOverride] = {}
+        for override in overrides:
+            if override.scope == "recurring":
+                recurring.setdefault(override.lesson_id, []).append(override)
+            else:
+                occurrences[(override.lesson_id, override.effective_date)] = override
+        return recurring, occurrences
+
+    def _configured_schedule_payload_as_of(
+        self, group: Group, lesson_id: str, at_date: date
+    ) -> Dict[str, Any]:
+        """Return the recurring configuration effective on a date.
+
+        Unlike an occurrence resolver, ``at_date`` does not need to be the
+        lesson's weekday. This is essential when a teacher says "from Tuesday
+        the Monday lesson moves to Thursday".
+        """
+        payload = self._slot_payload(self._find_schedule_slot(group, lesson_id))
+        recurring, _ = self._schedule_overrides_for_group(group, until=at_date)
+        for revision in recurring.get(lesson_id, []):
+            if revision.effective_date <= at_date.isoformat():
+                payload = dict(revision.payload or payload)
+        return payload
+
+    def _resolved_occurrences_for_group(
+        self,
+        group: Group,
+        *,
+        date_from: date,
+        date_to: date,
+    ) -> List[Dict[str, Any]]:
+        """Развернуть шаблон расписания в реальные занятия заданного периода."""
+        recurring, occurrence_overrides = self._schedule_overrides_for_group(group, until=date_to)
+        slots = [slot for slot in (group.schedule or []) if isinstance(slot, dict)]
+        result: List[Dict[str, Any]] = []
+        current_day = date_from
+        while current_day <= date_to:
+            current_iso = current_day.isoformat()
+            for slot in slots:
+                lesson_id = self._lesson_id_for_slot(group, slot)
+                base_payload = self._slot_payload(slot)
+                configured_payload = dict(base_payload)
+                for revision in recurring.get(lesson_id, []):
+                    if revision.effective_date <= current_iso:
+                        configured_payload = dict(revision.payload or configured_payload)
+
+                if configured_payload["dayOfWeek"] != current_day.isoweekday():
+                    continue
+
+                occurrence_override = occurrence_overrides.get((lesson_id, current_iso))
+                payload = (
+                    dict(occurrence_override.payload or configured_payload)
+                    if occurrence_override
+                    else configured_payload
+                )
+                result.append(
+                    {
+                        "id": lesson_id,
+                        "groupId": str(group.id),
+                        "groupName": group.name,
+                        "classLevel": group.class_level or 5,
+                        **payload,
+                        "occurrenceDate": current_iso,
+                        "isRescheduled": bool(occurrence_override),
+                        "originalStartTime": configured_payload["startTime"] if occurrence_override else None,
+                        "originalEndTime": configured_payload["endTime"] if occurrence_override else None,
+                        "originalRoom": configured_payload["room"] if occurrence_override else None,
+                        "rescheduleReason": occurrence_override.reason if occurrence_override else None,
+                    }
+                )
+            current_day += timedelta(days=1)
+        return sorted(result, key=lambda item: (item["occurrenceDate"], item["startTime"], item["groupName"]))
+
+    def _resolved_schedule_payload_for_date(
+        self, group: Group, lesson_id: str, occurrence_date: date
+    ) -> Dict[str, Any]:
+        occurrences = self._resolved_occurrences_for_group(
+            group, date_from=occurrence_date, date_to=occurrence_date
+        )
+        for occurrence in occurrences:
+            if occurrence["id"] == lesson_id:
+                return occurrence
+        raise ValueError("На указанную дату этот урок не запланирован")
+
+    def _assert_teacher_time_is_available(
+        self,
+        *,
+        group: Group,
+        lesson_id: str,
+        occurrence_date: date,
+        payload: Dict[str, Any],
+    ) -> None:
+        """Reject a transfer/revision that overlaps another lesson of its teacher.
+
+        The browser check is only a convenience. This server-side check uses
+        resolved occurrences, so one-off transfers and already versioned
+        recurring schedules are both considered.
+        """
+        if not group.teacher_id:
+            return
+        candidate_start, candidate_end = self._validate_lesson_time_range(
+            payload["startTime"], payload["endTime"]
+        )
+        peers = (
+            self.db.query(Group)
+            .filter(
+                Group.org_id == group.org_id,
+                Group.status == "active",
+                Group.teacher_id == group.teacher_id,
+            )
+            .all()
+        )
+        for peer in peers:
+            for occurrence in self._resolved_occurrences_for_group(
+                peer, date_from=occurrence_date, date_to=occurrence_date
+            ):
+                if str(peer.id) == str(group.id) and occurrence["id"] == lesson_id:
+                    continue
+                peer_start, peer_end = self._validate_lesson_time_range(
+                    occurrence["startTime"], occurrence["endTime"]
+                )
+                if candidate_start < peer_end and candidate_end > peer_start:
+                    raise ValueError(
+                        f"У преподавателя уже есть урок «{occurrence['groupName']}» "
+                        f"{occurrence['startTime']}–{occurrence['endTime']} в это время"
+                    )
+
+    def _upsert_schedule_override(
+        self,
+        *,
+        group: Group,
+        lesson_id: str,
+        scope: str,
+        effective_date: date,
+        payload: Dict[str, Any],
+        reason: str,
+        actor_id: str,
+        baseline_payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        effective_iso = effective_date.isoformat()
+        override = (
+            self.db.query(GroupScheduleOverride)
+            .filter(
+                GroupScheduleOverride.group_id == group.id,
+                GroupScheduleOverride.lesson_id == lesson_id,
+                GroupScheduleOverride.scope == scope,
+                GroupScheduleOverride.effective_date == effective_iso,
+            )
+            .first()
+        )
+        before_payload = (
+            dict(override.payload or {})
+            if override
+            else dict(baseline_payload or {})
+        )
+        if override:
+            override.payload = payload
+            flag_modified(override, "payload")
+            override.reason = reason
+            override.changed_by = actor_id
+        else:
+            override = GroupScheduleOverride(
+                org_id=group.org_id,
+                group_id=group.id,
+                lesson_id=lesson_id,
+                scope=scope,
+                effective_date=effective_iso,
+                payload=payload,
+                reason=reason,
+                changed_by=actor_id,
+            )
+            self.db.add(override)
+            self.db.flush()
+
+        self.db.add(
+            GroupScheduleAudit(
+                override_id=override.id,
+                org_id=group.org_id,
+                group_id=group.id,
+                lesson_id=lesson_id,
+                scope=scope,
+                effective_date=effective_iso,
+                actor_id=actor_id,
+                before_payload=before_payload,
+                after_payload=payload,
+                reason=reason,
+            )
+        )
+
+    def get_schedule_occurrences(
+        self,
+        org_id: str,
+        *,
+        date_from: date,
+        date_to: date,
+        teacher_id: Optional[str] = None,
+    ) -> List[ScheduleOccurrenceResponse]:
+        if date_to < date_from:
+            raise ValueError("date_to не может быть раньше date_from")
+        if (date_to - date_from).days > 62:
+            raise ValueError("Период расписания не может превышать 63 дня")
+        query = self.db.query(Group).filter(Group.org_id == org_id, Group.status == "active")
+        if teacher_id:
+            query = query.filter(Group.teacher_id == teacher_id)
+        occurrences: List[ScheduleOccurrenceResponse] = []
+        for group in query.order_by(Group.name).all():
+            occurrences.extend(
+                ScheduleOccurrenceResponse(**item)
+                for item in self._resolved_occurrences_for_group(
+                    group, date_from=date_from, date_to=date_to
+                )
+            )
+        return sorted(occurrences, key=lambda item: (item.occurrenceDate, item.startTime, item.groupName))
+
+    def reschedule_lesson_occurrence(
+        self,
+        org_id: str,
+        lesson_id: str,
+        req: RescheduleLessonRequest,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> ScheduleOccurrenceResponse:
+        if not actor_id:
+            raise PermissionError("Не удалось определить автора переноса")
+        groups = self.db.query(Group).filter(Group.org_id == org_id).all()
+        group = next(
+            (
+                item
+                for item in groups
+                if any(
+                    isinstance(slot, dict) and self._lesson_id_for_slot(item, slot) == lesson_id
+                    for slot in (item.schedule or [])
+                )
+            ),
+            None,
+        )
+        if not group:
+            raise ValueError("Урок не найден")
+        self._require_group_access(org_id, str(group.id), actor_id=actor_id, is_org_admin=is_org_admin)
+
+        now = datetime.now(BUSINESS_TIMEZONE)
+        if req.lessonDate != now.date():
+            raise ValueError("Перенос доступен только для сегодняшнего урока")
+        occurrence = self._resolved_schedule_payload_for_date(group, lesson_id, req.lessonDate)
+        original_start, _ = self._validate_lesson_time_range(
+            occurrence["startTime"], occurrence["endTime"]
+        )
+        current_minutes = now.hour * 60 + now.minute
+        if current_minutes >= original_start - 60:
+            raise ValueError("Перенести урок можно не позднее чем за 60 минут до начала")
+
+        active_attendance = (
+            self.db.query(GroupAttendance)
+            .filter(
+                GroupAttendance.group_id == group.id,
+                GroupAttendance.lesson_id == lesson_id,
+                GroupAttendance.lesson_date == req.lessonDate.isoformat(),
+            )
+            .first()
+        )
+        if active_attendance:
+            raise ValueError("Нельзя переносить урок после начала, отмены или завершения")
+
+        updated_payload = self._apply_schedule_patch(occurrence, req)
+        self._validate_schedule_payload(updated_payload)
+        new_start_minutes, _ = self._validate_lesson_time_range(
+            updated_payload["startTime"], updated_payload["endTime"]
+        )
+        if new_start_minutes <= current_minutes:
+            raise ValueError("Новое время начала должно быть позже текущего времени")
+        if all(updated_payload.get(key) == occurrence.get(key) for key in ("startTime", "endTime", "room", "format", "topic")):
+            raise ValueError("Укажите новое время, кабинет, формат или тему урока")
+        self._assert_teacher_time_is_available(
+            group=group,
+            lesson_id=lesson_id,
+            occurrence_date=req.lessonDate,
+            payload=updated_payload,
+        )
+
+        self._upsert_schedule_override(
+            group=group,
+            lesson_id=lesson_id,
+            scope="occurrence",
+            effective_date=req.lessonDate,
+            payload=updated_payload,
+            reason=req.reason.strip(),
+            actor_id=actor_id,
+            baseline_payload=occurrence,
+        )
+        # The exam remains attached to this same occurrence.  We only append
+        # an immutable audit entry so the administrator can later see both
+        # the old and the new schedule; no exam state or student access code
+        # is changed by a transfer.
+        self._sync_exam_lesson_reschedule(
+            org_id=org_id,
+            group_id=str(group.id),
+            group_name=group.name,
+            lesson_id=lesson_id,
+            lesson_date=req.lessonDate.isoformat(),
+            actor_id=actor_id,
+            reason=req.reason.strip(),
+            previous={
+                "startTime": occurrence.get("startTime"),
+                "endTime": occurrence.get("endTime"),
+                "room": occurrence.get("room"),
+                "format": occurrence.get("format"),
+                "topic": occurrence.get("topic"),
+            },
+            current={
+                "startTime": updated_payload.get("startTime"),
+                "endTime": updated_payload.get("endTime"),
+                "room": updated_payload.get("room"),
+                "format": updated_payload.get("format"),
+                "topic": updated_payload.get("topic"),
+            },
+        )
+        self.db.commit()
+        return ScheduleOccurrenceResponse(
+            **{
+                **updated_payload,
+                "id": lesson_id,
+                "groupId": str(group.id),
+                "groupName": group.name,
+                "classLevel": group.class_level or 5,
+                "occurrenceDate": req.lessonDate.isoformat(),
+                "isRescheduled": True,
+                "originalStartTime": occurrence["startTime"],
+                "originalEndTime": occurrence["endTime"],
+                "originalRoom": occurrence["room"],
+                "rescheduleReason": req.reason.strip(),
+            }
+        )
+
+    def revise_recurring_lesson(
+        self,
+        org_id: str,
+        lesson_id: str,
+        req: ReviseRecurringLessonRequest,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> ScheduleLessonResponse:
+        if not actor_id:
+            raise PermissionError("Не удалось определить автора изменения")
+        groups = self.db.query(Group).filter(Group.org_id == org_id).all()
+        group = next(
+            (
+                item
+                for item in groups
+                if any(
+                    isinstance(slot, dict) and self._lesson_id_for_slot(item, slot) == lesson_id
+                    for slot in (item.schedule or [])
+                )
+            ),
+            None,
+        )
+        if not group:
+            raise ValueError("Урок не найден")
+        self._require_group_access(org_id, str(group.id), actor_id=actor_id, is_org_admin=is_org_admin)
+        today = datetime.now(BUSINESS_TIMEZONE).date()
+        if req.effectiveFrom <= today:
+            raise ValueError("Постоянное расписание можно менять только начиная с будущей даты")
+
+        current_payload = self._configured_schedule_payload_as_of(
+            group, lesson_id, req.effectiveFrom
+        )
+        updated_payload = self._apply_schedule_patch(current_payload, req)
+        self._validate_schedule_payload(updated_payload)
+        if all(updated_payload.get(key) == current_payload.get(key) for key in ("dayOfWeek", "startTime", "endTime", "subject", "room", "format", "color", "topic")):
+            raise ValueError("Укажите хотя бы одно изменение постоянного расписания")
+
+        # Inspect the first two weeks after the effective date. That covers
+        # every weekday once and verifies conflicts against other versioned
+        # schedules without fabricating or modifying future attendance rows.
+        for offset in range(14):
+            candidate_date = req.effectiveFrom + timedelta(days=offset)
+            if candidate_date.isoweekday() == updated_payload["dayOfWeek"]:
+                self._assert_teacher_time_is_available(
+                    group=group,
+                    lesson_id=lesson_id,
+                    occurrence_date=candidate_date,
+                    payload=updated_payload,
+                )
+
+        self._upsert_schedule_override(
+            group=group,
+            lesson_id=lesson_id,
+            scope="recurring",
+            effective_date=req.effectiveFrom,
+            payload=updated_payload,
+            reason=req.reason.strip(),
+            actor_id=actor_id,
+            baseline_payload=current_payload,
+        )
+        self.db.commit()
+        return ScheduleLessonResponse(
+            id=lesson_id,
+            groupId=str(group.id),
+            groupName=group.name,
+            classLevel=group.class_level or 5,
+            **updated_payload,
+        )
+
+    def create_lesson(
+        self,
+        org_id: str,
+        req: CreateLessonRequest,
+        *,
+        actor_id: Optional[str] = None,
+        is_org_admin: bool = False,
+    ) -> ScheduleLessonResponse:
+        group = self._require_group_access(
+            org_id, req.groupId, actor_id=actor_id, is_org_admin=is_org_admin
+        )
+
+        start_minutes, _ = self._validate_lesson_time_range(req.startTime, req.endTime)
+
+        # Validate that lesson is not in the past if scheduled for today
+        now = datetime.now(BUSINESS_TIMEZONE)
+        today_dow = now.weekday() + 1
+        if req.dayOfWeek == today_dow:
+            current_minutes = now.hour * 60 + now.minute
+            if start_minutes < current_minutes:
+                raise ValueError(
+                    f"Нельзя запланировать урок на прошедшее время сегодняшнего дня (текущее время: {now.strftime('%H:%M')})"
+                )
+
+        current_slots = list(group.schedule or [])
+        new_id = f"lesson-{uuid4().hex[:10]}"
+        new_slot = {
+            "id": new_id,
+            "dayOfWeek": req.dayOfWeek,
+            "startTime": req.startTime,
+            "endTime": req.endTime,
+            "subject": req.subject or "Математика",
+            "room": req.room or "Кабинет 204",
+            "format": req.format or "offline",
+            "color": req.color or "blue",
+            "topic": req.topic,
+        }
+        # A new recurring lesson must use the same server-side conflict guard
+        # as a transfer or a future recurrence edit.  Checking its next
+        # occurrence is sufficient: every peer's recurring weekday is present
+        # in that resolved date window, including one-off overrides.
+        days_until_occurrence = (req.dayOfWeek - now.isoweekday()) % 7
+        next_occurrence_date = now.date() + timedelta(days=days_until_occurrence)
+        self._assert_teacher_time_is_available(
+            group=group,
+            lesson_id=new_id,
+            occurrence_date=next_occurrence_date,
+            payload=new_slot,
+        )
+        current_slots.append(new_slot)
+        group.schedule = current_slots
+        flag_modified(group, "schedule")
+        self.db.commit()
+
+        return ScheduleLessonResponse(
+            id=new_id,
+            groupId=str(group.id),
+            groupName=group.name,
+            classLevel=group.class_level or 5,
+            subject=new_slot["subject"],
+            dayOfWeek=new_slot["dayOfWeek"],
+            startTime=new_slot["startTime"],
+            endTime=new_slot["endTime"],
+            room=new_slot["room"],
+            format=new_slot["format"],
+            color=new_slot["color"],
+            topic=new_slot["topic"],
+        )
+
+    def update_lesson(
+        self,
+        org_id: str,
+        lesson_id: str,
+        req: UpdateLessonRequest,
+        *,
+        actor_id: Optional[str] = None,
+        is_org_admin: bool = False,
+    ) -> ScheduleLessonResponse:
+        # A blind template rewrite changes the interpretation of historical
+        # lessons. Clients must explicitly choose either a one-off transfer or
+        # a future recurring revision, both of which are audited.
+        raise ValueError(
+            "Прямое редактирование расписания отключено: используйте перенос "
+            "сегодняшнего урока или изменение постоянного расписания с датой начала"
+        )
+
+        groups = self.db.query(Group).filter(Group.org_id == org_id).all()
+        target_group = None
+        target_slot = None
+        slot_idx = -1
+
+        for g in groups:
+            slots = list(g.schedule or [])
+            for idx, s in enumerate(slots):
+                if isinstance(s, dict) and s.get("id") == lesson_id:
+                    target_group = g
+                    target_slot = s
+                    slot_idx = idx
+                    break
+            if target_group:
+                break
+
+        if not target_group or not target_slot:
+            raise ValueError("Урок не найден")
+        self._require_group_access(
+            org_id,
+            str(target_group.id),
+            actor_id=actor_id,
+            is_org_admin=is_org_admin,
+        )
+
+        # Validate that lesson is not moved to past time if on today
+        target_dow = req.dayOfWeek if req.dayOfWeek is not None else int(target_slot.get("dayOfWeek", 1))
+        target_start = req.startTime if req.startTime is not None else target_slot.get("startTime", "10:00")
+        target_end = req.endTime if req.endTime is not None else target_slot.get("endTime", "11:30")
+        target_start_minutes, _ = self._validate_lesson_time_range(target_start, target_end)
+        now = datetime.now(BUSINESS_TIMEZONE)
+        today_dow = now.weekday() + 1
+        if target_dow == today_dow:
+            current_minutes = now.hour * 60 + now.minute
+            if target_start_minutes < current_minutes:
+                raise ValueError(
+                    f"Нельзя изменять уже начавшийся урок (текущее время: {now.strftime('%H:%M')})"
+                )
+
+        # If group changed
+        if req.groupId and req.groupId != str(target_group.id):
+            new_group = (
+                self.db.query(Group)
+                .filter(Group.id == req.groupId, Group.org_id == org_id)
+                .first()
+            )
+            if not new_group:
+                raise ValueError("Новая группа не найдена")
+            self._require_group_access(
+                org_id,
+                str(new_group.id),
+                actor_id=actor_id,
+                is_org_admin=is_org_admin,
+            )
+
+            old_slots = [
+                s for s in (target_group.schedule or [])
+                if isinstance(s, dict) and s.get("id") != lesson_id
+            ]
+            target_group.schedule = old_slots
+            flag_modified(target_group, "schedule")
+
+            updated_slot = dict(target_slot)
+            if req.dayOfWeek is not None: updated_slot["dayOfWeek"] = req.dayOfWeek
+            if req.startTime is not None: updated_slot["startTime"] = req.startTime
+            if req.endTime is not None: updated_slot["endTime"] = req.endTime
+            if req.subject is not None: updated_slot["subject"] = req.subject
+            if req.room is not None: updated_slot["room"] = req.room
+            if req.format is not None: updated_slot["format"] = req.format
+            if req.color is not None: updated_slot["color"] = req.color
+            if req.topic is not None: updated_slot["topic"] = req.topic
+
+            new_slots = list(new_group.schedule or [])
+            new_slots.append(updated_slot)
+            new_group.schedule = new_slots
+            flag_modified(new_group, "schedule")
+            self.db.commit()
+
+            return ScheduleLessonResponse(
+                id=lesson_id,
+                groupId=str(new_group.id),
+                groupName=new_group.name,
+                classLevel=new_group.class_level or 5,
+                subject=updated_slot.get("subject", "Математика"),
+                dayOfWeek=int(updated_slot.get("dayOfWeek", 1)),
+                startTime=updated_slot.get("startTime", "10:00"),
+                endTime=updated_slot.get("endTime", "11:30"),
+                room=updated_slot.get("room", "Кабинет 204"),
+                format=updated_slot.get("format", "offline"),
+                color=updated_slot.get("color", "blue"),
+                topic=updated_slot.get("topic"),
+            )
+
+        # Same group
+        updated_slot = dict(target_slot)
+        if req.dayOfWeek is not None: updated_slot["dayOfWeek"] = req.dayOfWeek
+        if req.startTime is not None: updated_slot["startTime"] = req.startTime
+        if req.endTime is not None: updated_slot["endTime"] = req.endTime
+        if req.subject is not None: updated_slot["subject"] = req.subject
+        if req.room is not None: updated_slot["room"] = req.room
+        if req.format is not None: updated_slot["format"] = req.format
+        if req.color is not None: updated_slot["color"] = req.color
+        if req.topic is not None: updated_slot["topic"] = req.topic
+
+        slots = list(target_group.schedule or [])
+        slots[slot_idx] = updated_slot
+        target_group.schedule = slots
+        flag_modified(target_group, "schedule")
+        self.db.commit()
+
+        return ScheduleLessonResponse(
+            id=lesson_id,
+            groupId=str(target_group.id),
+            groupName=target_group.name,
+            classLevel=target_group.class_level or 5,
+            subject=updated_slot.get("subject", "Математика"),
+            dayOfWeek=int(updated_slot.get("dayOfWeek", 1)),
+            startTime=updated_slot.get("startTime", "10:00"),
+            endTime=updated_slot.get("endTime", "11:30"),
+            room=updated_slot.get("room", "Кабинет 204"),
+            format=updated_slot.get("format", "offline"),
+            color=updated_slot.get("color", "blue"),
+            topic=updated_slot.get("topic"),
+        )
+
+    def delete_lesson(
+        self,
+        org_id: str,
+        lesson_id: str,
+        *,
+        actor_id: Optional[str] = None,
+        is_org_admin: bool = False,
+    ) -> bool:
+        groups = self.db.query(Group).filter(Group.org_id == org_id).all()
+        for g in groups:
+            slots = list(g.schedule or [])
+            filtered = [s for s in slots if isinstance(s, dict) and s.get("id") != lesson_id]
+            if len(filtered) != len(slots):
+                self._require_group_access(
+                    org_id,
+                    str(g.id),
+                    actor_id=actor_id,
+                    is_org_admin=is_org_admin,
+                )
+                g.schedule = filtered
+                flag_modified(g, "schedule")
+                self.db.commit()
+                return True
+        return False
+
+    @staticmethod
+    def _roster_ids_from_snapshot(snapshot: Any) -> set[str]:
+        """Extract stable student IDs from an attendance roster snapshot."""
+        if not isinstance(snapshot, list):
+            return set()
+        return {
+            str(item.get("student_id"))
+            for item in snapshot
+            if isinstance(item, dict) and item.get("student_id")
+        }
+
+    def _active_attendance_roster(self, group_id: UUID) -> list[dict[str, Any]]:
+        """Freeze the current active roster as a serialisable lesson fact."""
+        memberships = (
+            self.db.query(StudentGroup)
+            .filter(
+                StudentGroup.group_id == group_id,
+                StudentGroup.is_active.is_(True),
+                StudentGroup.left_at.is_(None),
+            )
+            .order_by(StudentGroup.joined_at, StudentGroup.id)
+            .all()
+        )
+        student_ids = [membership.student_id for membership in memberships]
+        students_by_id = {
+            student.id: student
+            for student in self.db.query(Student).filter(Student.id.in_(student_ids)).all()
+        } if student_ids else {}
+
+        roster: list[dict[str, Any]] = []
+        for membership in memberships:
+            student = students_by_id.get(membership.student_id)
+            if not student:
+                continue
+            full_name = f"{student.last_name or ''} {student.first_name or ''}".strip() or "Ученик"
+            roster.append({
+                "student_id": str(student.id),
+                "first_name": student.first_name,
+                "last_name": student.last_name,
+                "full_name": full_name,
+                "class_level": student.class_level,
+                "display_id": student.display_id,
+            })
+        return roster
+
+    def _lock_groups_for_membership_change(self, org_id: str, group_ids: list[UUID]) -> None:
+        """Serialize a transfer against starting attendance in either group."""
+        unique_group_ids = sorted({str(group_id) for group_id in group_ids})
+        if not unique_group_ids:
+            return
+        # The stable order prevents two opposing transfers from deadlocking.
+        self.db.query(Group.id).filter(
+            Group.org_id == org_id,
+            Group.id.in_(unique_group_ids),
+        ).order_by(Group.id).with_for_update().all()
+
+    def _assert_no_open_attendance_for_groups(self, org_id: str, group_ids: list[UUID]) -> None:
+        """A roster cannot change while any of its actual lessons is open."""
+        if not group_ids:
+            return
+        active_lesson = (
+            self.db.query(GroupAttendance)
+            .filter(
+                GroupAttendance.org_id == org_id,
+                GroupAttendance.group_id.in_(group_ids),
+                GroupAttendance.status == LessonAttendanceStatus.IN_PROGRESS.value,
+            )
+            .with_for_update()
+            .first()
+        )
+        if active_lesson:
+            raise ValueError(
+                "Нельзя изменить состав группы, пока идёт урок. "
+                "Сначала завершите или отмените начатый урок."
+            )
+
+    def get_group_attendance(
+        self,
+        org_id: str,
+        group_id: str,
+        month: Optional[str] = None,
+        *,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        is_org_admin: bool = False,
+    ) -> GroupAttendanceResponse:
+        """Получить экземпляры уроков и отметки за строго заданный период."""
+        group = self._require_group_access(
+            org_id, group_id, actor_id=actor_id, is_org_admin=is_org_admin
+        )
+
+        def parse_iso_date(value: str, field: str) -> date:
+            try:
+                parsed = datetime.strptime(value, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise ValueError(f"{field} должен иметь формат YYYY-MM-DD") from exc
+            if parsed.isoformat() != value:
+                raise ValueError(f"{field} должен иметь формат YYYY-MM-DD")
+            return parsed
+
+        if bool(date_from) != bool(date_to):
+            raise ValueError("date_from и date_to передаются вместе")
+        if date_from and date_to:
+            period_start = parse_iso_date(date_from, "date_from")
+            period_end = parse_iso_date(date_to, "date_to")
+            if period_end < period_start:
+                raise ValueError("date_to не может быть раньше date_from")
+            if (period_end - period_start).days > 62:
+                raise ValueError("Период журнала не может превышать 63 дня")
+        else:
+            selected_month = month or datetime.now(BUSINESS_TIMEZONE).strftime("%Y-%m")
+            try:
+                month_start = datetime.strptime(selected_month + "-01", "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise ValueError("month должен иметь формат YYYY-MM") from exc
+            if month_start.strftime("%Y-%m") != selected_month:
+                raise ValueError("month должен иметь формат YYYY-MM")
+            next_month = (
+                date(month_start.year + 1, 1, 1)
+                if month_start.month == 12
+                else date(month_start.year, month_start.month + 1, 1)
+            )
+            period_start = month_start
+            period_end = next_month - timedelta(days=1)
+            month = selected_month
+
+        query = self.db.query(GroupAttendance).filter(
+            GroupAttendance.group_id == group_id,
+            GroupAttendance.org_id == org_id,
+            GroupAttendance.lesson_date >= period_start.isoformat(),
+            GroupAttendance.lesson_date <= period_end.isoformat(),
+        )
+        att_records = query.order_by(GroupAttendance.lesson_date).all()
+        records_map: Dict[str, Dict[str, str]] = {}
+        statuses_map: Dict[str, str] = {}
+        cancellation_reasons_map: Dict[str, str] = {}
+        roster_student_ids_map: Dict[str, List[str]] = {}
+        lessons_map: Dict[str, Dict[str, Any]] = {}
+        historical_candidate_ids: set[str] = set()
+        business_today = datetime.now(BUSINESS_TIMEZONE).date().isoformat()
+
+        for att in att_records:
+            # A recurring slot is the source of truth for a future lesson. An
+            # attendance row for a future date can only be a legacy/corrupt
+            # write (except an explicit cancellation, which is allowed in
+            # advance). An open row without an author is likewise not valid
+            # attendance. Do not let either state reach a client while the
+            # migration quarantines historic records.
+            is_invalid_future_row = (
+                att.lesson_date > business_today
+                and att.status != LessonAttendanceStatus.CANCELLED.value
+            )
+            is_unattributable_open_row = (
+                att.status == LessonAttendanceStatus.IN_PROGRESS.value
+                and att.marked_by is None
+            )
+            if is_invalid_future_row or is_unattributable_open_row:
+                logger.error(
+                    "Ignoring invalid attendance row %s for group %s, lesson %s",
+                    att.id,
+                    group.id,
+                    att.lesson_id,
+                )
+                continue
+            lesson_key = att.lesson_id or f"lesson_{att.lesson_date}"
+            instance_key = f"{att.lesson_date}_{lesson_key}"
+            records = dict(att.records or {})
+            records_map[instance_key] = records
+            statuses_map[instance_key] = att.status or LessonAttendanceStatus.COMPLETED.value
+            # New records have a frozen roster. For legacy records, the
+            # immutable keys already present in the attendance snapshot are
+            # the only honest fallback.
+            roster_ids = self._roster_ids_from_snapshot(att.roster_snapshot)
+            if not roster_ids:
+                roster_ids = {str(student_id) for student_id in records}
+            if roster_ids:
+                roster_student_ids_map[instance_key] = sorted(roster_ids)
+                historical_candidate_ids.update(roster_ids)
+            if att.status == LessonAttendanceStatus.CANCELLED.value and att.cancellation_reason:
+                cancellation_reasons_map[instance_key] = att.cancellation_reason
+            lessons_map[instance_key] = {
+                "id": lesson_key,
+                "instanceKey": instance_key,
+                "date": att.lesson_date,
+                "topic": att.topic or "Занятие",
+                "status": att.status or LessonAttendanceStatus.COMPLETED.value,
+            }
+
+        for occurrence in self._resolved_occurrences_for_group(
+            group, date_from=period_start, date_to=period_end
+        ):
+            date_str = occurrence["occurrenceDate"]
+            slot_id = occurrence["id"]
+            instance_key = f"{date_str}_{slot_id}"
+            topic = occurrence.get("topic") or occurrence.get("subject") or "Занятие"
+            if instance_key in lessons_map:
+                lessons_map[instance_key]["startTime"] = occurrence["startTime"]
+                lessons_map[instance_key]["endTime"] = occurrence["endTime"]
+                lessons_map[instance_key]["topic"] = lessons_map[instance_key].get("topic") or topic
+                lessons_map[instance_key]["room"] = occurrence.get("room")
+                lessons_map[instance_key]["format"] = occurrence.get("format")
+                lessons_map[instance_key]["isRescheduled"] = occurrence["isRescheduled"]
+                lessons_map[instance_key]["originalStartTime"] = occurrence["originalStartTime"]
+                lessons_map[instance_key]["originalEndTime"] = occurrence["originalEndTime"]
+                lessons_map[instance_key]["originalRoom"] = occurrence["originalRoom"]
+                lessons_map[instance_key]["rescheduleReason"] = occurrence["rescheduleReason"]
+            else:
+                lessons_map[instance_key] = {
+                    "id": slot_id,
+                    "instanceKey": instance_key,
+                    "date": date_str,
+                    "startTime": occurrence["startTime"],
+                    "endTime": occurrence["endTime"],
+                    "topic": topic,
+                    "room": occurrence.get("room"),
+                    "format": occurrence.get("format"),
+                    "status": "scheduled",
+                    "isRescheduled": occurrence["isRescheduled"],
+                    "originalStartTime": occurrence["originalStartTime"],
+                    "originalEndTime": occurrence["originalEndTime"],
+                    "originalRoom": occurrence["originalRoom"],
+                    "rescheduleReason": occurrence["rescheduleReason"],
+                }
+
+        sorted_lessons = sorted(
+            lessons_map.values(),
+            key=lambda item: (item.get("date", ""), item.get("startTime", "00:00")),
+        )
+
+        active_memberships = (
+            self.db.query(StudentGroup)
+            .filter(
+                StudentGroup.group_id == group.id,
+                StudentGroup.is_active.is_(True),
+                StudentGroup.left_at.is_(None),
+            )
+            .all()
+        )
+        active_student_ids = {
+            str(membership.student_id) for membership in active_memberships
+        }
+
+        # A transfer is a factual membership event and is useful only in the
+        # selected period. Ordinary enrolment is deliberately *not* exposed
+        # as a journal event: it must not visually change existing students.
+        recent_active_memberships = [
+            membership
+            for membership in active_memberships
+            if membership.joined_at
+            and period_start <= membership.joined_at.date() <= period_end
+        ]
+        membership_events: list[dict[str, Any]] = []
+        if recent_active_memberships:
+            recent_student_ids = [membership.student_id for membership in recent_active_memberships]
+            source_rows = (
+                self.db.query(StudentGroup, Group)
+                .join(Group, Group.id == StudentGroup.group_id)
+                .filter(
+                    StudentGroup.student_id.in_(recent_student_ids),
+                    StudentGroup.group_id != group.id,
+                    StudentGroup.is_active.is_(False),
+                    StudentGroup.left_at.isnot(None),
+                    Group.org_id == org_id,
+                )
+                .all()
+            )
+            sources_by_student_id: dict[UUID, list[tuple[StudentGroup, Group]]] = {}
+            for source_membership, source_group in source_rows:
+                sources_by_student_id.setdefault(source_membership.student_id, []).append(
+                    (source_membership, source_group)
+                )
+
+            for membership in recent_active_memberships:
+                candidates = sources_by_student_id.get(membership.student_id, [])
+                source = max(
+                    candidates,
+                    key=lambda item: item[0].left_at or datetime.min,
+                    default=None,
+                )
+                # A transfer closes one membership and opens the next one in
+                # the same transaction. Five minutes is deliberately narrow:
+                # an old historic membership must not turn a later enrolment
+                # into a false "transfer from" label.
+                is_transfer = bool(
+                    source
+                    and membership.joined_at
+                    and source[0].left_at
+                    and abs((membership.joined_at - source[0].left_at).total_seconds()) <= 300
+                )
+                if is_transfer:
+                    membership_events.append({
+                        "student_id": str(membership.student_id),
+                        "kind": "transferred",
+                        "joined_at": membership.joined_at.isoformat() if membership.joined_at else None,
+                        "source_group_name": source[1].name,
+                    })
+
+        # "New after diagnostic" is a separate operational signal. It is
+        # shown only for a student's first group after a completed *initial*
+        # diagnostic, and disappears after the current group teacher opens
+        # that exact report. Transfers never receive this tag.
+        diagnostic_report_notices: list[dict[str, Any]] = []
+        if group.teacher_id and active_memberships:
+            active_ids = [membership.student_id for membership in active_memberships]
+            other_memberships = (
+                self.db.query(StudentGroup.student_id)
+                .filter(
+                    StudentGroup.student_id.in_(active_ids),
+                    StudentGroup.group_id != group.id,
+                )
+                .all()
+            )
+            student_ids_with_other_groups = {row[0] for row in other_memberships}
+            initial_results = (
+                self.db.query(StudentDiagnosticResult)
+                .filter(
+                    StudentDiagnosticResult.org_id == org_id,
+                    StudentDiagnosticResult.student_id.in_(active_ids),
+                    StudentDiagnosticResult.diagnostic_type == "initial",
+                    StudentDiagnosticResult.invite_id.isnot(None),
+                )
+                .order_by(StudentDiagnosticResult.diagnosed_at.desc())
+                .all()
+            )
+            results_by_student_id: dict[UUID, list[StudentDiagnosticResult]] = {}
+            for result in initial_results:
+                results_by_student_id.setdefault(result.student_id, []).append(result)
+
+            for membership in active_memberships:
+                if membership.student_id in student_ids_with_other_groups or not membership.joined_at:
+                    continue
+                result = next(
+                    (
+                        candidate
+                        for candidate in results_by_student_id.get(membership.student_id, [])
+                        if candidate.diagnosed_at and candidate.diagnosed_at <= membership.joined_at
+                    ),
+                    None,
+                )
+                if not result or membership.initial_diagnostic_reviewed_invite_id == result.invite_id:
+                    continue
+                diagnostic_report_notices.append({
+                    "student_id": str(membership.student_id),
+                    "invite_id": str(result.invite_id),
+                    "completed_at": result.diagnosed_at.isoformat() if result.diagnosed_at else None,
+                })
+
+        former_student_ids = historical_candidate_ids - active_student_ids
+        historical_students: list[dict[str, Any]] = []
+        if former_student_ids:
+            former_uuid_ids = []
+            for raw_id in former_student_ids:
+                try:
+                    former_uuid_ids.append(UUID(raw_id))
+                except (TypeError, ValueError):
+                    logger.warning("Ignoring malformed historical attendance student id %s", raw_id)
+            memberships = (
+                self.db.query(StudentGroup)
+                .filter(
+                    StudentGroup.group_id == group.id,
+                    StudentGroup.student_id.in_(former_uuid_ids),
+                )
+                .all()
+            ) if former_uuid_ids else []
+            memberships_by_student_id = {membership.student_id: membership for membership in memberships}
+            destination_rows = (
+                self.db.query(StudentGroup, Group)
+                .join(Group, Group.id == StudentGroup.group_id)
+                .filter(
+                    StudentGroup.student_id.in_(former_uuid_ids),
+                    StudentGroup.is_active.is_(True),
+                    StudentGroup.left_at.is_(None),
+                    Group.org_id == org_id,
+                )
+                .all()
+            ) if former_uuid_ids else []
+            destinations_by_student_id = {
+                membership.student_id: destination_group.name
+                for membership, destination_group in destination_rows
+            }
+            students_by_id = {
+                student.id: student
+                for student in self.db.query(Student).filter(Student.id.in_(former_uuid_ids)).all()
+            } if former_uuid_ids else {}
+            for student_uuid in former_uuid_ids:
+                student = students_by_id.get(student_uuid)
+                if not student:
+                    continue
+                membership = memberships_by_student_id.get(student_uuid)
+                full_name = f"{student.last_name or ''} {student.first_name or ''}".strip() or "Ученик"
+                historical_students.append({
+                    "id": str(student.id),
+                    "first_name": student.first_name,
+                    "last_name": student.last_name,
+                    "full_name": full_name,
+                    "class_level": student.class_level,
+                    "display_id": student.display_id,
+                    "left_at": membership.left_at.isoformat() if membership and membership.left_at else None,
+                    "transferred_to_group_name": destinations_by_student_id.get(student.id),
+                })
+            historical_students.sort(key=lambda item: (item.get("left_at") or "", item["full_name"]))
+
+        return GroupAttendanceResponse(
+            groupId=str(group.id),
+            month=month,
+            lessons=sorted_lessons,
+            records=records_map,
+            statuses=statuses_map,
+            cancellationReasons=cancellation_reasons_map,
+            rosterStudentIds=roster_student_ids_map,
+            historicalStudents=historical_students,
+            membershipEvents=membership_events,
+            diagnosticReportNotices=diagnostic_report_notices,
+        )
+
+    def start_group_attendance(
+        self,
+        org_id: str,
+        group_id: str,
+        req: StartAttendanceRequest,
+        *,
+        started_by: Optional[str],
+        is_org_admin: bool,
+    ) -> bool:
+        """Create the only valid transition from scheduled to in_progress."""
+        if not started_by:
+            raise ValueError("Не удалось определить преподавателя, начавшего урок")
+        group = self._require_group_access(
+            org_id, group_id, actor_id=started_by, is_org_admin=is_org_admin
+        )
+        # The same group lock is acquired by a membership transfer. It makes
+        # "start lesson" and "move student" mutually exclusive operations.
+        locked_group = (
+            self.db.query(Group)
+            .filter(Group.id == group.id, Group.org_id == org_id)
+            .with_for_update()
+            .first()
+        )
+        if not locked_group:
+            raise ValueError("Группа не найдена")
+        group = locked_group
+        lesson_date = req.lessonDate
+        today = datetime.now(BUSINESS_TIMEZONE).date()
+        if lesson_date != today:
+            raise ValueError("Начать урок можно только в день его проведения")
+
+        matching_slot = next(
+            (
+                occurrence
+                for occurrence in self._resolved_occurrences_for_group(
+                    group, date_from=lesson_date, date_to=lesson_date
+                )
+                if occurrence["id"] == req.lessonId
+            ),
+            None,
+        )
+        if not matching_slot:
+            raise ValueError("Урок не принадлежит расписанию этой группы")
+        if int(matching_slot.get("dayOfWeek") or 0) != lesson_date.isoweekday():
+            raise ValueError("Дата не соответствует дню урока в расписании")
+
+        start_minutes, _ = self._validate_lesson_time_range(
+            matching_slot.get("startTime"), matching_slot.get("endTime")
+        )
+        current_business_time = datetime.now(BUSINESS_TIMEZONE)
+        current_minutes = current_business_time.hour * 60 + current_business_time.minute
+        if current_minutes < start_minutes:
+            raise ValueError("Нельзя начать урок до времени по расписанию")
+
+        # Serialize starts for the teacher who is assigned to this group.  It
+        # prevents two browser tabs (or two groups) from creating overlapping
+        # active lessons between the check below and the insert.
+        lesson_teacher_id = group.teacher_id or started_by
+        self.db.query(User.id).filter(User.id == lesson_teacher_id).with_for_update().first()
+
+        att = (
+            self.db.query(GroupAttendance)
+            .filter(
+                GroupAttendance.group_id == group_id,
+                GroupAttendance.org_id == org_id,
+                GroupAttendance.lesson_date == lesson_date.isoformat(),
+                GroupAttendance.lesson_id == req.lessonId,
+            )
+            .first()
+        )
+        if att:
+            if att.status == LessonAttendanceStatus.CANCELLED.value:
+                raise ValueError("Отменённый урок нельзя начать")
+            if att.status == LessonAttendanceStatus.COMPLETED.value:
+                raise ValueError("Завершённый урок нельзя начать повторно")
+            # Idempotency protects a double click/retry; it does not alter the
+            # original actual start timestamp or audit trail.
+            return True
+
+        # A real teacher cannot conduct two lessons at the same time.  The
+        # previous occurrence must first be completed or cancelled, otherwise
+        # attendance and future worked-hours analytics would contain two
+        # simultaneous sessions for one teacher.
+        active_lesson_query = (
+            self.db.query(GroupAttendance, Group)
+            .join(Group, Group.id == GroupAttendance.group_id)
+            .filter(
+                GroupAttendance.org_id == org_id,
+                GroupAttendance.lesson_date == lesson_date.isoformat(),
+                GroupAttendance.status == LessonAttendanceStatus.IN_PROGRESS.value,
+            )
+        )
+        if group.teacher_id:
+            active_lesson_query = active_lesson_query.filter(
+                Group.teacher_id == group.teacher_id
+            )
+        else:
+            # Unassigned legacy groups have no designated instructor.  The
+            # actor who started the lesson is the only reliable identity.
+            active_lesson_query = active_lesson_query.filter(
+                GroupAttendance.marked_by == started_by
+            )
+
+        active_lesson = active_lesson_query.first()
+        if active_lesson:
+            active_attendance, active_group = active_lesson
+            active_label = active_attendance.topic or active_group.name
+            raise ValueError(
+                f"Сначала завершите или отмените начатый урок «{active_label}» "
+                f"в группе «{active_group.name}». Один преподаватель не может вести два урока одновременно."
+            )
+
+        now = current_business_time.replace(tzinfo=None)
+        roster_snapshot = self._active_attendance_roster(group.id)
+        att = GroupAttendance(
+            org_id=org_id,
+            group_id=group_id,
+            lesson_date=lesson_date.isoformat(),
+            lesson_id=req.lessonId,
+            topic=req.topic or matching_slot.get("topic"),
+            status=LessonAttendanceStatus.IN_PROGRESS.value,
+            records={},
+            roster_snapshot=roster_snapshot,
+            marked_by=started_by,
+            started_at=now,
+        )
+        self.db.add(att)
+        self.db.flush()
+        self.db.add(
+            GroupAttendanceAudit(
+                attendance_id=att.id,
+                org_id=org_id,
+                group_id=group_id,
+                actor_id=started_by,
+                action="started",
+                before_status=None,
+                after_status=LessonAttendanceStatus.IN_PROGRESS.value,
+                before_records=None,
+                after_records={},
+            )
+        )
+        self.db.commit()
+        return True
+
+    def save_group_attendance(
+        self,
+        org_id: str,
+        group_id: str,
+        req: SaveAttendanceRequest,
+        *,
+        marked_by: Optional[str],
+        is_org_admin: bool,
+    ) -> bool:
+        """Сохранить полный проверенный снимок отметок одного экземпляра урока."""
+        if not marked_by:
+            raise ValueError("Не удалось определить автора отметки")
+        group = self._require_group_access(
+            org_id, group_id, actor_id=marked_by, is_org_admin=is_org_admin
+        )
+        lesson_date = req.lessonDate
+        today = datetime.now(BUSINESS_TIMEZONE).date()
+        if (
+            lesson_date > today
+            and req.status.value != LessonAttendanceStatus.CANCELLED.value
+        ):
+            raise ValueError("Нельзя отмечать посещаемость будущего урока")
+
+        if not req.lessonId:
+            raise ValueError("Для посещаемости необходим идентификатор урока из расписания")
+        target_lesson_id = req.lessonId or f"lesson_{lesson_date.isoformat()}"
+        requested_status = req.status.value
+        is_cancellation = requested_status == LessonAttendanceStatus.CANCELLED.value
+        att = (
+            self.db.query(GroupAttendance)
+            .filter(
+                GroupAttendance.group_id == group_id,
+                GroupAttendance.org_id == org_id,
+                GroupAttendance.lesson_date == lesson_date.isoformat(),
+                GroupAttendance.lesson_id == target_lesson_id,
+            )
+            .with_for_update()
+            .first()
+        )
+
+        matching_slot = next(
+            (
+                occurrence
+                for occurrence in self._resolved_occurrences_for_group(
+                    group, date_from=lesson_date, date_to=lesson_date
+                )
+                if occurrence["id"] == target_lesson_id
+            ),
+            None,
+        )
+        if not att:
+            if not matching_slot:
+                raise ValueError("Урок не принадлежит расписанию этой группы")
+            slot_day = int(matching_slot.get("dayOfWeek") or 0)
+            if slot_day != lesson_date.isoweekday():
+                raise ValueError("Дата не соответствует дню урока в расписании")
+
+        if not is_cancellation and not att:
+            raise ValueError("Сначала начните урок, затем отмечайте посещаемость")
+        if (
+            not is_cancellation
+            and att.status != LessonAttendanceStatus.IN_PROGRESS.value
+        ):
+            raise ValueError("Отметки можно изменять только у начатого урока")
+
+        if matching_slot and lesson_date == today and not is_cancellation:
+            start_time = matching_slot.get("startTime")
+            end_time = matching_slot.get("endTime")
+            start_minutes, end_minutes = self._validate_lesson_time_range(start_time, end_time)
+            current_business_time = datetime.now(BUSINESS_TIMEZONE)
+            current_minutes = current_business_time.hour * 60 + current_business_time.minute
+            if current_minutes < start_minutes:
+                raise ValueError("Нельзя начать или отмечать посещаемость до времени урока")
+            if (
+                requested_status == LessonAttendanceStatus.COMPLETED.value
+                and current_minutes < end_minutes - 15
+            ):
+                raise ValueError("Урок можно завершить не ранее чем за 15 минут до окончания")
+
+        # A lesson owns the roster that existed at its explicit start. Never
+        # derive it from today's group membership: an administrative transfer
+        # after the lesson must not rewrite yesterday's attendance evidence.
+        if (
+            att
+            and not is_cancellation
+            and att.status == LessonAttendanceStatus.IN_PROGRESS.value
+            and not att.roster_snapshot
+        ):
+            # Safe compatibility path for lessons started before the roster
+            # snapshot migration. New lessons always receive this at start.
+            att.roster_snapshot = self._active_attendance_roster(group.id)
+            flag_modified(att, "roster_snapshot")
+        roster_student_ids = set()
+        if att and not is_cancellation:
+            roster_student_ids = self._roster_ids_from_snapshot(att.roster_snapshot)
+            if not roster_student_ids:
+                # A completed legacy lesson cannot be rebuilt from the current
+                # membership: the student may have been transferred since it
+                # happened. Its saved record keys are the only durable roster.
+                roster_student_ids = {str(student_id) for student_id in (att.records or {})}
+            if (
+                not roster_student_ids
+                and att.status == LessonAttendanceStatus.IN_PROGRESS.value
+            ):
+                roster_student_ids = {
+                    entry["student_id"]
+                    for entry in self._active_attendance_roster(group.id)
+                }
+        records = {str(student_id): state.value for student_id, state in req.records.items()}
+        unknown_student_ids = set(records) - roster_student_ids
+        if unknown_student_ids:
+            raise ValueError("В журнал передан ученик, которого не было в составе начатого урока")
+
+        if is_cancellation:
+            if records:
+                raise ValueError("У отменённого урока не может быть отметок посещаемости")
+            if not req.cancellationReason:
+                raise ValueError("Для отмены урока укажите причину")
+        elif req.cancellationReason:
+            raise ValueError("Причина отмены передаётся только для отменённого урока")
+        if requested_status == LessonAttendanceStatus.COMPLETED.value:
+            missing_student_ids = roster_student_ids - set(records)
+            if missing_student_ids:
+                raise ValueError("Перед завершением урока заполните отметки всех учеников из состава урока")
+
+        now = datetime.now(BUSINESS_TIMEZONE).replace(tzinfo=None)
+        before_status = att.status if att else None
+        before_records = dict(att.records or {}) if att else None
+        is_completed_correction = bool(
+            att
+            and att.status == LessonAttendanceStatus.COMPLETED.value
+            and (records != before_records or requested_status != before_status)
+        )
+        if is_completed_correction:
+            if not is_org_admin:
+                raise PermissionError("Корректировать завершённый урок может только owner или admin")
+            if not req.correctionReason:
+                raise ValueError("Для корректировки завершённого урока укажите причину")
+
+        if att and att.status == LessonAttendanceStatus.COMPLETED.value and requested_status != before_status:
+            raise ValueError("Завершённый урок нельзя вернуть в другой статус")
+        if att and att.status == LessonAttendanceStatus.CANCELLED.value and requested_status != before_status:
+            raise ValueError("Отменённый урок нельзя повторно открыть")
+
+        # A cancelled lesson must not silently invalidate a live exam or erase
+        # a student waiting in its lobby.  Exam-service is the owner of those
+        # rows, so it is consulted before this service persists the
+        # cancellation.  This protects direct API callers as well as the UI.
+        if is_cancellation:
+            self._sync_exam_lesson_cancellation(
+                phase="cancellation-check",
+                org_id=org_id,
+                group_id=group_id,
+                lesson_id=target_lesson_id,
+                lesson_date=lesson_date.isoformat(),
+                reason=req.cancellationReason,
+            )
+
+        if not att:
+            att = GroupAttendance(
+                org_id=org_id,
+                group_id=group_id,
+                lesson_date=lesson_date.isoformat(),
+                lesson_id=target_lesson_id,
+                topic=req.topic,
+                status=requested_status,
+                records=records,
+                marked_by=marked_by,
+                started_at=None,
+                completed_at=now if requested_status == LessonAttendanceStatus.COMPLETED.value else None,
+                cancellation_reason=req.cancellationReason if is_cancellation else None,
+            )
+            self.db.add(att)
+            action = "cancelled" if is_cancellation else "created"
+        else:
+            att.records = records
+            flag_modified(att, "records")
+            att.status = requested_status
+            if req.topic is not None:
+                att.topic = req.topic
+            att.marked_by = marked_by
+            if requested_status == LessonAttendanceStatus.COMPLETED.value:
+                att.completed_at = att.completed_at or now
+            else:
+                att.completed_at = None
+            att.cancellation_reason = req.cancellationReason if is_cancellation else None
+            action = (
+                "cancelled"
+                if is_cancellation
+                else "corrected"
+                if is_completed_correction
+                else "updated"
+            )
+
+        self.db.flush()
+        self.db.add(
+            GroupAttendanceAudit(
+                attendance_id=att.id,
+                org_id=org_id,
+                group_id=group_id,
+                actor_id=marked_by,
+                action=action,
+                before_status=before_status,
+                after_status=requested_status,
+                before_records=before_records,
+                after_records=records,
+                correction_reason=req.correctionReason if is_completed_correction else None,
+                cancellation_reason=req.cancellationReason if is_cancellation else None,
+            )
+        )
+        self.db.flush()
+        if is_cancellation:
+            try:
+                # The request is deliberately made before the local commit:
+                # if exam-service rejects a race (a student joined just now),
+                # both the attendance write and audit record are rolled back.
+                self._sync_exam_lesson_cancellation(
+                    phase="release",
+                    org_id=org_id,
+                    group_id=group_id,
+                    lesson_id=target_lesson_id,
+                    lesson_date=lesson_date.isoformat(),
+                    reason=req.cancellationReason,
+                )
+            except Exception:
+                self.db.rollback()
+                raise
+        self.db.commit()
+        return True
+
+    def _sync_exam_lesson_cancellation(
+        self,
+        *,
+        phase: str,
+        org_id: str,
+        group_id: str,
+        lesson_id: str,
+        lesson_date: str,
+        reason: Optional[str],
+    ) -> None:
+        """Synchronise one lesson cancellation with exam-service.
+
+        Auth owns the cancellation, exam-service owns attempts and access
+        codes.  The two short internal calls form a small guarded saga: first
+        check that no active work exists, then revoke an untouched lobby while
+        this attendance transaction is still uncommitted.
+        """
+        settings = get_settings()
+        if not settings.internal_service_token:
+            raise RuntimeError("Не настроена внутренняя связка отмены урока и экзаменов")
+        endpoint = f"{settings.exam_service_url.rstrip('/')}/internal/lesson-bindings/{phase}"
+        payload = {
+            "org_id": str(org_id),
+            "group_id": str(group_id),
+            "lesson_id": lesson_id,
+            "lesson_date": lesson_date,
+            "reason": reason,
+        }
+        try:
+            response = httpx.post(
+                endpoint,
+                json=payload,
+                headers={"X-Internal-Service-Token": settings.internal_service_token},
+                timeout=5.0,
+            )
+        except httpx.HTTPError as exc:
+            raise RuntimeError("Сервис экзаменов временно недоступен; урок не был отменён") from exc
+
+        if response.status_code == 409:
+            try:
+                detail = response.json().get("detail")
+            except ValueError:
+                detail = None
+            raise ValueError(detail or "Нельзя отменить урок с активным экзаменом")
+        if response.status_code != 200:
+            logger.error(
+                "Exam lesson cancellation sync failed: phase=%s status=%s body=%s",
+                phase,
+                response.status_code,
+                response.text[:500],
+            )
+            raise RuntimeError("Не удалось синхронизировать отмену урока с экзаменом")
+
+    def _sync_exam_lesson_reschedule(
+        self,
+        *,
+        org_id: str,
+        group_id: str,
+        group_name: Optional[str],
+        lesson_id: str,
+        lesson_date: str,
+        actor_id: str,
+        reason: Optional[str],
+        previous: Dict[str, Any],
+        current: Dict[str, Any],
+    ) -> None:
+        """Persist a schedule transfer in exam-service's audit timeline.
+
+        The concrete lesson identity does not change, therefore this is not a
+        new exam assignment and cannot change a public code, attempts or the
+        lesson itself.  Failing closed prevents a successful reschedule from
+        disappearing from the operational history.
+        """
+        settings = get_settings()
+        if not settings.internal_service_token:
+            raise RuntimeError("Не настроена внутренняя связка расписания и экзаменов")
+        endpoint = f"{settings.exam_service_url.rstrip('/')}/internal/lesson-bindings/rescheduled"
+        payload = {
+            "org_id": str(org_id),
+            "group_id": str(group_id),
+            "group_name": group_name,
+            "lesson_id": lesson_id,
+            "lesson_date": lesson_date,
+            "actor_id": actor_id,
+            "reason": reason,
+            "previous": previous,
+            "current": current,
+        }
+        try:
+            response = httpx.post(
+                endpoint,
+                json=payload,
+                headers={"X-Internal-Service-Token": settings.internal_service_token},
+                timeout=5.0,
+            )
+        except httpx.HTTPError as exc:
+            raise RuntimeError("Сервис экзаменов временно недоступен; урок не был перенесён") from exc
+        if response.status_code != 200:
+            logger.error(
+                "Exam lesson reschedule audit failed: status=%s body=%s",
+                response.status_code,
+                response.text[:500],
+            )
+            raise RuntimeError("Не удалось зафиксировать перенос занятия для экзамена")

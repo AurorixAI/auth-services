@@ -14,6 +14,10 @@ from src.models.auth import (
     StudentGroup,
     DiagnosticInvite,
     StudentDiagnosticResult,
+    GroupAttendance,
+    GroupAttendanceAudit,
+    GroupScheduleOverride,
+    GroupScheduleAudit,
 )
 
 __all__ = [
@@ -26,4 +30,8 @@ __all__ = [
     "StudentGroup",
     "DiagnosticInvite",
     "StudentDiagnosticResult",
+    "GroupAttendance",
+    "GroupAttendanceAudit",
+    "GroupScheduleOverride",
+    "GroupScheduleAudit",
 ]

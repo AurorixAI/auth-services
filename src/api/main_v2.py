@@ -76,6 +76,15 @@ async def lifespan(app: FastAPI):
         logger.error("Alembic migration failed: %s", e)
         raise
 
+    # Ensure all newly added tables are created
+    try:
+        from src.core.database import engine
+        from src.models.auth import Base
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables verified/created.")
+    except Exception as e:
+        logger.error("Failed to verify/create database tables: %s", e)
+
     yield
 
     # Shutdown
