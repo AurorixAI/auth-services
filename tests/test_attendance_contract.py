@@ -11,6 +11,8 @@ from src.auth.attendance_access import is_org_admin
 from src.auth.schemas import (
     GroupAttendanceResponse,
     LessonAttendanceStatus,
+    OpenAttendanceActionResponse,
+    ReconcileMissedLessonRequest,
     SaveAttendanceRequest,
     StudentAttendanceStatus,
 )
@@ -148,6 +150,33 @@ class AttendanceContractTests(unittest.TestCase):
                 cancellationReason="ok",
             )
 
+    def test_missed_lesson_reconciliation_is_explicit_and_requires_a_reason_to_cancel(self):
+        action = OpenAttendanceActionResponse(
+            actionType="missed",
+            groupId=str(uuid4()),
+            groupName="10-А",
+            classLevel=10,
+            lessonId="lesson-1",
+            lessonDate="2026-08-20",
+            subject="Алгебра",
+            startTime="10:00",
+            endTime="11:30",
+        )
+        self.assertEqual(action.actionType, "missed")
+
+        cancellation = ReconcileMissedLessonRequest(
+            lessonDate="2026-08-20",
+            lessonId="lesson-1",
+            cancellationReason="Преподаватель заболел",
+        )
+        self.assertEqual(cancellation.lessonDate.isoformat(), "2026-08-20")
+        with self.assertRaises(ValidationError):
+            ReconcileMissedLessonRequest(
+                lessonDate="2026-08-20",
+                lessonId="lesson-1",
+                cancellationReason="ok",
+            )
+
     def test_schedule_time_validation_is_strict_and_ordered(self):
         self.assertEqual(AuthService._validate_lesson_time_range("09:00", "10:30"), (540, 630))
         with self.assertRaises(ValueError):
@@ -216,6 +245,7 @@ class AttendanceContractTests(unittest.TestCase):
         service._schedule_overrides_for_group = lambda *_args, **_kwargs: (
             {"lesson-1": [recurring]},
             {("lesson-1", "2026-08-19"): transfer},
+            {},
         )
 
         occurrences = service._resolved_occurrences_for_group(
@@ -232,6 +262,36 @@ class AttendanceContractTests(unittest.TestCase):
         self.assertEqual(occurrences[1]["originalStartTime"], "12:00")
         self.assertEqual(occurrences[1]["startTime"], "14:00")
         self.assertEqual(occurrences[1]["room"], "203")
+
+    def test_resolved_occurrences_stop_at_recurring_end_without_erasing_past(self):
+        group = SimpleNamespace(
+            id=uuid4(),
+            name="Математика-1",
+            class_level=10,
+            schedule=[{
+                "id": "lesson-1", "dayOfWeek": 1,
+                "startTime": "10:00", "endTime": "11:30",
+                "subject": "Алгебра", "room": "201", "format": "offline",
+                "color": "blue", "topic": "Функции",
+            }],
+        )
+        recurring_end = SimpleNamespace(effective_date="2026-08-24")
+        service = AuthService(_ReadOnlyScheduleDB([]))
+        service._schedule_overrides_for_group = lambda *_args, **_kwargs: (
+            {},
+            {},
+            {"lesson-1": recurring_end},
+        )
+
+        occurrences = service._resolved_occurrences_for_group(
+            group,
+            date_from=date(2026, 8, 17),
+            date_to=date(2026, 8, 31),
+        )
+
+        # The scheduled fact before the end date remains resolvable; the two
+        # future Mondays are not generated at all.
+        self.assertEqual([item["occurrenceDate"] for item in occurrences], ["2026-08-17"])
 
     def test_group_access_allows_only_assigned_teacher_or_org_manager(self):
         teacher_id = uuid4()

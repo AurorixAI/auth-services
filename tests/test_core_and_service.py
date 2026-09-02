@@ -340,6 +340,147 @@ class TestAuthServiceWithMock:
         assert code.isdigit()
 
 
+class TestGroupCreationPermissions:
+    """The server, not the client, owns the teacher assignment rule."""
+
+    def _make_service(self, memberships):
+        from src.auth.service import AuthService
+        from src.auth.models import OrganizationMember, User
+
+        db = MagicMock()
+        membership_results = iter(memberships)
+        created = []
+
+        def query(model, *args):
+            query_mock = MagicMock()
+            if model is OrganizationMember:
+                query_mock.filter.return_value.first.side_effect = lambda: next(membership_results)
+            elif model is User:
+                teacher = MagicMock()
+                teacher.first_name = "Иван"
+                teacher.last_name = "Иванов"
+                query_mock.filter.return_value.first.return_value = teacher
+            else:
+                query_mock.filter.return_value.scalar.return_value = 0
+            return query_mock
+
+        def add(value):
+            created.append(value)
+
+        def flush():
+            from src.auth.models import Group
+            from uuid import uuid4
+
+            group = next(item for item in created if isinstance(item, Group))
+            if group.id is None:
+                group.id = uuid4()
+
+        db.query.side_effect = query
+        db.add.side_effect = add
+        db.flush.side_effect = flush
+        return AuthService(db), db, created
+
+    @staticmethod
+    def _membership(role="teacher", active=True):
+        membership = MagicMock()
+        membership.org_role = role
+        membership.is_active = active
+        return membership
+
+    def test_teacher_creates_group_only_for_themself_and_audit_is_written(self):
+        from uuid import uuid4
+        from src.auth.models import Group, GroupAudit
+        from src.auth.schemas import GroupCreateRequest
+
+        actor_id = uuid4()
+        service, db, created = self._make_service([self._membership("teacher")])
+        response = service.create_group(
+            str(uuid4()),
+            GroupCreateRequest(name="Алгебра-9", class_level=9),
+            actor_id=str(actor_id),
+            is_org_admin=False,
+            actor_role="teacher",
+        )
+
+        group = next(item for item in created if isinstance(item, Group))
+        audit = next(item for item in created if isinstance(item, GroupAudit))
+        assert group.teacher_id == actor_id
+        assert audit.actor_id == actor_id
+        assert audit.assigned_teacher_id == actor_id
+        assert audit.actor_role == "teacher"
+        assert audit.action == "created"
+        assert audit.snapshot["name"] == "Алгебра-9"
+        assert response.teacher_id == str(actor_id)
+        db.commit.assert_called_once()
+
+    def test_teacher_cannot_forge_assignment_to_another_teacher(self):
+        from uuid import uuid4
+        from src.auth.schemas import GroupCreateRequest
+
+        actor_id = uuid4()
+        service, db, created = self._make_service([self._membership("teacher")])
+
+        with pytest.raises(PermissionError, match="только для себя"):
+            service.create_group(
+                str(uuid4()),
+                GroupCreateRequest(name="Чужая группа", teacher_id=str(uuid4())),
+                actor_id=str(actor_id),
+                is_org_admin=False,
+                actor_role="teacher",
+            )
+
+        assert created == []
+        db.commit.assert_not_called()
+
+    def test_manager_can_assign_only_an_active_teacher_of_the_same_org(self):
+        from uuid import uuid4
+        from src.auth.models import Group, GroupAudit
+        from src.auth.schemas import GroupCreateRequest
+
+        actor_id = uuid4()
+        assigned_teacher_id = uuid4()
+        service, db, created = self._make_service([
+            self._membership("admin"),
+            self._membership("teacher"),
+        ])
+        service.create_group(
+            str(uuid4()),
+            GroupCreateRequest(name="Геометрия-10", teacher_id=str(assigned_teacher_id)),
+            actor_id=str(actor_id),
+            is_org_admin=True,
+            actor_role="admin",
+        )
+
+        group = next(item for item in created if isinstance(item, Group))
+        audit = next(item for item in created if isinstance(item, GroupAudit))
+        assert group.teacher_id == assigned_teacher_id
+        assert audit.actor_id == actor_id
+        assert audit.assigned_teacher_id == assigned_teacher_id
+        assert audit.actor_role == "admin"
+        db.commit.assert_called_once()
+
+    def test_manager_cannot_assign_a_group_to_an_inactive_or_foreign_member(self):
+        from uuid import uuid4
+        from src.auth.schemas import GroupCreateRequest
+
+        service, db, created = self._make_service([
+            self._membership("owner"),
+            None,
+        ])
+
+        with pytest.raises(ValueError, match="активного преподавателя"):
+            service.create_group(
+                str(uuid4()),
+                GroupCreateRequest(name="Некорректное назначение", teacher_id=str(uuid4())),
+                actor_id=str(uuid4()),
+                is_org_admin=True,
+                actor_role="owner",
+            )
+
+        assert created == []
+        db.commit.assert_not_called()
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # AuthService — extended coverage: internal helpers + CRUD methods
 # ═══════════════════════════════════════════════════════════════════════════

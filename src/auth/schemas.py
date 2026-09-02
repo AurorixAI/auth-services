@@ -5,7 +5,7 @@ B2B модель: Organizations → Members → Students (no login)
 
 from datetime import date
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -288,6 +288,24 @@ class CreateLessonRequest(BaseModel):
     topic: Optional[str] = None
 
 
+class CreateOneOffLessonRequest(BaseModel):
+    """Разовое занятие на конкретную календарную дату.
+
+    Предмет намеренно не передаётся: на текущем этапе все группы платформы
+    относятся к математике. Это исключает появление противоречивого предмета
+    в одном расписании группы.
+    """
+
+    groupId: str
+    lessonDate: date
+    startTime: str
+    endTime: str
+    room: Optional[str] = "Кабинет 204"
+    format: Optional[str] = "offline"
+    color: Optional[str] = "blue"
+    topic: Optional[str] = None
+
+
 class UpdateLessonRequest(BaseModel):
     groupId: Optional[str] = None
     dayOfWeek: Optional[int] = Field(None, ge=1, le=7)
@@ -309,6 +327,7 @@ class ScheduleOccurrenceResponse(ScheduleLessonResponse):
     originalEndTime: Optional[str] = None
     originalRoom: Optional[str] = None
     rescheduleReason: Optional[str] = None
+    isOneOff: bool = False
 
 
 class RescheduleLessonRequest(BaseModel):
@@ -336,6 +355,42 @@ class ReviseRecurringLessonRequest(BaseModel):
     color: Optional[str] = None
     topic: Optional[str] = Field(None, max_length=300)
     reason: str = Field(..., min_length=3, max_length=500)
+
+
+class EndRecurringLessonRequest(BaseModel):
+    """Stop a recurring lesson from a future date without deleting history."""
+
+    effectiveFrom: date
+    reason: str = Field(..., min_length=3, max_length=500)
+    # A teacher must explicitly acknowledge that every untouched future
+    # delivery reported by preflight will be returned to a safe draft state.
+    releaseAffectedExams: bool = False
+
+
+class RecurringLessonEndExamImpact(BaseModel):
+    examId: str
+    title: str
+    lessonDate: str
+    deliveryMode: str
+    status: str
+    canRelease: bool
+    blockerReason: Optional[str] = None
+
+
+class RecurringLessonEndImpactResponse(BaseModel):
+    groupId: str
+    lessonId: str
+    effectiveFrom: date
+    affectedExamCount: int = 0
+    releasableExamCount: int = 0
+    blockedExamCount: int = 0
+    canEnd: bool
+    exams: List[RecurringLessonEndExamImpact] = Field(default_factory=list)
+
+
+class EndRecurringLessonResponse(RecurringLessonEndImpactResponse):
+    ended: bool = True
+    releasedExamIds: List[str] = Field(default_factory=list)
 
 
 class LessonAttendanceStatus(str, Enum):
@@ -398,6 +453,40 @@ class GroupAttendanceResponse(BaseModel):
     # A student newly enrolled after an initial diagnostic stays flagged only
     # until the teacher of the current group has opened that report.
     diagnosticReportNotices: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class OpenAttendanceActionResponse(BaseModel):
+    """A lesson instance that needs the teacher's explicit decision.
+
+    ``in_progress`` is a real started lesson with an open journal. ``missed``
+    is a past schedule occurrence that was never started and therefore must be
+    reconciled explicitly, never silently treated as an absence.
+    """
+
+    actionType: Literal["in_progress", "missed"] = "in_progress"
+
+    groupId: str
+    groupName: str
+    classLevel: int
+    lessonId: str
+    lessonDate: str
+    subject: str
+    startTime: str
+    endTime: str
+    room: Optional[str] = None
+    format: str = "offline"
+    topic: Optional[str] = None
+    markedCount: int = 0
+    rosterCount: int = 0
+    remainingCount: int = 0
+
+
+class ReconcileMissedLessonRequest(BaseModel):
+    """Explicit teacher decision for a past lesson that was never started."""
+
+    lessonDate: date
+    lessonId: str = Field(..., min_length=1, max_length=100)
+    cancellationReason: str = Field(..., min_length=3, max_length=500)
 
 
 # ============================================================================

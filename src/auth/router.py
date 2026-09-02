@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, U
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 from typing import Optional
-from datetime import datetime
+from datetime import date, datetime
 import os
 
 from .service import AuthService
@@ -46,12 +46,18 @@ from .schemas import (
     ScheduleLessonResponse,
     ScheduleOccurrenceResponse,
     CreateLessonRequest,
+    CreateOneOffLessonRequest,
     UpdateLessonRequest,
     RescheduleLessonRequest,
     ReviseRecurringLessonRequest,
+    EndRecurringLessonRequest,
+    RecurringLessonEndImpactResponse,
+    EndRecurringLessonResponse,
     StartAttendanceRequest,
     SaveAttendanceRequest,
+    ReconcileMissedLessonRequest,
     GroupAttendanceResponse,
+    OpenAttendanceActionResponse,
 )
 from .dependencies import (
     get_current_user_payload,
@@ -717,11 +723,22 @@ def acknowledge_diagnostic_report(
 @router.post("/org/groups", response_model=GroupResponse, status_code=201)
 def create_group(
     request: GroupCreateRequest,
-    user: dict = Depends(require_org_admin),
+    user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
-    """Создать группу"""
-    return _svc(db).create_group(user["org_id"], request)
+    """Создать группу в рамках полномочий текущего сотрудника."""
+    try:
+        return _svc(db).create_group(
+            user["org_id"],
+            request,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+            actor_role=user.get("org_role") or user.get("role"),
+        )
+    except PermissionError as e:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(e))
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
 
 @router.get("/org/groups", response_model=list[GroupResponse])
@@ -976,18 +993,20 @@ def create_lesson(
         raise HTTPException(400, str(e))
 
 
-@router.put("/org/schedule/lessons/{lesson_id}", response_model=ScheduleLessonResponse)
-def update_lesson(
-    lesson_id: str,
-    request: UpdateLessonRequest,
+@router.post(
+    "/org/schedule/occurrences",
+    response_model=ScheduleOccurrenceResponse,
+    status_code=201,
+)
+def create_one_off_lesson(
+    request: CreateOneOffLessonRequest,
     user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
-    """Отредактировать урок в расписании"""
+    """Создать разовое занятие только на выбранную календарную дату."""
     try:
-        return _svc(db).update_lesson(
+        return _svc(db).create_one_off_lesson(
             user["org_id"],
-            lesson_id,
             request,
             actor_id=user["user_id"],
             is_org_admin=is_org_admin(user),
@@ -996,8 +1015,29 @@ def update_lesson(
         raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
-    except RuntimeError as e:
-        raise HTTPException(503, str(e))
+
+
+@router.put("/org/schedule/lessons/{lesson_id}", response_model=ScheduleLessonResponse)
+def update_lesson(
+    lesson_id: str,
+    request: UpdateLessonRequest,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Deprecated: base rules are never rewritten in place.
+
+    Keep this explicit HTTP boundary as well as the defensive service guard:
+    a stale client cannot reinterpret past attendance by moving/removing a
+    JSON schedule slot. The supported routes retain an audit trail.
+    """
+    del lesson_id, request, user, db
+    raise HTTPException(
+        status.HTTP_410_GONE,
+        detail=(
+            "Прямое редактирование расписания отключено. Перенесите один урок "
+            "или измените постоянное расписание с будущей даты."
+        ),
+    )
 
 
 @router.post("/org/schedule/lessons/{lesson_id}/reschedule", response_model=ScheduleOccurrenceResponse)
@@ -1044,25 +1084,93 @@ def revise_recurring_lesson(
         raise HTTPException(400, str(e))
 
 
+@router.get(
+    "/org/schedule/lessons/{lesson_id}/recurrence/end-impact",
+    response_model=RecurringLessonEndImpactResponse,
+)
+def get_recurring_lesson_end_impact(
+    lesson_id: str,
+    effective_from: date = Query(...),
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Show all future exam consequences before ending a recurring schedule."""
+    try:
+        return _svc(db).get_recurring_lesson_end_impact(
+            user["org_id"],
+            lesson_id,
+            effective_from=effective_from,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+
+
+@router.post(
+    "/org/schedule/lessons/{lesson_id}/recurrence/end",
+    response_model=EndRecurringLessonResponse,
+)
+def end_recurring_lesson(
+    lesson_id: str,
+    request: EndRecurringLessonRequest,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Stop future recurrences after an exam-safe, explicit confirmation."""
+    try:
+        return _svc(db).end_recurring_lesson(
+            user["org_id"],
+            lesson_id,
+            request,
+            actor_id=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+
+
 @router.delete("/org/schedule/lessons/{lesson_id}")
 def delete_lesson(
     lesson_id: str,
     user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
-    """Удалить урок из расписания"""
+    """Deprecated: physical schedule deletion would orphan operational facts."""
+    del lesson_id, user, db
+    raise HTTPException(
+        status.HTTP_410_GONE,
+        "Физическое удаление уроков отключено. Отмените один экземпляр или прекратите регулярные занятия с даты.",
+    )
+
+
+@router.get("/org/attendance/open-actions", response_model=list[OpenAttendanceActionResponse])
+def get_open_attendance_actions(
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Started lessons that still need attendance or final closure.
+
+    This intentionally returns only persisted ``in_progress`` lesson
+    instances. A planned lesson is not an overdue attendance task until a
+    teacher has explicitly begun it.
+    """
     try:
-        deleted = _svc(db).delete_lesson(
+        return _svc(db).get_open_attendance_actions(
             user["org_id"],
-            lesson_id,
             actor_id=user["user_id"],
             is_org_admin=is_org_admin(user),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
-    if not deleted:
-        raise HTTPException(404, "Урок не найден")
-    return {"ok": True, "action": "deleted", "lesson_id": lesson_id}
 
 
 @router.get("/org/groups/{group_id}/attendance", response_model=GroupAttendanceResponse)
@@ -1137,3 +1245,51 @@ def start_group_attendance(
         raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.post("/org/groups/{group_id}/attendance/reconcile")
+def reconcile_missed_group_attendance(
+    group_id: str,
+    request: StartAttendanceRequest,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Open the journal for a past occurrence that was never started."""
+    try:
+        _svc(db).reconcile_missed_group_attendance(
+            user["org_id"],
+            group_id,
+            request,
+            reconciled_by=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+        return {"ok": True, "reconciled": True}
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/org/groups/{group_id}/attendance/reconcile/cancel")
+def cancel_missed_group_attendance(
+    group_id: str,
+    request: ReconcileMissedLessonRequest,
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Cancel a missed occurrence with a mandatory reason and audit trail."""
+    try:
+        _svc(db).cancel_missed_group_attendance(
+            user["org_id"],
+            group_id,
+            request,
+            cancelled_by=user["user_id"],
+            is_org_admin=is_org_admin(user),
+        )
+        return {"ok": True, "cancelled": True}
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))

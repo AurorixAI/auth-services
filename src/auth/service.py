@@ -34,7 +34,9 @@ from .models import (
     StudentDiagnosticResult,
     GroupAttendance,
     GroupAttendanceAudit,
+    GroupAudit,
     GroupScheduleOverride,
+    GroupScheduleOneOffLesson,
     GroupScheduleAudit,
 )
 from .schemas import (
@@ -59,12 +61,18 @@ from .schemas import (
     ScheduleLessonResponse,
     ScheduleOccurrenceResponse,
     CreateLessonRequest,
+    CreateOneOffLessonRequest,
     UpdateLessonRequest,
     RescheduleLessonRequest,
     ReviseRecurringLessonRequest,
+    EndRecurringLessonRequest,
+    RecurringLessonEndImpactResponse,
+    EndRecurringLessonResponse,
     StartAttendanceRequest,
     SaveAttendanceRequest,
+    ReconcileMissedLessonRequest,
     GroupAttendanceResponse,
+    OpenAttendanceActionResponse,
     LessonAttendanceStatus,
 )
 from src.core.config import get_settings
@@ -77,6 +85,10 @@ from src.core.exceptions import (
 
 logger = logging.getLogger(__name__)
 BUSINESS_TIMEZONE = ZoneInfo(os.getenv("BUSINESS_TIMEZONE", "Asia/Tashkent"))
+# A stale schedule should not turn into an unbounded operational queue. The
+# latest calendar month is long enough for a teacher to reconcile an omission
+# while preserving a predictable dashboard response time.
+MISSED_LESSON_RECONCILIATION_DAYS = 30
 
 # ============================================================================
 # КОНФИГУРАЦИЯ
@@ -1707,18 +1719,103 @@ class AuthService:
     # 8. GROUPS — группы
     # ═══════════════════════════════════════════════════════════════════
 
-    def create_group(self, org_id: str, request: GroupCreateRequest) -> GroupResponse:
+    def create_group(
+        self,
+        org_id: str,
+        request: GroupCreateRequest,
+        *,
+        actor_id: str,
+        is_org_admin: bool,
+        actor_role: Optional[str] = None,
+    ) -> GroupResponse:
+        """Create a group without trusting a client-supplied teacher id.
+
+        A teacher can create a group for themself only.  Organisation managers
+        retain the existing ability to create an unassigned group or assign an
+        active teacher of their organisation.  The resulting assignment and
+        actor are persisted in ``group_audit`` before the transaction commits.
+        """
+        try:
+            actor_uuid = UUID(str(actor_id))
+        except (TypeError, ValueError) as exc:
+            raise PermissionError("Не удалось определить текущего сотрудника") from exc
+
+        actor_membership = (
+            self.db.query(OrganizationMember)
+            .filter(
+                OrganizationMember.org_id == org_id,
+                OrganizationMember.user_id == actor_uuid,
+                OrganizationMember.is_active,
+            )
+            .first()
+        )
+        if not actor_membership:
+            raise PermissionError("Вы больше не состоите в этой организации")
+
+        if is_org_admin:
+            teacher_uuid = None
+            if request.teacher_id:
+                try:
+                    teacher_uuid = UUID(str(request.teacher_id))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("Некорректный преподаватель") from exc
+                self._require_active_group_teacher(org_id, teacher_uuid)
+        else:
+            # Never silently reinterpret a forged request as a safe one: a
+            # teacher receives a clear forbidden response if a foreign teacher
+            # was supplied, whether it came from an old UI or a crafted call.
+            if request.teacher_id and str(request.teacher_id) != str(actor_uuid):
+                raise PermissionError(
+                    "Преподаватель может создать группу только для себя"
+                )
+            if actor_membership.org_role != "teacher":
+                raise PermissionError("Недостаточно прав для создания группы")
+            teacher_uuid = actor_uuid
+
         group = Group(
             org_id=org_id,
             name=request.name,
             class_level=request.class_level,
-            teacher_id=request.teacher_id,
+            teacher_id=teacher_uuid,
             description=request.description,
             max_students=request.max_students,
         )
         self.db.add(group)
+        self.db.flush()
+        self.db.add(
+            GroupAudit(
+                org_id=org_id,
+                group_id=group.id,
+                actor_id=actor_uuid,
+                actor_role=actor_role or actor_membership.org_role,
+                action="created",
+                assigned_teacher_id=teacher_uuid,
+                snapshot={
+                    "name": group.name,
+                    "class_level": group.class_level,
+                    "description": group.description,
+                    "max_students": group.max_students,
+                    "status": group.status or "active",
+                },
+            )
+        )
         self.db.commit()
         return self._build_group_response(group)
+
+    def _require_active_group_teacher(self, org_id: str, teacher_id: UUID) -> None:
+        """Ensure a manager cannot assign a group outside their organisation."""
+        membership = (
+            self.db.query(OrganizationMember)
+            .filter(
+                OrganizationMember.org_id == org_id,
+                OrganizationMember.user_id == teacher_id,
+                OrganizationMember.org_role == "teacher",
+                OrganizationMember.is_active,
+            )
+            .first()
+        )
+        if not membership:
+            raise ValueError("Выберите активного преподавателя этой организации")
 
     def update_group(
         self, org_id: str, group_id: str, request: GroupUpdateRequest
@@ -2384,12 +2481,18 @@ class AuthService:
         today = datetime.now(BUSINESS_TIMEZONE).date()
 
         for g in groups:
-            recurring, _ = self._schedule_overrides_for_group(g, until=today)
+            recurring, _, recurring_ends = self._schedule_overrides_for_group(g, until=today)
             slots = list(g.schedule or [])
             for s in slots:
                 if not isinstance(s, dict):
                     continue
                 lesson_id = self._lesson_id_for_slot(g, s)
+                ended_at = recurring_ends.get(str(lesson_id))
+                if ended_at and ended_at.effective_date <= today.isoformat():
+                    # A stopped recurrence is deliberately omitted from the
+                    # current schedule. Its base JSON slot stays intact so
+                    # historical attendance keeps a valid schedule context.
+                    continue
                 payload = self._slot_payload(s)
                 for revision in recurring.get(str(lesson_id), []):
                     if revision.effective_date <= today.isoformat():
@@ -2492,7 +2595,7 @@ class AuthService:
             value = getattr(request, field, None)
             if value is not None:
                 result[field] = value
-        return result, total
+        return result
 
     def get_diagnostic_invite(
         self,
@@ -2611,14 +2714,21 @@ class AuthService:
         group: Group,
         *,
         until: date,
-    ) -> tuple[Dict[str, List[GroupScheduleOverride]], Dict[tuple[str, str], GroupScheduleOverride]]:
+        extra_lesson_ids: Optional[List[str]] = None,
+    ) -> tuple[
+        Dict[str, List[GroupScheduleOverride]],
+        Dict[tuple[str, str], GroupScheduleOverride],
+        Dict[str, GroupScheduleOverride],
+    ]:
         lesson_ids = [
             self._lesson_id_for_slot(group, slot)
             for slot in (group.schedule or [])
             if isinstance(slot, dict)
         ]
+        lesson_ids.extend(extra_lesson_ids or [])
+        lesson_ids = list(dict.fromkeys(lesson_ids))
         if not lesson_ids:
-            return {}, {}
+            return {}, {}, {}
         overrides = (
             self.db.query(GroupScheduleOverride)
             .filter(
@@ -2631,12 +2741,19 @@ class AuthService:
         )
         recurring: Dict[str, List[GroupScheduleOverride]] = {}
         occurrences: Dict[tuple[str, str], GroupScheduleOverride] = {}
+        recurring_ends: Dict[str, GroupScheduleOverride] = {}
         for override in overrides:
             if override.scope == "recurring":
                 recurring.setdefault(override.lesson_id, []).append(override)
-            else:
+            elif override.scope == "occurrence":
                 occurrences[(override.lesson_id, override.effective_date)] = override
-        return recurring, occurrences
+            elif override.scope == "recurring_end":
+                previous = recurring_ends.get(override.lesson_id)
+                # The table migration enforces one end marker per recurrence,
+                # but choose the earliest one defensively for legacy data.
+                if not previous or override.effective_date < previous.effective_date:
+                    recurring_ends[override.lesson_id] = override
+        return recurring, occurrences, recurring_ends
 
     def _configured_schedule_payload_as_of(
         self, group: Group, lesson_id: str, at_date: date
@@ -2648,7 +2765,7 @@ class AuthService:
         the Monday lesson moves to Thursday".
         """
         payload = self._slot_payload(self._find_schedule_slot(group, lesson_id))
-        recurring, _ = self._schedule_overrides_for_group(group, until=at_date)
+        recurring, _, _ = self._schedule_overrides_for_group(group, until=at_date)
         for revision in recurring.get(lesson_id, []):
             if revision.effective_date <= at_date.isoformat():
                 payload = dict(revision.payload or payload)
@@ -2662,7 +2779,20 @@ class AuthService:
         date_to: date,
     ) -> List[Dict[str, Any]]:
         """Развернуть шаблон расписания в реальные занятия заданного периода."""
-        recurring, occurrence_overrides = self._schedule_overrides_for_group(group, until=date_to)
+        one_off_lessons = (
+            self.db.query(GroupScheduleOneOffLesson)
+            .filter(
+                GroupScheduleOneOffLesson.group_id == group.id,
+                GroupScheduleOneOffLesson.lesson_date >= date_from.isoformat(),
+                GroupScheduleOneOffLesson.lesson_date <= date_to.isoformat(),
+            )
+            .all()
+        )
+        recurring, occurrence_overrides, recurring_ends = self._schedule_overrides_for_group(
+            group,
+            until=date_to,
+            extra_lesson_ids=[lesson.id for lesson in one_off_lessons],
+        )
         slots = [slot for slot in (group.schedule or []) if isinstance(slot, dict)]
         result: List[Dict[str, Any]] = []
         current_day = date_from
@@ -2670,6 +2800,12 @@ class AuthService:
             current_iso = current_day.isoformat()
             for slot in slots:
                 lesson_id = self._lesson_id_for_slot(group, slot)
+                ended_at = recurring_ends.get(lesson_id)
+                if ended_at and ended_at.effective_date <= current_iso:
+                    # Do not generate artificial future lesson instances once
+                    # the recurrence was explicitly stopped. One-off lessons
+                    # remain independent and are handled below.
+                    continue
                 base_payload = self._slot_payload(slot)
                 configured_payload = dict(base_payload)
                 for revision in recurring.get(lesson_id, []):
@@ -2701,6 +2837,31 @@ class AuthService:
                     }
                 )
             current_day += timedelta(days=1)
+
+        for one_off in one_off_lessons:
+            occurrence_override = occurrence_overrides.get((one_off.id, one_off.lesson_date))
+            configured_payload = self._slot_payload(dict(one_off.payload or {}))
+            payload = (
+                dict(occurrence_override.payload or configured_payload)
+                if occurrence_override
+                else configured_payload
+            )
+            result.append(
+                {
+                    "id": one_off.id,
+                    "groupId": str(group.id),
+                    "groupName": group.name,
+                    "classLevel": group.class_level or 5,
+                    **payload,
+                    "occurrenceDate": one_off.lesson_date,
+                    "isRescheduled": bool(occurrence_override),
+                    "originalStartTime": configured_payload["startTime"] if occurrence_override else None,
+                    "originalEndTime": configured_payload["endTime"] if occurrence_override else None,
+                    "originalRoom": configured_payload["room"] if occurrence_override else None,
+                    "rescheduleReason": occurrence_override.reason if occurrence_override else None,
+                    "isOneOff": True,
+                }
+            )
         return sorted(result, key=lambda item: (item["occurrenceDate"], item["startTime"], item["groupName"]))
 
     def _resolved_schedule_payload_for_date(
@@ -2855,18 +3016,34 @@ class AuthService:
     ) -> ScheduleOccurrenceResponse:
         if not actor_id:
             raise PermissionError("Не удалось определить автора переноса")
-        groups = self.db.query(Group).filter(Group.org_id == org_id).all()
-        group = next(
-            (
-                item
-                for item in groups
-                if any(
-                    isinstance(slot, dict) and self._lesson_id_for_slot(item, slot) == lesson_id
-                    for slot in (item.schedule or [])
-                )
-            ),
-            None,
+        one_off = (
+            self.db.query(GroupScheduleOneOffLesson)
+            .filter(
+                GroupScheduleOneOffLesson.org_id == org_id,
+                GroupScheduleOneOffLesson.id == lesson_id,
+            )
+            .first()
         )
+        group = None
+        if one_off:
+            group = (
+                self.db.query(Group)
+                .filter(Group.id == one_off.group_id, Group.org_id == org_id)
+                .first()
+            )
+        if not group:
+            groups = self.db.query(Group).filter(Group.org_id == org_id).all()
+            group = next(
+                (
+                    item
+                    for item in groups
+                    if any(
+                        isinstance(slot, dict) and self._lesson_id_for_slot(item, slot) == lesson_id
+                        for slot in (item.schedule or [])
+                    )
+                ),
+                None,
+            )
         if not group:
             raise ValueError("Урок не найден")
         self._require_group_access(org_id, str(group.id), actor_id=actor_id, is_org_admin=is_org_admin)
@@ -2961,6 +3138,10 @@ class AuthService:
                 "originalEndTime": occurrence["endTime"],
                 "originalRoom": occurrence["room"],
                 "rescheduleReason": req.reason.strip(),
+                # Keep the occurrence's scope in the immediate response too.
+                # Otherwise the client could temporarily offer a permanent
+                # schedule edit for a one-off lesson before the next reload.
+                "isOneOff": bool(one_off),
             }
         )
 
@@ -2993,6 +3174,17 @@ class AuthService:
         today = datetime.now(BUSINESS_TIMEZONE).date()
         if req.effectiveFrom <= today:
             raise ValueError("Постоянное расписание можно менять только начиная с будущей даты")
+
+        # A dated end marker wins over later recurring revisions.  Without
+        # this guard an edit whose effective date is after the end would be
+        # accepted, recorded, and then never become visible to the teacher.
+        # Re-open/recreate the rule explicitly instead of creating a silent
+        # dead configuration.
+        recurring_end = self._recurring_end_override(group, lesson_id)
+        if recurring_end and recurring_end.effective_date <= req.effectiveFrom.isoformat():
+            raise ValueError(
+                "Нельзя изменить расписание после даты его прекращения. Создайте новое регулярное занятие."
+            )
 
         current_payload = self._configured_schedule_payload_as_of(
             group, lesson_id, req.effectiveFrom
@@ -3032,6 +3224,286 @@ class AuthService:
             groupName=group.name,
             classLevel=group.class_level or 5,
             **updated_payload,
+        )
+
+    def _require_recurring_lesson(
+        self,
+        org_id: str,
+        lesson_id: str,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> Group:
+        """Resolve a base recurring slot and check the actor's group scope.
+
+        A one-off lesson intentionally has no entry in ``Group.schedule`` and
+        therefore cannot be ended through this flow. It needs the existing
+        single-occurrence cancellation path instead.
+        """
+        groups = self.db.query(Group).filter(Group.org_id == org_id).all()
+        group = next(
+            (
+                candidate
+                for candidate in groups
+                if any(
+                    isinstance(slot, dict)
+                    and self._lesson_id_for_slot(candidate, slot) == lesson_id
+                    for slot in (candidate.schedule or [])
+                )
+            ),
+            None,
+        )
+        if not group:
+            raise ValueError("Регулярное занятие не найдено")
+        self._require_group_access(
+            org_id,
+            str(group.id),
+            actor_id=actor_id,
+            is_org_admin=is_org_admin,
+        )
+        return group
+
+    def _recurring_end_override(
+        self,
+        group: Group,
+        lesson_id: str,
+        *,
+        lock: bool = False,
+    ) -> Optional[GroupScheduleOverride]:
+        query = self.db.query(GroupScheduleOverride).filter(
+            GroupScheduleOverride.group_id == group.id,
+            GroupScheduleOverride.lesson_id == lesson_id,
+            GroupScheduleOverride.scope == "recurring_end",
+        )
+        if lock:
+            query = query.with_for_update()
+        # A partial unique index keeps this to one row after the migration.
+        # Ordering keeps a deterministic fallback for a manually repaired old
+        # database that happens to contain more than one marker.
+        return query.order_by(GroupScheduleOverride.effective_date).first()
+
+    def _assert_recurring_end_is_allowed(
+        self,
+        group: Group,
+        lesson_id: str,
+        *,
+        effective_from: date,
+        lock: bool = False,
+    ) -> Optional[GroupScheduleOverride]:
+        today = datetime.now(BUSINESS_TIMEZONE).date()
+        if effective_from <= today:
+            raise ValueError("Регулярные занятия можно прекратить только начиная с будущей даты")
+        existing_end = self._recurring_end_override(group, lesson_id, lock=lock)
+        if existing_end and existing_end.effective_date <= effective_from.isoformat():
+            raise ValueError(
+                f"Регулярные занятия уже прекращены с {existing_end.effective_date}"
+            )
+        return existing_end
+
+    @staticmethod
+    def _recurring_end_response(
+        *,
+        group: Group,
+        lesson_id: str,
+        effective_from: date,
+        payload: Dict[str, Any],
+        ended: bool = False,
+        released_exam_ids: Optional[List[str]] = None,
+    ) -> dict[str, Any]:
+        exams = list(payload.get("exams") or [])
+        return {
+            "groupId": str(group.id),
+            "lessonId": lesson_id,
+            "effectiveFrom": effective_from,
+            "affectedExamCount": int(payload.get("affected_exam_count") or len(exams)),
+            "releasableExamCount": int(payload.get("releasable_exam_count") or 0),
+            "blockedExamCount": int(payload.get("blocked_exam_count") or 0),
+            "canEnd": bool(payload.get("can_end")),
+            "exams": [
+                {
+                    "examId": str(item.get("exam_id") or ""),
+                    "title": str(item.get("title") or "Экзамен"),
+                    "lessonDate": str(item.get("lesson_date") or ""),
+                    "deliveryMode": str(item.get("delivery_mode") or "online"),
+                    "status": str(item.get("status") or "draft"),
+                    "canRelease": bool(item.get("can_release")),
+                    "blockerReason": item.get("blocker_reason"),
+                }
+                for item in exams
+            ],
+            "ended": ended,
+            "releasedExamIds": released_exam_ids or [],
+        }
+
+    def get_recurring_lesson_end_impact(
+        self,
+        org_id: str,
+        lesson_id: str,
+        *,
+        effective_from: date,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> RecurringLessonEndImpactResponse:
+        """Return a fail-closed preview before a teacher stops a recurrence."""
+        group = self._require_recurring_lesson(
+            org_id,
+            lesson_id,
+            actor_id=actor_id,
+            is_org_admin=is_org_admin,
+        )
+        self._assert_recurring_end_is_allowed(
+            group,
+            lesson_id,
+            effective_from=effective_from,
+        )
+        impact = self._fetch_exam_recurring_end_impact(
+            org_id=org_id,
+            group_id=str(group.id),
+            lesson_id=lesson_id,
+            effective_from=effective_from.isoformat(),
+        )
+        return RecurringLessonEndImpactResponse(
+            **self._recurring_end_response(
+                group=group,
+                lesson_id=lesson_id,
+                effective_from=effective_from,
+                payload=impact,
+            )
+        )
+
+    def end_recurring_lesson(
+        self,
+        org_id: str,
+        lesson_id: str,
+        req: EndRecurringLessonRequest,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> EndRecurringLessonResponse:
+        """End one recurring rule without erasing facts or orphaning exams.
+
+        The remote release is deliberately rechecked under the exam-service
+        lock immediately before it mutates any access code/package. Therefore
+        a student joining after the UI preview still prevents the operation.
+        """
+        if not actor_id:
+            raise PermissionError("Не удалось определить автора прекращения расписания")
+        group = self._require_recurring_lesson(
+            org_id,
+            lesson_id,
+            actor_id=actor_id,
+            is_org_admin=is_org_admin,
+        )
+        existing_end = self._assert_recurring_end_is_allowed(
+            group,
+            lesson_id,
+            effective_from=req.effectiveFrom,
+            lock=True,
+        )
+        impact = self._fetch_exam_recurring_end_impact(
+            org_id=org_id,
+            group_id=str(group.id),
+            lesson_id=lesson_id,
+            effective_from=req.effectiveFrom.isoformat(),
+        )
+        blocked_count = int(impact.get("blocked_exam_count") or 0)
+        affected_count = int(impact.get("affected_exam_count") or 0)
+        if blocked_count:
+            blocked_titles = [
+                str(item.get("title") or "Экзамен")
+                for item in (impact.get("exams") or [])
+                if not item.get("can_release")
+            ]
+            suffix = f": {', '.join(f'«{title}»' for title in blocked_titles[:2])}" if blocked_titles else ""
+            raise ValueError(
+                "Нельзя прекратить регулярные занятия: есть активный экзамен или попытки учеников" + suffix
+            )
+        if affected_count and not req.releaseAffectedExams:
+            raise ValueError(
+                "Подтвердите возврат затронутых экзаменов в черновики или сначала перенесите их на другие занятия"
+            )
+
+        effective_iso = req.effectiveFrom.isoformat()
+        before_payload = (
+            {
+                "state": "recurring_end",
+                "effectiveFrom": existing_end.effective_date,
+                "reason": existing_end.reason,
+            }
+            if existing_end
+            else self._configured_schedule_payload_as_of(group, lesson_id, req.effectiveFrom)
+        )
+        end_payload = {
+            "state": "recurring_end",
+            "effectiveFrom": effective_iso,
+            "affectedExamCount": affected_count,
+        }
+        if existing_end:
+            existing_end.effective_date = effective_iso
+            existing_end.payload = end_payload
+            existing_end.reason = req.reason.strip()
+            existing_end.changed_by = UUID(str(actor_id))
+            flag_modified(existing_end, "payload")
+            end_override = existing_end
+        else:
+            end_override = GroupScheduleOverride(
+                org_id=group.org_id,
+                group_id=group.id,
+                lesson_id=lesson_id,
+                scope="recurring_end",
+                effective_date=effective_iso,
+                payload=end_payload,
+                reason=req.reason.strip(),
+                changed_by=UUID(str(actor_id)),
+            )
+            self.db.add(end_override)
+            self.db.flush()
+
+        self.db.add(
+            GroupScheduleAudit(
+                override_id=end_override.id,
+                org_id=group.org_id,
+                group_id=group.id,
+                lesson_id=lesson_id,
+                scope="recurring_end",
+                effective_date=effective_iso,
+                actor_id=UUID(str(actor_id)),
+                before_payload=before_payload,
+                after_payload=end_payload,
+                reason=req.reason.strip(),
+            )
+        )
+        self.db.flush()
+
+        released_exam_ids: List[str] = []
+        if affected_count:
+            try:
+                released_exam_ids = self._release_exam_recurring_end(
+                    org_id=org_id,
+                    group_id=str(group.id),
+                    group_name=group.name,
+                    lesson_id=lesson_id,
+                    effective_from=effective_iso,
+                    actor_id=str(actor_id),
+                    reason=req.reason.strip(),
+                )
+            except Exception:
+                # No schedule tombstone or audit survives a refused/failed
+                # remote release. The remote endpoint itself is atomic over
+                # the affected exam rows and checks sessions under a row lock.
+                self.db.rollback()
+                raise
+
+        self.db.commit()
+        return EndRecurringLessonResponse(
+            **self._recurring_end_response(
+                group=group,
+                lesson_id=lesson_id,
+                effective_from=req.effectiveFrom,
+                payload=impact,
+                ended=True,
+                released_exam_ids=released_exam_ids,
+            )
         )
 
     def create_lesson(
@@ -3101,6 +3573,71 @@ class AuthService:
             format=new_slot["format"],
             color=new_slot["color"],
             topic=new_slot["topic"],
+        )
+
+    def create_one_off_lesson(
+        self,
+        org_id: str,
+        req: CreateOneOffLessonRequest,
+        *,
+        actor_id: Optional[str] = None,
+        is_org_admin: bool = False,
+    ) -> ScheduleOccurrenceResponse:
+        """Create a lesson for one date without altering a recurring rule."""
+        if not actor_id:
+            raise PermissionError("Не удалось определить автора занятия")
+        group = self._require_group_access(
+            org_id, req.groupId, actor_id=actor_id, is_org_admin=is_org_admin
+        )
+        now = datetime.now(BUSINESS_TIMEZONE)
+        if req.lessonDate < now.date():
+            raise ValueError("Нельзя добавить разовый урок на прошедшую дату")
+
+        payload = {
+            "dayOfWeek": req.lessonDate.isoweekday(),
+            "startTime": req.startTime,
+            "endTime": req.endTime,
+            "subject": "Математика",
+            "room": req.room or "Кабинет 204",
+            "format": req.format or "offline",
+            "color": req.color or "blue",
+            "topic": req.topic,
+        }
+        start_minutes, _ = self._validate_lesson_time_range(
+            payload["startTime"], payload["endTime"]
+        )
+        self._validate_schedule_payload(payload)
+        if req.lessonDate == now.date() and start_minutes < now.hour * 60 + now.minute:
+            raise ValueError(
+                "Нельзя добавить разовый урок на прошедшее время сегодняшнего дня"
+            )
+
+        lesson_id = f"one-off-{uuid4().hex[:16]}"
+        self._assert_teacher_time_is_available(
+            group=group,
+            lesson_id=lesson_id,
+            occurrence_date=req.lessonDate,
+            payload=payload,
+        )
+        self.db.add(
+            GroupScheduleOneOffLesson(
+                id=lesson_id,
+                org_id=group.org_id,
+                group_id=group.id,
+                lesson_date=req.lessonDate.isoformat(),
+                payload=payload,
+                created_by=UUID(actor_id),
+            )
+        )
+        self.db.commit()
+        return ScheduleOccurrenceResponse(
+            id=lesson_id,
+            groupId=str(group.id),
+            groupName=group.name,
+            classLevel=group.class_level or 5,
+            **payload,
+            occurrenceDate=req.lessonDate.isoformat(),
+            isOneOff=True,
         )
 
     def update_lesson(
@@ -3253,22 +3790,14 @@ class AuthService:
         actor_id: Optional[str] = None,
         is_org_admin: bool = False,
     ) -> bool:
-        groups = self.db.query(Group).filter(Group.org_id == org_id).all()
-        for g in groups:
-            slots = list(g.schedule or [])
-            filtered = [s for s in slots if isinstance(s, dict) and s.get("id") != lesson_id]
-            if len(filtered) != len(slots):
-                self._require_group_access(
-                    org_id,
-                    str(g.id),
-                    actor_id=actor_id,
-                    is_org_admin=is_org_admin,
-                )
-                g.schedule = filtered
-                flag_modified(g, "schedule")
-                self.db.commit()
-                return True
-        return False
+        # Do not leave a callable backdoor for physical deletion. A base JSON
+        # slot is historical context for attendance, audit entries and exam
+        # bindings; removing it can produce an orphaned delivery. Keep this
+        # method as a defensive compatibility boundary for direct callers.
+        del org_id, lesson_id, actor_id, is_org_admin
+        raise ValueError(
+            "Физическое удаление расписания отключено. Используйте отмену экземпляра или прекращение регулярных занятий с даты."
+        )
 
     @staticmethod
     def _roster_ids_from_snapshot(snapshot: Any) -> set[str]:
@@ -3315,6 +3844,82 @@ class AuthService:
             })
         return roster
 
+    def _attendance_roster_at(self, group_id: UUID, occurred_at: datetime) -> list[dict[str, Any]]:
+        """Freeze the roster that existed when a historical lesson was scheduled.
+
+        Reconciliation happens later, so the current roster is not evidence of
+        who could have attended. Memberships are evaluated at the scheduled
+        start time; a transfer after that moment cannot rewrite the journal.
+        """
+        memberships = (
+            self.db.query(StudentGroup)
+            .filter(
+                StudentGroup.group_id == group_id,
+                or_(StudentGroup.joined_at.is_(None), StudentGroup.joined_at <= occurred_at),
+                or_(StudentGroup.left_at.is_(None), StudentGroup.left_at > occurred_at),
+            )
+            .order_by(StudentGroup.joined_at, StudentGroup.id)
+            .all()
+        )
+        student_ids = [membership.student_id for membership in memberships]
+        students_by_id = {
+            student.id: student
+            for student in self.db.query(Student).filter(Student.id.in_(student_ids)).all()
+        } if student_ids else {}
+
+        roster: list[dict[str, Any]] = []
+        for membership in memberships:
+            student = students_by_id.get(membership.student_id)
+            if not student:
+                continue
+            full_name = f"{student.last_name or ''} {student.first_name or ''}".strip() or "Ученик"
+            roster.append({
+                "student_id": str(student.id),
+                "first_name": student.first_name,
+                "last_name": student.last_name,
+                "full_name": full_name,
+                "class_level": student.class_level,
+                "display_id": student.display_id,
+            })
+        return roster
+
+    def _resolve_reconcilable_missed_occurrence(
+        self,
+        group: Group,
+        *,
+        lesson_date: date,
+        lesson_id: str,
+    ) -> Dict[str, Any]:
+        """Return a past schedule occurrence that can be reconciled explicitly."""
+        current_business_time = datetime.now(BUSINESS_TIMEZONE)
+        today = current_business_time.date()
+        if lesson_date > today:
+            raise ValueError("Нельзя разбирать будущий урок")
+
+        occurrence = next(
+            (
+                item
+                for item in self._resolved_occurrences_for_group(
+                    group, date_from=lesson_date, date_to=lesson_date
+                )
+                if item["id"] == lesson_id
+            ),
+            None,
+        )
+        if not occurrence:
+            raise ValueError("Урок не принадлежит расписанию этой группы")
+        if int(occurrence.get("dayOfWeek") or 0) != lesson_date.isoweekday():
+            raise ValueError("Дата не соответствует дню урока в расписании")
+
+        _, end_minutes = self._validate_lesson_time_range(
+            occurrence.get("startTime"), occurrence.get("endTime")
+        )
+        if lesson_date == today:
+            current_minutes = current_business_time.hour * 60 + current_business_time.minute
+            if current_minutes <= end_minutes:
+                raise ValueError("Разобрать можно только урок, время которого уже закончилось")
+        return occurrence
+
     def _lock_groups_for_membership_change(self, org_id: str, group_ids: list[UUID]) -> None:
         """Serialize a transfer against starting attendance in either group."""
         unique_group_ids = sorted({str(group_id) for group_id in group_ids})
@@ -3345,6 +3950,176 @@ class AuthService:
                 "Нельзя изменить состав группы, пока идёт урок. "
                 "Сначала завершите или отмените начатый урок."
             )
+
+    def get_open_attendance_actions(
+        self,
+        org_id: str,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> list[OpenAttendanceActionResponse]:
+        """Return unfinished and never-started past lessons for follow-up.
+
+        A started instance remains the source of truth for an open journal.
+        A missed occurrence has no attendance row at all, so the server must
+        derive it from the resolved schedule and present it as a separate,
+        explicit reconciliation action. It is never converted to absences.
+        """
+        now = datetime.now(BUSINESS_TIMEZONE)
+        today_date = now.date()
+        today = today_date.isoformat()
+        query = (
+            self.db.query(GroupAttendance, Group)
+            .join(Group, Group.id == GroupAttendance.group_id)
+            .filter(
+                GroupAttendance.org_id == org_id,
+                GroupAttendance.status == LessonAttendanceStatus.IN_PROGRESS.value,
+                GroupAttendance.lesson_date <= today,
+            )
+        )
+        if not is_org_admin:
+            if not actor_id:
+                raise PermissionError("Нет доступа к открытым урокам")
+            query = query.filter(Group.teacher_id == actor_id)
+
+        actions: list[OpenAttendanceActionResponse] = []
+        for attendance, group in query.order_by(
+            GroupAttendance.lesson_date.asc(),
+            GroupAttendance.started_at.asc(),
+            GroupAttendance.created_at.asc(),
+        ).all():
+            try:
+                lesson_date = date.fromisoformat(attendance.lesson_date)
+            except (TypeError, ValueError):
+                logger.error("Ignoring open attendance row with invalid date %s", attendance.id)
+                continue
+
+            occurrence = next(
+                (
+                    item
+                    for item in self._resolved_occurrences_for_group(
+                        group, date_from=lesson_date, date_to=lesson_date
+                    )
+                    if item["id"] == attendance.lesson_id
+                ),
+                None,
+            )
+            # A deleted legacy schedule item must not make the unfinished
+            # attendance invisible. Preserve the operational task and provide
+            # a safe neutral fallback for its presentation.
+            occurrence = occurrence or {}
+            roster_ids = self._roster_ids_from_snapshot(attendance.roster_snapshot)
+            records = dict(attendance.records or {})
+            if not roster_ids:
+                roster_ids = set(records)
+            roster_count = len(roster_ids)
+            marked_count = len(set(records) & roster_ids) if roster_ids else len(records)
+
+            actions.append(
+                OpenAttendanceActionResponse(
+                    groupId=str(group.id),
+                    groupName=group.name,
+                    classLevel=group.class_level or 5,
+                    actionType="in_progress",
+                    lessonId=attendance.lesson_id,
+                    lessonDate=attendance.lesson_date,
+                    subject=occurrence.get("subject") or "Занятие",
+                    startTime=occurrence.get("startTime") or "—",
+                    endTime=occurrence.get("endTime") or "—",
+                    room=occurrence.get("room"),
+                    format=occurrence.get("format") or "offline",
+                    topic=attendance.topic or occurrence.get("topic"),
+                    markedCount=marked_count,
+                    rosterCount=roster_count,
+                    remainingCount=max(roster_count - marked_count, 0),
+                )
+            )
+
+        # A missed occurrence is intentionally bounded to a rolling period.
+        # Without it, an old recurring schedule would create an unbounded and
+        # unusable operational queue. Completed/cancelled/in-progress rows
+        # are all terminal for this discovery pass and therefore excluded.
+        reconciliation_from = today_date - timedelta(days=MISSED_LESSON_RECONCILIATION_DAYS)
+        groups_query = self.db.query(Group).filter(
+            Group.org_id == org_id,
+            Group.status == "active",
+        )
+        if not is_org_admin:
+            if not actor_id:
+                raise PermissionError("Нет доступа к пропущенным урокам")
+            groups_query = groups_query.filter(Group.teacher_id == actor_id)
+        actionable_groups = groups_query.order_by(Group.name).all()
+        group_ids = [group.id for group in actionable_groups]
+        recorded_keys = {
+            (str(attendance.group_id), attendance.lesson_date, attendance.lesson_id)
+            for attendance in (
+                self.db.query(GroupAttendance)
+                .filter(
+                    GroupAttendance.org_id == org_id,
+                    GroupAttendance.group_id.in_(group_ids),
+                    GroupAttendance.lesson_date >= reconciliation_from.isoformat(),
+                    GroupAttendance.lesson_date <= today,
+                )
+                .all()
+                if group_ids
+                else []
+            )
+        }
+
+        for group in actionable_groups:
+            for occurrence in self._resolved_occurrences_for_group(
+                group, date_from=reconciliation_from, date_to=today_date
+            ):
+                occurrence_date = occurrence["occurrenceDate"]
+                key = (str(group.id), occurrence_date, occurrence["id"])
+                if key in recorded_keys:
+                    continue
+                try:
+                    _, end_minutes = self._validate_lesson_time_range(
+                        occurrence.get("startTime"), occurrence.get("endTime")
+                    )
+                except ValueError:
+                    logger.error(
+                        "Ignoring missed lesson with invalid time for group %s, lesson %s",
+                        group.id,
+                        occurrence.get("id"),
+                    )
+                    continue
+                is_past = occurrence_date < today or (
+                    occurrence_date == today
+                    and (now.hour * 60 + now.minute) > end_minutes
+                )
+                if not is_past:
+                    continue
+                actions.append(
+                    OpenAttendanceActionResponse(
+                        actionType="missed",
+                        groupId=str(group.id),
+                        groupName=group.name,
+                        classLevel=group.class_level or 5,
+                        lessonId=occurrence["id"],
+                        lessonDate=occurrence_date,
+                        subject=occurrence.get("subject") or "Занятие",
+                        startTime=occurrence.get("startTime") or "—",
+                        endTime=occurrence.get("endTime") or "—",
+                        room=occurrence.get("room"),
+                        format=occurrence.get("format") or "offline",
+                        topic=occurrence.get("topic"),
+                        markedCount=0,
+                        rosterCount=0,
+                        remainingCount=0,
+                    )
+                )
+
+        return sorted(
+            actions,
+            key=lambda action: (
+                action.lessonDate,
+                action.startTime,
+                0 if action.actionType == "missed" else 1,
+                action.groupName,
+            ),
+        )
 
     def get_group_attendance(
         self,
@@ -3443,10 +4218,14 @@ class AuthService:
             # New records have a frozen roster. For legacy records, the
             # immutable keys already present in the attendance snapshot are
             # the only honest fallback.
+            # ``[]`` is a real frozen roster (for example, a group that had
+            # no members on the historical lesson date). Only NULL denotes a
+            # legacy row without this evidence and may fall back to records.
+            has_frozen_roster = isinstance(att.roster_snapshot, list)
             roster_ids = self._roster_ids_from_snapshot(att.roster_snapshot)
-            if not roster_ids:
+            if not has_frozen_roster:
                 roster_ids = {str(student_id) for student_id in records}
-            if roster_ids:
+            if has_frozen_roster or roster_ids:
                 roster_student_ids_map[instance_key] = sorted(roster_ids)
                 historical_candidate_ids.update(roster_ids)
             if att.status == LessonAttendanceStatus.CANCELLED.value and att.cancellation_reason:
@@ -3686,6 +4465,192 @@ class AuthService:
             diagnosticReportNotices=diagnostic_report_notices,
         )
 
+    def reconcile_missed_group_attendance(
+        self,
+        org_id: str,
+        group_id: str,
+        req: StartAttendanceRequest,
+        *,
+        reconciled_by: Optional[str],
+        is_org_admin: bool,
+    ) -> bool:
+        """Open a historical journal without claiming that it was started now.
+
+        This is a reconciliation decision, not a delayed "start lesson"
+        operation: ``started_at`` stays NULL and the audit records who opened
+        the historical journal and when.
+        """
+        if not reconciled_by:
+            raise ValueError("Не удалось определить автора разбора урока")
+        group = self._require_group_access(
+            org_id, group_id, actor_id=reconciled_by, is_org_admin=is_org_admin
+        )
+        locked_group = (
+            self.db.query(Group)
+            .filter(Group.id == group.id, Group.org_id == org_id)
+            .with_for_update()
+            .first()
+        )
+        if not locked_group:
+            raise ValueError("Группа не найдена")
+        group = locked_group
+        occurrence = self._resolve_reconcilable_missed_occurrence(
+            group, lesson_date=req.lessonDate, lesson_id=req.lessonId
+        )
+
+        attendance = (
+            self.db.query(GroupAttendance)
+            .filter(
+                GroupAttendance.group_id == group_id,
+                GroupAttendance.org_id == org_id,
+                GroupAttendance.lesson_date == req.lessonDate.isoformat(),
+                GroupAttendance.lesson_id == req.lessonId,
+            )
+            .with_for_update()
+            .first()
+        )
+        if attendance:
+            if attendance.status == LessonAttendanceStatus.IN_PROGRESS.value:
+                return True  # Idempotent double click: preserve the original audit row.
+            if attendance.status == LessonAttendanceStatus.CANCELLED.value:
+                raise ValueError("Пропущенный урок уже отменён")
+            raise ValueError("Пропущенный урок уже завершён")
+
+        start_minutes, _ = self._validate_lesson_time_range(
+            occurrence.get("startTime"), occurrence.get("endTime")
+        )
+        scheduled_start = datetime.combine(req.lessonDate, datetime.min.time()) + timedelta(minutes=start_minutes)
+        attendance = GroupAttendance(
+            org_id=org_id,
+            group_id=group_id,
+            lesson_date=req.lessonDate.isoformat(),
+            lesson_id=req.lessonId,
+            topic=occurrence.get("topic") or req.topic or occurrence.get("subject"),
+            status=LessonAttendanceStatus.IN_PROGRESS.value,
+            records={},
+            roster_snapshot=self._attendance_roster_at(group.id, scheduled_start),
+            marked_by=reconciled_by,
+            # Do not fabricate an actual start timestamp for a lesson that
+            # was not started in the system at the time.
+            started_at=None,
+        )
+        self.db.add(attendance)
+        self.db.flush()
+        self.db.add(
+            GroupAttendanceAudit(
+                attendance_id=attendance.id,
+                org_id=org_id,
+                group_id=group_id,
+                actor_id=reconciled_by,
+                action="reconciliation_started",
+                before_status=None,
+                after_status=LessonAttendanceStatus.IN_PROGRESS.value,
+                before_records=None,
+                after_records={},
+            )
+        )
+        self.db.commit()
+        return True
+
+    def cancel_missed_group_attendance(
+        self,
+        org_id: str,
+        group_id: str,
+        req: ReconcileMissedLessonRequest,
+        *,
+        cancelled_by: Optional[str],
+        is_org_admin: bool,
+    ) -> bool:
+        """Record an explicit, reasoned cancellation for a missed lesson."""
+        if not cancelled_by:
+            raise ValueError("Не удалось определить автора отмены урока")
+        group = self._require_group_access(
+            org_id, group_id, actor_id=cancelled_by, is_org_admin=is_org_admin
+        )
+        locked_group = (
+            self.db.query(Group)
+            .filter(Group.id == group.id, Group.org_id == org_id)
+            .with_for_update()
+            .first()
+        )
+        if not locked_group:
+            raise ValueError("Группа не найдена")
+        group = locked_group
+        occurrence = self._resolve_reconcilable_missed_occurrence(
+            group, lesson_date=req.lessonDate, lesson_id=req.lessonId
+        )
+        attendance = (
+            self.db.query(GroupAttendance)
+            .filter(
+                GroupAttendance.group_id == group_id,
+                GroupAttendance.org_id == org_id,
+                GroupAttendance.lesson_date == req.lessonDate.isoformat(),
+                GroupAttendance.lesson_id == req.lessonId,
+            )
+            .with_for_update()
+            .first()
+        )
+        if attendance:
+            if attendance.status == LessonAttendanceStatus.CANCELLED.value:
+                return True  # The same cancellation was already committed.
+            raise ValueError("Нельзя отменить урок, который уже начали или завершили")
+
+        self._sync_exam_lesson_cancellation(
+            phase="cancellation-check",
+            org_id=org_id,
+            group_id=group_id,
+            lesson_id=req.lessonId,
+            lesson_date=req.lessonDate.isoformat(),
+            reason=req.cancellationReason,
+        )
+        start_minutes, _ = self._validate_lesson_time_range(
+            occurrence.get("startTime"), occurrence.get("endTime")
+        )
+        scheduled_start = datetime.combine(req.lessonDate, datetime.min.time()) + timedelta(minutes=start_minutes)
+        attendance = GroupAttendance(
+            org_id=org_id,
+            group_id=group_id,
+            lesson_date=req.lessonDate.isoformat(),
+            lesson_id=req.lessonId,
+            topic=occurrence.get("topic") or occurrence.get("subject"),
+            status=LessonAttendanceStatus.CANCELLED.value,
+            records={},
+            roster_snapshot=self._attendance_roster_at(group.id, scheduled_start),
+            marked_by=cancelled_by,
+            started_at=None,
+            cancellation_reason=req.cancellationReason,
+        )
+        self.db.add(attendance)
+        self.db.flush()
+        self.db.add(
+            GroupAttendanceAudit(
+                attendance_id=attendance.id,
+                org_id=org_id,
+                group_id=group_id,
+                actor_id=cancelled_by,
+                action="reconciliation_cancelled",
+                before_status=None,
+                after_status=LessonAttendanceStatus.CANCELLED.value,
+                before_records=None,
+                after_records={},
+                cancellation_reason=req.cancellationReason,
+            )
+        )
+        try:
+            self._sync_exam_lesson_cancellation(
+                phase="release",
+                org_id=org_id,
+                group_id=group_id,
+                lesson_id=req.lessonId,
+                lesson_date=req.lessonDate.isoformat(),
+                reason=req.cancellationReason,
+            )
+        except Exception:
+            self.db.rollback()
+            raise
+        self.db.commit()
+        return True
+
     def start_group_attendance(
         self,
         org_id: str,
@@ -3732,7 +4697,7 @@ class AuthService:
         if int(matching_slot.get("dayOfWeek") or 0) != lesson_date.isoweekday():
             raise ValueError("Дата не соответствует дню урока в расписании")
 
-        start_minutes, _ = self._validate_lesson_time_range(
+        start_minutes, end_minutes = self._validate_lesson_time_range(
             matching_slot.get("startTime"), matching_slot.get("endTime")
         )
         current_business_time = datetime.now(BUSINESS_TIMEZONE)
@@ -3796,6 +4761,47 @@ class AuthService:
             raise ValueError(
                 f"Сначала завершите или отмените начатый урок «{active_label}» "
                 f"в группе «{active_group.name}». Один преподаватель не может вести два урока одновременно."
+            )
+
+        # A teacher may recover a forgotten lesson after its scheduled end,
+        # but only until a later lesson has actually been started. Once that
+        # happened, starting the older occurrence would fabricate a parallel
+        # or retroactive lesson and corrupt the attendance chronology.
+        planned_end_at = current_business_time.replace(
+            hour=end_minutes // 60,
+            minute=end_minutes % 60,
+            second=0,
+            microsecond=0,
+            tzinfo=None,
+        )
+        subsequent_lesson_query = (
+            self.db.query(GroupAttendance, Group)
+            .join(Group, Group.id == GroupAttendance.group_id)
+            .filter(
+                GroupAttendance.org_id == org_id,
+                GroupAttendance.lesson_date == lesson_date.isoformat(),
+                GroupAttendance.started_at.isnot(None),
+                GroupAttendance.started_at >= planned_end_at,
+            )
+        )
+        if group.teacher_id:
+            subsequent_lesson_query = subsequent_lesson_query.filter(
+                Group.teacher_id == group.teacher_id
+            )
+        else:
+            subsequent_lesson_query = subsequent_lesson_query.filter(
+                GroupAttendance.marked_by == started_by
+            )
+        subsequent_lesson = subsequent_lesson_query.order_by(
+            GroupAttendance.started_at.asc()
+        ).first()
+        if subsequent_lesson:
+            subsequent_attendance, subsequent_group = subsequent_lesson
+            subsequent_label = subsequent_attendance.topic or subsequent_group.name
+            raise ValueError(
+                f"Нельзя начать этот урок: после его планового окончания уже был начат "
+                f"урок «{subsequent_label}» в группе «{subsequent_group.name}». "
+                "Отмените пропущенное занятие с причиной."
             )
 
         now = current_business_time.replace(tzinfo=None)
@@ -3916,7 +4922,7 @@ class AuthService:
             att
             and not is_cancellation
             and att.status == LessonAttendanceStatus.IN_PROGRESS.value
-            and not att.roster_snapshot
+            and att.roster_snapshot is None
         ):
             # Safe compatibility path for lessons started before the roster
             # snapshot migration. New lessons always receive this at start.
@@ -3933,6 +4939,7 @@ class AuthService:
             if (
                 not roster_student_ids
                 and att.status == LessonAttendanceStatus.IN_PROGRESS.value
+                and att.roster_snapshot is None
             ):
                 roster_student_ids = {
                     entry["student_id"]
@@ -3973,6 +4980,21 @@ class AuthService:
             raise ValueError("Завершённый урок нельзя вернуть в другой статус")
         if att and att.status == LessonAttendanceStatus.CANCELLED.value and requested_status != before_status:
             raise ValueError("Отменённый урок нельзя повторно открыть")
+
+        # Reconciliation starts a historical missed lesson without fabricating a
+        # real start timestamp. Preserve that distinct workflow in the audit if
+        # the teacher later decides it was opened by mistake and cancels it.
+        is_reconciliation_cancellation = False
+        if is_cancellation and att and att.status == LessonAttendanceStatus.IN_PROGRESS.value:
+            is_reconciliation_cancellation = (
+                self.db.query(GroupAttendanceAudit.id)
+                .filter(
+                    GroupAttendanceAudit.attendance_id == att.id,
+                    GroupAttendanceAudit.action == "reconciliation_started",
+                )
+                .first()
+                is not None
+            )
 
         # A cancelled lesson must not silently invalidate a live exam or erase
         # a student waiting in its lobby.  Exam-service is the owner of those
@@ -4017,7 +5039,9 @@ class AuthService:
                 att.completed_at = None
             att.cancellation_reason = req.cancellationReason if is_cancellation else None
             action = (
-                "cancelled"
+                "reconciliation_cancelled"
+                if is_cancellation and is_reconciliation_cancellation
+                else "cancelled"
                 if is_cancellation
                 else "corrected"
                 if is_completed_correction
@@ -4112,6 +5136,109 @@ class AuthService:
                 response.text[:500],
             )
             raise RuntimeError("Не удалось синхронизировать отмену урока с экзаменом")
+
+    def _fetch_exam_recurring_end_impact(
+        self,
+        *,
+        org_id: str,
+        group_id: str,
+        lesson_id: str,
+        effective_from: str,
+    ) -> Dict[str, Any]:
+        """Read the canonical future-exam impact from exam-service.
+
+        Auth owns the schedule but must not infer whether an exam has a
+        session. That data belongs to exam-service, so a missing/failed
+        internal connection blocks the operation rather than reporting a
+        misleading zero-impact preview.
+        """
+        settings = get_settings()
+        if not settings.internal_service_token:
+            raise RuntimeError("Не настроена внутренняя связка расписания и экзаменов")
+        endpoint = f"{settings.exam_service_url.rstrip('/')}/internal/lesson-bindings/recurring-end-impact"
+        try:
+            response = httpx.post(
+                endpoint,
+                json={
+                    "org_id": str(org_id),
+                    "group_id": str(group_id),
+                    "lesson_id": lesson_id,
+                    "effective_from": effective_from,
+                },
+                headers={"X-Internal-Service-Token": settings.internal_service_token},
+                timeout=5.0,
+            )
+        except httpx.HTTPError as exc:
+            raise RuntimeError("Сервис экзаменов временно недоступен; остановка расписания не выполнена") from exc
+        if response.status_code != 200:
+            logger.error(
+                "Exam recurring-end impact failed: status=%s body=%s",
+                response.status_code,
+                response.text[:500],
+            )
+            raise RuntimeError("Не удалось проверить связанные экзамены")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError("Сервис экзаменов вернул некорректный ответ") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("Сервис экзаменов вернул некорректный ответ")
+        return payload
+
+    def _release_exam_recurring_end(
+        self,
+        *,
+        org_id: str,
+        group_id: str,
+        group_name: str,
+        lesson_id: str,
+        effective_from: str,
+        actor_id: str,
+        reason: str,
+    ) -> List[str]:
+        """Atomically release only the future deliveries approved in preview."""
+        settings = get_settings()
+        if not settings.internal_service_token:
+            raise RuntimeError("Не настроена внутренняя связка расписания и экзаменов")
+        endpoint = f"{settings.exam_service_url.rstrip('/')}/internal/lesson-bindings/recurring-end-release"
+        try:
+            response = httpx.post(
+                endpoint,
+                json={
+                    "org_id": str(org_id),
+                    "group_id": str(group_id),
+                    "group_name": group_name,
+                    "lesson_id": lesson_id,
+                    "effective_from": effective_from,
+                    "actor_id": actor_id,
+                    "reason": reason,
+                },
+                headers={"X-Internal-Service-Token": settings.internal_service_token},
+                timeout=5.0,
+            )
+        except httpx.HTTPError as exc:
+            raise RuntimeError("Сервис экзаменов временно недоступен; регулярное расписание не прекращено") from exc
+        if response.status_code == 409:
+            try:
+                detail = response.json().get("detail")
+            except ValueError:
+                detail = None
+            raise ValueError(detail or "Нельзя прекратить расписание с активным экзаменом")
+        if response.status_code != 200:
+            logger.error(
+                "Exam recurring-end release failed: status=%s body=%s",
+                response.status_code,
+                response.text[:500],
+            )
+            raise RuntimeError("Не удалось безопасно вернуть экзамены в черновики")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError("Сервис экзаменов вернул некорректный ответ") from exc
+        released = payload.get("released_exam_ids") if isinstance(payload, dict) else None
+        if not isinstance(released, list):
+            raise RuntimeError("Сервис экзаменов не подтвердил возврат экзаменов")
+        return [str(exam_id) for exam_id in released]
 
     def _sync_exam_lesson_reschedule(
         self,

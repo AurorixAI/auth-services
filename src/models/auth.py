@@ -405,6 +405,40 @@ class Group(Base):
         }
 
 
+class GroupAudit(Base):
+    """Immutable provenance for group creation and future lifecycle events."""
+
+    __tablename__ = "group_audit"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    actor_role = Column(String(20), nullable=False)
+    action = Column(String(30), nullable=False)
+    assigned_teacher_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    snapshot = Column(JSONB, nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("action IN ('created')", name="ck_group_audit_action"),
+        CheckConstraint(
+            "actor_role IN ('owner', 'admin', 'teacher', 'superadmin')",
+            name="ck_group_audit_actor_role",
+        ),
+        Index("idx_group_audit_group", "group_id", "created_at"),
+        Index("idx_group_audit_org", "org_id", "created_at"),
+    )
+
+
 # ============================================================================
 # STUDENT ↔ GROUP (M2M)
 # ============================================================================
@@ -667,7 +701,7 @@ class GroupAttendanceAudit(Base):
         nullable=False,
     )
     actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    action = Column(String(30), nullable=False)  # created | updated | corrected | cancelled
+    action = Column(String(30), nullable=False)  # started | reconciliation_started | updated | corrected | cancelled
     before_status = Column(String(20))
     after_status = Column(String(20), nullable=False)
     before_records = Column(JSONB)
@@ -678,7 +712,7 @@ class GroupAttendanceAudit(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "action IN ('started', 'created', 'updated', 'corrected', 'cancelled')",
+            "action IN ('started', 'reconciliation_started', 'created', 'updated', 'corrected', 'cancelled', 'reconciliation_cancelled')",
             name="ck_group_attendance_audit_action",
         ),
         Index("idx_group_attendance_audit_attendance", "attendance_id"),
@@ -687,7 +721,7 @@ class GroupAttendanceAudit(Base):
 
 
 class GroupScheduleOverride(Base):
-    """Версия постоянного расписания или перенос одного экземпляра урока.
+    """Версия, перенос или управляемое прекращение регулярного расписания.
 
     Исходный ``Group.schedule`` остаётся базовым шаблоном. Эта таблица хранит
     только изменения, поэтому завершённые занятия и их посещаемость никогда не
@@ -700,7 +734,10 @@ class GroupScheduleOverride(Base):
     org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
     lesson_id = Column(String(100), nullable=False)
-    scope = Column(String(20), nullable=False)  # occurrence | recurring
+    # ``recurring_end`` is a dated tombstone.  It never removes the base slot:
+    # past attendance and audit history remain resolvable while future
+    # occurrences of this recurring lesson stop being generated.
+    scope = Column(String(20), nullable=False)  # occurrence | recurring | recurring_end
     effective_date = Column(String(10), nullable=False)  # YYYY-MM-DD
     payload = Column(JSONB, nullable=False)
     reason = Column(String(500), nullable=False)
@@ -714,7 +751,7 @@ class GroupScheduleOverride(Base):
             name="uq_group_schedule_override_scope_date",
         ),
         CheckConstraint(
-            "scope IN ('occurrence', 'recurring')",
+            "scope IN ('occurrence', 'recurring', 'recurring_end')",
             name="ck_group_schedule_override_scope",
         ),
         Index("idx_group_schedule_override_lookup", "group_id", "lesson_id", "effective_date"),
@@ -722,8 +759,36 @@ class GroupScheduleOverride(Base):
     )
 
 
+class GroupScheduleOneOffLesson(Base):
+    """Отдельное занятие, существующее только в указанную дату.
+
+    Разовый урок не добавляется в ``Group.schedule``: этот JSON-массив хранит
+    исключительно постоянные правила. Благодаря отдельной сущности создание
+    занятия на текущую неделю никогда не создаёт повторяющийся урок на
+    следующих неделях.
+    """
+
+    __tablename__ = "group_schedule_one_off_lessons"
+
+    # String ID keeps the identifier compatible with schedule occurrences,
+    # attendance and exam bindings, which already use lesson_id strings.
+    id = Column(String(100), primary_key=True)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    lesson_date = Column(String(10), nullable=False)  # YYYY-MM-DD
+    payload = Column(JSONB, nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("idx_group_schedule_one_off_group_date", "group_id", "lesson_date"),
+        Index("idx_group_schedule_one_off_org_date", "org_id", "lesson_date"),
+    )
+
+
 class GroupScheduleAudit(Base):
-    """Неизменяемый аудит переносов и изменений постоянного расписания."""
+    """Неизменяемый аудит переносов, изменений и прекращения расписания."""
 
     __tablename__ = "group_schedule_audit"
 
@@ -742,7 +807,7 @@ class GroupScheduleAudit(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "scope IN ('occurrence', 'recurring')",
+            "scope IN ('occurrence', 'recurring', 'recurring_end')",
             name="ck_group_schedule_audit_scope",
         ),
         Index("idx_group_schedule_audit_group", "group_id", "effective_date"),

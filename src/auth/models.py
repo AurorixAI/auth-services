@@ -11,12 +11,14 @@ from src.models.auth import (
     Invitation,
     Student,
     Group,
+    GroupAudit,
     StudentGroup,
     DiagnosticInvite,
     StudentDiagnosticResult,
     GroupAttendance,
     GroupAttendanceAudit,
     GroupScheduleOverride,
+    GroupScheduleOneOffLesson,
     GroupScheduleAudit,
 )
 
@@ -27,11 +29,13 @@ __all__ = [
     "Invitation",
     "Student",
     "Group",
+    "GroupAudit",
     "StudentGroup",
     "DiagnosticInvite",
     "StudentDiagnosticResult",
     "GroupAttendance",
     "GroupAttendanceAudit",
     "GroupScheduleOverride",
+    "GroupScheduleOneOffLesson",
     "GroupScheduleAudit",
 ]

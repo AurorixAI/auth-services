@@ -5,6 +5,7 @@ NOT exposed externally; in production this should be behind network-level ACL.
 from __future__ import annotations
 
 import secrets
+from datetime import date
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
@@ -63,6 +64,50 @@ def internal_org_student_ids(org_id: str, db: Session = Depends(get_db)):
 
     rows = db.query(Student.id).filter(Student.org_id == org_id).all()
     return [str(r[0]) for r in rows]
+
+
+@router.get(
+    "/org/{org_id}/groups/{group_id}/lessons/{lesson_id}/attendance",
+    summary="[Internal] Точный статус проведения одного занятия",
+)
+def internal_lesson_attendance_status(
+    org_id: str,
+    group_id: str,
+    lesson_id: str,
+    lesson_date: str,
+    db: Session = Depends(get_db),
+):
+    """Return the authoritative attendance lifecycle for one occurrence.
+
+    The exam service must not infer that a lesson has started from its clock
+    or from a client request.  This narrowly scoped internal endpoint lets it
+    check the exact immutable occurrence before making an online lobby public.
+    A missing row means the teacher has not started the lesson yet.
+    """
+    try:
+        date.fromisoformat(lesson_date)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Дата урока должна иметь формат YYYY-MM-DD",
+        ) from exc
+
+    from src.models.auth import GroupAttendance
+
+    attendance = (
+        db.query(GroupAttendance)
+        .filter(
+            GroupAttendance.org_id == org_id,
+            GroupAttendance.group_id == group_id,
+            GroupAttendance.lesson_id == lesson_id,
+            GroupAttendance.lesson_date == lesson_date,
+        )
+        .first()
+    )
+    return {
+        "status": attendance.status if attendance else "scheduled",
+        "started_at": attendance.started_at.isoformat() if attendance and attendance.started_at else None,
+    }
 
 
 # ── Diagnostic callbacks ──────────────────────────────────────────────────────

@@ -6,4 +6,5 @@ def is_org_admin(user: dict) -> bool:
     return user.get("org_role") in {"owner", "admin"} or user.get("role") in {
         "owner",
         "admin",
+        "superadmin",
     }
