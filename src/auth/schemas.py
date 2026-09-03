@@ -481,6 +481,31 @@ class OpenAttendanceActionResponse(BaseModel):
     remainingCount: int = 0
 
 
+class TeacherDashboardLessonAttendanceStateResponse(BaseModel):
+    """Attendance state for one concrete lesson in the teacher dashboard.
+
+    ``status`` is intentionally nullable: a planned lesson has no attendance
+    row yet.  This lets the client distinguish it from an unavailable request
+    instead of guessing that the lesson was never started.
+    """
+
+    lessonId: str
+    groupId: str
+    status: Optional[str] = None
+    hasSavedRecords: bool = False
+
+
+class TeacherDashboardSummaryResponse(BaseModel):
+    """Single authoritative snapshot for the teacher's operational dashboard."""
+
+    businessDate: str
+    groups: List[GroupResponse] = Field(default_factory=list)
+    todayLessons: List[ScheduleOccurrenceResponse] = Field(default_factory=list)
+    scheduleWindow: List[ScheduleOccurrenceResponse] = Field(default_factory=list)
+    openAttendanceActions: List[OpenAttendanceActionResponse] = Field(default_factory=list)
+    attendanceStates: List[TeacherDashboardLessonAttendanceStateResponse] = Field(default_factory=list)
+
+
 class ReconcileMissedLessonRequest(BaseModel):
     """Explicit teacher decision for a past lesson that was never started."""
 

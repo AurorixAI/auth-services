@@ -73,6 +73,8 @@ from .schemas import (
     ReconcileMissedLessonRequest,
     GroupAttendanceResponse,
     OpenAttendanceActionResponse,
+    TeacherDashboardLessonAttendanceStateResponse,
+    TeacherDashboardSummaryResponse,
     LessonAttendanceStatus,
 )
 from src.core.config import get_settings
@@ -4119,6 +4121,101 @@ class AuthService:
                 0 if action.actionType == "missed" else 1,
                 action.groupName,
             ),
+        )
+
+    def get_teacher_dashboard_summary(
+        self,
+        org_id: str,
+        *,
+        actor_id: str,
+        business_date: date,
+    ) -> TeacherDashboardSummaryResponse:
+        """Build the teacher's dashboard state in one database-backed read.
+
+        The previous client implementation read one attendance journal for
+        every lesson shown today.  Apart from the N+1 latency, a failed
+        journal request made an already-started lesson look scheduled.  This
+        endpoint derives occurrences and their attendance rows together, so a
+        successful response is a consistent snapshot for the same teacher and
+        business date.
+        """
+        if not actor_id:
+            raise PermissionError("Не удалось определить преподавателя")
+
+        groups = (
+            self.db.query(Group)
+            .filter(
+                Group.org_id == org_id,
+                Group.status == "active",
+                Group.teacher_id == actor_id,
+            )
+            .order_by(Group.name)
+            .all()
+        )
+
+        # The dashboard uses a short retrospective window to attach an
+        # operational exam to its concrete lesson, and six days ahead for the
+        # group-focus cards.  It is well within the public 63-day limit.
+        window_start = business_date - timedelta(days=30)
+        window_end = business_date + timedelta(days=6)
+        schedule_window: list[ScheduleOccurrenceResponse] = []
+        for group in groups:
+            schedule_window.extend(
+                ScheduleOccurrenceResponse(**item)
+                for item in self._resolved_occurrences_for_group(
+                    group,
+                    date_from=window_start,
+                    date_to=window_end,
+                )
+            )
+        schedule_window.sort(key=lambda item: (item.occurrenceDate, item.startTime, item.groupName))
+        today_lessons = [
+            occurrence
+            for occurrence in schedule_window
+            if occurrence.occurrenceDate == business_date.isoformat()
+        ]
+
+        group_ids = [group.id for group in groups]
+        attendance_by_instance: dict[tuple[str, str], GroupAttendance] = {}
+        if group_ids:
+            attendance_rows = (
+                self.db.query(GroupAttendance)
+                .filter(
+                    GroupAttendance.org_id == org_id,
+                    GroupAttendance.group_id.in_(group_ids),
+                    GroupAttendance.lesson_date == business_date.isoformat(),
+                )
+                .all()
+            )
+            attendance_by_instance = {
+                (str(row.group_id), row.lesson_id): row
+                for row in attendance_rows
+                if row.lesson_id
+            }
+
+        attendance_states = []
+        for lesson in today_lessons:
+            attendance = attendance_by_instance.get((lesson.groupId, lesson.id))
+            attendance_states.append(
+                TeacherDashboardLessonAttendanceStateResponse(
+                    lessonId=lesson.id,
+                    groupId=lesson.groupId,
+                    status=attendance.status if attendance else None,
+                    hasSavedRecords=bool(attendance and attendance.records),
+                )
+            )
+
+        return TeacherDashboardSummaryResponse(
+            businessDate=business_date.isoformat(),
+            groups=[self._build_group_response(group) for group in groups],
+            todayLessons=today_lessons,
+            scheduleWindow=schedule_window,
+            openAttendanceActions=self.get_open_attendance_actions(
+                org_id,
+                actor_id=actor_id,
+                is_org_admin=False,
+            ),
+            attendanceStates=attendance_states,
         )
 
     def get_group_attendance(

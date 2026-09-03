@@ -10,7 +10,7 @@ from typing import Optional
 from datetime import date, datetime
 import os
 
-from .service import AuthService
+from .service import AuthService, BUSINESS_TIMEZONE
 from .attendance_access import is_org_admin
 from . import import_service
 from .import_service import ImportPreviewResponse, ImportCommitResponse
@@ -58,6 +58,7 @@ from .schemas import (
     ReconcileMissedLessonRequest,
     GroupAttendanceResponse,
     OpenAttendanceActionResponse,
+    TeacherDashboardSummaryResponse,
 )
 from .dependencies import (
     get_current_user_payload,
@@ -935,6 +936,36 @@ def list_users(
 # ═══════════════════════════════════════════════════════════════════
 # SCHEDULE & ATTENDANCE ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════
+
+
+@router.get("/org/teacher/dashboard/summary", response_model=TeacherDashboardSummaryResponse)
+def get_teacher_dashboard_summary(
+    business_date: Optional[str] = Query(None, description="Дата сводки YYYY-MM-DD"),
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """One operational snapshot for an actual teacher's dashboard.
+
+    Administrators and owners use their own dashboards.  Keeping this route
+    teacher-scoped prevents a direct /teacher URL from silently showing an
+    empty dashboard filtered by a manager's user id.
+    """
+    if user.get("org_role") != "teacher":
+        raise HTTPException(403, "Учительский дашборд доступен только преподавателю")
+    try:
+        selected_date = (
+            date.fromisoformat(business_date)
+            if business_date
+            else datetime.now(BUSINESS_TIMEZONE).date()
+        )
+    except ValueError as exc:
+        raise HTTPException(400, "business_date должен иметь формат YYYY-MM-DD") from exc
+
+    return _svc(db).get_teacher_dashboard_summary(
+        user["org_id"],
+        actor_id=user["user_id"],
+        business_date=selected_date,
+    )
 
 
 @router.get("/org/schedule", response_model=list[ScheduleLessonResponse])
