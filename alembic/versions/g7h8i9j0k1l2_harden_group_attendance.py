@@ -1,7 +1,7 @@
 """Harden attendance status, provenance and audit history.
 
 Revision ID: g7h8i9j0k1l2
-Revises: f6a7b8c9d0e1
+Revises: f6a7b8c9d0e2
 Create Date: 2026-08-20
 """
 
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision: str = "g7h8i9j0k1l2"
-down_revision: Union[str, Sequence[str], None] = "f6a7b8c9d0e1"
+down_revision: Union[str, Sequence[str], None] = "f6a7b8c9d0e2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -46,6 +46,13 @@ def upgrade() -> None:
         server_default="in_progress",
         nullable=False,
     )
+
+    # ``001_baseline`` builds the schema with ``Base.metadata.create_all()``, so
+    # on a database whose baseline ran after this model was added the audit
+    # table is already present in its final shape.  Creating it again would
+    # abort the whole upgrade with DuplicateTable.
+    if "group_attendance_audit" in sa.inspect(op.get_bind()).get_table_names():
+        return
 
     op.create_table(
         "group_attendance_audit",

@@ -17,14 +17,25 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _add_column_if_missing(table: str, column: sa.Column) -> None:
+    """Skip a column an ORM-created development database already has.
+
+    ``group_attendance`` is also created by ``Base.metadata.create_all()`` in
+    its final shape, so on such a database this additive step is already done.
+    """
+    existing = {c["name"] for c in sa.inspect(op.get_bind()).get_columns(table)}
+    if column.name not in existing:
+        op.add_column(table, column)
+
+
 def upgrade() -> None:
     # Additive only: existing lesson records and their JSON attendance snapshots
     # remain byte-for-byte unchanged.
-    op.add_column(
+    _add_column_if_missing(
         "group_attendance",
         sa.Column("cancellation_reason", sa.String(length=500), nullable=True),
     )
-    op.add_column(
+    _add_column_if_missing(
         "group_attendance_audit",
         sa.Column("cancellation_reason", sa.String(length=500), nullable=True),
     )
