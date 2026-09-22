@@ -5,11 +5,15 @@ B2B: owner / admin / teacher — students have NO JWT
 """
 
 from typing import Optional, List
+from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
 
 from .service import verify_access_token
+from src.core.database import get_db
+from src.models.auth import Organization, OrganizationMember, User
 
 # HTTP Bearer scheme
 security = HTTPBearer(auto_error=False)
@@ -61,6 +65,87 @@ def get_current_user_payload(
     return payload
 
 
+def get_current_active_user_payload(
+    payload: dict = Depends(get_current_user_payload),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Resolve a JWT against the current account and organisation state.
+
+    Access tokens carry identity, while role and membership are read from the
+    database for protected requests. Removing a member, suspending an
+    organisation, or changing a role therefore takes effect immediately
+    rather than waiting for token expiry. Downstream services use ``/auth/me``
+    as their authority check, making this the single source of truth.
+    """
+    try:
+        user_id = UUID(str(payload.get("sub")))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невалидный идентификатор пользователя",
+        ) from exc
+
+    user = (
+        db.query(User)
+        .filter(User.id == user_id, User.is_active.is_(True))
+        .first()
+    )
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Учётная запись отключена или не найдена",
+        )
+
+    resolved = dict(payload)
+    resolved["role"] = user.role
+
+    # Platform superadmins do not belong to a tenant organisation. Their
+    # current database role is still verified above; tenant RBAC below stays
+    # membership-based and cannot be bypassed by a stale JWT claim.
+    if user.role == "superadmin":
+        resolved.pop("org_id", None)
+        resolved.pop("org_role", None)
+        return resolved
+
+    try:
+        org_id = UUID(str(payload.get("org_id")))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Пользователь не привязан к активной организации",
+        ) from exc
+
+    membership = (
+        db.query(OrganizationMember)
+        .filter(
+            OrganizationMember.org_id == org_id,
+            OrganizationMember.user_id == user.id,
+            OrganizationMember.is_active.is_(True),
+        )
+        .first()
+    )
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ к организации отозван",
+        )
+
+    organisation = (
+        db.query(Organization)
+        .filter(Organization.id == org_id, Organization.status == "active")
+        .first()
+    )
+    if not organisation:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Организация недоступна",
+        )
+
+    resolved["org_id"] = str(organisation.id)
+    resolved["org_role"] = membership.org_role
+    return resolved
+
+
 def get_optional_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
@@ -101,16 +186,21 @@ class RoleChecker:
         self.allowed_roles = allowed_roles
         self.check_org = check_org
 
-    def __call__(self, payload: dict = Depends(get_current_user_payload)) -> dict:
+    def __call__(self, payload: dict = Depends(get_current_active_user_payload)) -> dict:
         role = payload.get("role")
         org_role = payload.get("org_role")
 
-        # Superadmin проходит всегда
+        # Superadmin keeps its established platform-wide access semantics,
+        # but only after ``get_current_active_user_payload`` has checked that
+        # the account is currently active in the database.
         if role == "superadmin":
             return self._extract(payload)
 
-        # Проверка по role или org_role
-        if role not in self.allowed_roles and org_role not in self.allowed_roles:
+        # Tenant permissions come solely from the fresh membership role.
+        # ``users.role`` is a legacy/global convenience field and must not
+        # grant administrator access in another organisation.
+        effective_role = org_role if self.check_org else (org_role or role)
+        if effective_role not in self.allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Недостаточно прав. Требуется: {', '.join(self.allowed_roles)}",

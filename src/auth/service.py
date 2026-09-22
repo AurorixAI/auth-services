@@ -789,6 +789,9 @@ class AuthService:
         user = self.db.query(User).filter(User.id == member.user_id).first()
         if user:
             user.is_active = False
+            # A removed staff member must not be able to mint a fresh access
+            # token with a previously issued refresh cookie.
+            user.refresh_token_hash = None
 
         self.db.commit()
         return True

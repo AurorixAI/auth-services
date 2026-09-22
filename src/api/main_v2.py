@@ -206,6 +206,23 @@ def health_live():
     return {"status": "alive"}
 
 
+@app.get("/version", tags=["System"], summary="Deployed release metadata")
+def release_version():
+    """Return non-secret metadata for the exact deployed auth-service release.
+
+    This endpoint deliberately does not replace ``/health``: health probes
+    answer whether dependencies are available, while release metadata answers
+    which immutable source revision is currently running.
+    """
+    return {
+        "service": "auth-service",
+        "app_version": "1.0.0",
+        "release_sha": os.getenv("RELEASE_SHA", "unknown"),
+        "release_ref": os.getenv("RELEASE_REF", "unknown"),
+        "released_at": os.getenv("RELEASED_AT", "unknown"),
+    }
+
+
 @app.get("/health/ready", tags=["System"], summary="Readiness probe")
 async def health_ready(db: Session = Depends(get_db)):
     """Returns 200 if DB reachable, 503 otherwise."""

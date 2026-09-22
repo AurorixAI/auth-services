@@ -62,6 +62,7 @@ from .schemas import (
 )
 from .dependencies import (
     get_current_user_payload,
+    get_current_active_user_payload,
     require_org_owner,
     require_org_admin,
     require_org_teacher,
@@ -215,15 +216,6 @@ def accept_invite(request: AcceptInviteRequest, db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
 
-@router.post("/logout")
-def logout():
-    """Очистить httpOnly auth cookies."""
-    resp = JSONResponse(content={"message": "logged out", "success": True})
-    resp.delete_cookie(AUTH_COOKIE_NAME, path="/", domain=_COOKIE_DOMAIN)
-    resp.delete_cookie(REFRESH_COOKIE_NAME, path="/api/v1/auth", domain=_COOKIE_DOMAIN)
-    return resp
-
-
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  ADMIN APPROVAL & ACTIVATION                                            ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
@@ -325,7 +317,7 @@ def verify_group_student(
 
 @router.get("/me", response_model=UserResponse)
 def get_profile(
-    payload: dict = Depends(get_current_user_payload), db: Session = Depends(get_db)
+    payload: dict = Depends(get_current_active_user_payload), db: Session = Depends(get_db)
 ):
     """Профиль текущего пользователя"""
     svc = _svc(db)
@@ -338,7 +330,7 @@ def get_profile(
 @router.put("/me", response_model=UserResponse)
 def update_profile(
     request: UpdateProfileRequest,
-    payload: dict = Depends(get_current_user_payload),
+    payload: dict = Depends(get_current_active_user_payload),
     db: Session = Depends(get_db),
 ):
     """Обновить профиль"""
@@ -355,7 +347,7 @@ def update_profile(
 @router.post("/change-password", response_model=MessageResponse)
 def change_password(
     request: ChangePasswordRequest,
-    payload: dict = Depends(get_current_user_payload),
+    payload: dict = Depends(get_current_active_user_payload),
     db: Session = Depends(get_db),
 ):
     """Сменить пароль"""
@@ -372,9 +364,12 @@ def change_password(
 def logout(
     payload: dict = Depends(get_current_user_payload), db: Session = Depends(get_db)
 ):
-    """Выход — отзыв refresh token"""
+    """Revoke the server refresh token and clear both browser cookies."""
     _svc(db).logout(payload["sub"])
-    return MessageResponse(message="Вы вышли из системы")
+    resp = JSONResponse(content=MessageResponse(message="Вы вышли из системы").model_dump())
+    resp.delete_cookie(AUTH_COOKIE_NAME, path="/", domain=_COOKIE_DOMAIN)
+    resp.delete_cookie(REFRESH_COOKIE_NAME, path="/api/v1/auth", domain=_COOKIE_DOMAIN)
+    return resp
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
