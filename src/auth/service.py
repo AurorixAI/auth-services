@@ -1393,6 +1393,7 @@ class AuthService:
             return False
         invite.status = "expired"
         self.db.commit()
+        logger.info("diagnostic_invite_transition invite_id=%s session_id=%s status=expired", invite.id, invite.cat_session_id)
         return True
 
     def _expire_due_diagnostic_invites(self, org_id: str) -> int:
@@ -1413,6 +1414,7 @@ class AuthService:
         )
         if updated:
             self.db.commit()
+            logger.info("diagnostic_invites_expired org_id=%s count=%s", org_id, updated)
         return int(updated or 0)
 
     def get_diagnostic_by_code(self, code: str) -> Optional[dict]:
@@ -1477,6 +1479,7 @@ class AuthService:
             invite.status = "confirmed"
             invite.confirmed_at = datetime.now(timezone.utc)
             self.db.commit()
+            logger.info("diagnostic_invite_transition invite_id=%s status=confirmed", invite.id)
 
         return {
             "id": str(invite.id),
@@ -1531,6 +1534,7 @@ class AuthService:
             invite.started_at = datetime.now(timezone.utc)
         invite.cat_session_id = requested_session_id
         self.db.commit()
+        logger.info("diagnostic_invite_transition invite_id=%s session_id=%s status=in_progress", invite.id, requested_session_id)
 
         return {
             "id": str(invite.id),
@@ -1552,13 +1556,36 @@ class AuthService:
             self.db.query(DiagnosticInvite)
             .filter(
                 DiagnosticInvite.code == code,
-                DiagnosticInvite.status.in_(["in_progress", "completed"]),
+                DiagnosticInvite.status.in_(["confirmed", "in_progress", "completed", "expired"]),
             )
             .with_for_update()
             .first()
         )
         if not invite:
             raise ValueError("Диагностика не найдена или не начата")
+
+        if invite.cat_session_id is None and invite.status in {"confirmed", "expired"}:
+            # The engine can have durably started before expiry while the
+            # start callback was unavailable. Only the authenticated internal
+            # completion callback may repair that projection, using its
+            # database creation time and the confirmed invite's time bounds.
+            try:
+                started_at = datetime.fromisoformat(str(result_data.get("session_started_at") or "").replace("Z", "+00:00"))
+                started_at = started_at.replace(tzinfo=timezone.utc) if started_at.tzinfo is None else started_at
+                confirmed_at = invite.confirmed_at
+                if confirmed_at and confirmed_at.tzinfo is None:
+                    confirmed_at = confirmed_at.replace(tzinfo=timezone.utc)
+                expires_at = invite.expires_at
+                if expires_at and expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                if not confirmed_at or started_at < confirmed_at or started_at > datetime.now(timezone.utc):
+                    raise ValueError("Unconfirmed start")
+                if expires_at and started_at >= expires_at:
+                    raise ValueError("Start after expiry")
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Не подтверждён допустимый старт сессии диагностики") from exc
+            invite.cat_session_id = completed_session_id
+            invite.started_at = started_at
 
         if invite.cat_session_id != completed_session_id:
             raise ValueError("Сессия не соответствует приглашению на диагностику")
@@ -1630,9 +1657,7 @@ class AuthService:
 
         self.db.commit()
 
-        logger.info(
-            f"Diagnostic completed: code={code}, theta={result_data.get('final_theta')}"
-        )
+        logger.info("diagnostic_invite_transition invite_id=%s session_id=%s status=completed", invite.id, completed_session_id)
 
         return {
             "id": str(result.id),

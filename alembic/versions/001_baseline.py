@@ -20,14 +20,20 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Create baseline tables if they do not exist."""
+    """Create only baseline tables, not tables owned by later revisions.
+
+    This fixed allowlist is intentional: importing today's ORM metadata must
+    not create future tables before their CREATE TABLE migrations run.
+    """
     from src.models import Base
     from alembic import op
     bind = op.get_bind()
-    tables_to_create = [
-        tbl for name, tbl in Base.metadata.tables.items()
-        if name not in ("answer_events", "session_summaries", "student_skill_states")
-    ]
+    baseline_tables = (
+        "organizations", "users", "organization_members", "invitations",
+        "students", "groups", "student_groups", "diagnostic_invites",
+        "student_diagnostic_results",
+    )
+    tables_to_create = [Base.metadata.tables[name] for name in baseline_tables]
     Base.metadata.create_all(bind=bind, tables=tables_to_create)
 
 

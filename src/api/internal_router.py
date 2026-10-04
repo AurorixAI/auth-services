@@ -5,7 +5,7 @@ NOT exposed externally; in production this should be behind network-level ACL.
 from __future__ import annotations
 
 import secrets
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
@@ -118,6 +118,7 @@ class DiagStartCallback(BaseModel):
 
 class DiagCompleteCallback(BaseModel):
     session_id: str
+    session_started_at: Optional[datetime] = None
     final_theta: Optional[float] = None
     se: Optional[float] = None
     total_items: Optional[int] = None
@@ -150,6 +151,7 @@ def internal_complete_diagnostic(
 ):
     result_data: Dict[str, Any] = {
         "session_id": body.session_id,
+        "session_started_at": body.session_started_at.isoformat() if body.session_started_at else None,
         "final_theta": body.final_theta,
         "se": body.se,
         "total_items": body.total_items,
