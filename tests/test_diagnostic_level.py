@@ -179,21 +179,27 @@ def test_resent_completion_updates_level_columns_and_nothing_else(world):
     first = _complete(client, token, inv, final_theta=0.48)
     before = _row(db, inv)
     assert before.overall_level is None and before.level_status is None
-    snapshot = (before.id, before.final_theta, before.se, before.total_tasks, before.correct_answers, before.diagnosed_at)
+    snapshot = (before.id, before.final_theta, before.se, before.diagnosed_at)
+    assert (before.total_tasks, before.correct_answers) == (30, 6)
 
-    again = _complete(client, token, inv, final_theta=-2.0, total_items=99,
+    again = _complete(client, token, inv, final_theta=-2.0, total_items=25, correct_answers=8,
                       overall_level="at_grade", level_status="on_level",
                       class_equivalent="конец 8 класса", level_provisional=True)
     assert again == first
     after = _row(db, inv)
     assert (after.overall_level, after.level_status, after.class_equivalent, after.level_provisional) == \
         ("at_grade", "on_level", "конец 8 класса", True)
-    assert (after.id, after.final_theta, after.se, after.total_tasks, after.correct_answers, after.diagnosed_at) == snapshot
+    assert (after.id, after.final_theta, after.se, after.diagnosed_at) == snapshot
+    # The newer report's counts are authoritative (CAT answers only, no deep-scan).
+    assert (after.total_tasks, after.correct_answers) == (25, 8)
+    assert float(after.accuracy) == 0.32
     assert db.query(StudentDiagnosticResult).filter_by(invite_id=inv.id).count() == 1
 
     # A newer authoritative report overwrites; a resend without fields keeps what is stored.
-    _complete(client, token, inv, overall_level="below_grade", level_status="below",
+    _complete(client, token, inv, total_items=25, correct_answers=8, overall_level="below_grade", level_status="below",
               class_equivalent="начало 8 класса", level_provisional=False)
     assert (_row(db, inv).level_status, _row(db, inv).level_provisional) == ("below", False)
-    _complete(client, token, inv)
-    assert (_row(db, inv).overall_level, _row(db, inv).class_equivalent) == ("below_grade", "начало 8 класса")
+    _complete(client, token, inv, total_items=None, correct_answers=None)
+    row = _row(db, inv)
+    assert (row.overall_level, row.class_equivalent) == ("below_grade", "начало 8 класса")
+    assert (row.total_tasks, row.correct_answers) == (25, 8)

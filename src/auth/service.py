@@ -138,6 +138,30 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _completion_counts(result_data: dict) -> tuple:
+    """(correct, total, accuracy) from a completion payload; None when absent."""
+    correct_cnt = next(
+        (
+            result_data[key]
+            for key in ("correct_answers", "correct_count", "questions_correct")
+            if result_data.get(key) is not None
+        ),
+        None,
+    )
+    total_cnt = next(
+        (
+            result_data[key]
+            for key in ("total_items", "total_tasks", "total_questions")
+            if result_data.get(key) is not None
+        ),
+        None,
+    )
+    accuracy_val = result_data.get("accuracy")
+    if accuracy_val is None and total_cnt and correct_cnt is not None:
+        accuracy_val = round(float(correct_cnt) / float(total_cnt), 4)
+    return correct_cnt, total_cnt, accuracy_val
+
+
 def generate_code(
     length: int = 6, digits_only: bool = True, exclude_ambiguous: bool = False
 ) -> str:
@@ -1586,11 +1610,18 @@ class AuthService:
         if invite.status == "completed":
             if existing_result and existing_result.session_id == completed_session_id:
                 # A re-sent completion (diagnostic-side resync after the report
-                # was rebuilt) carries the authoritative level: overwrite the
-                # level columns when provided, leave everything else untouched.
+                # was rebuilt) is authoritative: overwrite the level columns and
+                # the answer counts when provided. theta, se, id and
+                # diagnosed_at are never touched.
+                correct_cnt, total_cnt, accuracy_val = _completion_counts(result_data)
                 provided = {
                     key: value
-                    for key, value in normalize_level_payload(result_data).items()
+                    for key, value in {
+                        **normalize_level_payload(result_data),
+                        "correct_answers": correct_cnt,
+                        "total_tasks": total_cnt,
+                        "accuracy": accuracy_val,
+                    }.items()
                     if value is not None
                 }
                 if provided:
@@ -1609,25 +1640,7 @@ class AuthService:
         invite.completed_at = datetime.now(timezone.utc)
 
         # Сохранить результат
-        correct_cnt = next(
-            (
-                result_data[key]
-                for key in ("correct_answers", "correct_count", "questions_correct")
-                if result_data.get(key) is not None
-            ),
-            None,
-        )
-        total_cnt = next(
-            (
-                result_data[key]
-                for key in ("total_items", "total_tasks", "total_questions")
-                if result_data.get(key) is not None
-            ),
-            None,
-        )
-        accuracy_val = result_data.get("accuracy")
-        if accuracy_val is None and total_cnt and correct_cnt is not None:
-            accuracy_val = round(float(correct_cnt) / float(total_cnt), 4)
+        correct_cnt, total_cnt, accuracy_val = _completion_counts(result_data)
 
         result = StudentDiagnosticResult(
             student_id=invite.student_id,
