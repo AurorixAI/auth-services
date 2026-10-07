@@ -43,7 +43,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     with engine.connect() as connection:
         assert connection.execute(text('SELECT name FROM organizations WHERE id=:id'),{'id':ids['org']}).scalar_one()=='Migration sentinel'
         assert connection.execute(text('SELECT count(*) FROM student_groups WHERE id=:id'),{'id':ids['membership']}).scalar_one()==1
-        assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='q7r8s9t0u1v'
+        assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='r8s9t0u1v2w'
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled

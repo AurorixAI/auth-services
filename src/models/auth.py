@@ -572,7 +572,15 @@ class StudentDiagnosticResult(Base):
     error_summary = Column(JSONB, default={})
     integrity_report = Column(JSONB, default={})
 
+    # Legacy VARCHAR(5), never filled and too short for the level codes; kept as is.
     recommended_level = Column(String(5))
+    # Level decided once by diagnostic-service (level_policy) and stored as-is.
+    # NULL on rows saved before the contract: readers fall back to theta
+    # (src/auth/diagnostic_level.py).
+    overall_level = Column(String(16))
+    level_status = Column(String(16))
+    class_equivalent = Column(String(64))
+    level_provisional = Column(Boolean)
     recommended_group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id"))
 
     diagnosed_at = Column(DateTime, default=func.now())
@@ -601,6 +609,10 @@ class StudentDiagnosticResult(Base):
             "root_gaps": self.root_gaps,
             "error_summary": self.error_summary,
             "recommended_level": self.recommended_level,
+            "overall_level": self.overall_level,
+            "level_status": self.level_status,
+            "class_equivalent": self.class_equivalent,
+            "level_provisional": self.level_provisional,
             "diagnosed_at": self.diagnosed_at.isoformat()
             if self.diagnosed_at
             else None,

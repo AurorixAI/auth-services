@@ -22,6 +22,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import func, or_
 
 from .student_id_service import assign_display_id
+from .diagnostic_level import level_fields, normalize_level_payload
 from .models import (
     Organization,
     User,
@@ -135,19 +136,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
-
-
-def _theta_to_level(theta: float) -> str:
-    """Map IRT theta to a pedagogical level label.
-
-    Mirrors diagnostics-service's alpha_engine.theta_to_level() so a
-    student's level reads the same everywhere in the app.
-    """
-    if theta >= 1.0:
-        return "above_grade"
-    if theta >= -0.5:
-        return "at_grade"
-    return "below_grade"
 
 
 def generate_code(
@@ -985,7 +973,7 @@ class AuthService:
                 "session_id": str(r.session_id) if r.session_id else None,
                 "theta": theta,
                 "accuracy": float(r.accuracy) if r.accuracy is not None else None,
-                "recommended_level": _theta_to_level(theta) if theta is not None else None,
+                **level_fields(r),
                 "total_questions": r.total_tasks,
                 "correct_answers": r.correct_answers,
                 "duration_seconds": int((r.total_duration_ms or 0) / 1000) if r.total_duration_ms else None,
@@ -1016,11 +1004,10 @@ class AuthService:
                     if acc is not None:
                         matching_res["correct_answers"] = int(round(acc * total_q))
 
-                theta = matching_res.get("theta")
                 level = matching_res.get("recommended_level")
-                if level == "below_grade" or (theta is not None and theta < -0.5):
+                if level == "below_grade":
                     matching_res["recommended_load"] = "Усиленный курс (3–4 ч/нед) для закрытия пробелов"
-                elif level == "above_grade" or (theta is not None and theta >= 1.0):
+                elif level == "above_grade":
                     matching_res["recommended_load"] = "Продвинутый курс (2 ч/нед) с углублённой программой"
                 else:
                     matching_res["recommended_load"] = "Стандартный курс (2–3 ч/нед) по программе класса"
@@ -1598,6 +1585,18 @@ class AuthService:
         )
         if invite.status == "completed":
             if existing_result and existing_result.session_id == completed_session_id:
+                # A re-sent completion (diagnostic-side resync after the report
+                # was rebuilt) carries the authoritative level: overwrite the
+                # level columns when provided, leave everything else untouched.
+                provided = {
+                    key: value
+                    for key, value in normalize_level_payload(result_data).items()
+                    if value is not None
+                }
+                if provided:
+                    for key, value in provided.items():
+                        setattr(existing_result, key, value)
+                    self.db.commit()
                 return {
                     "id": str(existing_result.id),
                     "status": "completed",
@@ -1645,7 +1644,10 @@ class AuthService:
             root_gaps=result_data.get("root_gaps"),
             error_summary=result_data.get("error_summary"),
             integrity_report=result_data.get("integrity_report"),
+            # recommended_level (VARCHAR(5)) is a legacy column nobody fills; the
+            # level lives in overall_level / level_status below.
             recommended_level=result_data.get("recommended_level"),
+            **normalize_level_payload(result_data),
             recommended_group_id=result_data.get("recommended_group_id"),
         )
         self.db.add(result)
@@ -1710,7 +1712,9 @@ class AuthService:
                 res_dict = {
                     "theta": theta,
                     "accuracy": float(r.accuracy) if r.accuracy is not None else None,
-                    "recommended_level": _theta_to_level(theta) if theta is not None else None,
+                    **level_fields(r),
+                    "total_questions": r.total_tasks,
+                    "correct_answers": r.correct_answers,
                 }
 
             result.append(
@@ -1930,6 +1934,7 @@ class AuthService:
                 needs_commit = True
             r = latest_results.get(s.id)
             theta = float(r.final_theta) if r and r.final_theta is not None else None
+            lvl = level_fields(r) if r else level_fields(None)
             students_out.append({
                 "id": str(s.id),
                 "first_name": s.first_name,
@@ -1941,7 +1946,10 @@ class AuthService:
                 "student_phone": s.student_phone,
                 "joined_at": m.joined_at.isoformat() if m.joined_at else None,
                 "last_theta": theta,
-                "last_level": _theta_to_level(theta) if theta is not None else None,
+                "last_level": lvl["recommended_level"],
+                "last_level_status": lvl["level_status"],
+                "last_class_equivalent": lvl["class_equivalent"],
+                "last_level_provisional": lvl["level_provisional"],
                 "last_diagnosed_at": r.diagnosed_at.isoformat() if r and r.diagnosed_at else None,
             })
 
@@ -1983,8 +1991,12 @@ class AuthService:
         ]
 
         dist = {"below_grade": 0, "at_grade": 0, "above_grade": 0}
-        for t in thetas:
-            dist[_theta_to_level(t)] += 1
+        for r in latest_results.values():
+            if r.final_theta is None:
+                continue
+            level = level_fields(r)["recommended_level"]
+            if level in dist:
+                dist[level] += 1
 
         return {
             "group_id": str(group_id),
@@ -2658,7 +2670,9 @@ class AuthService:
             result = {
                 "theta": theta,
                 "accuracy": float(exact_result.accuracy) if exact_result.accuracy is not None else None,
-                "recommended_level": _theta_to_level(theta) if theta is not None else None,
+                **level_fields(exact_result),
+                "total_questions": exact_result.total_tasks,
+                "correct_answers": exact_result.correct_answers,
             }
         return {
             "id": str(invite.id),

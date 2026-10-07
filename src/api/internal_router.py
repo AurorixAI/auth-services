@@ -127,6 +127,12 @@ class DiagCompleteCallback(BaseModel):
     accuracy: Optional[float] = None
     # per-topic mastery breakdown: {topic_id: {"alpha": float, "level": str}}
     topic_breakdown: Optional[Dict[str, Any]] = None
+    # Level decided by diagnostic-service (level_policy). Optional: older
+    # payloads lack them and auth falls back to theta for those rows.
+    overall_level: Optional[str] = None
+    level_status: Optional[str] = None
+    class_equivalent: Optional[str] = None
+    level_provisional: Optional[bool] = None
 
 
 @router.post("/diagnostic/{code}/start", status_code=200,
@@ -158,6 +164,10 @@ def internal_complete_diagnostic(
         "correct_answers": body.correct_answers,
         "identified_gaps": body.identified_gaps or [],
         "accuracy": body.accuracy,
+        "overall_level": body.overall_level,
+        "level_status": body.level_status,
+        "class_equivalent": body.class_equivalent,
+        "level_provisional": body.level_provisional,
     }
     try:
         saved = _svc(db).complete_diagnostic(code, result_data)
