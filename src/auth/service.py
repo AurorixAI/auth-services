@@ -1226,7 +1226,7 @@ class AuthService:
             "lessons": lessons,
         }
 
-    def list_students(
+    def _students_query(
         self,
         org_id: str,
         class_level: Optional[int] = None,
@@ -1235,17 +1235,17 @@ class AuthService:
         status: Optional[str] = None,
         exclude_status: Optional[str] = None,
         search: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0,
+        has_primary_group: Optional[bool] = None,
         *,
         actor_id: Optional[str],
         is_org_admin: bool,
-    ) -> list[StudentResponse]:
+    ):
+        """Filtered student query, or ``None`` when the actor can see nobody."""
         query = self.db.query(Student).filter(Student.org_id == org_id)
 
         if not is_org_admin:
             if not actor_id:
-                return []
+                return None
             taught_group_ids = [
                 group_id
                 for (group_id,) in self.db.query(Group.id)
@@ -1253,7 +1253,7 @@ class AuthService:
                 .all()
             ]
             if not taught_group_ids:
-                return []
+                return None
             active_member_ids = (
                 self.db.query(StudentGroup.student_id)
                 .filter(
@@ -1273,6 +1273,8 @@ class AuthService:
             query = query.filter(Student.class_level == class_level)
         if group_id:
             query = query.filter(Student.group_id == group_id)
+        if has_primary_group is True:
+            query = query.filter(Student.group_id.isnot(None))
         if has_group is True:
             active_memberships = self.db.query(StudentGroup.student_id).filter(StudentGroup.is_active == True)
             query = query.filter(
@@ -1289,15 +1291,85 @@ class AuthService:
         if exclude_status:
             query = query.filter(Student.status != exclude_status)
         if search:
-            pattern = f"%{search}%"
-            query = query.filter(
-                (Student.first_name.ilike(pattern)) | (Student.last_name.ilike(pattern))
-            )
+            # Every word must match the first or last name, so a full-name
+            # query such as "Иван Петров" finds the student too.
+            for word in search.split():
+                pattern = f"%{word}%"
+                query = query.filter(
+                    (Student.first_name.ilike(pattern)) | (Student.last_name.ilike(pattern))
+                )
+        return query
 
-        students = (
-            query.order_by(Student.created_at.desc()).offset(offset).limit(limit).all()
+    def list_students(
+        self,
+        org_id: str,
+        class_level: Optional[int] = None,
+        group_id: Optional[str] = None,
+        has_group: Optional[bool] = None,
+        status: Optional[str] = None,
+        exclude_status: Optional[str] = None,
+        search: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        has_primary_group: Optional[bool] = None,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> list[StudentResponse]:
+        return self.list_students_page(
+            org_id,
+            class_level=class_level,
+            group_id=group_id,
+            has_group=has_group,
+            status=status,
+            exclude_status=exclude_status,
+            search=search,
+            limit=limit,
+            offset=offset,
+            has_primary_group=has_primary_group,
+            actor_id=actor_id,
+            is_org_admin=is_org_admin,
+        )[0]
+
+    def list_students_page(
+        self,
+        org_id: str,
+        class_level: Optional[int] = None,
+        group_id: Optional[str] = None,
+        has_group: Optional[bool] = None,
+        status: Optional[str] = None,
+        exclude_status: Optional[str] = None,
+        search: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        has_primary_group: Optional[bool] = None,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> tuple[list[StudentResponse], int]:
+        """One page of students plus the exact total of the filtered set."""
+        query = self._students_query(
+            org_id,
+            class_level=class_level,
+            group_id=group_id,
+            has_group=has_group,
+            status=status,
+            exclude_status=exclude_status,
+            search=search,
+            has_primary_group=has_primary_group,
+            actor_id=actor_id,
+            is_org_admin=is_org_admin,
         )
-        return [self._build_student_response(s) for s in students]
+        if query is None:
+            return [], 0
+        total = query.count()
+        students = (
+            query.order_by(Student.created_at.desc(), Student.id.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return [self._build_student_response(s) for s in students], total
 
     def _build_student_response(self, student: Student) -> StudentResponse:
         return StudentResponse(

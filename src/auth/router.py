@@ -506,21 +506,28 @@ def create_student(
     return _svc(db).create_student(user["org_id"], request)
 
 
-@router.get("/org/students", response_model=list[StudentResponse])
+@router.get("/org/students")
 def list_students(
     class_level: Optional[int] = None,
     group_id: Optional[str] = None,
     has_group: Optional[bool] = Query(None),
     student_status: Optional[str] = Query(None, alias="status"),
     exclude_status: Optional[str] = Query(None),
+    has_primary_group: Optional[bool] = Query(None),
     search: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    include_meta: bool = Query(False),
     user: dict = Depends(require_org_teacher),
     db: Session = Depends(get_db),
 ):
-    """Список учеников организации"""
-    return _svc(db).list_students(
+    """Список учеников организации.
+
+    По умолчанию — массив (прежний контракт). С ``include_meta=true`` —
+    ``{items, total, limit, offset}``, где ``total`` — точное число учеников
+    в выборке (для постраничной навигации).
+    """
+    items, total = _svc(db).list_students_page(
         user["org_id"],
         class_level=class_level,
         group_id=group_id,
@@ -530,9 +537,13 @@ def list_students(
         search=search,
         limit=limit,
         offset=offset,
+        has_primary_group=has_primary_group,
         actor_id=user["user_id"],
         is_org_admin=is_org_admin(user),
     )
+    if include_meta:
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+    return items
 
 
 @router.get("/org/students/{student_id}", response_model=StudentResponse)
