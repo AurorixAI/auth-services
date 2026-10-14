@@ -15,15 +15,17 @@ from src.auth.service import AuthService
 from src.models.auth import Group, Organization, Student, StudentGroup, User
 
 
+DB_URL = os.getenv("A2_AUTH_TEST_DATABASE_URL")
+# PostgreSQL only: the models use JSONB, which SQLite cannot create, so a SQLite
+# fixture would skip itself silently and a "cut at 100" regression would pass CI.
+pytestmark = pytest.mark.skipif(not DB_URL, reason="Requires disposable A2 auth PostgreSQL")
+
+
 @pytest.fixture
 def world():
-    engine = create_engine("sqlite:///:memory:")
-    tables = [m.__table__ for m in (Organization, User, Group, Student, StudentGroup)]
-    try:
-        for t in tables:
-            t.create(engine, checkfirst=True)
-    except Exception as exc:  # pragma: no cover - model needs PostgreSQL-only types
-        pytest.skip(f"models not creatable on SQLite: {exc}")
+    assert DB_URL and DB_URL.endswith("/a2_auth"), "Use only the disposable a2_auth database"
+    engine = create_engine(DB_URL)
+    Organization.metadata.create_all(engine)
     with sessionmaker(engine)() as db:
         org = Organization(name="Org", status="active")
         other = Organization(name="Other", status="active")

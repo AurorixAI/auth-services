@@ -1938,7 +1938,13 @@ class AuthService:
             raise ValueError("Выберите активного преподавателя этой организации")
 
     def update_group(
-        self, org_id: str, group_id: str, request: GroupUpdateRequest
+        self,
+        org_id: str,
+        group_id: str,
+        request: GroupUpdateRequest,
+        *,
+        actor_id: str,
+        actor_role: Optional[str] = None,
     ) -> GroupResponse:
         group = (
             self.db.query(Group)
@@ -1948,10 +1954,49 @@ class AuthService:
         if not group:
             raise ValueError("Группа не найдена")
 
-        for key, value in request.model_dump(exclude_none=True).items():
-            if hasattr(group, key):
-                setattr(group, key, value)
+        changes = request.model_dump(exclude_none=True)
+        teacher_changed = False
+        if "teacher_id" in changes:
+            try:
+                new_teacher_id = UUID(str(changes["teacher_id"]))
+            except ValueError as exc:
+                raise ValueError("Некорректный преподаватель") from exc
+            changes["teacher_id"] = new_teacher_id
+            teacher_changed = str(new_teacher_id) != str(group.teacher_id)
+            if teacher_changed:
+                try:
+                    self._require_active_group_teacher(org_id, new_teacher_id)
+                except ValueError as exc:
+                    raise ValueError("Выбранный сотрудник не преподаватель центра") from exc
 
+        # {field: [old, new]} for the audit trail; unchanged fields are skipped
+        # so a no-op save never writes a journal row.
+        diff: dict[str, list[Any]] = {}
+        for key, value in changes.items():
+            if not hasattr(group, key):
+                continue
+            old_value = getattr(group, key)
+            if key == "teacher_id":
+                # UUIDs go to the JSONB snapshot as strings.
+                old_value = str(old_value) if old_value else None
+                value = str(value)
+            if old_value == value:
+                continue
+            diff[key] = [old_value, value]
+            setattr(group, key, UUID(value) if key == "teacher_id" else value)
+
+        if diff:
+            self.db.add(
+                GroupAudit(
+                    org_id=org_id,
+                    group_id=group.id,
+                    actor_id=actor_id,
+                    actor_role=actor_role or "admin",
+                    action="teacher_changed" if teacher_changed else "updated",
+                    assigned_teacher_id=group.teacher_id,
+                    snapshot=diff,
+                )
+            )
         self.db.commit()
         return self._build_group_response(group)
 
@@ -2297,14 +2342,22 @@ class AuthService:
         self, org_id: str, group_id: str, student_ids: list[str]
     ) -> dict:
         added = 0
-        skipped = 0
+        skipped_details: list[dict[str, str]] = []
         for student_id in student_ids:
             try:
                 self.add_student_to_group(org_id, group_id, student_id)
                 added += 1
-            except ValueError:
-                skipped += 1
-        return {"group_id": str(group_id), "added": added, "skipped": skipped}
+            except ValueError as exc:
+                # Release the row locks taken before the refusal.
+                self.db.rollback()
+                skipped_details.append({"student_id": str(student_id), "reason": str(exc)})
+        # ``skipped`` stays a number for older clients; the reasons are new.
+        return {
+            "group_id": str(group_id),
+            "added": added,
+            "skipped": len(skipped_details),
+            "skipped_details": skipped_details,
+        }
 
     def add_student_to_group(self, org_id: str, group_id: str, student_id: str) -> dict:
         # Serialize every membership change for this student.  Without this

@@ -814,7 +814,13 @@ def update_group(
 ):
     """Обновить группу"""
     try:
-        return _svc(db).update_group(user["org_id"], group_id, request)
+        return _svc(db).update_group(
+            user["org_id"],
+            group_id,
+            request,
+            actor_id=user["user_id"],
+            actor_role=user.get("org_role"),
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
 
