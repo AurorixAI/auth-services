@@ -98,10 +98,19 @@ MEMBERSHIP_MODES = ("transfer", "add")
 class MembershipConflict(ValueError):
     """The membership change contradicts the current state (HTTP 409)."""
 BUSINESS_TIMEZONE = ZoneInfo(os.getenv("BUSINESS_TIMEZONE", "Asia/Tashkent"))
-# A stale schedule should not turn into an unbounded operational queue. The
-# latest calendar month is long enough for a teacher to reconcile an omission
-# while preserving a predictable dashboard response time.
-MISSED_LESSON_RECONCILIATION_DAYS = 30
+
+
+def missed_lesson_window_start(today: date) -> date:
+    """First day a never-started lesson is still offered for follow-up.
+
+    A stale schedule must not turn into an unbounded queue, but a rolling
+    window can cut a payroll period in half. Payroll is monthly, so the window
+    always covers the whole previous month and the current one: 15.10 -> 01.09,
+    01.11 -> 01.10, 05.01 -> 01.12 of the year before.
+    """
+    first_of_month = today.replace(day=1)
+    return (first_of_month - timedelta(days=1)).replace(day=1)
+
 
 # ============================================================================
 # КОНФИГУРАЦИЯ
@@ -4381,6 +4390,7 @@ class AuthService:
         *,
         actor_id: Optional[str],
         is_org_admin: bool,
+        now: Optional[datetime] = None,
     ) -> list[OpenAttendanceActionResponse]:
         """Return unfinished and never-started past lessons for follow-up.
 
@@ -4389,7 +4399,7 @@ class AuthService:
         derive it from the resolved schedule and present it as a separate,
         explicit reconciliation action. It is never converted to absences.
         """
-        now = datetime.now(BUSINESS_TIMEZONE)
+        now = now or datetime.now(BUSINESS_TIMEZONE)
         today_date = now.date()
         today = today_date.isoformat()
         query = (
@@ -4414,7 +4424,7 @@ class AuthService:
         # The missed-lesson candidates are known up front, so the schedule
         # data of every group involved is loaded once (two queries) instead of
         # per group: the cost of this call must not grow with the group count.
-        reconciliation_from = today_date - timedelta(days=MISSED_LESSON_RECONCILIATION_DAYS)
+        reconciliation_from = missed_lesson_window_start(today_date)
         groups_query = self.db.query(Group).filter(
             Group.org_id == org_id,
             Group.status == "active",
@@ -4487,7 +4497,7 @@ class AuthService:
                 )
             )
 
-        # A missed occurrence is intentionally bounded to a rolling period.
+        # A missed occurrence is intentionally bounded (see missed_lesson_window_start).
         # Without it, an old recurring schedule would create an unbounded and
         # unusable operational queue. Completed/cancelled/in-progress rows
         # are all terminal for this discovery pass and therefore excluded.

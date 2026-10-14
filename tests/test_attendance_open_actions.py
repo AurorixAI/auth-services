@@ -194,3 +194,42 @@ def test_teacher_open_actions_only_own_groups(world):
     others = make_client(world, user=world.teacher2).get(OPEN).json()
     assert mine and all(i["teacherId"] == str(world.teacher.id) for i in mine)
     assert others == []
+
+
+# ---- N13 P1.2: the missed-lesson window is "from the 1st of the previous month" ----
+
+
+def test_missed_window_start_covers_the_previous_month():
+    from datetime import date
+
+    from src.auth.service import missed_lesson_window_start
+
+    assert missed_lesson_window_start(date(2026, 10, 15)) == date(2026, 9, 1)
+    assert missed_lesson_window_start(date(2026, 11, 1)) == date(2026, 10, 1)
+    assert missed_lesson_window_start(date(2026, 10, 31)) == date(2026, 9, 1)
+    assert missed_lesson_window_start(date(2027, 1, 5)) == date(2026, 12, 1)  # year boundary
+    assert missed_lesson_window_start(date(2026, 3, 31)) == date(2026, 2, 1)  # short previous month
+
+
+def test_open_actions_missed_lessons_start_on_the_first_of_the_previous_month(world):
+    from datetime import datetime
+
+    from src.auth.service import BUSINESS_TIMEZONE
+
+    def missed_dates(now):
+        items = world.svc.get_open_attendance_actions(
+            str(world.org.id), actor_id=None, is_org_admin=True, now=now
+        )
+        return sorted(i.lessonDate for i in items if i.actionType == "missed")
+
+    # 15.10 (a Thursday, after the lessons ended): the whole of September is covered.
+    dates = missed_dates(datetime(2026, 10, 15, 23, 0, tzinfo=BUSINESS_TIMEZONE))
+    assert dates[0] == "2026-09-01" and dates[-1] == "2026-10-15"
+    assert "2026-08-31" not in dates
+    # 01.11, early morning: October is covered from its 1st, the day itself has no past lesson yet.
+    dates = missed_dates(datetime(2026, 11, 1, 5, 0, tzinfo=BUSINESS_TIMEZONE))
+    assert dates[0] == "2026-10-01" and dates[-1] == "2026-10-31"
+    assert not any(d.startswith("2026-09") for d in dates)
+    # The preload stays O(1): a window of two months costs the same queries as before.
+    _, statements = _statements_for_open_actions(world)
+    assert len(statements) <= 8

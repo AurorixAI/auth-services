@@ -136,6 +136,8 @@ class ExcuseStudent(BaseModel):
     id: str
     full_name: str
     display_id: Optional[str] = None
+    # Student / parents contact (the card's «Телефон ученика / родителей»); never money data.
+    phone: Optional[str] = None
 
 
 class ExcuseFileInfo(BaseModel):
@@ -604,6 +606,7 @@ class AttendanceExcuseService:
                         id=str(excuse.student_id),
                         full_name=full_name,
                         display_id=student.display_id if student else None,
+                        phone=(student.student_phone or None) if student else None,
                     ),
                     reason=excuse.reason,
                     reason_by=IdName(id=str(excuse.reason_by), name=_user_name(users.get(excuse.reason_by))),

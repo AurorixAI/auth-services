@@ -114,7 +114,7 @@ def test_list_shape_filters_and_counters(world, lesson):
     assert item["teacher"]["id"] == str(world.teacher.id) and item["teacher"]["name"]
     student = world.students[0]
     assert item["student"] == {"id": str(student.id), "full_name": f"{student.last_name} {student.first_name}",
-                               "display_id": student.display_id}
+                               "display_id": student.display_id, "phone": None}
     assert item["reason"] == "Болел, написал в Telegram" and item["status"] == "pending"
     assert item["reason_by"]["id"] == str(world.admin.id)
     assert item["reviewed_by"] is None and item["reviewed_at"] is None and item["files"] == []
@@ -135,6 +135,21 @@ def test_list_shape_filters_and_counters(world, lesson):
     assert client.get(BASE, params=far).json()["total"] == 0
     around = {"date_from": (day - timedelta(days=1)).isoformat(), "date_to": (day + timedelta(days=1)).isoformat()}
     assert client.get(BASE, params=around).json()["total"] == 1
+
+
+def test_list_carries_the_student_phone_and_no_money_fields(world, lesson):
+    world.students[0].student_phone = "+998901234567"
+    world.db.commit()
+    item = make_client(world, user=world.owner).get(BASE, params=window()).json()["items"][0]
+    assert item["student"]["phone"] == "+998901234567"
+    # The student block is an allow-list: contact data yes, anything financial no.
+    assert set(item["student"]) == {"id", "full_name", "display_id", "phone"}
+    text = str(item).lower()
+    assert not any(word in text for word in ("balance", "fee", "monthly", "amount", "payment", "price", "debt"))
+    world.students[0].student_phone = ""
+    world.db.commit()
+    again = make_client(world, user=world.owner).get(BASE, params=window()).json()["items"][0]
+    assert again["student"]["phone"] is None  # empty is "no phone", not an empty link
 
 
 def test_list_validation_errors_are_422(world):
