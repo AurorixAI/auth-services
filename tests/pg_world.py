@@ -196,6 +196,7 @@ def make_client(w, user=None, org="own", org_role=None, role=None):
 
     import src.api.internal_router  # noqa: F401  (import order: avoids a pre-existing router cycle)
     from src.auth.attendance_excuses_router import router as excuses_router
+    from src.auth.payments_router import router as payments_router
     from src.auth.dependencies import get_current_active_user_payload
     from src.auth.router import router as auth_router
     from src.core.database import get_db
@@ -209,6 +210,7 @@ def make_client(w, user=None, org="own", org_role=None, role=None):
     app = FastAPI()
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(excuses_router, prefix="/api/v1")
+    app.include_router(payments_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = lambda: w.db
     app.dependency_overrides[get_current_active_user_payload] = lambda: payload
     return TestClient(app)
