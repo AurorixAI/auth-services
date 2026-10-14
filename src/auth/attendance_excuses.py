@@ -171,6 +171,8 @@ class ExcuseListResponse(BaseModel):
 
 class ExcuseSummaryResponse(BaseModel):
     pending_total: int
+    # Lessons still to be closed (started-unfinished + never-started), org-wide.
+    open_lessons_total: int = 0
 
 
 class ReviewRequest(BaseModel):
@@ -438,7 +440,28 @@ class AttendanceExcuseService:
     # ---- admin: list / summary ----------------------------------------
 
     def summary(self, org_id: str) -> ExcuseSummaryResponse:
-        return ExcuseSummaryResponse(pending_total=self._pending_count(org_id))
+        return ExcuseSummaryResponse(
+            pending_total=self._pending_count(org_id),
+            open_lessons_total=self._open_lessons_count(org_id),
+        )
+
+    def _open_lessons_count(self, org_id: str) -> int:
+        """Open lessons for the sidebar badge; never breaks the summary."""
+        from .service import AuthService  # lazy: service imports this module
+
+        try:
+            return len(
+                AuthService(self.db).get_open_attendance_actions(
+                    org_id, actor_id=None, is_org_admin=True
+                )
+            )
+        except Exception:
+            logger.exception("Could not count open lessons for org %s", org_id)
+            try:
+                self.db.rollback()
+            except Exception:  # pragma: no cover - defensive
+                pass
+            return 0
 
     def _pending_count(self, org_id: str) -> int:
         return (

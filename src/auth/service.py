@@ -4214,6 +4214,7 @@ class AuthService:
                     groupName=group.name,
                     classLevel=group.class_level or 5,
                     actionType="in_progress",
+                    teacherId=self._open_action_teacher_id(attendance, group),
                     lessonId=attendance.lesson_id,
                     lessonDate=attendance.lesson_date,
                     subject=occurrence.get("subject") or "Занятие",
@@ -4287,6 +4288,7 @@ class AuthService:
                 actions.append(
                     OpenAttendanceActionResponse(
                         actionType="missed",
+                        teacherId=str(group.teacher_id) if group.teacher_id else None,
                         groupId=str(group.id),
                         groupName=group.name,
                         classLevel=group.class_level or 5,
@@ -4304,6 +4306,16 @@ class AuthService:
                     )
                 )
 
+        # Teacher names in one batched query (no per-row lookups).
+        teacher_ids = {UUID(action.teacherId) for action in actions if action.teacherId}
+        if teacher_ids:
+            names = {
+                str(user.id): f"{user.first_name} {user.last_name}".strip() or None
+                for user in self.db.query(User).filter(User.id.in_(teacher_ids)).all()
+            }
+            for action in actions:
+                action.teacherName = names.get(action.teacherId) if action.teacherId else None
+
         return sorted(
             actions,
             key=lambda action: (
@@ -4313,6 +4325,12 @@ class AuthService:
                 action.groupName,
             ),
         )
+
+    @staticmethod
+    def _open_action_teacher_id(attendance: GroupAttendance, group: Group) -> Optional[str]:
+        """Who taught the lesson: the lesson snapshot, else the group's teacher."""
+        teacher_id = attendance.teacher_id or group.teacher_id
+        return str(teacher_id) if teacher_id else None
 
     def get_teacher_dashboard_summary(
         self,

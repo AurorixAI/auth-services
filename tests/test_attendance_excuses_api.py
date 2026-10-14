@@ -71,7 +71,8 @@ def test_other_organisation_sees_nothing_and_gets_404(world, lesson):
     excuse = lesson[2]
     foreign = make_client(world, user=world.foreign_admin, org="other")
     assert foreign.get(BASE, params={"status": "all"}).json() == {"items": [], "total": 0, "pending_total": 0}
-    assert foreign.get(f"{BASE}/summary").json() == {"pending_total": 0}
+    summary = foreign.get(f"{BASE}/summary").json()
+    assert summary["pending_total"] == 0
     owner = make_client(world)
     stored = owner.post(f"{BASE}/{excuse.id}/files", files={"file": ("a.png", PNG, "image/png")}).json()
     for method, url, kw in [
@@ -117,7 +118,7 @@ def test_list_shape_filters_and_counters(world, lesson):
     assert item["reason"] == "Болел, написал в Telegram" and item["status"] == "pending"
     assert item["reason_by"]["id"] == str(world.admin.id)
     assert item["reviewed_by"] is None and item["reviewed_at"] is None and item["files"] == []
-    assert client.get(f"{BASE}/summary").json() == {"pending_total": 1}
+    assert client.get(f"{BASE}/summary").json()["pending_total"] == 1
 
     assert client.get(BASE, params={**window(), "status": "confirmed"}).json()["total"] == 0
     assert client.get(BASE, params={**window(), "status": "all"}).json()["total"] == 1
@@ -182,7 +183,7 @@ def test_review_confirm_reject_reset_and_audit(world, lesson):
     assert client.get(BASE, params={**window(), "status": "rejected"}).json()["total"] == 1
     reset = client.post(f"{BASE}/{excuse.id}/reset").json()
     assert (reset["status"], reset["reviewed_by"], reset["reviewed_at"], reset["review_note"]) == ("pending", None, None, None)
-    assert client.get(f"{BASE}/summary").json() == {"pending_total": 1}
+    assert client.get(f"{BASE}/summary").json()["pending_total"] == 1
     # Reset of a pending excuse is a harmless no-op without a journal row.
     before = audit_actions(world, excuse.attendance_id)
     client.post(f"{BASE}/{excuse.id}/reset")

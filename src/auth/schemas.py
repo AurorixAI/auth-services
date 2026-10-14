@@ -487,6 +487,9 @@ class OpenAttendanceActionResponse(BaseModel):
     markedCount: int = 0
     rosterCount: int = 0
     remainingCount: int = 0
+    # Who taught / is to teach the lesson (lesson snapshot, else group teacher).
+    teacherId: Optional[str] = None
+    teacherName: Optional[str] = None
 
 
 class TeacherDashboardLessonAttendanceStateResponse(BaseModel):
