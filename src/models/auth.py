@@ -20,6 +20,7 @@ from sqlalchemy import (
     CheckConstraint,
     UniqueConstraint,
     Numeric,
+    LargeBinary,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -429,7 +430,10 @@ class GroupAudit(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
     __table_args__ = (
-        CheckConstraint("action IN ('created')", name="ck_group_audit_action"),
+        CheckConstraint(
+            "action IN ('created', 'updated', 'teacher_changed')",
+            name="ck_group_audit_action",
+        ),
         CheckConstraint(
             "actor_role IN ('owner', 'admin', 'teacher', 'superadmin')",
             name="ck_group_audit_actor_role",
@@ -649,6 +653,10 @@ class GroupAttendance(Base):
     # Membership can change later, but it must never rewrite past attendance.
     roster_snapshot = Column(JSONB, nullable=True, default=list)
     marked_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    # The group's teacher at the moment the lesson row was created.  Groups
+    # carry no teacher history, so this snapshot is the only durable record of
+    # who taught a lesson; changing ``Group.teacher_id`` never rewrites it.
+    teacher_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     # Server timestamp of the explicit teacher action "Start lesson".  It is
     # deliberately distinct from ``created_at`` so future analytics never
     # mistake a draft/scheduled occurrence for delivered teaching time.
@@ -669,6 +677,7 @@ class GroupAttendance(Base):
         ),
         Index("idx_attendance_group", "group_id"),
         Index("idx_attendance_org", "org_id"),
+        Index("idx_attendance_teacher", "org_id", "teacher_id", "lesson_date"),
     )
 
     def to_dict(self) -> dict:
@@ -683,6 +692,7 @@ class GroupAttendance(Base):
             "records": self.records or {},
             "roster_snapshot": self.roster_snapshot or [],
             "marked_by": str(self.marked_by) if self.marked_by else None,
+            "teacher_id": str(self.teacher_id) if self.teacher_id else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "cancellation_reason": self.cancellation_reason,
@@ -713,7 +723,7 @@ class GroupAttendanceAudit(Base):
         nullable=False,
     )
     actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    action = Column(String(30), nullable=False)  # started | reconciliation_started | updated | corrected | cancelled
+    action = Column(String(30), nullable=False)  # started | reconciliation_started | updated | corrected | cancelled | excuse_*
     before_status = Column(String(20))
     after_status = Column(String(20), nullable=False)
     before_records = Column(JSONB)
@@ -724,11 +734,88 @@ class GroupAttendanceAudit(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "action IN ('started', 'reconciliation_started', 'created', 'updated', 'corrected', 'cancelled', 'reconciliation_cancelled')",
+            "action IN ('started', 'reconciliation_started', 'created', 'updated', 'corrected', 'cancelled', 'reconciliation_cancelled', "
+            "'excuse_reviewed', 'excuse_file_added', 'excuse_file_removed')",
             name="ck_group_attendance_audit_action",
         ),
         Index("idx_group_attendance_audit_attendance", "attendance_id"),
         Index("idx_group_attendance_audit_group", "group_id"),
+    )
+
+
+class AttendanceExcuse(Base):
+    """Причина уважительного пропуска и решение администратора по ней.
+
+    Запись создаётся при отметке ``excused`` и живёт, пока ученик остаётся
+    ``excused`` на этом уроке: смена отметки удаляет запись вместе с файлами.
+    """
+
+    __tablename__ = "attendance_excuses"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    attendance_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("group_attendance.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    student_id = Column(UUID(as_uuid=True), nullable=False)
+    reason = Column(String(300), nullable=False)
+    reason_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    reason_at = Column(DateTime, nullable=False)
+    status = Column(String(12), nullable=False, default="pending", server_default="pending")
+    reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    review_note = Column(String(500), nullable=True)
+
+    files = relationship(
+        "AttendanceExcuseFile",
+        back_populates="excuse",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("attendance_id", "student_id", name="uq_attendance_excuse_student"),
+        CheckConstraint(
+            "status IN ('pending', 'confirmed', 'rejected')",
+            name="ck_attendance_excuse_status",
+        ),
+        Index("idx_attendance_excuses_org_status", "org_id", "status"),
+    )
+
+
+class AttendanceExcuseFile(Base):
+    """Справка к уважительному пропуску (JPEG/PNG/PDF, до 2 МБ, хранится в БД)."""
+
+    __tablename__ = "attendance_excuse_files"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), nullable=False)
+    excuse_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("attendance_excuses.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    filename = Column(String(200))
+    content_type = Column(String(50), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    data = Column(LargeBinary, nullable=False)
+    uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    uploaded_at = Column(DateTime, nullable=False)
+
+    excuse = relationship("AttendanceExcuse", back_populates="files")
+
+    __table_args__ = (
+        CheckConstraint(
+            "size_bytes > 0 AND size_bytes <= 2097152",
+            name="ck_attendance_excuse_file_size",
+        ),
+        Index("idx_attendance_excuse_files_excuse", "excuse_id"),
     )
 
 
