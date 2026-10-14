@@ -46,8 +46,11 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     with engine.connect() as connection:
         assert connection.execute(text('SELECT name FROM organizations WHERE id=:id'),{'id':ids['org']}).scalar_one()=='Migration sentinel'
         assert connection.execute(text('SELECT count(*) FROM student_groups WHERE id=:id'),{'id':ids['membership']}).scalar_one()==1
-        assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='s9t0u1v2w3x'
+        assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='t0u1v2w3x4y'
+    assert 'student_payments' in set(inspect(engine).get_table_names())
+    assert {'monthly_fee','monthly_fee_updated_by','monthly_fee_updated_at'} <= {c['name'] for c in inspect(engine).get_columns('student_groups')}
     _check_n13_p1_objects(engine,config,ids)
+    _check_n13_p2_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -106,6 +109,67 @@ def _check_n13_p1_objects(engine,config,ids):
     command.stamp(config,'r8s9t0u1v2w')
     command.upgrade(config,'head')
     with engine.connect() as c:
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='s9t0u1v2w3x'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='t0u1v2w3x4y'
         # Backfill restores the snapshot from the group's current teacher.
         assert c.execute(text('SELECT teacher_id FROM group_attendance WHERE id=:a'),params).scalar_one()==teacher
+
+
+def _check_n13_p2_objects(engine,config,ids):
+    """N13 P2: payments table guards, RESTRICT on memberships, round trip."""
+    from datetime import date
+    from sqlalchemy.exc import IntegrityError
+    from src.models.auth import User
+    actor,pay=uuid4(),uuid4()
+    with Session(engine) as db:
+        db.add(User(id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='P',role='owner'))
+        db.commit()
+    params={'o':ids['org'],'m':ids['membership'],'s':ids['student'],'g':ids['group'],'u':actor,'p':pay}
+    insert=("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,valid_from,valid_to,lessons_count,created_by{extra}) "
+            "VALUES ({pid},:o,:m,:s,:g,{amount},'2026-10-05','2026-10-05',{valid_to},{lessons},:u{extra_v})")
+    def row(pid=':p',amount='450000',valid_to="'2026-11-04'",lessons='NULL',extra='',extra_v=''):
+        return insert.format(pid=pid,amount=amount,valid_to=valid_to,lessons=lessons,extra=extra,extra_v=extra_v)
+    with engine.begin() as c:
+        c.execute(text(row()),params)
+        # a lessons-mode payment is a different row, not a duplicate
+        c.execute(text(row(pid='gen_random_uuid()',valid_to='NULL',lessons='12')),params)
+    bad={
+        'negative amount':row(pid='gen_random_uuid()',amount='-1',valid_to="'2026-12-04'"),
+        'zero lessons':row(pid='gen_random_uuid()',valid_to='NULL',lessons='0',amount='1'),
+        'neither period':row(pid='gen_random_uuid()',valid_to='NULL',lessons='NULL',amount='2'),
+        'both periods':row(pid='gen_random_uuid()',lessons='12',amount='3'),
+        'valid_to before valid_from':row(pid='gen_random_uuid()',valid_to="'2026-10-04'",amount='4'),
+        'partial void':row(pid='gen_random_uuid()',amount='5',valid_to="'2026-12-05'",extra=',voided_at',extra_v=',now()'),
+        'duplicate live payment':row(pid='gen_random_uuid()'),
+        'duplicate live lessons payment':row(pid='gen_random_uuid()',valid_to='NULL',lessons='12'),
+    }
+    for name,sql in bad.items():
+        with pytest.raises(IntegrityError,match='.'):
+            with engine.begin() as c:
+                c.execute(text(sql),params)
+    with engine.begin() as c:
+        c.execute(text("UPDATE student_payments SET voided_at=now(),voided_by=:u,void_reason='test' WHERE id=:p"),params)
+        # the same payment again is allowed once the first one is voided
+        c.execute(text(row(pid='gen_random_uuid()')),params)
+        with pytest.raises(IntegrityError):
+            with c.begin_nested():
+                c.execute(text("UPDATE student_groups SET monthly_fee=-5 WHERE id=:m"),params)
+    # RESTRICT: a membership (and so its group/student) with payments cannot be deleted.
+    for sql in ("DELETE FROM student_groups WHERE id=:m","DELETE FROM groups WHERE id=:g","DELETE FROM students WHERE id=:s"):
+        with pytest.raises(IntegrityError):
+            with engine.begin() as c:
+                c.execute(text(sql),params)
+    with engine.begin() as c:
+        c.execute(text("UPDATE student_groups SET monthly_fee=450000 WHERE id=:m"),params)
+    # Round trip: downgrade drops payments and the fee columns, keeps memberships.
+    command.downgrade(config,'s9t0u1v2w3x')
+    assert 'student_payments' not in set(inspect(engine).get_table_names())
+    assert not ({'monthly_fee','monthly_fee_updated_by','monthly_fee_updated_at'} & {c['name'] for c in inspect(engine).get_columns('student_groups')})
+    with engine.connect() as c:
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='s9t0u1v2w3x'
+        assert c.execute(text('SELECT count(*) FROM student_groups WHERE id=:m'),params).scalar_one()==1
+    command.upgrade(config,'head')
+    command.upgrade(config,'head')  # idempotent re-run
+    with engine.connect() as c:
+        assert c.execute(text('SELECT count(*) FROM student_payments')).scalar_one()==0
+        assert c.execute(text('SELECT monthly_fee FROM student_groups WHERE id=:m'),params).scalar_one() is None
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='t0u1v2w3x4y'

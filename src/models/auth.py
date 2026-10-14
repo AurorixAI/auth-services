@@ -21,6 +21,10 @@ from sqlalchemy import (
     UniqueConstraint,
     Numeric,
     LargeBinary,
+    BigInteger,
+    SmallInteger,
+    Date,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -471,11 +475,18 @@ class StudentGroup(Base):
     initial_diagnostic_reviewed_at = Column(DateTime)
     initial_diagnostic_reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
 
+    # "Оплата в месяц" in whole sums.  NULL = not set, 0 = free.  Money is
+    # never returned by student/group endpoints - only by the payment API.
+    monthly_fee = Column(BigInteger, nullable=True)
+    monthly_fee_updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    monthly_fee_updated_at = Column(DateTime, nullable=True)
+
     student = relationship("Student", back_populates="group_memberships")
     group = relationship("Group", back_populates="student_memberships")
 
     __table_args__ = (
         UniqueConstraint("student_id", "group_id", name="uq_student_group"),
+        CheckConstraint("monthly_fee >= 0", name="ck_student_groups_monthly_fee"),
     )
 
 
@@ -913,4 +924,95 @@ class GroupScheduleAudit(Base):
         ),
         Index("idx_group_schedule_audit_group", "group_id", "effective_date"),
         Index("idx_group_schedule_audit_override", "override_id"),
+    )
+
+
+# ============================================================================
+# STUDENT PAYMENTS (N13 P2)
+# ============================================================================
+
+
+class StudentPayment(Base):
+    """Одна оплата за период по одному членству ученика в группе.
+
+    Записи не удаляются: ``voided_*`` отменяет оплату, ``replaces_payment_id``
+    связывает исправление со старой записью.  Ровно одно из ``valid_to`` /
+    ``lessons_count`` заполнено - это режим периода, действовавший при внесении.
+    """
+
+    __tablename__ = "student_payments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    membership_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("student_groups.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    # Copies of the membership's ids for fast queries (kept equal by the service).
+    student_id = Column(
+        UUID(as_uuid=True), ForeignKey("students.id", ondelete="RESTRICT"), nullable=False
+    )
+    group_id = Column(
+        UUID(as_uuid=True), ForeignKey("groups.id", ondelete="RESTRICT"), nullable=False
+    )
+    amount = Column(BigInteger, nullable=False)
+    currency = Column(String(3), nullable=False, default="UZS", server_default="UZS")
+    paid_on = Column(Date, nullable=False)
+    valid_from = Column(Date, nullable=False)
+    valid_to = Column(Date, nullable=True)
+    lessons_count = Column(SmallInteger, nullable=True)
+    note = Column(String(500), nullable=True)
+    replaces_payment_id = Column(UUID(as_uuid=True), ForeignKey("student_payments.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    voided_at = Column(DateTime, nullable=True)
+    voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    void_reason = Column(String(500), nullable=True)
+
+    membership = relationship("StudentGroup")
+
+    __table_args__ = (
+        CheckConstraint("amount >= 0", name="ck_student_payments_amount"),
+        CheckConstraint("lessons_count > 0", name="ck_student_payments_lessons_positive"),
+        CheckConstraint(
+            "(valid_to IS NULL) <> (lessons_count IS NULL)", name="ck_student_payments_period_kind"
+        ),
+        CheckConstraint(
+            "valid_to IS NULL OR valid_to >= valid_from", name="ck_student_payments_period_order"
+        ),
+        CheckConstraint(
+            "(voided_at IS NULL AND voided_by IS NULL AND void_reason IS NULL) OR "
+            "(voided_at IS NOT NULL AND voided_by IS NOT NULL AND void_reason IS NOT NULL)",
+            name="ck_student_payments_void_all_or_none",
+        ),
+        Index(
+            "idx_student_payments_membership",
+            "org_id",
+            "membership_id",
+            text("valid_to DESC"),
+        ),
+        Index(
+            "idx_student_payments_org_valid_to",
+            "org_id",
+            "valid_to",
+            postgresql_where=text("voided_at IS NULL"),
+        ),
+        # Double-click guard: an identical live payment cannot be inserted twice.
+        Index(
+            "uq_student_payments_active_dup",
+            "org_id",
+            "membership_id",
+            "paid_on",
+            "valid_from",
+            text("COALESCE(valid_to, DATE '1900-01-01')"),
+            text("COALESCE(lessons_count, 0)"),
+            "amount",
+            unique=True,
+            postgresql_where=text("voided_at IS NULL"),
+        ),
     )
