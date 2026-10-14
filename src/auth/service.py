@@ -4502,9 +4502,14 @@ class AuthService:
         # unusable operational queue. Completed/cancelled/in-progress rows
         # are all terminal for this discovery pass and therefore excluded.
         recorded_keys = {
-            (str(attendance.group_id), attendance.lesson_date, attendance.lesson_id)
-            for attendance in (
-                self.db.query(GroupAttendance)
+            (str(group_id), lesson_date, lesson_id)
+            # Only the three key columns: the JSON records / roster snapshots are not needed here.
+            for group_id, lesson_date, lesson_id in (
+                self.db.query(
+                    GroupAttendance.group_id,
+                    GroupAttendance.lesson_date,
+                    GroupAttendance.lesson_id,
+                )
                 .filter(
                     GroupAttendance.org_id == org_id,
                     GroupAttendance.group_id.in_(group_ids),
