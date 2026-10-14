@@ -432,6 +432,9 @@ class SaveAttendanceRequest(BaseModel):
     records: Dict[UUID, StudentAttendanceStatus] = Field(default_factory=dict)
     correctionReason: Optional[str] = Field(None, min_length=3, max_length=500)
     cancellationReason: Optional[str] = Field(None, min_length=3, max_length=500)
+    # Reason for every student newly marked "excused" (3..300 characters). May
+    # also be sent for an already excused student to change the reason.
+    excuseReasons: Optional[Dict[UUID, str]] = None
 
 
 class GroupAttendanceResponse(BaseModel):
@@ -453,6 +456,11 @@ class GroupAttendanceResponse(BaseModel):
     # A student newly enrolled after an initial diagnostic stays flagged only
     # until the teacher of the current group has opened that report.
     diagnosticReportNotices: List[Dict[str, Any]] = Field(default_factory=list)
+    # Excuse reasons and their review state: { lessonKey: { studentId: {...} } }.
+    # ``review_note`` is present for administrators only.
+    excuses: Dict[str, Dict[str, Dict[str, Any]]] = Field(default_factory=dict)
+    # Latest correction of a completed lesson: { lessonKey: {by_name, at, reason} }.
+    corrections: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 
 class OpenAttendanceActionResponse(BaseModel):

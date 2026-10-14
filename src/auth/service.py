@@ -22,6 +22,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import func, or_
 
 from .student_id_service import assign_display_id
+from .attendance_excuses import AttendanceExcuseService
 from .diagnostic_level import level_fields, normalize_level_payload
 from .models import (
     Organization,
@@ -2636,6 +2637,16 @@ class AuthService:
 
         return lessons_out
 
+    @staticmethod
+    def _attendance_teacher_snapshot(group: Group) -> Optional[UUID]:
+        """Teacher to record on a new lesson row.
+
+        Groups keep no teacher history, so every created ``GroupAttendance``
+        freezes the teacher the group has *now*; a later reassignment of the
+        group never rewrites the lessons already taught.
+        """
+        return group.teacher_id
+
     def _require_group_access(
         self,
         org_id: str,
@@ -4408,6 +4419,7 @@ class AuthService:
         cancellation_reasons_map: Dict[str, str] = {}
         roster_student_ids_map: Dict[str, List[str]] = {}
         lessons_map: Dict[str, Dict[str, Any]] = {}
+        attendance_keys: Dict[UUID, str] = {}  # attendance row id -> journal lesson key
         historical_candidate_ids: set[str] = set()
         business_today = datetime.now(BUSINESS_TIMEZONE).date().isoformat()
 
@@ -4436,6 +4448,7 @@ class AuthService:
                 continue
             lesson_key = att.lesson_id or f"lesson_{att.lesson_date}"
             instance_key = f"{att.lesson_date}_{lesson_key}"
+            attendance_keys[att.id] = instance_key
             records = dict(att.records or {})
             records_map[instance_key] = records
             statuses_map[instance_key] = att.status or LessonAttendanceStatus.COMPLETED.value
@@ -4676,6 +4689,10 @@ class AuthService:
                 })
             historical_students.sort(key=lambda item: (item.get("left_at") or "", item["full_name"]))
 
+        excuses_map, corrections_map = AttendanceExcuseService(self.db).journal_payload(
+            org_id, attendance_keys, include_review_note=is_org_admin
+        )
+
         return GroupAttendanceResponse(
             groupId=str(group.id),
             month=month,
@@ -4687,6 +4704,8 @@ class AuthService:
             historicalStudents=historical_students,
             membershipEvents=membership_events,
             diagnosticReportNotices=diagnostic_report_notices,
+            excuses=excuses_map,
+            corrections=corrections_map,
         )
 
     def reconcile_missed_group_attendance(
@@ -4747,6 +4766,7 @@ class AuthService:
         attendance = GroupAttendance(
             org_id=org_id,
             group_id=group_id,
+            teacher_id=self._attendance_teacher_snapshot(group),
             lesson_date=req.lessonDate.isoformat(),
             lesson_id=req.lessonId,
             topic=occurrence.get("topic") or req.topic or occurrence.get("subject"),
@@ -4834,6 +4854,7 @@ class AuthService:
         attendance = GroupAttendance(
             org_id=org_id,
             group_id=group_id,
+            teacher_id=self._attendance_teacher_snapshot(group),
             lesson_date=req.lessonDate.isoformat(),
             lesson_id=req.lessonId,
             topic=occurrence.get("topic") or occurrence.get("subject"),
@@ -5033,6 +5054,7 @@ class AuthService:
         att = GroupAttendance(
             org_id=org_id,
             group_id=group_id,
+            teacher_id=self._attendance_teacher_snapshot(group),
             lesson_date=lesson_date.isoformat(),
             lesson_id=req.lessonId,
             topic=req.topic or matching_slot.get("topic"),
@@ -5119,13 +5141,22 @@ class AuthService:
 
         if not is_cancellation and not att:
             raise ValueError("Сначала начните урок, затем отмечайте посещаемость")
+        # An administrator may correct a completed lesson (a reason is required
+        # below); anyone else only edits a lesson that is in progress.
+        is_correction_save = bool(
+            att
+            and not is_cancellation
+            and is_org_admin
+            and att.status == LessonAttendanceStatus.COMPLETED.value
+        )
         if (
             not is_cancellation
             and att.status != LessonAttendanceStatus.IN_PROGRESS.value
+            and not is_correction_save
         ):
             raise ValueError("Отметки можно изменять только у начатого урока")
 
-        if matching_slot and lesson_date == today and not is_cancellation:
+        if matching_slot and lesson_date == today and not is_cancellation and not is_correction_save:
             start_time = matching_slot.get("startTime")
             end_time = matching_slot.get("endTime")
             start_minutes, end_minutes = self._validate_lesson_time_range(start_time, end_time)
@@ -5186,6 +5217,10 @@ class AuthService:
             if missing_student_ids:
                 raise ValueError("Перед завершением урока заполните отметки всех учеников из состава урока")
 
+        # Reasons for new "excused" marks are validated before any write.
+        excuse_service = AttendanceExcuseService(self.db)
+        excuse_plan = excuse_service.plan_save(att, records, req.excuseReasons)
+
         now = datetime.now(BUSINESS_TIMEZONE).replace(tzinfo=None)
         before_status = att.status if att else None
         before_records = dict(att.records or {}) if att else None
@@ -5238,6 +5273,7 @@ class AuthService:
             att = GroupAttendance(
                 org_id=org_id,
                 group_id=group_id,
+                teacher_id=self._attendance_teacher_snapshot(group),
                 lesson_date=lesson_date.isoformat(),
                 lesson_id=target_lesson_id,
                 topic=req.topic,
@@ -5256,7 +5292,8 @@ class AuthService:
             att.status = requested_status
             if req.topic is not None:
                 att.topic = req.topic
-            att.marked_by = marked_by
+            if not is_correction_save:
+                att.marked_by = marked_by
             if requested_status == LessonAttendanceStatus.COMPLETED.value:
                 att.completed_at = att.completed_at or now
             else:
@@ -5273,6 +5310,7 @@ class AuthService:
             )
 
         self.db.flush()
+        excuse_service.apply_save(att, excuse_plan, marked_by, now)
         self.db.add(
             GroupAttendanceAudit(
                 attendance_id=att.id,

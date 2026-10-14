@@ -28,6 +28,7 @@ from src.auth.dev_router import router as dev_router
 
 # Auth
 from src.auth.router import router as auth_router
+from src.auth.attendance_excuses_router import router as attendance_excuses_router
 from src.api.internal_router import router as internal_router
 
 # Настройка логирования через structlog
@@ -172,6 +173,7 @@ async def global_exception_handler(request, exc):
 
 # ─── Routers ───
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(attendance_excuses_router, prefix="/api/v1")
 app.include_router(internal_router, prefix="/api/v1")
 # analytics_router removed — analytics live in diagnostic-service (port 8002)
 
