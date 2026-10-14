@@ -254,6 +254,14 @@ def verify_refresh_token(token: str) -> Optional[dict]:
 # ============================================================================
 
 
+class _SchedulePreload:
+    """Per-group one-off lessons and schedule overrides loaded in bulk."""
+
+    def __init__(self) -> None:
+        self.one_offs: Dict[Any, List[GroupScheduleOneOffLesson]] = {}
+        self.overrides: Dict[Any, List[GroupScheduleOverride]] = {}
+
+
 class AuthService:
     def __init__(self, db: Session):
         self.db = db
@@ -3078,6 +3086,7 @@ class AuthService:
         *,
         until: date,
         extra_lesson_ids: Optional[List[str]] = None,
+        preloaded_overrides: Optional[List[GroupScheduleOverride]] = None,
     ) -> tuple[
         Dict[str, List[GroupScheduleOverride]],
         Dict[tuple[str, str], GroupScheduleOverride],
@@ -3092,16 +3101,25 @@ class AuthService:
         lesson_ids = list(dict.fromkeys(lesson_ids))
         if not lesson_ids:
             return {}, {}, {}
-        overrides = (
-            self.db.query(GroupScheduleOverride)
-            .filter(
-                GroupScheduleOverride.group_id == group.id,
-                GroupScheduleOverride.lesson_id.in_(lesson_ids),
-                GroupScheduleOverride.effective_date <= until.isoformat(),
+        if preloaded_overrides is not None:
+            # Same filter and order as the query below, applied to rows that a
+            # batch loader already fetched for many groups at once.
+            wanted = set(lesson_ids)
+            overrides = [
+                item for item in preloaded_overrides
+                if item.lesson_id in wanted and item.effective_date <= until.isoformat()
+            ]
+        else:
+            overrides = (
+                self.db.query(GroupScheduleOverride)
+                .filter(
+                    GroupScheduleOverride.group_id == group.id,
+                    GroupScheduleOverride.lesson_id.in_(lesson_ids),
+                    GroupScheduleOverride.effective_date <= until.isoformat(),
+                )
+                .order_by(GroupScheduleOverride.effective_date, GroupScheduleOverride.created_at)
+                .all()
             )
-            .order_by(GroupScheduleOverride.effective_date, GroupScheduleOverride.created_at)
-            .all()
-        )
         recurring: Dict[str, List[GroupScheduleOverride]] = {}
         occurrences: Dict[tuple[str, str], GroupScheduleOverride] = {}
         recurring_ends: Dict[str, GroupScheduleOverride] = {}
@@ -3134,27 +3152,70 @@ class AuthService:
                 payload = dict(revision.payload or payload)
         return payload
 
+    def _preload_schedule_data(
+        self, group_ids: List[Any], *, date_from: date, date_to: date
+    ) -> "_SchedulePreload":
+        """One-off lessons and schedule overrides of many groups: two queries in total."""
+        preload = _SchedulePreload()
+        ids = list(dict.fromkeys(group_ids))
+        if not ids:
+            return preload
+        for lesson in (
+            self.db.query(GroupScheduleOneOffLesson)
+            .filter(
+                GroupScheduleOneOffLesson.group_id.in_(ids),
+                GroupScheduleOneOffLesson.lesson_date >= date_from.isoformat(),
+                GroupScheduleOneOffLesson.lesson_date <= date_to.isoformat(),
+            )
+            .all()
+        ):
+            preload.one_offs.setdefault(lesson.group_id, []).append(lesson)
+        for override in (
+            self.db.query(GroupScheduleOverride)
+            .filter(
+                GroupScheduleOverride.group_id.in_(ids),
+                GroupScheduleOverride.effective_date <= date_to.isoformat(),
+            )
+            .order_by(GroupScheduleOverride.effective_date, GroupScheduleOverride.created_at)
+            .all()
+        ):
+            preload.overrides.setdefault(override.group_id, []).append(override)
+        return preload
+
     def _resolved_occurrences_for_group(
         self,
         group: Group,
         *,
         date_from: date,
         date_to: date,
+        preloaded: Optional["_SchedulePreload"] = None,
     ) -> List[Dict[str, Any]]:
-        """Развернуть шаблон расписания в реальные занятия заданного периода."""
-        one_off_lessons = (
-            self.db.query(GroupScheduleOneOffLesson)
-            .filter(
-                GroupScheduleOneOffLesson.group_id == group.id,
-                GroupScheduleOneOffLesson.lesson_date >= date_from.isoformat(),
-                GroupScheduleOneOffLesson.lesson_date <= date_to.isoformat(),
+        """Развернуть шаблон расписания в реальные занятия заданного периода.
+
+        ``preloaded`` (see ``_preload_schedule_data``) replaces the two per-group
+        queries when many groups are resolved in one pass; its rows must cover
+        the requested period.
+        """
+        if preloaded is not None:
+            one_off_lessons = [
+                lesson for lesson in preloaded.one_offs.get(group.id, [])
+                if date_from.isoformat() <= lesson.lesson_date <= date_to.isoformat()
+            ]
+        else:
+            one_off_lessons = (
+                self.db.query(GroupScheduleOneOffLesson)
+                .filter(
+                    GroupScheduleOneOffLesson.group_id == group.id,
+                    GroupScheduleOneOffLesson.lesson_date >= date_from.isoformat(),
+                    GroupScheduleOneOffLesson.lesson_date <= date_to.isoformat(),
+                )
+                .all()
             )
-            .all()
-        )
         recurring, occurrence_overrides, recurring_ends = self._schedule_overrides_for_group(
             group,
             until=date_to,
             extra_lesson_ids=[lesson.id for lesson in one_off_lessons],
+            preloaded_overrides=preloaded.overrides.get(group.id, []) if preloaded is not None else None,
         )
         slots = [slot for slot in (group.schedule or []) if isinstance(slot, dict)]
         result: List[Dict[str, Any]] = []
@@ -4344,13 +4405,40 @@ class AuthService:
             if not actor_id:
                 raise PermissionError("Нет доступа к открытым урокам")
             query = query.filter(Group.teacher_id == actor_id)
-
-        actions: list[OpenAttendanceActionResponse] = []
-        for attendance, group in query.order_by(
+        open_rows = query.order_by(
             GroupAttendance.lesson_date.asc(),
             GroupAttendance.started_at.asc(),
             GroupAttendance.created_at.asc(),
-        ).all():
+        ).all()
+
+        # The missed-lesson candidates are known up front, so the schedule
+        # data of every group involved is loaded once (two queries) instead of
+        # per group: the cost of this call must not grow with the group count.
+        reconciliation_from = today_date - timedelta(days=MISSED_LESSON_RECONCILIATION_DAYS)
+        groups_query = self.db.query(Group).filter(
+            Group.org_id == org_id,
+            Group.status == "active",
+        )
+        if not is_org_admin:
+            if not actor_id:
+                raise PermissionError("Нет доступа к пропущенным урокам")
+            groups_query = groups_query.filter(Group.teacher_id == actor_id)
+        actionable_groups = groups_query.order_by(Group.name).all()
+        group_ids = [group.id for group in actionable_groups]
+        open_dates = [row[0].lesson_date for row in open_rows if row[0].lesson_date]
+        preload_from = min([reconciliation_from.isoformat(), *open_dates])
+        try:
+            preload_from_date = date.fromisoformat(preload_from)
+        except ValueError:
+            preload_from_date = reconciliation_from
+        schedule = self._preload_schedule_data(
+            [*(row[1].id for row in open_rows), *group_ids],
+            date_from=preload_from_date,
+            date_to=today_date,
+        )
+
+        actions: list[OpenAttendanceActionResponse] = []
+        for attendance, group in open_rows:
             try:
                 lesson_date = date.fromisoformat(attendance.lesson_date)
             except (TypeError, ValueError):
@@ -4361,7 +4449,7 @@ class AuthService:
                 (
                     item
                     for item in self._resolved_occurrences_for_group(
-                        group, date_from=lesson_date, date_to=lesson_date
+                        group, date_from=lesson_date, date_to=lesson_date, preloaded=schedule
                     )
                     if item["id"] == attendance.lesson_id
                 ),
@@ -4403,17 +4491,6 @@ class AuthService:
         # Without it, an old recurring schedule would create an unbounded and
         # unusable operational queue. Completed/cancelled/in-progress rows
         # are all terminal for this discovery pass and therefore excluded.
-        reconciliation_from = today_date - timedelta(days=MISSED_LESSON_RECONCILIATION_DAYS)
-        groups_query = self.db.query(Group).filter(
-            Group.org_id == org_id,
-            Group.status == "active",
-        )
-        if not is_org_admin:
-            if not actor_id:
-                raise PermissionError("Нет доступа к пропущенным урокам")
-            groups_query = groups_query.filter(Group.teacher_id == actor_id)
-        actionable_groups = groups_query.order_by(Group.name).all()
-        group_ids = [group.id for group in actionable_groups]
         recorded_keys = {
             (str(attendance.group_id), attendance.lesson_date, attendance.lesson_id)
             for attendance in (
@@ -4432,7 +4509,7 @@ class AuthService:
 
         for group in actionable_groups:
             for occurrence in self._resolved_occurrences_for_group(
-                group, date_from=reconciliation_from, date_to=today_date
+                group, date_from=reconciliation_from, date_to=today_date, preloaded=schedule
             ):
                 occurrence_date = occurrence["occurrenceDate"]
                 key = (str(group.id), occurrence_date, occurrence["id"])

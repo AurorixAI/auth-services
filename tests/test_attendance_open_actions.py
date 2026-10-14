@@ -111,7 +111,77 @@ def test_summary_survives_open_lessons_failure(world, monkeypatch):
     monkeypatch.setattr(AuthService, "get_open_attendance_actions", boom)
     r = make_client(world).get(SUMMARY)
     assert r.status_code == 200
-    assert r.json() == {"pending_total": 1, "open_lessons_total": 0}
+    # Not counted is not zero: the client keeps its last value.
+    assert r.json() == {"pending_total": 1, "open_lessons_total": None}
+
+
+def test_summary_survives_a_real_sql_error_in_the_open_lessons_count(world, monkeypatch):
+    from sqlalchemy import text
+
+    excused_lesson(world)
+
+    def poisoned(self, *a, **kw):
+        # A genuine database error: the PostgreSQL transaction is aborted.
+        self.db.execute(text("SELECT * FROM table_that_does_not_exist_n13"))
+
+    monkeypatch.setattr(AuthService, "get_open_attendance_actions", poisoned)
+    client = make_client(world)
+    r = client.get(SUMMARY)
+    assert r.status_code == 200
+    assert r.json() == {"pending_total": 1, "open_lessons_total": None}
+    monkeypatch.undo()
+    # The session was rolled back and is usable; the next summary is complete.
+    again = client.get(SUMMARY).json()
+    assert again["pending_total"] == 1 and again["open_lessons_total"] > 1
+    assert world.db.execute(text("SELECT 1")).scalar() == 1
+
+
+def _statements_for_open_actions(w):
+    from sqlalchemy import event
+
+    statements = []
+    engine = w.db.get_bind()
+
+    def record(conn, cursor, statement, *a):
+        statements.append(statement)
+
+    w.db.expire_all()
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        items = w.svc.get_open_attendance_actions(str(w.org.id), actor_id=None, is_org_admin=True)
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    return items, statements
+
+
+def test_open_actions_query_count_does_not_grow_with_group_count(world):
+    from tests.pg_world import make_group
+
+    def add_groups(count, start):
+        for i in range(count):
+            group = make_group(world.db, world.org, world.teacher, f"Доп {start + i}")
+            if i % 3 == 0:
+                reconcile(world, offset_days=1, group=group)  # a started lesson in every third group
+        world.db.commit()
+
+    add_groups(2, 0)  # 3 active groups
+    small_items, small = _statements_for_open_actions(world)
+    add_groups(27, 2)  # 30 active groups
+    big_items, big = _statements_for_open_actions(world)
+    assert len(big_items) > len(small_items) > 0
+    assert len(big) == len(small), (len(small), len(big))
+    assert len(big) <= 8
+
+
+def test_preloaded_schedule_gives_the_same_occurrences(world):
+    from datetime import timedelta
+    from src.auth.service import AuthService
+
+    today = business_today()
+    kw = dict(date_from=today - timedelta(days=30), date_to=today)
+    plain = world.svc._resolved_occurrences_for_group(world.group, **kw)
+    pre = world.svc._preload_schedule_data([world.group.id], **kw)
+    assert world.svc._resolved_occurrences_for_group(world.group, preloaded=pre, **kw) == plain
 
 
 def test_teacher_still_gets_403_on_summary(world):
