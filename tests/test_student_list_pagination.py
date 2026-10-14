@@ -33,8 +33,13 @@ def world():
         group = Group(org_id=org.id, name="G", class_level=8)
         db.add(group); db.flush()
         for i in range(250):
-            db.add(Student(org_id=org.id, first_name=f"Имя{i}", last_name="Иванов" if i % 2 else "Петров",
-                           class_level=8, group_id=group.id if i < 220 else None))
+            student = Student(org_id=org.id, first_name=f"Имя{i}", last_name="Иванов" if i % 2 else "Петров",
+                              class_level=8, group_id=group.id if i < 220 else None)
+            db.add(student)
+            db.flush()
+            if i < 220:
+                # The group filter reads active memberships (a student may be in several groups).
+                db.add(StudentGroup(student_id=student.id, group_id=group.id, is_active=True))
         db.add(Student(org_id=other.id, first_name="Чужой", last_name="Ученик", class_level=8))
         db.commit()
         yield db, org.id, group.id

@@ -88,6 +88,15 @@ from src.core.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+# A transfer closes one membership and opens the next one in the same request;
+# the two timestamps may differ only by the time the request itself takes.
+TRANSFER_WINDOW_SECONDS = 2
+MEMBERSHIP_MODES = ("transfer", "add")
+
+
+class MembershipConflict(ValueError):
+    """The membership change contradicts the current state (HTTP 409)."""
 BUSINESS_TIMEZONE = ZoneInfo(os.getenv("BUSINESS_TIMEZONE", "Asia/Tashkent"))
 # A stale schedule should not turn into an unbounded operational queue. The
 # latest calendar month is long enough for a teacher to reconcile an omission
@@ -1069,9 +1078,40 @@ class AuthService:
                 "left_at": m.left_at.isoformat() if m.left_at else None,
             })
 
+        # 5. Every active membership (primary first); no money here.
+        group_rows = (
+            self.db.query(StudentGroup, Group, User)
+            .join(Group, Group.id == StudentGroup.group_id)
+            .outerjoin(User, User.id == Group.teacher_id)
+            .filter(
+                StudentGroup.student_id == student_id,
+                StudentGroup.is_active.is_(True),
+                Group.org_id == org_id,
+            )
+            .order_by(StudentGroup.joined_at, StudentGroup.id)
+            .all()
+        )
+        groups_list = [
+            {
+                "membership_id": str(m.id),
+                "group_id": str(g.id),
+                "group_name": g.name,
+                "teacher_id": str(g.teacher_id) if g.teacher_id else None,
+                "teacher_name": (
+                    f"{t.first_name} {t.last_name}".strip() if t is not None else None
+                ),
+                "class_level": g.class_level,
+                "is_primary": str(student.group_id or "") == str(g.id),
+                "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+            }
+            for m, g, t in group_rows
+        ]
+        groups_list.sort(key=lambda item: not item["is_primary"])  # stable: primary first
+
         return {
             "student": self._build_student_response(student).model_dump(),
             "group": group_info,
+            "groups": groups_list,
             "group_history": group_history,
             "diagnostics": diagnostics_list,
             "diagnostic_results": results_list,
@@ -1273,7 +1313,16 @@ class AuthService:
         if class_level:
             query = query.filter(Student.class_level == class_level)
         if group_id:
-            query = query.filter(Student.group_id == group_id)
+            # Any active membership counts: a student of two groups is found
+            # by the filter of either one.
+            query = query.filter(
+                Student.id.in_(
+                    self.db.query(StudentGroup.student_id).filter(
+                        StudentGroup.group_id == group_id,
+                        StudentGroup.is_active.is_(True),
+                    )
+                )
+            )
         if has_primary_group is True:
             query = query.filter(Student.group_id.isnot(None))
         if has_group is True:
@@ -2163,14 +2212,9 @@ class AuthService:
             .filter(StudentGroup.group_id == group_id, StudentGroup.is_active)
             .all()
         )
+        # Only the *current* roster: a former member (inactive membership) or
+        # a stale primary-group pointer must not pass as enrolled.
         student_ids = {m.student_id for m in memberships}
-        primary_students = (
-            self.db.query(Student)
-            .filter(Student.group_id == group_id)
-            .all()
-        )
-        for ps in primary_students:
-            student_ids.add(ps.id)
 
         if not student_ids:
             return {
@@ -2339,14 +2383,27 @@ class AuthService:
         return by_invite
 
     def bulk_add_students(
-        self, org_id: str, group_id: str, student_ids: list[str]
+        self,
+        org_id: str,
+        group_id: str,
+        student_ids: list[str],
+        *,
+        mode: str = "transfer",
+        monthly_fee: Optional[int] = None,
+        actor_id: Optional[str] = None,
     ) -> dict:
         added = 0
         skipped_details: list[dict[str, str]] = []
+        warnings: list[dict[str, str]] = []
         for student_id in student_ids:
             try:
-                self.add_student_to_group(org_id, group_id, student_id)
+                result = self.add_student_to_group(
+                    org_id, group_id, student_id,
+                    mode=mode, monthly_fee=monthly_fee, actor_id=actor_id,
+                )
                 added += 1
+                for warning in result.get("warnings", []):
+                    warnings.append({"student_id": str(student_id), **warning})
             except ValueError as exc:
                 # Release the row locks taken before the refusal.
                 self.db.rollback()
@@ -2357,9 +2414,29 @@ class AuthService:
             "added": added,
             "skipped": len(skipped_details),
             "skipped_details": skipped_details,
+            "warnings": warnings,
         }
 
-    def add_student_to_group(self, org_id: str, group_id: str, student_id: str) -> dict:
+    def add_student_to_group(
+        self,
+        org_id: str,
+        group_id: str,
+        student_id: str,
+        *,
+        mode: str = "transfer",
+        monthly_fee: Optional[int] = None,
+        actor_id: Optional[str] = None,
+    ) -> dict:
+        """Enrol a student in a group.
+
+        ``transfer`` (default): every other active membership is closed and the
+        group becomes the primary one.  ``add``: other memberships stay, the
+        primary group changes only if the student had none.  ``monthly_fee`` is
+        written to the membership; the caller must have checked the right to
+        manage payments.  Warnings (never refusals) are returned in ``warnings``.
+        """
+        if mode not in MEMBERSHIP_MODES:
+            raise ValueError("Неизвестный способ добавления в группу")
         # Serialize every membership change for this student.  Without this
         # row lock, two concurrent admin requests could both observe the old
         # group and create two active memberships despite the service rule.
@@ -2386,11 +2463,6 @@ class AuthService:
         if group.status != "active":
             raise ValueError("Нельзя зачислить ученика в архивную группу")
 
-        # A request to add a student to the group they already actively belong
-        # to is not a transfer.  Treat it as an explicit no-op before touching
-        # any membership history.  The client uses this state to avoid showing
-        # a false "successfully transferred" confirmation; direct API callers
-        # still get a safe, idempotent response.
         existing = (
             self.db.query(StudentGroup)
             .filter(
@@ -2400,23 +2472,6 @@ class AuthService:
             .with_for_update()
             .first()
         )
-        if existing and existing.is_active:
-            if str(student.group_id) != str(group.id):
-                # Do not silently repair contradictory legacy memberships from
-                # a normal transfer action.  It must be investigated instead.
-                raise ValueError("У ученика обнаружена несогласованность текущей группы")
-            return {
-                "student_id": str(student_id),
-                "group_id": str(group_id),
-                "status": "unchanged",
-                "reason": "already_in_target_group",
-                "display_id": student.display_id,
-            }
-
-        now_dt = datetime.now(timezone.utc)
-
-        # 1. Бизнес-правило: один ученик может состоять только в одной группе.
-        # Деактивируем все предыдущие активные группы ученика
         other_active_memberships = (
             self.db.query(StudentGroup)
             .filter(
@@ -2427,44 +2482,78 @@ class AuthService:
             .with_for_update()
             .all()
         )
-        # A transfer changes the roster of both the previous and destination
-        # groups. It must not rewrite the facts of an already started lesson.
-        affected_group_ids = [
-            group.id,
-            *(membership.group_id for membership in other_active_memberships),
-        ]
+        already_member = bool(existing and existing.is_active)
+
+        if already_member and mode == "add":
+            raise MembershipConflict("Ученик уже состоит в этой группе")
+        # A transfer to the group the student already belongs to (as the only
+        # and primary one) is an explicit no-op: the client uses this state to
+        # avoid a false "successfully transferred" confirmation.
+        if (
+            already_member
+            and mode == "transfer"
+            and not other_active_memberships
+            and str(student.group_id) == str(group.id)
+        ):
+            return {
+                "student_id": str(student_id),
+                "group_id": str(group_id),
+                "status": "unchanged",
+                "reason": "already_in_target_group",
+                "display_id": student.display_id,
+                "mode": mode,
+                "membership_id": str(existing.id),
+                "warnings": [],
+            }
+
+        now_dt = datetime.now(timezone.utc)
+
+        # Only a transfer closes the previous memberships.  The roster of
+        # every changed group must not rewrite an already started lesson.
+        closing = other_active_memberships if mode == "transfer" else []
+        affected_group_ids = [group.id, *(membership.group_id for membership in closing)]
         self._lock_groups_for_membership_change(org_id, affected_group_ids)
         self._assert_no_open_attendance_for_groups(org_id, affected_group_ids)
-        for om in other_active_memberships:
+        for om in closing:
             om.is_active = False
             om.left_at = now_dt
 
-        # 2. Target membership is either a historical inactive record that
-        # will be reactivated, or a new record.  The active case returned
-        # above, so it must count towards capacity in both remaining cases.
-        active_count = (
-            self.db.query(StudentGroup)
-            .filter(
-                StudentGroup.group_id == group_id,
-                StudentGroup.is_active.is_(True),
+        # Target membership is either a historical inactive record that will
+        # be reactivated (its payment history stays attached), or a new one.
+        if not already_member:
+            active_count = (
+                self.db.query(StudentGroup)
+                .filter(
+                    StudentGroup.group_id == group_id,
+                    StudentGroup.is_active.is_(True),
+                )
+                .count()
             )
-            .count()
-        )
-        if group.max_students is not None and active_count >= group.max_students:
-            raise ValueError("В группе достигнут лимит учеников")
+            if group.max_students is not None and active_count >= group.max_students:
+                raise ValueError("В группе достигнут лимит учеников")
 
         if existing:
-            existing.is_active = True
-            # Returning to a historical group starts a new membership period;
-            # the already recorded attendance remains tied to past lessons.
-            existing.joined_at = now_dt
-            existing.left_at = None
+            if not already_member:
+                existing.is_active = True
+                # Returning to a historical group starts a new membership
+                # period; recorded attendance stays tied to past lessons.
+                existing.joined_at = now_dt
+                existing.left_at = None
+            membership = existing
         else:
-            sg = StudentGroup(student_id=student_id, group_id=group_id, is_active=True)
-            self.db.add(sg)
+            membership = StudentGroup(
+                student_id=student_id, group_id=group_id, is_active=True, joined_at=now_dt
+            )
+            self.db.add(membership)
 
-        # 3. Синхронизируем основную группу в Student
-        student.group_id = group_id
+        if monthly_fee is not None:
+            membership.monthly_fee = int(monthly_fee)
+            membership.monthly_fee_updated_by = UUID(str(actor_id)) if actor_id else None
+            membership.monthly_fee_updated_at = now_dt.replace(tzinfo=None)
+
+        # The primary group: a transfer always moves it, "add" only fills a gap.
+        if mode == "transfer" or student.group_id is None:
+            student.group_id = group_id
 
         if student.status in ("new", "diagnosed"):
             student.status = "active"
@@ -2475,13 +2564,42 @@ class AuthService:
         if not student.display_id:
             assign_display_id(self.db, org_id, student)
 
+        self.db.flush()
+        warnings = self._membership_warnings(student, group)
         self.db.commit()
         return {
             "student_id": str(student_id),
             "group_id": str(group_id),
             "status": "added",
             "display_id": student.display_id,
+            "mode": mode,
+            "membership_id": str(membership.id),
+            "warnings": warnings,
         }
+
+    def _membership_warnings(self, student: Student, group: Group) -> list[dict[str, str]]:
+        """Soft notes after enrolment: shown to the administrator, never a refusal."""
+        warnings: list[dict[str, str]] = []
+        active_total = (
+            self.db.query(func.count(StudentGroup.id))
+            .filter(StudentGroup.student_id == student.id, StudentGroup.is_active.is_(True))
+            .scalar()
+            or 0
+        )
+        if active_total >= 3:
+            warnings.append({
+                "code": "third_group",
+                "message": f"Ученик состоит в {active_total} группах",
+            })
+        if group.class_level is not None and student.class_level != group.class_level:
+            warnings.append({
+                "code": "class_mismatch",
+                "message": (
+                    f"Класс ученика ({student.class_level}) не совпадает "
+                    f"с классом группы ({group.class_level})"
+                ),
+            })
+        return warnings
 
     def remove_student_from_group(
         self, org_id: str, group_id: str, student_id: str
@@ -2519,9 +2637,27 @@ class AuthService:
         self._assert_no_open_attendance_for_groups(org_id, [group.id])
         sg.is_active = False
         sg.left_at = datetime.now(timezone.utc)
+        self.db.flush()
 
         if str(student.group_id or "") == str(group.id):
-            student.group_id = None
+            # The primary group is gone: the earliest remaining active
+            # membership (in a live group first) takes over, else none.
+            successor = (
+                self.db.query(StudentGroup)
+                .join(Group, Group.id == StudentGroup.group_id)
+                .filter(
+                    StudentGroup.student_id == student.id,
+                    StudentGroup.is_active.is_(True),
+                    Group.org_id == org_id,
+                )
+                .order_by(
+                    (Group.status != "active"),
+                    StudentGroup.joined_at,
+                    StudentGroup.id,
+                )
+                .first()
+            )
+            student.group_id = successor.group_id if successor else None
 
         self.db.commit()
         return True
@@ -4633,22 +4769,24 @@ class AuthService:
 
             for membership in recent_active_memberships:
                 candidates = sources_by_student_id.get(membership.student_id, [])
-                source = max(
-                    candidates,
-                    key=lambda item: item[0].left_at or datetime.min,
+                # A transfer closes one membership and opens the next one in
+                # the same transaction, so only a closure that coincides with
+                # this opening is a transfer.  A student who was removed from
+                # another group earlier, or who was *added* to this group
+                # while staying in the others, is never labelled "transferred".
+                source = min(
+                    (
+                        item
+                        for item in candidates
+                        if membership.joined_at
+                        and item[0].left_at
+                        and abs((membership.joined_at - item[0].left_at).total_seconds())
+                        <= TRANSFER_WINDOW_SECONDS
+                    ),
+                    key=lambda item: abs((membership.joined_at - item[0].left_at).total_seconds()),
                     default=None,
                 )
-                # A transfer closes one membership and opens the next one in
-                # the same transaction. Five minutes is deliberately narrow:
-                # an old historic membership must not turn a later enrolment
-                # into a false "transfer from" label.
-                is_transfer = bool(
-                    source
-                    and membership.joined_at
-                    and source[0].left_at
-                    and abs((membership.joined_at - source[0].left_at).total_seconds()) <= 300
-                )
-                if is_transfer:
+                if source:
                     membership_events.append({
                         "student_id": str(membership.student_id),
                         "kind": "transferred",
@@ -4657,21 +4795,30 @@ class AuthService:
                     })
 
         # "New after diagnostic" is a separate operational signal. It is
-        # shown only for a student's first group after a completed *initial*
-        # diagnostic, and disappears after the current group teacher opens
-        # that exact report. Transfers never receive this tag.
+        # shown only in a student's *primary* group, and only while that is
+        # the student's first group after a completed *initial* diagnostic;
+        # it disappears after the current group teacher opens that exact
+        # report. Transfers (and a second group added later) never receive it.
         diagnostic_report_notices: list[dict[str, Any]] = []
         if group.teacher_id and active_memberships:
             active_ids = [membership.student_id for membership in active_memberships]
+            primary_ids = {
+                row[0]
+                for row in self.db.query(Student.id)
+                .filter(Student.id.in_(active_ids), Student.group_id == group.id)
+                .all()
+            }
             other_memberships = (
-                self.db.query(StudentGroup.student_id)
+                self.db.query(StudentGroup.student_id, StudentGroup.joined_at)
                 .filter(
                     StudentGroup.student_id.in_(active_ids),
                     StudentGroup.group_id != group.id,
                 )
                 .all()
             )
-            student_ids_with_other_groups = {row[0] for row in other_memberships}
+            other_joined_by_student: dict[UUID, list[Optional[datetime]]] = {}
+            for other_student_id, other_joined_at in other_memberships:
+                other_joined_by_student.setdefault(other_student_id, []).append(other_joined_at)
             initial_results = (
                 self.db.query(StudentDiagnosticResult)
                 .filter(
@@ -4688,7 +4835,14 @@ class AuthService:
                 results_by_student_id.setdefault(result.student_id, []).append(result)
 
             for membership in active_memberships:
-                if membership.student_id in student_ids_with_other_groups or not membership.joined_at:
+                if membership.student_id not in primary_ids or not membership.joined_at:
+                    continue
+                # Not the first group: the student already belonged to another
+                # one before (unknown join time counts as earlier).
+                if any(
+                    other is None or other < membership.joined_at
+                    for other in other_joined_by_student.get(membership.student_id, [])
+                ):
                     continue
                 result = next(
                     (
@@ -4735,10 +4889,16 @@ class AuthService:
                 )
                 .all()
             ) if former_uuid_ids else []
-            destinations_by_student_id = {
-                membership.student_id: destination_group.name
-                for membership, destination_group in destination_rows
-            }
+            # "Transferred to ..." only when that membership was opened by the
+            # same transfer that closed this one; a student who simply left
+            # this group while staying in others has no destination.
+            destinations_by_student_id: dict[UUID, str] = {}
+            for destination, destination_group in destination_rows:
+                closed = memberships_by_student_id.get(destination.student_id)
+                if not (closed and closed.left_at and destination.joined_at):
+                    continue
+                if abs((destination.joined_at - closed.left_at).total_seconds()) <= TRANSFER_WINDOW_SECONDS:
+                    destinations_by_student_id[destination.student_id] = destination_group.name
             students_by_id = {
                 student.id: student
                 for student in self.db.query(Student).filter(Student.id.in_(former_uuid_ids)).all()

@@ -6,11 +6,11 @@ REST API: org application, login, invitations, students, diagnostics, groups
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, UploadFile, File
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Literal, Optional
 from datetime import date, datetime
 import os
 
-from .service import AuthService, BUSINESS_TIMEZONE
+from .service import AuthService, BUSINESS_TIMEZONE, MembershipConflict
 from .attendance_access import is_org_admin, is_org_manager
 from . import import_service
 from .import_service import ImportPreviewResponse, ImportCommitResponse
@@ -33,6 +33,7 @@ from .schemas import (
     GroupCreateRequest,
     GroupUpdateRequest,
     GroupResponse,
+    AddStudentToGroupRequest,
     BulkAddStudentsRequest,
     OrgUpdateRequest,
     AuthResponse,
@@ -68,6 +69,7 @@ from .dependencies import (
     require_org_teacher,
     require_org_member,
     require_superadmin,
+    ensure_payments_access,
 )
 
 from src.core.database import get_db
@@ -825,10 +827,17 @@ def update_group(
         raise HTTPException(400, str(e))
 
 
+def _check_fee_right(monthly_fee: Optional[int], user: dict, db: Session) -> None:
+    """The amount is money: only a caller with the payments right may send it."""
+    if monthly_fee is not None:
+        ensure_payments_access(user, db)
+
+
 @router.post("/org/groups/{group_id}/students/bulk")
 def bulk_add_students(
     group_id: str,
     request: BulkAddStudentsRequest,
+    mode: Literal["transfer", "add"] = Query("transfer", description="transfer | add"),
     user: dict = Depends(require_org_admin),
     db: Session = Depends(get_db),
 ):
@@ -837,8 +846,12 @@ def bulk_add_students(
     Registered before /students/{student_id} — a generic path param would
     otherwise greedily match the literal "bulk" segment first.
     """
+    _check_fee_right(request.monthly_fee, user, db)
     try:
-        return _svc(db).bulk_add_students(user["org_id"], group_id, request.student_ids)
+        return _svc(db).bulk_add_students(
+            user["org_id"], group_id, request.student_ids,
+            mode=mode, monthly_fee=request.monthly_fee, actor_id=user["user_id"],
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -847,12 +860,21 @@ def bulk_add_students(
 def add_student_to_group(
     group_id: str,
     student_id: str,
+    request: Optional[AddStudentToGroupRequest] = None,
+    mode: Literal["transfer", "add"] = Query("transfer", description="transfer | add"),
     user: dict = Depends(require_org_admin),
     db: Session = Depends(get_db),
 ):
-    """Добавить ученика в группу"""
+    """Добавить ученика в группу: перевести (по умолчанию) или добавить ещё одну группу."""
+    monthly_fee = request.monthly_fee if request else None
+    _check_fee_right(monthly_fee, user, db)
     try:
-        return _svc(db).add_student_to_group(user["org_id"], group_id, student_id)
+        return _svc(db).add_student_to_group(
+            user["org_id"], group_id, student_id,
+            mode=mode, monthly_fee=monthly_fee, actor_id=user["user_id"],
+        )
+    except MembershipConflict as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
 

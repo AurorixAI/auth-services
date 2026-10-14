@@ -252,8 +252,19 @@ class GroupResponse(BaseModel):
     created_at: Optional[str] = None
 
 
+MAX_MONEY = 10_000_000_000
+
+
+class AddStudentToGroupRequest(BaseModel):
+    """Optional body of "add a student to a group"; the fee needs the payments right."""
+
+    monthly_fee: Optional[int] = Field(None, ge=0, le=MAX_MONEY)
+
+
 class BulkAddStudentsRequest(BaseModel):
     student_ids: list[str] = Field(..., min_length=1)
+    # One amount for everybody, or none.  Needs the right to manage payments.
+    monthly_fee: Optional[int] = Field(None, ge=0, le=MAX_MONEY)
 
 
 # ============================================================================

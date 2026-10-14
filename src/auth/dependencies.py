@@ -243,3 +243,43 @@ require_any_auth = RoleChecker(["owner", "admin", "teacher", "superadmin"])
 
 # Superadmin
 require_superadmin = RoleChecker(["superadmin"])
+
+
+# ─── Деньги (N13 P2) ───
+
+
+def payments_enabled_for_admin(db: Session, org_id: str) -> bool:
+    """``organizations.settings["payments"]["admin_can_manage"]`` is exactly ``true``."""
+    try:
+        org_uuid = UUID(str(org_id))
+    except (TypeError, ValueError):
+        return False
+    settings = db.query(Organization.settings).filter(Organization.id == org_uuid).scalar()
+    block = settings.get("payments") if isinstance(settings, dict) else None
+    return isinstance(block, dict) and block.get("admin_can_manage") is True
+
+
+def ensure_payments_access(user: dict, db: Session) -> dict:
+    """Owner: always.  Admin: only if the owner allowed it.  Everybody else: 403."""
+    if not user.get("org_id"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет организации")
+    org_role = user.get("org_role")
+    if org_role == "owner":
+        return user
+    if org_role == "admin" and payments_enabled_for_admin(db, user["org_id"]):
+        return user
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к оплатам")
+
+
+def require_payments_access(
+    user: dict = Depends(require_org_admin), db: Session = Depends(get_db)
+) -> dict:
+    """Every payment endpoint.  Money is visible nowhere else."""
+    return ensure_payments_access(user, db)
+
+
+def require_payments_settings(user: dict = Depends(require_org_owner)) -> dict:
+    """Payment settings: the owner only (and a tenant must exist)."""
+    if not user.get("org_id"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет организации")
+    return user
