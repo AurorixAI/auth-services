@@ -730,12 +730,14 @@ class GroupAttendanceAudit(Base):
     after_records = Column(JSONB, nullable=False)
     correction_reason = Column(String(500))
     cancellation_reason = Column(String(500))
+    # Structured facts of the event (excuse decisions, files); ids only, no names.
+    details = Column(JSONB, nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
     __table_args__ = (
         CheckConstraint(
             "action IN ('started', 'reconciliation_started', 'created', 'updated', 'corrected', 'cancelled', 'reconciliation_cancelled', "
-            "'excuse_reviewed', 'excuse_file_added', 'excuse_file_removed')",
+            "'excuse_reviewed', 'excuse_reset', 'excuse_removed', 'excuse_file_added', 'excuse_file_removed')",
             name="ck_group_attendance_audit_action",
         ),
         Index("idx_group_attendance_audit_attendance", "attendance_id"),

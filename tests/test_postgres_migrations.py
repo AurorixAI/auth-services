@@ -27,6 +27,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     assert expected <= set(inspect(engine).get_table_names())
     assert {'attendance_excuses','attendance_excuse_files'} <= set(inspect(engine).get_table_names())
     assert 'teacher_id' in {c['name'] for c in inspect(engine).get_columns('group_attendance')}
+    assert 'details' in {c['name'] for c in inspect(engine).get_columns('group_attendance_audit')}
     assert {'initial_diagnostic_reviewed_invite_id','initial_diagnostic_reviewed_by',
             'initial_diagnostic_reviewed_at'} <= {c['name'] for c in inspect(engine).get_columns('student_groups')}
     ids={name:uuid4() for name in ['org','group','student','membership']}
@@ -81,7 +82,8 @@ def _check_n13_p1_objects(engine,config,ids):
             with engine.begin() as c:
                 c.execute(text(sql),params)
     with engine.begin() as c:
-        c.execute(text("INSERT INTO group_attendance_audit (id,attendance_id,org_id,group_id,actor_id,action,after_status,after_records) VALUES (gen_random_uuid(),:a,:o,:g,:u,'excuse_reviewed','completed','{}')"),params)
+        for action in ('excuse_reviewed','excuse_reset','excuse_removed','excuse_file_added','excuse_file_removed'):
+            c.execute(text("INSERT INTO group_attendance_audit (id,attendance_id,org_id,group_id,actor_id,action,after_status,after_records,details) VALUES (gen_random_uuid(),:a,:o,:g,:u,'"+action+"','completed','{}','[]')"),params)
         c.execute(text("INSERT INTO group_audit (id,org_id,group_id,actor_id,actor_role,action,snapshot) VALUES (gen_random_uuid(),:o,:g,:u,'admin','teacher_changed','{}')"),params)
         # Deleting the lesson removes its excuses (CASCADE).
         c.execute(text("INSERT INTO group_attendance (id,org_id,group_id,lesson_date,lesson_id,status,records) VALUES (:a2,:o,:g,'2026-10-02','m2','completed','{}')"),{**params,'a2':uuid4()})
@@ -90,6 +92,7 @@ def _check_n13_p1_objects(engine,config,ids):
     names=set(inspect(engine).get_table_names())
     assert not ({'attendance_excuses','attendance_excuse_files'} & names)
     assert 'teacher_id' not in {c['name'] for c in inspect(engine).get_columns('group_attendance')}
+    assert 'details' not in {c['name'] for c in inspect(engine).get_columns('group_attendance_audit')}
     with engine.connect() as c:
         assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='r8s9t0u1v2w'
         assert c.execute(text('SELECT count(*) FROM group_attendance WHERE id=:a'),params).scalar_one()==1

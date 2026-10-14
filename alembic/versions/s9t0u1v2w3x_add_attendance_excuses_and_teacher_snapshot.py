@@ -9,16 +9,21 @@ Create Date: 2026-10-14
   group (an approximation: groups never kept a teacher history).
 * ``attendance_excuses`` / ``attendance_excuse_files`` - reason for an
   ``excused`` mark, the administrator's decision and attached certificates.
-* The audit CHECK lists gain the new actions.
+* ``group_attendance_audit.details`` (JSONB) - what exactly happened to an
+  excuse or a certificate; the audit CHECK lists gain the new actions.
 
 Everything is additive and idempotent: ``001_baseline`` and ``create_all`` may
 have created some of these objects already.
 
-Rollback: an older auth image cannot start on a database at this head (unknown
-revision). Run ``alembic downgrade r8s9t0u1v2w`` before redeploying an older
-image.  This DROPS excuses and certificates - export them first.  Audit rows
-that use the new actions are kept; the restored old CHECKs are NOT VALID, so
-they constrain new rows only.
+Rollback runbook (an older auth image cannot start on a database at this head -
+unknown revision):
+  1. export ``attendance_excuses`` and ``attendance_excuse_files`` (the
+     downgrade DROPS both tables, ``group_attendance.teacher_id`` and
+     ``group_attendance_audit.details``);
+  2. ``alembic downgrade r8s9t0u1v2w``;
+  3. only then roll the image back.
+Audit rows that use the new actions are kept; the restored old CHECKs are NOT
+VALID, so they constrain new rows only.
 """
 from __future__ import annotations
 
@@ -43,7 +48,8 @@ ATTENDANCE_AUDIT_OLD = (
 ATTENDANCE_AUDIT_NEW = (
     "action IN ('started', 'reconciliation_started', 'created', 'updated', "
     "'corrected', 'cancelled', 'reconciliation_cancelled', "
-    "'excuse_reviewed', 'excuse_file_added', 'excuse_file_removed')"
+    "'excuse_reviewed', 'excuse_reset', 'excuse_removed', "
+    "'excuse_file_added', 'excuse_file_removed')"
 )
 GROUP_AUDIT_OLD = "action IN ('created')"
 GROUP_AUDIT_NEW = "action IN ('created', 'updated', 'teacher_changed')"
@@ -157,7 +163,12 @@ def upgrade() -> None:
     if "idx_attendance_excuse_files_excuse" not in _index_names(sa.inspect(bind), EXCUSE_FILES):
         op.create_index("idx_attendance_excuse_files_excuse", EXCUSE_FILES, ["excuse_id"])
 
-    # 4-5. Audit actions.
+    # 4-5. Audit details and actions.
+    if "details" not in {c["name"] for c in sa.inspect(bind).get_columns("group_attendance_audit")}:
+        op.add_column(
+            "group_attendance_audit",
+            sa.Column("details", postgresql.JSONB(), nullable=True),
+        )
     _replace_check(
         "group_attendance_audit", "ck_group_attendance_audit_action", ATTENDANCE_AUDIT_NEW
     )
@@ -178,6 +189,9 @@ def downgrade() -> None:
         ATTENDANCE_AUDIT_OLD,
         not_valid=True,
     )
+
+    if "details" in {c["name"] for c in inspector.get_columns("group_attendance_audit")}:
+        op.drop_column("group_attendance_audit", "details")
 
     tables = set(inspector.get_table_names())
     if EXCUSE_FILES in tables:

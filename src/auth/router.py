@@ -11,7 +11,7 @@ from datetime import date, datetime
 import os
 
 from .service import AuthService, BUSINESS_TIMEZONE
-from .attendance_access import is_org_admin
+from .attendance_access import is_org_admin, is_org_manager
 from . import import_service
 from .import_service import ImportPreviewResponse, ImportCommitResponse
 from src.api.rate_limit import rate_limit
@@ -1235,6 +1235,7 @@ def get_group_attendance(
             date_to=date_to,
             actor_id=user["user_id"],
             is_org_admin=is_org_admin(user),
+            is_org_manager=is_org_manager(user),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -1257,6 +1258,7 @@ def save_group_attendance(
             request,
             marked_by=user["user_id"],
             is_org_admin=is_org_admin(user),
+            is_org_manager=is_org_manager(user),
         )
         return {"ok": True, "saved": True}
     except PermissionError as e:

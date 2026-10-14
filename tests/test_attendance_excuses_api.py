@@ -184,15 +184,23 @@ def test_review_confirm_reject_reset_and_audit(world, lesson):
     assert (reset["status"], reset["reviewed_by"], reset["reviewed_at"], reset["review_note"]) == ("pending", None, None, None)
     assert client.get(f"{BASE}/summary").json() == {"pending_total": 1}
     # Reset of a pending excuse is a harmless no-op without a journal row.
-    before = audit_actions(world, excuse.attendance_id).count("excuse_reviewed")
+    before = audit_actions(world, excuse.attendance_id)
     client.post(f"{BASE}/{excuse.id}/reset")
-    assert audit_actions(world, excuse.attendance_id).count("excuse_reviewed") == before == 3
+    after = audit_actions(world, excuse.attendance_id)
+    assert after == before and after.count("excuse_reviewed") == 2 and after.count("excuse_reset") == 1
     # The lesson and its marks are untouched.
     world.db.expire_all()
     att = world.db.get(GroupAttendance, excuse.attendance_id)
     assert att.records[str(world.students[0].id)] == "excused"
-    last = world.db.query(GroupAttendanceAudit).filter_by(attendance_id=att.id, action="excuse_reviewed").first()
-    assert last.after_status == att.status and last.after_records == att.records
+    rows = world.db.query(GroupAttendanceAudit).filter_by(attendance_id=att.id).filter(
+        GroupAttendanceAudit.action.in_(["excuse_reviewed", "excuse_reset"])).order_by(GroupAttendanceAudit.created_at).all()
+    assert all(r.after_status == att.status and r.after_records == att.records for r in rows)
+    sid = str(world.students[0].id)
+    assert [r.details for r in rows] == [
+        {"excuse_id": str(excuse.id), "student_id": sid, "decision_before": "pending", "decision_after": "confirmed", "note": "Справка принесена"},
+        {"excuse_id": str(excuse.id), "student_id": sid, "decision_before": "confirmed", "decision_after": "rejected", "note": None},
+        {"excuse_id": str(excuse.id), "student_id": sid, "decision_before": "rejected", "decision_after": "pending", "note": None},
+    ]
 
 
 @pytest.mark.parametrize("body", [{"decision": "maybe"}, {}, {"decision": "confirmed", "note": "x" * 501}])
@@ -286,11 +294,18 @@ def test_download_headers_and_delete_with_audit(world, lesson):
     assert r.headers["content-disposition"].startswith("inline; filename=")
     assert "\n" not in r.headers["content-disposition"]
     assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["content-security-policy"] == "sandbox"
     assert client.delete(f"{BASE}/files/{file_id}").json() == {"ok": True}
     assert client.get(f"{BASE}/files/{file_id}").status_code == 404
     assert client.delete(f"{BASE}/files/{file_id}").status_code == 404
     actions = audit_actions(world, excuse.attendance_id)
     assert actions.count("excuse_file_added") == 1 and actions.count("excuse_file_removed") == 1
+    world.db.expire_all()
+    added, removed = [world.db.query(GroupAttendanceAudit).filter_by(attendance_id=excuse.attendance_id, action=a).one()
+                      for a in ("excuse_file_added", "excuse_file_removed")]
+    expected = {"excuse_id": str(excuse.id), "student_id": str(world.students[0].id), "file_id": file_id,
+                "filename": added.details["filename"], "size_bytes": len(PDF)}
+    assert added.details == removed.details == expected and expected["filename"].endswith(".pdf")
     # Journal flag follows the files.
     journal = client.get(f"/api/v1/auth/org/groups/{world.group.id}/attendance",
                          params={"date_from": lesson[0].isoformat(), "date_to": lesson[0].isoformat()}).json()
@@ -327,3 +342,17 @@ def test_default_period_is_the_current_business_month(world):
     save(world, today, LIVE_SLOT, [(world.students[0], "excused")], actor=world.teacher, is_admin=False,
          excuseReasons={world.students[0].id: "Болел"})
     assert make_client(world).get(BASE).json()["total"] == 1
+
+
+def test_oversized_upload_is_refused_by_content_length_before_the_body_is_read(world, lesson):
+    client = make_client(world)
+    big = PNG + b"\x00" * (3 * 1024 * 1024)
+    r = upload(client, lesson[2].id, big)
+    assert r.status_code == 413 and r.json()["detail"] == "Файл слишком большой (макс. 2 МБ)"
+    world.db.expire_all()
+    assert world.db.query(AttendanceExcuseFile).filter_by(org_id=world.org.id).count() == 0
+    # A body with no usable length is refused as well.
+    r = client.post(f"{BASE}/{lesson[2].id}/files", content=b"x", headers={"content-type": "multipart/form-data; boundary=x", "content-length": ""})
+    assert r.status_code in (411, 400, 422)
+    # Not multipart / no "file" field.
+    assert client.post(f"{BASE}/{lesson[2].id}/files", data={"other": "1"}).status_code in (415, 422, 400)

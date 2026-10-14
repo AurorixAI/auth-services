@@ -8,9 +8,11 @@ from typing import Optional
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from src.core.database import get_db
 
@@ -123,19 +125,58 @@ def reset_excuse(
         raise _http(exc)
 
 
-@router.post("/org/attendance/excuses/{excuse_id}/files", response_model=ExcuseFileInfo)
+# The request body is multipart: file + framing.  A declared length above this
+# is refused before a single byte of the body is read.
+MAX_BODY_BYTES = MAX_FILE_BYTES + 64 * 1024
+
+
+@router.post(
+    "/org/attendance/excuses/{excuse_id}/files",
+    response_model=ExcuseFileInfo,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["file"],
+                        "properties": {"file": {"type": "string", "format": "binary"}},
+                    }
+                }
+            },
+        }
+    },
+)
 async def upload_excuse_file(
     excuse_id: UUID,
-    file: UploadFile = File(...),
+    request: Request,
     user: dict = Depends(_admin),
     db: Session = Depends(get_db),
 ):
     """Приложить справку (JPEG/PNG/PDF до 2 МБ, не более 3 файлов)."""
-    # Never read more than one byte past the limit into memory.
-    data = await file.read(MAX_FILE_BYTES + 1)
+    # ``file: UploadFile`` would make FastAPI buffer the whole body before this
+    # handler (and any dependency) runs, so the size is checked here first.
     try:
-        return AttendanceExcuseService(db).add_file(
-            user["org_id"], excuse_id, user["user_id"], data, file.filename
+        declared = int(request.headers.get("content-length", ""))
+    except ValueError:
+        raise HTTPException(411, "Не указан размер файла")
+    if declared > MAX_BODY_BYTES:
+        raise HTTPException(413, "Файл слишком большой (макс. 2 МБ)")
+    form = await request.form()
+    try:
+        upload = form.get("file")
+        if not isinstance(upload, StarletteUploadFile):
+            raise HTTPException(422, "Передайте файл в поле file")
+        # Never read more than one byte past the limit into memory.
+        data = await upload.read(MAX_FILE_BYTES + 1)
+        filename = upload.filename
+    finally:
+        await form.close()
+    try:
+        # Blocking DB work runs in the thread pool, not on the event loop.
+        return await run_in_threadpool(
+            AttendanceExcuseService(db).add_file, user["org_id"], excuse_id, user["user_id"], data, filename
         )
     except ExcuseError as exc:
         raise _http(exc)
@@ -163,6 +204,8 @@ def download_excuse_file(
             ),
             "Cache-Control": "private, no-store",
             "X-Content-Type-Options": "nosniff",
+            # Even if a browser opens the file directly, nothing in it may run.
+            "Content-Security-Policy": "sandbox",
         },
     )
 

@@ -4419,6 +4419,7 @@ class AuthService:
         date_to: Optional[str] = None,
         actor_id: Optional[str] = None,
         is_org_admin: bool = False,
+        is_org_manager: bool = False,
     ) -> GroupAttendanceResponse:
         """Получить экземпляры уроков и отметки за строго заданный период."""
         group = self._require_group_access(
@@ -4743,7 +4744,7 @@ class AuthService:
             historical_students.sort(key=lambda item: (item.get("left_at") or "", item["full_name"]))
 
         excuses_map, corrections_map = AttendanceExcuseService(self.db).journal_payload(
-            org_id, attendance_keys, include_review_note=is_org_admin
+            org_id, attendance_keys, include_review_note=is_org_manager
         )
 
         return GroupAttendanceResponse(
@@ -5143,6 +5144,7 @@ class AuthService:
         *,
         marked_by: Optional[str],
         is_org_admin: bool,
+        is_org_manager: bool = False,
     ) -> bool:
         """Сохранить полный проверенный снимок отметок одного экземпляра урока."""
         if not marked_by:
@@ -5199,9 +5201,19 @@ class AuthService:
         is_correction_save = bool(
             att
             and not is_cancellation
-            and is_org_admin
+            and is_org_manager
             and att.status == LessonAttendanceStatus.COMPLETED.value
         )
+        if (
+            att
+            and not is_cancellation
+            and att.status == LessonAttendanceStatus.COMPLETED.value
+            and is_org_admin
+            and not is_org_manager
+        ):
+            # Only the organisation's owner/admin corrects completed lessons;
+            # a global "admin" role without that membership does not.
+            raise PermissionError("Корректировать завершённый урок может только owner или admin")
         if (
             not is_cancellation
             and att.status != LessonAttendanceStatus.IN_PROGRESS.value
@@ -5283,7 +5295,7 @@ class AuthService:
             and (records != before_records or requested_status != before_status)
         )
         if is_completed_correction:
-            if not is_org_admin:
+            if not is_org_manager:
                 raise PermissionError("Корректировать завершённый урок может только owner или admin")
             if not req.correctionReason:
                 raise ValueError("Для корректировки завершённого урока укажите причину")

@@ -48,6 +48,9 @@ MAX_FILES_PER_EXCUSE = 3
 MAX_PERIOD_DAYS = 93
 DECISIONS = ("confirmed", "rejected")
 REASON_REQUIRED_MESSAGE = "Укажите причину уважительного пропуска"
+# Marks saved before reasons existed carry no excuse row; one is created for
+# them on the next save, without asking the client for a reason.
+LEGACY_REASON = "Отмечено до введения причин"
 
 
 def _business_now() -> datetime:
@@ -266,10 +269,16 @@ class AttendanceExcuseService:
                 .all()
             }
         plan = ExcusePlan()
+        before = (att.records or {}) if att is not None else {}
         excused_now = {sid for sid, state in records.items() if state == EXCUSED}
         for sid in sorted(excused_now):
             if sid not in existing:
-                plan.create[sid] = _clean_reason(reasons.get(sid))
+                if before.get(sid) == EXCUSED and not reasons.get(sid):
+                    # Already excused before this release: no transition, so
+                    # no reason is demanded.
+                    plan.create[sid] = LEGACY_REASON
+                else:
+                    plan.create[sid] = _clean_reason(reasons.get(sid))
             elif sid in reasons:
                 reason = _clean_reason(reasons[sid])
                 if reason != existing[sid].reason:
@@ -282,6 +291,21 @@ class AttendanceExcuseService:
     def apply_save(self, att: GroupAttendance, plan: ExcusePlan, actor_id: str, now: datetime) -> None:
         """Persist ``plan``; ``att`` must already be flushed (has an id)."""
         for excuse in plan.delete:
+            files_removed = (
+                self.db.query(func.count(AttendanceExcuseFile.id))
+                .filter(AttendanceExcuseFile.excuse_id == excuse.id)
+                .scalar()
+                or 0
+            )
+            self._audit(
+                att, actor_id, "excuse_removed",
+                {
+                    "excuse_id": str(excuse.id),
+                    "student_id": str(excuse.student_id),
+                    "status_before": excuse.status,
+                    "files_removed": files_removed,
+                },
+            )
             self.db.delete(excuse)
         if plan.update:
             rows = (
@@ -296,6 +320,24 @@ class AttendanceExcuseService:
                 row.reason = plan.update[str(row.student_id)]
                 row.reason_by = actor_id
                 row.reason_at = now
+                if row.status != "pending":
+                    # A confirmed/rejected reason must not be replaced silently:
+                    # the new text goes back to the administrator.
+                    self._audit(
+                        att, actor_id, "excuse_reset",
+                        {
+                            "excuse_id": str(row.id),
+                            "student_id": str(row.student_id),
+                            "decision_before": row.status,
+                            "decision_after": "pending",
+                            "note": row.review_note,
+                            "reason_changed": True,
+                        },
+                    )
+                    row.status = "pending"
+                    row.reviewed_by = None
+                    row.reviewed_at = None
+                    row.review_note = None
         for sid, reason in plan.create.items():
             self.db.add(
                 AttendanceExcuse(
@@ -576,8 +618,14 @@ class AttendanceExcuseService:
             raise ExcuseNotFound("Урок не найден")
         return att
 
-    def _audit(self, att: GroupAttendance, actor_id: str, action: str) -> None:
-        """Journal row: the lesson state and its marks are unchanged."""
+    def _audit(
+        self, att: GroupAttendance, actor_id: str, action: str, details: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Journal row: the lesson state and its marks are unchanged.
+
+        ``details`` says what exactly happened to which excuse; it holds ids,
+        statuses and the administrator's note - never a student's name.
+        """
         records = dict(att.records or {})
         self.db.add(
             GroupAttendanceAudit(
@@ -590,6 +638,7 @@ class AttendanceExcuseService:
                 after_status=att.status or "completed",
                 before_records=records,
                 after_records=records,
+                details=details,
             )
         )
 
@@ -598,11 +647,21 @@ class AttendanceExcuseService:
     ) -> None:
         if (att.records or {}).get(str(excuse.student_id)) != EXCUSED:
             raise ExcuseNotExcused("Ученик уже не отмечен как пропустивший по уважительной причине")
+        decision_before = excuse.status
         excuse.status = decision
         excuse.reviewed_by = actor_id
         excuse.reviewed_at = _business_now()
         excuse.review_note = (note or "").strip() or None
-        self._audit(att, actor_id, "excuse_reviewed")
+        self._audit(
+            att, actor_id, "excuse_reviewed",
+            {
+                "excuse_id": str(excuse.id),
+                "student_id": str(excuse.student_id),
+                "decision_before": decision_before,
+                "decision_after": decision,
+                "note": excuse.review_note,
+            },
+        )
 
     def review(
         self, org_id: str, excuse_id: UUID, actor_id: str, decision: str, note: Optional[str]
@@ -640,11 +699,18 @@ class AttendanceExcuseService:
     def reset(self, org_id: str, excuse_id: UUID, actor_id: str) -> ExcuseItem:
         excuse = self._lock_excuse(org_id, excuse_id)
         if excuse.status != "pending":
+            details = {
+                "excuse_id": str(excuse.id),
+                "student_id": str(excuse.student_id),
+                "decision_before": excuse.status,
+                "decision_after": "pending",
+                "note": excuse.review_note,
+            }
             excuse.status = "pending"
             excuse.reviewed_by = None
             excuse.reviewed_at = None
             excuse.review_note = None
-            self._audit(self._lesson(excuse), actor_id, "excuse_reviewed")
+            self._audit(self._lesson(excuse), actor_id, "excuse_reset", details)
             self.db.commit()
             logger.info("Attendance excuse %s reset by %s", excuse_id, actor_id)
         return self._item(org_id, excuse_id)
@@ -682,7 +748,16 @@ class AttendanceExcuseService:
         )
         self.db.add(stored)
         self.db.flush()
-        self._audit(self._lesson(excuse), actor_id, "excuse_file_added")
+        self._audit(
+            self._lesson(excuse), actor_id, "excuse_file_added",
+            {
+                "excuse_id": str(excuse.id),
+                "student_id": str(excuse.student_id),
+                "file_id": str(stored.id),
+                "filename": stored.filename,
+                "size_bytes": stored.size_bytes,
+            },
+        )
         self.db.commit()
         logger.info("Attendance excuse file %s added to %s by %s", stored.id, excuse_id, actor_id)
         return ExcuseFileInfo(
@@ -703,8 +778,15 @@ class AttendanceExcuseService:
         stored = self.get_file(org_id, file_id)
         # Serialise with uploads to the same excuse.
         excuse = self._lock_excuse(org_id, stored.excuse_id)
+        details = {
+            "excuse_id": str(excuse.id),
+            "student_id": str(excuse.student_id),
+            "file_id": str(stored.id),
+            "filename": stored.filename,
+            "size_bytes": stored.size_bytes,
+        }
         self.db.delete(stored)
         self.db.flush()
-        self._audit(self._lesson(excuse), actor_id, "excuse_file_removed")
+        self._audit(self._lesson(excuse), actor_id, "excuse_file_removed", details)
         self.db.commit()
         logger.info("Attendance excuse file %s removed by %s", file_id, actor_id)

@@ -172,7 +172,7 @@ def save(w, day, lesson_id, records, *, status="in_progress", actor=None, is_adm
             lessonDate=day, lessonId=lesson_id, status=status,
             records={s.id: st for s, st in records}, **extra,
         ),
-        marked_by=str(actor.id), is_org_admin=is_admin,
+        marked_by=str(actor.id), is_org_admin=is_admin, is_org_manager=is_admin,
     )
 
 

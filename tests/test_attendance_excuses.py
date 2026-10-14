@@ -30,7 +30,7 @@ def journal(w, actor, is_admin=True):
     today = business_today()
     return w.svc.get_group_attendance(
         str(w.org.id), str(w.group.id), date_from=(today - timedelta(days=30)).isoformat(),
-        date_to=today.isoformat(), actor_id=str(actor.id), is_org_admin=is_admin,
+        date_to=today.isoformat(), actor_id=str(actor.id), is_org_admin=is_admin, is_org_manager=is_admin,
     )
 
 
@@ -100,10 +100,10 @@ def test_resave_without_reason_keeps_existing_excuse_and_reason_can_change(world
     # Same marks, no excuseReasons: nothing changes.
     save(world, day, lesson_id, [(s, "excused"), (world.students[1], "present")])
     assert (excuse_of(world).status, excuse_of(world).reason) == ("confirmed", "Болел, написал в Telegram")
-    # A new reason for an already excused student: status stays.
+    # A new reason for an already excused student: same row, back to the administrator.
     save(world, day, lesson_id, [(s, "excused")], excuseReasons={s.id: "Уехал на олимпиаду"})
     changed = excuse_of(world)
-    assert (changed.status, changed.reason, changed.id) == ("confirmed", "Уехал на олимпиаду", first.id)
+    assert (changed.status, changed.reason, changed.id) == ("pending", "Уехал на олимпиаду", first.id)
 
 
 def test_excuse_reasons_for_non_excused_students_are_ignored(world):
@@ -206,3 +206,98 @@ def test_journal_http_roundtrip_with_excuse_reasons(world):
     got = client.get(base, params={"date_from": day.isoformat(), "date_to": day.isoformat()}).json()
     assert got["excuses"][key_of(day, lesson_id)][str(s.id)]["reason"] == "Болел"
     assert got["corrections"] == {}
+
+
+# ============================================================================
+# R3 follow-ups: reason change resets the decision, legacy marks, audit details
+# ============================================================================
+
+
+def audit_rows(w, action):
+    w.db.expire_all()
+    return [a for a in w.db.query(GroupAttendanceAudit).filter_by(org_id=w.org.id, action=action).order_by(GroupAttendanceAudit.created_at)]
+
+
+def test_changing_the_reason_of_a_decided_excuse_returns_it_to_pending(world):
+    day, lesson_id = excused_lesson(world)
+    s = world.students[0]
+    excuse = excuse_of(world)
+    excuse.status, excuse.reviewed_by, excuse.review_note = "confirmed", world.owner.id, "Справка"
+    world.db.commit()
+    save(world, day, lesson_id, [(s, "excused")], excuseReasons={s.id: "Уехал на олимпиаду"})
+    changed = excuse_of(world)
+    assert (changed.status, changed.reason) == ("pending", "Уехал на олимпиаду")
+    assert (changed.reviewed_by, changed.reviewed_at, changed.review_note) == (None, None, None)
+    (row,) = audit_rows(world, "excuse_reset")
+    assert row.details == {"excuse_id": str(excuse.id), "student_id": str(s.id), "decision_before": "confirmed",
+                           "decision_after": "pending", "note": "Справка", "reason_changed": True}
+    # The same text again changes nothing and writes nothing.
+    save(world, day, lesson_id, [(s, "excused")], excuseReasons={s.id: "Уехал на олимпиаду"})
+    assert len(audit_rows(world, "excuse_reset")) == 1
+
+
+def test_pending_reason_change_does_not_reset_or_audit(world):
+    day, lesson_id = excused_lesson(world)
+    s = world.students[0]
+    save(world, day, lesson_id, [(s, "excused")], excuseReasons={s.id: "Другая причина"})
+    assert excuse_of(world).reason == "Другая причина"
+    assert audit_rows(world, "excuse_reset") == []
+
+
+def test_removing_an_excuse_is_audited_with_details(world):
+    day, lesson_id = excused_lesson(world)
+    s = world.students[0]
+    excuse = excuse_of(world)
+    excuse.status = "rejected"
+    world.db.add(AttendanceExcuseFile(org_id=world.org.id, excuse_id=excuse.id, filename="a.png", content_type="image/png",
+                                      size_bytes=10, data=b"x" * 10, uploaded_by=world.admin.id, uploaded_at=excuse.reason_at))
+    world.db.commit()
+    save(world, day, lesson_id, [(s, "absent")])
+    (row,) = audit_rows(world, "excuse_removed")
+    assert row.details == {"excuse_id": str(excuse.id), "student_id": str(s.id), "status_before": "rejected", "files_removed": 1}
+    # Cancelling the lesson removes the remaining excuses the same way.
+    day2, lesson2 = excused_lesson(world, offset_days=2)
+    save(world, day2, lesson2, [], status="cancelled", cancellationReason="Праздник")
+    assert len(audit_rows(world, "excuse_removed")) == 2
+
+
+def test_legacy_excused_mark_without_excuse_row_gets_a_pending_excuse(world):
+    day, lesson_id = reconcile(world)
+    s1, s2, s3 = world.students
+    att = world.db.query(GroupAttendance).filter_by(lesson_id=lesson_id, group_id=world.group.id).one()
+    att.records = {str(s1.id): "excused", str(s2.id): "present", str(s3.id): "present"}  # saved before this release
+    world.db.commit()
+    assert excuse_of(world) is None
+    # No reason demanded for the unchanged legacy mark ...
+    save(world, day, lesson_id, [(s1, "excused"), (s2, "present"), (s3, "present")])
+    excuse = excuse_of(world)
+    assert (excuse.status, excuse.reason, excuse.reason_by) == ("pending", "Отмечено до введения причин", world.admin.id)
+    # ... but a *new* excused mark still needs one.
+    with pytest.raises(ValueError, match="Укажите причину"):
+        save(world, day, lesson_id, [(s1, "excused"), (s2, "excused")])
+    world.db.rollback()
+
+
+def test_global_admin_role_without_org_admin_membership_cannot_correct(world):
+    day, lesson_id = reconcile(world)
+    save(world, day, lesson_id, [(s, "present") for s in world.students], status="completed")
+    body = {"lessonDate": day.isoformat(), "lessonId": lesson_id, "status": "completed",
+            "records": {str(s.id): "absent" for s in world.students}, "correctionReason": "Хочу поменять"}
+    url = f"/api/v1/auth/org/groups/{world.group.id}/attendance"
+    # org_role teacher, global role admin: passes the group-access check, not the correction check.
+    loose = make_client(world, user=world.teacher, role="admin", org_role="teacher")
+    r = loose.post(url, json=body)
+    assert r.status_code == 403 and "owner или admin" in r.json()["detail"]
+    world.db.expire_all()
+    att = world.db.query(GroupAttendance).filter_by(lesson_id=lesson_id, group_id=world.group.id).one()
+    assert set(att.records.values()) == {"present"}
+    # The real organisation admin can.
+    assert make_client(world).post(url, json=body).status_code == 200
+    # The review note is also not shown to the loose admin.
+    s = world.students[0]
+    day2, lesson2 = excused_lesson(world, offset_days=2)
+    excuse = excuse_of(world)
+    excuse.status, excuse.review_note = "confirmed", "секрет"
+    world.db.commit()
+    got = loose.get(url, params={"date_from": day2.isoformat(), "date_to": day2.isoformat()}).json()
+    assert "review_note" not in got["excuses"][key_of(day2, lesson2)][str(s.id)]
