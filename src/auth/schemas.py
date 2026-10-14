@@ -172,6 +172,8 @@ class StudentResponse(BaseModel):
     comment: Optional[str] = None
     status: str
     created_at: Optional[str] = None
+    # Number of active group memberships; filled in list responses only.
+    groups_count: Optional[int] = None
 
 
 # ============================================================================

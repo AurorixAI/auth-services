@@ -6,6 +6,8 @@ Create Date: 2026-10-15
 
 * ``student_groups.monthly_fee`` (+ who/when) - "оплата в месяц" of a
   membership; NULL = not set, 0 = free.
+* ``student_groups.transferred_at`` - when a transfer made an already active
+  membership the primary one (the journal's "transferred" label).
 * ``student_payments`` - one row per payment for one membership.  Rows are
   never deleted: ``voided_*`` cancels, ``replaces_payment_id`` links a
   correction.  ``valid_to`` (calendar period) XOR ``lessons_count`` (period in
@@ -69,6 +71,8 @@ def upgrade() -> None:
         )
     if "monthly_fee_updated_at" not in existing:
         op.add_column(MEMBERSHIPS, sa.Column("monthly_fee_updated_at", sa.DateTime(), nullable=True))
+    if "transferred_at" not in existing:
+        op.add_column(MEMBERSHIPS, sa.Column("transferred_at", sa.DateTime(), nullable=True))
     checks = {c["name"] for c in inspector.get_check_constraints(MEMBERSHIPS)}
     if FEE_CHECK not in checks:
         op.create_check_constraint(FEE_CHECK, MEMBERSHIPS, "monthly_fee >= 0")
@@ -166,6 +170,6 @@ def downgrade() -> None:
     if FEE_CHECK in checks:
         op.drop_constraint(FEE_CHECK, MEMBERSHIPS, type_="check")
     existing = {c["name"] for c in inspector.get_columns(MEMBERSHIPS)}
-    for column in ("monthly_fee_updated_at", "monthly_fee_updated_by", "monthly_fee"):
+    for column in ("transferred_at", "monthly_fee_updated_at", "monthly_fee_updated_by", "monthly_fee"):
         if column in existing:
             op.drop_column(MEMBERSHIPS, column)

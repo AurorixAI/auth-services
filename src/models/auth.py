@@ -481,6 +481,11 @@ class StudentGroup(Base):
     monthly_fee_updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     monthly_fee_updated_at = Column(DateTime, nullable=True)
 
+    # Set when a transfer makes an *already active* membership the primary one:
+    # its joined_at must stay (rosters of past lessons depend on it), so the
+    # journal reads this instant to recognise the transfer.
+    transferred_at = Column(DateTime, nullable=True)
+
     student = relationship("Student", back_populates="group_memberships")
     group = relationship("Group", back_populates="student_memberships")
 

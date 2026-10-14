@@ -210,12 +210,35 @@ def test_latest_payment_ties_break_by_created_at():
 # ------------------------------------------- defaults, errors, warnings ----
 
 
-def test_add_month_minus_day():
-    assert ps.add_month_minus_day(date(2026, 10, 5)) == date(2026, 11, 4)
-    assert ps.add_month_minus_day(date(2026, 12, 15)) == date(2027, 1, 14)
-    assert ps.add_month_minus_day(date(2026, 1, 31)) == date(2026, 2, 27)
-    assert ps.add_month_minus_day(date(2028, 1, 31)) == date(2028, 2, 28)
-    assert ps.add_month_minus_day(date(2026, 10, 1)) == date(2026, 10, 31)
+@pytest.mark.parametrize(
+    "start,expected",
+    [
+        ((2026, 10, 5), (2026, 11, 4)),
+        ((2026, 10, 1), (2026, 10, 31)),     # the 1st: last day of the same month
+        ((2026, 2, 1), (2026, 2, 28)),
+        ((2028, 2, 1), (2028, 2, 29)),
+        ((2026, 12, 1), (2026, 12, 31)),
+        ((2026, 12, 15), (2027, 1, 14)),
+        ((2026, 1, 31), (2026, 2, 28)),
+        ((2026, 1, 30), (2026, 2, 28)),
+        ((2026, 1, 29), (2026, 2, 28)),
+        ((2026, 1, 28), (2026, 2, 27)),
+        ((2028, 1, 31), (2028, 2, 29)),      # leap year
+        ((2028, 2, 29), (2028, 3, 28)),
+        ((2026, 3, 31), (2026, 4, 30)),
+        ((2026, 11, 30), (2026, 12, 29)),
+        ((2026, 5, 31), (2026, 6, 30)),
+    ],
+)
+def test_add_month_minus_day(start, expected):
+    assert ps.add_month_minus_day(date(*start)) == date(*expected)
+
+
+def test_add_month_minus_day_never_raises_anything_but_overflow():
+    assert ps.add_month_minus_day(date(9999, 12, 1)) == date(9999, 12, 31)
+    with pytest.raises(OverflowError):
+        ps.add_month_minus_day(date(9999, 12, 31))
+    assert ps.add_month_minus_day(date.min.replace(day=2)) == date(1, 2, 1)
 
 
 def test_default_valid_from():
@@ -232,7 +255,7 @@ def test_validation_errors():
     assert ps.validation_errors(**ok) == []
     assert ps.validation_errors(**{**ok, "paid_on": days(1)})
     assert ps.validation_errors(**{**ok, "paid_on": date(2023, 10, 14)})
-    assert ps.validation_errors(**{**ok, "paid_on": date(2023, 10, 15)}) == []
+    assert ps.validation_errors(**{**ok, "paid_on": date(2023, 10, 15), "valid_from": date(2023, 10, 15), "valid_to": date(2023, 11, 14)}) == []
     assert ps.validation_errors(**{**ok, "valid_to": days(-1)})
     assert ps.validation_errors(**{**ok, "valid_to": TODAY + timedelta(days=400)}) == []
     assert ps.validation_errors(**{**ok, "valid_to": TODAY + timedelta(days=401)})
@@ -270,3 +293,26 @@ def test_warnings():
 )
 def test_lesson_counts(mark, excuse, expected):
     assert ps.lesson_counts(mark=mark, excuse_status=excuse) is expected
+
+
+def test_valid_from_bounds():
+    paid = TODAY
+    ok = dict(today=TODAY, paid_on=paid, valid_to=None)
+    assert ps.validation_errors(valid_from=paid, **ok) == []
+    assert ps.validation_errors(valid_from=ps._years_ago(paid, 3), **ok) == []
+    assert ps.validation_errors(valid_from=ps._years_ago(paid, 3) - timedelta(days=1), **ok)
+    assert ps.validation_errors(valid_from=paid + timedelta(days=400), **ok) == []
+    assert ps.validation_errors(valid_from=paid + timedelta(days=401), **ok)
+    assert ps.valid_from_error(paid, paid) is None
+    assert ps.valid_from_error(paid, paid + timedelta(days=401))
+
+
+@pytest.mark.parametrize("extreme", [date.min, date.max, date(9999, 12, 30), date(1, 1, 2)])
+def test_extreme_dates_are_errors_not_exceptions(extreme):
+    for paid, frm, to in [(extreme, extreme, None), (TODAY, extreme, None), (TODAY, TODAY, extreme),
+                          (extreme, TODAY, extreme)]:
+        assert ps.validation_errors(today=TODAY, paid_on=paid, valid_from=frm, valid_to=to)
+    assert ps.validation_errors(today=date(2026, 2, 28), paid_on=date(2026, 2, 28), valid_from=date(2026, 2, 28), valid_to=None) == []
+    # today itself near the edges of the calendar must not raise either
+    assert ps.validation_errors(today=date.min, paid_on=date.min, valid_from=date.min, valid_to=None) == []
+    assert ps.payment_warnings(today=TODAY, paid_on=date.min, valid_from=date.min, valid_to=date.max, existing=[])

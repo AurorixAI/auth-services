@@ -476,6 +476,7 @@ class PaymentService:
             free=counts[ps.FREE],
             tracked_total=len(entries),
             period_mode=settings.period_mode,
+            lessons_per_payment=settings.lessons_per_payment,
         )
 
     @staticmethod
@@ -609,9 +610,26 @@ class PaymentService:
             else settings.period_mode
         )
         previous_until = max((p.valid_to for p in live if p.valid_to is not None), default=None)
-        valid_from = data.valid_from or ps.default_valid_from(mode, data.paid_on, previous_until)
+        # The payment date and the start are bounded first: every default
+        # below does date arithmetic that must never see 0001 or 9999.
+        errors = ps.validation_errors(
+            today=today, paid_on=data.paid_on, valid_from=data.valid_from or data.paid_on,
+            valid_to=None,
+        )
+        if errors:
+            raise PaymentInvalid(errors[0])
+        try:
+            valid_from = data.valid_from or ps.default_valid_from(mode, data.paid_on, previous_until)
+        except OverflowError:
+            raise PaymentInvalid("Начало периода слишком далеко в будущем")
+        problem = ps.valid_from_error(data.paid_on, valid_from)
+        if problem:
+            raise PaymentInvalid(problem)
         if mode == ps.CALENDAR:
-            valid_to = data.valid_to or ps.add_month_minus_day(valid_from)
+            try:
+                valid_to = data.valid_to or ps.add_month_minus_day(valid_from)
+            except OverflowError:
+                raise PaymentInvalid("Период выходит за допустимые даты")
             lessons_count = None
         else:
             valid_to = None

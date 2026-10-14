@@ -91,7 +91,7 @@ logger = logging.getLogger(__name__)
 
 # A transfer closes one membership and opens the next one in the same request;
 # the two timestamps may differ only by the time the request itself takes.
-TRANSFER_WINDOW_SECONDS = 2
+TRANSFER_WINDOW_SECONDS = 10
 MEMBERSHIP_MODES = ("transfer", "add")
 
 
@@ -1419,7 +1419,24 @@ class AuthService:
             .limit(limit)
             .all()
         )
-        return [self._build_student_response(s) for s in students], total
+        counts: dict = {}
+        if students:
+            # One grouped query for the whole page: a count, never money.
+            counts = dict(
+                self.db.query(StudentGroup.student_id, func.count(StudentGroup.id))
+                .filter(
+                    StudentGroup.student_id.in_([s.id for s in students]),
+                    StudentGroup.is_active.is_(True),
+                )
+                .group_by(StudentGroup.student_id)
+                .all()
+            )
+        items = []
+        for s in students:
+            item = self._build_student_response(s)
+            item.groups_count = int(counts.get(s.id, 0))
+            items.append(item)
+        return items, total
 
     def _build_student_response(self, student: Student) -> StudentResponse:
         return StudentResponse(
@@ -2495,6 +2512,12 @@ class AuthService:
             and not other_active_memberships
             and str(student.group_id) == str(group.id)
         ):
+            if monthly_fee is not None:
+                # Nothing moves, but an authorised amount is still the admin's intent.
+                existing.monthly_fee = int(monthly_fee)
+                existing.monthly_fee_updated_by = UUID(str(actor_id)) if actor_id else None
+                existing.monthly_fee_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                self.db.commit()
             return {
                 "student_id": str(student_id),
                 "group_id": str(group_id),
@@ -2539,6 +2562,11 @@ class AuthService:
                 # period; recorded attendance stays tied to past lessons.
                 existing.joined_at = now_dt
                 existing.left_at = None
+            if closing:
+                # A transfer into a group the student already belongs to keeps
+                # its old joined_at (past rosters need it); this instant lets
+                # the journal recognise the transfer.
+                existing.transferred_at = now_dt
             membership = existing
         else:
             membership = StudentGroup(
@@ -2576,6 +2604,12 @@ class AuthService:
             "membership_id": str(membership.id),
             "warnings": warnings,
         }
+
+    @staticmethod
+    def _membership_event_at(membership: StudentGroup) -> Optional[datetime]:
+        """When the membership was opened or made primary by a transfer (the later one)."""
+        moments = [m for m in (membership.joined_at, membership.transferred_at) if m]
+        return max(moments) if moments else None
 
     def _membership_warnings(self, student: Student, group: Group) -> list[dict[str, str]]:
         """Soft notes after enrolment: shown to the administrator, never a refusal."""
@@ -4743,8 +4777,8 @@ class AuthService:
         recent_active_memberships = [
             membership
             for membership in active_memberships
-            if membership.joined_at
-            and period_start <= membership.joined_at.date() <= period_end
+            if self._membership_event_at(membership)
+            and period_start <= self._membership_event_at(membership).date() <= period_end
         ]
         membership_events: list[dict[str, Any]] = []
         if recent_active_memberships:
@@ -4768,6 +4802,7 @@ class AuthService:
                 )
 
             for membership in recent_active_memberships:
+                event_at = self._membership_event_at(membership)
                 candidates = sources_by_student_id.get(membership.student_id, [])
                 # A transfer closes one membership and opens the next one in
                 # the same transaction, so only a closure that coincides with
@@ -4778,19 +4813,19 @@ class AuthService:
                     (
                         item
                         for item in candidates
-                        if membership.joined_at
+                        if event_at
                         and item[0].left_at
-                        and abs((membership.joined_at - item[0].left_at).total_seconds())
+                        and abs((event_at - item[0].left_at).total_seconds())
                         <= TRANSFER_WINDOW_SECONDS
                     ),
-                    key=lambda item: abs((membership.joined_at - item[0].left_at).total_seconds()),
+                    key=lambda item: abs((event_at - item[0].left_at).total_seconds()),
                     default=None,
                 )
                 if source:
                     membership_events.append({
                         "student_id": str(membership.student_id),
                         "kind": "transferred",
-                        "joined_at": membership.joined_at.isoformat() if membership.joined_at else None,
+                        "joined_at": event_at.isoformat() if event_at else None,
                         "source_group_name": source[1].name,
                     })
 
@@ -4895,9 +4930,10 @@ class AuthService:
             destinations_by_student_id: dict[UUID, str] = {}
             for destination, destination_group in destination_rows:
                 closed = memberships_by_student_id.get(destination.student_id)
-                if not (closed and closed.left_at and destination.joined_at):
+                destination_at = self._membership_event_at(destination)
+                if not (closed and closed.left_at and destination_at):
                     continue
-                if abs((destination.joined_at - closed.left_at).total_seconds()) <= TRANSFER_WINDOW_SECONDS:
+                if abs((destination_at - closed.left_at).total_seconds()) <= TRANSFER_WINDOW_SECONDS:
                     destinations_by_student_id[destination.student_id] = destination_group.name
             students_by_id = {
                 student.id: student

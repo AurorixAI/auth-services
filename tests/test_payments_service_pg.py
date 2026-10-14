@@ -1,5 +1,5 @@
 """N13 P2: payments service and API - defaults, duplicates, replace/void, status, tenancy (PostgreSQL)."""
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -601,3 +601,75 @@ def test_other_organisation_gets_404_everywhere_and_sees_nothing(world):
     # and the settings of one centre never leak into the other
     set_settings(world, period_mode="lessons")
     assert foreign.get(f"{API}/org/settings/payments").json()["period_mode"] == "calendar"
+
+
+# ---- review follow-ups: default end of period, valid_from bounds, extreme dates ------
+
+
+@pytest.mark.parametrize(
+    "paid_on,expected",
+    [
+        ("2026-01-31", "2026-02-28"), ("2026-10-01", "2026-10-31"), ("2028-02-29", "2028-03-28"),
+        ("2026-11-30", "2026-12-29"), ("2026-03-31", "2026-04-30"), ("2026-10-05", "2026-11-04"),
+    ],
+)
+def test_default_end_of_period_over_the_api(world, paid_on, expected, monkeypatch):
+    from datetime import datetime, timezone
+    import src.auth.payments_service as svc
+    monkeypatch.setattr(svc.ps, "business_today", lambda tz=None: date.fromisoformat(paid_on))
+    assert pay(world, paid_on=paid_on)["payment"]["valid_to"] == expected
+
+
+def test_valid_from_must_be_within_three_years_back_and_400_days_forward(world):
+    paid = day(-1)
+    far_back = (paid.replace(year=paid.year - 3) - timedelta(days=1)).isoformat()
+    pay(world, paid_on=paid, valid_from=far_back, expect=422)
+    pay(world, paid_on=paid, valid_from=(paid + timedelta(days=401)).isoformat(), expect=422)
+    pay(world, paid_on=paid, valid_from=(paid + timedelta(days=401)).isoformat(), lessons_count=5, expect=422)
+    pay(world, paid_on=paid, valid_from=(paid + timedelta(days=400)).isoformat(), valid_to=(paid + timedelta(days=430)).isoformat(), amount=2)
+    start = paid.replace(year=paid.year - 3)
+    ok = pay(world, paid_on=paid, valid_from=start.isoformat(), valid_to=(start + timedelta(days=30)).isoformat(), amount=3)
+    assert ok["payment"]["valid_from"] == start.isoformat()
+
+
+EXTREMES = ["9999-12-31", "9999-12-30", "0001-01-01", "0001-01-02", "2999-01-01"]
+
+
+@pytest.mark.parametrize("extreme", EXTREMES)
+@pytest.mark.parametrize("mode", ["calendar", "lessons"])
+def test_extreme_dates_are_422_never_500(world, extreme, mode):
+    set_settings(world, period_mode=mode)
+    base = {"amount": 1}
+    client = owner(world)
+    url = f"{API}/org/memberships/{mid(world)}/payments"
+    today = day().isoformat()
+    for body in (
+        {**base, "paid_on": extreme},
+        {**base, "paid_on": today, "valid_from": extreme},
+        {**base, "paid_on": today, "valid_to": extreme},
+        {**base, "paid_on": today, "valid_from": extreme, "valid_to": extreme},
+        {**base, "paid_on": today, "valid_from": extreme, "lessons_count": 3},
+        {**base, "paid_on": extreme, "valid_from": extreme},
+    ):
+        r = client.post(url, json=body)
+        assert r.status_code == 422, (body, r.status_code, r.text[:200])
+    p = pay(world)["payment"]
+    for path, body in (
+        (f"{API}/org/payments/{p['id']}/replace", {**base, "paid_on": extreme}),
+        (f"{API}/org/payments/{p['id']}/replace", {**base, "paid_on": today, "valid_from": extreme}),
+    ):
+        assert client.post(path, json=body).status_code == 422
+    assert world.db.query(StudentPayment).filter_by(org_id=world.org.id, voided_at=None).count() == 1
+
+
+def test_a_previous_payment_ending_at_the_edge_does_not_break_the_next_default(world):
+    first = pay(world, paid_on=day(-1), valid_from=day(-1), valid_to=day(399))["payment"]
+    nxt = pay(world, paid_on=day(0), amount=2)["payment"]       # default start = day after 399
+    assert nxt["valid_from"] == day(400).isoformat() and nxt["valid_to"]
+
+
+def test_summary_carries_lessons_per_payment(world):
+    assert summary(world)["lessons_per_payment"] == 12
+    set_settings(world, period_mode="lessons", lessons_per_payment=8)
+    s = summary(world)
+    assert (s["lessons_per_payment"], s["period_mode"]) == (8, "lessons")

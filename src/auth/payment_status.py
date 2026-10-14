@@ -133,10 +133,23 @@ def business_today(tz=None) -> date:
 
 
 def add_month_minus_day(start: date) -> date:
-    """``start`` + 1 calendar month - 1 day (05.10 -> 04.11; 31.01 -> 27.02/28.02)."""
-    year, month = (start.year + 1, 1) if start.month == 12 else (start.year, start.month + 1)
-    day = min(start.day, _calendar.monthrange(year, month)[1])
-    return date(year, month, day) - timedelta(days=1)
+    """Default end of a calendar period: the day before ``start``'s day in the next month.
+
+    ``min(day - 1, last day of the next month)`` of the month after ``start``:
+    05.10 -> 04.11, 31.01 -> 28.02 (29.02 in a leap year), 31.03 -> 30.04,
+    30.11 -> 29.12.  The 1st has no day before it in the next month, so the
+    period ends on the last day of the *same* month: 01.10 -> 31.10.
+
+    Raises ``OverflowError`` when the result would not be a valid date.
+    """
+    if start.day == 1:
+        return start.replace(day=_calendar.monthrange(start.year, start.month)[1])
+    try:
+        year, month = (start.year + 1, 1) if start.month == 12 else (start.year, start.month + 1)
+        last = _calendar.monthrange(year, month)[1]
+        return date(year, month, min(start.day - 1, last))
+    except ValueError as exc:  # year 10000
+        raise OverflowError("date out of range") from exc
 
 
 # --------------------------------------------------------------- status ----
@@ -257,10 +270,15 @@ def validation_errors(
     errors: list[str] = []
     if paid_on > today:
         errors.append("Дата оплаты не может быть в будущем")
-    oldest = _years_ago(today, MAX_PAID_AGO_YEARS)
-    if paid_on < oldest:
+    elif paid_on < _years_ago(today, MAX_PAID_AGO_YEARS):
         errors.append("Дата оплаты старше 3 лет")
-    if valid_to is not None:
+    if errors:  # the remaining checks only make sense around a sane payment date
+        return errors
+    if valid_from < _years_ago(paid_on, MAX_PAID_AGO_YEARS):
+        errors.append("Начало периода слишком далеко в прошлом")
+    elif (valid_from - paid_on).days > MAX_PERIOD_DAYS:
+        errors.append("Начало периода слишком далеко в будущем")
+    elif valid_to is not None:
         if valid_to < valid_from:
             errors.append("Дата «оплачено до» раньше начала периода")
         elif (valid_to - valid_from).days > MAX_PERIOD_DAYS:
@@ -268,7 +286,18 @@ def validation_errors(
     return errors
 
 
+def valid_from_error(paid_on: date, valid_from: date) -> Optional[str]:
+    """The ``valid_from`` bound alone (used before a default end is derived)."""
+    if valid_from < _years_ago(paid_on, MAX_PAID_AGO_YEARS):
+        return "Начало периода слишком далеко в прошлом"
+    if (valid_from - paid_on).days > MAX_PERIOD_DAYS:
+        return "Начало периода слишком далеко в будущем"
+    return None
+
+
 def _years_ago(day: date, years: int) -> date:
+    if day.year - years < date.min.year:
+        return date.min
     try:
         return day.replace(year=day.year - years)
     except ValueError:  # 29 February

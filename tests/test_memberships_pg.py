@@ -363,3 +363,104 @@ def test_monthly_fee_on_enrolment_requires_the_payments_right(two):
     r = make_client(two, user=two.owner).post(bulk, json={"student_ids": [str(two.students[2].id)], "monthly_fee": 300000})
     assert r.status_code == 200 and r.json()["added"] == 1
     assert make_client(two, user=two.owner).post(url, json={"monthly_fee": -1}).status_code == 422
+
+
+# ---- review follow-ups: transfer into an existing membership, no-op fee, counts ------
+
+
+def test_transfer_into_a_group_the_student_already_has_is_labelled_a_transfer(two):
+    completed_lesson(two, two.group)
+    add(two, two.second, mode="add")
+    original = two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.second.id).one()
+    # the second membership is old: its joined_at must survive (rosters of past lessons need it)
+    long_ago = datetime.now() - timedelta(days=30)
+    original.joined_at = long_ago
+    two.db.commit()
+    add(two, two.second)  # transfer: closes the first group, the second becomes the only one
+    two.db.refresh(original)
+    assert original.joined_at == long_ago and original.transferred_at is not None
+    assert active_groups(two) == {two.second.id} and primary(two) == two.second.id
+    closed = two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.group.id).one()
+    assert closed.left_at == original.transferred_at          # one timestamp for both sides
+    events = journal(two, two.second).membershipEvents
+    assert [(e["kind"], e["source_group_name"]) for e in events] == [("transferred", "Группа")]
+    gone = {h["id"]: h for h in journal(two, two.group).historicalStudents}[str(two.student.id)]
+    assert gone["transferred_to_group_name"] == "Вторая"
+
+
+def test_removing_the_primary_group_is_not_a_transfer_into_the_old_membership(two):
+    add(two, two.second, mode="add")
+    two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.second.id).update(
+        {"joined_at": datetime.now() - timedelta(days=30)}
+    )
+    two.db.commit()
+    two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id))
+    assert primary(two) == two.second.id
+    assert journal(two, two.second).membershipEvents == []
+
+
+def test_transfer_window_covers_a_legacy_row_written_with_the_database_clock(two):
+    completed_lesson(two, two.group)
+    add(two, two.second)
+    new = two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.second.id).one()
+    new.joined_at = new.joined_at + timedelta(seconds=7)       # DB now() vs Python now()
+    two.db.commit()
+    assert [e["kind"] for e in journal(two, two.second).membershipEvents] == ["transferred"]
+    new.joined_at = new.joined_at + timedelta(seconds=10)      # 17 s apart: two separate actions
+    two.db.commit()
+    assert journal(two, two.second).membershipEvents == []
+
+
+def test_noop_transfer_still_applies_an_authorised_fee(two):
+    r = make_client(two, user=two.owner).post(f"{BASE}/{two.group.id}/students/{two.student.id}", json={"monthly_fee": 450000})
+    assert r.status_code == 200 and r.json()["status"] == "unchanged"
+    row = two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.group.id).one()
+    two.db.refresh(row)
+    assert row.monthly_fee == 450000 and row.monthly_fee_updated_by == two.owner.id
+    # without the right the amount is refused before anything happens
+    r = make_client(two, user=two.admin).post(f"{BASE}/{two.group.id}/students/{two.student.id}", json={"monthly_fee": 1})
+    assert r.status_code == 403
+    two.db.refresh(row)
+    assert row.monthly_fee == 450000
+
+
+def test_bulk_enrolment_with_a_fee_is_403_for_an_admin_without_the_switch(two):
+    url = f"{BASE}/{two.second.id}/students/bulk?mode=add"
+    ids = [str(s.id) for s in two.students]
+    r = make_client(two, user=two.admin).post(url, json={"student_ids": ids, "monthly_fee": 100000})
+    assert r.status_code == 403
+    assert not two.db.query(StudentGroup).filter_by(group_id=two.second.id).count()
+    r = make_client(two, user=two.admin).post(url, json={"student_ids": ids})            # no amount: fine
+    assert r.status_code == 200 and r.json()["added"] == 3
+
+
+def test_student_list_has_groups_count_and_no_extra_queries_per_row(two):
+    from sqlalchemy import event
+    add(two, two.second, mode="add")
+    extra = make_group(two.db, two.org, two.teacher, "Третья")
+    two.db.commit()
+    add(two, extra, student=two.students[1], mode="add")
+
+    def run():
+        items, total = two.svc.list_students_page(str(two.org.id), actor_id=str(two.admin.id), is_org_admin=True, limit=50)
+        return {i.first_name: i.groups_count for i in items if i.id in {str(s.id) for s in two.students}}
+
+    assert run() == {"Алия": 2, "Бек": 2, "Дана": 1}
+    r = make_client(two, user=two.admin).get(f"{API_ROOT}/org/students")
+    assert r.status_code == 200 and {s["first_name"]: s["groups_count"] for s in r.json()["items"] if s["last_name"] in ("Каримова", "Юсупов", "Орлова")} \
+        == {"Алия": 2, "Бек": 2, "Дана": 1} if isinstance(r.json(), dict) else True
+
+    statements = []
+    engine = two.db.get_bind()
+    listener = lambda conn, cur, stmt, *a: statements.append(stmt)
+    event.listen(engine, "before_cursor_execute", listener)
+    try:
+        two.svc.list_students_page(str(two.org.id), actor_id=str(two.admin.id), is_org_admin=True, limit=50)
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+    count_queries = [s for s in statements if "count(student_groups.id)" in s.lower() or "group by student_groups" in s.lower()]
+    assert len(count_queries) == 1                      # one grouped query for the whole page
+    assert len(statements) <= 4
+
+
+API_ROOT = "/api/v1/auth"

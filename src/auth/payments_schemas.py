@@ -87,6 +87,7 @@ class PaymentsSummary(BaseModel):
     free: int
     tracked_total: int
     period_mode: PeriodMode
+    lessons_per_payment: int
 
 
 class PaymentStatusPage(BaseModel):

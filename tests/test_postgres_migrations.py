@@ -48,7 +48,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
         assert connection.execute(text('SELECT count(*) FROM student_groups WHERE id=:id'),{'id':ids['membership']}).scalar_one()==1
         assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='t0u1v2w3x4y'
     assert 'student_payments' in set(inspect(engine).get_table_names())
-    assert {'monthly_fee','monthly_fee_updated_by','monthly_fee_updated_at'} <= {c['name'] for c in inspect(engine).get_columns('student_groups')}
+    assert {'monthly_fee','monthly_fee_updated_by','monthly_fee_updated_at','transferred_at'} <= {c['name'] for c in inspect(engine).get_columns('student_groups')}
     _check_n13_p1_objects(engine,config,ids)
     _check_n13_p2_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
@@ -163,7 +163,7 @@ def _check_n13_p2_objects(engine,config,ids):
     # Round trip: downgrade drops payments and the fee columns, keeps memberships.
     command.downgrade(config,'s9t0u1v2w3x')
     assert 'student_payments' not in set(inspect(engine).get_table_names())
-    assert not ({'monthly_fee','monthly_fee_updated_by','monthly_fee_updated_at'} & {c['name'] for c in inspect(engine).get_columns('student_groups')})
+    assert not ({'monthly_fee','monthly_fee_updated_by','monthly_fee_updated_at','transferred_at'} & {c['name'] for c in inspect(engine).get_columns('student_groups')})
     with engine.connect() as c:
         assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='s9t0u1v2w3x'
         assert c.execute(text('SELECT count(*) FROM student_groups WHERE id=:m'),params).scalar_one()==1
