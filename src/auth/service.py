@@ -5187,6 +5187,14 @@ class AuthService:
             occurrence.get("startTime"), occurrence.get("endTime")
         )
         scheduled_start = lesson_start_as_naive_utc(req.lessonDate, start_minutes)
+        roster_snapshot = self._attendance_roster_at(group.id, scheduled_start)
+        if not roster_snapshot:
+            # The same rule that keeps such a lesson out of the open-lessons list
+            # (get_open_attendance_actions): nobody belonged to the group at its start.
+            raise ValueError(
+                "На дату урока в группе не было учеников — урок нечего отмечать. "
+                "Отметьте «Урока не было», если нужно"
+            )
         attendance = GroupAttendance(
             org_id=org_id,
             group_id=group_id,
@@ -5196,7 +5204,7 @@ class AuthService:
             topic=occurrence.get("topic") or req.topic or occurrence.get("subject"),
             status=LessonAttendanceStatus.IN_PROGRESS.value,
             records={},
-            roster_snapshot=self._attendance_roster_at(group.id, scheduled_start),
+            roster_snapshot=roster_snapshot,
             marked_by=reconciled_by,
             # Do not fabricate an actual start timestamp for a lesson that
             # was not started in the system at the time.

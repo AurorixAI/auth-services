@@ -155,11 +155,12 @@ def _statements_for_open_actions(w):
 
 
 def test_open_actions_query_count_does_not_grow_with_group_count(world):
-    from tests.pg_world import make_group
+    from tests.pg_world import make_group, make_student
 
     def add_groups(count, start):
         for i in range(count):
             group = make_group(world.db, world.org, world.teacher, f"Доп {start + i}")
+            make_student(world.db, world.org, group, f"Имя{start + i}", f"Фамилия{start + i}")
             if i % 3 == 0:
                 reconcile(world, offset_days=1, group=group)  # a started lesson in every third group
         world.db.commit()
@@ -283,18 +284,24 @@ def test_missed_lesson_of_a_group_with_no_students_is_not_reported(world):
     assert _missed_for(world, world.group, _noon(business_today()))
 
 
-def test_in_progress_lesson_of_an_empty_group_is_still_reported(world):
-    from src.auth.schemas import StartAttendanceRequest
+def test_in_progress_lesson_stays_reported_after_the_roster_became_empty(world):
+    from datetime import datetime, timedelta
 
-    empty = _weekday_group(world, "Пустая начатая", [])
+    from src.auth.schemas import StartAttendanceRequest
+    from src.models.auth import StudentGroup
+
+    group = _weekday_group(world, "Начатая", [(datetime.now() - timedelta(days=90), None)])
     day, lesson_id = past_lesson_for_test()
     world.svc.reconcile_missed_group_attendance(
-        str(world.org.id), str(empty.id), StartAttendanceRequest(lessonDate=day, lessonId=lesson_id),
+        str(world.org.id), str(group.id), StartAttendanceRequest(lessonDate=day, lessonId=lesson_id),
         reconciled_by=str(world.admin.id), is_org_admin=True,
     )
+    # the only student leaves afterwards: someone started the lesson, so it stays an open task
+    world.db.query(StudentGroup).filter_by(group_id=group.id).update({"left_at": datetime.utcnow()})
+    world.db.commit()
     items = world.svc.get_open_attendance_actions(str(world.org.id), actor_id=None, is_org_admin=True)
-    started = [i for i in items if i.groupId == str(empty.id)]
-    assert [(i.actionType, i.lessonDate) for i in started] == [("in_progress", day.isoformat())]
+    started = [i for i in items if i.groupId == str(group.id) and i.actionType == "in_progress"]
+    assert [i.lessonDate for i in started] == [day.isoformat()]
 
 
 def past_lesson_for_test():
@@ -385,3 +392,68 @@ def test_empty_roster_check_keeps_the_query_count_constant(world):
     assert len(big_items) > len(small_items) > 0
     assert len(big) == len(small), (len(small), len(big))
     assert len(big) <= 9
+
+
+# ---- N13 P1.5: a lesson nobody could attend cannot be reconciled either ------------
+
+RECONCILE = "/api/v1/auth/org/groups/{gid}/attendance/reconcile"
+CANCEL = "/api/v1/auth/org/groups/{gid}/attendance/reconcile/cancel"
+NO_STUDENTS = "На дату урока в группе не было учеников — урок нечего отмечать. Отметьте «Урока не было», если нужно"
+
+
+def _reconcile_request(world, group, day, lesson_id=None):
+    return make_client(world).post(
+        RECONCILE.format(gid=group.id),
+        json={"lessonDate": day.isoformat(), "lessonId": lesson_id or f"s{day.isoweekday()}"},
+    )
+
+
+def test_reconcile_with_an_empty_roster_is_refused_with_400(world):
+    from sqlalchemy import func
+
+    from src.models.auth import GroupAttendance
+
+    empty = _weekday_group(world, "Пустая", [])
+    day, _ = past_lesson_for_test()
+    r = _reconcile_request(world, empty, day)
+    assert r.status_code == 400 and r.json()["detail"] == NO_STUDENTS
+    # nothing was written
+    assert world.db.query(func.count(GroupAttendance.id)).filter_by(group_id=empty.id).scalar() == 0
+
+
+def test_reconcile_with_a_student_who_joined_before_the_lesson_works(world):
+    from datetime import datetime, timedelta
+
+    group = _weekday_group(world, "С учеником", [(datetime.now() - timedelta(days=90), None)])
+    day, _ = past_lesson_for_test()
+    r = _reconcile_request(world, group, day)
+    assert r.status_code == 200, r.text
+    items = world.svc.get_open_attendance_actions(str(world.org.id), actor_id=None, is_org_admin=True)
+    assert [i.actionType for i in items if i.groupId == str(group.id) and i.lessonDate == day.isoformat()] == ["in_progress"]
+
+
+def test_reconcile_uses_the_same_rule_as_the_open_lessons_list(world):
+    """The first student joined at 11:00 Tashkent: the 10:00 lesson that day is not listed and cannot be reconciled."""
+    from datetime import datetime, timedelta
+
+    today = business_today()
+    joined_day = today - timedelta(days=10)
+    group = _weekday_group(world, "Пришёл позже", [(datetime(joined_day.year, joined_day.month, joined_day.day, 6, 0), None)])
+    listed = set(_missed_for(world, group, _noon(today)))
+    assert joined_day.isoformat() not in listed and (joined_day + timedelta(days=1)).isoformat() in listed
+    assert _reconcile_request(world, group, joined_day).status_code == 400
+    assert _reconcile_request(world, group, joined_day - timedelta(days=1)).status_code == 400
+    assert _reconcile_request(world, group, joined_day + timedelta(days=1)).status_code == 200
+    # one hour earlier (09:30 Tashkent = 04:30 UTC) the same day's lesson counts
+    early = _weekday_group(world, "Пришёл раньше", [(datetime(joined_day.year, joined_day.month, joined_day.day, 4, 30), None)])
+    assert _reconcile_request(world, early, joined_day).status_code == 200
+
+
+def test_cancelling_a_missed_lesson_of_an_empty_group_stays_allowed(world):
+    empty = _weekday_group(world, "Пустая для отмены", [])
+    day, lesson_id = past_lesson_for_test()
+    r = make_client(world).post(
+        CANCEL.format(gid=empty.id),
+        json={"lessonDate": day.isoformat(), "lessonId": lesson_id, "cancellationReason": "Каникулы"},
+    )
+    assert r.status_code == 200, r.text
