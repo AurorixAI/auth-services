@@ -256,6 +256,17 @@ def test_without_smtp_the_reset_email_is_not_even_logged_with_its_body(monkeypat
     assert email_module.smtp_configured() is False
 
 
+def test_looking_at_links_is_limited_per_address_and_needs_no_database_for_junk():
+    """A value that cannot be one of our tokens is answered without touching the database; the limit still counts it."""
+    client = client_for(None)                               # a MagicMock session: any query would return garbage
+    for _ in range(60):
+        assert client.get(f"{API}/password/reset/check", params={"token": "junk"}).json() == {"valid": False}
+    blocked = client.get(f"{API}/password/reset/check", params={"token": "junk"})
+    assert blocked.status_code == 429
+    other = client_for(None, **{"X-Real-IP": "203.0.113.90"})
+    assert other.get(f"{API}/password/reset/check", params={"token": "junk"}).status_code == 200
+
+
 # ---- «Забыли пароль?» -------------------------------------------------------------
 
 
