@@ -106,17 +106,6 @@ def get_current_active_user_payload(
             detail="Учётная запись отключена или не найдена",
         )
 
-    # A password reset ends every login of the account NOW: an access JWT issued before the revocation
-    # instant is dead even though its own ``exp`` is still ahead (whole seconds, like the claim).
-    revoked_at = getattr(user, "sessions_valid_after", None)
-    if revoked_at is not None:
-        issued_at = payload.get("iat")
-        if not isinstance(issued_at, (int, float)) or int(issued_at) < int(revoked_at.timestamp()):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Сессия завершена. Войдите снова.",
-            )
-
     resolved = dict(payload)
     resolved["role"] = user.role
 

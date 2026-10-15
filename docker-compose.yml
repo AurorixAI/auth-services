@@ -30,12 +30,6 @@ services:
       - EXAM_SERVICE_URL=http://exam-service:8003/api/v1
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-local-internal-service-token-change-in-production}
       - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3000","http://localhost:5173"]}
-      - FRONTEND_URL=${FRONTEND_URL:-}
-      - SMTP_HOST=${SMTP_HOST:-}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USER=${SMTP_USER:-}
-      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
-      - SMTP_FROM=${SMTP_FROM:-noreply@algo.kz}
     depends_on:
       postgres:
         condition: service_healthy

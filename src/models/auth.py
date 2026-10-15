@@ -132,9 +132,6 @@ class User(Base):
 
     subjects = Column(JSONB, default=[])
     refresh_token_hash = Column(String(255))
-    # Access JWTs issued before this instant are rejected (see get_current_active_user_payload): set
-    # when the password is reset, so the old logins of the account end NOW, not when the JWT expires.
-    sessions_valid_after = Column(DateTime(timezone=True), nullable=True)
 
     # Set on accounts provisioned with a temporary password (bulk import) —
     # the user must set their own password before using the app.
@@ -272,42 +269,6 @@ class Invitation(Base):
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
-
-
-# ============================================================================
-# PASSWORD RECOVERY
-# ============================================================================
-
-
-class PasswordResetToken(Base):
-    """One-time link to set a new password (N13 password recovery).
-
-    ``purpose`` 'email' - the user asked for it on the login page (valid 1 hour); 'issued' - an owner /
-    admin / superadmin handed it over (valid 24 hours, ``created_by`` is that person). Only the sha256 of
-    the 32-byte random token is stored: the raw token exists in the e-mail / the issuing response and
-    nowhere else. Expired or superseded links get ``expires_at`` moved to the past; ``used_at`` means
-    the password really was changed with it.
-    """
-
-    __tablename__ = "password_reset_tokens"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id = Column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
-    token_hash = Column(String(64), nullable=False)
-    purpose = Column(String(10), nullable=False)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    used_at = Column(DateTime(timezone=True))
-    ip = Column(String(45))
-
-    __table_args__ = (
-        UniqueConstraint("token_hash", name="uq_password_reset_tokens_hash"),
-        CheckConstraint("purpose IN ('email', 'issued')", name="ck_password_reset_tokens_purpose"),
-        Index("idx_password_reset_tokens_user", "user_id"),
-    )
 
 
 # ============================================================================
