@@ -271,6 +271,15 @@ def ensure_payments_access(user: dict, db: Session) -> dict:
     raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к оплатам")
 
 
+def has_payments_access(user: dict, db: Session) -> bool:
+    """``ensure_payments_access`` as a yes/no (a caller that only changes what it may say)."""
+    try:
+        ensure_payments_access(user, db)
+    except HTTPException:
+        return False
+    return True
+
+
 def require_payments_access(
     user: dict = Depends(require_org_admin), db: Session = Depends(get_db)
 ) -> dict:

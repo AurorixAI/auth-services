@@ -38,6 +38,13 @@ class PaymentSettingsUpdate(BaseModel):
     admin_can_manage: Optional[bool] = None
 
 
+class CarriedFromOut(BaseModel):
+    """The payment a carry-over (N13 P2.1) was made from, and the group it belonged to."""
+
+    payment_id: str
+    group_name: str
+
+
 class PaymentOut(BaseModel):
     id: str
     membership_id: str
@@ -49,6 +56,8 @@ class PaymentOut(BaseModel):
     lessons_count: Optional[int] = None
     note: Optional[str] = None
     replaces_payment_id: Optional[str] = None
+    # Set on a carry-over made by a transfer (amount 0): "перенос из «<group>»".
+    carried_from: Optional[CarriedFromOut] = None
     created_by: Optional[str] = None
     created_by_name: Optional[str] = None
     created_at: Optional[str] = None

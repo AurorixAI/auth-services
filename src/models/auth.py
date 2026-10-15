@@ -973,6 +973,9 @@ class StudentPayment(Base):
     lessons_count = Column(SmallInteger, nullable=True)
     note = Column(String(500), nullable=True)
     replaces_payment_id = Column(UUID(as_uuid=True), ForeignKey("student_payments.id"), nullable=True)
+    # N13 P2.1: a carry-over made by a transfer points at the payment it was made from
+    # (amount 0, the original keeps the money).  NULL = an ordinary payment.
+    carried_from_payment_id = Column(UUID(as_uuid=True), ForeignKey("student_payments.id"), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
     voided_at = Column(DateTime, nullable=True)
@@ -1006,6 +1009,12 @@ class StudentPayment(Base):
             "org_id",
             "valid_to",
             postgresql_where=text("voided_at IS NULL"),
+        ),
+        # Cascades (void / replace of the original) find the carry-overs through this column.
+        Index(
+            "idx_student_payments_carried_from",
+            "carried_from_payment_id",
+            postgresql_where=text("carried_from_payment_id IS NOT NULL"),
         ),
         # Double-click guard: an identical live payment cannot be inserted twice.
         Index(
