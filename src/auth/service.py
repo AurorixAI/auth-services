@@ -83,11 +83,7 @@ from .schemas import (
 )
 from src.core.config import get_settings
 from src.core.email import send_admin_new_application
-from src.core.exceptions import (
-    AccountNotFoundError,
-    InvalidCredentialsError,
-    AccountInactiveError,
-)
+from src.core.exceptions import InvalidCredentialsError
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +158,10 @@ BASE_DIAGNOSTIC_URL = os.getenv("DIAGNOSTIC_BASE_URL", "http://localhost:3000/d"
 _EXPIRABLE_DIAGNOSTIC_STATUSES = ("pending", "confirmed", "in_progress")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# A real bcrypt hash (cost 12, same as pwd_context makes) of a random string nobody knows. login() verifies
+# against it when the e-mail is unknown, so an unknown account costs the same time as a known one.
+_DUMMY_PASSWORD_HASH = "$2b$12$wFh2ZCojJmLqU5ozLAz99OChtLuiQ.w.YYKc03f534RzPqJUpavxa"
 
 
 # ============================================================================
@@ -552,12 +552,12 @@ class AuthService:
     # ═══════════════════════════════════════════════════════════════════
 
     def login(self, request: LoginRequest) -> AuthResponse:
+        # One answer, one cost: an unknown e-mail, a deactivated account and a wrong password all end in the same
+        # InvalidCredentialsError after the same bcrypt verification (against a dummy hash when there is no
+        # user), so neither the message nor the response time says whether the account exists.
         user = self.db.query(User).filter(User.email == request.email).first()
-        if not user:
-            raise AccountNotFoundError()
-        if not user.is_active:
-            raise AccountInactiveError()
-        if not verify_password(request.password, user.password_hash):
+        password_ok = verify_password(request.password, user.password_hash if user else _DUMMY_PASSWORD_HASH)
+        if not user or not user.is_active or not password_ok:
             raise InvalidCredentialsError()
 
         user.last_login_at = datetime.now(timezone.utc)

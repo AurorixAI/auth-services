@@ -94,9 +94,37 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+IPV6_BUCKET_PREFIX_LENGTH = 64
+
+
+def limit_bucket(address: str) -> str:
+    """The rate-limit bucket of a client address: an IPv4 address as it is, an IPv6 address by its /64 prefix.
+
+    A single IPv6 subscriber is handed a whole /64 (2**64 addresses) and can pick a new source address for
+    every request: counting the full address gives such a client an unlimited number of buckets. An IPv4
+    address that arrives IPv6-mapped (``::ffff:203.0.113.7``, how a dual-stack socket shows it) is the IPv4
+    client and keeps its own bucket - otherwise every IPv4 client would share the single bucket ``::/64``.
+    Anything that is not an address (``unknown``) is returned unchanged.
+    """
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return address
+    if ip.version == 4:
+        return str(ip)
+    if ip.ipv4_mapped is not None:
+        return str(ip.ipv4_mapped)
+    return str(ipaddress.ip_network(f"{ip}/{IPV6_BUCKET_PREFIX_LENGTH}", strict=False))
+
+
+def client_bucket(request: Request) -> str:
+    """What every limiter counts for this caller: the trusted client address (``client_ip``) as a bucket."""
+    return limit_bucket(client_ip(request))
+
+
 def _client_key(request: Request, endpoint: str) -> str:
-    """Build a unique key from IP + endpoint."""
-    return f"rl:{endpoint}:{client_ip(request)}"
+    """Build a unique key from client bucket + endpoint."""
+    return f"rl:{endpoint}:{client_bucket(request)}"
 
 
 # ---------------------------------------------------------------------------

@@ -20,9 +20,9 @@ from .service import (
 from .attendance_access import is_org_admin, is_org_manager
 from . import import_service
 from .import_service import ImportPreviewResponse, ImportCommitResponse
-from src.api.rate_limit import client_ip, enforce_rate_limit, rate_limit
+from src.api.rate_limit import client_bucket, enforce_rate_limit, rate_limit
 from src.core.config import get_settings
-from src.core.exceptions import AccountInactiveError, AccountNotFoundError, InvalidCredentialsError
+from src.core.exceptions import InvalidCredentialsError
 from . import login_throttle
 from .cookies import (
     AUTH_COOKIE_NAME,
@@ -154,18 +154,22 @@ def apply_organization(
 @router.post("/login", response_model=AuthResponse)
 def login(
     request: LoginRequest,
-    ip: str = Depends(login_throttle.enforce_login_ip_limits),
+    bucket: str = Depends(login_throttle.enforce_login_ip_limits),
     db: Session = Depends(get_db),
 ):
     """Вход в систему — возвращает JWT + org info.
 
-    Защита от подбора пароля (login_throttle.py): лимит попыток на адрес клиента (30/мин, 300/час) и
-    нарастающая пауза на аккаунт после 5 неудач подряд (1, 2, 4, 8, до 15 мин) - ответ 429 + Retry-After
-    выдаётся до поиска пользователя и проверки пароля."""
-    attempt = login_throttle.begin(login_throttle.SCOPE_LOGIN, request.email, ip)
+    Неизвестный email, отключённый аккаунт и неверный пароль дают один и тот же ответ (401, «Неверная почта
+    или пароль») за одно и то же время.
+
+    Защита от подбора пароля (login_throttle.py): лимит попыток на адрес клиента (30/мин, 300/час); пауза на
+    пару «аккаунт + адрес» после 5 неудач подряд (1, 2, 4, 8, до 15 мин); пауза на весь аккаунт после 20
+    неудач за 15 мин с любых адресов. Ответ 429 + Retry-After выдаётся до поиска пользователя и проверки
+    пароля."""
+    attempt = login_throttle.begin(login_throttle.SCOPE_LOGIN, request.email, bucket)
     try:
         result = _svc(db).login(request)
-    except (AccountNotFoundError, AccountInactiveError, InvalidCredentialsError, ValueError) as e:
+    except (InvalidCredentialsError, ValueError) as e:
         attempt.failed()  # unknown, inactive and wrong-password accounts are all counted the same way
         if isinstance(e, ValueError):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
@@ -370,9 +374,10 @@ def change_password(
     db: Session = Depends(get_db),
 ):
     """Сменить пароль. Текущий пароль проверяется, поэтому подбор ограничен как при входе:
-    нарастающая пауза на пользователя после 5 неверных попыток подряд (429 + Retry-After)."""
+    те же паузы, что и при входе: на пару «пользователь + адрес» после 5 неверных попыток подряд и на
+    пользователя после 20 с любых адресов (429 + Retry-After)."""
     attempt = login_throttle.begin(
-        login_throttle.SCOPE_CHANGE_PASSWORD, str(payload["sub"]), client_ip(raw_request)
+        login_throttle.SCOPE_CHANGE_PASSWORD, str(payload["sub"]), client_bucket(raw_request)
     )
     try:
         _svc(db).change_password(

@@ -189,7 +189,9 @@ class TestExceptions:
 
     def test_exception_status_map_has_all_types(self):
         from src.core.exceptions import EXCEPTION_STATUS_MAP, AlgoException
-        assert len(EXCEPTION_STATUS_MAP) == 10
+        assert len(EXCEPTION_STATUS_MAP) == 8
+        from src.core.exceptions import InvalidCredentialsError
+        assert EXCEPTION_STATUS_MAP[InvalidCredentialsError] == 401
         for exc_type in EXCEPTION_STATUS_MAP:
             assert issubclass(exc_type, AlgoException)
 
@@ -671,22 +673,26 @@ class TestAuthServiceExtended:
 
     # ─── login failure paths ─────────────────────────────────────────────
 
-    def test_login_user_not_found_raises_value_error(self):
+    def test_login_user_not_found_gets_the_one_credentials_answer(self):
         from src.auth.schemas import LoginRequest
-        from src.core.exceptions import AccountNotFoundError
+        from src.core.exceptions import InvalidCredentialsError
         service, db = self._make_service()
         db.query.return_value.filter.return_value.first.return_value = None
-        with pytest.raises(AccountNotFoundError, match="email"):
+        with pytest.raises(InvalidCredentialsError, match="Неверная почта или пароль") as exc:
             service.login(LoginRequest(email="x@y.com", password="anypass"))
+        assert exc.value.code == "INVALID_CREDENTIALS"
 
-    def test_login_inactive_user_raises(self):
+    def test_login_inactive_user_gets_the_same_answer_even_with_the_right_password(self):
+        from src.auth.service import hash_password
         from src.auth.schemas import LoginRequest
-        from src.core.exceptions import AccountInactiveError
+        from src.core.exceptions import InvalidCredentialsError
         service, db = self._make_service()
         user = self._mock_user(is_active=False)
+        user.password_hash = hash_password("anypass")
         db.query.return_value.filter.return_value.first.return_value = user
-        with pytest.raises(AccountInactiveError, match="заблокирован"):
+        with pytest.raises(InvalidCredentialsError, match="Неверная почта или пароль") as exc:
             service.login(LoginRequest(email="x@y.com", password="anypass"))
+        assert exc.value.code == "INVALID_CREDENTIALS"
 
     def test_login_wrong_password_raises(self):
         from src.auth.service import hash_password
@@ -696,8 +702,43 @@ class TestAuthServiceExtended:
         user = self._mock_user(is_active=True)
         user.password_hash = hash_password("correct_pw")
         db.query.return_value.filter.return_value.first.return_value = user
-        with pytest.raises(InvalidCredentialsError, match="пароль"):
+        with pytest.raises(InvalidCredentialsError, match="Неверная почта или пароль") as exc:
             service.login(LoginRequest(email="x@y.com", password="wrong_pw"))
+        assert exc.value.code == "INVALID_CREDENTIALS"
+
+    def test_login_does_the_same_bcrypt_work_for_unknown_inactive_and_wrong_password(self, monkeypatch):
+        """No timing oracle: a password is verified in all three cases (a dummy hash when there is no user)."""
+        from src.auth import service as service_module
+        from src.auth.schemas import LoginRequest
+        from src.auth.service import hash_password
+        from src.core.exceptions import InvalidCredentialsError
+
+        verified = []
+        monkeypatch.setattr(
+            service_module, "verify_password", lambda plain, hashed: verified.append(hashed) or False
+        )
+        real = hash_password("pw")
+        cases = {
+            "unknown": None,
+            "inactive": self._mock_user(is_active=False),
+            "wrong": self._mock_user(is_active=True),
+        }
+        cases["inactive"].password_hash = real
+        cases["wrong"].password_hash = real
+        for name, user in cases.items():
+            service, db = self._make_service()
+            db.query.return_value.filter.return_value.first.return_value = user
+            with pytest.raises(InvalidCredentialsError):
+                service.login(LoginRequest(email="x@y.com", password="anypass"))
+        assert verified == [service_module._DUMMY_PASSWORD_HASH, real, real]
+
+    def test_the_dummy_hash_is_a_real_bcrypt_hash_of_the_current_cost(self):
+        from src.auth import service as service_module
+
+        dummy = service_module._DUMMY_PASSWORD_HASH
+        fresh = service_module.hash_password("anything")
+        assert dummy[:7] == fresh[:7] == "$2b$12$" and len(dummy) == len(fresh) == 60
+        assert service_module.verify_password("not-the-password", dummy) is False
 
     # ─── refresh_tokens failure paths ───────────────────────────────────
 

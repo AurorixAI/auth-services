@@ -1,9 +1,12 @@
 """Brute-force protection of the password endpoints (login, change-password) and of the secret lookups.
 
-Decided design (N13 P2.2 security): per ACCOUNT, after 5 consecutive failures the account is refused for
-1, 2, 4, 8, at most 15 minutes (never locked for good); per CLIENT ADDRESS, 30 login attempts a minute and 300
-an hour; 429 + Retry-After + «Слишком много попыток входа. Попробуйте через N мин.»; a refused attempt never
-reaches the user lookup or the password check; unknown accounts are counted like known ones.
+Decided design (N13 P2.2 security): per ACCOUNT AND CLIENT ADDRESS, after 5 consecutive failures that address is
+refused for 1, 2, 4, 8, at most 15 minutes (never locked for good), so a guesser blocks only themselves; per
+ACCOUNT across all addresses, 20 failures within 15 minutes start the same schedule for the account itself
+(a distributed attack); per CLIENT ADDRESS (an IPv6 client by its /64), 30 login attempts a minute and 300 an
+hour; 429 + Retry-After + «Слишком много попыток входа. Попробуйте через N мин.»; a refused attempt never
+reaches the user lookup or the password check; unknown accounts are counted like known ones and get the same
+401 answer.
 
 Most tests run on the per-process memory store with a fake clock. The tests marked ``needs_redis`` run the same
 logic against a REAL Redis (Lua scripts, TTLs, parallel requests) and need ``THROTTLE_TEST_REDIS_URL`` pointing
@@ -38,12 +41,7 @@ from src.auth.dependencies import get_current_active_user_payload  # noqa: E402
 from src.auth.service import AuthService  # noqa: E402
 from src.core import redis_client  # noqa: E402
 from src.core.database import get_db  # noqa: E402
-from src.core.exceptions import (  # noqa: E402
-    AccountInactiveError,
-    AccountNotFoundError,
-    AlgoException,
-    InvalidCredentialsError,
-)
+from src.core.exceptions import AlgoException, InvalidCredentialsError  # noqa: E402
 
 REAL_GET_REDIS = redis_client.get_redis  # conftest swaps it for "no Redis" in every test
 API = "/api/v1/auth"
@@ -91,6 +89,11 @@ def refused_for(identifier, scope=lt.SCOPE_LOGIN, ip=IP):
     return exc.value
 
 
+def addresses(n, start=0):
+    """n different client buckets (documentation range 198.51.100.0/24 and beyond)."""
+    return [f"198.51.{(start + i) // 250}.{(start + i) % 250 + 1}" for i in range(n)]
+
+
 def make_app(db=None):
     """The auth router with the service's own error handlers (domain errors -> status codes, CORS-aware
     HTTPException with its headers), so what the tests see is what a client sees."""
@@ -109,10 +112,14 @@ def test_backoff_schedule_is_one_two_four_eight_then_fifteen_minutes():
     assert [lt.backoff_seconds(n) for n in range(1, 5)] == [0, 0, 0, 0]
     assert [lt.backoff_seconds(n) for n in range(5, 12)] == [60, 120, 240, 480, 900, 900, 900]
     assert lt.backoff_seconds(10**6) == 900  # no overflow, still the cap
+    # the account ceiling climbs the same schedule from its own threshold
+    assert [lt.backoff_seconds(n, lt.ACCOUNT_CEILING_THRESHOLD) for n in (19, 20, 21, 22, 23, 24, 25)] == [
+        0, 60, 120, 240, 480, 900, 900,
+    ]
 
 
 def test_the_decided_numbers():
-    assert lt.FAILURE_THRESHOLD == 5
+    assert lt.FAILURE_THRESHOLD == 5 and lt.ACCOUNT_CEILING_THRESHOLD == 20
     assert lt.BACKOFF_BASE_SECONDS == 60 and lt.BACKOFF_CAP_SECONDS == 900
     assert lt.QUIET_WINDOW_SECONDS == 900
     assert lt.LOGIN_IP_LIMITS == (("minute", 30, 60), ("hour", 300, 3600))
@@ -300,6 +307,18 @@ def test_one_warning_when_an_account_enters_backoff_and_no_secret_in_it(clock, c
     assert "teacher" not in line and "x.kz" not in line
 
 
+def test_the_ceiling_logs_its_own_line_and_names_the_address_that_tipped_it(clock, caplog):
+    caplog.set_level(logging.WARNING, logger="src.auth.login_throttle")
+    for ip in addresses(19):
+        fail("teacher@x.kz", ip=ip)
+    assert caplog.records == []
+    fail("teacher@x.kz", ip="203.0.113.9")
+    lines = [r.getMessage() for r in caplog.records]
+    assert len(lines) == 1 and "from all addresses" in lines[0]
+    assert "attempts=20" in lines[0] and "block_seconds=60" in lines[0] and "ip=203.0.113.9" in lines[0]
+    assert "teacher" not in lines[0]
+
+
 # ---- the endpoint: /auth/login ----------------------------------------------------------------
 
 
@@ -308,9 +327,7 @@ def login_app(monkeypatch):
 
     def fake_login(self, request):
         calls.append((request.email, request.password))
-        if request.email.startswith("ghost"):
-            raise AccountNotFoundError()
-        if request.password != GOOD:
+        if request.email.startswith("ghost") or request.password != GOOD:
             raise InvalidCredentialsError()
         return SimpleNamespace(
             model_dump=lambda mode="json": {"ok": True},
@@ -368,6 +385,24 @@ def test_a_refused_attempt_never_looks_up_the_user_or_checks_the_password(monkey
     assert len(verified) == 5 and db.query.call_count == 5  # untouched
 
 
+def test_unknown_inactive_and_wrong_password_get_the_same_401_through_the_real_service(monkeypatch, clock):
+    """No account enumeration: the real AuthService answers all three with one status, one code, one message."""
+    right = service_module.hash_password("the-right-one")
+    cases = {
+        "unknown": None,
+        "inactive": SimpleNamespace(is_active=False, password_hash=right, email="a@x.kz"),
+        "wrong password": SimpleNamespace(is_active=True, password_hash=right, email="a@x.kz"),
+    }
+    answers = {}
+    for name, user in cases.items():
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = user
+        r = post_login(TestClient(make_app(db)), f"who-{len(answers)}@x.kz", "the-right-one" if name == "inactive" else "nope")
+        answers[name] = (r.status_code, r.json())
+    expected = (401, {"detail": {"code": "INVALID_CREDENTIALS", "message": "Неверная почта или пароль"}})
+    assert answers == {"unknown": expected, "inactive": expected, "wrong password": expected}
+
+
 def test_a_success_resets_the_account_through_the_endpoint(monkeypatch, clock):
     client, _ = login_app(monkeypatch)
     for _ in range(4):
@@ -382,11 +417,10 @@ def test_an_unknown_account_is_counted_and_answered_like_a_known_one(monkeypatch
     client, _ = login_app(monkeypatch)
     known = [post_login(client, "teacher@x.kz") for _ in range(6)]
     ghost = [post_login(client, "ghost@x.kz") for _ in range(6)]
-    # (the 401 "wrong password" vs 404 "no such account" answers are the service's existing, deliberate contract;
-    # the throttle adds nothing to them: same threshold, same 429 body, same wait)
-    assert [r.status_code for r in known] == [401] * 5 + [429]
-    assert [r.status_code for r in ghost] == [404] * 5 + [429]
-    assert known[5].json() == ghost[5].json()
+    assert [r.status_code for r in known] == [r.status_code for r in ghost] == [401] * 5 + [429]
+    for k, g in zip(known, ghost):  # byte-for-byte the same answers, 401s and 429
+        assert k.json() == g.json()
+    assert known[0].json() == {"detail": {"code": "INVALID_CREDENTIALS", "message": "Неверная почта или пароль"}}
     assert known[5].headers["retry-after"] == ghost[5].headers["retry-after"]
 
 
@@ -410,11 +444,69 @@ def test_case_whitespace_and_width_variants_of_the_email_share_one_counter(monke
     assert post_login(client, "teacher@x.kz").status_code == 429
 
 
-def test_changing_the_address_does_not_reset_the_account_counter(monkeypatch, clock):
+def test_one_address_guessing_cannot_block_the_account_for_everybody_else(monkeypatch, clock):
     client, calls = login_app(monkeypatch)
-    codes = [post_login(client, "teacher@x.kz", ip=f"198.51.100.{i}").status_code for i in range(7)]
-    assert codes == [401] * 5 + [429] * 2
-    assert len(calls) == 5
+    attacker, school = "198.51.100.66", "203.0.113.20"
+    assert [post_login(client, "teacher@x.kz", ip=attacker).status_code for _ in range(5)] == [401] * 5
+    assert post_login(client, "teacher@x.kz", GOOD, ip=attacker).status_code == 429  # the guesser is stopped...
+    assert post_login(client, "teacher@x.kz", GOOD, ip=school).status_code == 200  # ...the teacher is not
+    assert post_login(client, "teacher@x.kz", "typo", ip=school).status_code == 401
+    assert post_login(client, "teacher@x.kz", GOOD, ip=attacker).status_code == 429  # and stays stopped
+    assert len(calls) == 7
+
+
+def test_rotating_addresses_does_not_reset_the_account_ceiling_but_a_few_addresses_are_not_enough(monkeypatch, clock):
+    client, calls = login_app(monkeypatch)
+    ips = addresses(25)
+    codes = [post_login(client, "teacher@x.kz", ip=ip).status_code for ip in ips]
+    # each address gets its own five tries; the 20 evaluated attempts in all arm the account, the rest are refused
+    assert codes == [401] * 20 + [429] * 5
+    assert len(calls) == 20
+
+
+def test_the_ceiling_refuses_the_account_owner_too_with_the_decided_schedule(monkeypatch, clock):
+    client, calls = login_app(monkeypatch)
+    for ip in addresses(20):
+        assert post_login(client, "teacher@x.kz", ip=ip).status_code == 401
+    r = post_login(client, "teacher@x.kz", GOOD, ip="203.0.113.20")  # the owner's own, untouched address
+    assert r.status_code == 429 and r.headers["retry-after"] == "60"
+    assert r.json()["detail"] == "Слишком много попыток входа. Попробуйте через 1 мин."
+    assert len(calls) == 20
+    waits = []
+    for n in range(6):
+        clock.advance(int(r.headers["retry-after"]) + 1)
+        assert post_login(client, "teacher@x.kz", ip=addresses(1, 100 + n)[0]).status_code == 401  # evaluated again
+        r = post_login(client, "teacher@x.kz", GOOD, ip="203.0.113.20")
+        waits.append(r.headers["retry-after"])
+    assert waits == ["120", "240", "480", "900", "900", "900"]
+
+
+def test_refused_attempts_of_a_blocked_address_do_not_feed_the_ceiling(monkeypatch, clock):
+    client, _ = login_app(monkeypatch)
+    for _ in range(5):
+        post_login(client, "teacher@x.kz", ip="198.51.100.66")
+    for _ in range(50):  # the guesser keeps hammering a blocked address
+        assert post_login(client, "teacher@x.kz", ip="198.51.100.66").status_code == 429
+    codes = [post_login(client, "teacher@x.kz", ip=ip).status_code for ip in addresses(14)]
+    assert codes == [401] * 14  # 5 + 14 = 19 evaluated attempts: the ceiling (20) is not reached
+    assert post_login(client, "teacher@x.kz", ip="203.0.113.77").status_code == 401  # the 20th: still evaluated
+    assert post_login(client, "teacher@x.kz", ip="203.0.113.78").status_code == 429  # armed by it
+
+
+def test_the_ceiling_counts_within_fifteen_quiet_minutes_and_the_owners_success_clears_it(monkeypatch, clock):
+    client, _ = login_app(monkeypatch)
+    for ip in addresses(10):
+        post_login(client, "teacher@x.kz", ip=ip)
+    clock.advance(10 * 60)  # still inside the quarter hour: the earlier failures count
+    for ip in addresses(9, 50):
+        assert post_login(client, "teacher@x.kz", ip=ip).status_code == 401
+    assert post_login(client, "teacher@x.kz", GOOD, ip="203.0.113.20").status_code == 200  # 20th evaluated: owner is in
+    # ...and signing in cleared the ceiling together with the owner's address
+    for ip in addresses(19, 200):
+        assert post_login(client, "teacher@x.kz", ip=ip).status_code == 401
+    clock.advance(16 * 60)  # a quiet quarter hour forgets the rest
+    for ip in addresses(19, 300):
+        assert post_login(client, "teacher@x.kz", ip=ip).status_code == 401
 
 
 def test_other_accounts_on_the_same_address_are_not_blocked(monkeypatch, clock):
@@ -422,15 +514,6 @@ def test_other_accounts_on_the_same_address_are_not_blocked(monkeypatch, clock):
     for _ in range(6):
         post_login(client, "victim@x.kz")
     assert post_login(client, "colleague@x.kz", GOOD).status_code == 200
-
-
-def test_an_inactive_account_is_counted_like_any_other_failure(monkeypatch, clock):
-    def inactive(self, request):
-        raise AccountInactiveError()
-
-    monkeypatch.setattr(AuthService, "login", inactive)
-    client = TestClient(make_app())
-    assert [post_login(client, "off@x.kz").status_code for _ in range(6)] == [403] * 5 + [429]
 
 
 def test_a_server_error_is_not_counted_against_the_account(monkeypatch, clock):
@@ -499,6 +582,33 @@ def test_a_spoofed_forwarded_for_next_to_x_real_ip_cannot_escape_the_address_lim
     assert codes == [401] * 30 + [429]
 
 
+def test_an_ipv6_client_is_limited_by_its_slash_64_not_by_the_single_address(monkeypatch, clock):
+    client, _ = login_app(monkeypatch)
+    one_subscriber = [f"2001:db8:aaaa:1:{i:x}:{i:x}:{i:x}:{i:x}" for i in range(1, 33)]  # a new source every time
+    codes = [post_login(client, f"user{i}@x.kz", ip=ip).status_code for i, ip in enumerate(one_subscriber)]
+    assert codes == [401] * 30 + [429] * 2
+    assert post_login(client, "user99@x.kz", ip="2001:db8:aaaa:2::5").status_code == 401  # the next /64 is another client
+    assert post_login(client, "user98@x.kz", ip="203.0.113.5").status_code == 401  # IPv4 is untouched
+
+
+def test_rotating_the_low_64_bits_does_not_reset_the_account_and_address_counter(monkeypatch, clock):
+    client, calls = login_app(monkeypatch)
+    codes = [
+        post_login(client, "teacher@x.kz", ip=f"2001:db8:aaaa:1::{i:x}").status_code for i in range(1, 8)
+    ]
+    assert codes == [401] * 5 + [429] * 2
+    assert len(calls) == 5
+    assert post_login(client, "teacher@x.kz", GOOD, ip="2001:db8:aaaa:7::1").status_code == 200  # another /64 is fine
+
+
+def test_the_attempt_log_names_the_bucket_not_a_single_ipv6_address(clock, caplog):
+    caplog.set_level(logging.WARNING, logger="src.auth.login_throttle")
+    bucket = rl.limit_bucket("2001:db8:aaaa:1:1:2:3:4")
+    for _ in range(5):
+        fail("teacher@x.kz", ip=bucket)
+    assert "ip=2001:db8:aaaa:1::/64" in caplog.records[0].getMessage()
+
+
 def test_retry_after_survives_the_cors_error_handler(clock):
     from src.api import main_v2
 
@@ -548,6 +658,17 @@ def test_change_password_is_throttled_per_user_like_login(monkeypatch, clock):
     clock.advance(61)
     assert change(client, GOOD).status_code == 200  # after the wait the right password works
     assert [change(client).status_code for _ in range(5)] == [400] * 5  # and the counter started over
+
+
+def test_change_password_blocks_only_the_guessing_address(monkeypatch, clock):
+    client, who = password_app(monkeypatch)
+    guesser = {"x-real-ip": "198.51.100.66"}
+    owner = {"x-real-ip": "203.0.113.20"}
+    body = {"old_password": "wrong-old-pw", "new_password": "brand-new-pw"}
+    assert [client.post(f"{API}/change-password", json=body, headers=guesser).status_code for _ in range(6)] == [400] * 5 + [429]
+    good = {"old_password": GOOD, "new_password": "brand-new-pw"}
+    assert client.post(f"{API}/change-password", json=good, headers=guesser).status_code == 429
+    assert client.post(f"{API}/change-password", json=good, headers=owner).status_code == 200
 
 
 def test_change_password_and_login_have_separate_counters(monkeypatch, clock):
@@ -662,33 +783,50 @@ def live(monkeypatch):
 
 
 @needs_redis
-def test_live_redis_blocks_after_five_with_real_ttls(live):
-    base = lt._key_base("login", "t@x.kz")
+def test_live_redis_blocks_the_address_after_five_with_real_ttls(live):
+    account = lt._key_base("login", "t@x.kz")
+    pair = lt._pair_base(account, IP)
     for _ in range(5):
         fail("t@x.kz")
     assert 1 <= refused_for("t@x.kz").retry_after <= 60
-    assert 0 < live.ttl(f"{base}:b") <= 60
-    assert 900 < live.ttl(f"{base}:n") <= 960  # forgotten a quiet quarter hour after the block ends
+    assert 0 < live.ttl(f"{pair}:b") <= 60
+    assert 900 < live.ttl(f"{pair}:n") <= 960  # forgotten a quiet quarter hour after the block ends
+    assert live.get(f"{account}:n") == "5" and live.exists(f"{account}:b") == 0  # the ceiling counts, is not armed
+    lt.begin(lt.SCOPE_LOGIN, "t@x.kz", "203.0.113.20").failed()  # another address is not blocked
     assert not lt._memory  # nothing was kept in process memory: the state is in Redis
 
 
 @needs_redis
-def test_live_redis_backoff_grows_and_a_success_clears_both_keys(live):
-    base = lt._key_base("login", "t@x.kz")
+def test_live_redis_backoff_grows_and_a_success_clears_the_keys(live):
+    account = lt._key_base("login", "t@x.kz")
+    pair = lt._pair_base(account, IP)
     for _ in range(5):
         fail("t@x.kz")
-    live.pexpire(f"{base}:b", 1)  # let the first block run out
+    live.pexpire(f"{pair}:b", 1)  # let the first block run out
     time.sleep(0.05)
     fail("t@x.kz")  # allowed again; the failure arms the next step
     assert 119 <= refused_for("t@x.kz").retry_after <= 120
-    live.delete(f"{base}:b")
+    live.delete(f"{pair}:b")
     lt.begin(lt.SCOPE_LOGIN, "t@x.kz", IP).succeeded()
-    assert live.exists(f"{base}:n", f"{base}:b") == 0
+    assert live.exists(f"{pair}:n", f"{pair}:b", f"{account}:n", f"{account}:b") == 0
     lt.begin(lt.SCOPE_LOGIN, "t@x.kz", IP).succeeded()  # and a stale reset is harmless
 
 
 @needs_redis
-def test_live_redis_sixty_parallel_guesses_evaluate_exactly_five(live):
+def test_live_redis_the_ceiling_blocks_the_account_for_every_address(live):
+    account = lt._key_base("login", "t@x.kz")
+    for ip in addresses(20):
+        fail("t@x.kz", ip=ip)
+    assert 1 <= refused_for("t@x.kz", ip="203.0.113.20").retry_after <= 60  # a fresh address is refused too
+    assert 0 < live.ttl(f"{account}:b") <= 60
+    live.pexpire(f"{account}:b", 1)
+    time.sleep(0.05)
+    fail("t@x.kz", ip="203.0.113.20")
+    assert 119 <= refused_for("t@x.kz", ip="203.0.113.21").retry_after <= 120
+
+
+@needs_redis
+def test_live_redis_sixty_parallel_guesses_from_one_address_evaluate_exactly_five(live):
     outcomes = []
     barrier = threading.Barrier(60)
 
@@ -704,6 +842,25 @@ def test_live_redis_sixty_parallel_guesses_evaluate_exactly_five(live):
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert outcomes.count("evaluated") == 5 and outcomes.count("refused") == 55
+
+
+@needs_redis
+def test_live_redis_sixty_parallel_guesses_from_sixty_addresses_evaluate_exactly_twenty(live):
+    outcomes = []
+    barrier = threading.Barrier(60)
+
+    def guess(ip):
+        barrier.wait()
+        try:
+            lt.begin(lt.SCOPE_LOGIN, "t@x.kz", ip).failed()
+            outcomes.append("evaluated")
+        except lt.TooManyAttempts:
+            outcomes.append("refused")
+
+    threads = [threading.Thread(target=guess, args=(ip,)) for ip in addresses(60)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert outcomes.count("evaluated") == 20 and outcomes.count("refused") == 40
 
 
 @needs_redis
@@ -737,6 +894,9 @@ def test_live_redis_the_endpoint_limits_hold(monkeypatch, live):
     other = [post_login(client, f"u{i}@x.kz", ip="198.51.100.9").status_code for i in range(31)]
     assert other == [401] * 30 + [429]
     assert live.get("lt:ip:login:minute:198.51.100.9") == "31"
+    v6 = [post_login(client, f"w{i}@x.kz", ip=f"2001:db8:aaaa:1::{i:x}").status_code for i in range(1, 32)]
+    assert v6 == [401] * 30 + [429]
+    assert live.get("lt:ip:login:minute:2001:db8:aaaa:1::/64") == "31"  # one bucket for the whole /64
 
 
 @needs_redis

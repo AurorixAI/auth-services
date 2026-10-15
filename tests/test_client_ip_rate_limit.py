@@ -82,6 +82,51 @@ def test_ipv6_is_normalised():
     assert rl.client_ip(request_with({"X-Real-IP": "::ffff:203.0.113.7"})) == "::ffff:203.0.113.7"
 
 
+# ---- an IPv6 client is one bucket per /64 --------------------------------------------
+
+
+def test_an_ipv4_address_is_its_own_bucket_unchanged():
+    assert rl.limit_bucket("203.0.113.7") == "203.0.113.7"
+    assert rl.client_bucket(request_with({"X-Real-IP": "203.0.113.7"})) == "203.0.113.7"
+
+
+def test_ipv6_addresses_of_one_slash_64_share_a_bucket_and_other_prefixes_do_not():
+    a = rl.limit_bucket("2001:db8:1:2:aaaa:bbbb:cccc:dddd")
+    assert a == "2001:db8:1:2::/64"
+    assert rl.limit_bucket("2001:db8:1:2::1") == rl.limit_bucket("2001:DB8:1:2:ffff:ffff:ffff:ffff") == a
+    assert rl.limit_bucket("2001:db8:1:3::1") != a  # the next /64 is another subscriber
+    assert rl.limit_bucket("2001:db8:2:2::1") != a
+
+
+def test_an_ipv4_mapped_ipv6_address_is_the_ipv4_client_not_one_shared_bucket():
+    # a dual-stack socket shows 203.0.113.7 as ::ffff:203.0.113.7; counting it by /64 would put every IPv4 client in "::/64"
+    assert rl.limit_bucket("::ffff:203.0.113.7") == "203.0.113.7"
+    assert rl.limit_bucket("::ffff:203.0.113.8") != rl.limit_bucket("::ffff:203.0.113.7")
+
+
+def test_not_an_address_is_left_alone():
+    assert rl.limit_bucket("unknown") == "unknown"
+    assert rl.client_bucket(request_with(host=None)) == "unknown"
+
+
+def test_every_source_address_of_one_slash_64_shares_the_rate_limit():
+    dep = rl.rate_limit("3/minute")
+    for i in range(3):  # a new source address in the same /64 for every request
+        dep(request_with({"X-Real-IP": f"2001:db8:1:2:{i:x}:{i:x}:{i:x}:{i:x}"}))
+    with pytest.raises(HTTPException) as exc:
+        dep(request_with({"X-Real-IP": "2001:db8:1:2:9999::1"}))
+    assert exc.value.status_code == 429
+    dep(request_with({"X-Real-IP": "2001:db8:1:3::1"}))  # a different /64 has its own bucket
+
+
+def test_the_forwarded_for_fallback_is_bucketed_too():
+    dep = rl.rate_limit("2/minute")
+    for i in range(2):
+        dep(request_with({"X-Forwarded-For": f"1.1.1.1, 2001:db8:5:6:{i}::1"}))
+    with pytest.raises(HTTPException):
+        dep(request_with({"X-Forwarded-For": "9.9.9.9, 2001:db8:5:6:77::1"}))
+
+
 # ---- a spoofed header cannot pick a fresh bucket ----------------------------------
 
 

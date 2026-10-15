@@ -146,7 +146,7 @@ async def http_exception_handler(request, exc: HTTPException):
     )
 
 
-# Handle domain/service errors (AccountNotFoundError, InvalidCredentialsError, etc.)
+# Handle domain/service errors (InvalidCredentialsError, etc.)
 # Detail is {code, message} so the frontend can branch on `code` instead of
 # pattern-matching the (Russian) message text.
 from src.core.exceptions import AlgoException, EXCEPTION_STATUS_MAP
