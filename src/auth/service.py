@@ -2475,6 +2475,7 @@ class AuthService:
         mode: str = "transfer",
         monthly_fee: Optional[int] = None,
         actor_id: Optional[str] = None,
+        payments_detail: bool = False,
     ) -> dict:
         added = 0
         skipped_details: list[dict[str, str]] = []
@@ -2484,6 +2485,7 @@ class AuthService:
                 result = self.add_student_to_group(
                     org_id, group_id, student_id,
                     mode=mode, monthly_fee=monthly_fee, actor_id=actor_id,
+                    payments_detail=payments_detail,
                 )
                 added += 1
                 for warning in result.get("warnings", []):
@@ -2510,6 +2512,7 @@ class AuthService:
         mode: str = "transfer",
         monthly_fee: Optional[int] = None,
         actor_id: Optional[str] = None,
+        payments_detail: bool = False,
     ) -> dict:
         """Enrol a student in a group.
 
@@ -2518,6 +2521,10 @@ class AuthService:
         primary group changes only if the student had none.  ``monthly_fee`` is
         written to the membership; the caller must have checked the right to
         manage payments.  Warnings (never refusals) are returned in ``warnings``.
+
+        A ``transfer`` also carries the payments in force over to the new group (and copies the
+        fee when it has none) - see ``PaymentService.carry_over_on_transfer``; ``payments_detail``
+        lets the note in ``warnings`` name dates / lessons (callers who may see payments).
         """
         if mode not in MEMBERSHIP_MODES:
             raise ValueError("Неизвестный способ добавления в группу")
@@ -2646,6 +2653,19 @@ class AuthService:
             membership.monthly_fee_updated_by = UUID(str(actor_id)) if actor_id else None
             membership.monthly_fee_updated_at = now_dt.replace(tzinfo=None)
 
+        # N13 P2.1: a transfer carries the payments in force over to the new group and copies
+        # the fee when the new group has none.  Before the primary group moves: the donor of
+        # the fee is the group the student is leaving.
+        carried: list[dict[str, str]] = []
+        if closing:
+            from .payments_service import PaymentService  # lazy: pulls in the status maths
+
+            self.db.flush()
+            carried = PaymentService(self.db).carry_over_on_transfer(
+                org_id, actor_id, closing, membership,
+                primary_group_id=student.group_id, detailed=payments_detail, moment=now_dt,
+            )
+
         # The primary group: a transfer always moves it, "add" only fills a gap.
         if mode == "transfer" or student.group_id is None:
             student.group_id = group_id
@@ -2661,6 +2681,7 @@ class AuthService:
 
         self.db.flush()
         warnings = self._membership_warnings(student, group)
+        warnings.extend(carried)
         self.db.commit()
         return {
             "student_id": str(student_id),

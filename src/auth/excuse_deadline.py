@@ -16,6 +16,11 @@ follows the payment that covers the lesson:
   (``due_now``), ``L < N`` is overdue.  N is capped at ``package size - 1`` so a
   small package never makes its first lesson overdue at once; when the effective N
   is 0, ``L == 1`` is ``due_now`` and ``L == 0`` (package used up) is overdue;
+A payment that moved to another group with the student (``carried_out_at``, N13 P2.1)
+covers only what happened while the student was still here: a calendar one ends on the
+transfer day (included), a lessons package covers only the lessons it took before the
+transfer and has nothing "left" afterwards.
+
 * **no covering payment** - or no package that took the lesson (all full, the
   lesson lies beyond the paid lessons): the last day of the lesson's month.
 
@@ -54,15 +59,17 @@ def covering_calendar_payment(
     """The calendar payment whose period contains the lesson (the longest-lasting one if several)."""
     covering = [
         p for p in payments
-        if p.lessons_count is None and p.valid_to is not None and p.valid_from <= lesson_date <= p.valid_to
+        if p.lessons_count is None and p.end is not None and p.valid_from <= lesson_date <= p.end
     ]
-    return max(covering, key=lambda p: (p.valid_to, p.paid_on, p.created_at)) if covering else None
+    return max(covering, key=lambda p: (p.end, p.paid_on, p.created_at)) if covering else None
 
 
 def needs_lessons_pool(payments: Sequence[ps.PaymentRecord], lesson_date: date) -> bool:
     """Whether the lessons FIFO is needed to decide this lesson's deadline."""
     return covering_calendar_payment(payments, lesson_date) is None and any(
-        p.lessons_count is not None and p.valid_from <= lesson_date for p in payments
+        p.lessons_count is not None and p.valid_from <= lesson_date
+        and (p.carried_out_at is None or lesson_date <= p.carried_out_day)
+        for p in payments
     )
 
 
@@ -127,7 +134,7 @@ def excuse_deadline(
     calendar_payment = covering_calendar_payment(payments, lesson_date)
     if calendar_payment is not None:
         return date_deadline(
-            calendar_deadline(lesson_date, calendar_payment.valid_to, deadline_days), today
+            calendar_deadline(lesson_date, calendar_payment.end, deadline_days), today
         )
 
     if needs_lessons_pool(payments, lesson_date):
@@ -137,9 +144,8 @@ def excuse_deadline(
         # Same-date entries may straddle two packages; the earliest package is the conservative pick.
         for payment, taken in ps.allocate_lessons_detail(payments, pool):
             if lesson_date in taken:
-                return lessons_deadline(
-                    payment.lessons_count - len(taken), deadline_lessons, payment.lessons_count
-                )
+                capacity = ps.lesson_capacity(payment, len(taken))
+                return lessons_deadline(capacity - len(taken), deadline_lessons, capacity)
         # No package took the lesson (all were already full): it is not covered, like "no payment".
 
     return date_deadline(month_end(lesson_date), today)

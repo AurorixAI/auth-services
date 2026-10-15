@@ -453,3 +453,43 @@ def test_deadlines_are_batch_loaded(world):
     assert len(big_items) == 16 > len(small_items) == 4
     assert big == small, (small, big)
     assert all(i["deadline"] and i["deadline"]["kind"] in ("date", "lessons") for i in big_items)
+
+
+# ---- a payment that moved to another group (N13 P2.1) ----------------------------------
+
+
+def moved(record, day, late=0):
+    """Moved at 15:00 Tashkent (10:00 UTC) of ``day``."""
+    return ps.PaymentRecord(
+        paid_on=record.paid_on, valid_from=record.valid_from, valid_to=record.valid_to,
+        lessons_count=record.lessons_count, created_at=record.created_at,
+        carried_out_at=__import__("datetime").datetime(day.year, day.month, day.day, 10, 0), carried_out_late=late,
+    )
+
+
+def test_a_calendar_payment_that_moved_ends_on_the_transfer_day_for_the_deadline():
+    payment = moved(rec(date(2026, 9, 1), date(2026, 10, 31)), date(2026, 10, 15))   # ends 15.10 here now
+    result = excuse_deadline(lesson_date=date(2026, 10, 10), today=TODAY, payments=[payment],
+                             deadline_days=5, deadline_lessons=2)
+    assert result == {"kind": "date", "date": "2026-10-15", "overdue": False, "days_left": 0}
+    # the lesson of the transfer day itself (it started before the instant) is covered too
+    same_day = excuse_deadline(lesson_date=date(2026, 10, 15), today=TODAY, payments=[payment],
+                               deadline_days=5, deadline_lessons=2)
+    assert same_day["date"] == "2026-10-15"
+    # a lesson after the move day is not covered by it at all: month end
+    late = excuse_deadline(lesson_date=date(2026, 10, 16), today=TODAY, payments=[payment],
+                           deadline_days=5, deadline_lessons=2)
+    assert late["date"] == "2026-10-31" and late["kind"] == "date"
+    assert month_end(date(2026, 10, 16)).isoformat() == "2026-10-31"
+
+
+def test_a_lessons_package_that_moved_has_nothing_left_for_the_deadline():
+    package = moved(rec(date(2026, 9, 1), lessons=12), date(2026, 10, 15))
+    taken = [date(2026, 9, 5), date(2026, 9, 8), date(2026, 9, 10)]
+    result = excuse_deadline(lesson_date=date(2026, 9, 10), today=TODAY, payments=[package],
+                             counted_dates=taken, lesson_counted=True, deadline_days=5, deadline_lessons=2)
+    assert result["kind"] == "lessons" and result["lessons_left"] == 0 and result["overdue"] is True
+    # lessons after the move day are outside the package: nothing covers them
+    outside = excuse_deadline(lesson_date=date(2026, 10, 20), today=TODAY, payments=[package],
+                              counted_dates=taken, lesson_counted=False, deadline_days=5, deadline_lessons=2)
+    assert outside["kind"] == "date" and outside["date"] == "2026-10-31"

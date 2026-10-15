@@ -70,6 +70,7 @@ from .dependencies import (
     require_org_member,
     require_superadmin,
     ensure_payments_access,
+    has_payments_access,
 )
 
 from src.core.database import get_db
@@ -859,6 +860,7 @@ def bulk_add_students(
         return _svc(db).bulk_add_students(
             user["org_id"], group_id, request.student_ids,
             mode=mode, monthly_fee=request.monthly_fee, actor_id=user["user_id"],
+            payments_detail=has_payments_access(user, db),
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -880,6 +882,7 @@ def add_student_to_group(
         return _svc(db).add_student_to_group(
             user["org_id"], group_id, student_id,
             mode=mode, monthly_fee=monthly_fee, actor_id=user["user_id"],
+            payments_detail=has_payments_access(user, db),
         )
     except MembershipConflict as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
+from datetime import date as date_type
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -38,6 +39,20 @@ class PaymentSettingsUpdate(BaseModel):
     admin_can_manage: Optional[bool] = None
 
 
+class CarriedFromOut(BaseModel):
+    """The payment a carry-over (N13 P2.1) was made from, and the group it belonged to."""
+
+    payment_id: str
+    group_name: str
+
+
+class CarriedOutOut(BaseModel):
+    """The payment moved to another group with the student on ``date`` (business date, N13 P2.1)."""
+
+    date: date_type
+    group_name: Optional[str] = None
+
+
 class PaymentOut(BaseModel):
     id: str
     membership_id: str
@@ -49,6 +64,10 @@ class PaymentOut(BaseModel):
     lessons_count: Optional[int] = None
     note: Optional[str] = None
     replaces_payment_id: Optional[str] = None
+    # Set on a carry-over made by a transfer (amount 0): "перенос из «<group>»".
+    carried_from: Optional[CarriedFromOut] = None
+    # Set on the original once it moved: it covers only the days before ``date``.
+    carried_out: Optional[CarriedOutOut] = None
     created_by: Optional[str] = None
     created_by_name: Optional[str] = None
     created_at: Optional[str] = None

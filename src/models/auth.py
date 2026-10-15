@@ -973,6 +973,13 @@ class StudentPayment(Base):
     lessons_count = Column(SmallInteger, nullable=True)
     note = Column(String(500), nullable=True)
     replaces_payment_id = Column(UUID(as_uuid=True), ForeignKey("student_payments.id"), nullable=True)
+    # N13 P2.1: a carry-over made by a transfer points at the payment it was made from
+    # (amount 0, the original keeps the money).  NULL = an ordinary payment.
+    carried_from_payment_id = Column(UUID(as_uuid=True), ForeignKey("student_payments.id"), nullable=True)
+    # The instant this payment moved to another group with the student (naive UTC, the same
+    # moment as the old membership's left_at): from then on it covers, in its own membership,
+    # only what happened while the student was still in the group.  NULL = it did not move.
+    carried_out_at = Column(DateTime, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
     voided_at = Column(DateTime, nullable=True)
@@ -1007,7 +1014,14 @@ class StudentPayment(Base):
             "valid_to",
             postgresql_where=text("voided_at IS NULL"),
         ),
-        # Double-click guard: an identical live payment cannot be inserted twice.
+        # Cascades (void / replace of the original) find the carry-overs through this column.
+        Index(
+            "idx_student_payments_carried_from",
+            "carried_from_payment_id",
+            postgresql_where=text("carried_from_payment_id IS NOT NULL"),
+        ),
+        # Double-click guard: an identical live payment cannot be inserted twice.  Carry-overs
+        # made from different payments are different payments (A -> B -> A -> B in one day).
         Index(
             "uq_student_payments_active_dup",
             "org_id",
@@ -1017,6 +1031,7 @@ class StudentPayment(Base):
             text("COALESCE(valid_to, DATE '1900-01-01')"),
             text("COALESCE(lessons_count, 0)"),
             "amount",
+            text("COALESCE(carried_from_payment_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
             unique=True,
             postgresql_where=text("voided_at IS NULL"),
         ),
