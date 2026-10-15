@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import func, or_
 
+from . import student_identity
 from .student_id_service import assign_display_id
 from .attendance_excuses import AttendanceExcuseService
 from .diagnostic_level import level_fields, normalize_level_payload
@@ -2257,125 +2258,65 @@ class AuthService:
                 "message": f"В группе «{group.name}» нет зарегистрированных учеников. Обратитесь к преподавателю.",
             }
 
-        students = self.db.query(Student).filter(Student.id.in_(list(student_ids))).all()
+        students = (
+            self.db.query(Student)
+            .filter(Student.id.in_(list(student_ids)), Student.status != "archived")
+            .all()
+        )
 
         s_id_input = (student_id or "").strip()
         s_name_input = (student_name or "").strip()
 
-        # If only query is passed, determine if it might be an ID or Name or both
-        if not s_id_input and not s_name_input and query:
+        # Only a free-form query: an exact ID (or a bare number) is an ID,
+        # anything else is read as a name.
+        if not s_id_input and not s_name_input and query and query.strip():
             q_clean = query.strip()
-            # If query starts with AL- or matches any student's display_id
-            if any(q_clean.lower() == (s.display_id or "").lower() for s in students):
+            q_norm = student_identity.normalize_id(q_clean)
+            if student_identity.has_exact_id(students, q_clean) or student_identity.is_digits_only(q_norm):
                 s_id_input = q_clean
             else:
                 s_name_input = q_clean
 
-        # CASE 1: Student ID is provided (and optionally Student Name)
-        if s_id_input:
-            id_norm = s_id_input.lower()
-            matched_by_id = None
-            for s in students:
-                s_disp = (s.display_id or "").strip().lower()
-                s_num = (s.student_number or "").strip().lower()
-                s_id_str = str(s.id).lower()
-                if id_norm in (s_disp, s_num, s_id_str) or (s_disp and s_disp.endswith(id_norm)) or (id_norm.endswith(s_disp) and len(s_disp) >= 3):
-                    matched_by_id = s
-                    break
-
-            if not matched_by_id:
-                return {
-                    "enrolled": False,
-                    "group_name": group.name,
-                    "message": f"Ученик с ID «{s_id_input}» не найден в группе «{group.name}». Пожалуйста, перепроверьте данные или обратитесь к преподавателю.",
-                }
-
-            # If name was also provided, verify that the name matches the student with this ID
-            if s_name_input:
-                name_tokens = [tok.lower() for tok in s_name_input.split() if len(tok) >= 2]
-                s_fn = (matched_by_id.first_name or "").strip().lower()
-                s_ln = (matched_by_id.last_name or "").strip().lower()
-
-                # Each token provided must match either first_name or last_name
-                mismatch = False
-                for token in name_tokens:
-                    token_match = (
-                        (s_fn and (token in s_fn or s_fn.startswith(token) or token.startswith(s_fn))) or
-                        (s_ln and (token in s_ln or s_ln.startswith(token) or token.startswith(s_ln)))
-                    )
-                    if not token_match:
-                        mismatch = True
-                        break
-
-                if mismatch:
-                    return {
-                        "enrolled": False,
-                        "group_name": group.name,
-                        "message": "Введённое имя (ФИО) или Student ID не соответствуют ученику в этой группе. Пожалуйста, перепроверьте данные или обратитесь к преподавателю.",
-                    }
-
+        def enrolled(student: Student) -> dict:
             return {
                 "enrolled": True,
                 "group_name": group.name,
                 "student": {
-                    "id": str(matched_by_id.id),
-                    "first_name": matched_by_id.first_name,
-                    "last_name": matched_by_id.last_name,
-                    "full_name": f"{matched_by_id.last_name} {matched_by_id.first_name}".strip(),
-                    "display_id": matched_by_id.display_id,
-                    "class_level": matched_by_id.class_level,
+                    "id": str(student.id),
+                    "first_name": student.first_name,
+                    "last_name": student.last_name,
+                    "full_name": f"{student.last_name} {student.first_name}".strip(),
+                    "display_id": student.display_id,
+                    "class_level": student.class_level,
                 },
             }
 
-        # CASE 2: Only Student Name is provided
+        def refused(message: str) -> dict:
+            return {"enrolled": False, "group_name": group.name, "message": message}
+
+        # CASE 1: Student ID is provided (and optionally the name of its owner)
+        if s_id_input:
+            match = student_identity.match_by_id(students, s_id_input)
+            if match.student is None:
+                return refused(
+                    match.message
+                    or f"Ученик с ID «{s_id_input}» не найден в группе «{group.name}». Пожалуйста, перепроверьте данные или обратитесь к преподавателю."
+                )
+            if s_name_input and not student_identity.name_matches_owner(match.student, s_name_input):
+                return refused(student_identity.MSG_NAME_MISMATCH)
+            return enrolled(match.student)
+
+        # CASE 2: Only the name: both first and last name as whole words, exactly one student
         if s_name_input:
-            name_tokens = [tok.lower() for tok in s_name_input.split() if len(tok) >= 2]
-            candidates = []
-            for s in students:
-                s_fn = (s.first_name or "").strip().lower()
-                s_ln = (s.last_name or "").strip().lower()
-                s_full = f"{s_fn} {s_ln}".strip()
-                s_full_rev = f"{s_ln} {s_fn}".strip()
+            match = student_identity.match_by_name(students, s_name_input)
+            if match.student is None:
+                return refused(
+                    match.message
+                    or f"Ученик с именем «{s_name_input}» не найден в группе «{group.name}». Пожалуйста, перепроверьте написание или обратитесь к преподавателю."
+                )
+            return enrolled(match.student)
 
-                # Exact match
-                if s_name_input.lower() in (s_full, s_full_rev, s_fn, s_ln):
-                    candidates.append(s)
-                    continue
-
-                # Token matching
-                if name_tokens and all(
-                    (s_fn and (tok in s_fn or s_fn.startswith(tok))) or
-                    (s_ln and (tok in s_ln or s_ln.startswith(tok)))
-                    for tok in name_tokens
-                ):
-                    candidates.append(s)
-
-            if candidates:
-                matched_student = candidates[0]
-                return {
-                    "enrolled": True,
-                    "group_name": group.name,
-                    "student": {
-                        "id": str(matched_student.id),
-                        "first_name": matched_student.first_name,
-                        "last_name": matched_student.last_name,
-                        "full_name": f"{matched_student.last_name} {matched_student.first_name}".strip(),
-                        "display_id": matched_student.display_id,
-                        "class_level": matched_student.class_level,
-                    },
-                }
-
-            return {
-                "enrolled": False,
-                "group_name": group.name,
-                "message": f"Ученик с именем «{s_name_input}» не найден в группе «{group.name}». Пожалуйста, перепроверьте написание или обратитесь к преподавателю.",
-            }
-
-        return {
-            "enrolled": False,
-            "group_name": group.name,
-            "message": "Пожалуйста, укажите имя (ФИО) или Student ID ученика.",
-        }
+        return refused("Пожалуйста, укажите имя (ФИО) или Student ID ученика.")
 
     def _latest_diagnostic_results(
         self, student_ids: list
