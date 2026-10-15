@@ -845,7 +845,8 @@ class PayrollService:
 
     def _lock_sheet(self, org_id: str, sheet_id: UUID, *, lock: bool) -> PayrollSheet:
         query = self.db.query(PayrollSheet).filter(PayrollSheet.id == sheet_id, PayrollSheet.org_id == org_id)
-        sheet = (query.with_for_update() if lock else query).first()
+        # populate_existing: after the wait for the lock the row is read again, never taken from the session
+        sheet = (query.with_for_update().populate_existing() if lock else query).first()
         if sheet is None:
             raise PayrollNotFound("Ведомость не найдена")
         return sheet

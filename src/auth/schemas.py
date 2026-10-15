@@ -264,6 +264,11 @@ class GroupCreateRequest(BaseModel):
     max_students: int = Field(default=30, ge=1, le=100)
     lesson_type: LessonType = "group"
 
+    @field_validator("lesson_type", mode="before")
+    @classmethod
+    def _default_lesson_type(cls, value):
+        return "group" if value is None else value  # a form that leaves the field empty means the default
+
 
 class GroupUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, max_length=200)

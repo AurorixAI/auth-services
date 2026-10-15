@@ -471,6 +471,47 @@ def test_an_included_unpaid_lesson_of_a_package_student_is_priced_by_his_package
     assert unpaid["unpaid"] == 3 and {x["divisor"] for x in unpaid["marks"] if x["state"] == "unpaid"} == {12}
 
 
+@pytest.mark.parametrize("seed", range(20))
+def test_covered_lessons_equal_what_the_status_page_consumes_on_random_data(world, seed):
+    """Random lessons, marks, excuse decisions and 1-3 packages per student: the page's «использовано» is our «засчитано»."""
+    import random
+
+    from src.auth import payment_status as ps
+
+    rnd = random.Random(seed)
+    m = previous_month()
+    students = world.students
+    for n in sorted(rnd.sample(range(1, 26), rnd.randint(6, 16))):
+        roster = [s for s in students if rnd.random() > 0.15]
+        marks = {s: rnd.choice(["present", "present", "late", "absent", "excused"]) for s in roster}
+        att = lesson(world, m.d(n), marks, roster=roster)
+        for s, mark in marks.items():
+            decision = rnd.choice(["confirmed", "pending", "rejected", None]) if mark == "excused" else None
+            if decision:
+                excuse(world, att, s, decision)
+    for s in students:
+        for start in rnd.sample(range(1, 21), rnd.randint(1, 3)):
+            pay_package(world, s, m.d(start), rnd.randint(1, 6))
+    world.db.expire_all()
+    rows = {r["student_id"]: r for r in owner(world).get(f"{API}/org/payments/status", params={"limit": 50}).json()["items"]}
+    held = world.db.query(GroupAttendance).filter_by(group_id=world.group.id, status="completed").all()
+    excuses = {(e.attendance_id, str(e.student_id)): e.status for e in world.db.query(AttendanceExcuse).filter_by(org_id=world.org.id)}
+    sheet = preview(world, m)
+    for s in students:
+        sid = str(s.id)
+        counts = sum(
+            1 for a in held
+            if sid in {i["student_id"] for i in a.roster_snapshot}
+            and ps.lesson_counts(mark=a.records.get(sid), excuse_status=excuses.get((a.id, sid)))
+        )
+        line = by_student(sheet).get(sid)
+        counted, unpaid = (line["counted"], line["unpaid"]) if line else (0, 0)
+        assert counted + unpaid == counts, (seed, sid)                                  # the same lessons are counted
+        assert rows[sid]["lessons_used"] == counted, (seed, sid, rows[sid]["lessons_used"], counted)   # and paid as on the page
+        if line:
+            assert all(x["divisor"] for x in line["marks"] if x["state"] in ("counted", "excused_pending", "unpaid"))
+
+
 def test_calendar_and_package_payments_of_one_membership_both_cover(world):
     m = previous_month()
     s0 = world.students[0]
@@ -599,6 +640,7 @@ def test_unfinished_lessons_are_counted_per_teacher_in_the_month(world):
     m = previous_month()
     s0 = world.students[0]
     world.group.schedule = [{"id": "mon", "dayOfWeek": 1, "startTime": "10:00", "endTime": "11:00", "format": "offline"}]
+    world.db.query(StudentGroup).filter_by(group_id=world.group.id).update({"joined_at": datetime(2020, 1, 1)})
     world.db.commit()
     pay_calendar(world, s0, m.first, m.last)
     lesson(world, m.d(1), {s0: "present"})
@@ -839,6 +881,65 @@ def test_a_fee_change_on_the_membership_after_saving_is_noticed_but_the_sheet_ke
     assert row["saved"]["monthly_fee"] == FEE and row["fresh"]["monthly_fee"] == 500_000
 
 
+def test_edge_cases_of_percents_overrides_and_missing_data(world, monkeypatch):
+    from src.auth.service import AuthService
+
+    m = previous_month()
+    s0, s1, _ = world.students
+    full_month(world, m, days=range(1, 4))
+    c = owner(world)
+    # a percent that belongs to another teacher is refused, in a save and in an edit
+    r = c.post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id),
+                                                  "percents": [pct(world, teacher=world.teacher2)]})
+    assert r.status_code == 422
+    saved = save(world, m)
+    r = c.patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 1, "percents": [pct(world, "9", teacher=world.teacher2)]})
+    assert r.status_code == 422
+    # a save for a revision that does not exist yet
+    other = previous_month()
+    r = c.post(f"{API}/org/payroll/sheets", json={"month": other.label, "teacher_id": str(world.teacher2.id),
+                                                  "percents": [], "revision": 3})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_REVISION_CONFLICT"
+    # a recalculation that finds a new kind of lessons needs its percent
+    second = make_group(world.db, world.org, world.teacher, "Индивидуальная")
+    second.lesson_type = "individual"
+    world.db.add(StudentGroup(student_id=s0.id, group_id=second.id, is_active=True, joined_at=datetime(2020, 1, 1)))
+    world.db.commit()
+    lesson(world, m.d(5), {s0: "present"}, group=second)
+    r = c.patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 1, "recalculate": True})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PERCENT_REQUIRED"
+    assert r.json()["detail"]["missing"][0]["lesson_type"] == "individual"
+    grown = patch(world, saved, recalculate=True, percents=[pct(world, "70", "individual")])
+    assert grown["percents"] == {"group": "50", "individual": "70"} and len(grown["groups"]) == 2
+    # ... and an override for a line the fresh data does not have
+    r = c.patch(f"{API}/org/payroll/sheets/{saved['id']}", json={
+        "revision": 2, "recalculate": True, "line_overrides": [{"membership_id": str(uuid4()), "include_unpaid": True}]})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "LINE_NOT_FOUND"
+    # a student that no longer exists has nobody to take a fee from: the lesson stays, the line is not made
+    lesson(world, m.d(6), {s1: "present"})
+    ghost = Student(org_id=world.org.id, first_name="Призрак", last_name="Удалённый", class_level=9)
+    world.db.add(ghost)
+    world.db.commit()
+    lesson(world, m.d(7), {ghost: "present"})
+    world.db.delete(ghost)
+    world.db.commit()
+    both = calc(world, m, [pct(world, "50"), pct(world, "70", "individual")], teacher_ids=[str(world.teacher.id)])
+    assert all(x["student_name"] != "Удалённый Призрак" for x in both["sheets"][0]["lines"])
+    assert len(both["sheets"][0]["lines"]) == 4                         # three students in the group + the one in the other
+    # a hand-edited percent in an old sheet must not break the suggestions
+    world.db.query(PayrollSheet).filter_by(id=saved["id"]).update({"percent_inputs": {"group": "abc", "pair": "40"}})
+    world.db.commit()
+    row = teacher_row(overview(world, m), world.teacher)
+    assert {t["lesson_type"]: t["suggested_percent"] for t in row["lesson_types"]}["group"] is None
+    # the list of unfinished lessons failing must not take the page down
+    def broken(self, *args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(AuthService, "get_open_attendance_actions", broken)
+    ov = overview(world, m)
+    assert teacher_row(ov, world.teacher)["warnings"]["open_lessons"] == 0
+
+
 # ============================================================================================
 # permissions and tenancy
 # ============================================================================================
@@ -1051,6 +1152,7 @@ def test_group_lesson_type_is_stored_audited_and_returned(world):
     assert r.status_code == 201 and r.json()["lesson_type"] == "pair"
     gid = r.json()["id"]
     assert c.post(f"{API}/org/groups", json={"name": "Без типа", "class_level": 9}).json()["lesson_type"] == "group"
+    assert c.post(f"{API}/org/groups", json={"name": "Пустой тип", "lesson_type": None}).json()["lesson_type"] == "group"
     assert c.post(f"{API}/org/groups", json={"name": "Плохая", "lesson_type": "huge"}).status_code == 422
     created = world.db.query(GroupAudit).filter_by(group_id=gid, action="created").one()
     assert created.snapshot["lesson_type"] == "pair"
@@ -1166,3 +1268,81 @@ def test_a_month_of_ten_teachers_and_two_hundred_students_costs_a_fixed_number_o
     q_save, saved = count_queries(world, lambda: client.post(f"{API}/org/payroll/sheets", json={
         "month": m.label, "teacher_id": teacher_id, "percents": [p for p in percents if p["teacher_id"] == teacher_id]}))
     assert saved.status_code == 201 and q_save <= 60, q_save
+
+
+# ============================================================================================
+# races (separate sessions, real row locks)
+# ============================================================================================
+
+
+def threaded_client(world):
+    """A client whose every request gets its OWN session, like production (the shared session of ``make_client`` would serialise)."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import sessionmaker
+
+    from src.auth.dependencies import get_current_active_user_payload
+    from src.auth.payroll_router import router
+    from src.core.database import get_db
+
+    factory = sessionmaker(world.db.get_bind())
+
+    def own_session():
+        db = factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    payload = {"sub": str(world.owner.id), "role": "owner", "type": "access", "org_id": str(world.org.id), "org_role": "owner"}
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    app.dependency_overrides[get_db] = own_session
+    app.dependency_overrides[get_current_active_user_payload] = lambda: payload
+    return lambda: TestClient(app)
+
+
+def test_simultaneous_edits_with_the_same_revision_have_exactly_one_winner(world):
+    from concurrent.futures import ThreadPoolExecutor
+
+    m = previous_month()
+    full_month(world, m, days=range(1, 5))
+    saved = save(world, m)
+    new_client = threaded_client(world)
+    url = f"{API}/org/payroll/sheets/{saved['id']}"
+
+    def edit(n):
+        return new_client().patch(url, json={"revision": 1, "note": f"правка {n}", "percents": [pct(world, str(40 + n))]})
+
+    with ThreadPoolExecutor(6) as pool:
+        results = list(pool.map(edit, range(6)))
+    codes = sorted(r.status_code for r in results)
+    assert codes == [200] + [409] * 5, [(r.status_code, r.text[:200]) for r in results]
+    assert all(r.json()["detail"]["code"] == "SHEET_REVISION_CONFLICT" for r in results if r.status_code == 409)
+    world.db.expire_all()
+    sheet = world.db.query(PayrollSheet).filter_by(id=saved["id"]).one()
+    revisions = world.db.query(PayrollSheetRevision).filter_by(sheet_id=sheet.id).order_by(PayrollSheetRevision.revision).all()
+    assert sheet.revision == 2 and [r.revision for r in revisions] == [1, 2]            # no gap, no duplicate
+    winner = next(r for r in results if r.status_code == 200).json()
+    assert revisions[1].change_note == winner["note"] and sheet.percent_inputs == winner["percents"]
+
+
+def test_simultaneous_first_saves_make_one_sheet(world):
+    from concurrent.futures import ThreadPoolExecutor
+
+    m = previous_month()
+    full_month(world, m, days=range(1, 4))
+    new_client = threaded_client(world)
+    body = {"month": m.label, "teacher_id": str(world.teacher.id), "percents": [pct(world)]}
+
+    def create(_):
+        return new_client().post(f"{API}/org/payroll/sheets", json=body)
+
+    with ThreadPoolExecutor(6) as pool:
+        results = list(pool.map(create, range(6)))
+    assert sorted(r.status_code for r in results) == [201] + [409] * 5, [(r.status_code, r.text[:200]) for r in results]
+    world.db.expire_all()
+    assert world.db.query(PayrollSheet).filter_by(org_id=world.org.id).count() == 1
+    assert world.db.query(PayrollSheetRevision).count() >= 1
+    sheet = world.db.query(PayrollSheet).filter_by(org_id=world.org.id).one()
+    assert sheet.revision == 1 and world.db.query(PayrollSheetRevision).filter_by(sheet_id=sheet.id).count() == 1

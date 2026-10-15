@@ -54,7 +54,7 @@ def _percent_list(value: Any) -> Any:
     return value
 
 
-Percents = Annotated[List[PercentInput], BeforeValidator(_percent_list)]
+Percents = Annotated[List[PercentInput], BeforeValidator(_percent_list), Field(max_length=400)]
 
 
 def _no_duplicates(percents: Optional[List[PercentInput]]) -> None:

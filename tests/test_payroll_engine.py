@@ -62,6 +62,11 @@ def round_half_up_ref(numerator, denominator):
     return (2 * numerator + denominator) // (2 * denominator)
 
 
+def test_a_divisor_must_be_positive():
+    with pytest.raises(ValueError):
+        pe.line_amount(1000, Decimal("50"), [0])
+
+
 def test_zero_fee_zero_percent_zero_lessons():
     assert line([pe.COUNTED] * 5, fee=0)["amount"] == 0
     assert line([pe.COUNTED] * 5, percent="0")["amount"] == 0
@@ -117,6 +122,14 @@ def test_unpaid_lessons_are_shown_but_not_paid_unless_included():
     assert (inc["counted"], inc["unpaid"], inc["amount"]) == (5, 3, 450_000 * 50 * 8 // 1200)
     assert inc["include_unpaid"] is True and "включены" in inc["warnings"][0]["message"]
     assert pe.UNPAID == inc["marks"][-1]["state"] and inc["marks"][-1]["mark"] == 1
+
+
+def test_a_free_student_owes_nothing_so_unpaid_lessons_are_no_warning():
+    free = line([pe.COUNTED, pe.UNPAID, pe.UNPAID], fee=0)
+    assert free["unpaid"] == 2 and free["amount"] == 0 and free["warnings"] == []
+    paying = line([pe.COUNTED, pe.UNPAID, pe.UNPAID], fee=450_000)
+    assert [w["code"] for w in paying["warnings"]] == [pe.UNPAID_LESSONS]
+    assert pe.sheet_counters([free])["unpaid"] == 0 and pe.sheet_counters([free, paying])["unpaid"] == 2
 
 
 def test_missing_fee_and_missing_percent_give_zero_and_a_reason():

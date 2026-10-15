@@ -194,7 +194,7 @@ def compute_line(
         warnings.append(
             _warning(EXCUSE_PENDING, f"Уважительных пропусков ожидает подтверждения: {pending_excused}")
         )
-    if unpaid:
+    if unpaid and fee != 0:  # a free student (fee 0) pays nothing, so "not paid" is no news
         tail = " (включены в расчёт)" if include_unpaid else ""
         warnings.append(_warning(UNPAID_LESSONS, f"Не оплачено уроков: {len(unpaid)}{tail}"))
 
@@ -275,7 +275,8 @@ def sheet_counters(lines: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
     return {
         "total_amount": sheet_total(lines),
         "counted": sum(int(line["counted"]) for line in lines),
-        "unpaid": sum(int(line["unpaid"]) for line in lines),
+        # lessons nobody paid for - not counting the free students (fee 0): they owe nothing
+        "unpaid": sum(int(line["unpaid"]) for line in lines if line.get("monthly_fee") != 0),
         "pending_excused": sum(int(line["pending_excused"]) for line in lines),
         # lines that have lessons to pay for but no fee (a line without lessons costs nothing either way)
         "no_fee": sum(

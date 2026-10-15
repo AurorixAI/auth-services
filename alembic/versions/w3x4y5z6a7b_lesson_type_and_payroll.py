@@ -18,7 +18,8 @@ Idempotent: the column, the CHECK, the tables and the indexes each tolerate a pa
 database that was built from the models, then stamped).
 
 Rollback: the downgrade drops both payroll tables and the column - EXPORT THE SHEETS BEFORE ROLLING BACK
-(the Excel export of every month, or ``SELECT * FROM payroll_sheets / payroll_sheet_revisions``): the
+(выгрузить ведомости перед откатом: the Excel export of every month, or
+``SELECT * FROM payroll_sheets / payroll_sheet_revisions``): the
 history of revisions is lost.  The kind of lessons of every group is lost too (the audit log keeps the
 changes as they were written).  An older auth image cannot start on a database at this head (unknown
 revision): downgrade first, roll the image back afterwards.
