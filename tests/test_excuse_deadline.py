@@ -3,7 +3,7 @@ import json
 from datetime import date, timedelta
 
 from src.auth import payment_status as ps
-from src.auth.excuse_deadline import excuse_deadline, month_end
+from src.auth.excuse_deadline import effective_threshold, excuse_deadline, month_end
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
     business_today, excused_lesson, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save, world,
@@ -112,9 +112,41 @@ def test_lessons_rule_is_symmetric_with_the_calendar_one():
     assert less(date(2026, 10, 2), [package], dates[:3], threshold=1) == state(2, False, False, False)
     assert less(date(2026, 10, 2), [package], dates[:4], threshold=1) == state(1, True, True, False)
     assert less(date(2026, 10, 2), [package], dates, threshold=1) == state(0, True, False, True)
-    # N = 0: the deadline is the moment the package is used up
-    assert less(date(2026, 10, 2), [package], dates[:4], threshold=0) == state(1, False, False, False)
-    assert less(date(2026, 10, 2), [package], dates, threshold=0) == state(0, True, True, False)
+    # N = 0: the last lesson (1 left) is the one due now, a used-up package is overdue
+    assert less(date(2026, 10, 2), [package], dates[:3], threshold=0) == state(2, False, False, False)
+    assert less(date(2026, 10, 2), [package], dates[:4], threshold=0) == state(1, True, True, False)
+    assert less(date(2026, 10, 2), [package], dates, threshold=0) == state(0, True, False, True)
+
+
+def test_the_threshold_never_exceeds_the_package_size_minus_one():
+    # a package of 2 with N = 2: the first lesson (1 left) is due now, not overdue; the second is overdue
+    two = rec(date(2026, 10, 1), lessons=2)
+    assert less(date(2026, 10, 2), [two], [date(2026, 10, 2)]) == state(1, True, True, False)
+    assert less(date(2026, 10, 2), [two], [date(2026, 10, 2), date(2026, 10, 5)]) == state(0, True, False, True)
+    # a package of 3 with N = 5: effective N = 2
+    three = rec(date(2026, 10, 1), lessons=3)
+    assert less(date(2026, 10, 2), [three], [date(2026, 10, 2)], threshold=5) == state(2, True, True, False)
+    assert less(date(2026, 10, 2), [three], [date(2026, 10, 2), date(2026, 10, 5)], threshold=5) == state(1, True, False, True)
+    # a package of 5 with N = 2 keeps N = 2
+    five = rec(date(2026, 10, 1), lessons=5)
+    assert less(date(2026, 10, 2), [five], [date(2026, 10, 2)]) == state(4, False, False, False)
+    assert effective_threshold(2, 2) == 1 and effective_threshold(2, 1) == 0 and effective_threshold(0, 9) == 0
+    assert effective_threshold(30, 12) == 11 and effective_threshold(2, 5) == 2 and effective_threshold(2, None) == 2
+
+
+def test_effective_threshold_zero_means_one_left_is_due_and_none_left_is_overdue():
+    # a package of one lesson (effective N = 0): the lesson used it up
+    one = rec(date(2026, 10, 1), lessons=1)
+    assert less(date(2026, 10, 2), [one], [date(2026, 10, 2)]) == state(0, True, False, True)
+    # a package of two with N = 1 (effective 1): symmetric rule
+    two = rec(date(2026, 10, 1), lessons=2)
+    assert less(date(2026, 10, 2), [two], [date(2026, 10, 2)], threshold=1) == state(1, True, True, False)
+    # N = 0 set by the owner on a big package: 2 left calm, 1 left due now, 0 overdue
+    big = rec(date(2026, 10, 1), lessons=10)
+    counted = [date(2026, 10, d) for d in range(2, 12)]
+    assert less(date(2026, 10, 2), [big], counted[:8], threshold=0) == state(2, False, False, False)
+    assert less(date(2026, 10, 2), [big], counted[:9], threshold=0) == state(1, True, True, False)
+    assert less(date(2026, 10, 2), [big], counted, threshold=0) == state(0, True, False, True)
 
 
 def test_lesson_goes_to_the_package_that_took_it_not_to_a_later_one():
@@ -145,10 +177,18 @@ def test_two_lessons_on_one_day_the_unfinished_one_is_added_on_top():
     assert less(date(2026, 10, 5), [package], [date(2026, 10, 2)], lesson_counted=True)["lessons_left"] == 1
 
 
-def test_full_packages_make_the_lesson_overdue_and_a_later_package_is_not_used_for_it():
+def test_a_lesson_that_no_package_took_is_treated_like_no_payment():
     full = rec(date(2026, 9, 1), lessons=1)
-    assert less(date(2026, 9, 20), [full], [date(2026, 9, 3), date(2026, 9, 20)]) == state(0, True, False, True)
-    assert less(date(2026, 9, 20), [full], [date(2026, 9, 3), date(2026, 9, 20)], threshold=0) == state(0, True, True, False)
+    # the package took 03.09; 20.09 lies beyond the paid lessons: the month end of the lesson, a "date" deadline
+    expected = {"kind": "date", "date": "2026-09-30", "overdue": True, "days_left": -15}
+    assert less(date(2026, 9, 20), [full], [date(2026, 9, 3), date(2026, 9, 20)]) == expected
+    assert less(date(2026, 9, 20), [full], [date(2026, 9, 3), date(2026, 9, 20)], threshold=0) == expected
+    # an unfinished lesson after a full package is not covered either (this month: not yet overdue)
+    after = less(date(2026, 10, 8), [rec(date(2026, 10, 1), lessons=1)], [date(2026, 10, 2)], lesson_counted=False)
+    assert after == {"kind": "date", "date": "2026-10-31", "overdue": False, "days_left": 16}
+    # two full packages, the lesson is beyond both
+    two_full = [rec(date(2026, 9, 1), lessons=1, n=1), rec(date(2026, 9, 5), lessons=1, n=2)]
+    assert less(date(2026, 9, 20), two_full, [date(2026, 9, 3), date(2026, 9, 6), date(2026, 9, 20)])["kind"] == "date"
     later = rec(date(2026, 10, 10), lessons=5)  # starts after the lesson: no package covers it
     assert less(date(2026, 9, 20), [later], [date(2026, 9, 20)])["kind"] == "date"
 
@@ -327,13 +367,28 @@ def test_lessons_fifo_picks_the_package_that_took_the_lesson(world):
 
 
 @needs_pg
-def test_exhausted_package_is_overdue(world):
+def test_lesson_beyond_the_paid_lessons_falls_back_to_the_month_end(world):
     s0 = world.students[0]
     set_settings(world, period_mode="lessons")
     pay(world, s0, paid_on=day(-20), valid_from=day(-20), lessons_count=1)
-    lesson_marks(world, 10)
+    lesson_marks(world, 10)                                   # the only paid lesson
+    d = lesson_marks(world, 3, {s0: "excused"}, reasons={s0: "Болел"})   # no package took this one
+    expected = month_end(d)
+    result = deadline_of(world)
+    assert result["kind"] == "date" and result["date"] == expected.isoformat()
+    assert result["overdue"] is (business_today() > expected)
+    assert set(result) == {"kind", "date", "overdue", "days_left"}
+
+
+@needs_pg
+def test_small_package_threshold_through_the_api(world):
+    s0 = world.students[0]
+    set_settings(world, period_mode="lessons", excuse_deadline_lessons=2)
+    pay(world, s0, paid_on=day(-10), valid_from=day(-10), lessons_count=2)     # effective N = 1
     lesson_marks(world, 3, {s0: "excused"}, reasons={s0: "Болел"})
-    assert deadline_of(world) == state(0, True, False, True)
+    assert deadline_of(world) == state(1, True, True, False)                    # the first lesson is due now, not overdue
+    lesson_marks(world, 2)
+    assert deadline_of(world) == state(0, True, False, True)                    # package used up
 
 
 @needs_pg

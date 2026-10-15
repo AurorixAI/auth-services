@@ -163,7 +163,8 @@ class ExcuseLessonsDeadline(BaseModel):
     """Confirm by the Nth-from-last lesson of the package (N = excuse_deadline_lessons); counts only.
 
     ``lessons_left > N``: normal; ``== N``: ``due_now`` (the last lesson to confirm);
-    ``< N``: ``overdue``.  ``urgent`` is ``lessons_left <= N`` (amber or worse).
+    ``< N``: ``overdue``.  N is capped at the package size minus one; with N == 0,
+    ``lessons_left == 1`` is ``due_now`` and ``0`` is ``overdue``.  ``urgent`` = due now or overdue.
     """
 
     kind: Literal["lessons"] = "lessons"

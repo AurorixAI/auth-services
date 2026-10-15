@@ -13,8 +13,11 @@ follows the payment that covers the lesson:
   consume - the lesson (the FIFO hand-out of ``payment_status``), symmetric with
   the calendar rule: with N = ``excuse_deadline_lessons`` and L lessons left in
   the package, ``L > N`` is normal, ``L == N`` is the last lesson to confirm
-  (``due_now``), ``L < N`` is overdue;
-* **no covering payment**: the last day of the lesson's month.
+  (``due_now``), ``L < N`` is overdue.  N is capped at ``package size - 1`` so a
+  small package never makes its first lesson overdue at once; when the effective N
+  is 0, ``L == 1`` is ``due_now`` and ``L == 0`` (package used up) is overdue;
+* **no covering payment** - or no package that took the lesson (all full, the
+  lesson lies beyond the paid lessons): the last day of the lesson's month.
 
 Only dates and lesson counts are produced - never an amount.  Confirming after
 the deadline stays possible; ``overdue`` is a hint for the administrator.
@@ -63,18 +66,35 @@ def needs_lessons_pool(payments: Sequence[ps.PaymentRecord], lesson_date: date) 
     )
 
 
-def lessons_deadline(lessons_left: int, threshold: int) -> Dict[str, Any]:
+def effective_threshold(threshold: int, package_size: Optional[int]) -> int:
+    """N of the rule: the setting, never above ``package size - 1`` and never below 0."""
+    n = threshold
+    if package_size is not None:
+        n = min(n, package_size - 1)
+    return max(n, 0)
+
+
+def lessons_deadline(
+    lessons_left: int, threshold: int, package_size: Optional[int] = None
+) -> Dict[str, Any]:
     """Lessons-package state: ``left > N`` normal, ``== N`` due now, ``< N`` overdue.
 
-    ``urgent`` (``left <= N``) is "amber or worse" for clients that show one flag.
+    N is ``effective_threshold(threshold, package_size)``.  With N == 0 the rule would never
+    fire before the package is gone, so the last lesson (``left == 1``) is the one due now and
+    an exhausted package (``left == 0``) is overdue.  ``urgent`` is "amber or worse".
     """
     left = max(0, lessons_left)
+    n = effective_threshold(threshold, package_size)
+    if n == 0:
+        due_now, overdue = left == 1, left == 0
+    else:
+        due_now, overdue = left == n, left < n
     return {
         "kind": "lessons",
         "lessons_left": left,
-        "urgent": left <= threshold,
-        "due_now": left == threshold,
-        "overdue": left < threshold,
+        "urgent": due_now or overdue,
+        "due_now": due_now,
+        "overdue": overdue,
     }
 
 
@@ -117,8 +137,9 @@ def excuse_deadline(
         # Same-date entries may straddle two packages; the earliest package is the conservative pick.
         for payment, taken in ps.allocate_lessons_detail(payments, pool):
             if lesson_date in taken:
-                return lessons_deadline(payment.lessons_count - len(taken), deadline_lessons)
-        # Every package that could have taken the lesson was already full.
-        return lessons_deadline(0, deadline_lessons)
+                return lessons_deadline(
+                    payment.lessons_count - len(taken), deadline_lessons, payment.lessons_count
+                )
+        # No package took the lesson (all were already full): it is not covered, like "no payment".
 
     return date_deadline(month_end(lesson_date), today)
