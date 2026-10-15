@@ -26,7 +26,8 @@ profile payload carries an amount.  Status maths is ``payment_status.py``
 * A carry-over's ``lessons_count`` is only the remainder at transfer time; its capacity is
   derived live along the chain (``_lessons_state`` / ``payment_status.resolve_lesson_chains``).
 * Locks, in this order everywhere: student -> membership(s) -> payment(s), a source payment
-  before its carry-overs.  A deadlock PostgreSQL still finds is a 409 (``deadlock_guard``).
+  before its carry-overs; membership locks are FOR NO KEY UPDATE so that inserting a
+  carry-over (foreign key: FOR KEY SHARE) into a membership someone else holds does not wait.  A deadlock PostgreSQL still finds is a 409 (``deadlock_guard``).
 """
 from __future__ import annotations
 
@@ -876,7 +877,9 @@ class PaymentService:
             )
         )
         if lock:
-            query = query.with_for_update(of=StudentGroup)
+            # FOR NO KEY UPDATE: still exclusive among membership editors, but it does not block the
+            # FOR KEY SHARE that an insert of a payment (or carry-over) takes on this row.
+            query = query.with_for_update(of=StudentGroup, key_share=True)
         membership = query.first()
         if not membership:
             raise PaymentNotFound("Членство не найдено")
