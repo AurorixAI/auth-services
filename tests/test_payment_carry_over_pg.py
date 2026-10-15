@@ -1077,3 +1077,89 @@ def test_other_database_errors_are_not_disguised_as_a_conflict(two, monkeypatch)
     monkeypatch.setattr(PaymentService, "_probe_payment", broken)
     with pytest.raises(OperationalError):
         owner(two).post(f"{API}/org/payments/{uuid4()}/void", json={"reason": "проверка"})
+
+
+# ---- membership locks are FOR NO KEY UPDATE -------------------------------------------------------------
+
+
+def test_every_membership_lock_is_for_no_key_update(two):
+    from sqlalchemy import event
+
+    original = pay(two, paid_on=day(-10), valid_from=day(-10), valid_to=day(20))["payment"]
+    engine = two.db.get_bind()
+    statements = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        set_fee(two, two.group, 300000)                                       # payments: _membership(lock=True)
+        owner(two).post(f"{API}/org/payments/{original['id']}/void", json={"reason": "проверка"})
+        pay(two, group=two.group, paid_on=day(-1), valid_to=day(30), amount=3)
+        transfer(two, two.second)                                              # transfer: target + closed memberships
+        assert owner(two).delete(f"{GROUPS}/{two.second.id}/students/{two.student.id}").status_code == 200   # remove
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    locking = [s for s in statements if "FROM student_groups" in s and " FOR " in s]
+    assert len(locking) >= 5, locking
+    assert all("FOR NO KEY UPDATE" in s for s in locking), [s for s in locking if "FOR NO KEY UPDATE" not in s]
+
+
+def test_a_carry_over_insert_is_not_blocked_by_a_membership_lock(two, engine):
+    """The cascade of a replace inserts a carry-over into a membership a transfer may hold (FK = KEY SHARE)."""
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+
+    from src.auth.payments_schemas import PaymentReplace
+    from src.auth.payments_service import PaymentService
+
+    original = pay(two, paid_on=day(-10), valid_from=day(-10), valid_to=day(20))["payment"]
+    transfer(two, two.second)
+    target = membership(two, two.second).id
+
+    def replace(valid_to):
+        body = PaymentReplace(amount=1, paid_on=day(-10), valid_from=day(-10), valid_to=valid_to)
+        current = [h for h in history(two, two.group, include_voided=False)][0]["id"]
+        return run_in_thread(engine, lambda session: PaymentService(session).replace_payment(
+            str(two.org.id), current, str(two.owner.id), body))
+
+    holder = Session(engine)                                  # a transfer in flight: FOR NO KEY UPDATE on the new membership
+    holder.execute(text("SELECT id FROM student_groups WHERE id = :m FOR NO KEY UPDATE"), {"m": target})
+    thread, outcome = replace(day(25))
+    thread.join(timeout=10)
+    assert not thread.is_alive(), "the carry-over insert waited for a membership lock that only guards its editors"
+    assert "error" not in outcome, outcome.get("error")
+    holder.rollback()
+    holder.close()
+    assert history(two, two.second, include_voided=False)[0]["valid_to"] == day(25).isoformat()
+
+    holder = Session(engine)                                  # control: a plain FOR UPDATE does block that insert
+    holder.execute(text("SELECT id FROM student_groups WHERE id = :m FOR UPDATE"), {"m": target})
+    thread, outcome = replace(day(26))
+    wait_until_blocked(engine)
+    holder.rollback()
+    holder.close()
+    thread.join(timeout=20)
+    assert "error" not in outcome, outcome.get("error")
+    assert history(two, two.second, include_voided=False)[0]["valid_to"] == day(26).isoformat()
+
+
+def test_removing_a_student_maps_a_deadlock_to_409(two, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    from src.auth.service import AuthService
+
+    def boom(*args, **kwargs):
+        raise deadlock()
+
+    monkeypatch.setattr(AuthService, "remove_student_from_group", boom)
+    r = owner(two).delete(f"{GROUPS}/{two.group.id}/students/{two.student.id}")
+    assert r.status_code == 409 and r.json()["detail"] == "Операция совпала с другой правкой. Повторите.", r.text
+
+    def broken(*args, **kwargs):
+        raise OperationalError("SELECT 1", {}, Exception("connection lost"))
+
+    monkeypatch.setattr(AuthService, "remove_student_from_group", broken)
+    with pytest.raises(OperationalError):
+        owner(two).delete(f"{GROUPS}/{two.group.id}/students/{two.student.id}")

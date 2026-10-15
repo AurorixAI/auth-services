@@ -2536,7 +2536,7 @@ class AuthService:
                 StudentGroup.student_id == student_id,
                 StudentGroup.group_id == group_id,
             )
-            .with_for_update()
+            .with_for_update(key_share=True)  # FOR NO KEY UPDATE: an FK insert (FOR KEY SHARE) does not wait
             .first()
         )
         other_active_memberships = (
@@ -2546,7 +2546,7 @@ class AuthService:
                 StudentGroup.group_id != group_id,
                 StudentGroup.is_active.is_(True),
             )
-            .with_for_update()
+            .with_for_update(key_share=True)  # FOR NO KEY UPDATE: an FK insert (FOR KEY SHARE) does not wait
             .all()
         )
         already_member = bool(existing and existing.is_active)
@@ -2726,7 +2726,7 @@ class AuthService:
                 StudentGroup.group_id == group.id,
                 StudentGroup.is_active.is_(True),
             )
-            .with_for_update()
+            .with_for_update(key_share=True)  # FOR NO KEY UPDATE: an FK insert (FOR KEY SHARE) does not wait
             .first()
         )
         if not sg:

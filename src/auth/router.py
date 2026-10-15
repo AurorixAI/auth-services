@@ -918,6 +918,8 @@ def remove_student_from_group(
     try:
         _svc(db).remove_student_from_group(user["org_id"], group_id, student_id)
         return MessageResponse(message="Ученик удалён из группы")
+    except OperationalError as e:
+        raise _concurrent_edit_or_raise(e, db)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
