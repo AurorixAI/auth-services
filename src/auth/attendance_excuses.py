@@ -160,11 +160,16 @@ class ExcuseDateDeadline(BaseModel):
 
 
 class ExcuseLessonsDeadline(BaseModel):
-    """Confirm before the lessons package runs out; counts only, never money."""
+    """Confirm by the Nth-from-last lesson of the package (N = excuse_deadline_lessons); counts only.
+
+    ``lessons_left > N``: normal; ``== N``: ``due_now`` (the last lesson to confirm);
+    ``< N``: ``overdue``.  ``urgent`` is ``lessons_left <= N`` (amber or worse).
+    """
 
     kind: Literal["lessons"] = "lessons"
     lessons_left: int
     urgent: bool
+    due_now: bool
     overdue: bool
 
 
@@ -670,6 +675,25 @@ class AttendanceExcuseService:
                 pass
             return {}
 
+    @staticmethod
+    def _lesson_is_counted(att: GroupAttendance, student_id: UUID) -> bool:
+        """Whether this (pending-excuse) lesson is already one of the student's counted lessons.
+
+        Same rule as ``PaymentService._counted_lesson_dates``: completed, and the student is in
+        the roster snapshot (no snapshot: being marked is enough).  A pending excused mark counts.
+        """
+        if att.status != "completed":
+            return False
+        snapshot = att.roster_snapshot
+        if isinstance(snapshot, list):
+            roster = {
+                str(item.get("student_id"))
+                for item in snapshot
+                if isinstance(item, dict) and item.get("student_id")
+            }
+            return str(student_id) in roster
+        return True
+
     def _pending_deadlines(self, pending) -> Dict[UUID, Dict[str, Any]]:
         from . import excuse_deadline as dl
         from . import payment_status as ps
@@ -763,6 +787,7 @@ class AttendanceExcuseService:
                 today=today,
                 payments=records.get(membership, ()),
                 counted_dates=pools.get(membership, ()),
+                lesson_counted=self._lesson_is_counted(att, excuse.student_id),
                 deadline_days=settings.excuse_deadline_days,
                 deadline_lessons=settings.excuse_deadline_lessons,
             )

@@ -6,12 +6,14 @@ payment*, so the administrator sees how long it can still wait.  The deadline
 follows the payment that covers the lesson:
 
 * a **calendar** payment (``valid_from <= lesson date <= valid_to``): the date
-  ``valid_to - excuse_deadline_days``; a lesson inside that last stretch gets
-  ``valid_to`` itself (there is no earlier date it could still be confirmed by);
+  ``valid_to - excuse_deadline_days``; a lesson on or after that cutoff day gets
+  ``valid_to`` itself.  Every lesson gets at least ``MIN_GRACE_DAYS`` days
+  (``lesson date + 2``, never past ``valid_to``) to be confirmed;
 * a **lessons** package that consumed - or, for a lesson not yet closed, would
-  consume - the lesson (the FIFO hand-out of ``payment_status``): the number of
-  lessons left in that package; urgent at ``<= excuse_deadline_lessons``,
-  overdue when the package is used up;
+  consume - the lesson (the FIFO hand-out of ``payment_status``), symmetric with
+  the calendar rule: with N = ``excuse_deadline_lessons`` and L lessons left in
+  the package, ``L > N`` is normal, ``L == N`` is the last lesson to confirm
+  (``due_now``), ``L < N`` is overdue;
 * **no covering payment**: the last day of the lesson's month.
 
 Only dates and lesson counts are produced - never an amount.  Confirming after
@@ -24,6 +26,10 @@ from datetime import date, timedelta
 from typing import Any, Dict, Iterable, Optional, Sequence
 
 from . import payment_status as ps
+
+
+# Whatever the cutoff, a lesson's excuse can wait at least this many days (but never past valid_to).
+MIN_GRACE_DAYS = 2
 
 
 def month_end(day: date) -> date:
@@ -57,37 +63,62 @@ def needs_lessons_pool(payments: Sequence[ps.PaymentRecord], lesson_date: date) 
     )
 
 
+def lessons_deadline(lessons_left: int, threshold: int) -> Dict[str, Any]:
+    """Lessons-package state: ``left > N`` normal, ``== N`` due now, ``< N`` overdue.
+
+    ``urgent`` (``left <= N``) is "amber or worse" for clients that show one flag.
+    """
+    left = max(0, lessons_left)
+    return {
+        "kind": "lessons",
+        "lessons_left": left,
+        "urgent": left <= threshold,
+        "due_now": left == threshold,
+        "overdue": left < threshold,
+    }
+
+
+def calendar_deadline(lesson_date: date, valid_to: date, deadline_days: int) -> date:
+    """Last day to confirm a lesson covered by a calendar payment ending on ``valid_to``."""
+    deadline = valid_to - timedelta(days=deadline_days)
+    if lesson_date >= deadline:
+        deadline = valid_to  # the lesson is inside the last stretch: nothing earlier makes sense
+    deadline = max(deadline, lesson_date + timedelta(days=MIN_GRACE_DAYS))
+    return min(deadline, valid_to)
+
+
 def excuse_deadline(
     *,
     lesson_date: date,
     today: date,
     payments: Sequence[ps.PaymentRecord],
     counted_dates: Iterable[date] = (),
+    lesson_counted: bool = False,
     deadline_days: int,
     deadline_lessons: int,
 ) -> Dict[str, Any]:
-    """Deadline of an excuse for ``lesson_date``.  ``payments`` = the live payments of the membership."""
+    """Deadline of an excuse for ``lesson_date``.  ``payments`` = the live payments of the membership.
+
+    ``counted_dates`` are the dates of the student's counted lessons; ``lesson_counted`` says
+    whether THIS lesson is one of them (a completed lesson).  It cannot be read off the dates:
+    two lessons on one day are two entries, and an unfinished one must be added on top of the
+    other one, not mistaken for it.
+    """
     calendar_payment = covering_calendar_payment(payments, lesson_date)
     if calendar_payment is not None:
-        deadline = calendar_payment.valid_to - timedelta(days=deadline_days)
-        if lesson_date > deadline:
-            deadline = calendar_payment.valid_to
-        return date_deadline(deadline, today)
+        return date_deadline(
+            calendar_deadline(lesson_date, calendar_payment.valid_to, deadline_days), today
+        )
 
     if needs_lessons_pool(payments, lesson_date):
         pool = list(counted_dates)
-        if lesson_date not in pool:
+        if not lesson_counted or lesson_date not in pool:
             pool.append(lesson_date)  # an unfinished lesson would be charged to the package too
+        # Same-date entries may straddle two packages; the earliest package is the conservative pick.
         for payment, taken in ps.allocate_lessons_detail(payments, pool):
             if lesson_date in taken:
-                left = max(0, payment.lessons_count - len(taken))
-                return {
-                    "kind": "lessons",
-                    "lessons_left": left,
-                    "urgent": left <= deadline_lessons,
-                    "overdue": left == 0,
-                }
+                return lessons_deadline(payment.lessons_count - len(taken), deadline_lessons)
         # Every package that could have taken the lesson was already full.
-        return {"kind": "lessons", "lessons_left": 0, "urgent": True, "overdue": True}
+        return lessons_deadline(0, deadline_lessons)
 
     return date_deadline(month_end(lesson_date), today)

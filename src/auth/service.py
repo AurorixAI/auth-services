@@ -2203,6 +2203,10 @@ class AuthService:
         ``avg_theta`` is the mean of the active students' latest ``final_theta``
         (the same rule as ``get_group_stats``); ``None`` when nobody of the group
         has a result.  ``diagnosed_count`` lets the caller weight the groups.
+
+        The centre-wide ``avg_theta`` / ``diagnosed_count`` / ``student_count`` count
+        every student ONCE: a student who belongs to two groups must not weigh double,
+        which averaging the per-group figures would do.
         """
         groups = (
             self.db.query(Group)
@@ -2248,7 +2252,13 @@ class AuthService:
                 "diagnosed_count": len(thetas),
                 "avg_theta": (sum(thetas) / len(thetas)) if thetas else None,
             })
-        return {"groups": rows}
+        org_thetas = [float(latest[sid]) for sid in student_ids if latest.get(sid) is not None]
+        return {
+            "groups": rows,
+            "student_count": len(student_ids),
+            "diagnosed_count": len(org_thetas),
+            "avg_theta": (sum(org_thetas) / len(org_thetas)) if org_thetas else None,
+        }
 
     def get_group_stats(
         self,

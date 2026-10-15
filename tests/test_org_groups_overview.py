@@ -76,3 +76,30 @@ def test_overview_query_count_does_not_grow_with_groups(world):
         student = make_student(world.db, world.org, group, f"Имя{i}", f"Фамилия{i}")
         result(world, student, 0.1 * i)
     assert count_queries() == small <= 4
+
+
+def test_org_average_counts_a_student_of_two_groups_once(world):
+    from src.models.auth import StudentGroup
+
+    s0, s1, _ = world.students
+    second = make_group(world.db, world.org, world.teacher, "Вторая группа")
+    world.db.add(StudentGroup(student_id=s0.id, group_id=second.id, is_active=True,
+                              joined_at=datetime.utcnow() - timedelta(days=30)))
+    world.db.commit()
+    result(world, s0, 1.0)     # in both groups
+    result(world, s1, -1.0)    # in the first group only
+    body = make_client(world).get(URL).json()
+    rows = {g["group_id"]: g for g in body["groups"]}
+    first, other = rows[str(world.group.id)], rows[str(second.id)]
+    # the per-group figures are unchanged: the first group has two diagnosed students, the second one
+    assert (first["student_count"], first["diagnosed_count"]) == (3, 2) and abs(first["avg_theta"] - 0.0) < 1e-9
+    assert (other["student_count"], other["diagnosed_count"]) == (1, 1) and abs(other["avg_theta"] - 1.0) < 1e-9
+    # the centre-wide figures count each student once: 3 students, 2 diagnosed, mean (1 + -1) / 2 = 0
+    # (weighting the group averages by their diagnosed counts would give (0*2 + 1*1) / 3 = 0.33)
+    assert body["student_count"] == 3 and body["diagnosed_count"] == 2
+    assert abs(body["avg_theta"] - 0.0) < 1e-9
+
+
+def test_org_average_is_null_without_any_result(world):
+    body = make_client(world).get(URL).json()
+    assert body["avg_theta"] is None and body["diagnosed_count"] == 0 and body["student_count"] == 3
