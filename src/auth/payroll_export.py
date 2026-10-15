@@ -12,7 +12,7 @@ starts with ``= + - @`` (or a tab / CR) gets a leading apostrophe and is stored 
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 from io import BytesIO
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -29,7 +29,7 @@ MONTHS = (
     "январь", "февраль", "март", "апрель", "май", "июнь",
     "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
 )
-_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+_FORMULA_START = ("=", "+", "-", "@")
 _BAD_SHEET_CHARS = re.compile(r"[\\/?*\[\]:]")
 
 RED = Font(color="C00000", bold=True)
@@ -50,13 +50,32 @@ HEADERS_LEFT = ["Группа", "Тип занятий", "Время", "Учен
 HEADERS_RIGHT = ["Засчитано", "Не оплачено", "Включено", "Начислено"]
 
 
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")  # not allowed in a worksheet (openpyxl refuses them)
+_WHITESPACE = re.compile(r"[\t\r\n]")
+# not allowed in a worksheet: openpyxl refuses \x00-\x08, \x0b, \x0c, \x0e-\x1f, and U+FFFE / U+FFFF are not XML characters
+_CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+
+def clean_text(value: Any) -> str:
+    """Text for a worksheet: tab / CR / LF become a space, characters XML cannot hold are dropped."""
+    return _CONTROL.sub("", _WHITESPACE.sub(" ", "" if value is None else str(value)))
 
 
 def safe_text(value: Any) -> str:
     """A string that no spreadsheet program will read as a formula and that a worksheet accepts."""
-    text = _CONTROL.sub("", "" if value is None else str(value))
-    return "'" + text if text.startswith(_FORMULA_START) else text
+    text = clean_text(value)
+    return "'" + text if text.lstrip().startswith(_FORMULA_START) else text
+
+
+def local_time(moment: Optional[str]) -> str:
+    """``2026-09-30T20:30:00`` (naive UTC, as stored) -> ``01.10.2026 01:30`` (Tashkent)."""
+    if not moment:
+        return ""
+    from .service import BUSINESS_TIMEZONE  # lazy: service is heavy
+
+    parsed = datetime.fromisoformat(moment)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(BUSINESS_TIMEZONE).strftime("%d.%m.%Y %H:%M")
 
 
 def _put(ws, row: int, column: int, value: Any, **style: Any):
@@ -74,7 +93,7 @@ def _put(ws, row: int, column: int, value: Any, **style: Any):
 
 def sheet_title(name: Optional[str], taken: Sequence[str]) -> str:
     """A worksheet name: at most 31 characters, none of ``\\ / ? * [ ] :``, not starting or ending with ``'``, unique."""
-    base = _BAD_SHEET_CHARS.sub(" ", name or "Преподаватель").strip().strip("'").strip() or "Преподаватель"
+    base = _BAD_SHEET_CHARS.sub(" ", clean_text(name) or "Преподаватель").strip().strip("'").strip() or "Преподаватель"
     base = base[:31].strip().strip("'") or "Преподаватель"
     candidate, n = base, 1
     while candidate.casefold() in {t.casefold() for t in taken}:
@@ -126,7 +145,7 @@ def write_sheet(ws, sheet: Mapping[str, Any]) -> None:
     if sheet.get("saved"):
         note = f"Редакция {sheet['revision']}"
         if sheet.get("updated_at"):
-            note += f" · сохранено {sheet['updated_at'][:16].replace('T', ' ')}"
+            note += f" · сохранено {local_time(sheet['updated_at'])}"
     else:
         note = "Предварительный расчёт — не сохранён"
     if sheet.get("month_open"):
@@ -236,7 +255,7 @@ def build_workbook(sheets: Sequence[Mapping[str, Any]]) -> bytes:
 def export_filename(month: str, teacher_name: Optional[str] = None) -> str:
     """``Зарплата 2026-09 Имя Фамилия.xlsx`` - no path characters, no control characters."""
     parts = ["Зарплата", month] + ([teacher_name] if teacher_name else [])
-    name = " ".join(parts)
+    name = clean_text(" ".join(parts))
     name = re.sub(r'[\x00-\x1f\x7f"\\/:*?<>|;]', " ", name)
     name = re.sub(r"\s+", " ", name).strip()[:120]
     return f"{name or 'Зарплата'}.xlsx"

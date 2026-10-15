@@ -106,6 +106,8 @@ class SheetCreate(BaseModel):
     note: Optional[str] = Field(None, max_length=MAX_NOTE)
     # The revision the caller saw; required (and must be current) when the sheet already exists.
     revision: Optional[int] = Field(None, ge=1)
+    # ``source_fingerprint`` of the preview the caller looked at: if the data moved since, nothing is saved.
+    expected_fingerprint: Optional[str] = Field(None, max_length=128)
 
     @model_validator(mode="after")
     def _check(self):
@@ -119,6 +121,8 @@ class SheetPatch(BaseModel):
     percents: Optional[Percents] = None
     line_overrides: Optional[List[LineOverride]] = Field(None, max_length=5000)
     recalculate: bool = False
+    # With ``recalculate``: the ``source_fingerprint`` of the preview the caller looked at (409 if it moved).
+    expected_fingerprint: Optional[str] = Field(None, max_length=128)
     note: Optional[str] = Field(None, max_length=MAX_NOTE)
 
     @model_validator(mode="after")

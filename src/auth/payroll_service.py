@@ -13,6 +13,10 @@ ALGO - Payroll service (N13 P3).  Owner only; money lives here and in ``payroll_
   history is append-only (``payroll_sheet_revisions``).  ``source_fingerprint`` hashes the data a
   calculation read, so "the data changed" is a comparison of two hashes.
 * Logs carry ids and the actor, never amounts.
+* The kind of lessons (``groups.lesson_type``) of a line is read from the group when the calculation
+  runs, not from the day of the lesson.  Changing it is audited (``group_audit``) and flips ``stale`` of
+  the sheets it touches (the kind is part of the data fingerprint), so a saved sheet never changes by
+  itself and the owner is told to recalculate.
 """
 from __future__ import annotations
 
@@ -27,7 +31,7 @@ from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from uuid import UUID
 
-from sqlalchemy import func
+from sqlalchemy import func, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -120,6 +124,13 @@ class PercentRequired(PayrollInvalid):
 class RevisionConflict(PayrollError):
     status_code = 409
     code = "SHEET_REVISION_CONFLICT"
+
+
+class DataChanged(PayrollError):
+    """The data moved between the preview the owner looked at and the save: save nothing."""
+
+    status_code = 409
+    code = "SHEET_DATA_CHANGED"
 
 
 # ============================================================================
@@ -671,17 +682,30 @@ class PayrollService:
             updated_at=_iso(sheet.updated_at) if sheet is not None else None,
         )
 
+    def _notes(self, sheets: Iterable[PayrollSheet]) -> Dict[UUID, Optional[str]]:
+        """The note of the current revision of each sheet, in ONE query."""
+        wanted = [(s.id, s.revision) for s in sheets]
+        if not wanted:
+            return {}
+        return {
+            sheet_id: note
+            for sheet_id, note in self.db.query(PayrollSheetRevision.sheet_id, PayrollSheetRevision.change_note).filter(
+                tuple_(PayrollSheetRevision.sheet_id, PayrollSheetRevision.revision).in_(wanted)
+            )
+        }
+
     def _saved_out(
-        self, sheet: PayrollSheet, *, stale: Optional[bool], names: Optional[Dict[UUID, Optional[str]]] = None
+        self,
+        sheet: PayrollSheet,
+        *,
+        stale: Optional[bool],
+        names: Optional[Dict[UUID, Optional[str]]] = None,
+        notes: Optional[Dict[UUID, Optional[str]]] = None,
     ) -> SheetOut:
         first = sheet.period_month
         last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
         names = names or self._names([sheet.teacher_id, sheet.created_by, sheet.updated_by])
-        note = (
-            self.db.query(PayrollSheetRevision.change_note)
-            .filter(PayrollSheetRevision.sheet_id == sheet.id, PayrollSheetRevision.revision == sheet.revision)
-            .scalar()
-        )
+        note = (notes if notes is not None else self._notes([sheet])).get(sheet.id)
         return self._out(
             sheet=sheet,
             first=first,
@@ -721,9 +745,9 @@ class PayrollService:
         for tid in teacher_ids:
             teacher = seed.teachers.get(tid)
             sheet = sheets.get(tid)
-            if teacher is None or not teacher.lessons_count:
-                if sheet is None:
-                    continue  # only unfinished lessons: nothing to pay yet
+            # a teacher with unfinished lessons only is listed too: the owner must see what blocks the month
+            if (teacher is None or not (teacher.lessons_count or teacher.open_lessons)) and sheet is None:
+                continue
             counters = engine.sheet_counters(self._render(teacher, {}, {}, seed.divisor)) if teacher else None
             types = (
                 {t: len(ids) for t, ids in teacher.groups_by_type.items()}
@@ -866,13 +890,20 @@ class PayrollService:
         return {str(item.membership_id): item for item in overrides or ()}
 
     def save_sheet(self, org_id: str, actor_id: str, body: SheetCreate) -> SheetOut:
-        """Save the calculation of a teacher's month; if a sheet exists this is its next revision."""
+        """Save the calculation of a teacher's month; if a sheet exists this is its next revision.
+
+        ``expected_fingerprint`` (the ``source_fingerprint`` of the preview the owner looked at): if the
+        data moved since, nothing is saved (409 ``SHEET_DATA_CHANGED``) - the owner saves what he saw.
+        On an existing sheet the decisions of its last revision (fee overrides, ticks) stay for the lines
+        the request does not mention; what the request says wins, ``monthly_fee: null`` resets a fee.
+        """
         first, last = parse_month(body.month)
         self._require_teacher(org_id, body.teacher_id)
         seed = self._collect(org_id, first, last, teacher_ids={body.teacher_id})
         teacher = seed.teachers.get(body.teacher_id) or TeacherSeed(
             body.teacher_id, fingerprint=fingerprint_of(first, body.teacher_id, [])
         )
+        self._check_expected(body.expected_fingerprint, teacher.fingerprint)
         percents = self._percent_map(body.percents, body.teacher_id)
         missing = self._missing_percents(teacher, percents)
         if missing:
@@ -884,33 +915,31 @@ class PayrollService:
                 ],
             )
         given = self._changes_from_body(body.line_overrides, {s.identity["membership_id"] for s in teacher.lines})
-        changes = {
-            mid: _Change(
-                fee=item.monthly_fee,
-                include_unpaid=bool(item.include_unpaid),
-            )
-            for mid, item in given.items()
-        }
-        lines = self._render(teacher, percents, changes, seed.divisor)
-        inputs = self._percent_inputs(lines, percents)
-        total = engine.sheet_total(lines)
         now = _utcnow()
         actor = UUID(str(actor_id))
 
-        sheet = (
-            self.db.query(PayrollSheet)
-            .filter(
-                PayrollSheet.org_id == org_id,
-                PayrollSheet.teacher_id == body.teacher_id,
-                PayrollSheet.period_month == first,
-            )
-            .with_for_update()
-            .first()
-        )
         try:
+            sheet = (
+                self.db.query(PayrollSheet)
+                .filter(
+                    PayrollSheet.org_id == org_id,
+                    PayrollSheet.teacher_id == body.teacher_id,
+                    PayrollSheet.period_month == first,
+                )
+                .with_for_update()
+                .populate_existing()
+                .first()
+            )
+            if sheet is not None and body.revision != sheet.revision:
+                raise self._conflict(sheet.revision)
+            if sheet is None and body.revision is not None:
+                raise self._conflict(0)
+            changes = self._carried_changes(sheet)
+            self._apply_overrides(changes, given)
+            lines = self._render(teacher, percents, changes, seed.divisor)
+            inputs = self._percent_inputs(lines, percents)
+            total = engine.sheet_total(lines)
             if sheet is not None:
-                if body.revision != sheet.revision:
-                    raise self._conflict(sheet.revision)
                 sheet.revision += 1
                 sheet.percent_inputs = inputs
                 sheet.divisor_default = seed.divisor
@@ -920,8 +949,6 @@ class PayrollService:
                 sheet.updated_by = actor
                 sheet.updated_at = now
             else:
-                if body.revision is not None:
-                    raise self._conflict(0)
                 sheet = PayrollSheet(
                     org_id=UUID(str(org_id)),
                     teacher_id=body.teacher_id,
@@ -944,14 +971,51 @@ class PayrollService:
         except IntegrityError as exc:  # another request saved the first sheet of this month meanwhile
             self.db.rollback()
             logger.info("payroll sheet save lost a race org=%s teacher=%s", org_id, body.teacher_id)
-            raise self._conflict(0) from exc
-        except RevisionConflict:
+            current = (
+                self.db.query(PayrollSheet.revision)
+                .filter(
+                    PayrollSheet.org_id == org_id,
+                    PayrollSheet.teacher_id == body.teacher_id,
+                    PayrollSheet.period_month == first,
+                )
+                .scalar()
+            )
+            raise self._conflict(current or 1) from exc
+        except PayrollError:
             self.db.rollback()
             raise
         logger.info(
             "payroll sheet saved org=%s sheet=%s revision=%s actor=%s", org_id, sheet.id, sheet.revision, actor_id
         )
         return self._saved_out(sheet, stale=False)
+
+    @staticmethod
+    def _check_expected(expected: Optional[str], fresh: str) -> None:
+        if expected and expected != fresh:
+            raise DataChanged(
+                "Данные изменились после расчёта — пересчитайте и проверьте суммы", source_fingerprint=fresh
+            )
+
+    @staticmethod
+    def _carried_changes(sheet: Optional[PayrollSheet]) -> Dict[str, _Change]:
+        """The owner's decisions on the lines of a saved sheet: fee overrides and ticks, by membership."""
+        return {
+            line["membership_id"]: _Change(
+                fee=line.get("monthly_fee") if line.get("fee_overridden") else None,
+                include_unpaid=bool(line.get("include_unpaid")),
+            )
+            for line in (sheet.lines or [] if sheet is not None else [])
+        }
+
+    @staticmethod
+    def _apply_overrides(changes: Dict[str, _Change], given: Dict[str, Any]) -> None:
+        """What a request says about a line wins over what the sheet had; a field it leaves out stays."""
+        for mid, item in given.items():
+            change = changes.setdefault(mid, _Change())
+            if "monthly_fee" in item.model_fields_set:
+                change.fee = item.monthly_fee
+            if item.include_unpaid is not None:
+                change.include_unpaid = item.include_unpaid
 
     def _add_revision(self, sheet: PayrollSheet, actor: UUID, now: datetime, note: Optional[str]) -> None:
         self.db.add(
@@ -1007,22 +1071,13 @@ class PayrollService:
                             for t in missing
                         ],
                     )
-                changes = {
-                    line["membership_id"]: _Change(
-                        fee=line.get("monthly_fee") if line.get("fee_overridden") else None,
-                        include_unpaid=bool(line.get("include_unpaid")),
-                    )
-                    for line in saved_lines
-                }
+                self._check_expected(body.expected_fingerprint, teacher.fingerprint)
+                changes = self._carried_changes(sheet)
                 fresh_ids = {s.identity["membership_id"] for s in teacher.lines}
-                for mid, item in given.items():
+                for mid in given:
                     if mid not in fresh_ids:
                         raise PayrollInvalid("Такой строки нет в ведомости", code="LINE_NOT_FOUND")
-                    change = changes.setdefault(mid, _Change())
-                    if "monthly_fee" in item.model_fields_set:
-                        change.fee = item.monthly_fee
-                    if item.include_unpaid is not None:
-                        change.include_unpaid = item.include_unpaid
+                self._apply_overrides(changes, given)
                 lines = self._render(teacher, percents, changes, seed.divisor)
                 fingerprint, divisor_default = teacher.fingerprint, seed.divisor
             else:
@@ -1131,7 +1186,16 @@ class PayrollService:
     def revisions(self, org_id: str, sheet_id: UUID) -> List[RevisionOut]:
         sheet = self._lock_sheet(org_id, sheet_id, lock=False)
         rows = (
-            self.db.query(PayrollSheetRevision)
+            # the lines themselves are not loaded: only how many there are
+            self.db.query(
+                PayrollSheetRevision.revision,
+                PayrollSheetRevision.total_amount,
+                PayrollSheetRevision.percent_inputs,
+                PayrollSheetRevision.changed_by,
+                PayrollSheetRevision.changed_at,
+                PayrollSheetRevision.change_note,
+                func.jsonb_array_length(PayrollSheetRevision.lines).label("line_count"),
+            )
             .filter(PayrollSheetRevision.sheet_id == sheet.id)
             .order_by(PayrollSheetRevision.revision.desc())
             .all()
@@ -1142,7 +1206,7 @@ class PayrollService:
                 revision=r.revision,
                 total_amount=r.total_amount,
                 percents=dict(r.percent_inputs or {}),
-                line_count=len(r.lines or []),
+                line_count=r.line_count or 0,
                 changed_by=str(r.changed_by),
                 changed_by_name=names.get(r.changed_by),
                 changed_at=_iso(r.changed_at),
@@ -1201,6 +1265,7 @@ class PayrollService:
         names = self._names(
             [r.teacher_id for r in rows] + [r.created_by for r in rows] + [r.updated_by for r in rows]
         )
-        outs = [self._saved_out(r, stale=None, names=names) for r in rows]
+        notes = self._notes(rows)
+        outs = [self._saved_out(r, stale=None, names=names, notes=notes) for r in rows]
         outs.sort(key=lambda o: ((o.teacher_name or "").casefold(), o.teacher_id))
         return outs, month_label(first)

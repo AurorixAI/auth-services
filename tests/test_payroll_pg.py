@@ -652,8 +652,10 @@ def test_unfinished_lessons_are_counted_per_teacher_in_the_month(world):
     never_started = len([n for n in mondays if n not in (1, 3, 4)])           # a Monday with no row at all
     ov = overview(world, m)
     assert teacher_row(ov, world.teacher)["warnings"]["open_lessons"] == 1 + never_started
-    # a teacher that only has an unfinished lesson has nothing to be paid yet and is not listed
-    assert all(t["teacher_id"] != str(world.teacher2.id) for t in ov["teachers"])
+    # a teacher that only has an unfinished lesson is listed too: nothing to pay yet, but the owner sees what blocks
+    only = teacher_row(ov, world.teacher2)
+    assert only["lessons_count"] == 0 and only["sheet"] is None and only["lesson_types"] == []
+    assert only["warnings"] == {"open_lessons": 1, "pending_excused": 0, "no_fee": 0, "unpaid": 0}
     assert preview(world, m)["warnings"]["open_lessons"] == 1 + never_started
 
 
@@ -749,6 +751,7 @@ def test_save_edit_history_and_conflicts(world):
     assert [h["revision"] for h in history] == [4, 3, 2, 1]
     assert history[3]["change_note"] == "Первый расчёт" and history[2]["change_note"] == "Скидка"
     assert history[3]["total_amount"] == first["total_amount"] and history[3]["percents"] == {"group": "50"}
+    assert [h["line_count"] for h in history] == [3, 3, 3, 3]
     assert history[0]["changed_by"] == str(world.owner.id) and history[0]["changed_by_name"] == "Иван Owner" and history[0]["changed_at"]
     assert world.db.query(PayrollSheetRevision).filter_by(sheet_id=sid).count() == 4
     # nothing to change is not a revision
@@ -1010,7 +1013,8 @@ def test_another_centre_sees_nothing_and_gets_404(world):
         assert foreign.get(base + suffix).status_code == 404, suffix
     assert foreign.patch(base, json={"revision": 1, "note": "x"}).status_code == 404
     assert foreign.get(f"{API}/org/payroll/sheets", params={"month": m.label}).json() == []
-    assert foreign.get(f"{API}/org/payroll/months/{m.label}").json()["teachers"] == []
+    theirs = foreign.get(f"{API}/org/payroll/months/{m.label}").json()["teachers"]
+    assert str(world.teacher.id) not in {t["teacher_id"] for t in theirs} and all(t["sheet"] is None for t in theirs)
     assert foreign.get(f"{API}/org/payroll/months/{m.label}/export.xlsx").status_code == 404
     # our teacher is not theirs, ours cannot be saved or previewed from there
     r = foreign.post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), "percents": []})
@@ -1131,7 +1135,7 @@ def test_excel_helpers():
 
     assert px.safe_text("=A1") == "'=A1" and px.safe_text("+1") == "'+1" and px.safe_text("-1") == "'-1"
     assert px.safe_text("a\x00b\x1fc\x0bd") == "abcd" and px.safe_text("\x00=1") == "'=1"            # control characters are dropped
-    assert px.safe_text("@x") == "'@x" and px.safe_text("\t=1") == "'\t=1" and px.safe_text("Алия") == "Алия" and px.safe_text(None) == ""
+    assert px.safe_text("@x") == "'@x" and px.safe_text("\t=1") == "' =1" and px.safe_text(" +1") == "' +1" and px.safe_text("Алия") == "Алия" and px.safe_text(None) == ""
     assert px.sheet_title("a/b:c*d?e[f]g\\h", []) == "a b c d e f g h"
     assert px.sheet_title("x" * 50, []) == "x" * 31
     assert px.sheet_title("Иван", ["иван"]) == "Иван (2)" and px.sheet_title("'quoted'", []) == "quoted"
@@ -1341,8 +1345,196 @@ def test_simultaneous_first_saves_make_one_sheet(world):
     with ThreadPoolExecutor(6) as pool:
         results = list(pool.map(create, range(6)))
     assert sorted(r.status_code for r in results) == [201] + [409] * 5, [(r.status_code, r.text[:200]) for r in results]
+    assert all(r.json()["detail"]["current_revision"] == 1 for r in results if r.status_code == 409)   # the real revision
     world.db.expire_all()
     assert world.db.query(PayrollSheet).filter_by(org_id=world.org.id).count() == 1
     assert world.db.query(PayrollSheetRevision).count() >= 1
     sheet = world.db.query(PayrollSheet).filter_by(org_id=world.org.id).one()
     assert sheet.revision == 1 and world.db.query(PayrollSheetRevision).filter_by(sheet_id=sheet.id).count() == 1
+
+
+# ============================================================================================
+# R3 fixes: sanitising, save what was seen, local time, boundary order, carried decisions
+# ============================================================================================
+
+
+def test_text_xml_cannot_hold_never_breaks_the_workbook(world):
+    from src.auth import payroll_export as px
+
+    m = previous_month()
+    s0, s1, s2 = world.students
+    world.teacher.first_name, world.teacher.last_name = "Пё\x0bтр\ufffe", "Te\tach\ner\uffff"
+    s0.first_name = "А\x0cл\x01ия\x1f"
+    world.group.name = "Груп\x0cпа\r\nA"
+    world.db.commit()
+    for n in (1, 2):
+        lesson(world, m.d(n), {s0: "present", s1: "present", s2: "present"})
+    for s in world.students:
+        pay_calendar(world, s, m.first, m.last)
+    save(world, m, note="При\x0bмечание\n2")
+    wb = workbook(owner(world).get(f"{API}/org/payroll/months/{m.label}/export.xlsx"))
+    assert wb.sheetnames == ["Пётр Te ach er"]                                   # \x0b, U+FFFE / U+FFFF dropped, tab / LF -> space
+    ws = wb.active
+    texts = [c.value for c in cells(ws) if isinstance(c.value, str)]
+    assert "Группа  A" in texts                                                    # \x0c dropped, CR LF -> two spaces
+    assert not any(ch in t for t in texts for ch in "\x00\x0b\x0c\x01\x1f\ufffe\uffff")
+    assert any(t == "Примечание: Примечание 2" for t in texts)
+    # the single-sheet export and the file name survive the same names
+    one = owner(world).get(f"{API}/org/payroll/sheets/{world.db.query(PayrollSheet).filter_by(org_id=world.org.id).one().id}/export.xlsx")
+    assert workbook(one).sheetnames == ["Пётр Te ach er"] and "\x0b" not in one.headers["content-disposition"]
+    assert px.sheet_title("a\x0bb\tc\nd\ufffe\uffff", []) == "ab c d"
+    assert px.clean_text("x\r\ny\x00") == "x  y"
+
+
+def test_save_what_the_owner_saw(world):
+    m = previous_month()
+    s0 = world.students[0]
+    full_month(world, m, days=range(1, 5))
+    seen = preview(world, m)
+    fp = seen["source_fingerprint"]
+    lesson(world, m.d(20), {s0: "present"})                                      # the data moves after the preview
+    r = owner(world).post(f"{API}/org/payroll/sheets", json={
+        "month": m.label, "teacher_id": str(world.teacher.id), "percents": [pct(world)], "expected_fingerprint": fp})
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "SHEET_DATA_CHANGED" and detail["message"] == "Данные изменились после расчёта — пересчитайте и проверьте суммы"
+    fresh = preview(world, m)["source_fingerprint"]
+    assert detail["source_fingerprint"] == fresh and fresh != fp
+    world.db.expire_all()
+    assert world.db.query(PayrollSheet).filter_by(org_id=world.org.id).count() == 0           # nothing was saved
+    saved = save(world, m, expected_fingerprint=fresh)                                          # the new preview can be saved
+    assert saved["revision"] == 1 and saved["source_fingerprint"] == fresh
+    assert save(world, m, revision=1)["revision"] == 2                                           # without it: no check
+
+    # PATCH with recalculate: the same protection
+    lesson(world, m.d(21), {s0: "present"})
+    r = owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 2, "recalculate": True, "expected_fingerprint": fresh})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_DATA_CHANGED"
+    newest = r.json()["detail"]["source_fingerprint"]
+    assert owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}").json()["revision"] == 2
+    ok = owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 2, "recalculate": True, "expected_fingerprint": newest})
+    assert ok.status_code == 200 and ok.json()["revision"] == 3 and ok.json()["source_fingerprint"] == newest
+    # without recalculation nothing is read again, so there is nothing to compare
+    lesson(world, m.d(22), {s0: "present"})
+    plain = owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 3, "note": "x", "expected_fingerprint": "0" * 64})
+    assert plain.status_code == 200 and plain.json()["revision"] == 4
+
+
+def test_the_export_shows_the_save_time_in_tashkent(world):
+    m = previous_month()
+    full_month(world, m, days=range(1, 3))
+    saved = save(world, m)
+    world.db.query(PayrollSheet).filter_by(id=saved["id"]).update({"updated_at": datetime(2026, 9, 30, 20, 30)})   # UTC
+    world.db.commit()
+    ws = workbook(owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}/export.xlsx")).active
+    assert ws["A2"].value == "Редакция 1 · сохранено 01.10.2026 01:30"                         # UTC+5, next day
+    from src.auth import payroll_export as px
+    assert px.local_time("2026-01-15T22:05:59") == "16.01.2026 03:05" and px.local_time(None) == ""
+
+
+def test_an_unpaid_lesson_is_priced_by_the_latest_package_not_by_a_payment_that_covers_nothing(world):
+    m = previous_month()
+    s0 = world.students[0]
+    for n in range(1, 11):
+        lesson(world, m.d(n), {s0: "present"})
+    pay_package(world, s0, m.first, 8, fee=480_000)
+    membership = student_group(world, s0)
+    # a calendar payment, paid LATER, that moved away before its period began: it covers nothing at all
+    world.db.add(StudentPayment(
+        org_id=world.org.id, membership_id=membership.id, student_id=s0.id, group_id=world.group.id, amount=1,
+        paid_on=m.d(25), valid_from=m.d(20), valid_to=m.last, created_by=world.owner.id,
+        carried_out_at=datetime(m.first.year, m.first.month, 5, 10, 0)))
+    world.db.commit()
+    line = line_of(preview(world, m), s0)
+    assert (line["counted"], line["unpaid"]) == (8, 2)
+    assert [x["divisor"] for x in line["marks"]] == [8] * 10                      # not 12: the package is the latest payment
+
+
+def test_two_lessons_of_one_day_at_the_package_boundary_go_by_start_time(world):
+    """The package ends in the middle of a day: the EARLIER lesson (teacher 1) is paid, the later one (teacher 2) is not."""
+    m = previous_month()
+    s0 = world.students[0]
+    day3 = m.d(3)
+    world.group.schedule = [
+        {"id": "z-early", "dayOfWeek": day3.isoweekday(), "startTime": "10:00", "endTime": "11:00", "format": "offline"},
+        {"id": "a-late", "dayOfWeek": day3.isoweekday(), "startTime": "15:00", "endTime": "16:00", "format": "offline"},
+    ]
+    world.db.commit()
+    lesson(world, m.d(1), {s0: "present"}, lesson_id="x1")
+    lesson(world, m.d(2), {s0: "present"}, lesson_id="x2")
+    lesson(world, day3, {s0: "present"}, lesson_id="z-early")                    # 10:00, teacher 1 ("z" sorts AFTER "a")
+    lesson(world, day3, {s0: "present"}, lesson_id="a-late", teacher=world.teacher2)   # 15:00, teacher 2
+    pay_package(world, s0, m.first, 3)
+    first, second = line_of(preview(world, m), s0), line_of(preview(world, m, teacher=world.teacher2), s0)
+    assert [x["state"] for x in first["marks"]] == ["counted", "counted", "counted"] and first["unpaid"] == 0
+    assert [x["state"] for x in second["marks"]] == ["unpaid"] and second["counted"] == 0
+    page = {r["student_id"]: r for r in owner(world).get(f"{API}/org/payments/status", params={"limit": 50}).json()["items"]}
+    assert page[str(s0.id)]["lessons_used"] == 3 and page[str(s0.id)]["lessons_left"] == 0
+    # the same day with the times the other way round: now teacher 2's lesson is the earlier one
+    world.group.schedule = [
+        {"id": "z-early", "dayOfWeek": day3.isoweekday(), "startTime": "16:00", "endTime": "17:00", "format": "offline"},
+        {"id": "a-late", "dayOfWeek": day3.isoweekday(), "startTime": "09:00", "endTime": "10:00", "format": "offline"},
+    ]
+    world.db.commit()
+    first, second = line_of(preview(world, m), s0), line_of(preview(world, m, teacher=world.teacher2), s0)
+    assert [x["state"] for x in first["marks"]] == ["counted", "counted", "unpaid"]
+    assert [x["state"] for x in second["marks"]] == ["counted"]
+
+
+def test_a_new_revision_by_post_keeps_the_decisions_of_the_last_one(world):
+    m = previous_month()
+    s0, s1, _ = world.students
+    for n in range(1, 7):
+        lesson(world, m.d(n), {s0: "present", s1: "present"})
+    pay_calendar(world, s0, m.first, m.d(4))                                       # two unpaid lessons each
+    pay_calendar(world, s1, m.first, m.d(4))
+    base = preview(world, m)
+    mid0, mid1 = line_of(base, s0)["membership_id"], line_of(base, s1)["membership_id"]
+    first = save(world, m, line_overrides=[{"membership_id": mid0, "monthly_fee": 300_000, "include_unpaid": True},
+                                           {"membership_id": mid1, "include_unpaid": True}])
+    assert line_of(first, s0)["fee_overridden"] and line_of(first, s0)["include_unpaid"] and line_of(first, s1)["include_unpaid"]
+    # a plain re-save (the percent changed): the fee overrides and the ticks stay
+    second = save(world, m, revision=1, percents=[pct(world, "60")])
+    a, b = line_of(second, s0), line_of(second, s1)
+    assert (a["monthly_fee"], a["fee_overridden"], a["include_unpaid"]) == (300_000, True, True)
+    assert (b["monthly_fee"], b["include_unpaid"]) == (FEE, True)
+    assert a["amount"] == 300_000 * 60 * 6 // 1200 and b["amount"] == FEE * 60 * 6 // 1200
+    # what the request says wins; a field it leaves out stays
+    third = save(world, m, revision=2, percents=[pct(world, "60")], line_overrides=[
+        {"membership_id": mid0, "monthly_fee": None},                              # null resets the fee ...
+        {"membership_id": mid1, "include_unpaid": False, "monthly_fee": 200_000}])
+    a, b = line_of(third, s0), line_of(third, s1)
+    assert (a["monthly_fee"], a["fee_overridden"], a["include_unpaid"]) == (FEE, False, True)            # ... the tick stays
+    assert (b["monthly_fee"], b["fee_overridden"], b["include_unpaid"]) == (200_000, True, False)
+    fourth = save(world, m, revision=3, percents=[pct(world, "60")], line_overrides=[{"membership_id": mid1, "include_unpaid": True}])
+    assert line_of(fourth, s1)["monthly_fee"] == 200_000 and line_of(fourth, s1)["include_unpaid"] is True   # the fee stays
+
+
+def test_revisions_and_the_month_export_use_a_fixed_number_of_queries(world):
+    m = previous_month()
+    s0 = world.students[0]
+    pay_calendar(world, s0, m.first, m.last)
+    lesson(world, m.d(1), {s0: "present"})
+    lesson(world, m.d(2), {s0: "present"}, teacher=world.teacher2)
+    a = save(world, m, note="первая")
+    save(world, m, teacher=world.teacher2, percents=[pct(world, "40", teacher=world.teacher2)], note="вторая")
+    patch(world, a, note="ещё")
+    client = owner(world)
+    statements = []
+
+    def grab(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    engine = world.db.get_bind()
+    event.listen(engine, "before_cursor_execute", grab)
+    try:
+        revisions = client.get(f"{API}/org/payroll/sheets/{a['id']}/revisions")
+        statements_revisions, statements[:] = list(statements), []
+        exported = client.get(f"{API}/org/payroll/months/{m.label}/export.xlsx")
+    finally:
+        event.remove(engine, "before_cursor_execute", grab)
+    assert revisions.status_code == 200 and [h["line_count"] for h in revisions.json()] == [1, 1]
+    assert any("jsonb_array_length" in q for q in statements_revisions)                       # counted by the database
+    assert not any("payroll_sheet_revisions.lines AS" in q for q in statements_revisions)      # the lines are not loaded
+    assert workbook(exported).sheetnames == ["Мария Teacher", "Пётр Teacher"]
+    assert len([q for q in statements if "FROM payroll_sheet_revisions" in q]) == 1            # the notes of all sheets: one query

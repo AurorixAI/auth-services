@@ -589,17 +589,20 @@ class PaymentService:
             for r in records
         ]
 
-    def _scheduled_starts(self, group: Group, day: date) -> Dict[str, datetime]:
+    def _scheduled_starts(self, group: Group, day: date, preloaded: Any = None) -> Dict[str, datetime]:
         """``{lesson_id: scheduled start}`` (naive UTC) of the group's lessons on one day.
 
         The schedule (with overrides and one-off lessons) is the only place that knows a lesson's
         start time; a lesson whose time cannot be read is left out (it counts as "before").
+        ``preloaded`` (``AuthService._preload_schedule_data``) replaces the per-group queries.
         """
         from .service import AuthService, lesson_start_as_naive_utc  # lazy: service is heavy
 
         service = AuthService(self.db)
         starts: Dict[str, datetime] = {}
-        for occurrence in service._resolved_occurrences_for_group(group, date_from=day, date_to=day):
+        for occurrence in service._resolved_occurrences_for_group(
+            group, date_from=day, date_to=day, preloaded=preloaded
+        ):
             try:
                 minutes, _ = service._validate_lesson_time_range(
                     occurrence.get("startTime"), occurrence.get("endTime")
@@ -634,7 +637,11 @@ class PaymentService:
         Payroll (N13 P3) reads the same lessons through three optional arguments: ``since`` moves the
         start of the read back (it never moves it forward), ``until`` cuts the end (lessons after it
         cannot change who covers an earlier lesson), ``detail_out[membership]`` receives
-        ``(day, lesson_id, attendance_id)`` of every counted lesson in the order of ``dates``.
+        ``(day, lesson_id, attendance_id)`` of every counted lesson in the ORDER OF HAND-OUT: by day,
+        then - when a day has several lessons of the student - by scheduled start, then by lesson id.
+        That is the order ``_take`` assumes ("the later lessons of the day come last") and the one
+        ``lesson_coverage`` uses to say WHICH lesson of a day a package covers, so the status page
+        (which counts) and payroll (which names the lessons) share one rule.
         """
         if not members:
             return {}
@@ -690,6 +697,7 @@ class PaymentService:
             by_group.setdefault(lesson.group_id, []).append((lesson, roster))
 
         out: Dict[UUID, List[date]] = {}
+        group_of: Dict[UUID, Group] = {}
         for membership, student, group in members:
             sid = str(membership.student_id)
             dates: List[date] = []
@@ -719,6 +727,7 @@ class PaymentService:
             out[membership.id] = dates
             if detail_out is not None:
                 detail_out[membership.id] = detail
+                group_of[membership.id] = group
             if late_out is not None and on_moved_day:
                 counts: Dict[datetime, int] = {}
                 for lesson_day, lesson_ids in on_moved_day.items():
@@ -728,7 +737,45 @@ class PaymentService:
                             1 for lid in lesson_ids if lid in starts and starts[lid] >= instant
                         )
                 late_out[membership.id] = counts
+        if detail_out is not None:
+            self._order_by_start(detail_out, group_of)
         return out
+
+    def _order_by_start(self, detail_out: Dict[UUID, List[tuple]], group_of: Dict[UUID, Group]) -> None:
+        """Put the lessons of one day of a student in hand-out order: scheduled start, then lesson id.
+
+        Only days with SEVERAL counted lessons of the student need the schedule (usually none); it is
+        read for all of them together (two queries), never per day.  A lesson whose time cannot be read
+        counts as "before", like in ``_scheduled_starts``.
+        """
+        several: Dict[Tuple[UUID, date], None] = {}
+        for mid, items in detail_out.items():
+            if mid not in group_of:
+                continue
+            seen: Dict[date, int] = {}
+            for day, _lesson_id, _attendance in items:
+                seen[day] = seen.get(day, 0) + 1
+            for day, n in seen.items():
+                if n > 1:
+                    several[(group_of[mid].id, day)] = None
+        starts: Dict[Tuple[UUID, date], Dict[str, datetime]] = {}
+        if several:
+            from .service import AuthService  # lazy: service is heavy
+
+            groups = {group_of[mid].id: group_of[mid] for mid in group_of}
+            days = [day for _, day in several]
+            preload = AuthService(self.db)._preload_schedule_data(
+                list({gid for gid, _ in several}), date_from=min(days), date_to=max(days)
+            )
+            for gid, day in several:
+                starts[(gid, day)] = self._scheduled_starts(groups[gid], day, preloaded=preload)
+        for mid, items in detail_out.items():
+            if mid not in group_of:
+                continue
+            gid = group_of[mid].id
+            items.sort(
+                key=lambda item: (item[0], starts.get((gid, item[0]), {}).get(item[1], datetime.min), item[1])
+            )
 
     # ------------------------------------------------- coverage (payroll)
 
@@ -808,7 +855,7 @@ class PaymentService:
         if state.taken:
             queues: Dict[Tuple[UUID, date], deque] = {}
             for mid, items in detail.items():
-                for day, lesson_id, _attendance in sorted(items, key=lambda item: (item[0], item[1])):
+                for day, lesson_id, _attendance in items:        # already in hand-out order (start, id)
                     queues.setdefault((mid, day), deque()).append(lesson_id)
             for record in sorted(
                 state.records.values(),
@@ -823,7 +870,8 @@ class PaymentService:
         out: Dict[Tuple[UUID, date, str], LessonCover] = {}
         for membership, _group in rows:
             recs = records[membership.id]
-            latest = ps.latest_payment(recs)
+            # like compute_status: a calendar payment that moved away before its period began is nothing
+            latest = ps.latest_payment([r for r in recs if not r.covers_nothing])
             package_first = latest is not None and latest.mode == ps.LESSONS
             latest_size = (
                 self._package_size(state.records, state.records.get(latest.id, latest)) if package_first else None
