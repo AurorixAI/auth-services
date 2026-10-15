@@ -3,8 +3,13 @@
 Used by ``AuthService.verify_group_student`` (exam-service asks it who is
 entering a group exam).  The old matching was dangerously loose - an ID matched
 by suffix and a name by any substring, silently taking the first candidate - so
-that typing «1» or «ал» entered as somebody else.  Here a student is identified
+that typing «1» or «ал» entered as someone else.  Here a student is identified
 only when the input is *exact* after normalisation, and ambiguity is refused.
+
+Normalisation is applied to the stored value and to what was typed alike, so
+the usual keyboard/typography differences do not matter (``Ma'rufjon`` =
+``Ma’rufjon`` = ``Marufjon``, ``Иванова-Петрова`` = ``Иванова Петрова``, a
+Cyrillic ``ТЕ-031`` = ``TE-031``) while a different person never matches.
 
 Pure functions over duck-typed students (``id``, ``display_id``,
 ``student_number``, ``first_name``, ``last_name``): no database access.
@@ -12,29 +17,60 @@ Pure functions over duck-typed students (``id``, ``display_id``,
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence
 
-_DASHES = str.maketrans({"‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-", "_": "-"})
+# Invisible characters that sneak in with copy/paste: ZWSP/ZWNJ/ZWJ, word joiner, BOM, soft hyphen.
+_INVISIBLE = dict.fromkeys(map(ord, "​‌‍⁠﻿­"))
+# The apostrophe family is deleted: Ma'rufjon = Ma’rufjon = Marufjon, Oʻgʻiloy = O'g'iloy.
+_APOSTROPHES = dict.fromkeys(map(ord, "'’‘ʼʻ`´"))
+# Hyphens and dashes read as a space in names: Иванова-Петрова = Иванова Петрова.
+_DASHES = "-‐‑‒–—−"
+_DASH_TO_SPACE = {ord(ch): " " for ch in _DASHES}
+# Uzbek Cyrillic letters typed on a Russian keyboard (after lower-casing and ё -> е).
+_UZBEK_FOLD = str.maketrans({"ғ": "г", "қ": "к", "ҳ": "х", "ў": "у"})
+# Cyrillic look-alikes of Latin letters in an ID (А В Е К М Н О Р С Т Х), lower case.
+_ID_LOOKALIKES = str.maketrans({"а": "a", "в": "b", "е": "e", "к": "k", "м": "m", "н": "h", "о": "o", "р": "p", "с": "c", "т": "t", "х": "x"})
+_ID_SEPARATORS = re.compile(r"[\s_" + re.escape(_DASHES) + r"]+")
 _DIGITS_ONLY = re.compile(r"[0-9]+")
 
 MSG_NEED_FULL_NAME = "Введите имя и фамилию полностью или ID"
 MSG_NAMESAKES = "В группе несколько учеников с таким именем — введите ваш ID (он есть у учителя и в карточке ученика)"
 MSG_AMBIGUOUS_ID = "Несколько учеников подходят под этот ID — обратитесь к преподавателю."
+# A fixed hint: it must never be built from a real student's ID.
+MSG_AMBIGUOUS_NUMBER = (
+    "Несколько учеников подходят под этот номер — "
+    "введите ID полностью, как в карточке ученика (буквы и цифры)"
+)
 MSG_NAME_MISMATCH = (
     "Введённое имя (ФИО) или Student ID не соответствуют ученику в этой группе. "
     "Пожалуйста, перепроверьте данные или обратитесь к преподавателю."
 )
 
 
+def _clean(value: Optional[str]) -> str:
+    """NFKC (NFD «й» becomes «й»), invisible characters and apostrophes removed."""
+    text = (value or "").translate(_INVISIBLE).translate(_APOSTROPHES)
+    # NFKC can itself produce one of the characters above (U+00B4 -> space + accent), so clean again.
+    return unicodedata.normalize("NFKC", text).translate(_INVISIBLE).translate(_APOSTROPHES)
+
+
 def normalize_name(value: Optional[str]) -> str:
-    """trim, lowercase, ё→е, collapse whitespace."""
-    return " ".join((value or "").strip().lower().replace("ё", "е").split())
+    """Comparable form of a name: see the module docstring.  Words are separated by single spaces."""
+    text = _clean(value).translate(_DASH_TO_SPACE).lower().replace("ё", "е").translate(_UZBEK_FOLD)
+    return " ".join(text.split())
 
 
 def normalize_id(value: Optional[str]) -> str:
-    """Like names, but spaces are dropped and ``-``/``_`` (and dash variants) are equal."""
-    return "".join(normalize_name(value).split()).translate(_DASHES)
+    """Comparable form of an ID.
+
+    Case-insensitive, Cyrillic look-alikes read as Latin, and any run of spaces, ``-``, ``_``
+    or dash variants is *one* ``-`` (so «TE 031» = «TE_031» = «TE-031»).  The separator is
+    kept - dropping it would make «NC1-001» and «NC10-01» the same ID.
+    """
+    text = _clean(value).lower().translate(_ID_LOOKALIKES)
+    return _ID_SEPARATORS.sub("-", text).strip("-")
 
 
 def name_tokens(value: Optional[str]) -> list[str]:
@@ -74,57 +110,68 @@ class Match:
 
 
 def match_by_id(students: Sequence, id_input: str) -> Match:
-    """Exact display_id / student_number / UUID; digits-only may match a display number if unique."""
+    """Exact display_id / student_number / UUID; a bare number also reads as a display number.
+
+    For a bare number both readings are merged, and it enters only when they point at exactly
+    one student: «31» is neither TE-031 for one student and student number 31 for another.
+    """
     id_norm = normalize_id(id_input)
     if not id_norm:
         return Match()
-    exact = [s for s in students if id_norm in _exact_ids(s)]
-    if len(exact) == 1:
-        return Match(exact[0])
-    if len(exact) > 1:
+    found = [s for s in students if id_norm in _exact_ids(s)]
+    if is_digits_only(id_norm):
+        number = _strip_zeros(id_norm)
+        seen = {id(s) for s in found}
+        found += [s for s in students if id(s) not in seen and _display_number(s.display_id) == number]
+        if len(found) > 1:
+            return Match(message=MSG_AMBIGUOUS_NUMBER)
+    elif len(found) > 1:
         return Match(message=MSG_AMBIGUOUS_ID)
-    if not is_digits_only(id_norm):
-        return Match()
-    number = _strip_zeros(id_norm)
-    numeric = sorted(
-        (s for s in students if _display_number(s.display_id) == number),
-        key=lambda s: normalize_id(s.display_id),
-    )
-    if len(numeric) == 1:
-        return Match(numeric[0])
-    if len(numeric) > 1:
-        display = normalize_id(numeric[0].display_id)
-        prefix = display.rsplit("-", 1)[0].upper() if "-" in display else "ID"
-        return Match(
-            message=(
-                "Несколько учеников подходят под этот номер — "
-                f"введите ID полностью, например {prefix}-{number.zfill(3)}"
-            )
-        )
-    return Match()
+    return Match(found[0]) if found else Match()
 
 
 def name_matches_owner(student, name_input: str) -> bool:
-    """Every typed word must be the student's first or last name as a whole word."""
-    typed = name_tokens(name_input)
+    """The typed name belongs to the owner of an already matched ID.
+
+    Either the owner's first and last name are both there (extra words, e.g. a patronymic, are
+    fine - the ID is the key), or every typed word is the owner's first or last name
+    (e.g. only the surname).
+    """
+    typed = set(name_tokens(name_input))
     if not typed:
         return False
-    own = set(name_tokens(student.first_name)) | set(name_tokens(student.last_name))
-    return all(token in own for token in typed)
+    first, last = set(name_tokens(student.first_name)), set(name_tokens(student.last_name))
+    if first and last and first <= typed and last <= typed:
+        return True
+    return typed <= (first | last)
 
 
 def match_by_name(students: Sequence, name_input: str) -> Match:
-    """Full name (first + last, any order) as whole words; exactly one student."""
+    """Full name (first + last, any order) as whole words; exactly one student.
+
+    Students whose name words *equal* the typed words go first, so «Али Каримов» and
+    «Али Акбар Каримов» each enter with their own exact name.  Failing that, the typed words
+    may hold the whole name plus at most one extra word (a patronymic).  Several students
+    on either level ask for the ID.
+    """
     typed = name_tokens(name_input)
     if len(typed) < 2:
         return Match(message=MSG_NEED_FULL_NAME)
     typed_set = set(typed)
-    candidates = []
+    exact, covering = [], []
     for s in students:
         first, last = set(name_tokens(s.first_name)), set(name_tokens(s.last_name))
         # A student without both names can only enter by ID.
-        if first and last and (first | last) <= typed_set:
-            candidates.append(s)
+        if not (first and last):
+            continue
+        own = first | last
+        if own == typed_set:
+            exact.append(s)
+        elif own <= typed_set and len(typed_set - own) <= 1:
+            covering.append(s)
+    if len(exact) == 1:
+        return Match(exact[0])
+    candidates = exact + covering
     if len(candidates) == 1:
         return Match(candidates[0])
     if len(candidates) > 1:
