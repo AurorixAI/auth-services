@@ -1538,3 +1538,25 @@ def test_revisions_and_the_month_export_use_a_fixed_number_of_queries(world):
     assert not any("payroll_sheet_revisions.lines AS" in q for q in statements_revisions)      # the lines are not loaded
     assert workbook(exported).sheetnames == ["Мария Teacher", "Пётр Teacher"]
     assert len([q for q in statements if "FROM payroll_sheet_revisions" in q]) == 1            # the notes of all sheets: one query
+
+
+def test_the_diff_carries_the_fingerprint_to_save_exactly_what_it_showed(world):
+    m = previous_month()
+    s0 = world.students[0]
+    full_month(world, m, days=range(1, 5))
+    saved = save(world, m)
+    url = f"{API}/org/payroll/sheets/{saved['id']}"
+    clean = owner(world).get(f"{url}/diff").json()
+    assert clean["source_fingerprint"] == saved["source_fingerprint"] and clean["stale"] is False
+    lesson(world, m.d(20), {s0: "present"})                                       # the data moves
+    diff = owner(world).get(f"{url}/diff").json()
+    assert diff["stale"] is True and diff["source_fingerprint"] != saved["source_fingerprint"]
+    assert diff["source_fingerprint"] == preview(world, m)["source_fingerprint"]      # the fresh one
+    lesson(world, m.d(21), {s0: "present"})                                       # ... and moves again after the owner looked
+    r = owner(world).patch(url, json={"revision": 1, "recalculate": True, "expected_fingerprint": diff["source_fingerprint"]})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_DATA_CHANGED"
+    assert owner(world).get(url).json()["revision"] == 1
+    again = owner(world).get(f"{url}/diff").json()
+    ok = owner(world).patch(url, json={"revision": 1, "recalculate": True, "expected_fingerprint": again["source_fingerprint"]})
+    assert ok.status_code == 200 and ok.json()["revision"] == 2 and ok.json()["source_fingerprint"] == again["source_fingerprint"]
+    assert ok.json()["stale"] is False and line_of(ok.json(), s0)["counted"] == 6

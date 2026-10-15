@@ -1241,6 +1241,7 @@ class PayrollService:
             sheet_id=str(sheet.id),
             revision=sheet.revision,
             stale=teacher.fingerprint != sheet.source_fingerprint,
+            source_fingerprint=teacher.fingerprint,
             saved_total=saved_total,
             fresh_total=fresh_total,
             delta_amount=fresh_total - saved_total,

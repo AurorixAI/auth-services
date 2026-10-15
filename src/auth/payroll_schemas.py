@@ -325,6 +325,9 @@ class SheetDiff(BaseModel):
     sheet_id: str
     revision: int
     stale: bool
+    # The FRESH fingerprint of the calculation this diff compared against: send it back as
+    # ``expected_fingerprint`` with PATCH ``recalculate`` and the owner saves exactly the diff he saw.
+    source_fingerprint: str
     saved_total: int
     fresh_total: int
     delta_amount: int
