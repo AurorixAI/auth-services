@@ -18,7 +18,7 @@ from .service import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 from .schemas import AuthResponse, UserResponse, TokenPair, OrgResponse
-from .router import _set_auth_cookies
+from .cookies import set_auth_cookies
 
 from src.core.database import get_db
 
@@ -189,5 +189,5 @@ def dev_login(
     resp = JSONResponse(content=body)
 
     # One cookie policy for every sign-in path (flags, domain, lifetimes).
-    _set_auth_cookies(resp, tokens.access_token, tokens.refresh_token)
+    set_auth_cookies(resp, tokens.access_token, tokens.refresh_token)
     return resp

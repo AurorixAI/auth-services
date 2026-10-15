@@ -9,26 +9,26 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import Literal, Optional
 from datetime import date, datetime
-import os
 
 from .service import (
     AuthService,
     BUSINESS_TIMEZONE,
     MembershipConflict,
+    hash_token,
     verify_access_token,
-    verify_refresh_token,
 )
 from .attendance_access import is_org_admin, is_org_manager
 from . import import_service
 from .import_service import ImportPreviewResponse, ImportCommitResponse
-from src.api.rate_limit import rate_limit
-from .dependencies import (
-    ACCESS_COOKIE_MAX_AGE,
+from src.api.rate_limit import enforce_rate_limit, rate_limit
+from src.core.config import get_settings
+from .cookies import (
     AUTH_COOKIE_NAME,
-    REFRESH_COOKIE_MAX_AGE,
     REFRESH_COOKIE_NAME,
-    security,
+    clear_auth_cookies,
+    set_auth_cookies,
 )
+from .dependencies import security
 from .schemas import (
     OrgApplicationRequest,
     LoginRequest,
@@ -93,54 +93,18 @@ from src.api.internal_router import require_internal_service_token
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# ----------- cookie / env helpers ----------- #
+# /auth/refresh limits: per client address (generous) and per refresh token (tight).
+REFRESH_IP_LIMIT = "120/minute"
+REFRESH_TOKEN_LIMIT = "10/minute"
 
-_IS_PROD = os.getenv("ENVIRONMENT", "development") == "production"
-_COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # e.g. ".algo.kz"
-# Cookie lifetimes live next to the cookie names (dependencies.py). The access COOKIE is as
-# long-lived as the refresh cookie (30 days); the JWT inside expires after
-# JWT_ACCESS_TTL_MINUTES (60) on its own - see the comment there for why.
-_ACCESS_COOKIE_MAX_AGE = ACCESS_COOKIE_MAX_AGE
-_REFRESH_COOKIE_MAX_AGE = REFRESH_COOKIE_MAX_AGE
-
-
-def _set_auth_cookies(
-    response: JSONResponse,
-    access_token: str,
-    refresh_token: str,
-) -> JSONResponse:
-    """Attach httpOnly JWT cookies to *response*."""
-    response.set_cookie(
-        key=AUTH_COOKIE_NAME,
-        value=access_token,
-        httponly=True,
-        secure=_IS_PROD,
-        samesite="lax",
-        max_age=_ACCESS_COOKIE_MAX_AGE,
-        path="/",
-        domain=_COOKIE_DOMAIN,
-    )
-    response.set_cookie(
-        key=REFRESH_COOKIE_NAME,
-        value=refresh_token,
-        httponly=True,
-        secure=_IS_PROD,
-        samesite="lax",
-        max_age=_REFRESH_COOKIE_MAX_AGE,
-        # Actual mount point is /api/v1/auth/* (see main_v2.py) — a plain
-        # "/auth" prefix would never match, so the browser would never send
-        # this cookie back to /api/v1/auth/refresh at all.
-        path="/api/v1/auth",
-        domain=_COOKIE_DOMAIN,
-    )
-    return response
+# ----------- cookie helpers: the policy itself is in cookies.py ----------- #
 
 
 def _auth_response_with_cookies(auth: AuthResponse) -> JSONResponse:
     """Return AuthResponse JSON body **and** set httpOnly cookies."""
     body = auth.model_dump(mode="json")
     resp = JSONResponse(content=body)
-    _set_auth_cookies(resp, auth.tokens.access_token, auth.tokens.refresh_token)
+    set_auth_cookies(resp, auth.tokens.access_token, auth.tokens.refresh_token)
     return resp
 
 
@@ -148,7 +112,7 @@ def _token_response_with_cookies(tokens: TokenPair) -> JSONResponse:
     """Return TokenPair JSON body **and** set httpOnly cookies."""
     body = tokens.model_dump(mode="json")
     resp = JSONResponse(content=body)
-    _set_auth_cookies(resp, tokens.access_token, tokens.refresh_token)
+    set_auth_cookies(resp, tokens.access_token, tokens.refresh_token)
     return resp
 
 
@@ -199,16 +163,21 @@ def refresh_tokens(
     request: RefreshTokenRequest,
     raw_request: Request = None,
     db: Session = Depends(get_db),
-    _rl=Depends(rate_limit("10/minute")),
+    _rl=Depends(rate_limit(REFRESH_IP_LIMIT)),
 ):
     """Обновление пары токенов.
-    Принимает refresh_token из тела ИЛИ из httpOnly cookie."""
+    Принимает refresh_token из тела ИЛИ из httpOnly cookie.
+
+    Two limits: a generous one per client address (a school behind one NAT returns at 08:00 and
+    every browser refreshes at once) and a tight one per refresh token (a client that hammers
+    the same token is broken or hostile)."""
     rt = request.refresh_token
     # Fallback: read from httpOnly cookie if body is empty
     if not rt and raw_request:
         rt = raw_request.cookies.get(REFRESH_COOKIE_NAME)
     if not rt:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "refresh_token required")
+    enforce_rate_limit(hash_token(rt), REFRESH_TOKEN_LIMIT, endpoint="auth-refresh-token")
     try:
         tokens = _svc(db).refresh_tokens(rt)
         return _token_response_with_cookies(tokens)
@@ -381,31 +350,31 @@ def change_password(
         raise HTTPException(400, str(e))
 
 
-def _clear_auth_cookies(response: JSONResponse) -> JSONResponse:
-    """Delete both browser cookies (same path/domain they were set with)."""
-    response.delete_cookie(AUTH_COOKIE_NAME, path="/", domain=_COOKIE_DOMAIN)
-    response.delete_cookie(REFRESH_COOKIE_NAME, path="/api/v1/auth", domain=_COOKIE_DOMAIN)
-    return response
+def _is_cross_site_request(request: Request) -> bool:
+    """A browser says this request was started by another site (CSRF-style).
+
+    Sec-Fetch-Site: cross-site is sent by every current browser and cannot be set by a page's script;
+    Origin (sent on every POST) must be one of the configured CORS origins. Requests without either
+    header (curl, server-to-server, old browsers) are not judged here: they carry no ambient cookies of
+    a third-party page's making.
+    """
+    if request.headers.get("sec-fetch-site", "").strip().lower() == "cross-site":
+        return True
+    origin = request.headers.get("origin")
+    if origin is not None:
+        allowed = {o.rstrip("/") for o in get_settings().cors_origins}
+        return "*" not in allowed and origin.strip().rstrip("/") not in allowed
+    return False
 
 
-def _logout_subject(
+def _access_subject(
     request: Request, credentials: Optional[HTTPAuthorizationCredentials]
 ) -> Optional[str]:
-    """Whose server-side refresh token to revoke, from whatever valid credential came along.
-
-    The access cookie now outlives the JWT inside it, so a logout request often carries an
-    expired access token. The refresh cookie (sent to /api/v1/auth/*) still identifies the
-    user then. Nothing identifiable -> None: the cookies are cleared all the same.
-    """
-    candidates = [request.cookies.get(AUTH_COOKIE_NAME), credentials.credentials if credentials else None]
-    for token in candidates:
+    """The user a VALID access token (cookie or Bearer header) belongs to, else None."""
+    for token in (request.cookies.get(AUTH_COOKIE_NAME), credentials.credentials if credentials else None):
         payload = verify_access_token(token) if token else None
         if payload and payload.get("sub"):
             return str(payload["sub"])
-    refresh = request.cookies.get(REFRESH_COOKIE_NAME)
-    payload = verify_refresh_token(refresh) if refresh else None
-    if payload and payload.get("sub"):
-        return str(payload["sub"])
     return None
 
 
@@ -415,16 +384,35 @@ def logout(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db),
 ):
-    """Revoke the server refresh token and ALWAYS clear both browser cookies.
+    """Revoke the server refresh token and clear both browser cookies.
 
-    Works with an expired access token as well: a long-lived cookie holding a stale JWT must
-    never make "log out" a 401 that leaves both cookies in the browser.
+    - Started by another site (Sec-Fetch-Site: cross-site or a foreign Origin): 403, no cookie
+      is touched - no site may sign a visitor out.
+    - No credential at all (no auth cookie, no Bearer header): nothing to clear, so 200 WITHOUT any
+      Set-Cookie.
+    - Otherwise both cookies are ALWAYS cleared, also when the access token inside the (30-day)
+      cookie has expired. The session is revoked server-side when a valid access token identifies the
+      user, or when the refresh cookie is that user's CURRENT refresh token; any other cookie is
+      just removed from the browser.
     """
-    user_id = _logout_subject(request, credentials)
-    if user_id:
-        _svc(db).logout(user_id)
+    if _is_cross_site_request(request):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Запрос выхода должен приходить с сайта ALGO")
+
+    refresh = request.cookies.get(REFRESH_COOKIE_NAME)
+    has_credential = bool(
+        request.cookies.get(AUTH_COOKIE_NAME) or refresh or (credentials and credentials.credentials)
+    )
     resp = JSONResponse(content=MessageResponse(message="Вы вышли из системы").model_dump())
-    return _clear_auth_cookies(resp)
+    if not has_credential:
+        return resp
+
+    svc = _svc(db)
+    user_id = _access_subject(request, credentials)
+    if user_id:
+        svc.logout(user_id)
+    elif refresh:
+        svc.logout_by_refresh_token(refresh)
+    return clear_auth_cookies(resp)
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗

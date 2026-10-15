@@ -14,6 +14,7 @@ Usage in router:
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import time
 from collections import defaultdict
@@ -52,15 +53,40 @@ def _parse_rate(rate_string: str) -> Tuple[int, int]:
     return count, window
 
 
+def _valid_ip(value: str | None) -> str | None:
+    """*value* as a normalised IP address, or None (a header is client input: never trust its shape)."""
+    if not value:
+        return None
+    try:
+        return str(ipaddress.ip_address(value.strip()))
+    except ValueError:
+        return None
+
+
+def client_ip(request: Request) -> str:
+    """The caller's address, as far as it can be trusted.
+
+    The service sits behind our nginx, which is directly on the internet and sets
+    X-Real-IP $remote_addr in every proxied location (it overwrites whatever the client sent) and
+    APPENDS the real peer to X-Forwarded-For (the client controls everything before it). So:
+    X-Real-IP, else the RIGHTMOST X-Forwarded-For element (the one our proxy added), else the
+    socket peer. The LEFTMOST element is whatever the client typed: using it let anybody pick a fresh
+    rate-limit bucket per request. A value that is not an IP address is ignored.
+    """
+    real_ip = _valid_ip(request.headers.get("x-real-ip"))
+    if real_ip:
+        return real_ip
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        last = _valid_ip(forwarded.split(",")[-1])
+        if last:
+            return last
+    return request.client.host if request.client else "unknown"
+
+
 def _client_key(request: Request, endpoint: str) -> str:
     """Build a unique key from IP + endpoint."""
-    forwarded = request.headers.get("x-forwarded-for")
-    ip = (
-        forwarded.split(",")[0].strip()
-        if forwarded
-        else (request.client.host if request.client else "unknown")
-    )
-    return f"rl:{endpoint}:{ip}"
+    return f"rl:{endpoint}:{client_ip(request)}"
 
 
 # ---------------------------------------------------------------------------
@@ -134,3 +160,19 @@ def rate_limit(rate_string: str, endpoint: str | None = None):
             )
 
     return _dependency
+
+
+def enforce_rate_limit(subject: str, rate_string: str, endpoint: str) -> None:
+    """Count one request of *subject* (anything but a client address, e.g. the hash of a token) and raise 429 over the limit.
+
+    For limits that are not about the caller's address: the key is built from *subject*, never from
+    request headers.
+    """
+    max_requests, window = _parse_rate(rate_string)
+    key = f"rl:{endpoint}:{subject}"
+    if not _check_redis(key, max_requests, window):
+        logger.warning("Rate limit exceeded: %s", key)
+        raise HTTPException(
+            status_code=429,
+            detail="Слишком много запросов. Попробуйте позже.",
+        )

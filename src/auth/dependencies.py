@@ -11,6 +11,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
+from .cookies import AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME  # noqa: F401
 from .service import verify_access_token
 from src.core.database import get_db
 from src.models.auth import Organization, OrganizationMember, User
@@ -18,18 +19,7 @@ from src.models.auth import Organization, OrganizationMember, User
 # HTTP Bearer scheme
 security = HTTPBearer(auto_error=False)
 
-# Cookie name for httpOnly JWT
-AUTH_COOKIE_NAME = "algo_auth_token"
-REFRESH_COOKIE_NAME = "algo_refresh_token"
-
-# The refresh cookie lives 30 days (the refresh JWT's own lifetime). The ACCESS cookie lives
-# exactly as long: the JWT inside keeps its own short ``exp`` (60 minutes) and the server
-# rejects it with 401 once it is stale, which makes the client call /auth/refresh and retry.
-# If the cookie itself expired together with the JWT, the browser would send no credential
-# at all on the next page navigation and the Next.js middleware would send the user to the
-# login page before any client code could refresh the session.
-REFRESH_COOKIE_MAX_AGE = 30 * 86400
-ACCESS_COOKIE_MAX_AGE = REFRESH_COOKIE_MAX_AGE
+# Cookie names, lifetimes and flags live in cookies.py (re-exported here for the existing imports).
 
 
 # ============================================================================
