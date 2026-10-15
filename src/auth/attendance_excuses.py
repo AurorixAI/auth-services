@@ -769,15 +769,19 @@ class AttendanceExcuseService:
                 lessons_members.append(
                     (SimpleNamespace(id=membership, student_id=excuse.student_id), student, group)
                 )
+        late: Dict[UUID, Dict[datetime, int]] = {}
         pools = (
             PaymentService(self.db)._counted_lesson_dates(
                 str(org_id),
                 lessons_members,
                 {m.id: [p for p in live.get(m.id, []) if p.lessons_count is not None] for m, _, _ in lessons_members},
+                late_out=late,
             )
             if lessons_members
             else {}
         )
+        for membership_id, group_late in late.items():  # packages that moved away: lessons after the transfer
+            records[membership_id] = PaymentService._with_late(records[membership_id], group_late)
 
         result: Dict[UUID, Dict[str, Any]] = {}
         for excuse, att, group, student in pending:

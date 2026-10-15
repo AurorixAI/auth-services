@@ -2639,7 +2639,7 @@ class AuthService:
             self.db.flush()
             carried = PaymentService(self.db).carry_over_on_transfer(
                 org_id, actor_id, closing, membership,
-                primary_group_id=student.group_id, detailed=payments_detail,
+                primary_group_id=student.group_id, detailed=payments_detail, moment=now_dt,
             )
 
         # The primary group: a transfer always moves it, "add" only fills a gap.

@@ -976,9 +976,10 @@ class StudentPayment(Base):
     # N13 P2.1: a carry-over made by a transfer points at the payment it was made from
     # (amount 0, the original keeps the money).  NULL = an ordinary payment.
     carried_from_payment_id = Column(UUID(as_uuid=True), ForeignKey("student_payments.id"), nullable=True)
-    # The day this payment moved to another group with the student (T of the transfer): from
-    # then on it covers only what lies strictly before T in its own membership.  NULL = it did not.
-    carried_out_at = Column(Date, nullable=True)
+    # The instant this payment moved to another group with the student (naive UTC, the same
+    # moment as the old membership's left_at): from then on it covers, in its own membership,
+    # only what happened while the student was still in the group.  NULL = it did not move.
+    carried_out_at = Column(DateTime, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
     voided_at = Column(DateTime, nullable=True)

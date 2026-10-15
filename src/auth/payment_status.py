@@ -21,21 +21,27 @@ order ``valid_from, paid_on, created_at``.  A payment takes up to
 
 Carried-out payments (N13 P2.1, "the payment moves with the student").  A transfer
 copies a payment in force into the new group and stamps the original with
-``carried_out_at`` = the transfer day T.  From then on the original covers only what
-lies strictly BEFORE T in its own membership:
+``carried_out_at`` = the INSTANT of the transfer (naive UTC, the same moment as the old
+membership's ``left_at``).  T is that instant's business date.  From then on the original
+covers, in its own membership, only what happened while the student was still in the group:
 
-* calendar: it ends on ``min(valid_to, T - 1)`` (``effective_valid_to``); if that is
-  before ``valid_from`` it covers nothing and is ignored by the status;
-* lessons: it takes only counted lessons dated before T, and its capacity is what it
-  took (``lesson_capacity``) - the unspent rest travelled with the student, so the
-  original never "resurrects" when the student comes back.
+* calendar: it ends on ``min(valid_to, T)`` - day T included, because a lesson of the old
+  group that started before the transfer is on that day (``PaymentRecord.end``).  Lessons
+  after the transfer are not in the old group's roster, so the day is never counted in
+  both groups.  A payment that moved before its period began (``valid_from > T``) covers
+  nothing and is ignored by the status;
+* lessons: it takes only counted lessons that STARTED before the instant (lesson date +
+  scheduled start, Tashkent).  Lessons on other days compare by date; of the lessons on day T
+  the service tells how many started at or after the instant (``carried_out_late``) and they
+  are not taken.  Its capacity is what it took (``lesson_capacity``): the unspent rest
+  travelled with the student, so the original never "resurrects" when the student comes back.
 
-The same rule feeds the excuse deadline and (P3) payroll: a lesson or day of the old
-group on or after T is NOT covered by the stamped original.  Payroll must therefore read
-the period of a calendar payment through ``PaymentRecord.end`` (never the raw ``valid_to``)
-and the lessons of a package through ``allocate_lessons_detail``; the carry-over rows (amount
-0, ``carried_from_payment_id``) are ordinary live payments of the new group and cover it from
-T.  The money for payroll is ``monthly_fee`` of the membership, never a payment ``amount``.
+The same rule feeds the excuse deadline and (P3) payroll.  Payroll must therefore read the
+period of a calendar payment through ``PaymentRecord.end`` (never the raw ``valid_to``) and
+the lessons of a package through ``allocate_lessons_detail``; the carry-over rows (amount 0,
+``carried_from_payment_id``) are ordinary live payments of the new group and cover it from T.
+A lesson belongs to one group, so a lesson is paid by exactly one membership.  The money for
+payroll is ``monthly_fee`` of the membership, never a payment ``amount``.
 
 "Today" is the business date (``BUSINESS_TIMEZONE``, Asia/Tashkent by default),
 never the server's or the browser's local date.
@@ -43,7 +49,7 @@ never the server's or the browser's local date.
 from __future__ import annotations
 
 import calendar as _calendar
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterable, Optional, Sequence
@@ -89,16 +95,25 @@ class PaymentRecord:
     lessons_count: Optional[int] = None
     created_at: datetime = datetime.min
     id: object = None
-    # Day the payment moved to another group with the student (it covers only before it).
-    carried_out_at: Optional[date] = None
+    # The instant (naive UTC) the payment moved to another group with the student; it covers
+    # only what happened while the student was still in this group (see the module docstring).
+    carried_out_at: Optional[datetime] = None
+    # Counted lessons dated on the business day of ``carried_out_at`` that started at or after
+    # that instant (filled in by the service, which knows the schedule); 0 = none / unknown.
+    carried_out_late: int = 0
 
     @property
     def mode(self) -> str:
         return LESSONS if self.lessons_count is not None else CALENDAR
 
     @property
+    def carried_out_day(self) -> Optional[date]:
+        """Business date (Tashkent) of the transfer instant."""
+        return business_date(self.carried_out_at) if self.carried_out_at is not None else None
+
+    @property
     def end(self) -> Optional[date]:
-        """Last covered day of a calendar payment (``valid_to``, cut at ``carried_out_at - 1``)."""
+        """Last covered day of a calendar payment (``valid_to``, cut at the transfer day, included)."""
         return effective_valid_to(self.valid_to, self.carried_out_at)
 
     @property
@@ -186,11 +201,11 @@ def add_month_minus_day(start: date) -> date:
 # --------------------------------------------------------------- status ----
 
 
-def effective_valid_to(valid_to: Optional[date], carried_out_at: Optional[date]) -> Optional[date]:
-    """End of a calendar payment in its own membership: cut the day before it moved away."""
+def effective_valid_to(valid_to: Optional[date], carried_out_at: Optional[datetime]) -> Optional[date]:
+    """End of a calendar payment in its own membership: cut at the day it moved away (included)."""
     if valid_to is None or carried_out_at is None:
         return valid_to
-    return min(valid_to, carried_out_at - timedelta(days=1))
+    return min(valid_to, business_date(carried_out_at))
 
 
 def lesson_capacity(payment: PaymentRecord, taken: int) -> int:
@@ -222,8 +237,11 @@ def allocate_lessons_detail(
     for payment in lessons_payments:
         start = bisect_left(pool, payment.valid_from)
         stop = start + payment.lessons_count
-        if payment.carried_out_at is not None:  # only lessons strictly before the day it moved away
-            stop = min(stop, bisect_left(pool, payment.carried_out_at))
+        if payment.carried_out_at is not None:  # only lessons that started before the instant it moved away
+            day = payment.carried_out_day
+            first, after = bisect_left(pool, day), bisect_right(pool, day)
+            # Of the lessons on that day the later ones come last; ``carried_out_late`` of them started after.
+            stop = min(stop, first + max(0, (after - first) - payment.carried_out_late))
         taken = pool[start : max(start, stop)]
         del pool[start : start + len(taken)]
         result.append((payment, taken))

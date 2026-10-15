@@ -47,7 +47,7 @@ class CarriedFromOut(BaseModel):
 
 
 class CarriedOutOut(BaseModel):
-    """The payment moved to another group with the student on ``date`` (N13 P2.1)."""
+    """The payment moved to another group with the student on ``date`` (business date, N13 P2.1)."""
 
     date: date_type
     group_name: Optional[str] = None

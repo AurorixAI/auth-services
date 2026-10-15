@@ -26,7 +26,7 @@ profile payload carries an amount.  Status maths is ``payment_status.py``
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 from uuid import UUID
@@ -322,7 +322,10 @@ class PaymentService:
             for m, st, g, _ in rows
             if (last := ps.latest_payment(records.get(m.id, ()))) is not None and last.mode == ps.LESSONS
         ]
-        lesson_dates = self._counted_lesson_dates(org_id, lessons_members, live_by_membership)
+        late: Dict[UUID, Dict[datetime, int]] = {}
+        lesson_dates = self._counted_lesson_dates(org_id, lessons_members, live_by_membership, late_out=late)
+        for mid, group_late in late.items():
+            records[mid] = self._with_late(records[mid], group_late)
 
         status_settings = self._status_settings(settings)
         entries = []
@@ -354,13 +357,52 @@ class PaymentService:
             carried_out_at=payment.carried_out_at,
         )
 
+    @staticmethod
+    def _with_late(
+        records: List[ps.PaymentRecord], late: Optional[Dict[datetime, int]]
+    ) -> List[ps.PaymentRecord]:
+        """Fill ``carried_out_late`` of the lessons payments that moved away (see ``payment_status``)."""
+        if not late:
+            return records
+        return [
+            replace(r, carried_out_late=late.get(r.carried_out_at, 0))
+            if r.carried_out_at is not None and r.lessons_count is not None
+            else r
+            for r in records
+        ]
+
+    def _scheduled_starts(self, group: Group, day: date) -> Dict[str, datetime]:
+        """``{lesson_id: scheduled start}`` (naive UTC) of the group's lessons on one day.
+
+        The schedule (with overrides and one-off lessons) is the only place that knows a lesson's
+        start time; a lesson whose time cannot be read is left out (it counts as "before").
+        """
+        from .service import AuthService, lesson_start_as_naive_utc  # lazy: service is heavy
+
+        service = AuthService(self.db)
+        starts: Dict[str, datetime] = {}
+        for occurrence in service._resolved_occurrences_for_group(group, date_from=day, date_to=day):
+            try:
+                minutes, _ = service._validate_lesson_time_range(
+                    occurrence.get("startTime"), occurrence.get("endTime")
+                )
+            except ValueError:
+                continue
+            starts[str(occurrence.get("id"))] = lesson_start_as_naive_utc(day, minutes)
+        return starts
+
     def _counted_lesson_dates(
         self,
         org_id: str,
         members: Sequence[tuple],
         live_by_membership: Dict[UUID, List[StudentPayment]],
+        late_out: Optional[Dict[UUID, Dict[datetime, int]]] = None,
     ) -> Dict[UUID, List[date]]:
         """Dates of the lessons that spend a lessons payment, per membership.
+
+        With ``late_out`` the lessons of the day a payment moved away on are looked at once more:
+        ``late_out[membership][instant]`` = how many of them started at or after that instant
+        (``PaymentRecord.carried_out_late``).
 
         Rule 4.3: the lesson is completed, the student is in its roster
         snapshot (no snapshot on a legacy lesson: being marked is enough), the
@@ -381,6 +423,7 @@ class PaymentService:
                 GroupAttendance.id,
                 GroupAttendance.group_id,
                 GroupAttendance.lesson_date,
+                GroupAttendance.lesson_id,
                 GroupAttendance.records,
                 GroupAttendance.roster_snapshot,
             )
@@ -419,6 +462,13 @@ class PaymentService:
         for membership, student, group in members:
             sid = str(membership.student_id)
             dates: List[date] = []
+            # instants a payment of this membership moved away at, by business day
+            moved_at: Dict[date, set] = {}
+            if late_out is not None:
+                for p in live_by_membership.get(membership.id, ()):
+                    if p.lessons_count is not None and p.carried_out_at is not None:
+                        moved_at.setdefault(ps.business_date(p.carried_out_at), set()).add(p.carried_out_at)
+            on_moved_day: Dict[date, List[str]] = {}
             for lesson, roster in by_group.get(group.id, ()):
                 if roster is not None and sid not in roster:
                     continue
@@ -426,10 +476,23 @@ class PaymentService:
                 excuse = "confirmed" if (lesson.id, sid) in confirmed else None
                 if ps.lesson_counts(mark=records.get(sid), excuse_status=excuse):
                     try:
-                        dates.append(date.fromisoformat(lesson.lesson_date))
+                        lesson_day = date.fromisoformat(lesson.lesson_date)
                     except ValueError:
                         logger.warning("Skipping lesson %s with malformed date", lesson.id)
+                        continue
+                    dates.append(lesson_day)
+                    if lesson_day in moved_at:
+                        on_moved_day.setdefault(lesson_day, []).append(str(lesson.lesson_id))
             out[membership.id] = dates
+            if late_out is not None and on_moved_day:
+                counts: Dict[datetime, int] = {}
+                for lesson_day, lesson_ids in on_moved_day.items():
+                    starts = self._scheduled_starts(group, lesson_day)
+                    for instant in moved_at[lesson_day]:
+                        counts[instant] = sum(
+                            1 for lid in lesson_ids if lid in starts and starts[lid] >= instant
+                        )
+                late_out[membership.id] = counts
         return out
 
     # ---------------------------------------------------------- serialising
@@ -488,7 +551,9 @@ class PaymentService:
             replaces_payment_id=str(payment.replaces_payment_id) if payment.replaces_payment_id else None,
             carried_from=links.sources.get(payment.carried_from_payment_id) if links else None,
             carried_out=(
-                CarriedOutOut(date=payment.carried_out_at, group_name=links.targets.get(payment.id))
+                CarriedOutOut(
+                    date=ps.business_date(payment.carried_out_at), group_name=links.targets.get(payment.id)
+                )
                 if links and payment.carried_out_at is not None
                 else None
             ),
@@ -931,12 +996,16 @@ class PaymentService:
         ]
         if not pairs:
             return {}
+        late: Dict[UUID, Dict[datetime, int]] = {}
         dates = self._counted_lesson_dates(
-            org_id, [(m, None, g) for m, g in pairs], live_by_membership
+            org_id, [(m, None, g) for m, g in pairs], live_by_membership, late_out=late
         )
         left: Dict[UUID, int] = {}
         for membership, _ in pairs:
-            records = [self._record(p) for p in live_by_membership.get(membership.id, ())]
+            records = self._with_late(
+                [self._record(p) for p in live_by_membership.get(membership.id, ())],
+                late.get(membership.id),
+            )
             for record, taken in ps.allocate_lessons_detail(records, dates.get(membership.id, ())):
                 left[record.id] = record.lessons_count - len(taken)
         return left
@@ -976,13 +1045,15 @@ class PaymentService:
         *,
         primary_group_id: Optional[UUID] = None,
         detailed: bool = False,
+        moment: Optional[datetime] = None,
     ) -> List[Dict[str, str]]:
         """Move the payments in force from the memberships a transfer closes into ``target``.
 
         Called by ``AuthService.add_student_to_group`` (mode ``transfer`` only) inside its
         transaction: this method flushes but never commits.  ``target`` must already be flushed.
 
-        In force on the business date T (the transfer day), per closed membership, among the
+        ``moment`` is the transfer instant (the same one the closed memberships get as ``left_at``;
+        default now).  In force on the business date T of that instant, per closed membership, among the
         payments that have not moved yet (``carried_out_at`` empty) and only for the mode of the
         latest of them (the others are ignored by the status too):
 
@@ -993,9 +1064,11 @@ class PaymentService:
 
         A carry-over is a ``StudentPayment`` of amount 0 with the original ``paid_on``, the note
         "Перенос оплаты из «<группа>»" and ``carried_from_payment_id``.  The original is stamped
-        ``carried_out_at = T`` and from then on covers only what lies before T, so a return
-        (B -> A) is just one more transfer: the live carry-over on B (with what it has consumed)
-        is carried again and stamped in its turn - the coverage is never counted twice.
+        ``carried_out_at = moment`` and from then on covers only what happened while the student
+        was still in its group (a lesson that started before the instant, a calendar day up to and
+        including T), so a return (B -> A) is just one more transfer: the live carry-over on B (with
+        what it has consumed) is carried again and stamped in its turn - nothing is counted twice
+        and no lesson falls between the two memberships.
 
         Also copies the fee of the closed group to ``target`` if the target has none.  Returns the
         ``warnings`` entries for the response: dates / lessons when ``detailed`` (the caller may
@@ -1008,7 +1081,11 @@ class PaymentService:
         if not actor_id:  # created_by is mandatory; an internal call without an actor carries nothing
             return []
 
-        today = ps.business_today()
+        if moment is None:
+            moment = _utcnow()
+        elif moment.tzinfo is not None:
+            moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
+        today = ps.business_date(moment)
         live_by_membership: Dict[UUID, List[StudentPayment]] = {}
         for payment in (
             self.db.query(StudentPayment)
@@ -1082,7 +1159,7 @@ class PaymentService:
                 created_at=now,
             )
             self.db.add(row)
-            c.original.carried_out_at = today  # it covers only the days before T from now on
+            c.original.carried_out_at = moment  # from now on it covers only what happened before this instant
             made.append((row, c))
         if not made:
             return []

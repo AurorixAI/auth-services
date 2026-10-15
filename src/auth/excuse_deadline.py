@@ -17,8 +17,9 @@ follows the payment that covers the lesson:
   small package never makes its first lesson overdue at once; when the effective N
   is 0, ``L == 1`` is ``due_now`` and ``L == 0`` (package used up) is overdue;
 A payment that moved to another group with the student (``carried_out_at``, N13 P2.1)
-covers only what lies before that day: a calendar one ends the day before it, a lessons
-package covers only the lessons it took before it and has nothing "left" afterwards.
+covers only what happened while the student was still here: a calendar one ends on the
+transfer day (included), a lessons package covers only the lessons it took before the
+transfer and has nothing "left" afterwards.
 
 * **no covering payment** - or no package that took the lesson (all full, the
   lesson lies beyond the paid lessons): the last day of the lesson's month.
@@ -67,7 +68,7 @@ def needs_lessons_pool(payments: Sequence[ps.PaymentRecord], lesson_date: date) 
     """Whether the lessons FIFO is needed to decide this lesson's deadline."""
     return covering_calendar_payment(payments, lesson_date) is None and any(
         p.lessons_count is not None and p.valid_from <= lesson_date
-        and (p.carried_out_at is None or lesson_date < p.carried_out_at)
+        and (p.carried_out_at is None or lesson_date <= p.carried_out_day)
         for p in payments
     )
 

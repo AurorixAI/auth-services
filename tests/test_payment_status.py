@@ -321,20 +321,35 @@ def test_extreme_dates_are_errors_not_exceptions(extreme):
 # ---- a payment that moved away with the student (N13 P2.1) ---------------------------
 
 
-def moved(record, day):
+def at(day, hour=15, minute=0):
+    """Tashkent wall time as the naive UTC instant the stamp is kept in (UTC+5)."""
+    return datetime.combine(day, datetime.min.time()) + timedelta(hours=hour, minutes=minute) - timedelta(hours=5)
+
+
+def moved(record, day, hour=15, late=0):
     return PaymentRecord(
         paid_on=record.paid_on, valid_from=record.valid_from, valid_to=record.valid_to,
-        lessons_count=record.lessons_count, created_at=record.created_at, carried_out_at=day,
+        lessons_count=record.lessons_count, created_at=record.created_at,
+        carried_out_at=at(day, hour), carried_out_late=late,
     )
 
 
-def test_calendar_payment_that_moved_ends_the_day_before():
+def test_calendar_payment_that_moved_ends_on_the_transfer_day_included():
     p = moved(cal(days(20), valid_from=days(-10)), days(0))
-    assert p.end == days(-1) and not p.covers_nothing
+    assert p.end == days(0) and not p.covers_nothing
     result = compute_status(today=TODAY, monthly_fee=None, payments=[p])
-    assert (result.status, result.paid_until, result.days_overdue) == (ps.EXPIRED, days(-1), 1)
+    assert (result.status, result.paid_until) == (ps.ENDS_TODAY, days(0))
+    later = compute_status(today=days(2), monthly_fee=None, payments=[p])        # never resurrects after that day
+    assert (later.status, later.paid_until, later.days_overdue) == (ps.EXPIRED, days(0), 2)
     # moved after its end: nothing changes; never extends it
     assert moved(cal(days(3), valid_from=days(-10)), days(9)).end == days(3)
+
+
+def test_the_transfer_day_is_the_tashkent_date_of_the_instant():
+    # 23:30 in Tashkent is still the same business day, although it is 18:30 UTC; 00:30 is the next one
+    assert moved(cal(days(20), valid_from=days(-10)), days(0), hour=23).end == days(0)
+    late_night = PaymentRecord(paid_on=days(-10), valid_from=days(-10), valid_to=days(20), carried_out_at=at(days(1), 0, 30))
+    assert late_night.carried_out_day == days(1) and late_night.end == days(1)
 
 
 def test_calendar_payment_that_moved_before_it_began_covers_nothing():
@@ -345,6 +360,8 @@ def test_calendar_payment_that_moved_before_it_began_covers_nothing():
     carry = cal(days(30), paid_on=days(0), valid_from=days(5), created=5)
     result = compute_status(today=TODAY, monthly_fee=None, payments=[p, carry])
     assert (result.status, result.paid_until) == (ps.ACTIVE, days(30))
+    # a payment that starts on the transfer day itself still covers that day (a lesson before the instant)
+    assert not moved(cal(days(30), paid_on=days(0), valid_from=days(0)), days(0)).covers_nothing
 
 
 def test_return_covers_again_only_through_the_new_carry_over():
@@ -352,18 +369,20 @@ def test_return_covers_again_only_through_the_new_carry_over():
     back = cal(days(20), paid_on=original.paid_on, valid_from=days(0), created=9)
     result = compute_status(today=TODAY, monthly_fee=None, payments=[original, back])
     assert (result.status, result.paid_until) == (ps.ACTIVE, days(20))
-    without = compute_status(today=TODAY, monthly_fee=None, payments=[original])
-    assert without.status == ps.EXPIRED
+    assert compute_status(today=days(2), monthly_fee=None, payments=[original]).status == ps.EXPIRED
 
 
-def test_lessons_payment_that_moved_takes_only_lessons_before_the_day():
+def test_lessons_payment_that_moved_takes_only_lessons_that_started_before_the_instant():
     package = moved(les(6, valid_from=days(-20)), days(-3))
-    dates = [days(-10), days(-8), days(-3), days(-1)]            # the last two are after it moved
+    dates = [days(-10), days(-8), days(-3), days(-1)]            # the last one is after the move
     detail = ps.allocate_lessons_detail([package], dates)
-    assert detail[0][1] == [days(-10), days(-8)]
-    assert ps.allocate_lessons([package], dates) == (2, 2)       # capacity = what it took: nothing left
+    assert detail[0][1] == [days(-10), days(-8), days(-3)]       # the lesson of the transfer day started before 15:00
+    assert ps.allocate_lessons([package], dates) == (3, 3)       # capacity = what it took: nothing left
     assert compute_status(today=TODAY, monthly_fee=None, payments=[package], lesson_dates=dates).lessons_left == 0
-    assert ps.lesson_capacity(package, 2) == 2 and ps.lesson_capacity(les(6), 2) == 6
+    assert ps.lesson_capacity(package, 3) == 3 and ps.lesson_capacity(les(6), 3) == 6
+    # the same lesson, but it started after the instant (the service says 1 of them is late)
+    later = moved(les(6, valid_from=days(-20)), days(-3), late=1)
+    assert ps.allocate_lessons_detail([later], dates)[0][1] == [days(-10), days(-8)]
 
 
 def test_lessons_return_leaves_original_minus_consumed():
@@ -378,14 +397,30 @@ def test_lessons_return_leaves_original_minus_consumed():
     assert (total, used) == (5, 3)
 
 
-def test_lessons_payment_moved_on_its_first_day_takes_nothing():
+def test_same_day_round_trip_splits_the_lessons_of_that_day_by_the_instant():
+    # A lesson at 10:00 (before the 15:00 transfer) and one at 18:00 (after the student came back at 16:00)
+    original = moved(les(6, valid_from=days(-20)), days(-3), hour=15, late=1)
+    back = les(4, valid_from=days(-3), paid_on=days(-20), created=9)
+    dates = [days(-3), days(-3)]
+    detail = ps.allocate_lessons_detail([original, back], dates)
+    assert [len(taken) for _, taken in detail] == [1, 1]          # one lesson each, none twice, none lost
+    assert ps.allocate_lessons([original, back], dates) == (1 + 4, 2)
+
+
+def test_lessons_payment_moved_on_its_first_day():
     package = moved(les(6, valid_from=days(0)), days(0))
-    assert ps.allocate_lessons([package], [days(0), days(1)]) == (0, 0)
+    assert ps.allocate_lessons([package], [days(0)]) == (1, 1)    # a lesson that morning is still its own
+    assert ps.allocate_lessons([package], [days(1)]) == (0, 0)
+    assert ps.allocate_lessons([moved(les(6, valid_from=days(0)), days(0), late=1)], [days(0)]) == (0, 0)
 
 
-def test_warnings_ignore_the_part_of_a_moved_payment_after_the_move():
+def test_warnings_see_the_end_of_a_moved_payment():
     gone = moved(cal(days(20), valid_from=days(-10)), days(0))
-    # a new period starting today overlaps nothing: the old one ended yesterday
+    # a new period starting the day after the transfer leaves no overlap and no gap
+    codes = [w.code for w in ps.payment_warnings(
+        today=TODAY, paid_on=TODAY, valid_from=days(1), valid_to=days(30), existing=[gone])]
+    assert "overlaps_previous" not in codes and "gap_before" not in codes
+    # the transfer day itself is still covered by it
     codes = [w.code for w in ps.payment_warnings(
         today=TODAY, paid_on=TODAY, valid_from=days(0), valid_to=days(30), existing=[gone])]
-    assert "overlaps_previous" not in codes and "gap_before" not in codes
+    assert "overlaps_previous" in codes

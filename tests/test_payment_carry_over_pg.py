@@ -1,11 +1,12 @@
 """N13 P2.1: the payment follows the student on a transfer (PostgreSQL)."""
 import json
-from datetime import datetime, timedelta
+from contextlib import contextmanager
+from datetime import datetime, time, timedelta, timezone
 
 import pytest
 
 from src.auth.schemas import SaveAttendanceRequest, StartAttendanceRequest
-from src.models.auth import Organization, Student, StudentGroup, StudentPayment
+from src.models.auth import GroupAttendance, Organization, Student, StudentGroup, StudentPayment
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
     LIVE_SLOT, business_today, make_client, make_group, make_student, needs_pg, pg_session, reconcile, world,
@@ -63,6 +64,48 @@ def membership(w, group, student=None):
     return w.db.query(StudentGroup).filter_by(group_id=group.id, student_id=(student or w.student).id).one()
 
 
+@contextmanager
+def clock(monkeypatch, day_, hour, minute=0):
+    """The membership service sees "now" as ``day_`` hour:minute Tashkent time (a transfer in the past)."""
+    from src.auth import service as service_module
+    from src.auth.service import BUSINESS_TIMEZONE
+
+    instant = datetime.combine(day_, time(hour, minute), tzinfo=BUSINESS_TIMEZONE).astimezone(timezone.utc)
+
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(service_module, "datetime", Frozen)
+        yield instant
+
+
+def add_slot(w, group, day_, slot_id, start, end):
+    """One more weekly slot (e.g. 17:00) on the weekday of ``day_``."""
+    group.schedule = [*group.schedule, {
+        "id": slot_id, "dayOfWeek": day_.isoweekday(), "startTime": start, "endTime": end, "format": "offline"}]
+    w.db.commit()
+
+
+def hold(w, group, day_, slot_id):
+    """A completed lesson of ``group`` on ``day_``; everybody on its frozen roster is present."""
+    w.svc.reconcile_missed_group_attendance(
+        str(w.org.id), str(group.id), StartAttendanceRequest(lessonDate=day_, lessonId=slot_id),
+        reconciled_by=str(w.admin.id), is_org_admin=True,
+    )
+    w.db.expire_all()
+    att = w.db.query(GroupAttendance).filter_by(group_id=group.id, lesson_date=day_.isoformat(), lesson_id=slot_id).one()
+    roster = [item["student_id"] for item in att.roster_snapshot]
+    w.svc.save_group_attendance(
+        str(w.org.id), str(group.id),
+        SaveAttendanceRequest(lessonDate=day_, lessonId=slot_id, status="completed", records={sid: "present" for sid in roster}),
+        marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True,
+    )
+    return roster
+
+
 def complete_in(w, group, offset_days):
     """A completed past lesson of ``group`` where its only student is present."""
     day_, lesson_id = reconcile(w, offset_days, group=group)
@@ -106,8 +149,8 @@ def test_calendar_payment_is_carried_with_the_same_end(two):
     assert kept["id"] == original["id"] and kept["amount"] == SECRET and kept["voided_at"] is None
     assert kept["carried_from"] is None and carried["carried_out"] is None
     assert kept["carried_out"] == {"date": day(0).isoformat(), "group_name": "Вторая"}
-    closed = row_of(two, group=two.group)
-    assert (closed["status"], closed["paid_until"]) == ("expired", day(-1).isoformat())
+    closed = row_of(two, group=two.group)       # day T itself stays covered: a lesson there started before the move
+    assert (closed["status"], closed["paid_until"]) == ("ends_today", day(0).isoformat())
 
 
 def test_last_payment_of_the_row_is_the_latest_even_when_it_is_a_carry_over(two):
@@ -439,8 +482,8 @@ def test_calendar_return_is_covered_again_only_through_the_new_carry_over(two):
     # the old original is stamped, the carry-over on B is stamped in its turn: nothing is counted twice
     assert [h for h in history(two, two.group) if h["id"] == original["id"]][0]["carried_out"]["date"] == day(0).isoformat()
     assert history(two, two.second)[0]["carried_out"] == {"date": day(0).isoformat(), "group_name": "Группа"}
-    closed = row_of(two, group=two.second)             # the carry-over moved on the day it was made: it covers nothing
-    assert (closed["status"], closed["paid_until"]) == ("none", None)
+    closed = row_of(two, group=two.second)             # the carry-over moved on the day it was made
+    assert (closed["status"], closed["paid_until"]) == ("ends_today", day(0).isoformat())
     # and once more forth: still exactly one live coverage on the destination
     transfer(two, two.second)
     live_b = history(two, two.second, include_voided=False)
@@ -448,29 +491,29 @@ def test_calendar_return_is_covered_again_only_through_the_new_carry_over(two):
     assert len([h for h in live_b if not h["carried_out"]]) == 1
 
 
-def test_without_a_new_carry_over_the_old_group_is_not_resurrected(two):
+def test_without_a_new_carry_over_the_old_group_is_not_resurrected(two, monkeypatch):
+    from src.auth import payment_status as status_module
+
     pay(two, paid_on=day(-10), valid_from=day(-10), valid_to=day(20))
     transfer(two, two.second)
     transfer(two, two.group, mode="add")                              # back to A without moving the payment
     row = row_of(two, group=two.group)
-    assert (row["is_active"], row["status"], row["paid_until"]) == (True, "expired", day(-1).isoformat())
+    assert (row["is_active"], row["status"], row["paid_until"]) == (True, "ends_today", day(0).isoformat())
     assert row_of(two, group=two.second)["status"] == "active"        # the live coverage stayed where it moved to
+    monkeypatch.setattr(status_module, "business_today", lambda tz=None: day(2))     # two days later
+    row = row_of(two, group=two.group)
+    assert (row["status"], row["paid_until"], row["days_overdue"]) == ("expired", day(0).isoformat(), 2)
 
 
 def test_lessons_return_leaves_original_minus_consumed_in_both_groups(two, monkeypatch):
-    from src.auth import payment_status as status_module
-
     set_settings(two, period_mode="lessons", lessons_per_payment=6)
     original = pay(two, paid_on=day(-12), valid_from=day(-12), lessons_count=6)["payment"]
     lesson_marks(two, 7, {})                                          # 2 lessons of A before the transfer
     lesson_marks(two, 6, {})
-    monkeypatch.setattr(status_module, "business_today", lambda tz=None: day(-4))
-    transfer(two, two.second)                                         # on day -4: 4 lessons travel
-    monkeypatch.undo()
+    with clock(monkeypatch, day(-4), 15):
+        transfer(two, two.second)                                     # on day -4: 4 lessons travel
     (c1,) = history(two, two.second)
     assert (c1["lessons_count"], c1["valid_from"]) == (4, day(-4).isoformat())
-    two.db.query(StudentGroup).filter_by(group_id=two.second.id).update({"joined_at": datetime.now() - timedelta(days=10)})
-    two.db.commit()
     complete_in(two, two.second, 2)                                   # 1 lesson of B (day -2) spends the carried package
     row_b = row_of(two, group=two.second)
     assert (row_b["lessons_total"], row_b["lessons_used"], row_b["lessons_left"]) == (4, 1, 3)
@@ -484,6 +527,61 @@ def test_lessons_return_leaves_original_minus_consumed_in_both_groups(two, monke
     row_b = row_of(two, group=two.second)                              # B keeps only what it took
     assert (row_b["lessons_total"], row_b["lessons_used"], row_b["lessons_left"]) == (1, 1, 0)
     assert two.db.get(StudentPayment, original["id"]).lessons_count == 6    # the record itself is never rewritten
+
+
+def test_lesson_before_the_transfer_stays_with_the_old_group_and_the_one_after_goes_to_the_new(two, monkeypatch):
+    """A at 10:00, transfer at 15:00 the same day, B at 17:00: each lesson is paid by exactly one membership."""
+    d = day(-2)
+    add_slot(two, two.second, d, "evening-b", "17:00", "18:00")
+    set_settings(two, period_mode="lessons", lessons_per_payment=6)
+    pay(two, paid_on=day(-12), valid_from=day(-12), lessons_count=6)
+    lesson_marks(two, 5, {})                                          # an earlier lesson of A
+    lesson_marks(two, 2, {})                                          # day d, 10:00, the student is in A
+    with clock(monkeypatch, d, 15):
+        transfer(two, two.second)
+    (c1,) = history(two, two.second)
+    assert (c1["lessons_count"], c1["valid_from"]) == (4, d.isoformat())      # 6 - the two lessons of A
+    assert hold(two, two.second, d, "evening-b") == [str(two.student.id)]      # day d, 17:00, the student is in B
+    row_a, row_b = row_of(two, group=two.group), row_of(two, group=two.second)
+    # the 10:00 lesson stays with the original (it started before the move): 2 taken, nothing left in A
+    assert (row_a["lessons_total"], row_a["lessons_used"], row_a["lessons_left"]) == (2, 2, 0)
+    # the 17:00 lesson is the carry-over's
+    assert (row_b["lessons_total"], row_b["lessons_used"], row_b["lessons_left"]) == (4, 1, 3)
+    assert row_a["lessons_used"] + row_b["lessons_used"] == 3                 # three lessons, each paid once
+
+
+def test_calendar_the_transfer_day_is_covered_by_both_but_each_lesson_by_one(two, monkeypatch):
+    d = day(-2)
+    pay(two, paid_on=day(-12), valid_from=day(-12), valid_to=day(18))
+    with clock(monkeypatch, d, 15):
+        transfer(two, two.second)
+    (c1,) = history(two, two.second)
+    assert (c1["valid_from"], c1["valid_to"]) == (d.isoformat(), day(18).isoformat())
+    (source,) = history(two, two.group)
+    assert source["carried_out"]["date"] == d.isoformat()
+    # the old group is paid up to and including the transfer day, the new one from it
+    assert row_of(two, group=two.group)["paid_until"] == d.isoformat()
+    assert row_of(two, group=two.second)["paid_until"] == day(18).isoformat()
+
+
+def test_same_day_round_trip_splits_that_days_lessons_by_the_instant(two, monkeypatch):
+    """A 10:00 (before the 15:00 transfer), back at 16:00, A 18:00 (after): the 18:00 lesson is the new carry-over's."""
+    d = day(-2)
+    add_slot(two, two.group, d, "evening-a", "18:00", "19:00")
+    set_settings(two, period_mode="lessons", lessons_per_payment=6)
+    pay(two, paid_on=day(-12), valid_from=day(-12), lessons_count=6)
+    lesson_marks(two, 5, {})
+    lesson_marks(two, 2, {})                                          # day d, 10:00
+    with clock(monkeypatch, d, 15):
+        transfer(two, two.second)
+    with clock(monkeypatch, d, 16):
+        transfer(two, two.group)                                      # back the same afternoon
+    assert str(two.student.id) in hold(two, two.group, d, "evening-a")        # day d, 18:00, in A again
+    (c2,) = [h for h in history(two, two.group) if h["carried_from"]]
+    assert (c2["lessons_count"], c2["valid_from"]) == (4, d.isoformat())
+    row = row_of(two, group=two.group)
+    # the original keeps the two lessons that started before 15:00, the carry-over takes the 18:00 one
+    assert (row["lessons_total"], row["lessons_used"], row["lessons_left"]) == (2 + 4, 3, 3)
 
 
 def test_returning_after_the_carry_over_was_voided_carries_the_original_again(two):
@@ -502,7 +600,7 @@ def test_returning_after_the_carry_over_was_voided_carries_the_original_again(tw
 def test_voiding_the_carry_over_gives_the_source_its_coverage_back(two):
     original = pay(two, paid_on=day(-10), valid_from=day(-10), valid_to=day(20))["payment"]
     transfer(two, two.second)
-    assert row_of(two, group=two.group)["status"] == "expired"
+    assert row_of(two, group=two.group)["status"] == "ends_today"
     (carry,) = history(two, two.second)
     r = owner(two).post(f"{API}/org/payments/{carry['id']}/void", json={"reason": "Не нужен"})
     assert r.status_code == 200, r.text
@@ -538,7 +636,7 @@ def test_the_same_day_there_and_back_and_there_again_keeps_the_payment(two):
     transfer(two, two.second)                                         # identical figures, other source: allowed
     live = [h for h in history(two, two.second, include_voided=False) if not h["carried_out"]]
     assert len(live) == 1 and row_of(two, group=two.second)["paid_until"] == day(20).isoformat()
-    assert row_of(two, group=two.group)["status"] == "expired"
+    assert row_of(two, group=two.group)["status"] == "ends_today"
 
 
 def test_closed_group_does_not_change_the_summary_or_the_buckets(two):
@@ -554,7 +652,7 @@ def test_closed_group_does_not_change_the_summary_or_the_buckets(two):
     assert all(i["is_active"] for i in status_page(two)["items"])
     # the closed membership is still readable on the card, and shows that the payment left
     closed = row_of(two, s0, two.group)
-    assert closed["is_active"] is False and closed["status"] == "expired"
+    assert closed["is_active"] is False and closed["status"] == "ends_today"
 
 
 def test_a_student_in_two_groups_transferred_carries_from_both(two):
@@ -686,8 +784,8 @@ def test_excuse_deadline_in_the_old_group_uses_the_stamp(two):
     pay(two, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))
     assert deadline_of(two) == {"kind": "date", "date": day(15).isoformat(), "overdue": False, "days_left": 15}
     transfer(two, two.second)
-    # the payment left with the student: in A it ended yesterday, so that is the end the deadline follows
-    assert deadline_of(two) == {"kind": "date", "date": day(-1).isoformat(), "overdue": True, "days_left": -1}
+    # the payment left with the student: in A it now ends on the transfer day, so that is the end the deadline follows
+    assert deadline_of(two) == {"kind": "date", "date": day(0).isoformat(), "overdue": False, "days_left": 0}
 
 
 def test_excuse_deadline_in_the_old_group_follows_what_the_package_took(two):

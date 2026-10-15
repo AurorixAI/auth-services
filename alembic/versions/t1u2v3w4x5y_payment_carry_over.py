@@ -9,9 +9,12 @@ Create Date: 2026-10-15
   it was made from.  NULL = an ordinary payment.  Voiding or replacing the
   original reaches its carry-overs through this column.
 * ``student_payments.carried_out_at`` - set on the ORIGINAL when its carry-over is
-  made: the transfer day T.  From then on the original covers only what lies
-  strictly before T in its own membership, so the coverage is never counted in
-  two groups at once (also not when the student returns).  NULL = it did not move.
+  made: the INSTANT of the transfer (TIMESTAMP, naive UTC like ``student_groups.left_at``,
+  the very same moment).  From then on the original covers, in its own membership, only
+  what happened while the student was still in the group (a lesson that started before
+  the instant, a calendar day up to and including the transfer day), so the coverage is
+  never counted in two groups at once (also not when the student returns).  NULL = it
+  did not move.
 * a partial index on ``carried_from_payment_id`` (cascades look carry-overs up by it).
 * the duplicate guard ``uq_student_payments_active_dup`` now also tells carry-overs
   made from different payments apart (A -> B -> A -> B within one day makes two
@@ -63,7 +66,7 @@ def upgrade() -> None:
             ),
         )
     if OUT_COLUMN not in existing:
-        op.add_column(PAYMENTS, sa.Column(OUT_COLUMN, sa.Date(), nullable=True))
+        op.add_column(PAYMENTS, sa.Column(OUT_COLUMN, sa.DateTime(), nullable=True))
     op.execute(
         f"CREATE INDEX IF NOT EXISTS {FROM_INDEX} ON {PAYMENTS} ({FROM_COLUMN}) "
         f"WHERE {FROM_COLUMN} IS NOT NULL"

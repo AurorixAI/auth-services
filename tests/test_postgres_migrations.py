@@ -200,7 +200,7 @@ def _check_n13_p21_objects(engine,config,ids):
         c.execute(text(row(':c','0',':p',vf='2026-10-20')),params)
         # identical figures from ANOTHER source are a different payment (A -> B -> A -> B within one day)
         c.execute(text(row(':c2','0',':p2',vf='2026-10-20')),params)
-        c.execute(text("UPDATE student_payments SET carried_out_at='2026-10-20' WHERE id=:p"),params)
+        c.execute(text("UPDATE student_payments SET carried_out_at='2026-10-20 10:00:00' WHERE id=:p"),params)
     bad={
         'unknown source payment':row('gen_random_uuid()','0','gen_random_uuid()',vf='2026-10-21'),
         'duplicate carry-over of the same source':row('gen_random_uuid()','0',':p',vf='2026-10-20'),
@@ -213,7 +213,9 @@ def _check_n13_p21_objects(engine,config,ids):
     with engine.connect() as c:
         assert c.execute(text('SELECT carried_from_payment_id FROM student_payments WHERE id=:c'),params).scalar_one()==orig
         assert c.execute(text('SELECT carried_from_payment_id FROM student_payments WHERE id=:p'),params).scalar_one() is None
-        assert str(c.execute(text('SELECT carried_out_at FROM student_payments WHERE id=:p'),params).scalar_one())=='2026-10-20'
+        assert str(c.execute(text('SELECT carried_out_at FROM student_payments WHERE id=:p'),params).scalar_one())=='2026-10-20 10:00:00'
+    carried_out_type=next(col['type'] for col in inspect(engine).get_columns('student_payments') if col['name']=='carried_out_at')
+    assert 'TIMESTAMP' in str(carried_out_type).upper()               # the transfer INSTANT, not a day
     # Round trip: the links and stamps are dropped, the rows stay as ordinary zero payments; the
     # pair of identical carry-overs that the old guard would refuse is reduced to one live row.
     command.downgrade(config,'t0u1v2w3x4y')
