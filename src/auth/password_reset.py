@@ -1,6 +1,6 @@
 """Password recovery for staff accounts (N13): one-time links, who may hand one out, how one is spent.
 
-Two ways to the same page ``/reset-password?token=...``:
+Two ways to the same page ``/reset-password#token=...``:
 
 * ``email``  - the user pressed «Забыли пароль?» on the login page; the link is e-mailed, valid 1 hour;
 * ``issued`` - an owner / admin / superadmin handed the link over (the teacher has no working e-mail, or
@@ -109,7 +109,10 @@ def frontend_base_url(origin: Optional[str]) -> Optional[str]:
 
 
 def reset_url(base: str, raw_token: str) -> str:
-    return f"{base}/reset-password?token={quote(raw_token, safe='')}"
+    """The link of the reset page. The token sits in the FRAGMENT: a browser never sends it to a server, so it
+    cannot land in an access log, a proxy log or a Referer; the page reads it from ``location.hash`` and
+    clears it from the address bar."""
+    return f"{base}/reset-password#token={quote(raw_token, safe='')}"
 
 
 def mask_email(email: str) -> str:

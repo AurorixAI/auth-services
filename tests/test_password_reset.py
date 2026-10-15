@@ -85,14 +85,14 @@ def mailbox(monkeypatch):
 
 
 def token_in(message) -> str:
-    found = re.findall(r"/reset-password\?token=([A-Za-z0-9_-]+)", message.body)
+    found = re.findall(r"/reset-password#token=([A-Za-z0-9_-]+)", message.body)
     assert found and len(set(found)) == 1, "the e-mail carries exactly one reset link"
     return found[0]
 
 
 def token_in_url(url: str) -> str:
-    assert url.startswith(f"{SITE}/reset-password?token=")
-    return url.split("token=", 1)[1]
+    assert url.startswith(f"{SITE}/reset-password#token=")
+    return url.split("#token=", 1)[1]
 
 
 def client_for(db=None, **headers):
@@ -201,7 +201,7 @@ def test_link_base_url_is_frontend_url_else_a_cors_origin_never_anything_else(mo
 
 
 def test_reset_url_carries_the_token_in_the_query_of_the_reset_page():
-    assert pr.reset_url("https://algolab.me", "abc-DEF_123") == "https://algolab.me/reset-password?token=abc-DEF_123"
+    assert pr.reset_url("https://algolab.me", "abc-DEF_123") == "https://algolab.me/reset-password#token=abc-DEF_123"
 
 
 def _resolve_with(sessions_valid_after, iat):
@@ -240,31 +240,42 @@ def test_reset_email_is_escaped_and_never_logged_with_its_token(monkeypatch, cap
     monkeypatch.setattr(email_module, "SMTP_PASSWORD", "x")
     monkeypatch.setattr(email_module, "_send_raw", lambda to, subject, body: sent.append((to, subject, body)) or True)
     with caplog.at_level(logging.DEBUG):
-        email_module.send_password_reset_email("a@b.kz", "<b>Иван</b>", f"{SITE}/reset-password?token=SECRETTOKEN123456", 60)
+        email_module.send_password_reset_email("a@b.kz", "<b>Иван</b>", f"{SITE}/reset-password#token=SECRETTOKEN123456", 60)
     to, subject, body = sent[0]
     assert to == "a@b.kz" and subject == "[ALGO] Восстановление пароля"
     assert "<b>Иван</b>" not in body and "&lt;b&gt;Иван&lt;/b&gt;" in body
-    assert f"{SITE}/reset-password?token=SECRETTOKEN123456" in body and "1 ч" in body
+    assert f"{SITE}/reset-password#token=SECRETTOKEN123456" in body and "1 ч" in body
     assert "SECRETTOKEN123456" not in caplog.text
 
 
 def test_without_smtp_the_reset_email_is_not_even_logged_with_its_body(monkeypatch, caplog):
     monkeypatch.setattr(email_module, "SMTP_HOST", "")
     with caplog.at_level(logging.DEBUG):
-        assert email_module.send_password_reset_email("a@b.kz", "Иван", f"{SITE}/reset-password?token=SECRETTOKEN123456", 60) is False
+        assert email_module.send_password_reset_email("a@b.kz", "Иван", f"{SITE}/reset-password#token=SECRETTOKEN123456", 60) is False
     assert "SECRETTOKEN123456" not in caplog.text
     assert email_module.smtp_configured() is False
+
+
+def test_the_token_is_never_in_a_query_string_and_the_check_is_a_post():
+    """A fragment is not sent to any server, so the token cannot reach an access log or a Referer."""
+    url = pr.reset_url("https://algolab.me", pr.new_raw_token())
+    assert "#token=" in url and "?" not in url
+    client = client_for(None)
+    assert client.get(f"{API}/password/reset/check", params={"token": "junk"}).status_code == 405   # the GET route is gone
+    assert client.post(f"{API}/password/reset/check", params={"token": "junk"}).status_code == 422  # a query is not read
+    assert client.post(f"{API}/password/reset/check", json={"token": ""}).json() == {"valid": False}
+    assert client.post(f"{API}/password/reset/check", json={"token": "x" * 4097}).status_code == 422
 
 
 def test_looking_at_links_is_limited_per_address_and_needs_no_database_for_junk():
     """A value that cannot be one of our tokens is answered without touching the database; the limit still counts it."""
     client = client_for(None)                               # a MagicMock session: any query would return garbage
     for _ in range(60):
-        assert client.get(f"{API}/password/reset/check", params={"token": "junk"}).json() == {"valid": False}
-    blocked = client.get(f"{API}/password/reset/check", params={"token": "junk"})
+        assert client.post(f"{API}/password/reset/check", json={"token": "junk"}).json() == {"valid": False}
+    blocked = client.post(f"{API}/password/reset/check", json={"token": "junk"})
     assert blocked.status_code == 429
     other = client_for(None, **{"X-Real-IP": "203.0.113.90"})
-    assert other.get(f"{API}/password/reset/check", params={"token": "junk"}).status_code == 200
+    assert other.post(f"{API}/password/reset/check", json={"token": "junk"}).status_code == 200
 
 
 # ---- «Забыли пароль?» -------------------------------------------------------------
@@ -294,7 +305,7 @@ def test_forgot_sends_a_link_to_the_reset_page_and_stores_only_the_hash(world, m
     assert response.json() == NEUTRAL
     message = mailbox[0]
     raw = token_in(message)
-    assert f"{SITE}/reset-password?token={raw}" in message.body
+    assert f"{SITE}/reset-password#token={raw}" in message.body
     (row,) = rows(w.db, w.teacher)
     assert row.purpose == "email" and row.created_by is None and row.used_at is None
     assert row.token_hash == hashlib.sha256(raw.encode()).hexdigest() and raw not in row.token_hash
@@ -310,8 +321,8 @@ def test_a_new_request_kills_the_older_unused_link_of_the_account(world, mailbox
     client.post(f"{API}/password/forgot", json={"email": w.teacher.email})
     first, second = (token_in(m) for m in mailbox)
     assert first != second
-    assert client.get(f"{API}/password/reset/check", params={"token": first}).json() == {"valid": False}
-    assert client.get(f"{API}/password/reset/check", params={"token": second}).json()["valid"] is True
+    assert client.post(f"{API}/password/reset/check", json={"token": first}).json() == {"valid": False}
+    assert client.post(f"{API}/password/reset/check", json={"token": second}).json()["valid"] is True
     assert len(live_rows(w.db, w.teacher)) == 1
 
 
@@ -340,7 +351,7 @@ def test_forgot_does_not_send_without_a_trusted_site_address(world, mailbox, mon
     # an Origin that IS a CORS origin is a trusted site address
     response = client_for(w.db).post(f"{API}/password/forgot", json={"email": w.teacher.email}, headers={"Origin": SITE})
     assert response.json() == NEUTRAL and token_in(mailbox[0])
-    assert f"{SITE}/reset-password?token=" in mailbox[0].body
+    assert f"{SITE}/reset-password#token=" in mailbox[0].body
 
 
 @needs_pg
@@ -376,13 +387,13 @@ def test_check_reports_a_live_link_with_a_masked_address_and_hides_everything_el
     w = world
     raw = issue_email_link(w, mailbox)
     client = client_for(w.db)
-    response = client.get(f"{API}/password/reset/check", params={"token": raw})
+    response = client.post(f"{API}/password/reset/check", json={"token": raw})
     body = response.json()
     assert response.status_code == 200 and body["valid"] is True
     assert body["email_masked"] == pr.mask_email(w.teacher.email) and w.teacher.email not in response.text
     assert body["expires_at"] and response.headers["cache-control"] == "no-store"
     for junk in ("", "x", "a" * 43, "../../etc/passwd", pr.new_raw_token()):
-        assert client.get(f"{API}/password/reset/check", params={"token": junk}).json() == {"valid": False}
+        assert client.post(f"{API}/password/reset/check", json={"token": junk}).json() == {"valid": False}
 
 
 @needs_pg
@@ -393,18 +404,18 @@ def test_check_says_invalid_for_an_expired_a_used_and_a_disabled_accounts_link(w
     (row,) = live_rows(w.db, w.teacher)
     row.expires_at = pr.utcnow() - timedelta(seconds=1)
     w.db.commit()
-    assert client.get(f"{API}/password/reset/check", params={"token": expired}).json() == {"valid": False}
+    assert client.post(f"{API}/password/reset/check", json={"token": expired}).json() == {"valid": False}
 
     used = issue_email_link(w, mailbox)
     (row,) = live_rows(w.db, w.teacher)
     row.used_at = pr.utcnow()
     w.db.commit()
-    assert client.get(f"{API}/password/reset/check", params={"token": used}).json() == {"valid": False}
+    assert client.post(f"{API}/password/reset/check", json={"token": used}).json() == {"valid": False}
 
     gone = issue_email_link(w, mailbox, w.teacher2)
     w.teacher2.is_active = False
     w.db.commit()
-    assert client.get(f"{API}/password/reset/check", params={"token": gone}).json() == {"valid": False}
+    assert client.post(f"{API}/password/reset/check", json={"token": gone}).json() == {"valid": False}
 
 
 @needs_pg
@@ -461,7 +472,7 @@ def test_reset_enforces_the_registration_password_policy_and_keeps_the_link_aliv
     client = client_for(w.db)
     for bad in ("12345", "", "x" * (PASSWORD_MAX_LENGTH + 1)):
         assert client.post(f"{API}/password/reset", json={"token": raw, "new_password": bad}).status_code == 422
-    assert client.get(f"{API}/password/reset/check", params={"token": raw}).json()["valid"] is True
+    assert client.post(f"{API}/password/reset/check", json={"token": raw}).json()["valid"] is True
     for ok in ("123456", "x" * PASSWORD_MAX_LENGTH):
         token = issue_email_link(w, mailbox)
         assert client.post(f"{API}/password/reset", json={"token": token, "new_password": ok}).status_code == 200
@@ -648,8 +659,8 @@ def test_issuing_replaces_the_previous_link_and_the_link_really_resets_the_passw
     first = token_in_url(issue(w.client, w.teacher, w.as_owner).json()["url"])
     second = token_in_url(issue(w.client, w.teacher, w.as_admin).json()["url"])
     assert first != second
-    assert w.client.get(f"{API}/password/reset/check", params={"token": first}).json() == {"valid": False}
-    check = w.client.get(f"{API}/password/reset/check", params={"token": second}).json()
+    assert w.client.post(f"{API}/password/reset/check", json={"token": first}).json() == {"valid": False}
+    check = w.client.post(f"{API}/password/reset/check", json={"token": second}).json()
     assert check["valid"] is True and check["email_masked"] == pr.mask_email(w.teacher.email)
     assert w.client.post(f"{API}/password/reset", json={"token": first, "new_password": NEW_PASSWORD}).status_code == 400
     assert w.client.post(f"{API}/password/reset", json={"token": second, "new_password": NEW_PASSWORD}).status_code == 200
@@ -667,11 +678,11 @@ def test_the_issued_link_points_to_the_trusted_site_only(staff, monkeypatch):
     assert issue(w.client, w.teacher, w.as_owner, Origin="https://evil.example").status_code == 403
     assert not rows(w.db, w.teacher)
     ok = issue(w.client, w.teacher, w.as_owner, Origin=SITE)
-    assert ok.status_code == 200 and ok.json()["url"].startswith(f"{SITE}/reset-password?token=")
+    assert ok.status_code == 200 and ok.json()["url"].startswith(f"{SITE}/reset-password#token=")
     # FRONTEND_URL beats whatever the request says
     monkeypatch.setenv("FRONTEND_URL", "https://stage.algolab.me")
     other = issue(w.client, w.teacher, w.as_owner, Origin=SITE)
-    assert other.json()["url"].startswith("https://stage.algolab.me/reset-password?token=")
+    assert other.json()["url"].startswith("https://stage.algolab.me/reset-password#token=")
 
 
 @needs_pg
@@ -702,3 +713,23 @@ def test_a_link_for_someone_who_sits_in_two_organisations_is_never_issued_by_eit
     assert issue(w.client, w.both, w.as_owner).status_code == 404
     assert issue(w.client, w.both, bearer(w.foreign_admin, w.other_org, "admin")).status_code == 404
     assert not rows(w.db, w.both)
+
+
+@needs_pg
+def test_the_member_list_behind_the_admin_teachers_page_is_admin_only_and_org_scoped(staff):
+    """/admin/teachers is read-only: it lists GET /auth/org/members (owner / admin of the organisation, nobody else)."""
+    w = staff
+    listed = w.client.get(f"{API}/org/members", headers=w.as_admin)
+    assert listed.status_code == 200
+    ids = {m["id"] for m in listed.json()}
+    own = {str(u.id) for u in (w.owner, w.owner2, w.admin, w.admin2, w.teacher, w.teacher2, w.both)}
+    foreign = {str(u.id) for u in (w.foreign_admin, w.foreign_owner, w.foreign_teacher, w.superadmin)}
+    assert ids == own and not (ids & foreign)
+    assert {"id", "email", "first_name", "last_name", "org_role"} <= set(listed.json()[0])
+    secrets_ = {"password_hash", "refresh_token_hash", "sessions_valid_after"}
+    assert not any(secrets_ & set(m) for m in listed.json()), "no credential material in the list"
+    assert w.client.get(f"{API}/org/members", headers=w.as_teacher).status_code == 403
+    assert w.client.get(f"{API}/org/members").status_code == 401
+    # another organisation's administrator sees their own people only
+    other = w.client.get(f"{API}/org/members", headers=bearer(w.foreign_admin, w.other_org, "admin"))
+    assert {m["id"] for m in other.json()} == {str(u.id) for u in (w.foreign_admin, w.foreign_owner, w.foreign_teacher, w.both)}

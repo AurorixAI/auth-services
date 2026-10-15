@@ -2,7 +2,7 @@
 
 Public (no login):
     POST /auth/password/forgot        {email}                  - ask for a link by e-mail
-    GET  /auth/password/reset/check   ?token=                  - is the link alive, whose account
+    POST /auth/password/reset/check   {token}                  - is the link alive, whose account
     POST /auth/password/reset         {token, new_password}    - spend the link
 
 For staff (owner / admin / superadmin):
@@ -58,6 +58,12 @@ class ForgotPasswordRequest(BaseModel):
     @classmethod
     def normalize_email(cls, v: str) -> str:
         return v.lower().strip()
+
+
+class CheckResetRequest(BaseModel):
+    # Not a query parameter: the token must not reach an access log. Anything that is not a token of ours
+    # is simply "not valid" (no 422 that would tell a probe more).
+    token: str = Field(..., max_length=4096)
 
 
 class ResetPasswordRequest(BaseModel):
@@ -154,16 +160,16 @@ def forgot_password(
     return result
 
 
-@router.get("/password/reset/check")
+@router.post("/password/reset/check")
 def check_reset_link(
-    token: str,
+    body: CheckResetRequest,
     response: Response,
     db: Session = Depends(get_db),
     _rl=Depends(rate_limit(CHECK_IP_LIMIT, endpoint="pw-reset-check")),
 ):
     """Is the link alive? ``{valid, email_masked, expires_at}``; ``{valid: false}`` for any other case."""
     response.headers["Cache-Control"] = NO_STORE
-    found = pr.find_live_token(db, token)
+    found = pr.find_live_token(db, body.token)
     if found is None:
         return {"valid": False}
     row, user = found
