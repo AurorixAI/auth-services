@@ -100,8 +100,13 @@ REFRESH_IP_LIMIT = "120/minute"
 REFRESH_TOKEN_LIMIT = "10/minute"
 
 # Endpoints that check an invite code / activation token (a secret) but have no password to throttle:
-# a modest limit per client address, shared between them, so the code space cannot be probed at wire speed.
-SECRET_LOOKUP_IP_LIMIT = "30/minute"
+# a modest limit per client address, so the code space cannot be probed at wire speed. Each endpoint counts
+# in a bucket of its own: a school behind one NAT where ~15 teachers open the invite page and accept the
+# invitation within one minute must not run into the limit that the other endpoints also spend.
+SECRET_LOOKUP_IP_LIMIT = "60/minute"
+INVITE_INFO_RATE_ENDPOINT = "auth-invite-info"
+INVITE_ACCEPT_RATE_ENDPOINT = "auth-invite-accept"
+ACTIVATE_RATE_ENDPOINT = "auth-activate"
 
 # ----------- cookie helpers: the policy itself is in cookies.py ----------- #
 
@@ -164,15 +169,15 @@ def login(
 
     Защита от подбора пароля (login_throttle.py): лимит попыток на адрес клиента (30/мин, 300/час); пауза на
     пару «аккаунт + адрес» после 5 неудач подряд (1, 2, 4, 8, до 15 мин); пауза на весь аккаунт после 20
-    неудач за 15 мин с любых адресов. Ответ 429 + Retry-After выдаётся до поиска пользователя и проверки
-    пароля."""
+    неудач за 15 мин с любых адресов (адреса, с которых владелец уже входил за последние 30 дней, под эту
+    паузу не попадают). Ответ 429 + Retry-After выдаётся до поиска пользователя и проверки пароля."""
     attempt = login_throttle.begin(login_throttle.SCOPE_LOGIN, request.email, bucket)
     try:
         result = _svc(db).login(request)
     except (InvalidCredentialsError, ValueError) as e:
         attempt.failed()  # unknown, inactive and wrong-password accounts are all counted the same way
-        if isinstance(e, ValueError):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
+        if isinstance(e, ValueError):  # never echo a library message: the one standard refusal
+            raise InvalidCredentialsError() from None
         raise
     except Exception:  # database down, a bug: says nothing about the password, so not counted
         attempt.aborted()
@@ -208,7 +213,10 @@ def refresh_tokens(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
 
 
-@router.get("/invite/{code}", dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint="auth-secret-lookup"))])
+@router.get(
+    "/invite/{code}",
+    dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint=INVITE_INFO_RATE_ENDPOINT))],
+)
 def get_invite_info(code: str, db: Session = Depends(get_db)):
     """Публичная информация о приглашении (орг + роль) — для экрана принятия."""
     try:
@@ -221,7 +229,7 @@ def get_invite_info(code: str, db: Session = Depends(get_db)):
     "/invite/accept",
     response_model=AuthResponse,
     status_code=201,
-    dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint="auth-secret-lookup"))],
+    dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint=INVITE_ACCEPT_RATE_ENDPOINT))],
 )
 def accept_invite(request: AcceptInviteRequest, db: Session = Depends(get_db)):
     """Принять приглашение в организацию — создаёт аккаунт"""
@@ -264,7 +272,7 @@ def admin_approve_organization(
 @router.post(
     "/activate",
     response_model=AuthResponse,
-    dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint="auth-secret-lookup"))],
+    dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint=ACTIVATE_RATE_ENDPOINT))],
 )
 def activate_account(
     request: ActivateAccountRequest,

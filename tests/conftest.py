@@ -17,6 +17,7 @@ def _isolated_counters(monkeypatch):
         rate_limit._memory_store.clear()
         rate_limit._window_store.clear()
         login_throttle._memory.clear()
+        login_throttle._known.clear()
 
     redis_client.reset_for_tests()
     monkeypatch.setattr(redis_client, "get_redis", lambda: None)

@@ -11,7 +11,7 @@ credential at all on the next page navigation and the Next.js middleware would s
 page before any client code could refresh the session.
 """
 import os
-from typing import TypeVar
+from typing import Mapping, TypeVar
 
 from starlette.responses import Response
 
@@ -25,7 +25,19 @@ REFRESH_COOKIE_NAME = "algo_refresh_token"
 AUTH_COOKIE_PATH = "/"
 REFRESH_COOKIE_PATH = "/api/v1/auth"
 
-_IS_PROD = os.getenv("ENVIRONMENT", "development") == "production"
+
+def cookies_are_secure(env: Mapping[str, str] = os.environ) -> bool:
+    """Whether the auth cookies carry ``Secure``: on every real stack, i.e. behind https.
+
+    Both real stacks (stage and prod) run ``APP_ENV=staging`` (the compose files of the infrastructure repo
+    set that and nothing called ``ENVIRONMENT``), and a real production build sets ``APP_ENV=production``;
+    the legacy ``ENVIRONMENT=production`` still counts. ``development`` / ``testing`` (plain http on a
+    laptop or in the test client) stay without ``Secure``, otherwise the browser would drop the cookie.
+    """
+    return env.get("APP_ENV", "") in ("production", "staging") or env.get("ENVIRONMENT", "") == "production"
+
+
+_IS_PROD = cookies_are_secure()
 _COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # e.g. ".algo.kz"
 
 R = TypeVar("R", bound=Response)
@@ -68,6 +80,11 @@ def set_auth_cookies(response: R, access_token: str, refresh_token: str) -> R:
 
 def clear_auth_cookies(response: R) -> R:
     """Delete both browser cookies (same path/domain they were set with)."""
-    response.delete_cookie(AUTH_COOKIE_NAME, path=AUTH_COOKIE_PATH, domain=_COOKIE_DOMAIN)
-    response.delete_cookie(REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH, domain=_COOKIE_DOMAIN)
+    # The deleting Set-Cookie carries the same flags as the one that set the cookie (Secure included).
+    response.delete_cookie(
+        AUTH_COOKIE_NAME, path=AUTH_COOKIE_PATH, domain=_COOKIE_DOMAIN, secure=_IS_PROD, httponly=True, samesite="lax"
+    )
+    response.delete_cookie(
+        REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH, domain=_COOKIE_DOMAIN, secure=_IS_PROD, httponly=True, samesite="lax"
+    )
     return response

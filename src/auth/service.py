@@ -174,7 +174,15 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except ValueError:
+        if "\x00" not in plain_password:
+            raise
+        # bcrypt refuses a NUL byte outright (and fast), and no stored hash can come from such a password:
+        # a plain "wrong password". One dummy verification keeps the cost of the answer the same.
+        pwd_context.verify("not the password", _DUMMY_PASSWORD_HASH)
+        return False
 
 
 def hash_token(token: str) -> str:
@@ -1576,7 +1584,7 @@ class AuthService:
         return DiagnosticInviteResponse(
             id=str(invite.id),
             student_id=str(student.id),
-            student_name=f"{student.first_name} {student.last_name}",
+            student_name=student.full_name.strip(),
             code=code,
             url=url,
             class_level=request.class_level,
@@ -1958,7 +1966,7 @@ class AuthService:
                     "id": str(inv.id),
                     "code": inv.code,
                     "student_id": str(inv.student_id) if inv.student_id else None,
-                    "student_name": f"{student.first_name} {student.last_name}"
+                    "student_name": student.full_name.strip()
                     if student
                     else "—",
                     "class_level": inv.class_level,
@@ -3105,7 +3113,7 @@ class AuthService:
             "id": str(invite.id),
             "code": invite.code,
             "student_id": str(invite.student_id),
-            "student_name": f"{student.first_name} {student.last_name}",
+            "student_name": student.full_name.strip(),
             "class_level": invite.class_level,
             "diagnostic_type": invite.diagnostic_type,
             "status": invite.status,

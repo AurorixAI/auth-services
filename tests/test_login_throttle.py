@@ -64,6 +64,7 @@ class Clock:
 def clock(monkeypatch):
     c = Clock()
     monkeypatch.setattr(lt, "_now", c)
+    monkeypatch.setattr(lt, "_wall", c)  # the known-good lists are dated with the wall clock
     monkeypatch.setattr(rl, "_monotonic", c)
     monkeypatch.setattr(redis_client, "_now", c)
     return c
@@ -122,6 +123,7 @@ def test_the_decided_numbers():
     assert lt.FAILURE_THRESHOLD == 5 and lt.ACCOUNT_CEILING_THRESHOLD == 20
     assert lt.BACKOFF_BASE_SECONDS == 60 and lt.BACKOFF_CAP_SECONDS == 900
     assert lt.QUIET_WINDOW_SECONDS == 900
+    assert lt.KNOWN_GOOD_TTL_SECONDS == 30 * 86400 and lt.KNOWN_GOOD_MAX == 20
     assert lt.LOGIN_IP_LIMITS == (("minute", 30, 60), ("hour", 300, 3600))
 
 
@@ -468,7 +470,8 @@ def test_the_ceiling_refuses_the_account_owner_too_with_the_decided_schedule(mon
     client, calls = login_app(monkeypatch)
     for ip in addresses(20):
         assert post_login(client, "teacher@x.kz", ip=ip).status_code == 401
-    r = post_login(client, "teacher@x.kz", GOOD, ip="203.0.113.20")  # the owner's own, untouched address
+    # the owner on an address they have never signed in from (a known-good one is exempt: see the tests below)
+    r = post_login(client, "teacher@x.kz", GOOD, ip="203.0.113.20")
     assert r.status_code == 429 and r.headers["retry-after"] == "60"
     assert r.json()["detail"] == "Слишком много попыток входа. Попробуйте через 1 мин."
     assert len(calls) == 20
@@ -523,6 +526,303 @@ def test_a_server_error_is_not_counted_against_the_account(monkeypatch, clock):
     monkeypatch.setattr(AuthService, "login", broken)
     client = TestClient(make_app(), raise_server_exceptions=False)
     assert [post_login(client, "teacher@x.kz").status_code for _ in range(8)] == [500] * 8
+
+
+# ---- NUL byte in a password -------------------------------------------------------------------
+
+
+def nul_login_app(user):
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = user
+    return TestClient(make_app(db))
+
+
+def test_a_nul_byte_in_the_login_password_is_the_standard_401_for_every_kind_of_account(monkeypatch, clock):
+    """bcrypt raises ValueError («bcrypt does not allow NULL bytes») for such a password; the raw message used to
+    reach the client as a 401 of a different shape. Now: the one standard refusal, known or unknown account."""
+    right = service_module.hash_password("the-right-one")
+    cases = {
+        "unknown": None,
+        "inactive": SimpleNamespace(is_active=False, password_hash=right, email="a@x.kz"),
+        "active": SimpleNamespace(is_active=True, password_hash=right, email="a@x.kz"),
+    }
+    expected = (401, {"detail": {"code": "INVALID_CREDENTIALS", "message": "Неверная почта или пароль"}})
+    for n, (name, user) in enumerate(cases.items()):
+        r = post_login(nul_login_app(user), f"who-{n}@x.kz", "pass\x00word")
+        assert (r.status_code, r.json()) == expected, name
+        assert "NULL" not in r.text and "bcrypt" not in r.text
+
+
+def test_a_nul_password_is_a_counted_failure_and_costs_the_same_bcrypt_work(monkeypatch, clock):
+    seen = []
+    real = service_module.pwd_context
+    right = service_module.hash_password("the-right-one")
+
+    class Spy:
+        def verify(self, plain, hashed):
+            seen.append((plain, hashed))
+            return real.verify(plain, hashed)
+
+    monkeypatch.setattr(service_module, "pwd_context", Spy())
+    user = SimpleNamespace(is_active=True, password_hash=right, email="a@x.kz")
+    assert service_module.verify_password("pass\x00word", right) is False
+    # the refused attempt still pays one full bcrypt verification (against the dummy hash): same cost as a wrong password
+    assert [h for _, h in seen] == [right, service_module._DUMMY_PASSWORD_HASH]
+    client = nul_login_app(user)
+    assert [post_login(client, "a@x.kz", "pass\x00word").status_code for _ in range(6)] == [401] * 5 + [429]
+
+
+def test_a_nul_byte_in_the_old_password_is_a_plain_wrong_password_not_a_leaked_library_message():
+    right = service_module.hash_password("the-right-one")
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(password_hash=right)
+    with pytest.raises(ValueError, match="^Неверный текущий пароль$"):
+        AuthService(db).change_password("u-1", "old\x00pw", "a-brand-new-pw")
+
+
+def test_other_value_errors_from_hashing_are_not_swallowed_as_a_wrong_password():
+    with pytest.raises(ValueError):
+        service_module.verify_password("fine-password", "this is not a bcrypt hash")
+
+
+def test_whatever_value_error_the_login_service_raises_the_client_gets_the_standard_refusal(monkeypatch, clock):
+    def boom(self, request):
+        raise ValueError("raw library message that must not leak")
+
+    monkeypatch.setattr(AuthService, "login", boom)
+    r = post_login(TestClient(make_app()), "a@x.kz", "whatever")
+    assert r.status_code == 401
+    assert r.json() == {"detail": {"code": "INVALID_CREDENTIALS", "message": "Неверная почта или пароль"}}
+
+
+# ---- known-good addresses: the ceiling does not lock the owner out of the places they sign in from ----
+
+SCHOOL = "203.0.113.20"
+HOME = "203.0.113.99"
+DAY = 86400
+
+
+def sign_in(identifier="t@x.kz", ip=SCHOOL, scope=lt.SCOPE_LOGIN):
+    lt.begin(scope, identifier, ip).succeeded()
+
+
+def arm_the_ceiling(identifier="t@x.kz", scope=lt.SCOPE_LOGIN, start=0):
+    """A distributed attack: one failed guess from each of 20 new addresses."""
+    for ip in addresses(lt.ACCOUNT_CEILING_THRESHOLD, start):
+        fail(identifier, scope, ip)
+
+
+def test_a_distributed_attack_blocks_a_new_address_but_not_the_known_school_and_home(clock):
+    sign_in(ip=SCHOOL)
+    sign_in(ip=HOME)
+    arm_the_ceiling()
+    assert 1 <= refused_for("t@x.kz", ip="203.0.113.77").retry_after <= 60  # a new address: refused, as before
+    for known in (SCHOOL, HOME):
+        lt.begin(lt.SCOPE_LOGIN, "t@x.kz", known).succeeded()  # evaluated, and the right password gets in
+
+
+def test_without_a_known_good_address_the_ceiling_refuses_the_owner_as_before(clock):
+    arm_the_ceiling()
+    refused_for("t@x.kz", ip=SCHOOL)
+    assert lt._known == {}
+
+
+def test_a_known_good_address_keeps_its_own_five_failure_backoff(clock):
+    sign_in(ip=SCHOOL)
+    sign_in(ip=HOME)
+    arm_the_ceiling()
+    for _ in range(5):
+        fail("t@x.kz", ip=SCHOOL)  # somebody guessing from the (shared) known address...
+    assert refused_for("t@x.kz", ip=SCHOOL).retry_after == 60  # ...is backed off like any single address
+    lt.begin(lt.SCOPE_LOGIN, "t@x.kz", HOME).failed()  # the owner's other known address is not affected
+
+
+def test_failures_from_a_known_good_address_are_not_counted_into_the_ceiling(clock):
+    account = lt._key_base(lt.SCOPE_LOGIN, "t@x.kz")
+    sign_in(ip=SCHOOL)
+    arm_the_ceiling(start=0)  # armed by 20 other addresses...
+    clock.advance(70)
+    assert lt._memory[account][0] == 20
+    for _ in range(3):
+        fail("t@x.kz", ip=SCHOOL)
+    assert lt._memory[account][0] == 20  # ...and 3 failures from the school added nothing to the account
+    assert lt._memory[lt._pair_base(account, SCHOOL)][0] == 3
+
+
+def test_typos_at_a_known_address_do_not_push_the_account_over_the_ceiling(clock):
+    sign_in(ip=SCHOOL)
+    for ip in addresses(19):
+        fail("t@x.kz", ip=ip)
+    for _ in range(4):
+        fail("t@x.kz", ip=SCHOOL)  # 4 typos: 23 failures in all, but only 19 count towards the ceiling
+    lt.begin(lt.SCOPE_LOGIN, "t@x.kz", "203.0.113.77").failed()  # the 20th counted one arms it
+    refused_for("t@x.kz", ip="203.0.113.78")
+
+
+def test_only_a_success_adds_to_the_list_never_a_failure_a_refusal_or_an_abort(clock):
+    for ip in addresses(40):
+        try:
+            fail("t@x.kz", ip=ip)  # 20 evaluated (arming the ceiling), the rest refused
+        except lt.TooManyAttempts:
+            pass
+    lt.begin(lt.SCOPE_LOGIN, "u@x.kz", SCHOOL).aborted()
+    assert lt._known == {}
+    refused_for("t@x.kz", ip=addresses(1, 400)[0])  # none of those addresses became a free pass
+
+
+def test_a_success_from_a_known_address_leaves_the_evidence_of_an_attack_alone(clock):
+    sign_in(ip=SCHOOL)
+    arm_the_ceiling()
+    sign_in(ip=SCHOOL)  # the owner signs in from school in the middle of the attack
+    refused_for("t@x.kz", ip="203.0.113.77")  # the attackers' ceiling is still armed
+
+
+def test_a_success_from_a_new_address_clears_the_ceiling_as_before_and_the_address_becomes_known(clock):
+    account = lt._key_base(lt.SCOPE_LOGIN, "t@x.kz")
+    for ip in addresses(10):
+        fail("t@x.kz", ip=ip)
+    sign_in(ip=SCHOOL)  # a new address below the ceiling: allowed
+    assert account not in lt._memory  # the ceiling counter was cleared by it
+    arm_the_ceiling(start=100)
+    sign_in(ip=SCHOOL)  # and now the school is exempt from an attack
+
+
+def test_the_list_keeps_the_twenty_most_recent_addresses(clock):
+    ips = addresses(25)
+    for ip in ips:
+        clock.advance(1)
+        sign_in(ip=ip)
+    account = lt._key_base(lt.SCOPE_LOGIN, "t@x.kz")
+    assert len(lt._known[account]) == lt.KNOWN_GOOD_MAX == 20
+    clock.advance(1)
+    sign_in(ip=ips[5])  # the oldest survivor signs in again: renewed, no longer the oldest
+    clock.advance(1)
+    sign_in(ip=SCHOOL)  # a 26th address pushes out the oldest one, which is ips[6] now
+    assert len(lt._known[account]) == 20
+    arm_the_ceiling(start=300)
+    for ip in [ips[5], *ips[7:], SCHOOL]:
+        lt.begin(lt.SCOPE_LOGIN, "t@x.kz", ip).failed()  # known: evaluated
+    for ip in [*ips[:5], ips[6]]:
+        refused_for("t@x.kz", ip=ip)  # evicted: like any new address
+
+
+def test_a_known_address_is_forgotten_after_thirty_days_and_each_success_renews_it(clock):
+    sign_in(ip=SCHOOL)
+    sign_in(ip=HOME)
+    clock.advance(30 * DAY - 10)
+    sign_in(ip=HOME)  # a success renews the home address...
+    clock.advance(20)  # ...the school address is now 30 days and 10 seconds old
+    arm_the_ceiling()
+    lt.begin(lt.SCOPE_LOGIN, "t@x.kz", HOME).failed()  # still known
+    refused_for("t@x.kz", ip=SCHOOL)  # expired
+
+
+def test_an_address_is_known_until_the_thirty_day_mark_and_not_a_second_longer(clock):
+    sign_in(ip=SCHOOL)
+    clock.advance(30 * DAY - 1)  # 1 second to go
+    arm_the_ceiling()
+    lt.begin(lt.SCOPE_LOGIN, "t@x.kz", SCHOOL).failed()  # still exempt
+    clock.advance(2)  # 30 days and 1 second since the success
+    lt._memory.clear()  # (start the ceiling over: the earlier block would refuse everybody for a while)
+    arm_the_ceiling(start=100)
+    refused_for("t@x.kz", ip=SCHOOL)
+
+
+def test_the_list_holds_an_hmac_of_the_address_not_the_address(clock):
+    sign_in(ip=SCHOOL)
+    (member,) = lt._known[lt._key_base(lt.SCOPE_LOGIN, "t@x.kz")]
+    assert SCHOOL not in member and re.fullmatch(r"[0-9a-f]{24}", member)
+    assert lt._good_member(lt._key_base(lt.SCOPE_LOGIN, "other@x.kz"), SCHOOL) != member  # not linkable across accounts
+
+
+def test_every_spelling_of_the_identifier_shares_one_known_good_list(clock):
+    sign_in("Teacher@X.KZ", ip=SCHOOL)
+    arm_the_ceiling("  teacher@x.kz ")
+    lt.begin(lt.SCOPE_LOGIN, "TEACHER@x.kz", SCHOOL).failed()
+
+
+def test_known_good_addresses_are_per_account(clock):
+    sign_in("a@x.kz", ip=SCHOOL)
+    arm_the_ceiling("b@x.kz")
+    refused_for("b@x.kz", ip=SCHOOL)  # the school is known for a@, not for b@
+
+
+def test_a_successful_password_change_makes_its_address_known_for_that_scope_only(clock):
+    sign_in("user-1", ip=SCHOOL, scope=lt.SCOPE_CHANGE_PASSWORD)
+    arm_the_ceiling("user-1", lt.SCOPE_CHANGE_PASSWORD)
+    refused_for("user-1", lt.SCOPE_CHANGE_PASSWORD, ip="203.0.113.77")
+    lt.begin(lt.SCOPE_CHANGE_PASSWORD, "user-1", SCHOOL).succeeded()  # known: evaluated
+    assert lt._key_base(lt.SCOPE_LOGIN, "user-1") not in lt._known  # the sign-in of the same text has its own list
+
+
+def test_an_aborted_attempt_from_a_known_address_does_not_take_back_a_count_it_never_made(clock):
+    account = lt._key_base(lt.SCOPE_LOGIN, "t@x.kz")
+    sign_in(ip=SCHOOL)
+    for ip in addresses(5):
+        fail("t@x.kz", ip=ip)
+    lt.begin(lt.SCOPE_LOGIN, "t@x.kz", SCHOOL).aborted()
+    assert lt._memory[account][0] == 5
+
+
+def test_with_redis_down_the_known_good_list_lives_in_process_memory(monkeypatch, clock):
+    monkeypatch.setattr(redis_client, "get_redis", lambda: DeadRedis())
+    sign_in(ip=SCHOOL)  # the pipeline fails, the success is still recorded (and never breaks the login)
+    assert lt._known[lt._key_base(lt.SCOPE_LOGIN, "t@x.kz")]
+    arm_the_ceiling()
+    refused_for("t@x.kz", ip="203.0.113.77")
+    lt.begin(lt.SCOPE_LOGIN, "t@x.kz", SCHOOL).succeeded()
+
+
+def test_the_known_good_memory_is_bounded(monkeypatch, clock):
+    monkeypatch.setattr(lt, "_MEMORY_SOFT_LIMIT", 10)
+    for n in range(15):
+        sign_in(f"u{n}@x.kz", ip=SCHOOL)
+    clock.advance(31 * DAY)
+    sign_in("fresh@x.kz", ip=SCHOOL)  # over the soft limit: every account whose addresses all expired is dropped
+    assert list(lt._known) == [lt._key_base(lt.SCOPE_LOGIN, "fresh@x.kz")]
+
+
+def test_endpoint_a_distributed_attack_locks_out_new_addresses_but_not_the_school(monkeypatch, clock):
+    client, calls = login_app(monkeypatch)
+    school = "203.0.113.20"
+    assert post_login(client, "teacher@x.kz", GOOD, ip=school).status_code == 200
+    for ip in addresses(20):
+        assert post_login(client, "teacher@x.kz", ip=ip).status_code == 401
+    blocked = post_login(client, "teacher@x.kz", GOOD, ip="203.0.113.77")  # the owner on mobile data: refused
+    assert blocked.status_code == 429 and blocked.headers["retry-after"] == "60"
+    ok = post_login(client, "teacher@x.kz", GOOD, ip=school)
+    assert ok.status_code == 200 and "algo_auth_token" in ok.headers["set-cookie"]
+    assert post_login(client, "teacher@x.kz", "typo", ip=school).status_code == 401  # a typo at school: a plain 401
+    assert post_login(client, "teacher@x.kz", GOOD, ip="203.0.113.77").status_code == 429  # the ceiling still holds
+    assert len(calls) == 1 + 20 + 2
+
+
+def test_endpoint_the_known_address_follows_the_ipv6_slash_64(monkeypatch, clock):
+    client, _ = login_app(monkeypatch)
+    assert post_login(client, "teacher@x.kz", GOOD, ip="2001:db8:aaaa:1::5").status_code == 200
+    for ip in addresses(20):
+        post_login(client, "teacher@x.kz", ip=ip)
+    assert post_login(client, "teacher@x.kz", GOOD, ip="2001:db8:aaaa:1:9:9:9:9").status_code == 200  # same /64
+    assert post_login(client, "teacher@x.kz", GOOD, ip="2001:db8:aaaa:2::5").status_code == 429  # another /64
+
+
+def test_endpoint_a_failed_login_never_makes_an_address_known(monkeypatch, clock):
+    client, _ = login_app(monkeypatch)
+    for ip in addresses(5):
+        post_login(client, "teacher@x.kz", ip=ip)  # wrong passwords
+    assert lt._known == {}
+
+
+def test_endpoint_change_password_known_address_survives_the_ceiling(monkeypatch, clock):
+    client, who = password_app(monkeypatch)
+    school = {"x-real-ip": "203.0.113.20"}
+    good = {"old_password": GOOD, "new_password": "brand-new-pw"}
+    bad = {"old_password": "wrong-old-pw", "new_password": "brand-new-pw"}
+    assert client.post(f"{API}/change-password", json=good, headers=school).status_code == 200
+    for ip in addresses(20):
+        assert client.post(f"{API}/change-password", json=bad, headers={"x-real-ip": ip}).status_code == 400
+    assert client.post(f"{API}/change-password", json=good, headers={"x-real-ip": "203.0.113.77"}).status_code == 429
+    assert client.post(f"{API}/change-password", json=good, headers=school).status_code == 200
 
 
 # ---- per client address ----------------------------------------------------------------------
@@ -679,28 +979,81 @@ def test_change_password_and_login_have_separate_counters(monkeypatch, clock):
     fail("teacher@x.kz", scope=lt.SCOPE_LOGIN)  # login for the same text is a different bucket
 
 
-def test_invite_and_activation_lookups_share_a_per_address_limit(monkeypatch, clock):
+def secret_lookup_app(monkeypatch):
     def bad_invite(self, request):
         raise ValueError("Приглашение не найдено или уже использовано")
 
     def no_invite(self, code):
         raise ValueError("Приглашение не найдено")
 
+    def bad_token(self, token):
+        raise ValueError("Невалидная или уже использованная ссылка активации")
+
     monkeypatch.setattr(AuthService, "accept_invitation", bad_invite)
     monkeypatch.setattr(AuthService, "get_invitation_info", no_invite)
-    client = TestClient(make_app())
-    body = {"code": "ABCD1234", "email": "n@x.kz", "password": "secret-pw", "first_name": "А", "last_name": "Б"}
-    headers = {"x-real-ip": IP}
+    monkeypatch.setattr(AuthService, "activate_account", bad_token)
+    return TestClient(make_app())
+
+
+INVITE_BODY = {"code": "ABCD1234", "email": "n@x.kz", "password": "secret-pw", "first_name": "А", "last_name": "Б"}
+ACTIVATE_BODY = {"token": "t" * 20}
+
+
+def invite_info(client, i=0, ip=IP):
+    return client.get(f"{API}/invite/ABCD{i:04d}", headers={"x-real-ip": ip}).status_code
+
+
+def invite_accept(client, ip=IP):
+    return client.post(f"{API}/invite/accept", json=INVITE_BODY, headers={"x-real-ip": ip}).status_code
+
+
+def activate(client, ip=IP):
+    return client.post(f"{API}/activate", json=ACTIVATE_BODY, headers={"x-real-ip": ip}).status_code
+
+
+def test_invite_info_invite_accept_and_activate_each_get_sixty_a_minute_per_address(monkeypatch, clock):
+    client = secret_lookup_app(monkeypatch)
+    monkeypatch.setattr(rl, "time", SimpleNamespace(time=clock, monotonic=clock))  # the in-process sliding window
+    assert router_limit_is_sixty_a_minute()
+    for call, ok in ((lambda: invite_info(client), 404), (lambda: invite_accept(client), 400), (lambda: activate(client), 400)):
+        codes = [call() for _ in range(61)]
+        assert codes == [ok] * 60 + [429], ok  # 60 evaluated, the 61st refused
+    # the other endpoints were not touched by the one that ran out: all three are now refused in their own right
+    assert (invite_info(client), invite_accept(client), activate(client)) == (429, 429, 429)
+    assert (invite_info(client, ip="198.51.100.1"), invite_accept(client, ip="198.51.100.1")) == (404, 400)  # per address
+    clock.advance(61)
+    assert (invite_info(client), invite_accept(client), activate(client)) == (404, 400, 400)  # a new minute
+
+
+def router_limit_is_sixty_a_minute():
+    return auth_router_module.SECRET_LOOKUP_IP_LIMIT == "60/minute"
+
+
+def test_one_endpoint_running_out_does_not_refuse_the_others(monkeypatch, clock):
+    client = secret_lookup_app(monkeypatch)
+    assert [invite_info(client, i) for i in range(61)] == [404] * 60 + [429]
+    assert invite_accept(client) == 400 and activate(client) == 400  # their buckets are untouched
+
+
+def test_a_school_behind_one_address_can_onboard_twenty_five_teachers_in_a_minute(monkeypatch, clock):
+    """Each teacher opens the invite page (GET) and submits it (POST): 50 requests from one NAT address in one minute
+    used to share one 30-a-minute bucket."""
+    client = secret_lookup_app(monkeypatch)
+    school = "203.0.113.20"
     codes = []
-    for i in range(30):
-        if i % 3:
-            codes.append(client.post(f"{API}/invite/accept", json=body, headers=headers).status_code)
-        else:
-            codes.append(client.get(f"{API}/invite/ABCD{i:04d}", headers=headers).status_code)
-    assert set(codes) == {400, 404}
-    assert client.post(f"{API}/invite/accept", json=body, headers=headers).status_code == 429
-    assert client.post(f"{API}/activate", json={"token": "t" * 20}, headers=headers).status_code == 429
-    assert client.get(f"{API}/invite/ABCD0000", headers={"x-real-ip": "198.51.100.1"}).status_code == 404
+    for teacher in range(25):
+        codes.append(invite_info(client, teacher, ip=school))
+        codes.append(invite_accept(client, ip=school))
+    assert 429 not in codes and codes[0::2] == [404] * 25 and codes[1::2] == [400] * 25
+
+
+def test_the_invite_buckets_are_named_per_endpoint_not_per_code(monkeypatch, clock):
+    """GET /invite/{code} has the code in its path: its bucket must be the fixed endpoint name, otherwise every
+    guessed code would get a bucket of its own and the limit would mean nothing."""
+    client = secret_lookup_app(monkeypatch)
+    assert [invite_info(client, i) for i in range(61)] == [404] * 60 + [429]  # 61 different codes, one bucket
+    assert {auth_router_module.INVITE_INFO_RATE_ENDPOINT, auth_router_module.INVITE_ACCEPT_RATE_ENDPOINT,
+            auth_router_module.ACTIVATE_RATE_ENDPOINT} == {"auth-invite-info", "auth-invite-accept", "auth-activate"}
 
 
 # ---- Redis: fallback and the shared client ---------------------------------------------------
@@ -911,3 +1264,120 @@ def test_live_redis_the_refresh_limiter_now_uses_redis(live):
     with pytest.raises(HTTPException):
         dep(request)
     assert not rl._memory_store  # the process memory was not used
+
+
+@needs_redis
+def test_live_redis_known_good_address_skips_the_ceiling_and_the_list_has_a_30_day_ttl(live):
+    account = lt._key_base("login", "t@x.kz")
+    key = lt._good_key(account)
+    sign_in(ip=SCHOOL)
+    assert 30 * DAY - 10 <= live.ttl(key) <= 30 * DAY
+    (member,) = live.zrange(key, 0, -1)
+    assert SCHOOL not in member and member == lt._good_member(account, SCHOOL)  # an HMAC, not the address
+    assert not lt._known  # nothing in process memory: the list is in Redis
+    arm_the_ceiling()
+    assert 0 < live.ttl(f"{account}:b") <= 60
+    assert 1 <= refused_for("t@x.kz", ip="203.0.113.77").retry_after <= 60  # a new address is refused...
+    lt.begin(lt.SCOPE_LOGIN, "t@x.kz", SCHOOL).failed()  # ...the school is evaluated
+    assert live.get(f"{account}:n") == "20"  # and its failure was not counted into the ceiling
+    assert live.get(f"{lt._pair_base(account, SCHOOL)}:n") == "1"  # but into its own counter
+    lt.begin(lt.SCOPE_LOGIN, "t@x.kz", SCHOOL).succeeded()
+    assert live.exists(f"{account}:b") == 1 and live.get(f"{account}:n") == "20"  # a known success keeps the evidence
+    assert 30 * DAY - 10 <= live.ttl(key) <= 30 * DAY
+
+
+@needs_redis
+def test_live_redis_an_entry_older_than_thirty_days_is_unknown_and_trimmed_by_the_next_success(live):
+    account = lt._key_base("login", "t@x.kz")
+    key = lt._good_key(account)
+    sign_in(ip=SCHOOL)
+    live.zadd(key, {lt._good_member(account, SCHOOL): time.time() - 30 * DAY - 5})  # the last success was 30 days ago
+    live.zadd(key, {"stale-entry": time.time() - 40 * DAY})
+    arm_the_ceiling()
+    refused_for("t@x.kz", ip=SCHOOL)  # the expired entry no longer exempts the school
+    live.delete(f"{account}:b", f"{account}:n")
+    sign_in(ip=HOME)
+    assert live.zscore(key, "stale-entry") is None  # trimmed in the same transaction as the new entry
+    assert live.zscore(key, lt._good_member(account, HOME)) is not None
+
+
+@needs_redis
+def test_live_redis_the_list_keeps_the_twenty_most_recent_addresses(live):
+    account = lt._key_base("login", "t@x.kz")
+    key = lt._good_key(account)
+    ips = addresses(25)
+    for ip in ips:
+        sign_in(ip=ip)
+        time.sleep(0.003)
+    assert live.zcard(key) == 20
+    kept = set(live.zrange(key, 0, -1))
+    assert kept == {lt._good_member(account, ip) for ip in ips[5:]}
+
+
+@needs_redis
+def test_live_redis_a_failure_a_refusal_or_an_abort_never_adds_to_the_list(live):
+    for ip in addresses(30):
+        try:
+            fail("t@x.kz", ip=ip)
+        except lt.TooManyAttempts:
+            pass
+    lt.begin(lt.SCOPE_LOGIN, "u@x.kz", SCHOOL).aborted()
+    assert live.keys("*:g") == []
+
+
+@needs_redis
+def test_live_redis_sixty_parallel_guesses_from_the_known_address_evaluate_exactly_five_and_skip_the_ceiling(live):
+    account = lt._key_base("login", "t@x.kz")
+    sign_in(ip=SCHOOL)
+    outcomes = []
+    barrier = threading.Barrier(60)
+
+    def guess():
+        barrier.wait()
+        try:
+            lt.begin(lt.SCOPE_LOGIN, "t@x.kz", SCHOOL).failed()
+            outcomes.append("evaluated")
+        except lt.TooManyAttempts:
+            outcomes.append("refused")
+
+    threads = [threading.Thread(target=guess) for _ in range(60)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert outcomes.count("evaluated") == 5 and outcomes.count("refused") == 55
+    assert live.exists(f"{account}:n") == 0  # the ceiling never saw them
+
+
+@needs_redis
+def test_live_redis_parallel_guesses_from_new_addresses_still_stop_at_twenty_beside_a_known_one(live):
+    sign_in(ip=SCHOOL)
+    outcomes = []
+    barrier = threading.Barrier(61)
+
+    def guess(ip):
+        barrier.wait()
+        try:
+            lt.begin(lt.SCOPE_LOGIN, "t@x.kz", ip).failed()
+            outcomes.append(("new" if ip != SCHOOL else "known", "evaluated"))
+        except lt.TooManyAttempts:
+            outcomes.append(("new" if ip != SCHOOL else "known", "refused"))
+
+    threads = [threading.Thread(target=guess, args=(ip,)) for ip in [*addresses(60), SCHOOL]]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert outcomes.count(("new", "evaluated")) == 20 and outcomes.count(("new", "refused")) == 40
+    assert outcomes.count(("known", "evaluated")) == 1  # the known address got its turn whatever the others did
+
+
+@needs_redis
+def test_live_redis_the_known_good_list_is_shared_between_workers(live, monkeypatch):
+    sign_in(ip=SCHOOL)
+    lt._known.clear()
+    lt._memory.clear()  # "another worker" has no memory, only Redis does
+    other_worker = redis_lib.Redis.from_url(LIVE_URL, decode_responses=True)
+    monkeypatch.setattr(redis_client, "get_redis", lambda: other_worker)
+    try:
+        arm_the_ceiling()
+        lt.begin(lt.SCOPE_LOGIN, "t@x.kz", SCHOOL).failed()
+        refused_for("t@x.kz", ip="203.0.113.77")
+    finally:
+        other_worker.close()

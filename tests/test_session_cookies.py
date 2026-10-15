@@ -10,6 +10,8 @@ The first half needs no database; the second half (``needs_pg``) drives login ->
 against the disposable ``a2_auth`` PostgreSQL.
 """
 import os
+import subprocess
+import sys
 from datetime import timedelta
 from http.cookies import SimpleCookie
 from unittest.mock import MagicMock
@@ -27,6 +29,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import src.api.internal_router  # noqa: E402,F401  (import order: avoids a pre-existing router cycle)
 import src.auth.cookies as cookies_module  # noqa: E402
+from src.api import main_v2  # noqa: E402
 import src.auth.router as auth_router_module  # noqa: E402
 import src.auth.service as service_module  # noqa: E402
 from src.auth.cookies import (  # noqa: E402
@@ -48,6 +51,7 @@ from src.auth.service import (  # noqa: E402
 )
 from src.core.config import get_settings  # noqa: E402
 from src.core.database import get_db  # noqa: E402
+from src.core.exceptions import AlgoException  # noqa: E402
 
 from tests.pg_world import needs_pg, pg_session, world  # noqa: E402,F401  (fixtures)
 
@@ -67,6 +71,7 @@ def client_for(db=None):
     app = FastAPI()
     app.include_router(auth_router_module.router, prefix="/api/v1")
     app.include_router(payments_router, prefix="/api/v1")
+    app.add_exception_handler(AlgoException, main_v2.algo_exception_handler)  # as the real service answers
     app.dependency_overrides[get_db] = lambda: db if db is not None else MagicMock()
     return TestClient(app)
 
@@ -163,6 +168,58 @@ def test_cookies_are_not_secure_outside_production(monkeypatch):
         assert not morsel["secure"] and not morsel["domain"] and morsel["httponly"] is True
 
 
+# ---- Secure: both real stacks run APP_ENV=staging behind https and set no ENVIRONMENT -----
+
+
+@pytest.mark.parametrize(
+    "env, secure",
+    [
+        ({"APP_ENV": "production"}, True),
+        ({"APP_ENV": "staging"}, True),  # stage AND prod are both "staging" in the compose files
+        ({"APP_ENV": "development"}, False),
+        ({"APP_ENV": "testing"}, False),
+        ({}, False),
+        ({"ENVIRONMENT": "production"}, True),  # the legacy switch still counts
+        ({"ENVIRONMENT": "production", "APP_ENV": "development"}, True),
+        ({"ENVIRONMENT": "staging"}, False),
+        ({"ENVIRONMENT": "development", "APP_ENV": "staging"}, True),
+    ],
+)
+def test_cookies_are_secure_by_the_deployed_environment(env, secure):
+    assert cookies_module.cookies_are_secure(env) is secure
+
+
+def test_the_module_reads_the_environment_the_deploy_really_sets():
+    """APP_ENV=staging (no ENVIRONMENT) is what stage and prod run: a fresh import must come out Secure."""
+    code = "import src.auth.cookies as c; print(c._IS_PROD)"
+    base = {k: v for k, v in os.environ.items() if k not in ("ENVIRONMENT", "APP_ENV")}
+    for app_env, expected in (("staging", "True"), ("production", "True"), ("development", "False"), ("testing", "False")):
+        out = subprocess.run(
+            [sys.executable, "-c", code],
+            env={**base, "APP_ENV": app_env},
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert out.stdout.strip().splitlines()[-1] == expected, (app_env, out.stdout, out.stderr[-300:])
+
+
+@pytest.mark.parametrize("secure", [True, False])
+def test_set_and_delete_cookies_carry_the_same_secure_flag(monkeypatch, secure):
+    monkeypatch.setattr(cookies_module, "_IS_PROD", secure)
+    monkeypatch.setattr(cookies_module, "_COOKIE_DOMAIN", None)
+    for response in (
+        cookies_module.set_auth_cookies(JSONResponse({}), "a", "r"),
+        cookies_module.clear_auth_cookies(JSONResponse({})),
+    ):
+        jar = set_cookies(response)
+        assert set(jar) == {AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME}
+        for morsel in jar.values():
+            assert bool(morsel["secure"]) is secure and morsel["httponly"] is True
+            assert morsel["samesite"].lower() == "lax"
+
+
 def test_every_sign_in_path_shares_one_cookie_policy_without_a_router_import_cycle():
     """The dev quick-login used to carry its own copy (and its 3600); it also imported the whole router."""
     import re
@@ -234,7 +291,9 @@ def test_expired_access_cookie_does_not_break_login(monkeypatch):
         json={"email": "a@b.co", "password": "x"},
         headers=cookie_header(access=expired_access_token()),
     )
-    assert r.status_code == 401 and r.json()["detail"] == "Неверный пароль (из обработчика)"
+    # the handler ran and answered; whatever text a ValueError carried is never echoed, the one standard refusal is
+    assert r.status_code == 401
+    assert r.json()["detail"] == {"code": "INVALID_CREDENTIALS", "message": "Неверная почта или пароль"}
 
 
 def test_refresh_ignores_the_stale_access_cookie(monkeypatch):

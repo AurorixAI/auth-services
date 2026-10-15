@@ -9,6 +9,18 @@ from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
+from pydantic_core import PydanticCustomError
+
+PASSWORD_NUL_MESSAGE = "Пароль содержит недопустимый символ"
+
+
+def _password_without_nul(value: str) -> str:
+    """bcrypt cannot hash a NUL byte, so a password that is being SET must not contain one (a login attempt
+    with one is merely a wrong password: AuthService.verify_password answers False)."""
+    if "\x00" in value:
+        raise PydanticCustomError("password_nul", PASSWORD_NUL_MESSAGE)
+    return value
+
 
 
 # ============================================================================
@@ -33,6 +45,11 @@ class OrgApplicationRequest(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
     language: str = Field(default="ru")
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v):
+        return _password_without_nul(v)
 
     @field_validator("org_type")
     @classmethod
@@ -80,6 +97,11 @@ class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str = Field(..., min_length=6, max_length=128)
 
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v):
+        return _password_without_nul(v)
+
 
 class UpdateProfileRequest(BaseModel):
     first_name: Optional[str] = Field(None, max_length=100)
@@ -115,6 +137,11 @@ class AcceptInviteRequest(BaseModel):
     password: str = Field(..., min_length=6, max_length=128)
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v):
+        return _password_without_nul(v)
 
     @field_validator("email")
     @classmethod
