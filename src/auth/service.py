@@ -1385,9 +1385,12 @@ class AuthService:
             # query such as "Иван Петров" finds the student too.
             for word in search.split():
                 pattern = f"%{word}%"
-                query = query.filter(
-                    (Student.first_name.ilike(pattern)) | (Student.last_name.ilike(pattern))
-                )
+                matches = (Student.first_name.ilike(pattern)) | (Student.last_name.ilike(pattern))
+                if any(ch.isdigit() for ch in word):
+                    # A word with a digit may be the public ID ("AL15-001"); names have
+                    # none, so a plain word never matches every ID of the centre.
+                    matches = matches | Student.display_id.ilike(pattern)
+                query = query.filter(matches)
         return query
 
     def list_students(
@@ -2788,11 +2791,11 @@ class AuthService:
         return self._build_org_response(org)
 
     def get_org_stats(self, org_id: str) -> dict:
-        """Краткая статистика организации для dashboard"""
+        """Краткая статистика организации для dashboard (total_students — без архивных)"""
         self._expire_due_diagnostic_invites(org_id)
         student_count = (
             self.db.query(func.count(Student.id))
-            .filter(Student.org_id == org_id)
+            .filter(Student.org_id == org_id, Student.status != "archived")
             .scalar()
             or 0
         )
