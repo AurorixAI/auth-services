@@ -293,3 +293,16 @@ def require_payments_settings(user: dict = Depends(require_org_owner)) -> dict:
     if not user.get("org_id"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет организации")
     return user
+
+
+# ─── Зарплата (N13 P3) ───
+
+
+def require_payroll_owner(user: dict = Depends(require_org_owner)) -> dict:
+    """Every payroll endpoint.  The owner only - an admin is refused even with the right to payments."""
+    if not user.get("org_id"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет организации")
+    # ``RoleChecker`` lets a superadmin through; a platform account is not the owner of the centre.
+    if user.get("org_role") != "owner":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Зарплата доступна только владельцу центра")
+    return user
