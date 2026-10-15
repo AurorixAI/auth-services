@@ -5,17 +5,30 @@ REST API: org application, login, invitations, students, diagnostics, groups
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, UploadFile, File
 from fastapi.responses import JSONResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import Literal, Optional
 from datetime import date, datetime
 import os
 
-from .service import AuthService, BUSINESS_TIMEZONE, MembershipConflict
+from .service import (
+    AuthService,
+    BUSINESS_TIMEZONE,
+    MembershipConflict,
+    verify_access_token,
+    verify_refresh_token,
+)
 from .attendance_access import is_org_admin, is_org_manager
 from . import import_service
 from .import_service import ImportPreviewResponse, ImportCommitResponse
 from src.api.rate_limit import rate_limit
-from .dependencies import AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME
+from .dependencies import (
+    ACCESS_COOKIE_MAX_AGE,
+    AUTH_COOKIE_NAME,
+    REFRESH_COOKIE_MAX_AGE,
+    REFRESH_COOKIE_NAME,
+    security,
+)
 from .schemas import (
     OrgApplicationRequest,
     LoginRequest,
@@ -62,7 +75,6 @@ from .schemas import (
     TeacherDashboardSummaryResponse,
 )
 from .dependencies import (
-    get_current_user_payload,
     get_current_active_user_payload,
     require_org_owner,
     require_org_admin,
@@ -85,8 +97,11 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 _IS_PROD = os.getenv("ENVIRONMENT", "development") == "production"
 _COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # e.g. ".algo.kz"
-_ACCESS_MAX_AGE = 3600  # 1 hour
-_REFRESH_MAX_AGE = 30 * 86400  # 30 days
+# Cookie lifetimes live next to the cookie names (dependencies.py). The access COOKIE is as
+# long-lived as the refresh cookie (30 days); the JWT inside expires after
+# JWT_ACCESS_TTL_MINUTES (60) on its own - see the comment there for why.
+_ACCESS_COOKIE_MAX_AGE = ACCESS_COOKIE_MAX_AGE
+_REFRESH_COOKIE_MAX_AGE = REFRESH_COOKIE_MAX_AGE
 
 
 def _set_auth_cookies(
@@ -101,7 +116,7 @@ def _set_auth_cookies(
         httponly=True,
         secure=_IS_PROD,
         samesite="lax",
-        max_age=_ACCESS_MAX_AGE,
+        max_age=_ACCESS_COOKIE_MAX_AGE,
         path="/",
         domain=_COOKIE_DOMAIN,
     )
@@ -111,7 +126,7 @@ def _set_auth_cookies(
         httponly=True,
         secure=_IS_PROD,
         samesite="lax",
-        max_age=_REFRESH_MAX_AGE,
+        max_age=_REFRESH_COOKIE_MAX_AGE,
         # Actual mount point is /api/v1/auth/* (see main_v2.py) — a plain
         # "/auth" prefix would never match, so the browser would never send
         # this cookie back to /api/v1/auth/refresh at all.
@@ -366,16 +381,50 @@ def change_password(
         raise HTTPException(400, str(e))
 
 
+def _clear_auth_cookies(response: JSONResponse) -> JSONResponse:
+    """Delete both browser cookies (same path/domain they were set with)."""
+    response.delete_cookie(AUTH_COOKIE_NAME, path="/", domain=_COOKIE_DOMAIN)
+    response.delete_cookie(REFRESH_COOKIE_NAME, path="/api/v1/auth", domain=_COOKIE_DOMAIN)
+    return response
+
+
+def _logout_subject(
+    request: Request, credentials: Optional[HTTPAuthorizationCredentials]
+) -> Optional[str]:
+    """Whose server-side refresh token to revoke, from whatever valid credential came along.
+
+    The access cookie now outlives the JWT inside it, so a logout request often carries an
+    expired access token. The refresh cookie (sent to /api/v1/auth/*) still identifies the
+    user then. Nothing identifiable -> None: the cookies are cleared all the same.
+    """
+    candidates = [request.cookies.get(AUTH_COOKIE_NAME), credentials.credentials if credentials else None]
+    for token in candidates:
+        payload = verify_access_token(token) if token else None
+        if payload and payload.get("sub"):
+            return str(payload["sub"])
+    refresh = request.cookies.get(REFRESH_COOKIE_NAME)
+    payload = verify_refresh_token(refresh) if refresh else None
+    if payload and payload.get("sub"):
+        return str(payload["sub"])
+    return None
+
+
 @router.post("/logout", response_model=MessageResponse)
 def logout(
-    payload: dict = Depends(get_current_user_payload), db: Session = Depends(get_db)
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: Session = Depends(get_db),
 ):
-    """Revoke the server refresh token and clear both browser cookies."""
-    _svc(db).logout(payload["sub"])
+    """Revoke the server refresh token and ALWAYS clear both browser cookies.
+
+    Works with an expired access token as well: a long-lived cookie holding a stale JWT must
+    never make "log out" a 401 that leaves both cookies in the browser.
+    """
+    user_id = _logout_subject(request, credentials)
+    if user_id:
+        _svc(db).logout(user_id)
     resp = JSONResponse(content=MessageResponse(message="Вы вышли из системы").model_dump())
-    resp.delete_cookie(AUTH_COOKIE_NAME, path="/", domain=_COOKIE_DOMAIN)
-    resp.delete_cookie(REFRESH_COOKIE_NAME, path="/api/v1/auth", domain=_COOKIE_DOMAIN)
-    return resp
+    return _clear_auth_cookies(resp)
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗

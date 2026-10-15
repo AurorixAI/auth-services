@@ -22,10 +22,37 @@ security = HTTPBearer(auto_error=False)
 AUTH_COOKIE_NAME = "algo_auth_token"
 REFRESH_COOKIE_NAME = "algo_refresh_token"
 
+# The refresh cookie lives 30 days (the refresh JWT's own lifetime). The ACCESS cookie lives
+# exactly as long: the JWT inside keeps its own short ``exp`` (60 minutes) and the server
+# rejects it with 401 once it is stale, which makes the client call /auth/refresh and retry.
+# If the cookie itself expired together with the JWT, the browser would send no credential
+# at all on the next page navigation and the Next.js middleware would send the user to the
+# login page before any client code could refresh the session.
+REFRESH_COOKIE_MAX_AGE = 30 * 86400
+ACCESS_COOKIE_MAX_AGE = REFRESH_COOKIE_MAX_AGE
+
 
 # ============================================================================
 # JWT EXTRACTION
 # ============================================================================
+
+
+def _credential_tokens(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials],
+) -> List[str]:
+    """Credentials of the request in the order they are tried: httpOnly cookie, then Bearer header.
+
+    The cookie outlives the access JWT it carries, so a stale cookie must not shadow a valid
+    Bearer header (the client sends the fresh token with the retry after a refresh).
+    """
+    tokens: List[str] = []
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
+    if cookie_token:
+        tokens.append(cookie_token)
+    if credentials and credentials.credentials:
+        tokens.append(credentials.credentials)
+    return tokens
 
 
 def get_current_user_payload(
@@ -35,34 +62,27 @@ def get_current_user_payload(
     """
     Извлекает и верифицирует JWT.
     Порядок: 1) httpOnly cookie  2) Authorization Bearer header.
+    Просроченный/невалидный токен в cookie даёт 401 (клиент обновит сессию через
+    /auth/refresh), а не 403/500; валидный Bearer при протухшей cookie принимается.
     """
-    token: Optional[str] = None
-
-    # 1. Try httpOnly cookie first
-    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
-    if cookie_token:
-        token = cookie_token
-
-    # 2. Fallback to Authorization header
-    if not token and credentials:
-        token = credentials.credentials
-
-    if not token:
+    tokens = _credential_tokens(request, credentials)
+    if not tokens:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Требуется аутентификация",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    payload = verify_access_token(token)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Невалидный или истёкший токен",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    for token in tokens:
+        payload = verify_access_token(token)
+        if payload:
+            return payload
 
-    return payload
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Невалидный или истёкший токен",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def get_current_active_user_payload(
@@ -150,21 +170,12 @@ def get_optional_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> Optional[dict]:
-    """Опциональная аутентификация — не падает если токена нет"""
-    token: Optional[str] = None
-
-    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
-    if cookie_token:
-        token = cookie_token
-    elif credentials:
-        token = credentials.credentials
-
-    if not token:
-        return None
-    payload = verify_access_token(token)
-    if not payload:
-        return None
-    return payload
+    """Опциональная аутентификация — не падает если токена нет или он просрочен"""
+    for token in _credential_tokens(request, credentials):
+        payload = verify_access_token(token)
+        if payload:
+            return payload
+    return None
 
 
 # ============================================================================

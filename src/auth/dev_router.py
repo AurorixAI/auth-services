@@ -4,8 +4,6 @@ ALGO V1 - Dev Router (Quick Login for Development)
 НЕ ИСПОЛЬЗОВАТЬ В PRODUCTION!
 """
 
-import os
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -20,7 +18,7 @@ from .service import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 from .schemas import AuthResponse, UserResponse, TokenPair, OrgResponse
-from .dependencies import AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME
+from .router import _set_auth_cookies
 
 from src.core.database import get_db
 
@@ -190,27 +188,6 @@ def dev_login(
     body = auth.model_dump(mode="json")
     resp = JSONResponse(content=body)
 
-    _is_prod = os.getenv("ENVIRONMENT", "development") == "production"
-    _cookie_domain = os.getenv("COOKIE_DOMAIN", None)
-
-    resp.set_cookie(
-        key=AUTH_COOKIE_NAME,
-        value=tokens.access_token,
-        httponly=True,
-        secure=_is_prod,
-        samesite="lax",
-        max_age=3600,
-        path="/",
-        domain=_cookie_domain,
-    )
-    resp.set_cookie(
-        key=REFRESH_COOKIE_NAME,
-        value=tokens.refresh_token,
-        httponly=True,
-        secure=_is_prod,
-        samesite="lax",
-        max_age=30 * 86400,
-        path="/api/v1/auth",
-        domain=_cookie_domain,
-    )
+    # One cookie policy for every sign-in path (flags, domain, lifetimes).
+    _set_auth_cookies(resp, tokens.access_token, tokens.refresh_token)
     return resp
