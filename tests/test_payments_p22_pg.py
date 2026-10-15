@@ -8,7 +8,7 @@ from sqlalchemy import event
 
 from src.auth import payment_status as ps
 from src.auth.payments_schemas import PaymentCreate
-from src.auth.payments_service import PaymentConflict, PaymentService
+from src.auth.payments_service import RECEIPT_ATTEMPTS, PaymentConflict, PaymentService
 from src.models.auth import (
     GroupAttendance, GroupScheduleOneOffLesson, StudentGroup, StudentPayment, StudentPaymentFile,
 )
@@ -337,6 +337,75 @@ def test_quote_lessons_package_full_and_non_standard_size(world):
     assert quote(world, paid_on=D(2026, 3, 5), lessons_count=7)["basis"] == "package"
 
 
+def test_quote_given_fee_replaces_the_saved_fee_for_the_calculation_only(world):
+    setup_mwf(world, fee=450_000, joined=datetime(2026, 3, 15, 6, 0))
+    saved = quote(world, paid_on=D(2026, 3, 17))
+    assert (saved["monthly_fee"], saved["suggested_amount"]) == (450_000, 242_000)
+    q = quote(world, paid_on=D(2026, 3, 17), monthly_fee=600_000)
+    assert q["monthly_fee"] == 600_000                                     # the fee that was used
+    assert q["suggested_amount"] == 323_000 and q["parts"][0]["amount"] == 323_000      # 600000 * 7 / 13 = 323 076
+    assert q["explanation"] == "Неполный месяц: 7 уроков из 13 по расписанию — 323 000 сум из 600 000"
+    assert world.db.get(StudentGroup, mid(world)).monthly_fee == 450_000   # nothing was written
+    assert quote(world, paid_on=D(2026, 3, 17))["monthly_fee"] == 450_000
+    assert quote(world, paid_on=D(2026, 3, 17), monthly_fee="")["monthly_fee"] == 450_000   # blank = not given
+    # a given fee of 0 is a fee (free), not "not given"
+    q = quote(world, paid_on=D(2026, 3, 17), monthly_fee=0)
+    assert (q["monthly_fee"], q["suggested_amount"]) == (0, 0)
+    assert q["explanation"] == "Оплата в месяц равна 0 — занятия бесплатные"
+    # a whole period and the other modes use it too
+    assert quote(world, paid_on=D(2026, 4, 2), monthly_fee=500_000)["suggested_amount"] == 500_000
+    set_settings(world, billing_anchor="payment_date")
+    assert quote(world, paid_on=D(2026, 3, 5), monthly_fee=520_000)["suggested_amount"] == 520_000
+    set_settings(world, period_mode="lessons", lessons_per_payment=12)
+    q = quote(world, paid_on=D(2026, 3, 5), lessons_count=6, monthly_fee=600_000)
+    assert (q["monthly_fee"], q["suggested_amount"], q["basis"]) == (600_000, 300_000, "package")
+
+
+def test_quote_given_fee_when_nothing_is_saved(world):
+    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
+    world.db.get(StudentGroup, mid(world)).monthly_fee = None
+    world.db.commit()
+    none = quote(world, paid_on=D(2026, 3, 17))
+    assert (none["monthly_fee"], none["suggested_amount"], none["basis"]) == (None, None, "none")
+    q = quote(world, paid_on=D(2026, 3, 17), monthly_fee=450_000)
+    assert (q["monthly_fee"], q["suggested_amount"], q["basis"]) == (450_000, 242_000, "lessons")
+    assert world.db.get(StudentGroup, mid(world)).monthly_fee is None      # still not saved
+
+
+def test_quote_given_fee_is_validated(world):
+    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
+    for bad in (-1, 10_000_000_001, "abc", "1.5"):
+        r = owner(world).get(f"{API}/org/memberships/{mid(world)}/payments/quote",
+                             params={"paid_on": "2026-03-17", "monthly_fee": bad})
+        assert r.status_code == 422, (bad, r.text)
+    q = quote(world, paid_on=D(2026, 3, 17), monthly_fee=10_000_000_000)
+    assert q["monthly_fee"] == 10_000_000_000
+    # a huge fee over many periods is refused as a suggestion, not crashed on
+    q = quote(world, paid_on=D(2026, 3, 17), valid_from=D(2026, 3, 1), valid_to=D(2027, 3, 31), monthly_fee=10_000_000_000)
+    assert (q["suggested_amount"], q["basis"]) == (None, "custom")
+    # permissions are the same as without it
+    url = f"{API}/org/memberships/{mid(world)}/payments/quote"
+    assert teacher_client(world).get(url, params={"paid_on": "2026-03-17", "monthly_fee": 1}).status_code == 403
+
+
+def test_explanations_name_the_package_in_lessons_mode(world):
+    setup_mwf(world, fee=600_000)
+    set_settings(world, period_mode="lessons", lessons_per_payment=12)
+    world.db.get(StudentGroup, mid(world)).monthly_fee = None
+    world.db.commit()
+    q = quote(world, paid_on=D(2026, 3, 5))
+    assert (q["basis"], q["explanation"]) == ("none", "Стоимость пакета не задана")
+    q = quote(world, paid_on=D(2026, 3, 5), monthly_fee=0)
+    assert q["explanation"] == "Стоимость пакета равна 0 — занятия бесплатные"
+    for given in (None, 600_000):
+        for count in (None, 5, 12):
+            q = quote(world, paid_on=D(2026, 3, 5), lessons_count=count, monthly_fee=given)
+            assert "месяц" not in q["explanation"].lower() and "оплата в месяц" not in q["explanation"].lower(), q
+    # the calendar wording stays
+    set_settings(world, period_mode="calendar", billing_anchor="payment_date")
+    assert quote(world, paid_on=D(2026, 3, 5))["explanation"] == "Оплата в месяц не задана"
+
+
 def test_quote_zero_fee_is_free(world):
     setup_mwf(world, fee=0, joined=datetime(2026, 3, 15, 6, 0))
     q = quote(world, paid_on=D(2026, 3, 17))
@@ -567,13 +636,13 @@ def test_a_taken_number_is_retried_with_the_new_maximum(world, monkeypatch):
     assert world.db.query(StudentPayment).filter_by(org_id=world.org.id).count() == 2
 
 
-def test_gives_up_after_five_conflicts_without_writing_anything(world, monkeypatch):
+def test_gives_up_after_ten_conflicts_without_writing_anything(world, monkeypatch):
     pay(world, paid_on=day(-3), valid_to=day(20), amount=1)
     calls = []
     monkeypatch.setattr(PaymentService, "_next_receipt_no", lambda self, org_id: calls.append(1) or 1)
     r = owner(world).post(f"{API}/org/memberships/{mid(world, world.students[1])}/payments",
                           json={"amount": 2, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat()})
-    assert r.status_code == 409 and "номер квитанции" in r.json()["detail"] and len(calls) == 5
+    assert r.status_code == 409 and "номер квитанции" in r.json()["detail"] and len(calls) == RECEIPT_ATTEMPTS == 10
     monkeypatch.undo()
     assert world.db.query(StudentPayment).filter_by(org_id=world.org.id).count() == 1
     ok = pay(world, world.students[1], paid_on=day(-3), valid_to=day(20), amount=2)["payment"]
@@ -775,6 +844,50 @@ def test_at_most_three_cheques_per_payment(world):
     r = owner(world).post(f"{API}/org/payments/{p['id']}/files", files={"file": ("x.png", PNG, "image/png")})
     assert r.status_code == 409 and r.json()["detail"] == "К оплате можно приложить не более 3 файлов"
     upload(world, other["id"])                                                # another payment has its own three
+
+
+def test_a_payment_that_cannot_take_a_cheque_is_refused_before_the_body_is_parsed(world, monkeypatch):
+    from starlette.requests import Request
+
+    full = pay(world, paid_on=day(-3), valid_to=day(20))["payment"]
+    for _ in range(3):
+        upload(world, full["id"])
+    voided = pay(world, world.students[1], paid_on=day(-3), valid_to=day(20))["payment"]
+    owner(world).post(f"{API}/org/payments/{voided['id']}/void", json={"reason": "ошибка"})
+
+    async def boom(self, *a, **k):
+        raise AssertionError("the multipart body must not be parsed")
+
+    monkeypatch.setattr(Request, "form", boom)
+    files = {"file": ("x.png", PNG, "image/png")}
+    r = owner(world).post(f"{API}/org/payments/{full['id']}/files", files=files)
+    assert r.status_code == 409 and r.json()["detail"] == "К оплате можно приложить не более 3 файлов"
+    r = owner(world).post(f"{API}/org/payments/{voided['id']}/files", files=files)
+    assert r.status_code == 409 and r.json()["detail"] == "Оплата аннулирована — чек прикрепить нельзя"
+    assert owner(world).post(f"{API}/org/payments/{uuid4()}/files", files=files).status_code == 404
+    foreign_owner = make_user(world.db, "owner")
+    make_member(world.db, world.other_org, foreign_owner, "owner")
+    world.db.commit()
+    fo = make_client(world, user=foreign_owner, org="other", org_role="owner")
+    assert fo.post(f"{API}/org/payments/{full['id']}/files", files=files).status_code == 404   # not this centre's
+    # the access check still comes first
+    assert teacher_client(world).post(f"{API}/org/payments/{full['id']}/files", files=files).status_code == 403
+    monkeypatch.undo()
+    assert nfiles(world) == 3
+
+
+def test_precheck_does_not_replace_the_checks_under_the_lock(world):
+    """A payment that looks free to the early check can still be refused when the upload reaches the lock."""
+    p = pay(world, paid_on=day(-3), valid_to=day(20))["payment"]
+    service = PaymentService(world.db)
+    service.precheck_file_upload(str(world.org.id), p["id"])           # fine now
+    for _ in range(3):
+        upload(world, p["id"])
+    r = owner(world).post(f"{API}/org/payments/{p['id']}/files", files={"file": ("x.png", PNG, "image/png")})
+    assert r.status_code == 409
+    # a malformed body on a good payment is still the 422 of the parser
+    q = pay(world, world.students[1], paid_on=day(-3), valid_to=day(20))["payment"]
+    assert owner(world).post(f"{API}/org/payments/{q['id']}/files", data={"file": "nope"}).status_code == 422
 
 
 def test_concurrent_uploads_cannot_exceed_the_limit(world, engine):

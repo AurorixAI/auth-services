@@ -23,6 +23,7 @@ from src.core.database import get_db
 from .dependencies import require_payments_access, require_payments_settings
 from .payments_files import MAX_BODY_BYTES, MAX_FILE_BYTES, file_headers
 from .payments_schemas import (
+    MAX_MONEY,
     FeeUpdate,
     MembershipPaymentRow,
     PaymentCreate,
@@ -153,16 +154,19 @@ def payment_quote(
     valid_from: Annotated[Optional[date], BeforeValidator(_blank_to_none)] = None,
     valid_to: Annotated[Optional[date], BeforeValidator(_blank_to_none)] = None,
     lessons_count: Annotated[Optional[Annotated[int, Field(ge=1, le=120)]], BeforeValidator(_blank_to_none)] = None,
+    monthly_fee: Annotated[Optional[Annotated[int, Field(ge=0, le=MAX_MONEY)]], BeforeValidator(_blank_to_none)] = None,
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Подсказка периода и суммы для формы оплаты; ничего не записывает.
 
-    Даты по умолчанию считаются тем же кодом, что при внесении оплаты; ошибки — те же 422."""
+    Даты по умолчанию считаются тем же кодом, что при внесении оплаты; ошибки — те же 422.
+    ``monthly_fee`` (необязательно) заменяет сохранённую «оплату в месяц» только для этого расчёта;
+    в ответе ``monthly_fee`` — та сумма, по которой считали."""
     try:
         return PaymentService(db).quote(
             user["org_id"], membership_id, paid_on=paid_on, valid_from=valid_from,
-            valid_to=valid_to, lessons_count=lessons_count,
+            valid_to=valid_to, lessons_count=lessons_count, monthly_fee=monthly_fee,
         )
     except PaymentError as exc:
         raise _http(exc)
@@ -263,6 +267,13 @@ async def upload_payment_file(
         raise HTTPException(411, "Не указан размер файла")
     if declared > MAX_BODY_BYTES:
         raise HTTPException(413, "Файл слишком большой (макс. 2 МБ)")
+    service = PaymentService(db)
+    try:
+        # A payment that cannot take a cheque (unknown, voided, a carry-over, already three) is refused
+        # BEFORE the multipart body is parsed.  Blocking DB work runs in the thread pool.
+        await run_in_threadpool(service.precheck_file_upload, user["org_id"], payment_id)
+    except PaymentError as exc:
+        raise _http(exc)
     form = await request.form()
     try:
         upload = form.get("file")
@@ -274,9 +285,9 @@ async def upload_payment_file(
     finally:
         await form.close()
     try:
-        # Blocking DB work runs in the thread pool, not on the event loop.
+        # The authoritative check (under the row lock) is in add_file.
         return await run_in_threadpool(
-            PaymentService(db).add_file, user["org_id"], payment_id, user["user_id"], data, filename
+            service.add_file, user["org_id"], payment_id, user["user_id"], data, filename
         )
     except PaymentError as exc:
         raise _http(exc)

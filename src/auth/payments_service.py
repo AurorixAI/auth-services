@@ -95,7 +95,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_REPLACE_REASON = "Исправлено"
 UNIQUE_DUP_INDEX = "uq_student_payments_active_dup"
 RECEIPT_INDEX = "uq_student_payments_receipt_no"
-RECEIPT_ATTEMPTS = 5  # max+1 under a SAVEPOINT; a conflict with a concurrent payment takes the next number
+FILE_ON_CARRY_OVER = "К переносу оплаты чек не прикрепляется — это не денежная операция"
+FILE_ON_VOIDED = "Оплата аннулирована — чек прикрепить нельзя"
+FILE_LIMIT = f"К оплате можно приложить не более {MAX_FILES_PER_PAYMENT} файлов"
+RECEIPT_ATTEMPTS = 10  # max+1 under a SAVEPOINT; a conflict with a concurrent payment takes the next number
 
 # Carry-over on transfer (N13 P2.1).
 CARRY_CODE = "payment_carried_over"
@@ -1334,8 +1337,13 @@ class PaymentService:
         valid_from: Optional[date] = None,
         valid_to: Optional[date] = None,
         lessons_count: Optional[int] = None,
+        monthly_fee: Optional[int] = None,
     ) -> PaymentQuote:
         """Suggested dates and amount for a payment of this membership.  Reads only, writes nothing.
+
+        ``monthly_fee`` (the fee typed in the form, e.g. together with the first payment of a new student)
+        replaces the saved fee of the membership for this calculation only; the answer's ``monthly_fee`` is
+        the fee that was actually used.
 
         The dates come from ``_resolve_period`` - the code that saves a payment - and fail with the same 422
         texts.  The amount rules (``PaymentSettings`` of the centre, ``monthly_fee`` of the membership):
@@ -1357,14 +1365,19 @@ class PaymentService:
             settings=settings, live=self._live_payments(org_id, membership.id), today=today,
             membership_start=self._membership_start(membership),
         )
-        fee = int(membership.monthly_fee) if membership.monthly_fee is not None else None
+        if monthly_fee is not None:
+            fee = int(monthly_fee)
+        else:
+            fee = int(membership.monthly_fee) if membership.monthly_fee is not None else None
+        # "Оплата в месяц" for a calendar period, "Стоимость пакета" for a lessons package.
+        price_name = "Оплата в месяц" if end is not None else "Стоимость пакета"
         fixed = end is not None and self._fixed_day(settings)
         partial = fixed and ps.is_partial_period(start, end, settings.billing_day)
         parts: List[ps.QuotePart] = []
         amount: Optional[int] = None
 
         if fee is None:
-            basis, explanation = "none", "Оплата в месяц не задана"
+            basis, explanation = "none", f"{price_name} не задана"
         elif end is None:  # a lessons package
             per = settings.lessons_per_payment
             amount = fee if count == per else ps.round_1000(fee * count, per)
@@ -1396,7 +1409,7 @@ class PaymentService:
                 amount, basis = total, ps.quote_basis(parts)
                 explanation = self._explain_parts(parts, fee, total, today)
         if fee == 0 and amount == 0:
-            explanation = "Оплата в месяц равна 0 — занятия бесплатные"
+            explanation = f"{price_name} равна 0 — занятия бесплатные"
 
         return PaymentQuote(
             mode=ps.CALENDAR if end is not None else ps.LESSONS,
@@ -1475,7 +1488,11 @@ class PaymentService:
         # The correction chain: this payment replaced another one / was replaced by another one.
         replaced_by = (
             self.db.query(StudentPayment.receipt_no)
-            .filter(StudentPayment.org_id == org_id, StudentPayment.replaces_payment_id == payment.id)
+            .filter(
+                StudentPayment.org_id == org_id,
+                StudentPayment.membership_id == payment.membership_id,  # a correction stays in its membership
+                StudentPayment.replaces_payment_id == payment.id,
+            )
             .order_by(StudentPayment.created_at.desc(), StudentPayment.id)
             .first()
         )
@@ -1512,6 +1529,32 @@ class PaymentService:
             replaces_receipt_no=replaces[0] if replaces else None,
         )
 
+    def precheck_file_upload(self, org_id: str, payment_id: UUID) -> None:
+        """Whether a cheque could be attached right now, WITHOUT a lock - asked before the upload body is
+        parsed, so a request that cannot succeed costs nothing.  The authoritative check is ``add_file``
+        under the row lock; this one only answers early: unknown payment 404, carry-over / voided / three
+        cheques already 409."""
+        payment = (
+            self.db.query(StudentPayment)
+            .filter(StudentPayment.id == payment_id, StudentPayment.org_id == org_id)
+            .populate_existing()
+            .first()
+        )
+        if payment is None:
+            raise PaymentNotFound("Оплата не найдена")
+        if payment.carried_from_payment_id is not None:
+            raise PaymentConflict(FILE_ON_CARRY_OVER)
+        if payment.voided_at is not None:
+            raise PaymentConflict(FILE_ON_VOIDED)
+        count = (
+            self.db.query(func.count(StudentPaymentFile.id))
+            .filter(StudentPaymentFile.payment_id == payment.id)
+            .scalar()
+            or 0
+        )
+        if count >= MAX_FILES_PER_PAYMENT:
+            raise PaymentConflict(FILE_LIMIT)
+
     @deadlock_guard
     def add_file(
         self, org_id: str, payment_id: UUID, actor_id: str, data: bytes, filename: Optional[str]
@@ -1521,7 +1564,7 @@ class PaymentService:
         try:
             probe = self._probe_payment(org_id, payment_id)
             if probe.carried_from_payment_id is not None:
-                raise PaymentConflict("К переносу оплаты чек не прикрепляется — это не денежная операция")
+                raise PaymentConflict(FILE_ON_CARRY_OVER)
             # Serialises uploads to one payment (the count below) with a void / replace of it.  Only this
             # row is locked, FOR NO KEY UPDATE: the insert of the file (a foreign key = FOR KEY SHARE) does
             # not wait for it, and nothing else is taken afterwards, so no lock order can be inverted.
@@ -1535,7 +1578,7 @@ class PaymentService:
             if payment is None:
                 raise PaymentNotFound("Оплата не найдена")
             if payment.voided_at is not None:
-                raise PaymentConflict("Оплата аннулирована — чек прикрепить нельзя")
+                raise PaymentConflict(FILE_ON_VOIDED)
             if not data:
                 raise PaymentInvalid("Файл пустой")
             if len(data) > MAX_FILE_BYTES:
@@ -1550,7 +1593,7 @@ class PaymentService:
                 or 0
             )
             if count >= MAX_FILES_PER_PAYMENT:
-                raise PaymentConflict(f"К оплате можно приложить не более {MAX_FILES_PER_PAYMENT} файлов")
+                raise PaymentConflict(FILE_LIMIT)
             file_id = uuid4()
             stored = StudentPaymentFile(
                 id=file_id,
