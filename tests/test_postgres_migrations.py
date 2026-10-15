@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
+HEAD='v2w3x4y5z6a'   # the newest revision: N13 password recovery
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
 
 
@@ -46,13 +47,14 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     with engine.connect() as connection:
         assert connection.execute(text('SELECT name FROM organizations WHERE id=:id'),{'id':ids['org']}).scalar_one()=='Migration sentinel'
         assert connection.execute(text('SELECT count(*) FROM student_groups WHERE id=:id'),{'id':ids['membership']}).scalar_one()==1
-        assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='u1v2w3x4y5z'
+        assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
     assert 'student_payments' in set(inspect(engine).get_table_names())
     assert {'monthly_fee','monthly_fee_updated_by','monthly_fee_updated_at','transferred_at'} <= {c['name'] for c in inspect(engine).get_columns('student_groups')}
     _check_n13_p1_objects(engine,config,ids)
     _check_n13_p2_objects(engine,config,ids)
     _check_n13_p21_objects(engine,config,ids)
     _check_n13_p22_objects(engine,config,ids)
+    _check_n13_pw_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -111,7 +113,7 @@ def _check_n13_p1_objects(engine,config,ids):
     command.stamp(config,'r8s9t0u1v2w')
     command.upgrade(config,'head')
     with engine.connect() as c:
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='u1v2w3x4y5z'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
         # Backfill restores the snapshot from the group's current teacher.
         assert c.execute(text('SELECT teacher_id FROM group_attendance WHERE id=:a'),params).scalar_one()==teacher
 
@@ -174,7 +176,7 @@ def _check_n13_p2_objects(engine,config,ids):
     with engine.connect() as c:
         assert c.execute(text('SELECT count(*) FROM student_payments')).scalar_one()==0
         assert c.execute(text('SELECT monthly_fee FROM student_groups WHERE id=:m'),params).scalar_one() is None
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='u1v2w3x4y5z'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
 
 
 def _check_n13_p21_objects(engine,config,ids):
@@ -239,7 +241,7 @@ def _check_n13_p21_objects(engine,config,ids):
     command.upgrade(config,'head')
     assert {'carried_from_payment_id','carried_out_at'} <= cols()
     with engine.connect() as c:
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='u1v2w3x4y5z'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
         assert c.execute(text('SELECT count(*) FROM student_payments WHERE org_id=:o'),params).scalar_one()==4
         assert c.execute(text('SELECT carried_from_payment_id FROM student_payments WHERE id=:c'),params).scalar_one() is None
 
@@ -285,7 +287,7 @@ def _check_n13_p22_objects(engine,config,ids):
         version=c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()
     # by created_at inside each organisation, the voided one included, the carry-over without a number
     assert numbers=={'a3':1,'a1':2,'a2':3,'carry':None,'a4':4,'b1':1,'b2':2}, numbers
-    assert partial==0 and version=='u1v2w3x4y5z'
+    assert partial==0 and version==HEAD
     # new rows: NULL receipt allowed (carry-over), partial_period defaults to false, numbers are unique per centre only
     with engine.begin() as c:
         c.execute(text("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,valid_from,valid_to,created_by,receipt_no) VALUES (gen_random_uuid(),:o,:m,:s,:g,9,'2026-12-01','2026-12-01','2026-12-31',:u,5)"),{'o':org,'m':m,'s':s,'g':g,'u':actor})
@@ -325,8 +327,70 @@ def _check_n13_p22_objects(engine,config,ids):
     command.stamp(config,'t1u2v3w4x5y')
     command.upgrade(config,'head')
     with engine.connect() as c:
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='u1v2w3x4y5z'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
         again=[n for (n,) in c.execute(text('SELECT receipt_no FROM student_payments WHERE org_id=:o AND receipt_no IS NOT NULL ORDER BY receipt_no'),{'o':org})]
         assert again==sorted(again) and len(again)==len(set(again)) and len(again)==7      # renumbered once by the downgrade/upgrade, consistently; the carry-over has none
         assert c.execute(text('SELECT count(*) FROM student_payment_files')).scalar_one()==0
 
+
+def _check_n13_pw_objects(engine,config,ids):
+    """N13 password recovery: token table guards, cascades, the revocation column, idempotent, round trip."""
+    from sqlalchemy.exc import IntegrityError
+    from src.models.auth import User
+    issuer,member=uuid4(),uuid4()
+    with Session(engine) as db:
+        for uid,role in ((issuer,'owner'),(member,'teacher')):
+            db.add(User(id=uid,email=f'{uid}@m.invalid',password_hash='synthetic-only',first_name='W',last_name='W',role=role))
+        db.commit()
+    def cols(table): return {c['name']:c for c in inspect(engine).get_columns(table)}
+    def index_names(): return {ix['name'] for ix in inspect(engine).get_indexes('password_reset_tokens')}
+    assert {'id','user_id','token_hash','purpose','created_by','created_at','expires_at','used_at','ip'} == set(cols('password_reset_tokens'))
+    assert 'idx_password_reset_tokens_user' in index_names()
+    for table,column in (('password_reset_tokens','created_at'),('password_reset_tokens','expires_at'),('password_reset_tokens','used_at'),('users','sessions_valid_after')):
+        assert cols(table)[column]['type'].timezone is True, (table,column)    # instants, not wall-clock times
+    assert cols('users')['sessions_valid_after']['nullable'] is True
+    params={'u':member,'by':issuer}
+    insert=("INSERT INTO password_reset_tokens (id,user_id,token_hash,purpose,created_by,expires_at) "
+            "VALUES (gen_random_uuid(),{user},'{hash}','{purpose}',{by},now() + interval '1 hour')")
+    def row(hash='h1',purpose='email',user=':u',by='NULL'): return insert.format(user=user,hash=hash,purpose=purpose,by=by)
+    with engine.begin() as c:
+        c.execute(text(row('h1','email')),params)
+        c.execute(text(row('h2','issued',by=':by')),params)
+    with engine.connect() as c:
+        assert c.execute(text("SELECT created_at IS NOT NULL AND used_at IS NULL AND ip IS NULL FROM password_reset_tokens WHERE token_hash='h1'")).scalar_one() is True
+    bad={
+        'duplicate token hash':row('h1','email'),
+        'unknown purpose':row('h3','sms'),
+        'unknown user':row('h4','email',user='gen_random_uuid()'),
+        'unknown issuer':row('h5','issued',by='gen_random_uuid()'),
+    }
+    for name,sql in bad.items():
+        with pytest.raises(IntegrityError,match='.'):
+            with engine.begin() as c:
+                c.execute(text(sql),params)
+    # The issuer's account may go; the link keeps working (created_by -> NULL). The user's account takes the links along.
+    with engine.begin() as c:
+        c.execute(text('DELETE FROM users WHERE id=:by'),params)
+    with engine.connect() as c:
+        assert c.execute(text("SELECT created_by FROM password_reset_tokens WHERE token_hash='h2'")).scalar_one() is None
+        assert c.execute(text('SELECT count(*) FROM password_reset_tokens WHERE user_id=:u'),params).scalar_one()==2
+    # Round trip: the downgrade drops the table and the column, keeps the accounts.
+    command.downgrade(config,'u1v2w3x4y5z')
+    assert 'password_reset_tokens' not in set(inspect(engine).get_table_names())
+    assert 'sessions_valid_after' not in cols('users')
+    with engine.connect() as c:
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='u1v2w3x4y5z'
+        assert c.execute(text('SELECT count(*) FROM users WHERE id=:u'),params).scalar_one()==1
+    command.upgrade(config,'head')
+    command.upgrade(config,'head')  # idempotent re-run
+    assert 'password_reset_tokens' in set(inspect(engine).get_table_names()) and 'sessions_valid_after' in cols('users')
+    with engine.connect() as c:
+        assert c.execute(text('SELECT count(*) FROM password_reset_tokens')).scalar_one()==0     # links are disposable
+    # Everything exists already (a database built from the models): the revision must neither fail nor lose rows.
+    with engine.begin() as c:
+        c.execute(text(row('h9','email')),params)
+    command.stamp(config,'u1v2w3x4y5z')
+    command.upgrade(config,'head')
+    with engine.connect() as c:
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+        assert c.execute(text("SELECT count(*) FROM password_reset_tokens WHERE token_hash='h9'")).scalar_one()==1

@@ -10,6 +10,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from .password_policy import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH
+
 
 # ============================================================================
 # ORG APPLICATION (заявка на регистрацию организации)
@@ -29,7 +31,7 @@ class OrgApplicationRequest(BaseModel):
 
     # Владелец (первый пользователь)
     email: str = Field(..., min_length=5, max_length=255)
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
     language: str = Field(default="ru")
@@ -65,6 +67,9 @@ class OrgApplicationRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=255)
     password: str = Field(..., min_length=1, max_length=128)
+    # «Запомнить меня»: false → the auth cookies are browser-session cookies (gone when the browser
+    # closes). Old clients do not send it: true, the 30-day cookies they always had.
+    remember: Optional[bool] = True
 
     @field_validator("email")
     @classmethod
@@ -78,7 +83,7 @@ class RefreshTokenRequest(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
-    new_password: str = Field(..., min_length=6, max_length=128)
+    new_password: str = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
 
 
 class UpdateProfileRequest(BaseModel):
@@ -112,7 +117,7 @@ class AcceptInviteRequest(BaseModel):
 
     code: str = Field(..., min_length=4, max_length=20)
     email: str = Field(..., min_length=5, max_length=255)
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
 

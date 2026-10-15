@@ -248,7 +248,7 @@ def create_access_token(
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def create_refresh_token(user_id: str) -> str:
+def create_refresh_token(user_id: str, remember: bool = True) -> str:
     expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     payload = {
         "sub": user_id,
@@ -257,6 +257,10 @@ def create_refresh_token(user_id: str) -> str:
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
+    if not remember:
+        # «Запомнить меня» is off: the cookies of this session die with the browser, and every
+        # rotation of the refresh token keeps that mode (cookies.remember_from_refresh_token).
+        payload["rem"] = False
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
@@ -348,10 +352,10 @@ class AuthService:
             created_at=org.created_at.isoformat() if org.created_at else None,
         )
 
-    def _create_tokens(self, user: User) -> TokenPair:
+    def _create_tokens(self, user: User, remember: bool = True) -> TokenPair:
         org_id, org_role, _ = self._get_user_org_info(user)
         access = create_access_token(str(user.id), user.role, org_id, org_role)
-        refresh = create_refresh_token(str(user.id))
+        refresh = create_refresh_token(str(user.id), remember=remember)
         user.refresh_token_hash = hash_token(refresh)
         return TokenPair(
             access_token=access,
@@ -563,7 +567,7 @@ class AuthService:
         user.last_login_at = datetime.now(timezone.utc)
         user.login_count = (user.login_count or 0) + 1
 
-        tokens = self._create_tokens(user)
+        tokens = self._create_tokens(user, remember=request.remember is not False)
         self.db.commit()
 
         logger.info(f"User logged in: {user.email}")
@@ -599,7 +603,8 @@ class AuthService:
         if user.refresh_token_hash != hash_token(refresh_token):
             raise ValueError("Refresh token отозван")
 
-        tokens = self._create_tokens(user)
+        # Rotation keeps the mode of the session: no «Запомнить меня» stays a browser-session login.
+        tokens = self._create_tokens(user, remember=payload.get("rem") is not False)
         self.db.commit()
         return tokens
 

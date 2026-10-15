@@ -9,9 +9,13 @@ The ACCESS cookie lives exactly as long: the JWT inside keeps its own short ``ex
 client call /auth/refresh and retry. If the cookie expired together with the JWT, the browser would send no
 credential at all on the next page navigation and the Next.js middleware would send the user to the login
 page before any client code could refresh the session.
+
+«Запомнить меня» off: both cookies are BROWSER-SESSION cookies (no Max-Age / Expires): the browser drops
+them when it closes. The mode lives in the refresh JWT (claim ``rem: false``), so every rotation of the
+refresh token (``/auth/refresh``) keeps it without the client having to say it again.
 """
 import os
-from typing import TypeVar
+from typing import Optional, TypeVar
 
 from starlette.responses import Response
 
@@ -41,15 +45,33 @@ def access_cookie_max_age() -> int:
     return refresh_cookie_max_age()
 
 
-def set_auth_cookies(response: R, access_token: str, refresh_token: str) -> R:
-    """Attach the httpOnly JWT cookies to *response*."""
+def remember_from_refresh_token(refresh_token: str) -> bool:
+    """False only for a refresh JWT of a login WITHOUT «Запомнить меня» (claim ``rem`` is false).
+
+    Everything else - tokens issued before the option existed, a token that cannot be read - is the
+    long-lived default. The tokens passed here were signed by this service a moment ago.
+    """
+    payload = _tokens.decode_token(refresh_token)
+    return not (payload and payload.get("rem") is False)
+
+
+def set_auth_cookies(
+    response: R, access_token: str, refresh_token: str, remember: Optional[bool] = None
+) -> R:
+    """Attach the httpOnly JWT cookies to *response*.
+
+    *remember* False makes both of them browser-session cookies; None (the callers' default) reads the
+    mode from the refresh token itself.
+    """
+    if remember is None:
+        remember = remember_from_refresh_token(refresh_token)
     response.set_cookie(
         key=AUTH_COOKIE_NAME,
         value=access_token,
         httponly=True,
         secure=_IS_PROD,
         samesite="lax",
-        max_age=access_cookie_max_age(),
+        max_age=access_cookie_max_age() if remember else None,
         path=AUTH_COOKIE_PATH,
         domain=_COOKIE_DOMAIN,
     )
@@ -59,7 +81,7 @@ def set_auth_cookies(response: R, access_token: str, refresh_token: str) -> R:
         httponly=True,
         secure=_IS_PROD,
         samesite="lax",
-        max_age=refresh_cookie_max_age(),
+        max_age=refresh_cookie_max_age() if remember else None,
         path=REFRESH_COOKIE_PATH,
         domain=_COOKIE_DOMAIN,
     )
