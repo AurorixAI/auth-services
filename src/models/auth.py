@@ -985,6 +985,12 @@ class StudentPayment(Base):
     voided_at = Column(DateTime, nullable=True)
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     void_reason = Column(String(500), nullable=True)
+    # N13 P2.2: the receipt number, 1, 2, 3... inside the organisation (never reused, also not after a
+    # void).  NULL for a carry-over (it is not money).  A replacement gets a new number.
+    receipt_no = Column(Integer, nullable=True)
+    # N13 P2.2: with one payment day for the centre, the payment did not cover whole periods of the
+    # centre (a student who came mid-month).  Honest history: settings changes do not touch it.
+    partial_period = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     membership = relationship("StudentGroup")
 
@@ -1020,6 +1026,14 @@ class StudentPayment(Base):
             "carried_from_payment_id",
             postgresql_where=text("carried_from_payment_id IS NOT NULL"),
         ),
+        # Receipt numbers are unique inside the organisation; the service takes max+1 and retries.
+        Index(
+            "uq_student_payments_receipt_no",
+            "org_id",
+            "receipt_no",
+            unique=True,
+            postgresql_where=text("receipt_no IS NOT NULL"),
+        ),
         # Double-click guard: an identical live payment cannot be inserted twice.  Carry-overs
         # made from different payments are different payments (A -> B -> A -> B in one day).
         Index(
@@ -1035,4 +1049,32 @@ class StudentPayment(Base):
             unique=True,
             postgresql_where=text("voided_at IS NULL"),
         ),
+    )
+
+
+class StudentPaymentFile(Base):
+    """Фото или скан чека к оплате (JPEG/PNG/PDF, до 2 МБ, до 3 на оплату, хранится в БД)."""
+
+    __tablename__ = "student_payment_files"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), nullable=False)
+    payment_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("student_payments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    filename = Column(String(200))
+    content_type = Column(String(50), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    data = Column(LargeBinary, nullable=False)
+    uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    uploaded_at = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "size_bytes > 0 AND size_bytes <= 2097152",
+            name="ck_student_payment_file_size",
+        ),
+        Index("idx_student_payment_files_payment", "payment_id"),
     )
