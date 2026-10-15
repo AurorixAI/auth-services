@@ -493,3 +493,18 @@ def test_a_lessons_package_that_moved_has_nothing_left_for_the_deadline():
     outside = excuse_deadline(lesson_date=date(2026, 10, 20), today=TODAY, payments=[package],
                               counted_dates=taken, lesson_counted=False, deadline_days=5, deadline_lessons=2)
     assert outside["kind"] == "date" and outside["date"] == "2026-10-31"
+
+
+def test_a_moved_package_is_measured_against_the_live_remainder_of_its_chain():
+    base = rec(date(2026, 9, 1), lessons=12)
+    package = ps.PaymentRecord(
+        paid_on=base.paid_on, valid_from=base.valid_from, lessons_count=12, created_at=base.created_at,
+        carried_out_at=__import__("datetime").datetime(2026, 10, 15, 10, 0), moved_left=2, moved_size=12,
+    )
+    taken = [date(2026, 9, 5), date(2026, 9, 8)]
+    result = excuse_deadline(lesson_date=date(2026, 9, 8), today=TODAY, payments=[package], counted_dates=taken,
+                             lesson_counted=True, deadline_days=5, deadline_lessons=2)
+    assert result == {"kind": "lessons", "lessons_left": 2, "urgent": True, "due_now": True, "overdue": False}
+    more = ps.PaymentRecord(**{**package.__dict__, "moved_left": 7})
+    assert excuse_deadline(lesson_date=date(2026, 9, 8), today=TODAY, payments=[more], counted_dates=taken,
+                           lesson_counted=True, deadline_days=5, deadline_lessons=2)["urgent"] is False

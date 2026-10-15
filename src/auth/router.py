@@ -73,6 +73,9 @@ from .dependencies import (
     has_payments_access,
 )
 
+from sqlalchemy.exc import OperationalError
+
+from .payments_service import CONCURRENT_EDIT_MESSAGE, is_deadlock
 from src.core.database import get_db
 from src.api.internal_router import require_internal_service_token
 
@@ -836,6 +839,14 @@ def update_group(
         raise HTTPException(400, str(e))
 
 
+def _concurrent_edit_or_raise(exc: OperationalError, db: Session) -> HTTPException:
+    """A PostgreSQL deadlock with another edit of the same student is a 409 to repeat, never a 500."""
+    if not is_deadlock(exc):
+        raise exc
+    db.rollback()
+    return HTTPException(status.HTTP_409_CONFLICT, CONCURRENT_EDIT_MESSAGE)
+
+
 def _check_fee_right(monthly_fee: Optional[int], user: dict, db: Session) -> None:
     """The amount is money: only a caller with the payments right may send it."""
     if monthly_fee is not None:
@@ -862,6 +873,8 @@ def bulk_add_students(
             mode=mode, monthly_fee=request.monthly_fee, actor_id=user["user_id"],
             payments_detail=has_payments_access(user, db),
         )
+    except OperationalError as e:
+        raise _concurrent_edit_or_raise(e, db)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -886,6 +899,8 @@ def add_student_to_group(
         )
     except MembershipConflict as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    except OperationalError as e:
+        raise _concurrent_edit_or_raise(e, db)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

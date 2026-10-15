@@ -424,3 +424,59 @@ def test_warnings_see_the_end_of_a_moved_payment():
     codes = [w.code for w in ps.payment_warnings(
         today=TODAY, paid_on=TODAY, valid_from=days(0), valid_to=days(30), existing=[gone])]
     assert "overlaps_previous" in codes
+
+
+# ---- live capacity of a package that travels (N13 P2.1) --------------------------------
+
+
+def chain_record(pid, membership, count, valid_from, source=None, moved_day=None, created=0, late=0):
+    return PaymentRecord(
+        paid_on=days(-20), valid_from=valid_from, lessons_count=count,
+        created_at=datetime(2026, 9, 1) + timedelta(seconds=created), id=pid, membership_id=membership,
+        carried_from_id=source, carried_out_at=at(moved_day) if moved_day else None, carried_out_late=late,
+    )
+
+
+def test_carry_over_capacity_is_the_source_capacity_minus_what_the_source_took():
+    # 6 lessons in A; A held 2 lessons before the move on day -5, B holds 1 afterwards
+    p = chain_record("P", "A", 6, days(-20), moved_day=days(-5))
+    c = chain_record("C", "B", 99, days(-5), source="P", created=1)            # the stored number is only a hint
+    records, taken, left = ps.resolve_lesson_chains([p, c], {"A": [days(-9), days(-8)], "B": [days(-2)]})
+    assert records["C"].lessons_count == 4 and len(taken["P"]) == 2 and len(taken["C"]) == 1
+    assert left["C"] == 3 and left["P"] == 4                       # P: what travelled on
+    assert len(taken["P"]) + left["C"] + len(taken["C"]) == 6       # conserved
+    # one more lesson of A (before the move) is reconciled late: the live package loses it
+    records, taken, left = ps.resolve_lesson_chains([p, c], {"A": [days(-9), days(-8), days(-7)], "B": [days(-2)]})
+    assert (len(taken["P"]), left["C"]) == (3, 2)
+    # ... and a lesson that turns out excused is given back
+    records, taken, left = ps.resolve_lesson_chains([p, c], {"A": [days(-9)], "B": [days(-2)]})
+    assert (len(taken["P"]), left["C"]) == (1, 4)
+
+
+def test_chain_through_three_memberships_and_back():
+    p = chain_record("P", "A", 6, days(-20), moved_day=days(-8))
+    c1 = chain_record("C1", "B", 0, days(-8), source="P", moved_day=days(-4), created=1)
+    c2 = chain_record("C2", "A", 0, days(-4), source="C1", moved_day=days(-1), created=2)
+    c3 = chain_record("C3", "B", 0, days(-1), source="C2", created=3)
+    pools = {"A": [days(-10), days(-9), days(-2)], "B": [days(-6)]}      # 2 in A, 1 in B, 1 in A again
+    records, taken, left = ps.resolve_lesson_chains([p, c1, c2, c3], pools)
+    assert [len(taken[x]) for x in ("P", "C1", "C2", "C3")] == [2, 1, 1, 0]
+    assert left["C3"] == 2 and sum(len(t) for t in taken.values()) + left["C3"] == 6
+    assert records["P"].moved_left == 2 and records["P"].moved_size == 6      # follows the chain to the live package
+    assert records["C2"].moved_left == 2 and records["C3"].moved_left is None
+
+
+def test_package_without_a_known_source_keeps_its_own_count_and_an_exhausted_one_gives_nothing():
+    orphan = chain_record("X", "B", 3, days(-3), source="gone")
+    records, taken, left = ps.resolve_lesson_chains([orphan], {"B": [days(-1)]})
+    assert records["X"].lessons_count == 3 and left["X"] == 2
+    p = chain_record("P", "A", 2, days(-20), moved_day=days(-5))
+    c = chain_record("C", "B", 5, days(-5), source="P", created=1)
+    records, _, left = ps.resolve_lesson_chains([p, c], {"A": [days(-9), days(-8), days(-7)], "B": []})
+    assert records["C"].lessons_count == 0 and left["C"] == 0        # the package was used up before the move
+
+
+def test_a_moved_package_without_a_live_chain_has_nothing_left():
+    p = chain_record("P", "A", 6, days(-20), moved_day=days(-5))
+    records, _, _ = ps.resolve_lesson_chains([p], {"A": [days(-9)]})
+    assert (records["P"].moved_left, records["P"].moved_size) == (0, 6)

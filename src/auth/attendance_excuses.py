@@ -725,6 +725,7 @@ class AttendanceExcuseService:
                     StudentPayment.lessons_count,
                     StudentPayment.created_at,
                     StudentPayment.carried_out_at,
+                    StudentPayment.carried_from_payment_id,
                 )
                 .filter(
                     StudentPayment.org_id == org_id,
@@ -744,6 +745,8 @@ class AttendanceExcuseService:
                     created_at=p.created_at or datetime.min,
                     id=p.id,
                     carried_out_at=p.carried_out_at,
+                    membership_id=p.membership_id,
+                    carried_from_id=p.carried_from_payment_id,
                 )
                 for p in payments
             ]
@@ -769,19 +772,17 @@ class AttendanceExcuseService:
                 lessons_members.append(
                     (SimpleNamespace(id=membership, student_id=excuse.student_id), student, group)
                 )
-        late: Dict[UUID, Dict[datetime, int]] = {}
-        pools = (
-            PaymentService(self.db)._counted_lesson_dates(
+        # Capacities of the lessons packages are derived live along their carry-over chains.
+        pools: Dict[UUID, list] = {}
+        if lessons_members:
+            state = PaymentService(self.db)._lessons_state(
                 str(org_id),
-                lessons_members,
-                {m.id: [p for p in live.get(m.id, []) if p.lessons_count is not None] for m, _, _ in lessons_members},
-                late_out=late,
+                [(m, g) for m, _, g in lessons_members],
+                {m.id: live.get(m.id, []) for m, _, _ in lessons_members},
             )
-            if lessons_members
-            else {}
-        )
-        for membership_id, group_late in late.items():  # packages that moved away: lessons after the transfer
-            records[membership_id] = PaymentService._with_late(records[membership_id], group_late)
+            pools = state.dates
+            for m, _, _ in lessons_members:
+                records[m.id] = [state.records.get(r.id, r) for r in records[m.id]]
 
         result: Dict[UUID, Dict[str, Any]] = {}
         for excuse, att, group, student in pending:

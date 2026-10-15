@@ -22,9 +22,15 @@ Create Date: 2026-10-15
   from the SAME source stay refused.
 
 Idempotent: ``001_baseline`` builds tables from the current ORM model, so the
-columns may already exist.  The downgrade drops both columns and restores the old
-guard; the carry-over rows stay as ordinary zero payments of the new group (a pair of
-live rows that would break the old guard is cancelled first, the later one).
+columns may already exist.
+
+Rollback: the downgrade is safe ONLY BEFORE REAL TRANSFERS EXIST.  It drops both columns
+and restores the old guard; after that the carry-over rows are ordinary zero payments of
+the new group while the originals - no longer stamped - cover their old group again, so
+every payment that travelled would be counted in two groups and its lessons twice (a pair
+of live rows that would break the old guard is cancelled first, the later one).  Once
+students have been transferred with this revision, export ``student_payments`` and fix
+the data by hand instead of downgrading.
 """
 from __future__ import annotations
 

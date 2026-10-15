@@ -18,8 +18,9 @@ follows the payment that covers the lesson:
   is 0, ``L == 1`` is ``due_now`` and ``L == 0`` (package used up) is overdue;
 A payment that moved to another group with the student (``carried_out_at``, N13 P2.1)
 covers only what happened while the student was still here: a calendar one ends on the
-transfer day (included), a lessons package covers only the lessons it took before the
-transfer and has nothing "left" afterwards.
+transfer day (included).  A lessons package that took the lesson and then moved is
+measured against what is left NOW in the live package at the end of its chain
+(``PaymentRecord.moved_left``), because those lessons are the student's current ones.
 
 * **no covering payment** - or no package that took the lesson (all full, the
   lesson lies beyond the paid lessons): the last day of the lesson's month.
@@ -144,8 +145,12 @@ def excuse_deadline(
         # Same-date entries may straddle two packages; the earliest package is the conservative pick.
         for payment, taken in ps.allocate_lessons_detail(payments, pool):
             if lesson_date in taken:
-                capacity = ps.lesson_capacity(payment, len(taken))
-                return lessons_deadline(capacity - len(taken), deadline_lessons, capacity)
+                if payment.carried_out_at is not None:
+                    # The package moved with the student: the lesson counts against what is left in
+                    # the live package at the end of its chain (nothing left if the service knows no chain).
+                    size = payment.moved_size if payment.moved_size is not None else len(taken)
+                    return lessons_deadline(payment.moved_left or 0, deadline_lessons, size)
+                return lessons_deadline(payment.lessons_count - len(taken), deadline_lessons, payment.lessons_count)
         # No package took the lesson (all were already full): it is not covered, like "no payment".
 
     return date_deadline(month_end(lesson_date), today)
