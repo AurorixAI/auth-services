@@ -11,6 +11,7 @@ Env vars:
 
 from __future__ import annotations
 
+import html
 import logging
 import os
 import smtplib
@@ -33,6 +34,11 @@ FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 def _smtp_configured() -> bool:
     return bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD)
+
+
+def smtp_configured() -> bool:
+    """Whether e-mails really leave the service (global configuration, not a property of any account)."""
+    return _smtp_configured()
 
 
 def _send_raw(to: str, subject: str, html_body: str) -> bool:
@@ -129,3 +135,45 @@ def send_activation_email(
 <p style="font-size:13px;color:#94a3b8">Ссылка действительна 7 дней.</p>
 </body></html>"""
     return _send_raw(to, subject, html)
+
+
+def send_password_reset_email(
+    to: str,
+    first_name: str,
+    reset_url: str,
+    valid_minutes: int,
+) -> bool:
+    """«Забыли пароль?»: the one-time link to set a new password.
+
+    Only called when SMTP is configured: with no SMTP ``_send_raw`` logs the whole body, and the body
+    carries a live token - the caller must not get there. The link is never written to the log here.
+    """
+    if not _smtp_configured():
+        logger.warning("SMTP not configured - password reset e-mail NOT sent (to=%s)", to)
+        return False
+    name = html.escape(first_name or "")
+    url = html.escape(reset_url, quote=True)
+    hours, rest = divmod(valid_minutes, 60)
+    valid_for = f"{hours} ч" if hours and not rest else f"{valid_minutes} мин"
+    subject = "[ALGO] Восстановление пароля"
+    body = f"""\
+<html><body style="font-family:sans-serif;color:#1e293b">
+<h2 style="color:#3b82f6">Восстановление пароля</h2>
+<p>Здравствуйте{", " + name if name else ""}!</p>
+<p>Кто-то запросил смену пароля для вашего аккаунта в ALGO. Нажмите кнопку, чтобы задать новый пароль:</p>
+<p style="text-align:center;margin:24px 0">
+  <a href="{url}"
+     style="display:inline-block;padding:12px 32px;background:#3b82f6;
+            color:#fff;text-decoration:none;border-radius:8px;font-weight:600">
+    Задать новый пароль
+  </a>
+</p>
+<p style="font-size:13px;color:#64748b">
+  Или откройте ссылку: <a href="{url}">{url}</a>
+</p>
+<p style="font-size:13px;color:#94a3b8">
+  Ссылка действует {valid_for} и работает один раз. Если вы не просили менять пароль,
+  просто проигнорируйте это письмо: ваш пароль останется прежним.
+</p>
+</body></html>"""
+    return _send_raw(to, subject, body)
