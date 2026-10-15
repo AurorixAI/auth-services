@@ -524,6 +524,9 @@ class TeacherDashboardSummaryResponse(BaseModel):
 
     businessDate: str
     groups: List[GroupResponse] = Field(default_factory=list)
+    # Distinct active students across the teacher's active groups (a student
+    # of two groups counts once); groups[].student_count stays per group.
+    studentCount: int = 0
     todayLessons: List[ScheduleOccurrenceResponse] = Field(default_factory=list)
     scheduleWindow: List[ScheduleOccurrenceResponse] = Field(default_factory=list)
     openAttendanceActions: List[OpenAttendanceActionResponse] = Field(default_factory=list)

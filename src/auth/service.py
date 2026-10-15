@@ -4676,9 +4676,24 @@ class AuthService:
                 )
             )
 
+        # "My students" counts people, not seats: a student who sits in two of
+        # the teacher's groups is one student.  The per-group rosters keep
+        # their own counts (groups[].student_count).
+        distinct_student_count = 0
+        if group_ids:
+            distinct_student_count = (
+                self.db.query(func.count(func.distinct(StudentGroup.student_id)))
+                .filter(
+                    StudentGroup.group_id.in_(group_ids),
+                    StudentGroup.is_active.is_(True),
+                )
+                .scalar()
+            ) or 0
+
         return TeacherDashboardSummaryResponse(
             businessDate=business_date.isoformat(),
             groups=[self._build_group_response(group) for group in groups],
+            studentCount=distinct_student_count,
             todayLessons=today_lessons,
             scheduleWindow=schedule_window,
             openAttendanceActions=self.get_open_attendance_actions(
