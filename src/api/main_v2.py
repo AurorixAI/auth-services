@@ -138,10 +138,11 @@ def _cors_headers(request) -> dict:
 # Handle HTTPException with CORS headers (401, 403, 404 etc.)
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc: HTTPException):
+    # exc.headers carries Retry-After (429) / WWW-Authenticate (401): the CORS headers must not replace them
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
-        headers=_cors_headers(request),
+        headers={**(exc.headers or {}), **_cors_headers(request)},
     )
 
 

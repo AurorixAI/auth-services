@@ -20,8 +20,10 @@ from .service import (
 from .attendance_access import is_org_admin, is_org_manager
 from . import import_service
 from .import_service import ImportPreviewResponse, ImportCommitResponse
-from src.api.rate_limit import enforce_rate_limit, rate_limit
+from src.api.rate_limit import client_ip, enforce_rate_limit, rate_limit
 from src.core.config import get_settings
+from src.core.exceptions import AccountInactiveError, AccountNotFoundError, InvalidCredentialsError
+from . import login_throttle
 from .cookies import (
     AUTH_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -97,6 +99,10 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 REFRESH_IP_LIMIT = "120/minute"
 REFRESH_TOKEN_LIMIT = "10/minute"
 
+# Endpoints that check an invite code / activation token (a secret) but have no password to throttle:
+# a modest limit per client address, shared between them, so the code space cannot be probed at wire speed.
+SECRET_LOOKUP_IP_LIMIT = "30/minute"
+
 # ----------- cookie helpers: the policy itself is in cookies.py ----------- #
 
 
@@ -148,14 +154,27 @@ def apply_organization(
 @router.post("/login", response_model=AuthResponse)
 def login(
     request: LoginRequest,
+    ip: str = Depends(login_throttle.enforce_login_ip_limits),
     db: Session = Depends(get_db),
 ):
-    """Вход в систему — возвращает JWT + org info"""
+    """Вход в систему — возвращает JWT + org info.
+
+    Защита от подбора пароля (login_throttle.py): лимит попыток на адрес клиента (30/мин, 300/час) и
+    нарастающая пауза на аккаунт после 5 неудач подряд (1, 2, 4, 8, до 15 мин) - ответ 429 + Retry-After
+    выдаётся до поиска пользователя и проверки пароля."""
+    attempt = login_throttle.begin(login_throttle.SCOPE_LOGIN, request.email, ip)
     try:
         result = _svc(db).login(request)
-        return _auth_response_with_cookies(result)
-    except ValueError as e:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
+    except (AccountNotFoundError, AccountInactiveError, InvalidCredentialsError, ValueError) as e:
+        attempt.failed()  # unknown, inactive and wrong-password accounts are all counted the same way
+        if isinstance(e, ValueError):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
+        raise
+    except Exception:  # database down, a bug: says nothing about the password, so not counted
+        attempt.aborted()
+        raise
+    attempt.succeeded()
+    return _auth_response_with_cookies(result)
 
 
 @router.post("/refresh", response_model=TokenPair)
@@ -185,7 +204,7 @@ def refresh_tokens(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
 
 
-@router.get("/invite/{code}")
+@router.get("/invite/{code}", dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint="auth-secret-lookup"))])
 def get_invite_info(code: str, db: Session = Depends(get_db)):
     """Публичная информация о приглашении (орг + роль) — для экрана принятия."""
     try:
@@ -194,7 +213,12 @@ def get_invite_info(code: str, db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
 
 
-@router.post("/invite/accept", response_model=AuthResponse, status_code=201)
+@router.post(
+    "/invite/accept",
+    response_model=AuthResponse,
+    status_code=201,
+    dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint="auth-secret-lookup"))],
+)
 def accept_invite(request: AcceptInviteRequest, db: Session = Depends(get_db)):
     """Принять приглашение в организацию — создаёт аккаунт"""
     try:
@@ -233,7 +257,11 @@ def admin_approve_organization(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
 
-@router.post("/activate", response_model=AuthResponse)
+@router.post(
+    "/activate",
+    response_model=AuthResponse,
+    dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint="auth-secret-lookup"))],
+)
 def activate_account(
     request: ActivateAccountRequest,
     db: Session = Depends(get_db),
@@ -337,17 +365,27 @@ def update_profile(
 @router.post("/change-password", response_model=MessageResponse)
 def change_password(
     request: ChangePasswordRequest,
+    raw_request: Request,
     payload: dict = Depends(get_current_active_user_payload),
     db: Session = Depends(get_db),
 ):
-    """Сменить пароль"""
+    """Сменить пароль. Текущий пароль проверяется, поэтому подбор ограничен как при входе:
+    нарастающая пауза на пользователя после 5 неверных попыток подряд (429 + Retry-After)."""
+    attempt = login_throttle.begin(
+        login_throttle.SCOPE_CHANGE_PASSWORD, str(payload["sub"]), client_ip(raw_request)
+    )
     try:
         _svc(db).change_password(
             payload["sub"], request.old_password, request.new_password
         )
-        return MessageResponse(message="Пароль успешно изменён")
     except ValueError as e:
+        attempt.failed()
         raise HTTPException(400, str(e))
+    except Exception:
+        attempt.aborted()
+        raise
+    attempt.succeeded()
+    return MessageResponse(message="Пароль успешно изменён")
 
 
 def _is_cross_site_request(request: Request) -> bool:

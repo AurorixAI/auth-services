@@ -2,7 +2,8 @@
 ALGO V1 — Rate Limiting Middleware
 
 Redis-backed rate limiter with in-memory fallback.
-Reuses the lazy Redis client from redis_sessions.py.
+The Redis client is src/core/redis_client.py (REDIS_URL); while Redis is unreachable every limit runs on
+per-process memory instead (fail open: availability first, the limits just stop being shared).
 
 Usage in router:
     from src.api.rate_limit import rate_limit
@@ -16,11 +17,15 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import math
+import threading
 import time
 from collections import defaultdict
-from typing import Tuple
+from typing import Optional, Tuple
 
 from fastapi import HTTPException, Request
+
+from src.core import redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,11 @@ logger = logging.getLogger(__name__)
 # In-memory fallback store  {key: [(timestamp, ...),]}
 # ---------------------------------------------------------------------------
 _memory_store: dict[str, list[float]] = defaultdict(list)
+
+# Fixed-window counters for hit_window(): {key: (count, window_ends_at)}.
+_window_store: dict[str, Tuple[int, float]] = {}
+_window_lock = threading.Lock()
+_WINDOW_STORE_SOFT_LIMIT = 20_000
 
 
 def _parse_rate(rate_string: str) -> Tuple[int, int]:
@@ -94,28 +104,66 @@ def _client_key(request: Request, endpoint: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _check_redis(key: str, max_requests: int, window: int) -> bool:
-    """Return True if request is allowed. Uses Redis INCR + EXPIRE.
+# INCR + EXPIRE as ONE atomic step. EXPIRE is set when the window opens (count == 1) and, defensively,
+# whenever a key somehow has no TTL (a crash between the two calls of the old non-atomic version left a
+# counter that never expired: a permanent block). Later hits do NOT push the TTL out, so a client that
+# keeps retrying inside the window still gets un-blocked when the window ends.
+_WINDOW_HIT_LUA = """
+local c = redis.call('INCR', KEYS[1])
+local ttl = redis.call('TTL', KEYS[1])
+if c == 1 or ttl < 0 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return {c, ttl}
+"""
 
-    EXPIRE is only set on the first increment of a window — setting it on
-    every call would keep pushing the TTL out on each request (including
-    rejected ones), so a client that keeps retrying within the window would
-    never actually get un-blocked.
-    """
+
+def _redis_hit(key: str, window: int) -> Optional[Tuple[int, int]]:
+    """(count, seconds until the window ends) from Redis, or None when Redis is unavailable."""
+    r = redis_client.get_redis()
+    if r is None:
+        return None
     try:
-        from src.api.redis_sessions import _get_redis
+        count, ttl = r.eval(_WINDOW_HIT_LUA, 1, key, window)
+        return int(count), max(int(ttl), 1)
+    except Exception as e:  # noqa: BLE001 - a counter store must never break a request
+        redis_client.mark_down(e)
+        return None
 
-        r = _get_redis()
-        if r is None:
-            return _check_memory(key, max_requests, window)
 
-        current = r.incr(key)
-        if current == 1:
-            r.expire(key, window)
-        return current <= max_requests
-    except Exception as e:
-        logger.warning("Rate limit Redis error, falling back to memory: %s", e)
+def _check_redis(key: str, max_requests: int, window: int) -> bool:
+    """Return True if request is allowed. Redis (shared between workers) first, process memory otherwise."""
+    hit = _redis_hit(key, window)
+    if hit is None:
         return _check_memory(key, max_requests, window)
+    return hit[0] <= max_requests
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def hit_window(key: str, window: int) -> Tuple[int, int]:
+    """Count one hit in a fixed window of *window* seconds: (hits so far including this one, seconds left).
+
+    Redis when available, a per-process fixed window otherwise. Unlike ``rate_limit`` the caller gets the
+    time left, which is what a ``Retry-After`` header needs.
+    """
+    hit = _redis_hit(key, window)
+    if hit is not None:
+        return hit
+    now = _monotonic()
+    with _window_lock:
+        count, ends_at = _window_store.get(key, (0, 0.0))
+        if ends_at <= now:
+            count, ends_at = 0, now + window
+        count += 1
+        _window_store[key] = (count, ends_at)
+        if len(_window_store) > _WINDOW_STORE_SOFT_LIMIT:  # keep unknown-key floods from growing memory
+            for stale in [k for k, (_, end) in _window_store.items() if end <= now]:
+                del _window_store[stale]
+    return count, max(math.ceil(ends_at - now), 1)
 
 
 def _check_memory(key: str, max_requests: int, window: int) -> bool:
