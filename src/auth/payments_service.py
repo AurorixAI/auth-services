@@ -21,10 +21,16 @@ profile payload carries an amount.  Status maths is ``payment_status.py``
   (later) payroll.  Voiding the original voids its carry-overs; voiding a carry-over
   gives the source its coverage back (``_release_source``); replacing the original
   rebuilds the carry-overs from the replacement and keeps the stamp
-  (``_rebuild_carry_overs``).  Replacing a carry-over itself is an ordinary replace.
+  (``_rebuild_carry_overs``).  A carry-over cannot be replaced (409): correct the payment it
+  was made from; it can be cancelled.
+* A carry-over's ``lessons_count`` is only the remainder at transfer time; its capacity is
+  derived live along the chain (``_lessons_state`` / ``payment_status.resolve_lesson_chains``).
+* Locks, in this order everywhere: student -> membership(s) -> payment(s), a source payment
+  before its carry-overs.  A deadlock PostgreSQL still finds is a 409 (``deadlock_guard``).
 """
 from __future__ import annotations
 
+import functools
 import logging
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
@@ -32,7 +38,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 from uuid import UUID
 
 from sqlalchemy import func, or_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -115,6 +121,40 @@ class PaymentInvalid(PaymentError):
     status_code = 422
 
 
+class CarryOverNotReplaceable(PaymentConflict):
+    code = "CARRY_OVER_NOT_REPLACEABLE"
+
+
+class ConcurrentEdit(PaymentConflict):
+    """A deadlock with another edit of the same student; nothing was written, repeat the request."""
+
+
+CONCURRENT_EDIT_MESSAGE = "Операция совпала с другой правкой. Повторите."
+
+
+def is_deadlock(exc: BaseException) -> bool:
+    """PostgreSQL deadlock_detected (SQLSTATE 40P01)."""
+    return isinstance(exc, OperationalError) and getattr(getattr(exc, "orig", None), "pgcode", None) == "40P01"
+
+
+def deadlock_guard(method):
+    """Locks are taken in one order (student -> membership -> payment, a source before its
+    carry-overs); should PostgreSQL still find a deadlock, the caller gets 409, never 500."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except OperationalError as exc:
+            if not is_deadlock(exc):
+                raise
+            self.db.rollback()
+            logger.warning("deadlock in %s; the request was rolled back", method.__name__)
+            raise ConcurrentEdit(CONCURRENT_EDIT_MESSAGE) from exc
+
+    return wrapper
+
+
 # ============================================================================
 # Helpers
 # ============================================================================
@@ -159,6 +199,15 @@ class _Links:
 
     sources: Dict[UUID, CarriedFromOut]  # original id -> {payment_id, group_name}
     targets: Dict[UUID, Optional[str]]  # stamped original id -> group its live carry-over lives in
+
+
+@dataclass
+class _LessonsState:
+    """Lessons payments of a set of memberships (and their carry-over chains) after the FIFO."""
+
+    records: Dict[UUID, ps.PaymentRecord]  # payment id -> record with the LIVE capacity as lessons_count
+    dates: Dict[UUID, List[date]]  # membership id -> counted lesson dates
+    left: Dict[UUID, int]  # payment id -> capacity - lessons it took (for one that moved: what travelled on)
 
 
 @dataclass
@@ -322,10 +371,15 @@ class PaymentService:
             for m, st, g, _ in rows
             if (last := ps.latest_payment(records.get(m.id, ()))) is not None and last.mode == ps.LESSONS
         ]
-        late: Dict[UUID, Dict[datetime, int]] = {}
-        lesson_dates = self._counted_lesson_dates(org_id, lessons_members, live_by_membership, late_out=late)
-        for mid, group_late in late.items():
-            records[mid] = self._with_late(records[mid], group_late)
+        # Lessons packages: capacities are derived along the carry-over chain (see ``_lessons_state``).
+        state = self._lessons_state(
+            org_id,
+            [(m, g) for m, _, g in lessons_members],
+            {m.id: live_by_membership[m.id] for m, _, _ in lessons_members},
+        )
+        lesson_dates = state.dates
+        for m, _, _ in lessons_members:
+            records[m.id] = [state.records.get(r.id, r) for r in records[m.id]]
 
         status_settings = self._status_settings(settings)
         entries = []
@@ -355,7 +409,88 @@ class PaymentService:
             created_at=payment.created_at or datetime.min,
             id=payment.id,
             carried_out_at=payment.carried_out_at,
+            membership_id=payment.membership_id,
+            carried_from_id=payment.carried_from_payment_id,
         )
+
+    def _lessons_state(
+        self,
+        org_id: str,
+        seeds: Sequence[tuple],
+        live_by_membership: Dict[UUID, Sequence[Any]],
+    ) -> "_LessonsState":
+        """Counted lessons and LIVE capacities of the lessons packages of ``seeds`` and of their chains.
+
+        ``seeds``: ``(membership, group)`` pairs; ``live_by_membership``: their live payments (rows
+        or entities with the payment columns).  A carry-over's capacity is derived along its chain
+        (``payment_status.resolve_lesson_chains``), which needs the memberships on the way: the
+        payments a carry-over came from and the carry-overs of a payment that moved away.  They are
+        loaded in a few batched queries (one round per step of the chain) - and not at all when the
+        seeds have no carry-overs.
+        """
+        members: Dict[UUID, tuple] = {m.id: (m, g) for m, g in seeds}
+        live: Dict[UUID, List[Any]] = {mid: list(plist) for mid, plist in live_by_membership.items()}
+        seen = {p.id for plist in live.values() for p in plist}
+        probe = [p for plist in live.values() for p in plist if p.lessons_count is not None]
+        for _ in range(MAX_CARRY_CHAIN):
+            linked = [p for p in probe if p.carried_from_payment_id is not None or p.carried_out_at is not None]
+            if not linked:
+                break
+            wanted_up = {p.carried_from_payment_id for p in linked if p.carried_from_payment_id} - seen
+            moved = {p.id for p in linked if p.carried_out_at is not None}
+            conditions = []
+            if wanted_up:
+                conditions.append(StudentPayment.id.in_(wanted_up))
+            if moved:
+                conditions.append(StudentPayment.carried_from_payment_id.in_(moved))
+            if not conditions:
+                break
+            related = [
+                p for p in self.db.query(StudentPayment)
+                .filter(StudentPayment.org_id == org_id, StudentPayment.voided_at.is_(None), or_(*conditions))
+                .all()
+                if p.id not in seen and p.lessons_count is not None
+            ]
+            new_membership_ids = {p.membership_id for p in related} - set(members)
+            if not new_membership_ids:
+                break
+            for membership in self.db.query(StudentGroup).filter(StudentGroup.id.in_(new_membership_ids)).all():
+                members[membership.id] = (membership, None)
+            groups = {
+                g.id: g for g in self.db.query(Group).filter(
+                    Group.id.in_({m.group_id for m, g in members.values() if g is None})
+                )
+            }
+            for mid in new_membership_ids:
+                membership, _ = members[mid]
+                members[mid] = (membership, groups.get(membership.group_id))
+            probe = []
+            for p in self.db.query(StudentPayment).filter(
+                StudentPayment.org_id == org_id,
+                StudentPayment.voided_at.is_(None),
+                StudentPayment.membership_id.in_(new_membership_ids),
+            ):
+                live.setdefault(p.membership_id, []).append(p)
+                seen.add(p.id)
+                if p.lessons_count is not None:
+                    probe.append(p)
+        usable = [(m, None, g) for m, g in members.values() if g is not None]
+        if not usable or not any(
+            p.lessons_count is not None for m, _, _ in usable for p in live.get(m.id, ())
+        ):
+            return _LessonsState({}, {}, {})
+        late: Dict[UUID, Dict[datetime, int]] = {}
+        dates = self._counted_lesson_dates(org_id, usable, live, late_out=late)
+        records = []
+        for m, _, _ in usable:
+            records.extend(
+                self._with_late(
+                    [self._record(p) for p in live.get(m.id, ()) if p.lessons_count is not None],
+                    late.get(m.id),
+                )
+            )
+        resolved, _, left = ps.resolve_lesson_chains(records, dates)
+        return _LessonsState(resolved, dates, left)
 
     @staticmethod
     def _with_late(
@@ -747,6 +882,7 @@ class PaymentService:
             raise PaymentNotFound("Членство не найдено")
         return membership
 
+    @deadlock_guard
     def set_fee(
         self, org_id: str, membership_id: UUID, actor_id: str, monthly_fee: Optional[int]
     ) -> MembershipPaymentRow:
@@ -888,6 +1024,7 @@ class PaymentService:
             row=self._row(org_id, payment.membership_id),
         )
 
+    @deadlock_guard
     def create_payment(
         self, org_id: str, membership_id: UUID, actor_id: str, data: PaymentCreate
     ) -> PaymentCreated:
@@ -906,10 +1043,22 @@ class PaymentService:
         )
         return self._created(org_id, payment, warnings)
 
+    def _probe_payment(self, org_id: str, payment_id: UUID) -> StudentPayment:
+        """The payment without a lock: just enough to learn which rows to lock first."""
+        payment = (
+            self.db.query(StudentPayment)
+            .filter(StudentPayment.id == payment_id, StudentPayment.org_id == org_id)
+            .first()
+        )
+        if not payment:
+            raise PaymentNotFound("Оплата не найдена")
+        return payment
+
     def _lock_payment(self, org_id: str, payment_id: UUID) -> StudentPayment:
         payment = (
             self.db.query(StudentPayment)
             .filter(StudentPayment.id == payment_id, StudentPayment.org_id == org_id)
+            .populate_existing()
             .with_for_update()
             .first()
         )
@@ -919,6 +1068,7 @@ class PaymentService:
             raise AlreadyVoided("Оплата уже отменена")
         return payment
 
+    @deadlock_guard
     def replace_payment(
         self,
         org_id: str,
@@ -927,10 +1077,17 @@ class PaymentService:
         data: PaymentCreate,
         reason: Optional[str] = None,
     ) -> PaymentCreated:
-        """Void the old payment and insert the corrected one - one transaction."""
+        """Void the old payment and insert the corrected one - one transaction.
+
+        Lock order: membership, then the payment (a transfer takes the membership first too).
+        A carry-over cannot be corrected: correct the payment it was made from.
+        """
         try:
+            probe = self._probe_payment(org_id, payment_id)
+            if probe.carried_from_payment_id is not None:
+                raise CarryOverNotReplaceable("Перенос нельзя исправить — исправьте исходную оплату")
+            membership = self._membership(org_id, probe.membership_id, lock=True)
             old = self._lock_payment(org_id, payment_id)
-            membership = self._membership(org_id, old.membership_id, lock=True)
             old.voided_at = _utcnow()
             old.voided_by = UUID(str(actor_id))
             old.void_reason = (reason or "").strip() or DEFAULT_REPLACE_REASON
@@ -942,7 +1099,7 @@ class PaymentService:
                 membership, org_id, actor_id, data, settings, ps.business_today(), replaces=old
             )
             # Carry-overs of the old payment follow the correction; the corrected one keeps the
-            # stamp "moved away on T" (set before the rebuild: the remainder is counted up to T).
+            # stamp "moved away at T" (set before the rebuild: the remainder is counted up to T).
             if old.carried_out_at is not None:
                 payment.carried_out_at = old.carried_out_at
                 self.db.flush()
@@ -959,10 +1116,19 @@ class PaymentService:
         )
         return self._created(org_id, payment, warnings)
 
+    @deadlock_guard
     def void_payment(
         self, org_id: str, payment_id: UUID, actor_id: str, reason: str
     ) -> PaymentVoided:
+        """Lock order: membership, the payment it was carried over from (if any), the payment,
+        then its carry-overs - a parent is never locked after a child."""
         try:
+            probe = self._probe_payment(org_id, payment_id)
+            self._membership(org_id, probe.membership_id, lock=True)
+            if probe.carried_from_payment_id is not None:
+                self.db.query(StudentPayment).filter(
+                    StudentPayment.id == probe.carried_from_payment_id, StudentPayment.org_id == org_id
+                ).populate_existing().with_for_update().first()
             payment = self._lock_payment(org_id, payment_id)
             payment.voided_at = _utcnow()
             payment.voided_by = UUID(str(actor_id))
@@ -987,28 +1153,17 @@ class PaymentService:
         self,
         org_id: str,
         pairs: Sequence[tuple],
-        live_by_membership: Dict[UUID, List[StudentPayment]],
+        live_by_membership: Dict[UUID, Sequence[Any]],
     ) -> Dict[UUID, int]:
-        """Lessons still unspent per lessons payment, ``{payment_id: left}`` (the FIFO of ``payment_status``)."""
+        """Lessons still unspent per lessons payment, ``{payment_id: left}``: the FIFO of
+        ``payment_status`` with capacities derived live along the carry-over chains."""
         pairs = [
             (m, g) for m, g in pairs
             if any(p.lessons_count is not None for p in live_by_membership.get(m.id, ()))
         ]
         if not pairs:
             return {}
-        late: Dict[UUID, Dict[datetime, int]] = {}
-        dates = self._counted_lesson_dates(
-            org_id, [(m, None, g) for m, g in pairs], live_by_membership, late_out=late
-        )
-        left: Dict[UUID, int] = {}
-        for membership, _ in pairs:
-            records = self._with_late(
-                [self._record(p) for p in live_by_membership.get(membership.id, ())],
-                late.get(membership.id),
-            )
-            for record, taken in ps.allocate_lessons_detail(records, dates.get(membership.id, ())):
-                left[record.id] = record.lessons_count - len(taken)
-        return left
+        return self._lessons_state(org_id, pairs, live_by_membership).left
 
     @staticmethod
     def _copy_fee(
@@ -1087,6 +1242,8 @@ class PaymentService:
             moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
         today = ps.business_date(moment)
         live_by_membership: Dict[UUID, List[StudentPayment]] = {}
+        # Locked (after the student and the memberships): a payment voided a moment ago by someone
+        # else is waited for and then drops out of the live set instead of being carried over.
         for payment in (
             self.db.query(StudentPayment)
             .filter(
@@ -1094,6 +1251,9 @@ class PaymentService:
                 StudentPayment.membership_id.in_([m.id for m in sources]),
                 StudentPayment.voided_at.is_(None),
             )
+            .order_by(StudentPayment.created_at, StudentPayment.id)
+            .populate_existing()
+            .with_for_update()
             .all()
         ):
             live_by_membership.setdefault(payment.membership_id, []).append(payment)
@@ -1197,6 +1357,7 @@ class PaymentService:
                 StudentPayment.id == carry_over.carried_from_payment_id,
                 StudentPayment.org_id == org_id,
             )
+            .populate_existing()
             .with_for_update()
             .first()
         )
@@ -1216,6 +1377,7 @@ class PaymentService:
                 StudentPayment.voided_at.is_(None),
             )
             .order_by(StudentPayment.created_at, StudentPayment.id)
+            .populate_existing()
             .with_for_update()
             .all()
         )

@@ -36,6 +36,17 @@ covers, in its own membership, only what happened while the student was still in
   are not taken.  Its capacity is what it took (``lesson_capacity``): the unspent rest
   travelled with the student, so the original never "resurrects" when the student comes back.
 
+Conservation of a lessons package (money).  A carry-over does NOT freeze the remainder that
+travelled: its capacity is derived live along the chain, ``capacity(C) = capacity(source) -
+lessons the source took before it moved`` (``resolve_lesson_chains``, same counting rules: a
+confirmed excuse consumes nothing, a cancelled lesson does not exist, a reconciled lesson
+does).  The ``lessons_count`` stored on a carry-over is only the remainder at transfer time
+(informational).  So confirming a pre-transfer excuse - or reconciling a pre-transfer lesson -
+AFTER the transfer gives a lesson to - or takes one from - the student's current package, and
+the lessons of the whole chain always add up to the original ``lessons_count``.  The excuse
+deadline of a lesson that a moved package took follows the CURRENT remainder of the chain's live
+package (``PaymentRecord.moved_left``), not "nothing left".
+
 The same rule feeds the excuse deadline and (P3) payroll.  Payroll must therefore read the
 period of a calendar payment through ``PaymentRecord.end`` (never the raw ``valid_to``) and
 the lessons of a package through ``allocate_lessons_detail``; the carry-over rows (amount 0,
@@ -50,7 +61,7 @@ from __future__ import annotations
 
 import calendar as _calendar
 from bisect import bisect_left, bisect_right
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterable, Optional, Sequence
 
@@ -101,6 +112,13 @@ class PaymentRecord:
     # Counted lessons dated on the business day of ``carried_out_at`` that started at or after
     # that instant (filled in by the service, which knows the schedule); 0 = none / unknown.
     carried_out_late: int = 0
+    # Chain bookkeeping (lessons packages): the membership the payment lives in, the payment it was
+    # carried over from, and - for a payment that moved away - what is left in the live package at the
+    # end of its chain and that package's size (the original ``lessons_count``).
+    membership_id: object = None
+    carried_from_id: object = None
+    moved_left: Optional[int] = None
+    moved_size: Optional[int] = None
 
     @property
     def mode(self) -> str:
@@ -233,19 +251,81 @@ def allocate_lessons_detail(
         key=lambda p: (p.valid_from, p.paid_on, p.created_at),
     )
     pool = sorted(lesson_dates)
-    result: list[tuple[PaymentRecord, list[date]]] = []
-    for payment in lessons_payments:
-        start = bisect_left(pool, payment.valid_from)
-        stop = start + payment.lessons_count
-        if payment.carried_out_at is not None:  # only lessons that started before the instant it moved away
-            day = payment.carried_out_day
-            first, after = bisect_left(pool, day), bisect_right(pool, day)
-            # Of the lessons on that day the later ones come last; ``carried_out_late`` of them started after.
-            stop = min(stop, first + max(0, (after - first) - payment.carried_out_late))
-        taken = pool[start : max(start, stop)]
-        del pool[start : start + len(taken)]
-        result.append((payment, taken))
-    return result
+    return [(payment, _take(pool, payment)) for payment in lessons_payments]
+
+
+def _take(pool: list[date], payment: PaymentRecord) -> list[date]:
+    """One FIFO step: remove from the sorted ``pool`` the lessons ``payment`` covers and return them."""
+    start = bisect_left(pool, payment.valid_from)
+    stop = start + payment.lessons_count
+    if payment.carried_out_at is not None:  # only lessons that started before the instant it moved away
+        day = payment.carried_out_day
+        first, after = bisect_left(pool, day), bisect_right(pool, day)
+        # Of the lessons on that day the later ones come last; ``carried_out_late`` of them started after.
+        stop = min(stop, first + max(0, (after - first) - payment.carried_out_late))
+    taken = pool[start : max(start, stop)]
+    del pool[start : start + len(taken)]
+    return taken
+
+
+def resolve_lesson_chains(
+    payments: Sequence[PaymentRecord], pools: "dict[object, Iterable[date]]"
+) -> tuple[dict, dict, dict]:
+    """Live capacities of lessons packages that travel with a student -> ``(records, taken, left)``.
+
+    ``payments``: every live lessons payment of the memberships involved (``membership_id`` and
+    ``carried_from_id`` set); ``pools``: the counted lessons of each membership.  Payments are handed
+    their lessons in the global order (valid_from, paid_on, created_at, id) - inside one membership it
+    is the usual FIFO, and a carry-over always comes after its source, so the source's consumption is
+    known when the carry-over's capacity is derived:
+    ``capacity(carry-over) = capacity(source) - lessons the source took``.  A payment without a known
+    source keeps its own ``lessons_count``.
+
+    ``records[id]`` is the payment with the derived capacity as ``lessons_count`` (and ``moved_left`` /
+    ``moved_size`` on one that moved away), ``taken[id]`` the dates it covers, ``left[id]`` its
+    capacity minus what it took (for a payment that moved: what travelled on).
+    """
+    ordered = sorted(
+        (p for p in payments if p.lessons_count is not None),
+        key=lambda p: (p.valid_from, p.paid_on, p.created_at, str(p.id)),
+    )
+    state = {key: sorted(dates) for key, dates in pools.items()}
+    records: dict = {}
+    taken: dict = {}
+    for payment in ordered:
+        capacity = payment.lessons_count
+        source = payment.carried_from_id
+        if source is not None and source in records:
+            capacity = max(0, records[source].lessons_count - len(taken[source]))
+        derived = replace(payment, lessons_count=capacity)
+        taken[payment.id] = _take(state.setdefault(payment.membership_id, []), derived)
+        records[payment.id] = derived
+    left = {pid: records[pid].lessons_count - len(got) for pid, got in taken.items()}
+
+    children: dict = {}
+    for payment in ordered:
+        if payment.carried_from_id is not None:
+            children.setdefault(payment.carried_from_id, []).append(payment.id)
+    for payment in ordered:
+        if payment.carried_out_at is None:
+            continue
+        leaf, seen = payment.id, set()
+        while records[leaf].carried_out_at is not None and leaf not in seen:
+            seen.add(leaf)
+            kids = children.get(leaf)
+            if not kids:
+                leaf = None
+                break
+            leaf = max(kids, key=lambda pid: (records[pid].created_at, str(pid)))
+        root, hops = payment.id, 0
+        while records[root].carried_from_id in records and hops < 64:
+            root, hops = records[root].carried_from_id, hops + 1
+        records[payment.id] = replace(
+            records[payment.id],
+            moved_left=0 if leaf is None else left[leaf],
+            moved_size=records[root].lessons_count,
+        )
+    return records, taken, left
 
 
 def allocate_lessons(

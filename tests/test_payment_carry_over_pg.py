@@ -3,6 +3,8 @@ import json
 from contextlib import contextmanager
 from datetime import datetime, time, timedelta, timezone
 
+from uuid import uuid4
+
 import pytest
 
 from src.auth.schemas import SaveAttendanceRequest, StartAttendanceRequest
@@ -453,7 +455,7 @@ def test_replacing_the_original_rebuilds_the_whole_chain(two):
     assert second["carried_out"] and not third["carried_out"]          # the middle link moved on, the last one is where it is
 
 
-def test_replacing_a_carry_over_directly_is_an_ordinary_replace(two):
+def test_a_carry_over_cannot_be_replaced_only_cancelled(two):
     original = pay(two, paid_on=day(-10), valid_from=day(-10), valid_to=day(20))["payment"]
     transfer(two, two.second)
     (carry,) = history(two, two.second)
@@ -461,9 +463,18 @@ def test_replacing_a_carry_over_directly_is_an_ordinary_replace(two):
         f"{API}/org/payments/{carry['id']}/replace",
         json={"amount": 5, "paid_on": day(0).isoformat(), "valid_to": day(40).isoformat()},
     )
-    assert r.status_code == 201, r.text
-    assert r.json()["payment"]["carried_from"] is None
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == {
+        "code": "CARRY_OVER_NOT_REPLACEABLE", "message": "Перенос нельзя исправить — исправьте исходную оплату"}
+    assert history(two, two.second, include_voided=False)[0]["id"] == carry["id"]      # nothing changed
     assert history(two, two.group)[0]["id"] == original["id"] and history(two, two.group)[0]["voided_at"] is None
+    # correcting the original is the way
+    r = owner(two).post(
+        f"{API}/org/payments/{original['id']}/replace",
+        json={"amount": 5, "paid_on": day(-10).isoformat(), "valid_from": day(-10).isoformat(), "valid_to": day(30).isoformat()},
+    )
+    assert r.status_code == 201, r.text
+    assert history(two, two.second, include_voided=False)[0]["valid_to"] == day(30).isoformat()
 
 
 # ---- round trips ---------------------------------------------------------------------------------
@@ -797,5 +808,272 @@ def test_excuse_deadline_in_the_old_group_follows_what_the_package_took(two):
     lesson_marks(two, 2, {})
     assert deadline_of(two)["kind"] == "lessons" and deadline_of(two)["lessons_left"] == 3
     transfer(two, two.second)                                          # the 3 unspent lessons travel
-    after = deadline_of(two)
-    assert (after["kind"], after["lessons_left"], after["overdue"]) == ("lessons", 0, True)
+    after = deadline_of(two)                                           # the package is the student's live one now
+    assert (after["kind"], after["lessons_left"], after["overdue"]) == ("lessons", 3, False)
+
+
+def test_excuse_deadline_of_a_moved_package_follows_the_live_remainder(two, monkeypatch):
+    from tests.pg_world import excused_lesson
+
+    set_settings(two, period_mode="lessons", lessons_per_payment=5, excuse_deadline_lessons=1)
+    pay(two, paid_on=day(-9), valid_from=day(-9), lessons_count=5)
+    excused_lesson(two, offset_days=6, complete=True)                  # the excused lesson of A (counts while pending)
+    lesson_marks(two, 5, {})
+    with clock(monkeypatch, day(-4), 12):
+        transfer(two, two.second)                                      # 3 lessons left travel to B
+    complete_in(two, two.second, 2)                                    # B spends one of them
+    assert deadline_of(two) == {"kind": "lessons", "lessons_left": 2, "urgent": False, "due_now": False, "overdue": False}
+    complete_in(two, two.second, 1)                                    # and another: 1 left = the threshold
+    last = deadline_of(two)
+    assert (last["lessons_left"], last["due_now"], last["overdue"]) == (1, True, False)
+
+
+# ---- conservation: the package that travels is always the original minus what was consumed -----------
+
+
+def confirm(w, excuse):
+    r = make_client(w).post(f"{API}/org/attendance/excuses/{excuse.id}/review", json={"decision": "confirmed"})
+    assert r.status_code == 200, r.text
+
+
+def test_confirming_a_pre_transfer_excuse_after_the_transfer_gives_the_lesson_back(two):
+    from tests.pg_world import excused_lesson
+    from tests.test_attendance_excuses import excuse_of
+
+    set_settings(two, period_mode="lessons", lessons_per_payment=6)
+    pay(two, paid_on=day(-12), valid_from=day(-12), lessons_count=6)
+    excused_lesson(two, offset_days=4, complete=True)                  # pending excuse: still spends a lesson
+    lesson_marks(two, 3, {})
+    transfer(two, two.second)
+    (carry,) = history(two, two.second)
+    assert carry["lessons_count"] == 4                                  # the remainder at transfer time (informational)
+    row_b = row_of(two, group=two.second)
+    assert (row_b["lessons_total"], row_b["lessons_left"]) == (4, 4)
+    confirm(two, excuse_of(two))                                        # the certificate arrives later
+    row_a, row_b = row_of(two, group=two.group), row_of(two, group=two.second)
+    assert (row_a["lessons_total"], row_a["lessons_used"]) == (1, 1)    # A keeps one consumed lesson
+    assert (row_b["lessons_total"], row_b["lessons_left"]) == (5, 5)    # the lesson went to the live package
+    assert row_a["lessons_used"] + row_b["lessons_left"] == 6           # conserved
+    assert history(two, two.second)[0]["lessons_count"] == 4            # the stored number is never the truth
+
+
+def test_reconciling_a_pre_transfer_lesson_after_the_transfer_takes_a_lesson_from_the_live_package(two):
+    set_settings(two, period_mode="lessons", lessons_per_payment=6)
+    pay(two, paid_on=day(-12), valid_from=day(-12), lessons_count=6)
+    lesson_marks(two, 5, {})                                            # one lesson of A is recorded
+    transfer(two, two.second)                                           # the lesson of day -3 was never opened
+    assert row_of(two, group=two.second)["lessons_left"] == 5
+    d = day(-3)
+    hold(two, two.group, d, f"s{d.isoweekday()}")                       # ... and is reconciled afterwards
+    row_a, row_b = row_of(two, group=two.group), row_of(two, group=two.second)
+    assert (row_a["lessons_total"], row_a["lessons_used"]) == (2, 2)
+    assert (row_b["lessons_total"], row_b["lessons_left"]) == (4, 4)    # not 6 + 5: the package stays 6 in all
+    assert row_a["lessons_used"] + row_b["lessons_left"] == 6
+
+
+def test_a_package_through_a_b_a_b_is_conserved_and_follows_late_changes(two, monkeypatch):
+    from tests.pg_world import excused_lesson
+    from tests.test_attendance_excuses import excuse_of
+
+    set_settings(two, period_mode="lessons", lessons_per_payment=6)
+    pay(two, paid_on=day(-20), valid_from=day(-20), lessons_count=6)
+    excused_lesson(two, offset_days=9, complete=True)                   # A: two lessons, one of them with a pending excuse
+    lesson_marks(two, 8, {})
+    with clock(monkeypatch, day(-7), 12):
+        transfer(two, two.second)                                       # A -> B
+    complete_in(two, two.second, 5)                                     # B: one lesson
+    with clock(monkeypatch, day(-4), 12):
+        transfer(two, two.group)                                        # B -> A
+    hold(two, two.group, day(-2), f"s{day(-2).isoweekday()}")           # A again: one lesson
+    with clock(monkeypatch, day(-1), 12):
+        transfer(two, two.second)                                       # A -> B
+
+    def totals():
+        a, b = row_of(two, group=two.group), row_of(two, group=two.second)
+        return a["lessons_used"] + b["lessons_used"], b["lessons_left"], a["lessons_left"]
+
+    used, left_b, left_a = totals()
+    assert (used, left_b, left_a) == (4, 2, 0) and used + left_b == 6    # 2 + 1 + 1 consumed, 2 travelling
+    confirm(two, excuse_of(two))                                         # the first lesson turns out to be excused
+    used, left_b, left_a = totals()
+    assert (used, left_b, left_a) == (3, 3, 0) and used + left_b == 6
+    chain = [h for h in history(two, two.second, include_voided=False) if not h["carried_out"]]
+    assert len(chain) == 1 and chain[0]["lessons_count"] == 2            # stored at its transfer: informational only
+
+
+# ---- locks: one order everywhere, a concurrent void is waited for ---------------------------------------
+
+
+@pytest.fixture
+def engine():
+    from sqlalchemy import create_engine
+
+    from tests.pg_world import DB_URL
+
+    engine = create_engine(DB_URL)
+    yield engine
+    engine.dispose()
+
+
+def run_in_thread(engine, fn):
+    import threading
+
+    from sqlalchemy.orm import Session
+
+    outcome = {}
+
+    def target():
+        with Session(engine) as session:
+            try:
+                outcome["value"] = fn(session)
+            except BaseException as exc:  # noqa: BLE001  (reported to the test)
+                outcome["error"] = exc
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    return thread, outcome
+
+
+def wait_until_blocked(engine, seconds=10):
+    import time
+
+    from sqlalchemy import text
+
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        with engine.connect() as conn:
+            waiting = conn.execute(text(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+            )).scalar_one()
+        if waiting:
+            return
+        time.sleep(0.05)
+    raise AssertionError("the request never waited for a lock")
+
+
+def row_is_free(engine, table, row_id):
+    """True if nobody holds the row lock (checked with NOWAIT from a third connection)."""
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError
+
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(f"SELECT id FROM {table} WHERE id = :i FOR UPDATE NOWAIT"), {"i": row_id})
+            return True
+        except OperationalError:
+            return False
+
+
+def test_transfer_waits_for_a_payment_being_voided_and_does_not_carry_it(two, engine):
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+
+    from src.auth.service import AuthService
+
+    original = pay(two, paid_on=day(-10), valid_from=day(-10), valid_to=day(20))["payment"]
+    holder = Session(engine)
+    holder.execute(text(  # a void in flight: the row is locked and already marked, not yet committed
+        "UPDATE student_payments SET voided_at = now(), voided_by = :u, void_reason = 'ошибка' WHERE id = :p"),
+        {"u": two.owner.id, "p": original["id"]})
+    thread, outcome = run_in_thread(engine, lambda session: AuthService(session).add_student_to_group(
+        str(two.org.id), str(two.second.id), str(two.student.id), actor_id=str(two.owner.id)))
+    wait_until_blocked(engine)
+    holder.commit()
+    holder.close()
+    thread.join(timeout=20)
+    assert "error" not in outcome, outcome.get("error")
+    assert outcome["value"]["status"] == "added" and outcome["value"]["warnings"] == []
+    two.db.expire_all()
+    assert stored(two, membership_id=membership(two, two.second).id) == []        # nothing carried
+    assert two.db.get(StudentPayment, original["id"]).carried_out_at is None      # and nothing stamped
+
+
+def test_replace_takes_the_membership_before_the_payment(two, engine):
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+
+    from src.auth.payments_schemas import PaymentReplace
+    from src.auth.payments_service import PaymentService
+
+    original = pay(two, paid_on=day(-10), valid_from=day(-10), valid_to=day(20))["payment"]
+    m = membership(two, two.group)
+    holder = Session(engine)                                  # a transfer in flight holds the membership
+    holder.execute(text("SELECT id FROM student_groups WHERE id = :m FOR UPDATE"), {"m": m.id})
+    body = PaymentReplace(amount=1, paid_on=day(-10), valid_from=day(-10), valid_to=day(25))
+    thread, outcome = run_in_thread(engine, lambda session: PaymentService(session).replace_payment(
+        str(two.org.id), original["id"], str(two.owner.id), body))
+    wait_until_blocked(engine)
+    assert row_is_free(engine, "student_payments", original["id"])       # waiting for the membership, payment untouched
+    holder.rollback()
+    holder.close()
+    thread.join(timeout=20)
+    assert "error" not in outcome, outcome.get("error")
+    assert outcome["value"].payment.valid_to == day(25)
+
+
+def test_void_of_a_carry_over_takes_its_source_before_itself(two, engine):
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+
+    from src.auth.payments_service import PaymentService
+
+    original = pay(two, paid_on=day(-10), valid_from=day(-10), valid_to=day(20))["payment"]
+    transfer(two, two.second)
+    (carry,) = history(two, two.second)
+    holder = Session(engine)                                  # somebody holds the source payment
+    holder.execute(text("SELECT id FROM student_payments WHERE id = :p FOR UPDATE"), {"p": original["id"]})
+    thread, outcome = run_in_thread(engine, lambda session: PaymentService(session).void_payment(
+        str(two.org.id), carry["id"], str(two.owner.id), "Не нужен"))
+    wait_until_blocked(engine)
+    assert row_is_free(engine, "student_payments", carry["id"])          # the carry-over is not locked before its source
+    holder.rollback()
+    holder.close()
+    thread.join(timeout=20)
+    assert "error" not in outcome, outcome.get("error")
+    assert history(two, two.group)[0]["carried_out"] is None             # the source covers its group again
+
+
+def deadlock():
+    from sqlalchemy.exc import OperationalError
+
+    class Orig(Exception):
+        pgcode = "40P01"
+
+    return OperationalError("UPDATE ...", {}, Orig("deadlock detected"))
+
+
+def test_a_deadlock_is_a_409_to_repeat_never_a_500(two, monkeypatch):
+    from src.auth.payments_service import PaymentService
+    from src.auth.service import AuthService
+
+    original = pay(two, paid_on=day(-10), valid_from=day(-10), valid_to=day(20))["payment"]
+
+    def boom(*args, **kwargs):
+        raise deadlock()
+
+    message = "Операция совпала с другой правкой. Повторите."
+    monkeypatch.setattr(PaymentService, "_probe_payment", boom)
+    for url, body in ((f"{API}/org/payments/{original['id']}/void", {"reason": "проверка"}),
+                      (f"{API}/org/payments/{original['id']}/replace", {"amount": 1, "paid_on": day(0).isoformat(), "valid_to": day(9).isoformat()})):
+        r = owner(two).post(url, json=body)
+        assert r.status_code == 409 and r.json()["detail"] == message, (url, r.text)
+    monkeypatch.undo()
+    monkeypatch.setattr(AuthService, "add_student_to_group", boom)
+    monkeypatch.setattr(AuthService, "bulk_add_students", boom)
+    r = owner(two).post(f"{GROUPS}/{two.second.id}/students/{two.student.id}")
+    assert r.status_code == 409 and r.json()["detail"] == message, r.text
+    r = owner(two).post(f"{GROUPS}/{two.second.id}/students/bulk", json={"student_ids": [str(two.student.id)]})
+    assert r.status_code == 409 and r.json()["detail"] == message, r.text
+
+
+def test_other_database_errors_are_not_disguised_as_a_conflict(two, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    from src.auth.payments_service import PaymentService
+
+    def broken(*args, **kwargs):
+        raise OperationalError("SELECT 1", {}, Exception("connection lost"))
+
+    monkeypatch.setattr(PaymentService, "_probe_payment", broken)
+    with pytest.raises(OperationalError):
+        owner(two).post(f"{API}/org/payments/{uuid4()}/void", json={"reason": "проверка"})
