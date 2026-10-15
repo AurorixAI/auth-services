@@ -28,6 +28,12 @@ profile payload carries an amount.  Status maths is ``payment_status.py``
 * Locks, in this order everywhere: student -> membership(s) -> payment(s), a source payment
   before its carry-overs; membership locks are FOR NO KEY UPDATE so that inserting a
   carry-over (foreign key: FOR KEY SHARE) into a membership someone else holds does not wait.  A deadlock PostgreSQL still finds is a 409 (``deadlock_guard``).
+* N13 P2.2.  One payment day for the centre (``billing_anchor = fixed_day``): ``quote`` suggests the dates and
+  the amount of a payment with the very code that creates it (``_resolve_period``), writing nothing.  Every
+  payment but a carry-over gets a receipt number ``max + 1`` inside the organisation, taken in a SAVEPOINT and
+  retried on a unique-index conflict - no lock on the organisation row, so the lock order above is unchanged.  A
+  carry-over has no number and copies ``partial_period`` from its source.  Cheques (photos / PDFs) are kept in
+  ``student_payment_files`` like the certificates of excuses.
 """
 from __future__ import annotations
 
@@ -36,11 +42,11 @@ import logging
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 from sqlalchemy.orm.attributes import flag_modified
 
 from src.models.auth import (
@@ -51,29 +57,45 @@ from src.models.auth import (
     Student,
     StudentGroup,
     StudentPayment,
+    StudentPaymentFile,
     User,
 )
 
 from . import payment_status as ps
+from .money_words import amount_words
+from .payments_files import (
+    MAX_FILE_BYTES,
+    MAX_FILES_PER_PAYMENT,
+    load_files,
+    sniff_content_type,
+    stored_filename,
+)
 from .payments_schemas import (
+    MAX_MONEY,
     CarriedFromOut,
     CarriedOutOut,
     MembershipPaymentRow,
     PaymentCreate,
     PaymentCreated,
+    PaymentFileOut,
     PaymentOut,
+    PaymentQuote,
     PaymentSettings,
     PaymentSettingsUpdate,
     PaymentsSummary,
     PaymentStatusPage,
     PaymentVoided,
     PaymentWarningOut,
+    QuotePartOut,
+    ReceiptOut,
 )
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_REPLACE_REASON = "Исправлено"
 UNIQUE_DUP_INDEX = "uq_student_payments_active_dup"
+RECEIPT_INDEX = "uq_student_payments_receipt_no"
+RECEIPT_ATTEMPTS = 5  # max+1 under a SAVEPOINT; a conflict with a concurrent payment takes the next number
 
 # Carry-over on transfer (N13 P2.1).
 CARRY_CODE = "payment_carried_over"
@@ -130,6 +152,18 @@ class ConcurrentEdit(PaymentConflict):
     """A deadlock with another edit of the same student; nothing was written, repeat the request."""
 
 
+class PaymentForbidden(PaymentError):
+    status_code = 403
+
+
+class PaymentFileTooLarge(PaymentError):
+    status_code = 413
+
+
+class PaymentFileUnsupported(PaymentError):
+    status_code = 415
+
+
 CONCURRENT_EDIT_MESSAGE = "Операция совпала с другой правкой. Повторите."
 
 
@@ -183,6 +217,25 @@ def _plural_lessons(count: int) -> str:
     if 2 <= last <= 4 and not 12 <= last2 <= 14:
         return "урока"
     return "уроков"
+
+
+def _plural_days(count: int) -> str:
+    last, last2 = count % 10, count % 100
+    if last == 1 and last2 != 11:
+        return "день"
+    if 2 <= last <= 4 and not 12 <= last2 <= 14:
+        return "дня"
+    return "дней"
+
+
+def _num(amount: int) -> str:
+    """``250 000`` (a plain space between the thousands)."""
+    return f"{amount:,}".replace(",", " ")
+
+
+def _sum(amount: int) -> str:
+    """``250 000 сум``."""
+    return _num(amount) + " сум"
 
 
 def _short_date(day: date, today: date) -> str:
@@ -673,6 +726,7 @@ class PaymentService:
         payment: StudentPayment,
         users: Dict[UUID, User],
         links: Optional[_Links] = None,
+        files: Optional[Dict[UUID, List[PaymentFileOut]]] = None,
     ) -> PaymentOut:
         return PaymentOut(
             id=str(payment.id),
@@ -685,6 +739,9 @@ class PaymentService:
             lessons_count=payment.lessons_count,
             note=payment.note,
             replaces_payment_id=str(payment.replaces_payment_id) if payment.replaces_payment_id else None,
+            receipt_no=payment.receipt_no,
+            partial_period=bool(payment.partial_period),
+            files=list(files.get(payment.id, ())) if files else [],
             carried_from=links.sources.get(payment.carried_from_payment_id) if links else None,
             carried_out=(
                 CarriedOutOut(
@@ -714,6 +771,7 @@ class PaymentService:
             x for p in last.values() if p for x in (p.created_by, p.voided_by)
         )
         links = self._links(p for p in last.values() if p)
+        files = load_files(self.db, [p.id for p in last.values() if p])
         rows = []
         for e in entries:
             payment = last[e.membership.id]
@@ -740,7 +798,7 @@ class PaymentService:
                     lessons_total=r.lessons_total,
                     lessons_used=r.lessons_used,
                     lessons_left=r.lessons_left,
-                    last_payment=self._payment_out(payment, users, links) if payment else None,
+                    last_payment=self._payment_out(payment, users, links, files) if payment else None,
                 )
             )
         return rows
@@ -861,7 +919,8 @@ class PaymentService:
         ).all()
         users = self._users(x for p in payments for x in (p.created_by, p.voided_by))
         links = self._links(payments)
-        return [self._payment_out(p, users, links) for p in payments]
+        files = load_files(self.db, [p.id for p in payments])
+        return [self._payment_out(p, users, links, files) for p in payments]
 
     # -------------------------------------------------------------- writing
 
@@ -897,20 +956,58 @@ class PaymentService:
         logger.info("membership fee updated membership=%s actor=%s", membership_id, actor_id)
         return self._row(org_id, membership_id)
 
+    @staticmethod
+    def _fixed_day(settings: PaymentSettings) -> bool:
+        """The centre has calendar periods that start on one payment day (``billing_day``)."""
+        return settings.period_mode == ps.CALENDAR and settings.billing_anchor == ps.FIXED_DAY
+
+    @staticmethod
+    def _membership_start(membership: StudentGroup) -> Optional[date]:
+        """Business date (Tashkent) the student joined the group.
+
+        ``student_groups.joined_at`` is a naive UTC instant (like ``left_at``), so it is read the way
+        ``ps.business_date`` reads every naive moment; a joined_at of 22:00 UTC is already the next day.
+        """
+        return ps.business_date(membership.joined_at) if membership.joined_at else None
+
+    def _live_payments(self, org_id: str, membership_id: UUID) -> List[StudentPayment]:
+        return (
+            self.db.query(StudentPayment)
+            .filter(
+                StudentPayment.org_id == org_id,
+                StudentPayment.membership_id == membership_id,
+                StudentPayment.voided_at.is_(None),
+            )
+            .all()
+        )
+
     def _resolve_period(
         self,
-        data: PaymentCreate,
+        *,
+        paid_on: date,
+        valid_from: Optional[date],
+        valid_to: Optional[date],
+        lessons_count: Optional[int],
         settings: PaymentSettings,
         live: Sequence[StudentPayment],
         today: date,
+        membership_start: Optional[date] = None,
     ) -> tuple[date, Optional[date], Optional[int]]:
-        if data.valid_to is not None and data.lessons_count is not None:
+        """The period of a payment: what the client sent, the rest from the centre's settings.
+
+        The one place that knows the defaults - ``create_payment``, ``replace_payment`` and ``quote`` all
+        come here, so a suggestion can never differ from what is saved.  With one payment day for the
+        centre (``fixed_day``) a calendar payment starts at ``default_fixed_day_period`` and ends with the
+        centre's period of its start; whatever the client sent is used as it is, with the same checks.
+        """
+        if valid_to is not None and lessons_count is not None:
             raise PaymentInvalid("Укажите что-то одно: «оплачено до» или число уроков")
         mode = (
-            ps.CALENDAR if data.valid_to is not None
-            else ps.LESSONS if data.lessons_count is not None
+            ps.CALENDAR if valid_to is not None
+            else ps.LESSONS if lessons_count is not None
             else settings.period_mode
         )
+        fixed = mode == ps.CALENDAR and self._fixed_day(settings)
         # What the live payments still cover in this membership (a moved-away original ends the day before).
         previous_until = max(
             (r.end for r in map(self._record, live) if r.end is not None and not r.covers_nothing),
@@ -919,33 +1016,83 @@ class PaymentService:
         # The payment date and the start are bounded first: every default
         # below does date arithmetic that must never see 0001 or 9999.
         errors = ps.validation_errors(
-            today=today, paid_on=data.paid_on, valid_from=data.valid_from or data.paid_on,
-            valid_to=None,
+            today=today, paid_on=paid_on, valid_from=valid_from or paid_on, valid_to=None,
         )
         if errors:
             raise PaymentInvalid(errors[0])
         try:
-            valid_from = data.valid_from or ps.default_valid_from(mode, data.paid_on, previous_until)
+            if valid_from is not None:
+                start = valid_from
+            elif fixed:
+                start, _ = ps.default_fixed_day_period(
+                    paid_on, previous_until, membership_start, settings.billing_day
+                )
+            else:
+                start = ps.default_valid_from(mode, paid_on, previous_until)
         except OverflowError:
             raise PaymentInvalid("Начало периода слишком далеко в будущем")
-        problem = ps.valid_from_error(data.paid_on, valid_from)
+        problem = ps.valid_from_error(paid_on, start)
         if problem:
             raise PaymentInvalid(problem)
         if mode == ps.CALENDAR:
             try:
-                valid_to = data.valid_to or ps.add_month_minus_day(valid_from)
+                if valid_to is not None:
+                    end = valid_to
+                elif fixed:
+                    end = ps.billing_period_end(start, settings.billing_day)
+                else:
+                    end = ps.add_month_minus_day(start)
             except OverflowError:
                 raise PaymentInvalid("Период выходит за допустимые даты")
-            lessons_count = None
+            count = None
         else:
-            valid_to = None
-            lessons_count = data.lessons_count or settings.lessons_per_payment
-        errors = ps.validation_errors(
-            today=today, paid_on=data.paid_on, valid_from=valid_from, valid_to=valid_to
-        )
+            end = None
+            count = lessons_count or settings.lessons_per_payment
+        errors = ps.validation_errors(today=today, paid_on=paid_on, valid_from=start, valid_to=end)
         if errors:
             raise PaymentInvalid(errors[0])
-        return valid_from, valid_to, lessons_count
+        return start, end, count
+
+    def _partial_flag(self, settings: PaymentSettings, valid_from: date, valid_to: Optional[date]) -> bool:
+        """``student_payments.partial_period``: set from the settings of the moment of the payment."""
+        return (
+            valid_to is not None
+            and self._fixed_day(settings)
+            and ps.is_partial_period(valid_from, valid_to, settings.billing_day)
+        )
+
+    def _next_receipt_no(self, org_id: str) -> int:
+        """``max + 1`` inside the organisation; voided payments keep their numbers, so none is reused."""
+        current = (
+            self.db.query(func.max(StudentPayment.receipt_no))
+            .filter(StudentPayment.org_id == org_id, StudentPayment.receipt_no.isnot(None))
+            .scalar()
+        )
+        return int(current or 0) + 1
+
+    def _add_with_receipt(self, org_id: str, build) -> StudentPayment:
+        """Insert the payment ``build(receipt_no)`` makes under the next receipt number.
+
+        The number is ``max + 1`` taken inside a SAVEPOINT; two concurrent payments of one centre may pick
+        the same one, the unique index refuses the second, and it retries with the new maximum (at most
+        ``RECEIPT_ATTEMPTS`` times).  No lock on the organisation: the insert waits only for a concurrent
+        insert of the same number, which never waits for anything this transaction holds.
+        """
+        for attempt in range(1, RECEIPT_ATTEMPTS + 1):
+            payment = build(self._next_receipt_no(org_id))
+            try:
+                with self.db.begin_nested():
+                    self.db.add(payment)
+                    self.db.flush()
+                return payment
+            except IntegrityError as exc:
+                reason = str(exc.orig)
+                if UNIQUE_DUP_INDEX in reason:  # a concurrent identical request slipped past the check
+                    raise DuplicatePayment("Такая оплата уже внесена") from exc
+                if RECEIPT_INDEX not in reason:
+                    raise
+                logger.info("receipt number taken by a concurrent payment (attempt %s)", attempt)
+        raise PaymentConflict("Не удалось присвоить номер квитанции. Повторите.")
 
     def _insert(
         self,
@@ -958,16 +1105,12 @@ class PaymentService:
         *,
         replaces: Optional[StudentPayment] = None,
     ) -> tuple[StudentPayment, List[PaymentWarningOut]]:
-        live = (
-            self.db.query(StudentPayment)
-            .filter(
-                StudentPayment.org_id == org_id,
-                StudentPayment.membership_id == membership.id,
-                StudentPayment.voided_at.is_(None),
-            )
-            .all()
+        live = self._live_payments(org_id, membership.id)
+        valid_from, valid_to, lessons_count = self._resolve_period(
+            paid_on=data.paid_on, valid_from=data.valid_from, valid_to=data.valid_to,
+            lessons_count=data.lessons_count, settings=settings, live=live, today=today,
+            membership_start=self._membership_start(membership),
         )
-        valid_from, valid_to, lessons_count = self._resolve_period(data, settings, live, today)
 
         duplicate = next(
             (
@@ -981,31 +1124,29 @@ class PaymentService:
         if duplicate:
             raise DuplicatePayment("Такая оплата уже внесена")
 
-        payment = StudentPayment(
-            org_id=org_id,
-            membership_id=membership.id,
-            student_id=membership.student_id,
-            group_id=membership.group_id,
-            amount=data.amount,
-            currency="UZS",
-            paid_on=data.paid_on,
-            valid_from=valid_from,
-            valid_to=valid_to,
-            lessons_count=lessons_count,
-            note=data.note,
-            replaces_payment_id=replaces.id if replaces else None,
-            created_by=UUID(str(actor_id)),
-            created_at=_utcnow(),
+        partial = self._partial_flag(settings, valid_from, valid_to)
+        created_at = _utcnow()
+        payment = self._add_with_receipt(
+            org_id,
+            lambda receipt_no: StudentPayment(
+                org_id=org_id,
+                membership_id=membership.id,
+                student_id=membership.student_id,
+                group_id=membership.group_id,
+                amount=data.amount,
+                currency="UZS",
+                paid_on=data.paid_on,
+                valid_from=valid_from,
+                valid_to=valid_to,
+                lessons_count=lessons_count,
+                note=data.note,
+                replaces_payment_id=replaces.id if replaces else None,
+                receipt_no=receipt_no,
+                partial_period=partial,
+                created_by=UUID(str(actor_id)),
+                created_at=created_at,
+            ),
         )
-        try:
-            with self.db.begin_nested():
-                self.db.add(payment)
-                self.db.flush()
-        except IntegrityError as exc:
-            # A concurrent identical request slipped past the check above.
-            if UNIQUE_DUP_INDEX in str(exc.orig):
-                raise DuplicatePayment("Такая оплата уже внесена") from exc
-            raise
 
         warnings = [
             PaymentWarningOut(code=w.code, message=w.message)
@@ -1015,6 +1156,8 @@ class PaymentService:
                 valid_from=valid_from,
                 valid_to=valid_to,
                 existing=[self._record(p) for p in live],
+                amount=data.amount,
+                monthly_fee=int(membership.monthly_fee) if membership.monthly_fee is not None else None,
             )
         ]
         return payment, warnings
@@ -1022,7 +1165,9 @@ class PaymentService:
     def _created(self, org_id: str, payment: StudentPayment, warnings) -> PaymentCreated:
         users = self._users([payment.created_by])
         return PaymentCreated(
-            payment=self._payment_out(payment, users, self._links([payment])),
+            payment=self._payment_out(
+                payment, users, self._links([payment]), load_files(self.db, [payment.id])
+            ),
             warnings=warnings,
             row=self._row(org_id, payment.membership_id),
         )
@@ -1146,9 +1291,323 @@ class PaymentService:
         logger.info("payment voided id=%s actor=%s", payment_id, actor_id)
         users = self._users([payment.created_by, payment.voided_by])
         return PaymentVoided(
-            payment=self._payment_out(payment, users, self._links([payment])),
+            payment=self._payment_out(
+                payment, users, self._links([payment]), load_files(self.db, [payment.id])
+            ),
             row=self._row(org_id, payment.membership_id),
         )
+
+    # ------------------------------------------------ amount hint (N13 P2.2)
+
+    def _group_lesson_days(self, group: Group, start: date, end: date) -> List[date]:
+        """Dates of the group's lessons in ``start .. end`` by the schedule: the regular schedule, moved and
+        one-off lessons, minus the lessons cancelled in the journal (``group_attendance.status =
+        'cancelled'``).  One expansion of the schedule and one query for the cancelled rows."""
+        from .service import AuthService  # lazy: service is heavy
+
+        occurrences = AuthService(self.db)._resolved_occurrences_for_group(
+            group, date_from=start, date_to=end
+        )
+        if not occurrences:
+            return []
+        cancelled = {
+            (row.lesson_date, row.lesson_id)
+            for row in self.db.query(GroupAttendance.lesson_date, GroupAttendance.lesson_id).filter(
+                GroupAttendance.group_id == group.id,
+                GroupAttendance.status == "cancelled",
+                GroupAttendance.lesson_date >= start.isoformat(),
+                GroupAttendance.lesson_date <= end.isoformat(),
+            )
+        }
+        return [
+            date.fromisoformat(item["occurrenceDate"])
+            for item in occurrences
+            if (item["occurrenceDate"], str(item["id"])) not in cancelled
+        ]
+
+    def quote(
+        self,
+        org_id: str,
+        membership_id: UUID,
+        *,
+        paid_on: date,
+        valid_from: Optional[date] = None,
+        valid_to: Optional[date] = None,
+        lessons_count: Optional[int] = None,
+    ) -> PaymentQuote:
+        """Suggested dates and amount for a payment of this membership.  Reads only, writes nothing.
+
+        The dates come from ``_resolve_period`` - the code that saves a payment - and fail with the same 422
+        texts.  The amount rules (``PaymentSettings`` of the centre, ``monthly_fee`` of the membership):
+
+        * no fee -> no amount (``basis`` ``none``);
+        * a lessons package: the fee for the centre's package size, else ``fee * lessons / package size``
+          rounded to 1 000 (``package``);
+        * calendar, from the payment date: the standard period ``add_month_minus_day`` -> the fee (``full``),
+          any other -> no amount (``custom``);
+        * calendar, one payment day: period by period of the centre, a complete one costs the fee, an incomplete
+          one ``fee * lessons in the part / lessons in the period`` by the group's schedule (``lessons``), or by
+          calendar days when the period has no lessons (``days``); the parts are rounded to 1 000 and added.
+        """
+        membership = self._membership(org_id, membership_id)
+        settings = self.get_settings(org_id)
+        today = ps.business_today()
+        start, end, count = self._resolve_period(
+            paid_on=paid_on, valid_from=valid_from, valid_to=valid_to, lessons_count=lessons_count,
+            settings=settings, live=self._live_payments(org_id, membership.id), today=today,
+            membership_start=self._membership_start(membership),
+        )
+        fee = int(membership.monthly_fee) if membership.monthly_fee is not None else None
+        fixed = end is not None and self._fixed_day(settings)
+        partial = fixed and ps.is_partial_period(start, end, settings.billing_day)
+        parts: List[ps.QuotePart] = []
+        amount: Optional[int] = None
+
+        if fee is None:
+            basis, explanation = "none", "Оплата в месяц не задана"
+        elif end is None:  # a lessons package
+            per = settings.lessons_per_payment
+            amount = fee if count == per else ps.round_1000(fee * count, per)
+            basis = "package"
+            explanation = (
+                f"Пакет из {count} {_plural_lessons(count)} — {_sum(amount)}"
+                if count == per
+                else f"Пакет из {count} {_plural_lessons(count)} вместо {per}: {_sum(amount)} из {_num(fee)}"
+            )
+        elif not fixed:
+            try:
+                standard = ps.add_month_minus_day(start) == end
+            except OverflowError:
+                standard = False
+            if standard:
+                amount, basis, explanation = fee, "full", f"Полный месяц — {_sum(fee)}"
+            else:
+                basis, explanation = "custom", "Нестандартный период — укажите сумму"
+        else:
+            group = self.db.query(Group).filter(Group.id == membership.group_id, Group.org_id == org_id).first()
+            parts = ps.price_fixed_day(
+                start, end, settings.billing_day, fee,
+                (lambda a, b: self._group_lesson_days(group, a, b)) if group else (lambda a, b: []),
+            )
+            total = sum(part.amount for part in parts)
+            if total > MAX_MONEY:
+                parts, basis, explanation = [], "custom", "Сумма слишком большая — укажите её вручную"
+            else:
+                amount, basis = total, ps.quote_basis(parts)
+                explanation = self._explain_parts(parts, fee, total, today)
+        if fee == 0 and amount == 0:
+            explanation = "Оплата в месяц равна 0 — занятия бесплатные"
+
+        return PaymentQuote(
+            mode=ps.CALENDAR if end is not None else ps.LESSONS,
+            billing_anchor=settings.billing_anchor,
+            billing_day=settings.billing_day,
+            paid_on=paid_on,
+            valid_from=start,
+            valid_to=end,
+            lessons_count=count,
+            partial=bool(partial),
+            monthly_fee=fee,
+            suggested_amount=amount,
+            basis=basis,
+            parts=[
+                QuotePartOut(
+                    from_=part.start, to=part.end, period_from=part.period_start, period_to=part.period_end,
+                    lessons=part.lessons, period_lessons=part.period_lessons, amount=part.amount,
+                )
+                for part in parts
+            ],
+            explanation=explanation,
+        )
+
+    @staticmethod
+    def _explain_parts(parts: Sequence[ps.QuotePart], fee: int, total: int, today: date) -> str:
+        """The caption under the amount, in Russian."""
+        if len(parts) == 1:
+            part = parts[0]
+            if part.basis == ps.BASIS_FULL:
+                return f"Полный месяц — {_sum(fee)}"
+            if part.basis == ps.BASIS_LESSONS:
+                return (
+                    f"Неполный месяц: {part.lessons} {_plural_lessons(part.lessons)} из {part.period_lessons} "
+                    f"по расписанию — {_sum(part.amount)} из {_num(fee)}"
+                )
+            covered = (part.end - part.start).days + 1
+            whole = (part.period_end - part.period_start).days + 1
+            return (
+                f"Неполный месяц: {covered} {_plural_days(covered)} из {whole} (уроков по расписанию нет, "
+                f"считаем по дням) — {_sum(part.amount)} из {_num(fee)}"
+            )
+        if all(part.basis == ps.BASIS_FULL for part in parts):
+            return f"Полных месяцев: {len(parts)} — {_sum(total)}"
+        lines = []
+        for part in parts:
+            span = f"{_short_date(part.start, today)}–{_short_date(part.end, today)}"
+            if part.basis == ps.BASIS_FULL:
+                lines.append(f"{span}: полный месяц — {_sum(part.amount)}")
+            elif part.basis == ps.BASIS_LESSONS:
+                lines.append(
+                    f"{span}: {part.lessons} {_plural_lessons(part.lessons)} из {part.period_lessons} "
+                    f"— {_sum(part.amount)}"
+                )
+            else:
+                covered = (part.end - part.start).days + 1
+                whole = (part.period_end - part.period_start).days + 1
+                lines.append(
+                    f"{span}: {covered} {_plural_days(covered)} из {whole} (по дням) — {_sum(part.amount)}"
+                )
+        return "; ".join(lines) + f". Итого {_sum(total)}"
+
+    # ------------------------------------------- receipts and cheques (N13 P2.2)
+
+    def receipt(self, org_id: str, payment_id: UUID) -> ReceiptOut:
+        """What the printed receipt shows.  A carry-over is not money: 409."""
+        payment = self._probe_payment(org_id, payment_id)
+        if payment.carried_from_payment_id is not None:
+            raise PaymentConflict("Перенос оплаты — не денежная операция, квитанции нет")
+        if payment.receipt_no is None:  # only a row written around the application
+            raise PaymentConflict("У этой оплаты нет номера квитанции")
+        org = self.db.query(Organization).filter(Organization.id == org_id).first()
+        student = self.db.query(Student).filter(Student.id == payment.student_id, Student.org_id == org_id).first()
+        group = self.db.query(Group).filter(Group.id == payment.group_id, Group.org_id == org_id).first()
+        if not (org and student and group):
+            raise PaymentNotFound("Оплата не найдена")
+        # The correction chain: this payment replaced another one / was replaced by another one.
+        replaced_by = (
+            self.db.query(StudentPayment.receipt_no)
+            .filter(StudentPayment.org_id == org_id, StudentPayment.replaces_payment_id == payment.id)
+            .order_by(StudentPayment.created_at.desc(), StudentPayment.id)
+            .first()
+        )
+        replaces = (
+            self.db.query(StudentPayment.receipt_no)
+            .filter(StudentPayment.org_id == org_id, StudentPayment.id == payment.replaces_payment_id)
+            .first()
+            if payment.replaces_payment_id
+            else None
+        )
+        users = self._users([payment.created_by])
+        return ReceiptOut(
+            receipt_no=payment.receipt_no,
+            org_name=org.name,
+            org_city=(org.city or "").strip() or None,
+            org_phone=(org.phone or "").strip() or None,
+            student_name=f"{student.last_name or ''} {student.first_name or ''}".strip(),
+            display_id=student.display_id,
+            group_name=group.name,
+            amount=int(payment.amount),
+            amount_words=amount_words(int(payment.amount)),
+            currency=payment.currency,
+            paid_on=payment.paid_on,
+            valid_from=payment.valid_from,
+            valid_to=payment.valid_to,
+            lessons_count=payment.lessons_count,
+            partial_period=bool(payment.partial_period),
+            note=payment.note,
+            accepted_by_name=_person(users.get(payment.created_by)),
+            created_at=_iso(payment.created_at),
+            voided_at=_iso(payment.voided_at),
+            void_reason=payment.void_reason,
+            replaced_by_receipt_no=replaced_by[0] if replaced_by else None,
+            replaces_receipt_no=replaces[0] if replaces else None,
+        )
+
+    @deadlock_guard
+    def add_file(
+        self, org_id: str, payment_id: UUID, actor_id: str, data: bytes, filename: Optional[str]
+    ) -> PaymentFileOut:
+        """Attach a cheque (JPEG / PNG / PDF, up to 2 MB, up to 3 per payment) to a live payment."""
+        payment_id = UUID(str(payment_id))
+        try:
+            probe = self._probe_payment(org_id, payment_id)
+            if probe.carried_from_payment_id is not None:
+                raise PaymentConflict("К переносу оплаты чек не прикрепляется — это не денежная операция")
+            # Serialises uploads to one payment (the count below) with a void / replace of it.  Only this
+            # row is locked, FOR NO KEY UPDATE: the insert of the file (a foreign key = FOR KEY SHARE) does
+            # not wait for it, and nothing else is taken afterwards, so no lock order can be inverted.
+            payment = (
+                self.db.query(StudentPayment)
+                .filter(StudentPayment.id == payment_id, StudentPayment.org_id == org_id)
+                .populate_existing()
+                .with_for_update(key_share=True)
+                .first()
+            )
+            if payment is None:
+                raise PaymentNotFound("Оплата не найдена")
+            if payment.voided_at is not None:
+                raise PaymentConflict("Оплата аннулирована — чек прикрепить нельзя")
+            if not data:
+                raise PaymentInvalid("Файл пустой")
+            if len(data) > MAX_FILE_BYTES:
+                raise PaymentFileTooLarge("Файл слишком большой (макс. 2 МБ)")
+            content_type = sniff_content_type(data)
+            if not content_type:
+                raise PaymentFileUnsupported("Допустимы только файлы JPEG, PNG или PDF")
+            count = (
+                self.db.query(func.count(StudentPaymentFile.id))
+                .filter(StudentPaymentFile.payment_id == payment.id)
+                .scalar()
+                or 0
+            )
+            if count >= MAX_FILES_PER_PAYMENT:
+                raise PaymentConflict(f"К оплате можно приложить не более {MAX_FILES_PER_PAYMENT} файлов")
+            file_id = uuid4()
+            stored = StudentPaymentFile(
+                id=file_id,
+                org_id=UUID(str(org_id)),
+                payment_id=payment.id,
+                filename=stored_filename(filename, content_type),
+                content_type=content_type,
+                size_bytes=len(data),
+                data=data,
+                uploaded_by=UUID(str(actor_id)),
+                uploaded_at=_utcnow(),
+            )
+            self.db.add(stored)
+            self.db.commit()
+        except PaymentError:
+            self.db.rollback()
+            raise
+        logger.info("payment file added id=%s payment=%s actor=%s", file_id, payment_id, actor_id)
+        return next(f for f in load_files(self.db, [payment_id]).get(payment_id, ()) if f.id == str(file_id))
+
+    def get_file(self, org_id: str, payment_id: UUID, file_id: UUID) -> StudentPaymentFile:
+        """The cheque with its bytes (the payment must be this centre's and the file this payment's)."""
+        stored = (
+            self.db.query(StudentPaymentFile)
+            .filter(
+                StudentPaymentFile.id == file_id,
+                StudentPaymentFile.payment_id == payment_id,
+                StudentPaymentFile.org_id == org_id,
+            )
+            .first()
+        )
+        if not stored:
+            raise PaymentNotFound("Файл не найден")
+        return stored
+
+    @deadlock_guard
+    def delete_file(
+        self, org_id: str, payment_id: UUID, file_id: UUID, actor_id: str, *, is_owner: bool
+    ) -> None:
+        """The owner, or whoever uploaded the cheque, may remove it (the bytes are not loaded)."""
+        stored = (
+            self.db.query(StudentPaymentFile)
+            .options(defer(StudentPaymentFile.data))
+            .filter(
+                StudentPaymentFile.id == file_id,
+                StudentPaymentFile.payment_id == payment_id,
+                StudentPaymentFile.org_id == org_id,
+            )
+            .first()
+        )
+        if not stored:
+            raise PaymentNotFound("Файл не найден")
+        if not is_owner and str(stored.uploaded_by) != str(actor_id):
+            raise PaymentForbidden("Удалить чек может владелец или тот, кто его загрузил")
+        self.db.delete(stored)
+        self.db.commit()
+        logger.info("payment file removed id=%s payment=%s actor=%s", file_id, payment_id, actor_id)
 
     # ------------------------------------------------- carry-over (N13 P2.1)
 
@@ -1318,6 +1777,7 @@ class PaymentService:
                 lessons_count=c.lessons_count,
                 note=CARRY_NOTE.format(group=c.group_name),
                 carried_from_payment_id=c.original.id,
+                partial_period=bool(c.original.partial_period),  # a carry-over has no receipt number
                 created_by=UUID(str(actor_id)),
                 created_at=now,
             )
@@ -1440,6 +1900,7 @@ class PaymentService:
             lessons_count=lessons,
             note=CARRY_NOTE.format(group=group_name),
             carried_from_payment_id=new_parent.id,
+            partial_period=bool(new_parent.partial_period),
             carried_out_at=child.carried_out_at,  # it had moved on: the new one moved on too
             created_by=UUID(str(actor_id)),
             created_at=_utcnow(),

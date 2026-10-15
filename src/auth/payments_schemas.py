@@ -10,11 +10,18 @@ from pydantic import BaseModel, Field, field_validator
 MAX_MONEY = 10_000_000_000
 
 PeriodMode = Literal["calendar", "lessons"]
+BillingAnchor = Literal["payment_date", "fixed_day"]
+QuoteBasis = Literal["full", "lessons", "days", "package", "custom", "none"]
 MembershipStatus = Literal["none", "free", "expired", "ends_today", "expiring", "active"]
 
 
 class PaymentSettings(BaseModel):
     period_mode: PeriodMode = "calendar"
+    # N13 P2.2.  ``payment_date``: a calendar period starts on the payment date (05.10 -> 04.11).
+    # ``fixed_day``: the centre has one payment day, ``billing_day`` (1..28): day 1 -> 01.10-31.10,
+    # day 10 -> 10.10-09.11; a student who comes mid-period pays for the incomplete one.
+    billing_anchor: BillingAnchor = "payment_date"
+    billing_day: int = Field(1, ge=1, le=28)
     lessons_per_payment: int = Field(12, ge=1, le=60)
     expiring_days: int = Field(3, ge=0, le=14)
     expiring_lessons: int = Field(3, ge=0, le=10)
@@ -31,6 +38,8 @@ class PaymentSettingsUpdate(BaseModel):
     """PATCH semantics: a field that is absent (or null) stays as it was."""
 
     period_mode: Optional[PeriodMode] = None
+    billing_anchor: Optional[BillingAnchor] = None
+    billing_day: Optional[int] = Field(None, ge=1, le=28)
     lessons_per_payment: Optional[int] = Field(None, ge=1, le=60)
     expiring_days: Optional[int] = Field(None, ge=0, le=14)
     expiring_lessons: Optional[int] = Field(None, ge=0, le=10)
@@ -53,6 +62,17 @@ class CarriedOutOut(BaseModel):
     group_name: Optional[str] = None
 
 
+class PaymentFileOut(BaseModel):
+    """A photo / scan of the cheque attached to a payment (the bytes are served by their own endpoint)."""
+
+    id: str
+    filename: Optional[str] = None
+    content_type: str
+    size_bytes: int
+    uploaded_at: Optional[str] = None
+    uploaded_by_name: Optional[str] = None
+
+
 class PaymentOut(BaseModel):
     id: str
     membership_id: str
@@ -64,6 +84,11 @@ class PaymentOut(BaseModel):
     lessons_count: Optional[int] = None
     note: Optional[str] = None
     replaces_payment_id: Optional[str] = None
+    # N13 P2.2: the receipt number (None on a carry-over: it is not money); the payment did not cover
+    # whole periods of the centre; the attached cheques (without their bytes).
+    receipt_no: Optional[int] = None
+    partial_period: bool = False
+    files: List[PaymentFileOut] = Field(default_factory=list)
     # Set on a carry-over made by a transfer (amount 0): "перенос из «<group>»".
     carried_from: Optional[CarriedFromOut] = None
     # Set on the original once it moved: it covers only the days before ``date``.
@@ -159,7 +184,10 @@ class PaymentVoid(BaseModel):
 
 
 class PaymentWarningOut(BaseModel):
-    code: Literal["overlaps_previous", "gap_before", "period_over_62_days", "paid_over_60_days_ago"]
+    code: Literal[
+        "overlaps_previous", "gap_before", "period_over_62_days", "paid_over_60_days_ago",
+        "short_period_full_amount",
+    ]
     message: str
 
 
@@ -172,3 +200,66 @@ class PaymentCreated(BaseModel):
 class PaymentVoided(BaseModel):
     payment: PaymentOut
     row: MembershipPaymentRow
+
+
+class QuotePartOut(BaseModel):
+    """One period of the centre inside the quoted payment.
+
+    ``lessons`` / ``period_lessons`` are filled for a period prorated by lessons (the group's lessons in
+    the covered part / in the whole period); ``None`` for a complete period and for one counted by days.
+    """
+
+    from_: date = Field(..., alias="from")
+    to: date
+    period_from: date
+    period_to: date
+    lessons: Optional[int] = None
+    period_lessons: Optional[int] = None
+    amount: int
+
+    model_config = {"populate_by_name": True}
+
+
+class PaymentQuote(BaseModel):
+    """Suggested dates and amount of a payment; nothing is written."""
+
+    mode: PeriodMode
+    billing_anchor: BillingAnchor
+    billing_day: int
+    paid_on: date
+    valid_from: date
+    valid_to: Optional[date] = None
+    lessons_count: Optional[int] = None
+    partial: bool
+    monthly_fee: Optional[int] = None
+    suggested_amount: Optional[int] = None
+    basis: QuoteBasis
+    parts: List[QuotePartOut] = Field(default_factory=list)
+    explanation: str
+
+
+class ReceiptOut(BaseModel):
+    """Everything the printed receipt shows (no other payment data)."""
+
+    receipt_no: int
+    org_name: str
+    org_city: Optional[str] = None
+    org_phone: Optional[str] = None
+    student_name: str
+    display_id: Optional[str] = None
+    group_name: str
+    amount: int
+    amount_words: str
+    currency: str
+    paid_on: date
+    valid_from: date
+    valid_to: Optional[date] = None
+    lessons_count: Optional[int] = None
+    partial_period: bool = False
+    note: Optional[str] = None
+    accepted_by_name: Optional[str] = None
+    created_at: Optional[str] = None
+    voided_at: Optional[str] = None
+    void_reason: Optional[str] = None
+    replaced_by_receipt_no: Optional[int] = None
+    replaces_receipt_no: Optional[int] = None

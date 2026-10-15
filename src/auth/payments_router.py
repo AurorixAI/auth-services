@@ -4,23 +4,31 @@ ALGO - Payments router (N13 P2).
 Mounted under /api/v1/auth.  Every handler is tenant-scoped by the org of the
 token and guarded by ``require_payments_access`` (owner always; admin only when
 the owner switched ``admin_can_manage`` on; teacher never).  The settings
-endpoints are the owner's alone.  Money is returned by nothing else.
+endpoints are the owner's alone.  Money is returned by nothing else - that
+includes the amount hint (``quote``), the receipt and the cheque files (N13 P2.2).
 """
+from datetime import date
 from typing import Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from src.core.database import get_db
 
 from .dependencies import require_payments_access, require_payments_settings
+from .payments_files import MAX_BODY_BYTES, MAX_FILE_BYTES, file_headers
 from .payments_schemas import (
     FeeUpdate,
     MembershipPaymentRow,
     PaymentCreate,
     PaymentCreated,
+    PaymentFileOut,
     PaymentOut,
+    PaymentQuote,
     PaymentReplace,
     PaymentSettings,
     PaymentSettingsUpdate,
@@ -28,6 +36,7 @@ from .payments_schemas import (
     PaymentStatusPage,
     PaymentVoid,
     PaymentVoided,
+    ReceiptOut,
 )
 from .payments_service import PaymentError, PaymentService
 
@@ -131,6 +140,28 @@ def list_payments(
         raise _http(exc)
 
 
+@router.get("/org/memberships/{membership_id}/payments/quote", response_model=PaymentQuote)
+def payment_quote(
+    membership_id: UUID,
+    paid_on: date,
+    valid_from: Optional[date] = None,
+    valid_to: Optional[date] = None,
+    lessons_count: Optional[int] = Query(None, ge=1, le=120),
+    user: dict = Depends(require_payments_access),
+    db: Session = Depends(get_db),
+):
+    """Подсказка периода и суммы для формы оплаты; ничего не записывает.
+
+    Даты по умолчанию считаются тем же кодом, что при внесении оплаты; ошибки — те же 422."""
+    try:
+        return PaymentService(db).quote(
+            user["org_id"], membership_id, paid_on=paid_on, valid_from=valid_from,
+            valid_to=valid_to, lessons_count=lessons_count,
+        )
+    except PaymentError as exc:
+        raise _http(exc)
+
+
 @router.post("/org/memberships/{membership_id}/payments", response_model=PaymentCreated, status_code=201)
 def create_payment(
     membership_id: UUID,
@@ -177,3 +208,101 @@ def void_payment(
         )
     except PaymentError as exc:
         raise _http(exc)
+
+
+# ---- receipt and cheques (N13 P2.2) -------------------------------------------
+
+
+@router.get("/org/payments/{payment_id}/receipt", response_model=ReceiptOut)
+def payment_receipt(
+    payment_id: UUID, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)
+):
+    """Данные квитанции (у переноса оплаты квитанции нет — 409)."""
+    try:
+        return PaymentService(db).receipt(user["org_id"], payment_id)
+    except PaymentError as exc:
+        raise _http(exc)
+
+
+@router.post(
+    "/org/payments/{payment_id}/files",
+    response_model=PaymentFileOut,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["file"],
+                        "properties": {"file": {"type": "string", "format": "binary"}},
+                    }
+                }
+            },
+        }
+    },
+)
+async def upload_payment_file(
+    payment_id: UUID,
+    request: Request,
+    user: dict = Depends(require_payments_access),
+    db: Session = Depends(get_db),
+):
+    """Приложить фото или скан чека (JPEG/PNG/PDF до 2 МБ, не более 3 файлов; не к аннулированной оплате)."""
+    # ``file: UploadFile`` would make FastAPI buffer the whole body before this handler runs; the size
+    # is checked here first (the access check above has already run as a dependency).
+    try:
+        declared = int(request.headers.get("content-length", ""))
+    except ValueError:
+        raise HTTPException(411, "Не указан размер файла")
+    if declared > MAX_BODY_BYTES:
+        raise HTTPException(413, "Файл слишком большой (макс. 2 МБ)")
+    form = await request.form()
+    try:
+        upload = form.get("file")
+        if not isinstance(upload, StarletteUploadFile):
+            raise HTTPException(422, "Передайте файл в поле file")
+        # Never read more than one byte past the limit into memory.
+        data = await upload.read(MAX_FILE_BYTES + 1)
+        filename = upload.filename
+    finally:
+        await form.close()
+    try:
+        # Blocking DB work runs in the thread pool, not on the event loop.
+        return await run_in_threadpool(
+            PaymentService(db).add_file, user["org_id"], payment_id, user["user_id"], data, filename
+        )
+    except PaymentError as exc:
+        raise _http(exc)
+
+
+@router.get("/org/payments/{payment_id}/files/{file_id}")
+def download_payment_file(
+    payment_id: UUID,
+    file_id: UUID,
+    user: dict = Depends(require_payments_access),
+    db: Session = Depends(get_db),
+):
+    """Отдать чек (inline, без угадывания типа)."""
+    try:
+        stored = PaymentService(db).get_file(user["org_id"], payment_id, file_id)
+    except PaymentError as exc:
+        raise _http(exc)
+    return Response(content=stored.data, media_type=stored.content_type, headers=file_headers(stored.filename))
+
+
+@router.delete("/org/payments/{payment_id}/files/{file_id}")
+def delete_payment_file(
+    payment_id: UUID,
+    file_id: UUID,
+    user: dict = Depends(require_payments_access),
+    db: Session = Depends(get_db),
+):
+    """Удалить чек: владелец или тот, кто его загрузил."""
+    try:
+        PaymentService(db).delete_file(
+            user["org_id"], payment_id, file_id, user["user_id"], is_owner=user.get("org_role") == "owner"
+        )
+    except PaymentError as exc:
+        raise _http(exc)
+    return {"ok": True}

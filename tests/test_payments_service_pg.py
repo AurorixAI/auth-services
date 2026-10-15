@@ -553,7 +553,8 @@ def test_fee_can_be_set_cleared_and_validated(world):
 def test_settings_defaults_patch_semantics_and_audit_stamp(world):
     client = owner(world)
     r = client.get(f"{API}/org/settings/payments")
-    assert r.json() == {"period_mode": "calendar", "lessons_per_payment": 12, "expiring_days": 3,
+    assert r.json() == {"period_mode": "calendar", "billing_anchor": "payment_date", "billing_day": 1,
+                        "lessons_per_payment": 12, "expiring_days": 3,
                         "expiring_lessons": 3, "excuse_deadline_days": 5, "excuse_deadline_lessons": 2,
                         "admin_can_manage": False, "updated_by": None, "updated_at": None}
     world.db.query(Organization).filter_by(id=world.org.id).update({"settings": {"theme": "keep-me"}})
@@ -570,7 +571,8 @@ def test_settings_defaults_patch_semantics_and_audit_stamp(world):
     for bad in ({"lessons_per_payment": 0}, {"lessons_per_payment": 61}, {"expiring_days": 15}, {"expiring_lessons": 11},
                 {"excuse_deadline_days": -1}, {"excuse_deadline_days": 31}, {"excuse_deadline_lessons": -1},
                 {"excuse_deadline_lessons": 13},
-                {"period_mode": "weekly"}, {"admin_can_manage": "maybe"}):
+                {"period_mode": "weekly"}, {"admin_can_manage": "maybe"},
+                {"billing_anchor": "monthly"}, {"billing_day": 0}, {"billing_day": 29}):
         assert client.put(f"{API}/org/settings/payments", json=bad).status_code == 422, bad
 
 

@@ -249,11 +249,11 @@ _EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "application/pdf": "pdf"
 _FILENAME_STRIP = re.compile(r'[\x00-\x1f\x7f"\\/:*?<>|]+')
 
 
-def safe_filename(raw: Optional[str], content_type: str) -> str:
+def safe_filename(raw: Optional[str], content_type: str, default: str = "spravka") -> str:
     """Display name only (never a path): no separators or control characters."""
     name = _FILENAME_STRIP.sub("_", (raw or "").replace("\\", "/").split("/")[-1]).strip(" ._")
     if not name:
-        name = "spravka"
+        name = default
     ext = _EXTENSIONS[content_type]
     if not name.lower().endswith("." + ext) and not (ext == "jpg" and name.lower().endswith(".jpeg")):
         name = f"{name[:190]}.{ext}"
