@@ -137,6 +137,17 @@ def test_list_shape_filters_and_counters(world, lesson):
     assert client.get(BASE, params=around).json()["total"] == 1
 
 
+def _all_keys(node):
+    """Every dict key anywhere inside ``node`` (dicts and lists, recursively)."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield str(key)
+            yield from _all_keys(value)
+    elif isinstance(node, (list, tuple)):
+        for value in node:
+            yield from _all_keys(value)
+
+
 def test_list_carries_the_student_phone_and_no_money_fields(world, lesson):
     world.students[0].student_phone = "+998901234567"
     world.db.commit()
@@ -144,8 +155,10 @@ def test_list_carries_the_student_phone_and_no_money_fields(world, lesson):
     assert item["student"]["phone"] == "+998901234567"
     # The student block is an allow-list: contact data yes, anything financial no.
     assert set(item["student"]) == {"id", "full_name", "display_id", "phone"}
-    text = str(item).lower()
-    assert not any(word in text for word in ("balance", "fee", "monthly", "amount", "payment", "price", "debt"))
+    keys = [key.lower() for key in _all_keys(item)]      # the field NAMES: values (random ids) may contain "fee"
+    assert keys and not any(
+        word in key for key in keys for word in ("balance", "fee", "monthly", "amount", "payment", "price", "debt")
+    )
     world.students[0].student_phone = ""
     world.db.commit()
     again = make_client(world, user=world.owner).get(BASE, params=window()).json()["items"][0]
