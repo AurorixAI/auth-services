@@ -1,0 +1,327 @@
+"""N13 P1.5: until when a pending excuse must be confirmed (before the student's next payment)."""
+import json
+from datetime import date, timedelta
+
+from src.auth import payment_status as ps
+from src.auth.excuse_deadline import excuse_deadline, month_end
+
+from tests.pg_world import (  # noqa: F401  (fixtures)
+    business_today, excused_lesson, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save, world,
+)
+from tests.test_payments_service_pg import day, mid, owner, pay, set_settings
+
+API = "/api/v1/auth"
+
+
+# ---- the pure rule (no database) --------------------------------------------------
+
+
+def rec(valid_from, valid_to=None, lessons=None, paid_on=None, n=0):
+    return ps.PaymentRecord(
+        paid_on=paid_on or valid_from, valid_from=valid_from, valid_to=valid_to, lessons_count=lessons,
+        created_at=__import__("datetime").datetime(2026, 1, 1, 0, n),
+    )
+
+
+TODAY = date(2026, 10, 15)
+
+
+def calendar_deadline(lesson, valid_to, days=5, valid_from=date(2026, 9, 1)):
+    return excuse_deadline(
+        lesson_date=lesson, today=TODAY, payments=[rec(valid_from, valid_to)], deadline_days=days, deadline_lessons=2,
+    )
+
+
+def test_calendar_deadline_is_valid_to_minus_the_configured_days():
+    result = calendar_deadline(date(2026, 10, 2), date(2026, 10, 31))
+    assert result == {"kind": "date", "date": "2026-10-26", "overdue": False, "days_left": 11}
+    assert calendar_deadline(date(2026, 10, 2), date(2026, 10, 31), days=0)["date"] == "2026-10-31"
+    assert calendar_deadline(date(2026, 10, 1), date(2026, 10, 31), days=30)["date"] == "2026-10-01"
+    # a lesson after valid_to - days is confirmed by valid_to itself
+    assert calendar_deadline(date(2026, 10, 2), date(2026, 10, 31), days=30)["date"] == "2026-10-31"
+
+
+def test_lesson_inside_the_last_days_gets_valid_to_itself():
+    # valid_to - 5 = 26.10: a lesson on the 26th is not after it, on the 27th it is.
+    assert calendar_deadline(date(2026, 10, 26), date(2026, 10, 31))["date"] == "2026-10-26"
+    assert calendar_deadline(date(2026, 10, 27), date(2026, 10, 31))["date"] == "2026-10-31"
+    assert calendar_deadline(date(2026, 10, 31), date(2026, 10, 31))["date"] == "2026-10-31"
+
+
+def test_overdue_is_strictly_after_the_deadline_day():
+    assert calendar_deadline(date(2026, 10, 1), date(2026, 10, 20)) == {
+        "kind": "date", "date": "2026-10-15", "overdue": False, "days_left": 0}
+    assert calendar_deadline(date(2026, 10, 1), date(2026, 10, 19)) == {
+        "kind": "date", "date": "2026-10-14", "overdue": True, "days_left": -1}
+
+
+def test_only_the_payment_covering_the_lesson_counts():
+    september = rec(date(2026, 9, 1), date(2026, 9, 30), n=1)
+    october = rec(date(2026, 10, 1), date(2026, 10, 31), n=2)
+    kwargs = dict(today=TODAY, payments=[september, october], deadline_days=5, deadline_lessons=2)
+    assert excuse_deadline(lesson_date=date(2026, 9, 20), **kwargs)["date"] == "2026-09-25"
+    assert excuse_deadline(lesson_date=date(2026, 10, 3), **kwargs)["date"] == "2026-10-26"
+
+
+def test_no_covering_payment_falls_back_to_the_month_end():
+    result = excuse_deadline(lesson_date=date(2026, 10, 8), today=TODAY, payments=[], deadline_days=5, deadline_lessons=2)
+    assert result == {"kind": "date", "date": "2026-10-31", "overdue": False, "days_left": 16}
+    earlier = excuse_deadline(lesson_date=date(2026, 9, 8), today=TODAY, payments=[], deadline_days=5, deadline_lessons=2)
+    assert earlier["date"] == "2026-09-30" and earlier["overdue"] is True
+    # a calendar payment that ends before the lesson does not cover it either
+    gap = excuse_deadline(lesson_date=date(2026, 10, 8), today=TODAY, payments=[rec(date(2026, 9, 1), date(2026, 9, 30))],
+                          deadline_days=5, deadline_lessons=2)
+    assert gap["date"] == "2026-10-31"
+    assert month_end(date(2026, 2, 3)) == date(2026, 2, 28) and month_end(date(2028, 2, 3)) == date(2028, 2, 29)
+
+
+def lessons_deadline(lesson, packages, counted, threshold=2):
+    return excuse_deadline(
+        lesson_date=lesson, today=TODAY, payments=packages, counted_dates=counted, deadline_days=5, deadline_lessons=threshold,
+    )
+
+
+def test_lessons_package_counts_down_by_fifo():
+    package = rec(date(2026, 10, 1), lessons=4)
+    counted = [date(2026, 10, 2), date(2026, 10, 5)]  # includes the excused lesson (10.05)
+    assert lessons_deadline(date(2026, 10, 5), [package], counted) == {
+        "kind": "lessons", "lessons_left": 2, "urgent": True, "overdue": False}
+    assert lessons_deadline(date(2026, 10, 5), [package], counted, threshold=1)["urgent"] is False
+    four = counted + [date(2026, 10, 7), date(2026, 10, 9)]
+    assert lessons_deadline(date(2026, 10, 5), [package], four) == {
+        "kind": "lessons", "lessons_left": 0, "urgent": True, "overdue": True}
+
+
+def test_lesson_goes_to_the_package_that_took_it_not_to_a_later_one():
+    first = rec(date(2026, 9, 1), lessons=2, n=1)
+    second = rec(date(2026, 9, 20), lessons=5, n=2)
+    counted = [date(2026, 9, 3), date(2026, 9, 10), date(2026, 9, 25), date(2026, 9, 27)]
+    # 03.09 and 10.09 fill the first package; 25.09 is the first lesson of the second (left 5-2=3)
+    assert lessons_deadline(date(2026, 9, 10), [first, second], counted)["lessons_left"] == 0
+    assert lessons_deadline(date(2026, 9, 25), [first, second], counted)["lessons_left"] == 3
+
+
+def test_an_unfinished_lesson_would_be_charged_to_the_package():
+    package = rec(date(2026, 10, 1), lessons=3)
+    result = lessons_deadline(date(2026, 10, 8), [package], [date(2026, 10, 2)])  # 10.08 is not in the counted list
+    assert result["lessons_left"] == 1 and result["urgent"] is True and result["overdue"] is False
+
+
+def test_full_packages_make_the_lesson_overdue_and_a_later_package_is_not_used_for_it():
+    full = rec(date(2026, 9, 1), lessons=1)
+    assert lessons_deadline(date(2026, 9, 20), [full], [date(2026, 9, 3), date(2026, 9, 20)]) == {
+        "kind": "lessons", "lessons_left": 0, "urgent": True, "overdue": True}
+    later = rec(date(2026, 10, 10), lessons=5)  # starts after the lesson: no package covers it
+    assert lessons_deadline(date(2026, 9, 20), [later], [date(2026, 9, 20)])["kind"] == "date"
+
+
+def test_a_calendar_payment_beats_a_lessons_package_for_the_same_day():
+    result = excuse_deadline(
+        lesson_date=date(2026, 10, 3), today=TODAY,
+        payments=[rec(date(2026, 10, 1), lessons=3), rec(date(2026, 9, 25), date(2026, 10, 24), n=1)],
+        counted_dates=[date(2026, 10, 3)], deadline_days=5, deadline_lessons=2,
+    )
+    assert result["kind"] == "date" and result["date"] == "2026-10-19"
+
+
+# ---- through the API --------------------------------------------------------------
+
+
+def listing(w, **params):
+    params = {"status": "all", "date_from": (business_today() - timedelta(days=60)).isoformat(),
+              "date_to": business_today().isoformat(), **params}
+    r = make_client(w).get(f"{API}/org/attendance/excuses", params=params)
+    assert r.status_code == 200, r.text
+    return r.json()["items"]
+
+
+def deadline_of(w, student=None):
+    sid = str((student or w.students[0]).id)
+    found = [i for i in listing(w) if i["student"]["id"] == sid]
+    assert len(found) == 1
+    return found[0]["deadline"]
+
+
+@needs_pg
+def test_calendar_payment_deadline_through_the_api(world):
+    excused_lesson(world, offset_days=3)
+    pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))
+    assert deadline_of(world) == {"kind": "date", "date": day(15).isoformat(), "overdue": False, "days_left": 15}
+
+
+@needs_pg
+def test_lesson_in_the_last_days_of_the_paid_period_uses_valid_to(world):
+    excused_lesson(world, offset_days=1)
+    pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(3))   # valid_to - 5 = day(-2) < lesson day(-1)
+    assert deadline_of(world) == {"kind": "date", "date": day(3).isoformat(), "overdue": False, "days_left": 3}
+
+
+@needs_pg
+def test_overdue_and_last_day_through_the_api(world):
+    excused_lesson(world, offset_days=3)
+    payment = pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(-1))["payment"]
+    assert deadline_of(world) == {"kind": "date", "date": day(-1).isoformat(), "overdue": True, "days_left": -1}
+    world.db.query(__import__("src.models.auth", fromlist=["StudentPayment"]).StudentPayment).filter_by(
+        id=payment["id"]).update({"valid_to": day(0)})
+    world.db.commit()
+    assert deadline_of(world) == {"kind": "date", "date": day(0).isoformat(), "overdue": False, "days_left": 0}
+
+
+@needs_pg
+def test_deadline_days_come_from_the_settings(world):
+    excused_lesson(world, offset_days=3)
+    pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))
+    assert set_settings(world, excuse_deadline_days=0)["excuse_deadline_days"] == 0
+    assert deadline_of(world)["date"] == day(20).isoformat()
+    set_settings(world, excuse_deadline_days=10)
+    assert deadline_of(world)["date"] == day(10).isoformat()
+    set_settings(world, excuse_deadline_days=30)       # the lesson is inside the last 30 days: valid_to
+    assert deadline_of(world)["date"] == day(20).isoformat()
+
+
+@needs_pg
+def test_no_payment_means_the_last_day_of_the_lesson_month(world):
+    day_, _ = excused_lesson(world, offset_days=2)
+    expected = month_end(day_)
+    result = deadline_of(world)
+    assert result["kind"] == "date" and result["date"] == expected.isoformat()
+    assert result["overdue"] is False and result["days_left"] == (expected - business_today()).days
+
+
+@needs_pg
+def test_a_voided_payment_does_not_count(world):
+    excused_lesson(world, offset_days=3)
+    payment = pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))["payment"]
+    assert deadline_of(world)["date"] == day(15).isoformat()
+    r = owner(world).post(f"{API}/org/payments/{payment['id']}/void", json={"reason": "Внесено по ошибке"})
+    assert r.status_code == 200, r.text
+    assert deadline_of(world)["date"] == month_end(business_today() - timedelta(days=3)).isoformat()
+
+
+@needs_pg
+def test_payment_of_another_group_membership_is_ignored(world):
+    excused_lesson(world, offset_days=3)
+    other = make_group(world.db, world.org, world.teacher, "Вторая")
+    world.db.commit()
+    from src.models.auth import StudentGroup
+    world.db.add(StudentGroup(student_id=world.students[0].id, group_id=other.id, is_active=True,
+                              joined_at=__import__("datetime").datetime.now() - timedelta(days=60)))
+    world.db.commit()
+    pay(world, world.students[0], group=other, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))
+    assert deadline_of(world)["date"] == month_end(business_today() - timedelta(days=3)).isoformat()
+
+
+def lesson_marks(w, offset, marks=None, reasons=None):
+    day_, lesson_id = reconcile(w, offset)
+    full = {s: "present" for s in w.students}
+    full.update(marks or {})
+    extra = {"excuseReasons": {s.id: r for s, r in (reasons or {}).items()}} if reasons else {}
+    save(w, day_, lesson_id, list(full.items()), status="completed", **extra)
+    return day_
+
+
+@needs_pg
+def test_lessons_package_countdown_through_the_api(world):
+    s0 = world.students[0]
+    set_settings(world, period_mode="lessons", lessons_per_payment=3, excuse_deadline_lessons=1)
+    pay(world, s0, paid_on=day(-10), valid_from=day(-10))
+    lesson_marks(world, 3, {s0: "excused"}, reasons={s0: "Болел"})
+    assert deadline_of(world) == {"kind": "lessons", "lessons_left": 2, "urgent": False, "overdue": False}
+    lesson_marks(world, 2)
+    assert deadline_of(world) == {"kind": "lessons", "lessons_left": 1, "urgent": True, "overdue": False}
+    lesson_marks(world, 1)
+    assert deadline_of(world) == {"kind": "lessons", "lessons_left": 0, "urgent": True, "overdue": True}
+
+
+@needs_pg
+def test_unfinished_excused_lesson_counts_against_the_package(world):
+    s0 = world.students[0]
+    set_settings(world, period_mode="lessons", lessons_per_payment=3)
+    pay(world, s0, paid_on=day(-10), valid_from=day(-10))
+    excused_lesson(world, offset_days=2)   # in progress: not counted yet, but it would be
+    assert deadline_of(world) == {"kind": "lessons", "lessons_left": 2, "urgent": True, "overdue": False}
+
+
+@needs_pg
+def test_lessons_fifo_picks_the_package_that_took_the_lesson(world):
+    s0 = world.students[0]
+    set_settings(world, period_mode="lessons")
+    pay(world, s0, paid_on=day(-20), valid_from=day(-20), lessons_count=1)
+    pay(world, s0, paid_on=day(-6), valid_from=day(-6), lessons_count=4)
+    lesson_marks(world, 10)                                   # fills the first package
+    lesson_marks(world, 3, {s0: "excused"}, reasons={s0: "Болел"})
+    assert deadline_of(world) == {"kind": "lessons", "lessons_left": 3, "urgent": False, "overdue": False}
+
+
+@needs_pg
+def test_exhausted_package_is_overdue(world):
+    s0 = world.students[0]
+    set_settings(world, period_mode="lessons")
+    pay(world, s0, paid_on=day(-20), valid_from=day(-20), lessons_count=1)
+    lesson_marks(world, 10)
+    lesson_marks(world, 3, {s0: "excused"}, reasons={s0: "Болел"})
+    assert deadline_of(world) == {"kind": "lessons", "lessons_left": 0, "urgent": True, "overdue": True}
+
+
+@needs_pg
+def test_decided_excuses_have_no_deadline_and_a_reset_one_gets_it_back(world):
+    excused_lesson(world, offset_days=3)
+    item = listing(world)[0]
+    assert item["deadline"] is not None
+    client = make_client(world)
+    r = client.post(f"{API}/org/attendance/excuses/{item['id']}/review", json={"decision": "confirmed"})
+    assert r.status_code == 200 and r.json()["deadline"] is None
+    assert listing(world)[0]["deadline"] is None
+    r = client.post(f"{API}/org/attendance/excuses/{item['id']}/reset")
+    assert r.status_code == 200 and r.json()["deadline"]["kind"] == "date"
+
+
+@needs_pg
+def test_deadline_exposes_no_money(world):
+    excused_lesson(world, offset_days=3)
+    pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(20), amount=987654, note="секретная сумма")
+    body = json.dumps(make_client(world).get(
+        f"{API}/org/attendance/excuses",
+        params={"status": "all", "date_from": day(-60).isoformat(), "date_to": day(0).isoformat()},
+    ).json(), ensure_ascii=False)
+    assert "987654" not in body and "amount" not in body and "секретная" not in body
+    assert set(deadline_of(world)) == {"kind", "date", "overdue", "days_left"}
+
+
+@needs_pg
+def test_deadlines_are_batch_loaded(world):
+    from sqlalchemy import event
+
+    s0, s1, _ = world.students
+    pay(world, s0, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))
+    set_settings(world, period_mode="lessons")
+    pay(world, s1, paid_on=day(-30), valid_from=day(-30), lessons_count=12)
+
+    def statements_for_list():
+        world.db.expire_all()
+        statements = []
+        engine = world.db.get_bind()
+
+        def record(conn, cursor, statement, *a):
+            statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            items = listing(world)
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+        return items, len(statements)
+
+    for offset in (1, 2):   # both a calendar and a lessons-mode excuse already: all loaders run
+        day_, lesson_id = reconcile(world, offset)
+        save(world, day_, lesson_id, [(s0, "excused"), (s1, "excused"), (world.students[2], "present")],
+             status="completed", excuseReasons={s0.id: "Болел", s1.id: "Болел"})
+    small_items, small = statements_for_list()
+    for offset in range(3, 9):
+        day_, lesson_id = reconcile(world, offset)
+        save(world, day_, lesson_id, [(s0, "excused"), (s1, "excused"), (world.students[2], "present")],
+             status="completed", excuseReasons={s0.id: "Болел", s1.id: "Болел"})
+    big_items, big = statements_for_list()
+    assert len(big_items) == 16 > len(small_items) == 4
+    assert big == small, (small, big)
+    assert all(i["deadline"] and i["deadline"]["kind"] in ("date", "lessons") for i in big_items)

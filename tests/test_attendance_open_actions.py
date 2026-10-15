@@ -233,3 +233,155 @@ def test_open_actions_missed_lessons_start_on_the_first_of_the_previous_month(wo
     # The preload stays O(1): a window of two months costs the same queries as before.
     _, statements = _statements_for_open_actions(world)
     assert len(statements) <= 8
+
+
+# ---- N13 P1.5: no student in the group at the lesson start = nothing was missed ----
+
+
+def _weekday_group(w, name, memberships):
+    """A group with one 10:00-11:00 lesson per weekday and the given (joined_at, left_at) memberships.
+
+    joined_at / left_at are naive UTC, like the real columns.
+    """
+    from datetime import datetime  # noqa: F401  (documentation of the types used)
+
+    from tests.pg_world import make_group
+    from src.models.auth import Student, StudentGroup
+
+    group = make_group(w.db, w.org, w.teacher, name)
+    group.schedule = [
+        {"id": f"s{d}", "dayOfWeek": d, "startTime": "10:00", "endTime": "11:00", "format": "offline"}
+        for d in range(1, 8)
+    ]
+    for i, (joined, left) in enumerate(memberships):
+        student = Student(org_id=w.org.id, first_name=f"Уч{i}", last_name="Тест", class_level=9, group_id=group.id)
+        w.db.add(student)
+        w.db.flush()
+        w.db.add(StudentGroup(student_id=student.id, group_id=group.id, is_active=left is None,
+                              joined_at=joined, left_at=left))
+    w.db.commit()
+    return group
+
+
+def _missed_for(w, group, now):
+    items = w.svc.get_open_attendance_actions(str(w.org.id), actor_id=None, is_org_admin=True, now=now)
+    return sorted(i.lessonDate for i in items if i.actionType == "missed" and i.groupId == str(group.id))
+
+
+def _noon(day):
+    from datetime import datetime
+
+    from src.auth.service import BUSINESS_TIMEZONE
+
+    return datetime(day.year, day.month, day.day, 23, 0, tzinfo=BUSINESS_TIMEZONE)
+
+
+def test_missed_lesson_of_a_group_with_no_students_is_not_reported(world):
+    empty = _weekday_group(world, "Пустая", [])
+    assert _missed_for(world, empty, _noon(business_today())) == []
+    # the group with students still reports its missed lessons
+    assert _missed_for(world, world.group, _noon(business_today()))
+
+
+def test_in_progress_lesson_of_an_empty_group_is_still_reported(world):
+    from src.auth.schemas import StartAttendanceRequest
+
+    empty = _weekday_group(world, "Пустая начатая", [])
+    day, lesson_id = past_lesson_for_test()
+    world.svc.reconcile_missed_group_attendance(
+        str(world.org.id), str(empty.id), StartAttendanceRequest(lessonDate=day, lessonId=lesson_id),
+        reconciled_by=str(world.admin.id), is_org_admin=True,
+    )
+    items = world.svc.get_open_attendance_actions(str(world.org.id), actor_id=None, is_org_admin=True)
+    started = [i for i in items if i.groupId == str(empty.id)]
+    assert [(i.actionType, i.lessonDate) for i in started] == [("in_progress", day.isoformat())]
+
+
+def past_lesson_for_test():
+    from tests.pg_world import past_lesson
+
+    return past_lesson(2)
+
+
+def test_missed_lessons_start_with_the_first_student_who_joined(world):
+    from datetime import datetime, timedelta
+
+    today = business_today()
+    joined_day = today - timedelta(days=10)
+    # 11:00 Tashkent = 06:00 UTC: AFTER the 10:00 lesson of that day (05:00 UTC).
+    joined = datetime(joined_day.year, joined_day.month, joined_day.day, 6, 0)
+    group = _weekday_group(world, "Новая", [(joined, None)])
+    dates = _missed_for(world, group, _noon(today))
+    assert joined_day.isoformat() not in dates  # the lesson that day had started before the student came
+    assert (joined_day - timedelta(days=1)).isoformat() not in dates
+    assert (joined_day + timedelta(days=1)).isoformat() in dates
+    assert dates[0] == (joined_day + timedelta(days=1)).isoformat() and dates[-1] == today.isoformat()
+    # one hour earlier (09:30 Tashkent = 04:30 UTC) the same day's lesson counts
+    group2 = _weekday_group(world, "Новая 2", [(datetime(joined_day.year, joined_day.month, joined_day.day, 4, 30), None)])
+    assert _missed_for(world, group2, _noon(today))[0] == joined_day.isoformat()
+
+
+def test_missed_lessons_stop_after_the_last_student_left(world):
+    from datetime import datetime, timedelta
+
+    today = business_today()
+    left_day = today - timedelta(days=5)
+    # 11:00 Tashkent = 06:00 UTC: AFTER the lesson start, so that day's lesson still had a student.
+    left = datetime(left_day.year, left_day.month, left_day.day, 6, 0)
+    group = _weekday_group(world, "Выбыли", [(datetime.now() - timedelta(days=90), left)])
+    dates = _missed_for(world, group, _noon(today))
+    assert dates[-1] == left_day.isoformat()
+    assert (left_day + timedelta(days=1)).isoformat() not in dates
+
+
+def test_a_second_student_keeps_the_lesson_after_the_first_one_left(world):
+    from datetime import datetime, timedelta
+
+    today = business_today()
+    early = datetime.now() - timedelta(days=90)
+    gone = datetime.now() - timedelta(days=20)
+    group = _weekday_group(world, "Один остался", [(early, gone), (early, None)])
+    assert _missed_for(world, group, _noon(today))[-1] == today.isoformat()
+
+
+def test_roster_rule_matches_the_snapshot_builder(world):
+    """The batched check and _attendance_roster_at agree at the boundary instants."""
+    from datetime import datetime, timedelta
+
+    from src.auth.service import lesson_start_as_naive_utc, membership_covers_instant
+
+    day = business_today() - timedelta(days=3)
+    start = lesson_start_as_naive_utc(day, 10 * 60)
+    assert start == datetime(day.year, day.month, day.day, 5, 0)
+    cases = [
+        (start - timedelta(minutes=1), None),   # joined just before
+        (start, None),                          # joined exactly at the start: counts
+        (start + timedelta(minutes=1), None),   # joined just after
+        (start - timedelta(days=9), start),     # left exactly at the start: no longer there
+        (start - timedelta(days=9), start + timedelta(minutes=1)),
+    ]
+    for joined, left in cases:
+        group = _weekday_group(world, "Граница", [(joined, left)])
+        in_snapshot = bool(world.svc._attendance_roster_at(group.id, start))
+        assert in_snapshot == membership_covers_instant(joined, left, start), (joined, left)
+    assert membership_covers_instant(None, None, start)  # no joined_at: counted, like the SQL rule
+
+
+def test_empty_roster_check_keeps_the_query_count_constant(world):
+    from datetime import datetime, timedelta
+
+    from tests.pg_world import make_group  # noqa: F401
+
+    joined = datetime.now() - timedelta(days=90)
+
+    def add(count, start):
+        for i in range(count):
+            _weekday_group(world, f"Состав {start + i}", [(joined, None)] if i % 2 == 0 else [])
+
+    add(2, 0)
+    small_items, small = _statements_for_open_actions(world)
+    add(28, 2)
+    big_items, big = _statements_for_open_actions(world)
+    assert len(big_items) > len(small_items) > 0
+    assert len(big) == len(small), (len(small), len(big))
+    assert len(big) <= 9

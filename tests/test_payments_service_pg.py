@@ -554,7 +554,8 @@ def test_settings_defaults_patch_semantics_and_audit_stamp(world):
     client = owner(world)
     r = client.get(f"{API}/org/settings/payments")
     assert r.json() == {"period_mode": "calendar", "lessons_per_payment": 12, "expiring_days": 3,
-                        "expiring_lessons": 3, "admin_can_manage": False, "updated_by": None, "updated_at": None}
+                        "expiring_lessons": 3, "excuse_deadline_days": 5, "excuse_deadline_lessons": 2,
+                        "admin_can_manage": False, "updated_by": None, "updated_at": None}
     world.db.query(Organization).filter_by(id=world.org.id).update({"settings": {"theme": "keep-me"}})
     world.db.commit()
     r = client.put(f"{API}/org/settings/payments", json={"period_mode": "lessons", "expiring_lessons": 5})
@@ -567,6 +568,8 @@ def test_settings_defaults_patch_semantics_and_audit_stamp(world):
     stored = world.db.get(Organization, world.org.id).settings
     assert stored["theme"] == "keep-me" and stored["payments"]["admin_can_manage"] is True
     for bad in ({"lessons_per_payment": 0}, {"lessons_per_payment": 61}, {"expiring_days": 15}, {"expiring_lessons": 11},
+                {"excuse_deadline_days": -1}, {"excuse_deadline_days": 31}, {"excuse_deadline_lessons": -1},
+                {"excuse_deadline_lessons": 13},
                 {"period_mode": "weekly"}, {"admin_can_manage": "maybe"}):
         assert client.put(f"{API}/org/settings/payments", json=bad).status_code == 422, bad
 

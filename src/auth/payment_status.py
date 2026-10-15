@@ -162,23 +162,33 @@ def latest_payment(payments: Sequence[PaymentRecord]) -> Optional[PaymentRecord]
     return max(payments, key=lambda p: (p.paid_on, p.created_at))
 
 
-def allocate_lessons(
+def allocate_lessons_detail(
     payments: Sequence[PaymentRecord], lesson_dates: Iterable[date]
-) -> tuple[int, int]:
-    """FIFO hand-out of counted lessons to lessons payments -> ``(total, used)``."""
+) -> list[tuple[PaymentRecord, list[date]]]:
+    """FIFO hand-out of counted lessons: ``[(payment, dates it took), ...]`` in hand-out order."""
     lessons_payments = sorted(
         (p for p in payments if p.lessons_count is not None),
         key=lambda p: (p.valid_from, p.paid_on, p.created_at),
     )
     pool = sorted(lesson_dates)
-    total = used = 0
+    result: list[tuple[PaymentRecord, list[date]]] = []
     for payment in lessons_payments:
-        total += payment.lessons_count
         start = bisect_left(pool, payment.valid_from)
         taken = pool[start : start + payment.lessons_count]
-        used += len(taken)
         del pool[start : start + len(taken)]
-    return total, used
+        result.append((payment, taken))
+    return result
+
+
+def allocate_lessons(
+    payments: Sequence[PaymentRecord], lesson_dates: Iterable[date]
+) -> tuple[int, int]:
+    """FIFO hand-out of counted lessons to lessons payments -> ``(total, used)``."""
+    detail = allocate_lessons_detail(payments, lesson_dates)
+    return (
+        sum(payment.lessons_count for payment, _ in detail),
+        sum(len(taken) for _, taken in detail),
+    )
 
 
 def compute_status(

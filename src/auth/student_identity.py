@@ -21,12 +21,13 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence
 
-# Invisible characters that sneak in with copy/paste: ZWSP/ZWNJ/ZWJ, word joiner, BOM, soft hyphen.
-_INVISIBLE = dict.fromkeys(map(ord, "​‌‍⁠﻿­"))
+# Invisible characters that sneak in with copy/paste: ZWSP/ZWNJ/ZWJ, LRM/RLM (copied from messengers
+# and right-to-left text), word joiner, BOM, soft hyphen.
+_INVISIBLE = dict.fromkeys(map(ord, "​‌‍‎‏⁠﻿­"))
 # The apostrophe family is deleted: Ma'rufjon = Ma’rufjon = Marufjon, Oʻgʻiloy = O'g'iloy.
 _APOSTROPHES = dict.fromkeys(map(ord, "'’‘ʼʻ`´"))
 # Hyphens and dashes read as a space in names: Иванова-Петрова = Иванова Петрова.
-_DASHES = "-‐‑‒–—−"
+_DASHES = "-‐‑‒–—―−"
 _DASH_TO_SPACE = {ord(ch): " " for ch in _DASHES}
 # Uzbek Cyrillic letters typed on a Russian keyboard (after lower-casing and ё -> е).
 _UZBEK_FOLD = str.maketrans({"ғ": "г", "қ": "к", "ҳ": "х", "ў": "у"})
@@ -35,6 +36,9 @@ _ID_LOOKALIKES = str.maketrans({"а": "a", "в": "b", "е": "e", "к": "k", "м"
 _ID_SEPARATORS = re.compile(r"[\s_" + re.escape(_DASHES) + r"]+")
 _DIGITS_ONLY = re.compile(r"[0-9]+")
 
+# Extra words a name-only entry may carry besides the student's first and last name.
+MAX_EXTRA_NAME_WORDS = 2
+
 MSG_NEED_FULL_NAME = "Введите имя и фамилию полностью или ID"
 MSG_NAMESAKES = "В группе несколько учеников с таким именем — введите ваш ID (он есть у учителя и в карточке ученика)"
 MSG_AMBIGUOUS_ID = "Несколько учеников подходят под этот ID — обратитесь к преподавателю."
@@ -42,6 +46,12 @@ MSG_AMBIGUOUS_ID = "Несколько учеников подходят под 
 MSG_AMBIGUOUS_NUMBER = (
     "Несколько учеников подходят под этот номер — "
     "введите ID полностью, как в карточке ученика (буквы и цифры)"
+)
+# Name-only entry found nobody: the ID of the student card is the way out.
+MSG_NAME_NOT_FOUND = (
+    "Ученик с именем «{name}» не найден в группе «{group}». "
+    "Пожалуйста, перепроверьте написание или введите ID из карточки ученика. "
+    "Если не получается — обратитесь к преподавателю."
 )
 MSG_NAME_MISMATCH = (
     "Введённое имя (ФИО) или Student ID не соответствуют ученику в этой группе. "
@@ -56,10 +66,15 @@ def _clean(value: Optional[str]) -> str:
     return unicodedata.normalize("NFKC", text).translate(_INVISIBLE).translate(_APOSTROPHES)
 
 
+def _punctuation_to_space(text: str) -> str:
+    """«Иванов, Иван» / «Иванов;Иван» -> words.  Apostrophes are gone already, dashes became spaces."""
+    return "".join(" " if unicodedata.category(ch).startswith("P") else ch for ch in text)
+
+
 def normalize_name(value: Optional[str]) -> str:
     """Comparable form of a name: see the module docstring.  Words are separated by single spaces."""
     text = _clean(value).translate(_DASH_TO_SPACE).lower().replace("ё", "е").translate(_UZBEK_FOLD)
-    return " ".join(text.split())
+    return " ".join(_punctuation_to_space(text).split())
 
 
 def normalize_id(value: Optional[str]) -> str:
@@ -151,8 +166,9 @@ def match_by_name(students: Sequence, name_input: str) -> Match:
 
     Students whose name words *equal* the typed words go first, so «Али Каримов» and
     «Али Акбар Каримов» each enter with their own exact name.  Failing that, the typed words
-    may hold the whole name plus at most one extra word (a patronymic).  Several students
-    on either level ask for the ID.
+    may hold the whole name plus at most TWO extra words: a patronymic is often two words
+    («Akram o'g'li», «Akram qizi») or one («Алиевич»).  Several students on either level ask
+    for the ID.
     """
     typed = name_tokens(name_input)
     if len(typed) < 2:
@@ -167,7 +183,7 @@ def match_by_name(students: Sequence, name_input: str) -> Match:
         own = first | last
         if own == typed_set:
             exact.append(s)
-        elif own <= typed_set and len(typed_set - own) <= 1:
+        elif own <= typed_set and len(typed_set - own) <= MAX_EXTRA_NAME_WORDS:
             covering.append(s)
     if len(exact) == 1:
         return Match(exact[0])

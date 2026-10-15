@@ -398,6 +398,14 @@ def get_org_stats(
     return _svc(db).get_org_stats(user["org_id"])
 
 
+@router.get("/org/groups-overview")
+def get_org_groups_overview(
+    user: dict = Depends(require_org_admin), db: Session = Depends(get_db)
+):
+    """Группы с средним θ (последний результат каждого активного ученика) для дашборда owner/admin."""
+    return _svc(db).get_org_groups_overview(user["org_id"])
+
+
 @router.put("/org", response_model=OrgResponse)
 def update_organization(
     request: OrgUpdateRequest,

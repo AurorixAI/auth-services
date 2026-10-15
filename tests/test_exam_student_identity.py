@@ -225,7 +225,8 @@ def test_full_name_in_both_orders_and_yo(exam):
     ok(exam.verify(student_name="Алексей Елкин"), exam.yolka)  # е for ё
     ok(exam.verify(student_name="ёлкин алексей"), exam.yolka)
     ok(exam.verify(student_name="Тимур Рахимов Алиевич"), exam.a)  # one extra word (a patronymic) is tolerated
-    refused(exam.verify(student_name="Тимур Рахимов Алиевич Второй"), "не найден")  # two are not
+    ok(exam.verify(student_name="Тимур Рахимов Алиевич Второй"), exam.a)  # up to two (N13 P1.5)
+    refused(exam.verify(student_name="Тимур Рахимов Алиевич Второй Третий"), "не найден")  # three are not
     ok(exam.verify(query="Тимур Рахимов"), exam.a)
 
 
@@ -325,3 +326,57 @@ def test_free_form_query_is_an_id_when_it_is_one(exam):
     ok(exam.verify(query="Тимур Рахимов"), exam.a)
     refused(exam.verify(query="Тимур"), "Введите имя и фамилию полностью или ID")
     refused(exam.verify(query="1"))
+
+
+# ---- N13 P1.5: patronymics, punctuation, bidi marks, the ID hint -------------------
+
+
+@needs_pg
+def test_name_only_entry_tolerates_two_extra_words_like_an_uzbek_patronymic(exam):
+    ok(exam.verify(student_name="Karimov Ma'rufjon Akram o'g'li"), exam.marufjon)
+    ok(exam.verify(student_name="Ma\u2019rufjon Karimov Akram qizi"), exam.marufjon)
+    ok(exam.verify(student_name="Рахимов Тимур Акрам угли"), exam.a)
+    ok(exam.verify(student_name="Тимур Рахимов Акрамович Второй"), exam.a)
+    refused(exam.verify(student_name="Ma'rufjon Karimov Akram o'g'li Jr Sr"), "не найден")  # three extra words
+    # the exact name still wins over a longer typed name that covers a shorter one
+    ok(exam.verify(student_name="Али Акбар Каримов"), exam.ali_akbar)
+    # two namesakes still ask for the ID
+    refused(exam.verify(student_name="Мария Иванова Акрам угли"), NAMESAKES)
+
+
+@needs_pg
+def test_commas_and_punctuation_between_words_are_ignored(exam):
+    for typed in ("Рахимов, Тимур", "Рахимов,Тимур", "Тимур; Рахимов.", "«Тимур» (Рахимов)", "Рахимов , Тимур , Алиевич"):
+        ok(exam.verify(student_name=typed), exam.a)
+    ok(exam.verify(student_name="Karimov, Ma'rufjon"), exam.marufjon)
+    ok(exam.verify(student_id="TE-031", student_name="Рахимов, Тимур"), exam.a)
+    refused(exam.verify(student_name="Рахимов, Иван"), "не найден")
+
+
+@needs_pg
+def test_lrm_rlm_and_horizontal_bar_are_handled(exam):
+    for typed in ("Тимур\u200e Рахимов", "\u200fТимур Рахимов\u200f", "Ти\u200eмур Рахи\u200fмов"):
+        ok(exam.verify(student_name=typed), exam.a)
+    ok(exam.verify(student_name="Ольга Иванова\u2015Петрова"), exam.double)       # U+2015 is a dash
+    ok(exam.verify(student_id="TE\u2015031"), exam.a)
+    ok(exam.verify(student_id="\u200eTE-031\u200f"), exam.a)
+
+
+def test_normalisation_of_the_new_characters():
+    assert si.normalize_name("Иванов,\u200e Иван") == "иванов иван"
+    assert si.normalize_name("Иванова\u2015Петрова") == "иванова петрова"
+    assert si.normalize_name("Akram o'g'li") == "akram ogli"
+    assert si.normalize_name("a.b;c:d!e?f") == "a b c d e f"
+    assert si.normalize_id("TE\u2015031") == "te-031"
+    assert si.normalize_id("\u200fTE-031\u200e") == "te-031"
+
+
+@needs_pg
+def test_name_not_found_points_to_the_id_on_the_student_card(exam):
+    result = exam.verify(student_name="Неизвестный Ученик")
+    assert result["enrolled"] is False
+    assert "или введите ID из карточки ученика" in result["message"]
+    assert "Неизвестный Ученик" in result["message"] and exam.exam_group.name in result["message"]
+    # the other refusals keep their own words
+    assert "карточки ученика" not in exam.verify(student_name="ал")["message"]
+    assert "карточки ученика" not in exam.verify(student_id="TE-031", student_name="Зарина Ахмедова")["message"]

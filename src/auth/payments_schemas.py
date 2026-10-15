@@ -17,6 +17,10 @@ class PaymentSettings(BaseModel):
     lessons_per_payment: int = Field(12, ge=1, le=60)
     expiring_days: int = Field(3, ge=0, le=14)
     expiring_lessons: int = Field(3, ge=0, le=10)
+    # An excuse must be confirmed this many days before the end of the paid
+    # period, or when this many lessons are left in a lessons package.
+    excuse_deadline_days: int = Field(5, ge=0, le=30)
+    excuse_deadline_lessons: int = Field(2, ge=0, le=12)
     admin_can_manage: bool = False
     updated_by: Optional[str] = None
     updated_at: Optional[str] = None
@@ -29,6 +33,8 @@ class PaymentSettingsUpdate(BaseModel):
     lessons_per_payment: Optional[int] = Field(None, ge=1, le=60)
     expiring_days: Optional[int] = Field(None, ge=0, le=14)
     expiring_lessons: Optional[int] = Field(None, ge=0, le=10)
+    excuse_deadline_days: Optional[int] = Field(None, ge=0, le=30)
+    excuse_deadline_lessons: Optional[int] = Field(None, ge=0, le=12)
     admin_can_manage: Optional[bool] = None
 
 

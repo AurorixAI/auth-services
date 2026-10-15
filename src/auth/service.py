@@ -113,6 +113,28 @@ def missed_lesson_window_start(today: date) -> date:
     return (first_of_month - timedelta(days=1)).replace(day=1)
 
 
+def lesson_start_as_naive_utc(lesson_date: date, start_minutes: int) -> datetime:
+    """A lesson's start (Tashkent wall time) as the naive UTC the membership columns use.
+
+    ``student_groups.joined_at`` / ``left_at`` are naive UTC, a lesson's time is
+    business-local; comparing the two without converting shifts the roster by
+    five hours around the lesson day.
+    """
+    local = datetime.combine(lesson_date, datetime.min.time()) + timedelta(minutes=start_minutes)
+    return local.replace(tzinfo=BUSINESS_TIMEZONE).astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def membership_covers_instant(
+    joined_at: Optional[datetime], left_at: Optional[datetime], instant: datetime
+) -> bool:
+    """Python twin of the SQL rule in ``AuthService._attendance_roster_at``.
+
+    ``joined_at <= instant`` (a missing ``joined_at`` counts) and
+    ``left_at is None or left_at > instant``; all naive UTC.
+    """
+    return (joined_at is None or joined_at <= instant) and (left_at is None or left_at > instant)
+
+
 # ============================================================================
 # КОНФИГУРАЦИЯ
 # ============================================================================
@@ -2175,6 +2197,59 @@ class AuthService:
         result["students"] = students_out
         return result
 
+    def get_org_groups_overview(self, org_id: str) -> dict:
+        """Per-group diagnosed level for the owner dashboard, in three queries.
+
+        ``avg_theta`` is the mean of the active students' latest ``final_theta``
+        (the same rule as ``get_group_stats``); ``None`` when nobody of the group
+        has a result.  ``diagnosed_count`` lets the caller weight the groups.
+        """
+        groups = (
+            self.db.query(Group)
+            .filter(Group.org_id == org_id, Group.status == "active")
+            .order_by(Group.name)
+            .all()
+        )
+        group_ids = [g.id for g in groups]
+        members: Dict[Any, list] = {}
+        if group_ids:
+            for group_id, student_id in (
+                self.db.query(StudentGroup.group_id, StudentGroup.student_id)
+                .filter(StudentGroup.group_id.in_(group_ids), StudentGroup.is_active.is_(True))
+                .all()
+            ):
+                members.setdefault(group_id, []).append(student_id)
+        student_ids = {sid for ids in members.values() for sid in ids}
+        latest: Dict[Any, Any] = {}
+        if student_ids:
+            # Columns only: the result rows carry large JSON that is not needed here.
+            for student_id, final_theta in (
+                self.db.query(
+                    StudentDiagnosticResult.student_id, StudentDiagnosticResult.final_theta
+                )
+                .filter(
+                    StudentDiagnosticResult.org_id == org_id,
+                    StudentDiagnosticResult.student_id.in_(student_ids),
+                )
+                .order_by(StudentDiagnosticResult.diagnosed_at.desc())
+                .all()
+            ):
+                latest.setdefault(student_id, final_theta)
+
+        rows = []
+        for group in groups:
+            ids = members.get(group.id, [])
+            thetas = [float(latest[sid]) for sid in ids if latest.get(sid) is not None]
+            rows.append({
+                "group_id": str(group.id),
+                "name": group.name,
+                "class_level": group.class_level,
+                "student_count": len(ids),
+                "diagnosed_count": len(thetas),
+                "avg_theta": (sum(thetas) / len(thetas)) if thetas else None,
+            })
+        return {"groups": rows}
+
     def get_group_stats(
         self,
         org_id: str,
@@ -2312,7 +2387,7 @@ class AuthService:
             if match.student is None:
                 return refused(
                     match.message
-                    or f"Ученик с именем «{s_name_input}» не найден в группе «{group.name}». Пожалуйста, перепроверьте написание или обратитесь к преподавателю."
+                    or student_identity.MSG_NAME_NOT_FOUND.format(name=s_name_input, group=group.name)
                 )
             return enrolled(match.student)
 
@@ -4387,6 +4462,21 @@ class AuthService:
             date_from=preload_from_date,
             date_to=today_date,
         )
+        # A never-started lesson of a group nobody belonged to at that moment
+        # is not a lesson that was missed (the group had no students yet).
+        # One query for every candidate group, not one per group.
+        memberships_by_group: Dict[Any, list[tuple[Optional[datetime], Optional[datetime]]]] = {}
+        if group_ids:
+            window_start_utc = lesson_start_as_naive_utc(reconciliation_from, 0)
+            for member_group_id, joined_at, left_at in (
+                self.db.query(StudentGroup.group_id, StudentGroup.joined_at, StudentGroup.left_at)
+                .filter(
+                    StudentGroup.group_id.in_(group_ids),
+                    or_(StudentGroup.left_at.is_(None), StudentGroup.left_at > window_start_utc),
+                )
+                .all()
+            ):
+                memberships_by_group.setdefault(member_group_id, []).append((joined_at, left_at))
 
         actions: list[OpenAttendanceActionResponse] = []
         for attendance, group in open_rows:
@@ -4472,7 +4562,7 @@ class AuthService:
                 if key in recorded_keys:
                     continue
                 try:
-                    _, end_minutes = self._validate_lesson_time_range(
+                    start_minutes, end_minutes = self._validate_lesson_time_range(
                         occurrence.get("startTime"), occurrence.get("endTime")
                     )
                 except ValueError:
@@ -4488,6 +4578,14 @@ class AuthService:
                 )
                 if not is_past:
                     continue
+                lesson_start = lesson_start_as_naive_utc(
+                    date.fromisoformat(occurrence_date), start_minutes
+                )
+                if not any(
+                    membership_covers_instant(joined_at, left_at, lesson_start)
+                    for joined_at, left_at in memberships_by_group.get(group.id, ())
+                ):
+                    continue  # empty roster at the lesson start: nothing to reconcile
                 actions.append(
                     OpenAttendanceActionResponse(
                         actionType="missed",
@@ -5078,7 +5176,7 @@ class AuthService:
         start_minutes, _ = self._validate_lesson_time_range(
             occurrence.get("startTime"), occurrence.get("endTime")
         )
-        scheduled_start = datetime.combine(req.lessonDate, datetime.min.time()) + timedelta(minutes=start_minutes)
+        scheduled_start = lesson_start_as_naive_utc(req.lessonDate, start_minutes)
         attendance = GroupAttendance(
             org_id=org_id,
             group_id=group_id,
@@ -5166,7 +5264,7 @@ class AuthService:
         start_minutes, _ = self._validate_lesson_time_range(
             occurrence.get("startTime"), occurrence.get("endTime")
         )
-        scheduled_start = datetime.combine(req.lessonDate, datetime.min.time()) + timedelta(minutes=start_minutes)
+        scheduled_start = lesson_start_as_naive_utc(req.lessonDate, start_minutes)
         attendance = GroupAttendance(
             org_id=org_id,
             group_id=group_id,

@@ -20,7 +20,8 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional
+from types import SimpleNamespace
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -34,6 +35,8 @@ from src.models.auth import (
     GroupAttendance,
     GroupAttendanceAudit,
     Student,
+    StudentGroup,
+    StudentPayment,
     User,
 )
 
@@ -147,6 +150,24 @@ class ExcuseFileInfo(BaseModel):
     size_bytes: int
 
 
+class ExcuseDateDeadline(BaseModel):
+    """Confirm by a calendar day (``days_left`` is negative once it has passed)."""
+
+    kind: Literal["date"] = "date"
+    date: str
+    overdue: bool
+    days_left: int
+
+
+class ExcuseLessonsDeadline(BaseModel):
+    """Confirm before the lessons package runs out; counts only, never money."""
+
+    kind: Literal["lessons"] = "lessons"
+    lessons_left: int
+    urgent: bool
+    overdue: bool
+
+
 class ExcuseItem(BaseModel):
     id: str
     attendance_id: str
@@ -163,6 +184,11 @@ class ExcuseItem(BaseModel):
     reviewed_at: Optional[str] = None
     review_note: Optional[str] = None
     files: List[ExcuseFileInfo] = Field(default_factory=list)
+    # Pending excuses only (a decided one has nothing left to confirm); ``None``
+    # also when it could not be worked out - the client then falls back to the month end.
+    deadline: Optional[Union[ExcuseDateDeadline, ExcuseLessonsDeadline]] = Field(
+        default=None, discriminator="kind"
+    )
 
 
 class ExcuseListResponse(BaseModel):
@@ -585,6 +611,7 @@ class AttendanceExcuseService:
         teacher_ids = {a.teacher_id or g.teacher_id for _, a, g, _ in rows}
         user_ids = teacher_ids | {e.reason_by for e, *_ in rows} | {e.reviewed_by for e, *_ in rows}
         users = self._users(user_ids)
+        deadlines = self._deadlines(rows)
 
         items: List[ExcuseItem] = []
         for excuse, att, group, student in rows:
@@ -618,9 +645,128 @@ class AttendanceExcuseService:
                     reviewed_at=_iso(excuse.reviewed_at),
                     review_note=excuse.review_note,
                     files=files.get(excuse.id, []),
+                    deadline=deadlines.get(excuse.id),
                 )
             )
         return items
+
+    def _deadlines(self, rows) -> Dict[UUID, Dict[str, Any]]:
+        """Confirmation deadline of every pending excuse of the page, in a fixed number of queries.
+
+        Memberships, live payments, the payment settings and (lessons mode only)
+        the counted lessons are each loaded once for the whole page.  Only dates
+        and lesson counts leave this method; a failure yields no deadline.
+        """
+        pending = [(e, a, g, s) for e, a, g, s in rows if e.status == "pending"]
+        if not pending:
+            return {}
+        try:
+            return self._pending_deadlines(pending)
+        except Exception:
+            logger.exception("Could not work out excuse deadlines")
+            try:
+                self.db.rollback()
+            except Exception:  # pragma: no cover - defensive
+                pass
+            return {}
+
+    def _pending_deadlines(self, pending) -> Dict[UUID, Dict[str, Any]]:
+        from . import excuse_deadline as dl
+        from . import payment_status as ps
+        from .payments_service import PaymentService  # lazy: it imports the models only, but is heavy
+
+        org_id = pending[0][0].org_id
+        settings = PaymentService(self.db).get_settings(str(org_id))
+        today = _business_today()
+
+        student_ids = {e.student_id for e, *_ in pending}
+        group_ids = {a.group_id for _, a, *_ in pending}
+        membership_of = {
+            (row.student_id, row.group_id): row.id
+            for row in self.db.query(StudentGroup.id, StudentGroup.student_id, StudentGroup.group_id)
+            .filter(StudentGroup.student_id.in_(student_ids), StudentGroup.group_id.in_(group_ids))
+            .all()
+        }
+        live: Dict[UUID, list] = {}
+        if membership_of:
+            # Columns, not entities: the amount is never loaded here.
+            for payment in (
+                self.db.query(
+                    StudentPayment.id,
+                    StudentPayment.membership_id,
+                    StudentPayment.paid_on,
+                    StudentPayment.valid_from,
+                    StudentPayment.valid_to,
+                    StudentPayment.lessons_count,
+                    StudentPayment.created_at,
+                )
+                .filter(
+                    StudentPayment.org_id == org_id,
+                    StudentPayment.membership_id.in_(set(membership_of.values())),
+                    StudentPayment.voided_at.is_(None),
+                )
+                .all()
+            ):
+                live.setdefault(payment.membership_id, []).append(payment)
+        records = {
+            membership: [
+                ps.PaymentRecord(
+                    paid_on=p.paid_on,
+                    valid_from=p.valid_from,
+                    valid_to=p.valid_to,
+                    lessons_count=p.lessons_count,
+                    created_at=p.created_at or datetime.min,
+                    id=p.id,
+                )
+                for p in payments
+            ]
+            for membership, payments in live.items()
+        }
+
+        # The lessons FIFO is needed only for lessons that no calendar payment covers.
+        lesson_dates: Dict[UUID, date] = {}
+        lessons_members = []
+        seen_members = set()
+        for excuse, att, group, student in pending:
+            try:
+                lesson_dates[excuse.id] = date.fromisoformat(att.lesson_date)
+            except (TypeError, ValueError):
+                continue
+            membership = membership_of.get((excuse.student_id, att.group_id))
+            if (
+                membership is not None
+                and membership not in seen_members
+                and dl.needs_lessons_pool(records.get(membership, ()), lesson_dates[excuse.id])
+            ):
+                seen_members.add(membership)
+                lessons_members.append(
+                    (SimpleNamespace(id=membership, student_id=excuse.student_id), student, group)
+                )
+        pools = (
+            PaymentService(self.db)._counted_lesson_dates(
+                str(org_id),
+                lessons_members,
+                {m.id: [p for p in live.get(m.id, []) if p.lessons_count is not None] for m, _, _ in lessons_members},
+            )
+            if lessons_members
+            else {}
+        )
+
+        result: Dict[UUID, Dict[str, Any]] = {}
+        for excuse, att, group, student in pending:
+            lesson_date = lesson_dates.get(excuse.id)
+            if lesson_date is None:
+                continue
+            membership = membership_of.get((excuse.student_id, att.group_id))
+            result[excuse.id] = dl.excuse_deadline(
+                lesson_date=lesson_date,
+                today=today,
+                payments=records.get(membership, ()),
+                counted_dates=pools.get(membership, ()),
+                deadline_days=settings.excuse_deadline_days,
+                deadline_lessons=settings.excuse_deadline_lessons,
+            )
+        return result
 
     def _item(self, org_id: str, excuse_id: UUID) -> ExcuseItem:
         rows = self._base_query(org_id).filter(AttendanceExcuse.id == excuse_id).all()
