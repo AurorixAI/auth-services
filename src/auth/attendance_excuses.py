@@ -724,6 +724,7 @@ class AttendanceExcuseService:
                     StudentPayment.valid_to,
                     StudentPayment.lessons_count,
                     StudentPayment.created_at,
+                    StudentPayment.carried_out_at,
                 )
                 .filter(
                     StudentPayment.org_id == org_id,
@@ -742,6 +743,7 @@ class AttendanceExcuseService:
                     lessons_count=p.lessons_count,
                     created_at=p.created_at or datetime.min,
                     id=p.id,
+                    carried_out_at=p.carried_out_at,
                 )
                 for p in payments
             ]

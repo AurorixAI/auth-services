@@ -10,12 +10,18 @@ profile payload carries an amount.  Status maths is ``payment_status.py``
 * The status is computed on every request from the live (not voided) payments;
   nothing is stored and no background job is needed.
 * Logs carry ids and the actor, never amounts or notes.
-* Carry-over (P2.1): a transfer copies the payments still in force of the group
-  being left into the new group as amount-0 payments linked to the original
-  (``carried_from_payment_id``).  They are ordinary live payments for the status,
-  the excuse deadline and (later) payroll.  Voiding or replacing the original
-  reaches them through the link (``_rebuild_carry_overs``); voiding or replacing
-  a carry-over itself follows the normal rules.
+* Carry-over (P2.1, "the payment moves with the student"): a transfer copies the
+  payments still in force of the group being left into the new group as amount-0
+  payments linked to the original (``carried_from_payment_id``) and stamps the
+  original with ``carried_out_at`` = the transfer day T.  A stamped original covers
+  only what lies strictly before T in its own membership (``payment_status``), so
+  the coverage is never counted twice - also not when the student comes back, which
+  is just one more transfer that carries the live payments of the group being left.
+  Carry-overs are ordinary live payments for the status, the excuse deadline and
+  (later) payroll.  Voiding the original voids its carry-overs; voiding a carry-over
+  gives the source its coverage back (``_release_source``); replacing the original
+  rebuilds the carry-overs from the replacement and keeps the stamp
+  (``_rebuild_carry_overs``).  Replacing a carry-over itself is an ordinary replace.
 """
 from __future__ import annotations
 
@@ -44,6 +50,7 @@ from src.models.auth import (
 from . import payment_status as ps
 from .payments_schemas import (
     CarriedFromOut,
+    CarriedOutOut,
     MembershipPaymentRow,
     PaymentCreate,
     PaymentCreated,
@@ -144,6 +151,14 @@ def _short_date(day: date, today: date) -> str:
 
 def _like(term: str) -> str:
     return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+@dataclass
+class _Links:
+    """Carry links of a batch of payments, for the response."""
+
+    sources: Dict[UUID, CarriedFromOut]  # original id -> {payment_id, group_name}
+    targets: Dict[UUID, Optional[str]]  # stamped original id -> group its live carry-over lives in
 
 
 @dataclass
@@ -336,6 +351,7 @@ class PaymentService:
             lessons_count=payment.lessons_count,
             created_at=payment.created_at or datetime.min,
             id=payment.id,
+            carried_out_at=payment.carried_out_at,
         )
 
     def _counted_lesson_dates(
@@ -424,26 +440,40 @@ class PaymentService:
             return {}
         return {u.id: u for u in self.db.query(User).filter(User.id.in_(wanted)).all()}
 
-    def _carried_sources(self, payments: Iterable[StudentPayment]) -> Dict[UUID, CarriedFromOut]:
-        """``{original payment id: {payment_id, group_name}}`` for the carry-overs among ``payments``."""
+    def _links(self, payments: Iterable[StudentPayment]) -> _Links:
+        """Where the carry-overs among ``payments`` come from and where the stamped ones went."""
+        payments = list(payments)
+        sources: Dict[UUID, CarriedFromOut] = {}
         ids = {p.carried_from_payment_id for p in payments if p.carried_from_payment_id}
-        if not ids:
-            return {}
-        rows = (
-            self.db.query(StudentPayment.id, Group.name)
-            .join(Group, Group.id == StudentPayment.group_id)
-            .filter(StudentPayment.id.in_(ids))
-            .all()
-        )
-        return {
-            pid: CarriedFromOut(payment_id=str(pid), group_name=name or "") for pid, name in rows
-        }
+        if ids:
+            for pid, name in (
+                self.db.query(StudentPayment.id, Group.name)
+                .join(Group, Group.id == StudentPayment.group_id)
+                .filter(StudentPayment.id.in_(ids))
+                .all()
+            ):
+                sources[pid] = CarriedFromOut(payment_id=str(pid), group_name=name or "")
+        targets: Dict[UUID, Optional[str]] = {}
+        stamped = {p.id for p in payments if p.carried_out_at is not None}
+        if stamped:
+            for source_id, name in (
+                self.db.query(StudentPayment.carried_from_payment_id, Group.name)
+                .join(Group, Group.id == StudentPayment.group_id)
+                .filter(
+                    StudentPayment.carried_from_payment_id.in_(stamped),
+                    StudentPayment.voided_at.is_(None),
+                )
+                .order_by(StudentPayment.created_at)
+                .all()
+            ):
+                targets[source_id] = name
+        return _Links(sources, targets)
 
     def _payment_out(
         self,
         payment: StudentPayment,
         users: Dict[UUID, User],
-        carried: Optional[Dict[UUID, CarriedFromOut]] = None,
+        links: Optional[_Links] = None,
     ) -> PaymentOut:
         return PaymentOut(
             id=str(payment.id),
@@ -456,7 +486,12 @@ class PaymentService:
             lessons_count=payment.lessons_count,
             note=payment.note,
             replaces_payment_id=str(payment.replaces_payment_id) if payment.replaces_payment_id else None,
-            carried_from=(carried or {}).get(payment.carried_from_payment_id),
+            carried_from=links.sources.get(payment.carried_from_payment_id) if links else None,
+            carried_out=(
+                CarriedOutOut(date=payment.carried_out_at, group_name=links.targets.get(payment.id))
+                if links and payment.carried_out_at is not None
+                else None
+            ),
             created_by=str(payment.created_by) if payment.created_by else None,
             created_by_name=_person(users.get(payment.created_by)),
             created_at=_iso(payment.created_at),
@@ -477,7 +512,7 @@ class PaymentService:
         users = self._users(
             x for p in last.values() if p for x in (p.created_by, p.voided_by)
         )
-        carried = self._carried_sources(p for p in last.values() if p)
+        links = self._links(p for p in last.values() if p)
         rows = []
         for e in entries:
             payment = last[e.membership.id]
@@ -504,7 +539,7 @@ class PaymentService:
                     lessons_total=r.lessons_total,
                     lessons_used=r.lessons_used,
                     lessons_left=r.lessons_left,
-                    last_payment=self._payment_out(payment, users, carried) if payment else None,
+                    last_payment=self._payment_out(payment, users, links) if payment else None,
                 )
             )
         return rows
@@ -624,8 +659,8 @@ class PaymentService:
             StudentPayment.paid_on.desc(), StudentPayment.created_at.desc(), StudentPayment.id
         ).all()
         users = self._users(x for p in payments for x in (p.created_by, p.voided_by))
-        carried = self._carried_sources(payments)
-        return [self._payment_out(p, users, carried) for p in payments]
+        links = self._links(payments)
+        return [self._payment_out(p, users, links) for p in payments]
 
     # -------------------------------------------------------------- writing
 
@@ -672,7 +707,11 @@ class PaymentService:
             else ps.LESSONS if data.lessons_count is not None
             else settings.period_mode
         )
-        previous_until = max((p.valid_to for p in live if p.valid_to is not None), default=None)
+        # What the live payments still cover in this membership (a moved-away original ends the day before).
+        previous_until = max(
+            (r.end for r in map(self._record, live) if r.end is not None and not r.covers_nothing),
+            default=None,
+        )
         # The payment date and the start are bounded first: every default
         # below does date arithmetic that must never see 0001 or 9999.
         errors = ps.validation_errors(
@@ -779,7 +818,7 @@ class PaymentService:
     def _created(self, org_id: str, payment: StudentPayment, warnings) -> PaymentCreated:
         users = self._users([payment.created_by])
         return PaymentCreated(
-            payment=self._payment_out(payment, users, self._carried_sources([payment])),
+            payment=self._payment_out(payment, users, self._links([payment])),
             warnings=warnings,
             row=self._row(org_id, payment.membership_id),
         )
@@ -837,8 +876,14 @@ class PaymentService:
             payment, warnings = self._insert(
                 membership, org_id, actor_id, data, settings, ps.business_today(), replaces=old
             )
-            # Carry-overs of the old payment follow the correction.
-            self._rebuild_carry_overs(org_id, actor_id, old, payment, CARRY_REPLACE_REASON)
+            # Carry-overs of the old payment follow the correction; the corrected one keeps the
+            # stamp "moved away on T" (set before the rebuild: the remainder is counted up to T).
+            if old.carried_out_at is not None:
+                payment.carried_out_at = old.carried_out_at
+                self.db.flush()
+                self._rebuild_carry_overs(org_id, actor_id, old, payment, CARRY_REPLACE_REASON)
+                if not self._live_children(org_id, payment.id):  # nothing moved after all
+                    payment.carried_out_at = None
             self.db.commit()
         except PaymentError:
             self.db.rollback()
@@ -859,6 +904,7 @@ class PaymentService:
             payment.void_reason = reason
             self.db.flush()
             self._rebuild_carry_overs(org_id, actor_id, payment, None, CARRY_VOID_REASON)
+            self._release_source(org_id, payment)
             self.db.commit()
         except PaymentError:
             self.db.rollback()
@@ -866,7 +912,7 @@ class PaymentService:
         logger.info("payment voided id=%s actor=%s", payment_id, actor_id)
         users = self._users([payment.created_by, payment.voided_by])
         return PaymentVoided(
-            payment=self._payment_out(payment, users, self._carried_sources([payment])),
+            payment=self._payment_out(payment, users, self._links([payment])),
             row=self._row(org_id, payment.membership_id),
         )
 
@@ -894,35 +940,6 @@ class PaymentService:
             for record, taken in ps.allocate_lessons_detail(records, dates.get(membership.id, ())):
                 left[record.id] = record.lessons_count - len(taken)
         return left
-
-    def _roots(self, payments: Sequence[StudentPayment]) -> Dict[UUID, UUID]:
-        """``{payment id: id of the ordinary payment at the top of its carry chain}``.
-
-        A carry-over of a carry-over (A -> B -> C) belongs to the family of the
-        payment that was actually paid; the chain is followed up, never down.
-        """
-        parent = {p.id: p.carried_from_payment_id for p in payments}
-        missing = {x for x in parent.values() if x and x not in parent}
-        for _ in range(MAX_CARRY_CHAIN):
-            if not missing:
-                break
-            rows = (
-                self.db.query(StudentPayment.id, StudentPayment.carried_from_payment_id)
-                .filter(StudentPayment.id.in_(missing))
-                .all()
-            )
-            for pid, up in rows:
-                parent[pid] = up
-            missing = {up for _, up in rows if up and up not in parent}
-
-        def top(pid: UUID) -> UUID:
-            seen = set()
-            while parent.get(pid) and pid not in seen:
-                seen.add(pid)
-                pid = parent[pid]
-            return pid
-
-        return {p.id: top(p.id) for p in payments}
 
     @staticmethod
     def _copy_fee(
@@ -965,8 +982,9 @@ class PaymentService:
         Called by ``AuthService.add_student_to_group`` (mode ``transfer`` only) inside its
         transaction: this method flushes but never commits.  ``target`` must already be flushed.
 
-        In force on the business date T (the transfer day), per closed membership and only for
-        the mode of its latest payment (the others are ignored by the status too):
+        In force on the business date T (the transfer day), per closed membership, among the
+        payments that have not moved yet (``carried_out_at`` empty) and only for the mode of the
+        latest of them (the others are ignored by the status too):
 
         * a calendar payment with ``valid_to >= T`` -> carry-over ``valid_from = max(T, its
           valid_from)`` (a prepaid future period keeps its start), the same ``valid_to``;
@@ -974,10 +992,10 @@ class PaymentService:
           ``lessons_count = R``, ``valid_from`` as above.
 
         A carry-over is a ``StudentPayment`` of amount 0 with the original ``paid_on``, the note
-        "Перенос оплаты из «<группа>»" and ``carried_from_payment_id``.  Skipped: a payment whose
-        family (the original or any earlier carry-over of it) is already live on ``target`` - this
-        keeps A -> B -> A from doubling the coverage - and an exact duplicate of a live
-        zero-amount row (the unique index would refuse it).
+        "Перенос оплаты из «<группа>»" and ``carried_from_payment_id``.  The original is stamped
+        ``carried_out_at = T`` and from then on covers only what lies before T, so a return
+        (B -> A) is just one more transfer: the live carry-over on B (with what it has consumed)
+        is carried again and stamped in its turn - the coverage is never counted twice.
 
         Also copies the fee of the closed group to ``target`` if the target has none.  Returns the
         ``warnings`` entries for the response: dates / lessons when ``detailed`` (the caller may
@@ -1019,9 +1037,13 @@ class PaymentService:
             if not payments:
                 continue
             name = groups[membership.group_id].name if membership.group_id in groups else ""
-            latest = ps.latest_payment([self._record(p) for p in payments])
+            # A payment that already moved away covers only the past of this membership.
+            staying = [p for p in payments if p.carried_out_at is None]
+            if not staying:
+                continue
+            latest = ps.latest_payment([self._record(p) for p in staying])
             if latest.mode == ps.CALENDAR:
-                for p in payments:
+                for p in staying:
                     if p.valid_to is not None and p.valid_to >= today:
                         candidates.append(_Carry(p, name, max(today, p.valid_from), p.valid_to, None))
             else:
@@ -1032,26 +1054,10 @@ class PaymentService:
         )
         for membership, name in lessons_side:
             for p in live_by_membership[membership.id]:
-                if p.lessons_count is not None and left.get(p.id, 0) >= 1:
+                if p.lessons_count is not None and p.carried_out_at is None and left.get(p.id, 0) >= 1:
                     candidates.append(_Carry(p, name, max(today, p.valid_from), None, left[p.id]))
         if not candidates:
             return []
-
-        target_live = (
-            self.db.query(StudentPayment)
-            .filter(
-                StudentPayment.org_id == org_id,
-                StudentPayment.membership_id == target.id,
-                StudentPayment.voided_at.is_(None),
-            )
-            .all()
-        )
-        roots = self._roots([c.original for c in candidates] + target_live)
-        family_on_target = {roots[p.id] for p in target_live}
-        taken_keys = {
-            (p.paid_on, p.valid_from, p.valid_to, p.lessons_count)
-            for p in target_live if int(p.amount) == 0
-        }
 
         candidates.sort(
             key=lambda c: (c.original.paid_on, c.original.created_at or datetime.min, str(c.original.id))
@@ -1059,16 +1065,6 @@ class PaymentService:
         now = _utcnow()
         made: List[tuple] = []  # (new row, its source)
         for c in candidates:
-            if roots[c.original.id] in family_on_target:
-                continue
-            key = (c.original.paid_on, c.valid_from, c.valid_to, c.lessons_count)
-            if key in taken_keys:
-                logger.warning(
-                    "carry-over skipped (identical zero payment exists) original=%s target=%s",
-                    c.original.id, target.id,
-                )
-                continue
-            taken_keys.add(key)
             row = StudentPayment(
                 org_id=org_id,
                 membership_id=target.id,
@@ -1086,6 +1082,7 @@ class PaymentService:
                 created_at=now,
             )
             self.db.add(row)
+            c.original.carried_out_at = today  # it covers only the days before T from now on
             made.append((row, c))
         if not made:
             return []
@@ -1109,6 +1106,29 @@ class PaymentService:
                 text = f"Оплата до {_short_date(c.valid_to, today)} перенесена в «{target_name}»"
             messages.append({"code": CARRY_CODE, "message": text})
         return messages
+
+    def _release_source(self, org_id: str, carry_over: StudentPayment) -> None:
+        """A cancelled carry-over gives its source the coverage back (the stamp is cleared).
+
+        Only while the source is live and no other live carry-over was made from it.
+        """
+        if carry_over.carried_from_payment_id is None:
+            return
+        source = (
+            self.db.query(StudentPayment)
+            .filter(
+                StudentPayment.id == carry_over.carried_from_payment_id,
+                StudentPayment.org_id == org_id,
+            )
+            .with_for_update()
+            .first()
+        )
+        if source is None or source.voided_at is not None or source.carried_out_at is None:
+            return
+        others = [c for c in self._live_children(org_id, source.id) if c.id != carry_over.id]
+        if not others:
+            source.carried_out_at = None
+            logger.info("payment=%s covers its group again (carry-over %s cancelled)", source.id, carry_over.id)
 
     def _live_children(self, org_id: str, parent_id: UUID) -> List[StudentPayment]:
         return (
@@ -1178,6 +1198,7 @@ class PaymentService:
             lessons_count=lessons,
             note=CARRY_NOTE.format(group=group_name),
             carried_from_payment_id=new_parent.id,
+            carried_out_at=child.carried_out_at,  # it had moved on: the new one moved on too
             created_by=UUID(str(actor_id)),
             created_at=_utcnow(),
         )

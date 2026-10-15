@@ -976,6 +976,9 @@ class StudentPayment(Base):
     # N13 P2.1: a carry-over made by a transfer points at the payment it was made from
     # (amount 0, the original keeps the money).  NULL = an ordinary payment.
     carried_from_payment_id = Column(UUID(as_uuid=True), ForeignKey("student_payments.id"), nullable=True)
+    # The day this payment moved to another group with the student (T of the transfer): from
+    # then on it covers only what lies strictly before T in its own membership.  NULL = it did not.
+    carried_out_at = Column(Date, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
     voided_at = Column(DateTime, nullable=True)
@@ -1016,7 +1019,8 @@ class StudentPayment(Base):
             "carried_from_payment_id",
             postgresql_where=text("carried_from_payment_id IS NOT NULL"),
         ),
-        # Double-click guard: an identical live payment cannot be inserted twice.
+        # Double-click guard: an identical live payment cannot be inserted twice.  Carry-overs
+        # made from different payments are different payments (A -> B -> A -> B in one day).
         Index(
             "uq_student_payments_active_dup",
             "org_id",
@@ -1026,6 +1030,7 @@ class StudentPayment(Base):
             text("COALESCE(valid_to, DATE '1900-01-01')"),
             text("COALESCE(lessons_count, 0)"),
             "amount",
+            text("COALESCE(carried_from_payment_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
             unique=True,
             postgresql_where=text("voided_at IS NULL"),
         ),

@@ -19,6 +19,24 @@ order ``valid_from, paid_on, created_at``.  A payment takes up to
 ``lessons_count`` not yet taken lessons dated on or after its ``valid_from``.
 ``left = max(0, sum(lessons_count) - taken)``.
 
+Carried-out payments (N13 P2.1, "the payment moves with the student").  A transfer
+copies a payment in force into the new group and stamps the original with
+``carried_out_at`` = the transfer day T.  From then on the original covers only what
+lies strictly BEFORE T in its own membership:
+
+* calendar: it ends on ``min(valid_to, T - 1)`` (``effective_valid_to``); if that is
+  before ``valid_from`` it covers nothing and is ignored by the status;
+* lessons: it takes only counted lessons dated before T, and its capacity is what it
+  took (``lesson_capacity``) - the unspent rest travelled with the student, so the
+  original never "resurrects" when the student comes back.
+
+The same rule feeds the excuse deadline and (P3) payroll: a lesson or day of the old
+group on or after T is NOT covered by the stamped original.  Payroll must therefore read
+the period of a calendar payment through ``PaymentRecord.end`` (never the raw ``valid_to``)
+and the lessons of a package through ``allocate_lessons_detail``; the carry-over rows (amount
+0, ``carried_from_payment_id``) are ordinary live payments of the new group and cover it from
+T.  The money for payroll is ``monthly_fee`` of the membership, never a payment ``amount``.
+
 "Today" is the business date (``BUSINESS_TIMEZONE``, Asia/Tashkent by default),
 never the server's or the browser's local date.
 """
@@ -71,10 +89,23 @@ class PaymentRecord:
     lessons_count: Optional[int] = None
     created_at: datetime = datetime.min
     id: object = None
+    # Day the payment moved to another group with the student (it covers only before it).
+    carried_out_at: Optional[date] = None
 
     @property
     def mode(self) -> str:
         return LESSONS if self.lessons_count is not None else CALENDAR
+
+    @property
+    def end(self) -> Optional[date]:
+        """Last covered day of a calendar payment (``valid_to``, cut at ``carried_out_at - 1``)."""
+        return effective_valid_to(self.valid_to, self.carried_out_at)
+
+    @property
+    def covers_nothing(self) -> bool:
+        """A calendar payment that was moved away before its period began."""
+        end = self.end
+        return end is not None and end < self.valid_from
 
 
 @dataclass(frozen=True)
@@ -155,6 +186,22 @@ def add_month_minus_day(start: date) -> date:
 # --------------------------------------------------------------- status ----
 
 
+def effective_valid_to(valid_to: Optional[date], carried_out_at: Optional[date]) -> Optional[date]:
+    """End of a calendar payment in its own membership: cut the day before it moved away."""
+    if valid_to is None or carried_out_at is None:
+        return valid_to
+    return min(valid_to, carried_out_at - timedelta(days=1))
+
+
+def lesson_capacity(payment: PaymentRecord, taken: int) -> int:
+    """Lessons a lessons payment covers in its own membership.
+
+    ``lessons_count``, unless the payment moved away with the student: then only the
+    lessons it took before it left (the rest was carried over to the new group).
+    """
+    return taken if payment.carried_out_at is not None else payment.lessons_count
+
+
 def latest_payment(payments: Sequence[PaymentRecord]) -> Optional[PaymentRecord]:
     """The latest live payment: by ``paid_on``, then ``created_at``."""
     if not payments:
@@ -174,7 +221,10 @@ def allocate_lessons_detail(
     result: list[tuple[PaymentRecord, list[date]]] = []
     for payment in lessons_payments:
         start = bisect_left(pool, payment.valid_from)
-        taken = pool[start : start + payment.lessons_count]
+        stop = start + payment.lessons_count
+        if payment.carried_out_at is not None:  # only lessons strictly before the day it moved away
+            stop = min(stop, bisect_left(pool, payment.carried_out_at))
+        taken = pool[start : max(start, stop)]
         del pool[start : start + len(taken)]
         result.append((payment, taken))
     return result
@@ -186,7 +236,7 @@ def allocate_lessons(
     """FIFO hand-out of counted lessons to lessons payments -> ``(total, used)``."""
     detail = allocate_lessons_detail(payments, lesson_dates)
     return (
-        sum(payment.lessons_count for payment, _ in detail),
+        sum(lesson_capacity(payment, len(taken)) for payment, taken in detail),
         sum(len(taken) for _, taken in detail),
     )
 
@@ -200,12 +250,14 @@ def compute_status(
     settings: StatusSettings = StatusSettings(),
 ) -> StatusResult:
     """Status of one membership.  ``payments`` must contain live payments only."""
+    # A calendar payment that moved away before its period began covers nothing at all.
+    payments = [p for p in payments if not p.covers_nothing]
     last = latest_payment(payments)
     if last is None:
         return StatusResult(status=FREE if monthly_fee == 0 else NONE)
 
     if last.mode == CALENDAR:
-        paid_until = max(p.valid_to for p in payments if p.valid_to is not None)
+        paid_until = max(p.end for p in payments if p.end is not None)
         delta = (paid_until - today).days
         if delta < 0:
             status, overdue, left = EXPIRED, -delta, None
@@ -325,11 +377,12 @@ def payment_warnings(
     """Soft rules: the payment is saved anyway.  ``existing`` = other live payments."""
     codes: list[str] = []
     if valid_to is not None:
-        calendar_payments = [p for p in existing if p.valid_to is not None]
-        if any(p.valid_from <= valid_to and p.valid_to >= valid_from for p in calendar_payments):
+        # (start, end) of what each calendar payment still covers in this membership
+        calendar_payments = [(p.valid_from, p.end) for p in existing if p.end is not None and not p.covers_nothing]
+        if any(start <= valid_to and end >= valid_from for start, end in calendar_payments):
             codes.append("overlaps_previous")
         elif calendar_payments:
-            before = [p.valid_to for p in calendar_payments if p.valid_to < valid_from]
+            before = [end for _, end in calendar_payments if end < valid_from]
             if before and max(before) < valid_from - timedelta(days=1):
                 codes.append("gap_before")
         if (valid_to - valid_from).days + 1 > WARN_PERIOD_DAYS:

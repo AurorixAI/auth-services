@@ -177,28 +177,34 @@ def _check_n13_p2_objects(engine,config,ids):
 
 
 def _check_n13_p21_objects(engine,config,ids):
-    """N13 P2.1: carried_from_payment_id - FK, index, the duplicate guard stays, idempotent, round trip."""
+    """N13 P2.1: carried_from_payment_id / carried_out_at, the duplicate guard, idempotent, round trip."""
     from sqlalchemy.exc import IntegrityError
     from src.models.auth import User
-    actor,orig,carry=uuid4(),uuid4(),uuid4()
+    actor,orig,orig2,carry,carry2=uuid4(),uuid4(),uuid4(),uuid4(),uuid4()
     with Session(engine) as db:
         db.add(User(id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='C',last_name='C',role='owner'))
         db.commit()
-    params={'o':ids['org'],'m':ids['membership'],'s':ids['student'],'g':ids['group'],'u':actor,'p':orig,'c':carry}
+    params={'o':ids['org'],'m':ids['membership'],'s':ids['student'],'g':ids['group'],'u':actor,'p':orig,'p2':orig2,'c':carry,'c2':carry2}
     insert=("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,valid_from,valid_to,lessons_count,created_by,carried_from_payment_id) "
             "VALUES ({pid},:o,:m,:s,:g,{amount},'2026-10-05','{vf}',{valid_to},NULL,:u,{src})")
     def row(pid,amount,src,vf='2026-10-05',valid_to="'2026-11-04'"):
         return insert.format(pid=pid,amount=amount,src=src,vf=vf,valid_to=valid_to)
-    cols=lambda: {c['name'] for c in inspect(engine).get_columns('student_payments')}
-    assert 'carried_from_payment_id' in cols()
-    assert 'idx_student_payments_carried_from' in {ix['name'] for ix in inspect(engine).get_indexes('student_payments')}
+    def cols(): return {c['name'] for c in inspect(engine).get_columns('student_payments')}
+    def index_names(): return {ix['name'] for ix in inspect(engine).get_indexes('student_payments')}
+    assert {'carried_from_payment_id','carried_out_at'} <= cols()
+    assert {'idx_student_payments_carried_from','uq_student_payments_active_dup'} <= index_names()
     with engine.begin() as c:
         c.execute(text(row(':p','450000','NULL')),params)
+        c.execute(text(row(':p2','450001','NULL',vf='2026-10-06')),params)
         # a carry-over of the same figures but amount 0 and a later start is not a duplicate of the original
         c.execute(text(row(':c','0',':p',vf='2026-10-20')),params)
+        # identical figures from ANOTHER source are a different payment (A -> B -> A -> B within one day)
+        c.execute(text(row(':c2','0',':p2',vf='2026-10-20')),params)
+        c.execute(text("UPDATE student_payments SET carried_out_at='2026-10-20' WHERE id=:p"),params)
     bad={
         'unknown source payment':row('gen_random_uuid()','0','gen_random_uuid()',vf='2026-10-21'),
-        'duplicate carry-over':row('gen_random_uuid()','0',':p',vf='2026-10-20'),
+        'duplicate carry-over of the same source':row('gen_random_uuid()','0',':p',vf='2026-10-20'),
+        'duplicate ordinary payment':row('gen_random_uuid()','450000','NULL'),
     }
     for name,sql in bad.items():
         with pytest.raises(IntegrityError,match='.'):
@@ -207,19 +213,29 @@ def _check_n13_p21_objects(engine,config,ids):
     with engine.connect() as c:
         assert c.execute(text('SELECT carried_from_payment_id FROM student_payments WHERE id=:c'),params).scalar_one()==orig
         assert c.execute(text('SELECT carried_from_payment_id FROM student_payments WHERE id=:p'),params).scalar_one() is None
-    # Round trip: the link is dropped, the rows stay as ordinary zero payments.
+        assert str(c.execute(text('SELECT carried_out_at FROM student_payments WHERE id=:p'),params).scalar_one())=='2026-10-20'
+    # Round trip: the links and stamps are dropped, the rows stay as ordinary zero payments; the
+    # pair of identical carry-overs that the old guard would refuse is reduced to one live row.
     command.downgrade(config,'t0u1v2w3x4y')
-    assert 'carried_from_payment_id' not in cols()
-    assert 'idx_student_payments_carried_from' not in {ix['name'] for ix in inspect(engine).get_indexes('student_payments')}
+    assert not ({'carried_from_payment_id','carried_out_at'} & cols())
+    assert 'idx_student_payments_carried_from' not in index_names() and 'uq_student_payments_active_dup' in index_names()
     with engine.connect() as c:
         assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='t0u1v2w3x4y'
-        assert c.execute(text('SELECT count(*) FROM student_payments WHERE org_id=:o'),params).scalar_one()==2
+        assert c.execute(text('SELECT count(*) FROM student_payments WHERE org_id=:o'),params).scalar_one()==4
+        assert c.execute(text('SELECT count(*) FROM student_payments WHERE org_id=:o AND voided_at IS NULL'),params).scalar_one()==3
+        reasons=[r for (r,) in c.execute(text("SELECT void_reason FROM student_payments WHERE id IN (:c,:c2) AND voided_at IS NOT NULL"),params)]
+        assert len(reasons)==1 and reasons[0].startswith('Откат миграции')
+    with pytest.raises(IntegrityError,match='.'):                  # the old guard is back
+        with engine.begin() as c:
+            c.execute(text("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,valid_from,valid_to,created_by) "
+                           "VALUES (gen_random_uuid(),:o,:m,:s,:g,0,'2026-10-05','2026-10-20','2026-11-04',:u)"),params)
     command.upgrade(config,'head')
     command.upgrade(config,'head')  # idempotent re-run
-    # The column/index already exist (baseline/create_all) - the revision must not break.
+    # The columns / indexes already exist (baseline/create_all) - the revision must not break.
     command.stamp(config,'t0u1v2w3x4y')
     command.upgrade(config,'head')
+    assert {'carried_from_payment_id','carried_out_at'} <= cols()
     with engine.connect() as c:
         assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='t1u2v3w4x5y'
-        assert c.execute(text('SELECT count(*) FROM student_payments WHERE org_id=:o'),params).scalar_one()==2
+        assert c.execute(text('SELECT count(*) FROM student_payments WHERE org_id=:o'),params).scalar_one()==4
         assert c.execute(text('SELECT carried_from_payment_id FROM student_payments WHERE id=:c'),params).scalar_one() is None

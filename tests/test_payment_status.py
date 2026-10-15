@@ -316,3 +316,76 @@ def test_extreme_dates_are_errors_not_exceptions(extreme):
     # today itself near the edges of the calendar must not raise either
     assert ps.validation_errors(today=date.min, paid_on=date.min, valid_from=date.min, valid_to=None) == []
     assert ps.payment_warnings(today=TODAY, paid_on=date.min, valid_from=date.min, valid_to=date.max, existing=[])
+
+
+# ---- a payment that moved away with the student (N13 P2.1) ---------------------------
+
+
+def moved(record, day):
+    return PaymentRecord(
+        paid_on=record.paid_on, valid_from=record.valid_from, valid_to=record.valid_to,
+        lessons_count=record.lessons_count, created_at=record.created_at, carried_out_at=day,
+    )
+
+
+def test_calendar_payment_that_moved_ends_the_day_before():
+    p = moved(cal(days(20), valid_from=days(-10)), days(0))
+    assert p.end == days(-1) and not p.covers_nothing
+    result = compute_status(today=TODAY, monthly_fee=None, payments=[p])
+    assert (result.status, result.paid_until, result.days_overdue) == (ps.EXPIRED, days(-1), 1)
+    # moved after its end: nothing changes; never extends it
+    assert moved(cal(days(3), valid_from=days(-10)), days(9)).end == days(3)
+
+
+def test_calendar_payment_that_moved_before_it_began_covers_nothing():
+    p = moved(cal(days(30), paid_on=days(0), valid_from=days(5)), days(0))
+    assert p.covers_nothing
+    assert compute_status(today=TODAY, monthly_fee=None, payments=[p]).status == ps.NONE
+    # the carry-over (a plain record from T) is the only coverage
+    carry = cal(days(30), paid_on=days(0), valid_from=days(5), created=5)
+    result = compute_status(today=TODAY, monthly_fee=None, payments=[p, carry])
+    assert (result.status, result.paid_until) == (ps.ACTIVE, days(30))
+
+
+def test_return_covers_again_only_through_the_new_carry_over():
+    original = moved(cal(days(20), valid_from=days(-10)), days(0))
+    back = cal(days(20), paid_on=original.paid_on, valid_from=days(0), created=9)
+    result = compute_status(today=TODAY, monthly_fee=None, payments=[original, back])
+    assert (result.status, result.paid_until) == (ps.ACTIVE, days(20))
+    without = compute_status(today=TODAY, monthly_fee=None, payments=[original])
+    assert without.status == ps.EXPIRED
+
+
+def test_lessons_payment_that_moved_takes_only_lessons_before_the_day():
+    package = moved(les(6, valid_from=days(-20)), days(-3))
+    dates = [days(-10), days(-8), days(-3), days(-1)]            # the last two are after it moved
+    detail = ps.allocate_lessons_detail([package], dates)
+    assert detail[0][1] == [days(-10), days(-8)]
+    assert ps.allocate_lessons([package], dates) == (2, 2)       # capacity = what it took: nothing left
+    assert compute_status(today=TODAY, monthly_fee=None, payments=[package], lesson_dates=dates).lessons_left == 0
+    assert ps.lesson_capacity(package, 2) == 2 and ps.lesson_capacity(les(6), 2) == 6
+
+
+def test_lessons_return_leaves_original_minus_consumed():
+    # 6 lessons, 2 used in A before the transfer on day -3, 1 used in B, 3 carried back: A shows 3 left
+    original = moved(les(6, valid_from=days(-20)), days(-3))
+    carry_back = les(3, valid_from=days(0), paid_on=days(-20), created=9)
+    dates = [days(-10), days(-8)]                                 # A's own lessons
+    total, used = ps.allocate_lessons([original, carry_back], dates)
+    assert (total, used) == (5, 2) and total - used == 3
+    # lessons held in A after the student came back are taken by the carry-over
+    total, used = ps.allocate_lessons([original, carry_back], dates + [days(1)])
+    assert (total, used) == (5, 3)
+
+
+def test_lessons_payment_moved_on_its_first_day_takes_nothing():
+    package = moved(les(6, valid_from=days(0)), days(0))
+    assert ps.allocate_lessons([package], [days(0), days(1)]) == (0, 0)
+
+
+def test_warnings_ignore_the_part_of_a_moved_payment_after_the_move():
+    gone = moved(cal(days(20), valid_from=days(-10)), days(0))
+    # a new period starting today overlaps nothing: the old one ended yesterday
+    codes = [w.code for w in ps.payment_warnings(
+        today=TODAY, paid_on=TODAY, valid_from=days(0), valid_to=days(30), existing=[gone])]
+    assert "overlaps_previous" not in codes and "gap_before" not in codes
