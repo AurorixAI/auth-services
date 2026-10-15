@@ -723,7 +723,7 @@ def test_receipt_content(world):
         "amount": 1_250_000, "amount_words": "Один миллион двести пятьдесят тысяч сум", "currency": "UZS",
         "paid_on": day(-3).isoformat(), "valid_from": day(-3).isoformat(), "valid_to": day(20).isoformat(),
         "lessons_count": None, "partial_period": False, "note": "Наличные",
-        "accepted_by_name": "Owner Иван", "created_at": p["created_at"], "voided_at": None,
+        "accepted_by_name": "Иван Owner", "created_at": p["created_at"], "voided_at": None,
         "void_reason": None, "replaced_by_receipt_no": None, "replaces_receipt_no": None,
     }
 
@@ -795,7 +795,7 @@ def test_upload_download_and_list_a_cheque(world):
     png = upload(world, p["id"], PNG, "чек №1.png")
     assert set(png) == {"id", "filename", "content_type", "size_bytes", "uploaded_at", "uploaded_by_name"}
     assert (png["filename"], png["content_type"], png["size_bytes"]) == ("чек №1.png", "image/png", len(PNG))
-    assert png["uploaded_by_name"] == "Owner Иван"          # «Фамилия Имя», like the rest of the system
+    assert png["uploaded_by_name"] == "Иван Owner"          # staff: «Имя Фамилия», like teachers on groups
     pdf = upload(world, p["id"], PDF, "scan", ctype="application/octet-stream")          # the client's type is ignored
     assert (pdf["filename"], pdf["content_type"]) == ("scan.pdf", "application/pdf")
     jpg = upload(world, p["id"], JPEG, "x.jpeg", ctype="text/plain")

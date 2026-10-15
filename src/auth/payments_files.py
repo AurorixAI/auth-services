@@ -75,6 +75,15 @@ def person_name(last: Optional[str], first: Optional[str], patronymic: Optional[
     return " ".join(part.strip() for part in (last, first, patronymic) if part and part.strip()) or None
 
 
+def staff_name(first: Optional[str], last: Optional[str]) -> Optional[str]:
+    """A staff member as the rest of the UI shows teachers and admins: «Имя Фамилия»; None when empty.
+
+    Students are «Фамилия Имя» (journal order, ``person_name``); staff keep the first name first,
+    like «Учитель: Дилноза Каримова» on groups (owner decision 15.10).
+    """
+    return " ".join(part.strip() for part in (first, last) if part and part.strip()) or None
+
+
 def load_files(db: Session, payment_ids: Iterable[UUID]) -> Dict[UUID, List[PaymentFileOut]]:
     """``{payment_id: [files, oldest first]}`` in ONE query, without the bytes (no N+1, no ``data``)."""
     ids = {i for i in payment_ids if i}
@@ -90,7 +99,6 @@ def load_files(db: Session, payment_ids: Iterable[UUID]) -> Dict[UUID, List[Paym
             StudentPaymentFile.uploaded_at,
             User.last_name,
             User.first_name,
-            User.patronymic,
         )
         .outerjoin(User, User.id == StudentPaymentFile.uploaded_by)
         .filter(StudentPaymentFile.payment_id.in_(ids))
@@ -106,7 +114,7 @@ def load_files(db: Session, payment_ids: Iterable[UUID]) -> Dict[UUID, List[Paym
                 content_type=row.content_type,
                 size_bytes=row.size_bytes,
                 uploaded_at=row.uploaded_at.isoformat() if row.uploaded_at else None,
-                uploaded_by_name=person_name(row.last_name, row.first_name, row.patronymic),
+                uploaded_by_name=staff_name(row.first_name, row.last_name),
             )
         )
     return out

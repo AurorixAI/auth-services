@@ -69,6 +69,7 @@ from .payments_files import (
     load_files,
     person_name,
     sniff_content_type,
+    staff_name,
     stored_filename,
 )
 from .payments_schemas import (
@@ -211,7 +212,7 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 def _person(user: Optional[User]) -> Optional[str]:
     if not user:
         return None
-    return person_name(user.last_name, user.first_name, user.patronymic)
+    return staff_name(user.first_name, user.last_name)
 
 
 def _plural_lessons(count: int) -> str:

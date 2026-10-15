@@ -47,3 +47,11 @@ def test_person_name_is_last_first_patronymic_like_the_models():
     assert person_name(user.last_name, user.first_name, user.patronymic) == user.full_name
     student = Student(first_name="Claude", last_name="Тест")
     assert person_name(student.last_name, student.first_name) == student.full_name
+
+
+def test_staff_name_is_first_last_like_teachers_on_groups():
+    from src.auth.payments_files import staff_name
+
+    assert staff_name("Дилноза", "Каримова") == "Дилноза Каримова"
+    assert staff_name(" Arslan ", "Djemilov ") == "Arslan Djemilov"
+    assert staff_name("", None) is None and staff_name(" ", " ") is None

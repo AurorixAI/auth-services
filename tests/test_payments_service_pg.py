@@ -89,7 +89,7 @@ def test_calendar_defaults_period_is_one_month_minus_a_day(world):
     assert p["paid_on"] == day(-5).isoformat() and p["valid_from"] == day(-5).isoformat()
     assert p["valid_to"] == ps.add_month_minus_day(day(-5)).isoformat() and p["lessons_count"] is None
     assert p["currency"] == "UZS" and p["created_by"] == str(world.owner.id) and p["voided_at"] is None
-    assert p["created_by_name"] == "Owner Иван" and p["amount"] == 450000     # «Фамилия Имя», like the rest of the system
+    assert p["created_by_name"] == "Иван Owner" and p["amount"] == 450000     # staff: «Имя Фамилия», like teachers on groups
     assert body["warnings"] == []
     assert body["row"]["status"] in ("active", "expiring") and body["row"]["period_mode"] == "calendar"
     assert body["row"]["paid_until"] == p["valid_to"] and body["row"]["last_payment"]["id"] == p["id"]
@@ -244,7 +244,7 @@ def test_void_needs_a_reason_and_works_once(world):
     r = client.post(f"{API}/org/payments/{p['id']}/void", json={"reason": "  Внесено дважды  "})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["payment"]["void_reason"] == "Внесено дважды" and body["payment"]["voided_by_name"] == "Owner Иван"
+    assert body["payment"]["void_reason"] == "Внесено дважды" and body["payment"]["voided_by_name"] == "Иван Owner"
     assert body["row"]["status"] == "none" and body["row"]["last_payment"] is None
     r = client.post(f"{API}/org/payments/{p['id']}/void", json={"reason": "ещё раз"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "ALREADY_VOIDED"
@@ -477,7 +477,7 @@ def test_filters_search_and_paging_have_exact_totals(world):
     world.db.commit()
     assert status_page(world, group_id=str(second.id))["total"] == 1
     assert status_page(world, teacher_id=str(world.teacher2.id))["items"][0]["student_name"] == "Другой Иван"
-    assert status_page(world, teacher_id=str(world.teacher2.id))["items"][0]["teacher_name"] == "Teacher Мария"
+    assert status_page(world, teacher_id=str(world.teacher2.id))["items"][0]["teacher_name"] == "Мария Teacher"
     assert status_page(world, search="zz-001")["total"] == 1
     assert status_page(world, search="Тестов Альфа")["total"] == 1
     assert status_page(world, search="100%")["total"] == 0                       # wildcard characters are literal
