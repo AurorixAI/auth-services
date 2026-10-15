@@ -6,6 +6,7 @@ JWT, bcrypt, org CRUD, invite flow, student management, diagnostic invites
 
 import os
 import hashlib
+import hmac
 import secrets
 import string
 import httpx
@@ -607,6 +608,25 @@ class AuthService:
         if user:
             user.refresh_token_hash = None
             self.db.commit()
+
+    def logout_by_refresh_token(self, refresh_token: str) -> bool:
+        """Sign out the session that *refresh_token* belongs to, when it is that user's CURRENT token.
+
+        A refresh JWT that is merely correctly signed proves nothing about the live session: a token
+        that was rotated away (or revoked) must not sign the user out of the session that replaced it.
+        Returns whether a session was revoked; a stale token only gets its cookies removed by the caller.
+        """
+        payload = verify_refresh_token(refresh_token)
+        if not payload or not payload.get("sub"):
+            return False
+        user = self.db.query(User).filter(User.id == payload["sub"]).first()
+        if not user or not user.refresh_token_hash:
+            return False
+        if not hmac.compare_digest(user.refresh_token_hash, hash_token(refresh_token)):
+            return False
+        user.refresh_token_hash = None
+        self.db.commit()
+        return True
 
     def get_user_by_id(self, user_id: str) -> Optional[User]:
         return self.db.query(User).filter(User.id == user_id).first()
@@ -1508,7 +1528,7 @@ class AuthService:
             org_id=str(student.org_id),
             first_name=student.first_name,
             last_name=student.last_name,
-            full_name=f"{student.first_name} {student.last_name}",
+            full_name=student.full_name.strip(),
             class_level=student.class_level,
             group_id=str(student.group_id) if student.group_id else None,
             student_number=student.student_number,
