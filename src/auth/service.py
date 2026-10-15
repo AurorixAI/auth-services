@@ -2048,6 +2048,9 @@ class AuthService:
                 )
             if actor_membership.org_role != "teacher":
                 raise PermissionError("Недостаточно прав для создания группы")
+            # The kind of lessons decides the teacher's payroll percent: a teacher cannot choose it.
+            if request.lesson_type != "group":
+                raise PermissionError("Тип занятий задаёт администратор центра")
             teacher_uuid = actor_uuid
 
         group = Group(
@@ -2057,6 +2060,7 @@ class AuthService:
             teacher_id=teacher_uuid,
             description=request.description,
             max_students=request.max_students,
+            lesson_type=request.lesson_type,
         )
         self.db.add(group)
         self.db.flush()
@@ -2073,6 +2077,7 @@ class AuthService:
                     "class_level": group.class_level,
                     "description": group.description,
                     "max_students": group.max_students,
+                    "lesson_type": group.lesson_type,
                     "status": group.status or "active",
                 },
             )
@@ -2837,6 +2842,7 @@ class AuthService:
             status=group.status or "active",
             max_students=group.max_students or 30,
             student_count=student_count,
+            lesson_type=group.lesson_type or "group",
             created_at=group.created_at.isoformat() if group.created_at else None,
         )
 

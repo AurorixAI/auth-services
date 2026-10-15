@@ -46,13 +46,14 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     with engine.connect() as connection:
         assert connection.execute(text('SELECT name FROM organizations WHERE id=:id'),{'id':ids['org']}).scalar_one()=='Migration sentinel'
         assert connection.execute(text('SELECT count(*) FROM student_groups WHERE id=:id'),{'id':ids['membership']}).scalar_one()==1
-        assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='u1v2w3x4y5z'
+        assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='w3x4y5z6a7b'
     assert 'student_payments' in set(inspect(engine).get_table_names())
     assert {'monthly_fee','monthly_fee_updated_by','monthly_fee_updated_at','transferred_at'} <= {c['name'] for c in inspect(engine).get_columns('student_groups')}
     _check_n13_p1_objects(engine,config,ids)
     _check_n13_p2_objects(engine,config,ids)
     _check_n13_p21_objects(engine,config,ids)
     _check_n13_p22_objects(engine,config,ids)
+    _check_n13_p3_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -111,7 +112,7 @@ def _check_n13_p1_objects(engine,config,ids):
     command.stamp(config,'r8s9t0u1v2w')
     command.upgrade(config,'head')
     with engine.connect() as c:
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='u1v2w3x4y5z'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='w3x4y5z6a7b'
         # Backfill restores the snapshot from the group's current teacher.
         assert c.execute(text('SELECT teacher_id FROM group_attendance WHERE id=:a'),params).scalar_one()==teacher
 
@@ -174,7 +175,7 @@ def _check_n13_p2_objects(engine,config,ids):
     with engine.connect() as c:
         assert c.execute(text('SELECT count(*) FROM student_payments')).scalar_one()==0
         assert c.execute(text('SELECT monthly_fee FROM student_groups WHERE id=:m'),params).scalar_one() is None
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='u1v2w3x4y5z'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='w3x4y5z6a7b'
 
 
 def _check_n13_p21_objects(engine,config,ids):
@@ -239,7 +240,7 @@ def _check_n13_p21_objects(engine,config,ids):
     command.upgrade(config,'head')
     assert {'carried_from_payment_id','carried_out_at'} <= cols()
     with engine.connect() as c:
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='u1v2w3x4y5z'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='w3x4y5z6a7b'
         assert c.execute(text('SELECT count(*) FROM student_payments WHERE org_id=:o'),params).scalar_one()==4
         assert c.execute(text('SELECT carried_from_payment_id FROM student_payments WHERE id=:c'),params).scalar_one() is None
 
@@ -285,7 +286,7 @@ def _check_n13_p22_objects(engine,config,ids):
         version=c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()
     # by created_at inside each organisation, the voided one included, the carry-over without a number
     assert numbers=={'a3':1,'a1':2,'a2':3,'carry':None,'a4':4,'b1':1,'b2':2}, numbers
-    assert partial==0 and version=='u1v2w3x4y5z'
+    assert partial==0 and version=='w3x4y5z6a7b'
     # new rows: NULL receipt allowed (carry-over), partial_period defaults to false, numbers are unique per centre only
     with engine.begin() as c:
         c.execute(text("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,valid_from,valid_to,created_by,receipt_no) VALUES (gen_random_uuid(),:o,:m,:s,:g,9,'2026-12-01','2026-12-01','2026-12-31',:u,5)"),{'o':org,'m':m,'s':s,'g':g,'u':actor})
@@ -325,8 +326,89 @@ def _check_n13_p22_objects(engine,config,ids):
     command.stamp(config,'t1u2v3w4x5y')
     command.upgrade(config,'head')
     with engine.connect() as c:
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='u1v2w3x4y5z'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='w3x4y5z6a7b'
         again=[n for (n,) in c.execute(text('SELECT receipt_no FROM student_payments WHERE org_id=:o AND receipt_no IS NOT NULL ORDER BY receipt_no'),{'o':org})]
         assert again==sorted(again) and len(again)==len(set(again)) and len(again)==7      # renumbered once by the downgrade/upgrade, consistently; the carry-over has none
         assert c.execute(text('SELECT count(*) FROM student_payment_files')).scalar_one()==0
 
+
+def _check_n13_p3_objects(engine,config,ids):
+    """N13 P3: groups.lesson_type (default, CHECK) and the payroll tables (constraints, cascade); round trip."""
+    from sqlalchemy.exc import IntegrityError
+    from src.models.auth import User
+    actor=uuid4()
+    org,group=ids['org'],ids['group']
+    with Session(engine) as db:
+        db.add(User(id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='3',role='owner'))
+        db.commit()
+    def group_cols(): return {c['name'] for c in inspect(engine).get_columns('groups')}
+    def tables(): return set(inspect(engine).get_table_names())
+    assert 'lesson_type' in group_cols() and {'payroll_sheets','payroll_sheet_revisions'} <= tables()
+    with engine.connect() as c:
+        assert c.execute(text('SELECT lesson_type FROM groups WHERE id=:g'),{'g':group}).scalar_one()=='group'   # existing groups
+        assert c.execute(text("SELECT count(*) FROM groups WHERE lesson_type<>'group'")).scalar_one()==0
+    for kind in ('mini_group','pair','individual'):
+        with engine.begin() as c:
+            c.execute(text('UPDATE groups SET lesson_type=:k WHERE id=:g'),{'k':kind,'g':group})
+    with pytest.raises(IntegrityError,match='ck_groups_lesson_type'):
+        with engine.begin() as c:
+            c.execute(text("UPDATE groups SET lesson_type='bogus' WHERE id=:g"),{'g':group})
+    with pytest.raises(IntegrityError,match='.'):
+        with engine.begin() as c:
+            c.execute(text('UPDATE groups SET lesson_type=NULL WHERE id=:g'),{'g':group})
+    with engine.begin() as c:
+        c.execute(text("UPDATE groups SET lesson_type='pair' WHERE id=:g"),{'g':group})
+    sheet,revision=uuid4(),uuid4()
+    insert=("INSERT INTO payroll_sheets (id,org_id,teacher_id,period_month,source_fingerprint,created_by,updated_by{extra}) "
+            "VALUES ({id},:o,:t,{month},'abc',:t,:t{values})")
+    def add_sheet(id_=':s',month="'2026-09-01'",extra='',values=''):
+        with engine.begin() as c:
+            c.execute(text(insert.format(id=id_,month=month,extra=extra,values=values)),{'s':sheet,'o':org,'t':actor})
+    add_sheet()
+    with engine.connect() as c:
+        row=c.execute(text('SELECT revision,total_amount,divisor_default,lines::text,percent_inputs::text FROM payroll_sheets WHERE id=:s'),{'s':sheet}).one()
+        assert tuple(row)==(1,0,12,'[]','{}')                                  # the defaults
+    for what,call in {
+        'one sheet per teacher and month':lambda: add_sheet('gen_random_uuid()'),
+        'first day of the month':lambda: add_sheet('gen_random_uuid()',"'2026-10-15'"),
+        'total >= 0':lambda: add_sheet('gen_random_uuid()',"'2026-08-01'",',total_amount',',-1'),
+        'revision >= 1':lambda: add_sheet('gen_random_uuid()',"'2026-08-01'",',revision',',0'),
+        'divisor 1..31':lambda: add_sheet('gen_random_uuid()',"'2026-08-01'",',divisor_default',',32'),
+    }.items():
+        with pytest.raises(IntegrityError,match='.'):
+            call()
+    rev=("INSERT INTO payroll_sheet_revisions (id,sheet_id,revision,changed_by) VALUES ({id},:s,{n},:t)")
+    with engine.begin() as c:
+        c.execute(text(rev.format(id=':r',n=1)),{'r':revision,'s':sheet,'t':actor})
+    with pytest.raises(IntegrityError,match='uq_payroll_sheet_revision'):
+        with engine.begin() as c:
+            c.execute(text(rev.format(id='gen_random_uuid()',n=1)),{'s':sheet,'t':actor})
+    with pytest.raises(IntegrityError,match='.'):                              # a revision needs its sheet
+        with engine.begin() as c:
+            c.execute(text(rev.format(id='gen_random_uuid()',n=2)),{'s':uuid4(),'t':actor})
+    with engine.begin() as c:                                                  # the history goes with the sheet
+        c.execute(text('DELETE FROM payroll_sheets WHERE id=:s'),{'s':sheet})
+    with engine.connect() as c:
+        assert c.execute(text('SELECT count(*) FROM payroll_sheet_revisions WHERE sheet_id=:s'),{'s':sheet}).scalar_one()==0
+    add_sheet()
+    with engine.begin() as c:
+        c.execute(text(rev.format(id=':r',n=1)),{'r':revision,'s':sheet,'t':actor})
+    # Round trip: the downgrade removes the tables and the column and leaves the groups themselves.
+    command.downgrade(config,'u1v2w3x4y5z')
+    assert 'lesson_type' not in group_cols() and not ({'payroll_sheets','payroll_sheet_revisions'} & tables())
+    with engine.connect() as c:
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='u1v2w3x4y5z'
+        assert c.execute(text('SELECT count(*) FROM groups WHERE id=:g'),{'g':group}).scalar_one()==1
+    command.upgrade(config,'head')
+    command.upgrade(config,'head')  # idempotent re-run
+    assert 'lesson_type' in group_cols() and {'payroll_sheets','payroll_sheet_revisions'} <= tables()
+    with engine.connect() as c:
+        assert c.execute(text('SELECT lesson_type FROM groups WHERE id=:g'),{'g':group}).scalar_one()=='group'
+        assert c.execute(text('SELECT count(*) FROM payroll_sheets')).scalar_one()==0          # the sheets were dropped by the rollback
+    # Everything exists already (a database built from the models): the revision must not fail.
+    add_sheet()
+    command.stamp(config,'u1v2w3x4y5z')
+    command.upgrade(config,'head')
+    with engine.connect() as c:
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='w3x4y5z6a7b'
+        assert c.execute(text('SELECT count(*) FROM payroll_sheets')).scalar_one()==1           # and it kept what was there

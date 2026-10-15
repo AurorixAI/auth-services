@@ -379,6 +379,9 @@ class Group(Base):
     schedule = Column(JSONB)
     status = Column(String(20), default="active")
     max_students = Column(Integer, default=30)
+    # N13 P3: the kind of lessons (the payroll percent is set per teacher and kind).  Existing
+    # groups are "group".  Changing it is written to ``group_audit`` like any other field.
+    lesson_type = Column(String(16), nullable=False, default="group", server_default="group")
 
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -391,6 +394,10 @@ class Group(Base):
 
     __table_args__ = (
         CheckConstraint("status IN ('active', 'archived')"),
+        CheckConstraint(
+            "lesson_type IN ('group', 'mini_group', 'pair', 'individual')",
+            name="ck_groups_lesson_type",
+        ),
         Index("idx_groups_org", "org_id"),
         Index("idx_groups_teacher", "teacher_id"),
     )
@@ -406,6 +413,7 @@ class Group(Base):
             "schedule": self.schedule or [],
             "status": self.status,
             "max_students": self.max_students,
+            "lesson_type": self.lesson_type or "group",
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -1077,4 +1085,84 @@ class StudentPaymentFile(Base):
             name="ck_student_payment_file_size",
         ),
         Index("idx_student_payment_files_payment", "payment_id"),
+    )
+
+
+# ============================================================================
+# PAYROLL (N13 P3)
+# ============================================================================
+
+
+class PayrollSheet(Base):
+    """Ведомость зарплаты: один преподаватель за один календарный месяц.
+
+    ``period_month`` - первое число месяца.  ``lines`` - строки (членство x преподаватель) вместе с
+    отметками по датам: ведомость самодостаточна и не меняется, когда позже правят посещаемость или
+    оплаты (для этого ``source_fingerprint`` - хэш входных данных расчёта).  Каждая правка создаёт
+    новую редакцию (``revision``); прежние остаются в ``payroll_sheet_revisions``.
+    """
+
+    __tablename__ = "payroll_sheets"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    teacher_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    period_month = Column(Date, nullable=False)
+    # {"group": "50", "individual": "60"} - decimal strings, percent per kind of lessons
+    percent_inputs = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    divisor_default = Column(SmallInteger, nullable=False, default=12, server_default="12")
+    lines = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    total_amount = Column(BigInteger, nullable=False, default=0, server_default="0")
+    source_fingerprint = Column(Text, nullable=False)
+    revision = Column(Integer, nullable=False, default=1, server_default="1")
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+
+    revisions = relationship(
+        "PayrollSheetRevision",
+        back_populates="sheet",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "teacher_id", "period_month", name="uq_payroll_sheet_teacher_month"),
+        CheckConstraint("EXTRACT(DAY FROM period_month) = 1", name="ck_payroll_sheets_first_day"),
+        CheckConstraint("total_amount >= 0", name="ck_payroll_sheets_total"),
+        CheckConstraint("revision >= 1", name="ck_payroll_sheets_revision"),
+        CheckConstraint("divisor_default BETWEEN 1 AND 31", name="ck_payroll_sheets_divisor"),
+        Index("idx_payroll_sheets_org_month", "org_id", "period_month"),
+    )
+
+
+class PayrollSheetRevision(Base):
+    """Редакция ведомости.  Только добавление: запись никогда не меняется."""
+
+    __tablename__ = "payroll_sheet_revisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    sheet_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("payroll_sheets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    revision = Column(Integer, nullable=False)
+    percent_inputs = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    lines = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    total_amount = Column(BigInteger, nullable=False, default=0, server_default="0")
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    changed_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    change_note = Column(String(300), nullable=True)
+
+    sheet = relationship("PayrollSheet", back_populates="revisions")
+
+    __table_args__ = (
+        UniqueConstraint("sheet_id", "revision", name="uq_payroll_sheet_revision"),
+        CheckConstraint("revision >= 1", name="ck_payroll_sheet_revisions_revision"),
     )

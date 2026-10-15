@@ -252,12 +252,17 @@ class DiagnosticInviteResponse(BaseModel):
 # ============================================================================
 
 
+# N13 P3: kind of lessons - the teacher's payroll percent is set per kind.
+LessonType = Literal["group", "mini_group", "pair", "individual"]
+
+
 class GroupCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     class_level: Optional[int] = Field(None, ge=1, le=11)
     teacher_id: Optional[str] = None
     description: Optional[str] = None
     max_students: int = Field(default=30, ge=1, le=100)
+    lesson_type: LessonType = "group"
 
 
 class GroupUpdateRequest(BaseModel):
@@ -267,6 +272,7 @@ class GroupUpdateRequest(BaseModel):
     description: Optional[str] = None
     status: Optional[str] = None
     max_students: Optional[int] = Field(None, ge=1, le=100)
+    lesson_type: Optional[LessonType] = None
 
 
 class GroupResponse(BaseModel):
@@ -281,6 +287,7 @@ class GroupResponse(BaseModel):
     status: str = "active"
     max_students: int = 30
     student_count: int = 0
+    lesson_type: str = "group"
     created_at: Optional[str] = None
 
 
