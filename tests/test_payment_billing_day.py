@@ -148,6 +148,21 @@ def test_default_period_first_payment_of_a_student_who_came_mid_period():
     assert period(D(2026, 10, 15), None, None, 1) == (D(2026, 10, 15), D(2026, 10, 31))
 
 
+def test_default_period_respects_the_joining_date_also_when_old_payments_exist():
+    # left and came back on the 15th: old payment ended 30.09, the new period starts on the return day
+    assert period(D(2026, 10, 17), D(2026, 9, 30), D(2026, 10, 15), 1) == (D(2026, 10, 15), D(2026, 10, 31))
+    assert period(D(2026, 10, 15), D(2026, 7, 31), D(2026, 10, 15), 10) == (D(2026, 10, 15), D(2026, 11, 9))
+    # returned in the next period after the old payment ended
+    assert period(D(2026, 11, 20), D(2026, 10, 31), D(2026, 11, 20), 1) == (D(2026, 11, 20), D(2026, 11, 30))
+    # a continuing student (joined long ago) is not affected: late payment, prepayment, a gap
+    long_ago = D(2020, 1, 1)
+    assert period(D(2026, 11, 2), D(2026, 10, 31), long_ago, 1) == (D(2026, 11, 1), D(2026, 11, 30))
+    assert period(D(2026, 10, 25), D(2026, 10, 31), long_ago, 1) == (D(2026, 11, 1), D(2026, 11, 30))
+    assert period(D(2026, 11, 2), D(2026, 7, 31), long_ago, 1) == (D(2026, 11, 1), D(2026, 11, 30))
+    # joined before the previous period ended (a transfer membership): the carry-over's end dominates
+    assert period(D(2026, 10, 25), D(2026, 11, 9), D(2026, 10, 12), 10) == (D(2026, 11, 10), D(2026, 12, 9))
+
+
 def test_default_period_edges_december_february_and_day_28():
     assert period(D(2026, 12, 31), None, D(2026, 12, 31), 1) == (D(2026, 12, 31), D(2026, 12, 31))
     assert period(D(2027, 1, 3), D(2026, 12, 31), None, 1) == (D(2027, 1, 1), D(2027, 1, 31))

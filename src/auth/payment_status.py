@@ -515,20 +515,25 @@ def default_fixed_day_period(
 ) -> tuple[date, date]:
     """Suggested ``(valid_from, valid_to)`` of a payment when the centre has one payment day.
 
-    ``anchor`` is the start of the centre's period of the payment date.
-    * a previous payment exists: ``valid_from = max(previous_paid_until + 1, anchor)`` - paying
-      two days late still gives the whole period, paying ahead continues without a gap;
-    * the first payment: ``valid_from = max(membership_start, anchor)`` - a student who came on the
-      15th pays 15.10-31.10, one who came in September and pays on 03.10 gets the whole of October
-      (``membership_start`` is the business date of joining, ``paid_on`` when unknown).
+    ``valid_from`` is the latest of:
+    * ``anchor`` - the start of the centre's period of the payment date;
+    * ``previous_paid_until + 1`` (when there is a previous payment) - paying two days late still gives
+      the whole period, paying ahead continues without a gap;
+    * ``membership_start`` - the business date the student joined the group (a student who came on the
+      15th pays 15.10-31.10; one who came in September and pays on 03.10 gets the whole of October; one
+      who left and came back on the 15th starts on the 15th even though old payments exist).  For a
+      continuing student it is long ago and changes nothing.  Unknown: the payment date, but only for
+      a first payment.
     ``valid_to`` is the end of the centre's period of ``valid_from``.
     """
-    anchor = billing_period_start(paid_on, billing_day)
+    start = billing_period_start(paid_on, billing_day)
     if previous_paid_until is not None:
-        valid_from = max(previous_paid_until + timedelta(days=1), anchor)
-    else:
-        valid_from = max(membership_start or paid_on, anchor)
-    return valid_from, billing_period_end(valid_from, billing_day)
+        start = max(start, previous_paid_until + timedelta(days=1))
+    if membership_start is not None:
+        start = max(start, membership_start)
+    elif previous_paid_until is None:
+        start = max(start, paid_on)
+    return start, billing_period_end(start, billing_day)
 
 
 # ------------------------------------------------------ amount hint (quote) ----

@@ -152,6 +152,31 @@ def test_quote_without_a_joining_date_starts_on_the_payment_date(world):
     assert (q["valid_from"], q["valid_to"], q["partial"]) == ("2026-03-17", "2026-03-31", True)
 
 
+def test_a_student_who_rejoins_reuses_the_row_and_starts_on_the_return_day(world, monkeypatch):
+    """Remove + add again reactivates the SAME membership and resets joined_at; old payments must not
+    stretch the new period back to the start of the month."""
+    from tests.test_payment_carry_over_pg import GROUPS, clock
+
+    setup_mwf(world, joined=datetime(2026, 1, 5, 6, 0))
+    student = world.students[0]
+    old_id = mid(world)
+    pay(world, paid_on=D(2026, 2, 1), valid_from=D(2026, 2, 1), valid_to=D(2026, 2, 28))   # paid until 28.02
+    assert owner(world).delete(f"{GROUPS}/{world.group.id}/students/{student.id}").status_code == 200
+    with clock(monkeypatch, D(2026, 3, 15), 11):
+        r = owner(world).post(f"{GROUPS}/{world.group.id}/students/{student.id}")
+        assert r.status_code == 200, r.text
+    membership = world.db.query(StudentGroup).filter_by(student_id=student.id, group_id=world.group.id).one()
+    assert membership.id == old_id and membership.is_active is True                          # the same row
+    assert membership.joined_at == datetime(2026, 3, 15, 6, 0)                              # reset to the return moment
+    q = quote(world, paid_on=D(2026, 3, 17))
+    assert (q["valid_from"], q["valid_to"], q["partial"]) == ("2026-03-15", "2026-03-31", True)
+    assert q["basis"] == "lessons" and q["parts"][0]["lessons"] == 7                          # 16 18 20 23 25 27 30
+    created = pay(world, paid_on=D(2026, 3, 17), amount=q["suggested_amount"])["payment"]
+    assert (created["valid_from"], created["valid_to"], created["partial_period"]) == ("2026-03-15", "2026-03-31", True)
+    # next month the (continuing) student gets the whole period again
+    assert quote(world, paid_on=D(2026, 4, 2))["valid_from"] == "2026-04-01"
+
+
 def test_quote_late_payment_is_still_the_next_period_and_prepayment_continues(world):
     setup_mwf(world, joined=datetime(2026, 1, 5, 6, 0))
     pay(world, paid_on=D(2026, 2, 1), valid_from=D(2026, 2, 1), valid_to=D(2026, 2, 28))
