@@ -39,9 +39,10 @@ from __future__ import annotations
 
 import functools
 import logging
-from dataclasses import dataclass, replace
+from collections import deque
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_
@@ -267,6 +268,20 @@ class _LessonsState:
     records: Dict[UUID, ps.PaymentRecord]  # payment id -> record with the LIVE capacity as lessons_count
     dates: Dict[UUID, List[date]]  # membership id -> counted lesson dates
     left: Dict[UUID, int]  # payment id -> capacity - lessons it took (for one that moved: what travelled on)
+    taken: Dict[UUID, List[date]] = field(default_factory=dict)  # payment id -> dates of the lessons it covers
+
+
+@dataclass(frozen=True)
+class LessonCover:
+    """What pays for one counted lesson (``PaymentService.lesson_coverage``)."""
+
+    payment_id: Optional[UUID]  # None = the lesson is not covered by any live payment
+    mode: Optional[str]  # ``payment_status.CALENDAR`` / ``LESSONS`` / None
+    # Lessons mode: size of the ORIGINAL package (a carry-over keeps its root's size) - the divisor of
+    # payroll.  For a lesson that no payment covers: the size of the membership's latest package when the
+    # membership pays by packages (so an unpaid lesson that the owner includes is priced like the others),
+    # else None.
+    package_size: Optional[int]
 
 
 @dataclass
@@ -477,6 +492,10 @@ class PaymentService:
         org_id: str,
         seeds: Sequence[tuple],
         live_by_membership: Dict[UUID, Sequence[Any]],
+        *,
+        since: Optional[date] = None,
+        until: Optional[date] = None,
+        detail_out: Optional[Dict[UUID, List[tuple]]] = None,
     ) -> "_LessonsState":
         """Counted lessons and LIVE capacities of the lessons packages of ``seeds`` and of their chains.
 
@@ -486,6 +505,9 @@ class PaymentService:
         payments a carry-over came from and the carry-overs of a payment that moved away.  They are
         loaded in a few batched queries (one round per step of the chain) - and not at all when the
         seeds have no carry-overs.
+
+        ``since`` / ``until`` / ``detail_out`` are passed to ``_counted_lesson_dates`` (payroll reads one
+        month: it needs the lessons of that month even before the first package, and their ids).
         """
         members: Dict[UUID, tuple] = {m.id: (m, g) for m, g in seeds}
         live: Dict[UUID, List[Any]] = {mid: list(plist) for mid, plist in live_by_membership.items()}
@@ -539,7 +561,9 @@ class PaymentService:
         ):
             return _LessonsState({}, {}, {})
         late: Dict[UUID, Dict[datetime, int]] = {}
-        dates = self._counted_lesson_dates(org_id, usable, live, late_out=late)
+        dates = self._counted_lesson_dates(
+            org_id, usable, live, late_out=late, since=since, until=until, detail_out=detail_out
+        )
         records = []
         for m, _, _ in usable:
             records.extend(
@@ -548,8 +572,8 @@ class PaymentService:
                     late.get(m.id),
                 )
             )
-        resolved, _, left = ps.resolve_lesson_chains(records, dates)
-        return _LessonsState(resolved, dates, left)
+        resolved, taken, left = ps.resolve_lesson_chains(records, dates)
+        return _LessonsState(resolved, dates, left, taken)
 
     @staticmethod
     def _with_late(
@@ -591,6 +615,10 @@ class PaymentService:
         members: Sequence[tuple],
         live_by_membership: Dict[UUID, List[StudentPayment]],
         late_out: Optional[Dict[UUID, Dict[datetime, int]]] = None,
+        *,
+        since: Optional[date] = None,
+        until: Optional[date] = None,
+        detail_out: Optional[Dict[UUID, List[tuple]]] = None,
     ) -> Dict[UUID, List[date]]:
         """Dates of the lessons that spend a lessons payment, per membership.
 
@@ -602,16 +630,24 @@ class PaymentService:
         snapshot (no snapshot on a legacy lesson: being marked is enough), the
         mark is present / late / absent or an excused mark without a confirmed
         excuse.
+
+        Payroll (N13 P3) reads the same lessons through three optional arguments: ``since`` moves the
+        start of the read back (it never moves it forward), ``until`` cuts the end (lessons after it
+        cannot change who covers an earlier lesson), ``detail_out[membership]`` receives
+        ``(day, lesson_id, attendance_id)`` of every counted lesson in the order of ``dates``.
         """
         if not members:
             return {}
         group_ids = {g.id for _, _, g in members}
-        earliest = min(
+        starts = [
             p.valid_from
             for m, _, _ in members
             for p in live_by_membership.get(m.id, [])
             if p.lessons_count is not None
-        )
+        ]
+        if since is not None:
+            starts.append(since)
+        earliest = min(starts)
         lessons = (
             self.db.query(
                 GroupAttendance.id,
@@ -626,6 +662,7 @@ class PaymentService:
                 GroupAttendance.group_id.in_(group_ids),
                 GroupAttendance.status == "completed",
                 GroupAttendance.lesson_date >= earliest.isoformat(),
+                *([GroupAttendance.lesson_date <= until.isoformat()] if until is not None else []),
             )
             .all()
         )
@@ -656,6 +693,7 @@ class PaymentService:
         for membership, student, group in members:
             sid = str(membership.student_id)
             dates: List[date] = []
+            detail: List[tuple] = []
             # instants a payment of this membership moved away at, by business day
             moved_at: Dict[date, set] = {}
             if late_out is not None:
@@ -675,9 +713,12 @@ class PaymentService:
                         logger.warning("Skipping lesson %s with malformed date", lesson.id)
                         continue
                     dates.append(lesson_day)
+                    detail.append((lesson_day, lesson.lesson_id or "", lesson.id))
                     if lesson_day in moved_at:
                         on_moved_day.setdefault(lesson_day, []).append(str(lesson.lesson_id))
             out[membership.id] = dates
+            if detail_out is not None:
+                detail_out[membership.id] = detail
             if late_out is not None and on_moved_day:
                 counts: Dict[datetime, int] = {}
                 for lesson_day, lesson_ids in on_moved_day.items():
@@ -688,6 +729,133 @@ class PaymentService:
                         )
                 late_out[membership.id] = counts
         return out
+
+    # ------------------------------------------------- coverage (payroll)
+
+    def lesson_coverage(
+        self,
+        org_id: str,
+        membership_ids: Iterable[UUID],
+        first_day: date,
+        last_day: date,
+    ) -> Dict[Tuple[UUID, date, str], LessonCover]:
+        """What pays for each counted lesson dated ``first_day .. last_day`` (N13 P3, payroll).
+
+        ``{(membership_id, lesson_date, lesson_id): LessonCover}`` for every lesson that spends a
+        payment by rule 4.3 (``_counted_lesson_dates``: completed, the student is in the roster
+        snapshot, present / late / absent, or an excused mark without a confirmed excuse).  The money
+        rules are the ones of the status page and nothing else:
+
+        * calendar payment: the lesson date is inside ``valid_from .. PaymentRecord.end`` (a payment
+          that moved away with the student is cut at the transfer day; one that moved before its
+          period began covers nothing);
+        * lessons package: the lesson is handed to the package by the FIFO of ``resolve_lesson_chains``
+          (live capacities along carry-over chains, a lesson started after the transfer instant stays
+          with the new group).  ``package_size`` is the size of the ORIGINAL package (the root of the
+          chain) - the divisor of payroll for that lesson.
+
+        A membership can hold payments of both modes (the centre changed its setting): the lesson is
+        paid if EITHER kind covers it; if both do, the mode of the membership's latest payment (the one
+        the status page reads) wins.  ``LessonCover.payment_id is None`` = counted but not paid.
+        Cost: a fixed number of queries, whatever the number of memberships.
+        """
+        ids = {i for i in membership_ids if i}
+        if not ids:
+            return {}
+        rows = (
+            self.db.query(StudentGroup, Group)
+            .join(Group, Group.id == StudentGroup.group_id)
+            .filter(StudentGroup.id.in_(ids), Group.org_id == org_id)
+            .all()
+        )
+        if not rows:
+            return {}
+        live: Dict[UUID, List[StudentPayment]] = {m.id: [] for m, _ in rows}
+        for payment in (
+            self.db.query(StudentPayment)
+            .filter(
+                StudentPayment.org_id == org_id,
+                StudentPayment.membership_id.in_(list(live)),
+                StudentPayment.voided_at.is_(None),
+            )
+            .all()
+        ):
+            live[payment.membership_id].append(payment)
+        records = {mid: [self._record(p) for p in plist] for mid, plist in live.items()}
+
+        detail: Dict[UUID, List[tuple]] = {}
+        with_package = [(m, g) for m, g in rows if any(p.lessons_count is not None for p in live[m.id])]
+        state = _LessonsState({}, {}, {})
+        if with_package:
+            state = self._lessons_state(
+                org_id,
+                with_package,
+                {m.id: live[m.id] for m, _ in with_package},
+                since=first_day,
+                until=last_day,
+                detail_out=detail,
+            )
+        package_ids = {m.id for m, _ in with_package}
+        plain = [(m, None, g) for m, g in rows if m.id not in package_ids]
+        if plain:
+            self._counted_lesson_dates(
+                org_id, plain, live, since=first_day, until=last_day, detail_out=detail
+            )
+
+        # Which lesson of a day went to which package: the FIFO hands out DATES; the lessons of one day
+        # are told apart by their id, in the order of the payments of ``resolve_lesson_chains``.
+        package_of: Dict[Tuple[UUID, date, str], Tuple[UUID, int]] = {}
+        if state.taken:
+            queues: Dict[Tuple[UUID, date], deque] = {}
+            for mid, items in detail.items():
+                for day, lesson_id, _attendance in sorted(items, key=lambda item: (item[0], item[1])):
+                    queues.setdefault((mid, day), deque()).append(lesson_id)
+            for record in sorted(
+                state.records.values(),
+                key=lambda r: (r.valid_from, r.paid_on, r.created_at, str(r.id)),
+            ):
+                size = self._package_size(state.records, record)
+                for day in state.taken.get(record.id, ()):
+                    queue = queues.get((record.membership_id, day))
+                    if queue:
+                        package_of[(record.membership_id, day, queue.popleft())] = (record.id, size)
+
+        out: Dict[Tuple[UUID, date, str], LessonCover] = {}
+        for membership, _group in rows:
+            recs = records[membership.id]
+            latest = ps.latest_payment(recs)
+            package_first = latest is not None and latest.mode == ps.LESSONS
+            latest_size = (
+                self._package_size(state.records, state.records.get(latest.id, latest)) if package_first else None
+            )
+            calendar = sorted(
+                (r for r in recs if r.lessons_count is None and not r.covers_nothing and r.end is not None),
+                key=lambda r: (r.valid_from, r.paid_on, r.created_at, str(r.id)),
+            )
+            for day, lesson_id, _attendance in detail.get(membership.id, ()):
+                if not first_day <= day <= last_day:
+                    continue
+                options: List[LessonCover] = []
+                package = package_of.get((membership.id, day, lesson_id))
+                if package is not None:
+                    options.append(LessonCover(package[0], ps.LESSONS, package[1]))
+                paid = next((r for r in calendar if r.valid_from <= day <= r.end), None)
+                if paid is not None:
+                    options.append(LessonCover(paid.id, ps.CALENDAR, None))
+                if not package_first:
+                    options.reverse()
+                out[(membership.id, day, lesson_id)] = (
+                    options[0] if options else LessonCover(None, None, latest_size)
+                )
+        return out
+
+    @staticmethod
+    def _package_size(records: Dict[UUID, ps.PaymentRecord], record: ps.PaymentRecord) -> int:
+        """Size of the original package of a payment: ``lessons_count`` of the root of its carry-over chain."""
+        root, hops = record, 0
+        while root.carried_from_id in records and hops < 4 * MAX_CARRY_CHAIN:
+            root, hops = records[root.carried_from_id], hops + 1
+        return root.lessons_count
 
     # ---------------------------------------------------------- serialising
 
