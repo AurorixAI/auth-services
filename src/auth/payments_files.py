@@ -70,8 +70,9 @@ def file_headers(name: Optional[str]) -> Dict[str, str]:
     }
 
 
-def _person(first: Optional[str], last: Optional[str]) -> Optional[str]:
-    return f"{first or ''} {last or ''}".strip() or None
+def person_name(last: Optional[str], first: Optional[str], patronymic: Optional[str] = None) -> Optional[str]:
+    """«Фамилия Имя [Отчество]» - the same order as ``User.full_name`` / ``Student.full_name``; None when empty."""
+    return " ".join(part.strip() for part in (last, first, patronymic) if part and part.strip()) or None
 
 
 def load_files(db: Session, payment_ids: Iterable[UUID]) -> Dict[UUID, List[PaymentFileOut]]:
@@ -87,8 +88,9 @@ def load_files(db: Session, payment_ids: Iterable[UUID]) -> Dict[UUID, List[Paym
             StudentPaymentFile.content_type,
             StudentPaymentFile.size_bytes,
             StudentPaymentFile.uploaded_at,
-            User.first_name,
             User.last_name,
+            User.first_name,
+            User.patronymic,
         )
         .outerjoin(User, User.id == StudentPaymentFile.uploaded_by)
         .filter(StudentPaymentFile.payment_id.in_(ids))
@@ -104,7 +106,7 @@ def load_files(db: Session, payment_ids: Iterable[UUID]) -> Dict[UUID, List[Paym
                 content_type=row.content_type,
                 size_bytes=row.size_bytes,
                 uploaded_at=row.uploaded_at.isoformat() if row.uploaded_at else None,
-                uploaded_by_name=_person(row.first_name, row.last_name),
+                uploaded_by_name=person_name(row.last_name, row.first_name, row.patronymic),
             )
         )
     return out

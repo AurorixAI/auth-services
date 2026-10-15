@@ -33,3 +33,17 @@ def test_content_disposition_cannot_be_broken_out_of():
     headers = file_headers("x.pdf")
     assert headers["X-Content-Type-Options"] == "nosniff" and headers["Content-Disposition"].startswith("inline;")
     assert headers["Cache-Control"] == "private, no-store" and headers["Content-Security-Policy"] == "sandbox"
+
+
+def test_person_name_is_last_first_patronymic_like_the_models():
+    from src.auth.payments_files import person_name
+    from src.models.auth import Student, User
+
+    assert person_name("Тест", "Claude") == "Тест Claude"
+    assert person_name("Каримова", "Алия", "Ахмедовна") == "Каримова Алия Ахмедовна"
+    assert person_name("  Каримова ", " Алия ", "  ") == "Каримова Алия"
+    assert person_name("", None) is None and person_name(" ", "  ", None) is None
+    user = User(first_name="Алия", last_name="Каримова", patronymic="Ахмедовна")
+    assert person_name(user.last_name, user.first_name, user.patronymic) == user.full_name
+    student = Student(first_name="Claude", last_name="Тест")
+    assert person_name(student.last_name, student.first_name) == student.full_name

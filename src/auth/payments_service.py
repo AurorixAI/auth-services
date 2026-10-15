@@ -67,6 +67,7 @@ from .payments_files import (
     MAX_FILE_BYTES,
     MAX_FILES_PER_PAYMENT,
     load_files,
+    person_name,
     sniff_content_type,
     stored_filename,
 )
@@ -210,7 +211,7 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 def _person(user: Optional[User]) -> Optional[str]:
     if not user:
         return None
-    return f"{user.first_name} {user.last_name}".strip() or None
+    return person_name(user.last_name, user.first_name, user.patronymic)
 
 
 def _plural_lessons(count: int) -> str:
@@ -291,7 +292,7 @@ class _Entry:
 
     @property
     def student_name(self) -> str:
-        return f"{self.student.last_name or ''} {self.student.first_name or ''}".strip()
+        return person_name(self.student.last_name, self.student.first_name) or ""
 
 
 # ============================================================================
@@ -1509,7 +1510,7 @@ class PaymentService:
             org_name=org.name,
             org_city=(org.city or "").strip() or None,
             org_phone=(org.phone or "").strip() or None,
-            student_name=f"{student.last_name or ''} {student.first_name or ''}".strip(),
+            student_name=person_name(student.last_name, student.first_name) or "",
             display_id=student.display_id,
             group_name=group.name,
             amount=int(payment.amount),
