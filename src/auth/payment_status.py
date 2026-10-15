@@ -54,6 +54,13 @@ the lessons of a package through ``allocate_lessons_detail``; the carry-over row
 A lesson belongs to one group, so a lesson is paid by exactly one membership.  The money for
 payroll is ``monthly_fee`` of the membership, never a payment ``amount``.
 
+N13 P2.2 - one payment day for the centre (``billing_anchor = fixed_day``, ``billing_day`` 1..28).
+The centre's periods then start on ``billing_day`` of every month (day 1: 01.10-31.10, day 10:
+10.10-09.11).  ``default_fixed_day_period`` suggests the dates of a payment, ``is_partial_period`` tells
+whether a payment covers whole periods, ``price_fixed_day`` prices an incomplete period by the lessons
+of the group (the amount hint, ``PaymentService.quote``).  Nothing here changes how a payment that is
+already saved is read: the status maths above knows only ``valid_from`` / ``valid_to``.
+
 "Today" is the business date (``BUSINESS_TIMEZONE``, Asia/Tashkent by default),
 never the server's or the browser's local date.
 """
@@ -67,6 +74,12 @@ from typing import Iterable, Optional, Sequence
 
 CALENDAR = "calendar"
 LESSONS = "lessons"
+
+# Where a calendar period starts (N13 P2.2): the payment date, or one centre-wide "payment day".
+PAYMENT_DATE = "payment_date"
+FIXED_DAY = "fixed_day"
+MIN_BILLING_DAY = 1
+MAX_BILLING_DAY = 28  # no 29..31: the period then never depends on the length of a month
 
 NONE = "none"
 FREE = "free"
@@ -94,6 +107,7 @@ MAX_PERIOD_DAYS = 400
 WARN_PERIOD_DAYS = 62
 WARN_PAID_AGO_DAYS = 60
 MAX_PAID_AGO_YEARS = 3
+SHORT_PERIOD_DAYS = 7  # a calendar period shorter than this at the full monthly fee is suspicious
 
 
 @dataclass(frozen=True)
@@ -171,6 +185,7 @@ WARNING_MESSAGES = {
     "gap_before": "Между прошлой оплатой и этим периодом есть пропуск",
     "period_over_62_days": "Период длиннее 62 дней",
     "paid_over_60_days_ago": "Дата оплаты старше 60 дней",
+    "short_period_full_amount": "Короткий период при полной сумме — проверьте даты",
 }
 
 
@@ -419,6 +434,183 @@ def default_valid_from(mode: str, paid_on: date, previous_paid_until: Optional[d
     return paid_on
 
 
+# ------------------------------------- one payment day for the centre -----
+#
+# "Единый день оплаты" (N13 P2.2): the centre has periods that start on ``billing_day`` of every
+# month: day 1 -> 01.10-31.10, day 10 -> 10.10-09.11.  ``billing_day`` is 1..28, so a period never
+# depends on the length of a month.
+
+
+def _check_billing_day(billing_day: int) -> None:
+    if not MIN_BILLING_DAY <= billing_day <= MAX_BILLING_DAY:
+        raise ValueError(f"billing_day must be {MIN_BILLING_DAY}..{MAX_BILLING_DAY}")
+
+
+def billing_period_start(day: date, billing_day: int) -> date:
+    """Start of the centre's period that contains ``day`` (``billing_day`` of this or of the previous month).
+
+    Raises ``OverflowError`` when the result would not be a valid date.
+    """
+    _check_billing_day(billing_day)
+    if day.day >= billing_day:
+        return day.replace(day=billing_day)
+    year, month = (day.year - 1, 12) if day.month == 1 else (day.year, day.month - 1)
+    try:
+        return date(year, month, billing_day)
+    except ValueError as exc:  # year 0
+        raise OverflowError("date out of range") from exc
+
+
+def billing_period_end(day: date, billing_day: int) -> date:
+    """Last day of the centre's period that contains ``day``: the next ``billing_day`` minus one day.
+
+    With ``billing_day`` 1 that is the last day of the month; passing the period's start gives its end.
+    Raises ``OverflowError`` when the result would not be a valid date.
+    """
+    start = billing_period_start(day, billing_day)
+    year, month = (start.year + 1, 1) if start.month == 12 else (start.year, start.month + 1)
+    try:
+        return date(year, month, billing_day) - timedelta(days=1)
+    except ValueError as exc:  # year 10000
+        raise OverflowError("date out of range") from exc
+
+
+def billing_periods(valid_from: date, valid_to: date, billing_day: int) -> list[tuple[date, date]]:
+    """Periods of the centre ``(start, end)`` that intersect ``valid_from .. valid_to`` (inclusive)."""
+    if valid_to < valid_from:
+        return []
+    periods: list[tuple[date, date]] = []
+    start = billing_period_start(valid_from, billing_day)
+    while start <= valid_to:
+        end = billing_period_end(start, billing_day)
+        periods.append((start, end))
+        if len(periods) > 200:  # a payment is at most 400 days: this is a bug, not a request
+            raise ValueError("too many billing periods")
+        start = end + timedelta(days=1)
+    return periods
+
+
+def is_partial_period(valid_from: date, valid_to: Optional[date], billing_day: int) -> bool:
+    """True when the payment does not cover whole periods of the centre.
+
+    ``valid_from`` is not the start of a period or ``valid_to`` is not the end of one.  A payment
+    without ``valid_to`` (a lessons package) is never partial.
+    """
+    if valid_to is None:
+        return False
+    try:
+        return (
+            valid_from != billing_period_start(valid_from, billing_day)
+            or valid_to != billing_period_end(valid_to, billing_day)
+        )
+    except OverflowError:
+        return False
+
+
+def default_fixed_day_period(
+    paid_on: date,
+    previous_paid_until: Optional[date],
+    membership_start: Optional[date],
+    billing_day: int,
+) -> tuple[date, date]:
+    """Suggested ``(valid_from, valid_to)`` of a payment when the centre has one payment day.
+
+    ``anchor`` is the start of the centre's period of the payment date.
+    * a previous payment exists: ``valid_from = max(previous_paid_until + 1, anchor)`` - paying
+      two days late still gives the whole period, paying ahead continues without a gap;
+    * the first payment: ``valid_from = max(membership_start, anchor)`` - a student who came on the
+      15th pays 15.10-31.10, one who came in September and pays on 03.10 gets the whole of October
+      (``membership_start`` is the business date of joining, ``paid_on`` when unknown).
+    ``valid_to`` is the end of the centre's period of ``valid_from``.
+    """
+    anchor = billing_period_start(paid_on, billing_day)
+    if previous_paid_until is not None:
+        valid_from = max(previous_paid_until + timedelta(days=1), anchor)
+    else:
+        valid_from = max(membership_start or paid_on, anchor)
+    return valid_from, billing_period_end(valid_from, billing_day)
+
+
+# ------------------------------------------------------ amount hint (quote) ----
+
+BASIS_FULL = "full"
+BASIS_LESSONS = "lessons"
+BASIS_DAYS = "days"
+
+
+def round_1000(numerator: int, denominator: int = 1) -> int:
+    """``numerator / denominator`` rounded to whole thousands, a half goes up (integer maths)."""
+    if denominator <= 0:
+        raise ValueError("denominator must be positive")
+    return ((2 * numerator + 1000 * denominator) // (2000 * denominator)) * 1000
+
+
+@dataclass(frozen=True)
+class QuotePart:
+    """One period of the centre inside a payment, with what it costs."""
+
+    start: date  # the part of the period the payment covers
+    end: date
+    period_start: date  # the whole period of the centre it belongs to
+    period_end: date
+    lessons: Optional[int]  # lessons in the part / in the period; None for a full period or counting by days
+    period_lessons: Optional[int]
+    amount: int
+    basis: str  # full | lessons | days
+
+    @property
+    def is_full(self) -> bool:
+        return self.start == self.period_start and self.end == self.period_end
+
+
+def price_fixed_day(
+    valid_from: date,
+    valid_to: date,
+    billing_day: int,
+    monthly_fee: int,
+    lesson_days,
+) -> list[QuotePart]:
+    """Price ``valid_from .. valid_to`` period by period of the centre.
+
+    A period covered completely costs ``monthly_fee``.  An incomplete one costs
+    ``monthly_fee * lessons in the part / lessons in the whole period`` (rounded to 1 000, a half
+    goes up); a period without lessons falls back to calendar days.  ``lesson_days(start, end)``
+    returns the dates of the group's lessons in ``start .. end`` (cancelled ones already removed,
+    one entry per lesson); it is called once per incomplete period.
+    """
+    parts: list[QuotePart] = []
+    for period_start, period_end in billing_periods(valid_from, valid_to, billing_day):
+        start, end = max(valid_from, period_start), min(valid_to, period_end)
+        if start == period_start and end == period_end:
+            parts.append(QuotePart(start, end, period_start, period_end, None, None, monthly_fee, BASIS_FULL))
+            continue
+        days = list(lesson_days(period_start, period_end))
+        if days:
+            in_part = sum(1 for d in days if start <= d <= end)
+            parts.append(
+                QuotePart(
+                    start, end, period_start, period_end, in_part, len(days),
+                    round_1000(monthly_fee * in_part, len(days)), BASIS_LESSONS,
+                )
+            )
+        else:
+            whole = (period_end - period_start).days + 1
+            covered = (end - start).days + 1
+            parts.append(
+                QuotePart(
+                    start, end, period_start, period_end, None, None,
+                    round_1000(monthly_fee * covered, whole), BASIS_DAYS,
+                )
+            )
+    return parts
+
+
+def quote_basis(parts: Sequence[QuotePart]) -> str:
+    """``lessons`` if any period was prorated by lessons, else ``days`` if by days, else ``full``."""
+    bases = {part.basis for part in parts}
+    return BASIS_LESSONS if BASIS_LESSONS in bases else BASIS_DAYS if BASIS_DAYS in bases else BASIS_FULL
+
+
 def validation_errors(
     *,
     today: date,
@@ -471,8 +663,14 @@ def payment_warnings(
     valid_from: date,
     valid_to: Optional[date],
     existing: Sequence[PaymentRecord],
+    amount: Optional[int] = None,
+    monthly_fee: Optional[int] = None,
 ) -> list[PaymentWarning]:
-    """Soft rules: the payment is saved anyway.  ``existing`` = other live payments."""
+    """Soft rules: the payment is saved anyway.  ``existing`` = other live payments.
+
+    ``amount`` / ``monthly_fee`` (both known) enable ``short_period_full_amount``: a calendar
+    period shorter than 7 days paid at the full monthly fee (a free membership, fee 0, is not asked).
+    """
     codes: list[str] = []
     if valid_to is not None:
         # (start, end) of what each calendar payment still covers in this membership
@@ -485,6 +683,14 @@ def payment_warnings(
                 codes.append("gap_before")
         if (valid_to - valid_from).days + 1 > WARN_PERIOD_DAYS:
             codes.append("period_over_62_days")
+        if (
+            (valid_to - valid_from).days + 1 < SHORT_PERIOD_DAYS
+            and amount is not None
+            and monthly_fee is not None
+            and monthly_fee > 0
+            and amount >= monthly_fee
+        ):
+            codes.append("short_period_full_amount")
     if (today - paid_on).days > WARN_PAID_AGO_DAYS:
         codes.append("paid_over_60_days_ago")
     return [PaymentWarning(code, WARNING_MESSAGES[code]) for code in codes]
