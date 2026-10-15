@@ -458,8 +458,8 @@ def test_student_list_has_groups_count_and_no_extra_queries_per_row(two):
         two.svc.list_students_page(str(two.org.id), actor_id=str(two.admin.id), is_org_admin=True, limit=50)
     finally:
         event.remove(engine, "before_cursor_execute", listener)
-    count_queries = [s for s in statements if "count(student_groups.id)" in s.lower() or "group by student_groups" in s.lower()]
-    assert len(count_queries) == 1                      # one grouped query for the whole page
+    membership_queries = [s for s in statements if "student_groups" in s.lower()]
+    assert len(membership_queries) == 1                 # one membership query for the whole page
     assert len(statements) <= 4
 
 

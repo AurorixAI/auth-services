@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from src.models.auth import Student, StudentGroup
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    make_student, needs_pg, pg_session, world,
+    make_group, make_student, needs_pg, pg_session, world,
 )
 
 pytestmark = needs_pg
@@ -63,6 +63,62 @@ def test_group_tabs_partition_the_non_archived_students_and_match_the_dashboard_
     assert str(w.foreign_student.id) not in _ids(grouped) | _ids(ungrouped)
 
 
+def _by_name(items):
+    return {s.first_name: s for s in items}
+
+
+def test_in_a_group_means_an_active_membership_in_a_live_group(world):
+    """The three edge states: stale primary group, archived group only, membership without a primary group."""
+    w = world
+    # 1. students.group_id points at a group but there is no active membership: not in a group
+    stale = _loose(w, "Висящий", "Групповой", status="active")
+    stale.group_id = w.group.id
+    # 2. the only membership is in an archived group: not in a group (can be enrolled again)
+    old_group = make_group(w.db, w.org, w.teacher, "Старая")
+    archived_member = make_student(w.db, w.org, old_group, "Архивгруппа", "Участник", "N13-020")
+    archived_member.status = "active"
+    old_group.status = "archived"
+    # 3. an active membership but no primary group: in a group
+    member_only = make_student(w.db, w.org, w.group, "Безосновной", "Участник", "N13-021")
+    member_only.group_id = None
+    # 4. a stale primary group plus a live membership elsewhere: in that other group
+    other = make_group(w.db, w.org, w.teacher, "Вторая")
+    two = make_student(w.db, w.org, w.group, "Перенесён", "Тихо", "N13-022")
+    two.group_id = old_group.id                                    # primary points at the archived group
+    w.db.add(StudentGroup(student_id=two.id, group_id=other.id, is_active=True))
+    # 5. a foreign group never counts for this centre (corrupt data must not hide the student)
+    foreign = _loose(w, "Чужое", "Членство", status="active")
+    w.db.add(StudentGroup(student_id=foreign.id, group_id=w.foreign_group.id, is_active=True))
+    w.db.commit()
+
+    grouped = _by_name(_page(w, has_group=True, exclude_status="archived")[0])
+    ungrouped = _by_name(_page(w, has_group=False, exclude_status="archived")[0])
+    assert set(ungrouped) == {"Висящий", "Архивгруппа", "Чужое"}
+    assert {"Безосновной", "Перенесён", "Алия", "Бек", "Дана"} == set(grouped)
+    assert set(grouped).isdisjoint(ungrouped)
+    # the list says the same thing as the filter: groups_count counts live groups only, current_group_id names one
+    everyone = _by_name(_page(w, exclude_status="archived")[0])
+    assert (everyone["Висящий"].groups_count, everyone["Висящий"].current_group_id) == (0, None)
+    assert (everyone["Архивгруппа"].groups_count, everyone["Архивгруппа"].current_group_id) == (0, None)
+    assert (everyone["Безосновной"].groups_count, everyone["Безосновной"].current_group_id) == (1, str(w.group.id))
+    assert everyone["Безосновной"].group_id is None
+    assert (everyone["Перенесён"].groups_count, everyone["Перенесён"].current_group_id) == (2, str(w.group.id))
+    assert (everyone["Алия"].groups_count, everyone["Алия"].current_group_id) == (1, str(w.group.id))
+    assert (everyone["Чужое"].groups_count, everyone["Чужое"].current_group_id) == (0, None)
+    # and the dashboard total still equals the two tabs together
+    assert w.svc.get_org_stats(str(w.org.id))["total_students"] == len(grouped) + len(ungrouped)
+
+
+def test_current_group_prefers_the_live_primary_group(world):
+    w = world
+    second = make_group(w.db, w.org, w.teacher, "Вторая")
+    w.db.add(StudentGroup(student_id=w.students[0].id, group_id=second.id, is_active=True,
+                          joined_at=datetime(2020, 1, 1)))          # earlier than the primary membership
+    w.db.commit()
+    first = _by_name(_page(w, search="Алия")[0])["Алия"]
+    assert first.groups_count == 2 and first.current_group_id == str(w.group.id)   # primary wins over "earliest"
+
+
 def test_ungrouped_filter_combines_with_class_and_search(world):
     w = world
     nine = _loose(w, "Девятый", "Свободный")
@@ -101,3 +157,20 @@ def test_dashboard_total_excludes_archived_students(world):
     gone.status = "new"
     w.db.commit()
     assert w.svc.get_org_stats(str(w.org.id))["total_students"] == before + 1
+
+
+def test_percent_and_underscore_in_a_search_are_plain_characters(world):
+    w = world
+    odd = _loose(w, "Анна_Мария", "Сто%", display_id="X_1-100%")
+    w.db.commit()
+    assert [s.first_name for s in _page(w, search="%")[0]] == ["Анна_Мария"]
+    assert [s.first_name for s in _page(w, search="_")[0]] == ["Анна_Мария"]
+    assert [s.first_name for s in _page(w, search="Сто%")[0]] == ["Анна_Мария"]
+    assert [s.first_name for s in _page(w, search="а_М")[0]] == ["Анна_Мария"]
+    assert _page(w, search="Ан_а")[1] == 0            # "_" is not "any one character"
+    assert _page(w, search="Ка%ова")[1] == 0          # "%" is not "anything"
+    assert [s.first_name for s in _page(w, search="X_1-100%")[0]] == ["Анна_Мария"]
+    assert _page(w, search="X_1")[1] == 1 and _page(w, search="X%1")[1] == 0
+    assert _page(w, search="N13_00")[1] == 0          # the ID's "-" is not "_"
+    assert _page(w, search="\\")[1] == 0             # a backslash is a plain character too
+    assert str(odd.id) in _ids(_page(w, search="1-100%")[0])

@@ -172,8 +172,11 @@ class StudentResponse(BaseModel):
     comment: Optional[str] = None
     status: str
     created_at: Optional[str] = None
-    # Number of active group memberships; filled in list responses only.
+    # Number of active memberships in live (not archived) groups; filled in list responses only.
     groups_count: Optional[int] = None
+    # The group the student is in now (primary while it is a live membership, else the earliest one);
+    # filled in list responses only, together with groups_count.
+    current_group_id: Optional[str] = None
 
 
 # ============================================================================

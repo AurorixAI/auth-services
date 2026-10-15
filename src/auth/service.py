@@ -1365,17 +1365,23 @@ class AuthService:
             )
         if has_primary_group is True:
             query = query.filter(Student.group_id.isnot(None))
-        if has_group is True:
-            active_memberships = self.db.query(StudentGroup.student_id).filter(StudentGroup.is_active == True)
-            query = query.filter(
-                (Student.group_id.isnot(None)) | (Student.id.in_(active_memberships))
+        if has_group is not None:
+            # "In a group" = an active membership in a live (not archived) group of this
+            # organisation. A stale students.group_id or a membership in an archived group
+            # does not count: such a student can be enrolled again. Correlated EXISTS, so
+            # the scan never leaves the student's own row.
+            in_a_group = (
+                self.db.query(StudentGroup.id)
+                .join(Group, Group.id == StudentGroup.group_id)
+                .filter(
+                    StudentGroup.student_id == Student.id,
+                    StudentGroup.is_active.is_(True),
+                    Group.org_id == org_id,
+                    Group.status == "active",
+                )
+                .exists()
             )
-        elif has_group is False:
-            active_memberships = self.db.query(StudentGroup.student_id).filter(StudentGroup.is_active == True)
-            query = query.filter(
-                Student.group_id.is_(None),
-                ~Student.id.in_(active_memberships),
-            )
+            query = query.filter(in_a_group if has_group else ~in_a_group)
         if status:
             query = query.filter(Student.status == status)
         if exclude_status:
@@ -1384,12 +1390,16 @@ class AuthService:
             # Every word must match the first or last name, so a full-name
             # query such as "Иван Петров" finds the student too.
             for word in search.split():
-                pattern = f"%{word}%"
-                matches = (Student.first_name.ilike(pattern)) | (Student.last_name.ilike(pattern))
+                # "%" and "_" typed by the user are plain characters, not wildcards.
+                escaped = word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                pattern = f"%{escaped}%"
+                matches = (Student.first_name.ilike(pattern, escape="\\")) | (
+                    Student.last_name.ilike(pattern, escape="\\")
+                )
                 if any(ch.isdigit() for ch in word):
                     # A word with a digit may be the public ID ("AL15-001"); names have
                     # none, so a plain word never matches every ID of the centre.
-                    matches = matches | Student.display_id.ilike(pattern)
+                    matches = matches | Student.display_id.ilike(pattern, escape="\\")
                 query = query.filter(matches)
         return query
 
@@ -1462,22 +1472,33 @@ class AuthService:
             .limit(limit)
             .all()
         )
-        counts: dict = {}
+        memberships: dict = {}
         if students:
-            # One grouped query for the whole page: a count, never money.
-            counts = dict(
-                self.db.query(StudentGroup.student_id, func.count(StudentGroup.id))
+            # One query for the whole page: which live groups each student is in, never money.
+            for student_id, member_group_id in (
+                self.db.query(StudentGroup.student_id, StudentGroup.group_id)
+                .join(Group, Group.id == StudentGroup.group_id)
                 .filter(
                     StudentGroup.student_id.in_([s.id for s in students]),
                     StudentGroup.is_active.is_(True),
+                    Group.org_id == org_id,
+                    Group.status == "active",
                 )
-                .group_by(StudentGroup.student_id)
+                .order_by(StudentGroup.joined_at, StudentGroup.id)
                 .all()
-            )
+            ):
+                memberships.setdefault(student_id, []).append(member_group_id)
         items = []
         for s in students:
             item = self._build_student_response(s)
-            item.groups_count = int(counts.get(s.id, 0))
+            groups_of = memberships.get(s.id, [])
+            item.groups_count = len(groups_of)
+            # The group the student "is in now": the primary one while it is a live membership,
+            # else the earliest live membership (students.group_id may be empty or stale).
+            primary_is_live = s.group_id is not None and s.group_id in groups_of
+            item.current_group_id = (
+                str(s.group_id) if primary_is_live else (str(groups_of[0]) if groups_of else None)
+            )
             items.append(item)
         return items, total
 
