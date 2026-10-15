@@ -8,12 +8,13 @@ endpoints are the owner's alone.  Money is returned by nothing else - that
 includes the amount hint (``quote``), the receipt and the cheque files (N13 P2.2).
 """
 from datetime import date
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
+from pydantic import BeforeValidator, Field
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
@@ -45,6 +46,11 @@ router = APIRouter(prefix="/auth", tags=["Payments"])
 
 def _http(exc: PaymentError) -> HTTPException:
     return HTTPException(exc.status_code, exc.detail)
+
+
+def _blank_to_none(value):
+    """A form that leaves a field empty sends ``?valid_to=``: that is "not given", not an invalid date."""
+    return None if isinstance(value, str) and not value.strip() else value
 
 
 # ---- settings (owner) -------------------------------------------------------
@@ -144,9 +150,9 @@ def list_payments(
 def payment_quote(
     membership_id: UUID,
     paid_on: date,
-    valid_from: Optional[date] = None,
-    valid_to: Optional[date] = None,
-    lessons_count: Optional[int] = Query(None, ge=1, le=120),
+    valid_from: Annotated[Optional[date], BeforeValidator(_blank_to_none)] = None,
+    valid_to: Annotated[Optional[date], BeforeValidator(_blank_to_none)] = None,
+    lessons_count: Annotated[Optional[Annotated[int, Field(ge=1, le=120)]], BeforeValidator(_blank_to_none)] = None,
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):

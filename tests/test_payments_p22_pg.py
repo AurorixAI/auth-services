@@ -208,6 +208,17 @@ def test_quote_client_dates_are_used_as_they_are(world):
     assert q["explanation"] == "Полных месяцев: 2 — 900 000 сум"
 
 
+def test_quote_treats_empty_optional_parameters_as_not_given(world):
+    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
+    r = owner(world).get(f"{API}/org/memberships/{mid(world)}/payments/quote",
+                         params={"paid_on": "2026-03-17", "valid_from": "", "valid_to": "", "lessons_count": ""})
+    assert r.status_code == 200, r.text
+    assert (r.json()["valid_from"], r.json()["valid_to"]) == ("2026-03-15", "2026-03-31")
+    r = owner(world).get(f"{API}/org/memberships/{mid(world)}/payments/quote",
+                         params={"paid_on": "2026-03-17", "valid_from": "not-a-date"})
+    assert r.status_code == 422
+
+
 def test_quote_range_over_two_periods_prices_each_one(world):
     setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
     q = quote(world, paid_on=D(2026, 3, 17), valid_to=D(2026, 4, 30))
