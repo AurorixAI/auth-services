@@ -10,6 +10,8 @@ Display-ID — короткий человекочитаемый идентиф�
 если инициалы уже заняты другой организацией, добавляется числовой суффикс
 (``NC`` → ``NC1`` → ``NC2`` …). Один раз назначенный префикс за организацией
 закрепляется (хранится в ``Organization.student_id_prefix``) и больше не меняется.
+Две организации с одинаковыми инициалами могут занять префикс одновременно: запись идёт в SAVEPOINT,
+проигравшая берёт следующий кандидат (``NC`` → ``NC1``), а не падает с 500 на уникальном индексе.
 
 Бизнес-правило (см. тикет): ID выдаётся строго в момент *фактического зачисления*
 ученика, а не при его создании в буфере. Точки вызова:
@@ -31,6 +33,7 @@ from __future__ import annotations
 import re
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.models.auth import Organization, Student
@@ -39,6 +42,9 @@ from src.models.auth import Organization, Student
 SEQ_PAD = 3
 # Запасной префикс, если из названия не выделилось двух латинских букв.
 PREFIX_FALLBACK = "ST"
+# Сколько раз пробуем следующий префикс, если соседняя организация заняла наш кандидат одновременно с нами.
+PREFIX_CLAIM_ATTEMPTS = 8
+PREFIX_UNIQUE_CONSTRAINT = "uq_org_student_id_prefix"
 
 # Базовая транслитерация кириллицы → латиница (нужен только первый символ).
 _TRANSLIT = {
@@ -85,8 +91,12 @@ def _initials_from_name(name: str) -> str:
     return base
 
 
-def _unique_prefix(db: Session, base: str, exclude_org_id) -> str:
-    """base, если свободен среди других организаций; иначе base1, base2, …"""
+def _unique_prefix(db: Session, base: str, exclude_org_id, rejected=()) -> str:
+    """base, если свободен среди других организаций; иначе base1, base2, …
+
+    ``rejected`` — кандидаты, которые уже проиграли гонку (их успела занять другая организация):
+    они считаются занятыми, даже если запрос их ещё не видит.
+    """
     taken = {
         p
         for (p,) in (
@@ -98,7 +108,7 @@ def _unique_prefix(db: Session, base: str, exclude_org_id) -> str:
             .all()
         )
         if p
-    }
+    } | set(rejected)
     if base not in taken:
         return base
     i = 1
@@ -107,17 +117,44 @@ def _unique_prefix(db: Session, base: str, exclude_org_id) -> str:
     return f"{base}{i}"
 
 
+def _is_prefix_conflict(exc: IntegrityError) -> bool:
+    """Нарушение уникальности именно ``student_id_prefix`` (а не какой-то другой ошибки записи)."""
+    orig = getattr(exc, "orig", None)
+    constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    if constraint:
+        return constraint == PREFIX_UNIQUE_CONSTRAINT
+    return "student_id_prefix" in str(orig)  # SQLite: «UNIQUE constraint failed: organizations.student_id_prefix»
+
+
 def ensure_org_prefix(db: Session, org: Organization) -> str:
     """Префикс организации; при отсутствии — назначает уникальный и сохраняет.
 
     Уже заданный префикс (явно админом или ранее сгенерированный) не меняется.
+
+    Две организации с одинаковыми инициалами могут одновременно выбрать один и тот же свободный префикс:
+    строки организаций разные, блокировка организации их не разделяет. Запись префикса идёт в SAVEPOINT; если
+    уникальный индекс отверг кандидата, откатывается только он (транзакция вызывающего кода живёт) и берётся
+    следующий кандидат — не более ``PREFIX_CLAIM_ATTEMPTS`` раз.
     """
     if org.student_id_prefix:
         return org.student_id_prefix
-    prefix = _unique_prefix(db, _initials_from_name(org.name or ""), org.id)
-    org.student_id_prefix = prefix
-    db.flush()
-    return prefix
+    base = _initials_from_name(org.name or "")
+    org_id = org.id
+    rejected: set = set()
+    for _ in range(PREFIX_CLAIM_ATTEMPTS):
+        prefix = _unique_prefix(db, base, org_id, rejected)
+        try:
+            with db.begin_nested():
+                org.student_id_prefix = prefix
+                db.flush()
+        except IntegrityError as exc:
+            if not _is_prefix_conflict(exc):
+                raise
+            rejected.add(prefix)
+            db.refresh(org)  # откат SAVEPOINT сбросил запись; строка организации по-прежнему заблокирована нами
+            continue
+        return prefix
+    raise RuntimeError("Не удалось выделить уникальный префикс ID учеников: слишком много параллельных попыток")
 
 
 def format_display_id(prefix: str, seq: int) -> str:
@@ -143,6 +180,7 @@ def _lock_org(db: Session, org_id) -> Organization:
     org = (
         db.query(Organization)
         .filter(Organization.id == org_id)
+        .populate_existing()  # организацию могли успеть изменить, пока мы ждали блокировку (префикс!)
         .with_for_update()
         .first()
     )
