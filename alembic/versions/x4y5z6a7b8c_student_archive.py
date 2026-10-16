@@ -16,11 +16,16 @@ Create Date: 2026-10-16
     - their ACTIVE memberships are closed (``is_active = false``, ``left_at`` = now, naive UTC; a
       ``left_at`` that is already set is kept) - payments, receipts, lesson marks and payroll sheets stay;
     - their ``group_id`` is emptied (the invariant "the primary group has an active membership").
-  ``students.updated_at`` is NOT touched: for a student archived before the action existed it is the only
-  date of the archiving the page can show.  No ``group_audit`` row is written (it needs an acting user).
+    - their ``archived_at`` is stamped with their ``updated_at`` (the last change of the row, which was the
+      archiving; the reason stays NULL).  ``updated_at`` is written by the database (``now()`` cast to a
+      TIMESTAMP in the session TimeZone), ``archived_at`` is naive UTC: the value is converted with
+      ``AT TIME ZONE current_setting('TimeZone')`` -> ``AT TIME ZONE 'UTC'``, which changes nothing on a
+      UTC server (the default; the application sets no other zone) and stays right on any other.
+  ``students.updated_at`` itself is NOT touched.  No ``group_audit`` row is written (it needs an acting
+  user).
 
 Idempotent: the columns and the CHECK tolerate a partial earlier run (a database built from the models,
-then stamped), and the clean-up changes nothing the second time.
+then stamped), and the clean-up and the stamp change nothing the second time.
 
 Rollback (downgrade): restores the previous action CHECK only - NOT VALID, so audit rows that already use
 the new actions stay and only new rows are constrained.  The two columns and the closed memberships are
@@ -77,6 +82,12 @@ def upgrade() -> None:
         "WHERE sg.student_id = s.id AND s.status = 'archived' AND sg.is_active IS TRUE"
     )
     op.execute("UPDATE students SET group_id = NULL WHERE status = 'archived' AND group_id IS NOT NULL")
+    # Legacy archived students get a frozen date (their last row change, as naive UTC); the reason stays NULL.
+    op.execute(
+        "UPDATE students "
+        "SET archived_at = ((updated_at AT TIME ZONE current_setting('TimeZone')) AT TIME ZONE 'UTC') "
+        "WHERE status = 'archived' AND archived_at IS NULL AND updated_at IS NOT NULL"
+    )
 
 
 def downgrade() -> None:

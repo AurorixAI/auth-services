@@ -30,7 +30,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from .models import Group, GroupAudit, Student, StudentGroup
+from .models import Group, GroupAudit, Student, StudentDiagnosticResult, StudentGroup
 from .payments_service import CONCURRENT_EDIT_MESSAGE, is_deadlock
 from .schemas import ArchivedGroupOut, StudentResponse
 
@@ -42,6 +42,7 @@ ACTION_RESTORED = "student_restored"
 REASON_MAX = 300
 RESTORE_GROUPS_MAX = 50
 GENERIC_STATUS_MESSAGE = "Используйте «В архив» / «Вернуть из архива»"
+RESTORE_FAILED_MESSAGE = "Не удалось вернуть в группу — повторите позже"
 
 
 # ---------------------------------------------------------------------------------------------- errors
@@ -146,12 +147,13 @@ def skip_code(message: str) -> str:
 def archive_stamp(student: Student) -> Dict[str, Optional[str]]:
     """``archived_at`` / ``archive_reason`` of a ``StudentResponse`` (both null unless archived).
 
-    A student archived before the action existed has no stamp: ``updated_at`` (the last change of the row,
-    which was the archiving) is the best date there is.
+    Students archived before the action existed were stamped by the migration (``archived_at`` = their
+    ``updated_at``, converted to naive UTC); a row that still has none (archived by an old image after
+    the migration) answers ``None`` - the caller must tolerate it.
     """
     if student.status != ARCHIVED:
         return {"archived_at": None, "archive_reason": None}
-    moment = student.archived_at or student.updated_at
+    moment = student.archived_at
     return {
         "archived_at": moment.isoformat() if moment else None,
         "archive_reason": student.archive_reason,
@@ -368,6 +370,49 @@ class StudentArchiveService:
 
     # -- restore ------------------------------------------------------------------------------
 
+    def _status_after_return(self, org_id: str, student: Student) -> str:
+        """``active`` with a public ID (he was enrolled once); without one ``diagnosed`` only if a completed
+        diagnostic exists, otherwise ``new`` (he never got further than the lobby)."""
+        if student.display_id:
+            return "active"
+        has_result = (
+            self.db.query(StudentDiagnosticResult.id)
+            .filter(StudentDiagnosticResult.student_id == student.id, StudentDiagnosticResult.org_id == org_id)
+            .first()
+        )
+        return "diagnosed" if has_result else "new"
+
+    def _write_restored_audit(
+        self,
+        org_id: str,
+        student: Student,
+        group_id: str,
+        teacher_id: Optional[UUID],
+        membership_id: Optional[str],
+        actor_id: str,
+        actor_role: str,
+    ) -> None:
+        now = _utcnow_naive()
+        self.db.add(
+            GroupAudit(
+                org_id=org_id,
+                group_id=UUID(group_id),
+                actor_id=UUID(str(actor_id)),
+                actor_role=actor_role,
+                action=ACTION_RESTORED,
+                assigned_teacher_id=teacher_id,
+                snapshot={
+                    "student_id": str(student.id),
+                    "student_name": f"{student.last_name} {student.first_name}".strip(),
+                    "display_id": student.display_id,
+                    "membership_id": membership_id,
+                    "restored_at": now.isoformat(),
+                },
+                created_at=now,
+            )
+        )
+        self.db.commit()
+
     def restore(
         self,
         org_id: str,
@@ -383,7 +428,7 @@ class StudentArchiveService:
         if student.status != ARCHIVED:
             self.db.rollback()
             raise ArchiveConflict("Ученик не в архиве")
-        student.status = "active" if student.display_id else "diagnosed"
+        student.status = self._status_after_return(org_id, student)
         student.archived_at = None
         student.archive_reason = None
         student.group_id = None  # the invariant of the archive; the first group enrolled below becomes primary
@@ -393,7 +438,6 @@ class StudentArchiveService:
         restored: List[ClosedGroupOut] = []
         skipped: List[SkippedGroupOut] = []
         warnings: List[Dict[str, str]] = []
-        audit_rows: List[Dict[str, Any]] = []
         seen: set = set()
         for raw_group_id in group_ids or ():
             group_id = str(raw_group_id)
@@ -416,46 +460,34 @@ class StudentArchiveService:
                     )
                 )
                 continue
-            except OperationalError as exc:
-                if not is_deadlock(exc):
-                    raise
-                self.db.rollback()  # a lost lock race with another edit of this student: this group only
-                skipped.append(
-                    SkippedGroupOut(
-                        group_id=group_id, group_name=group_name, reason="busy", message=CONCURRENT_EDIT_MESSAGE
+            except Exception as exc:  # noqa: BLE001  one broken group must not lose the groups already restored
+                self.db.rollback()
+                if isinstance(exc, OperationalError) and is_deadlock(exc):
+                    # a lost lock race with another edit of this student: this group only
+                    code, message = "busy", CONCURRENT_EDIT_MESSAGE
+                else:
+                    logger.exception(
+                        "restore: enrolling student=%s in group=%s failed actor=%s", student.id, group_id, actor_id
                     )
+                    code, message = "refused", RESTORE_FAILED_MESSAGE
+                skipped.append(
+                    SkippedGroupOut(group_id=group_id, group_name=group_name, reason=code, message=message)
                 )
                 continue
             restored.append(ClosedGroupOut(group_id=group_id, group_name=group_name or "—"))
             for warning in result.get("warnings", []):
                 warnings.append({"group_id": group_id, **warning})
-            audit_rows.append(
-                {"group_id": group_id, "teacher_id": teacher_id, "membership_id": result.get("membership_id")}
-            )
-
-        if audit_rows:
-            now = _utcnow_naive()
-            full_name = f"{student.last_name} {student.first_name}".strip()
-            for row in audit_rows:
-                self.db.add(
-                    GroupAudit(
-                        org_id=org_id,
-                        group_id=UUID(row["group_id"]),
-                        actor_id=UUID(str(actor_id)),
-                        actor_role=actor_role,
-                        action=ACTION_RESTORED,
-                        assigned_teacher_id=row["teacher_id"],
-                        snapshot={
-                            "student_id": str(student.id),
-                            "student_name": full_name,
-                            "display_id": student.display_id,
-                            "membership_id": row["membership_id"],
-                            "restored_at": now.isoformat(),
-                        },
-                        created_at=now,
-                    )
+            # The journal row of THIS group, right after its commit: a later group that fails cannot lose it.
+            try:
+                self._write_restored_audit(
+                    org_id, student, group_id, teacher_id, result.get("membership_id"), actor_id, actor_role
                 )
-            self.db.commit()
+            except Exception:  # noqa: BLE001  the student IS in the group; a missing journal row is logged
+                self.db.rollback()
+                logger.exception(
+                    "restore: journal row for student=%s group=%s failed actor=%s", student.id, group_id, actor_id
+                )
+
         logger.info(
             "student restored student=%s groups=%d skipped=%d actor=%s",
             student.id, len(restored), len(skipped), actor_id,

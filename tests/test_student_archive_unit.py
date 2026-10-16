@@ -61,13 +61,13 @@ def test_the_generic_edit_guard(current, requested, refused):
         guard_generic_status_update(student(current), requested)
 
 
-def test_the_stamp_is_empty_unless_archived_and_falls_back_to_updated_at():
+def test_the_stamp_is_empty_unless_archived_and_has_no_updated_at_fallback():
     assert archive_stamp(student("active", archived_at=datetime(2026, 1, 1), archive_reason="x")) == {
         "archived_at": None, "archive_reason": None}
     stamped = archive_stamp(student("archived", archived_at=datetime(2026, 10, 16, 8, 30, 5), archive_reason="Переехал"))
     assert stamped == {"archived_at": "2026-10-16T08:30:05", "archive_reason": "Переехал"}
-    legacy = archive_stamp(student("archived"))
-    assert legacy == {"archived_at": "2026-10-01T12:00:00", "archive_reason": None}
+    # the migration stamped the old ones; a row without a stamp (archived by an old image later) answers None
+    assert archive_stamp(student("archived")) == {"archived_at": None, "archive_reason": None}
     assert archive_stamp(student("archived", updated_at=None)) == {"archived_at": None, "archive_reason": None}
 
 

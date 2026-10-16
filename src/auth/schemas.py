@@ -214,7 +214,8 @@ class StudentResponse(BaseModel):
     # filled in list responses only, together with groups_count.
     current_group_id: Optional[str] = None
     # Only for status == "archived" (null otherwise): the instant the student was archived (naive UTC
-    # ISO; ``updated_at`` for a student archived before the action existed) and the reason, if any.
+    # ISO; the migration stamped the students archived before the action existed with their ``updated_at``;
+    # null only for a row archived by an old image after that) and the reason, if any.
     archived_at: Optional[str] = None
     archive_reason: Optional[str] = None
     # Only GET /org/students/{id} (and the profile) of an archived student: the groups closed by the

@@ -307,8 +307,8 @@ class Student(Base):
 
     status = Column(String(20), nullable=False, default="new")
     # "Ученик ушёл из центра": when (naive UTC, the instant the memberships were closed) and why the
-    # student went to the archive; both are cleared on return.  NULL for a student archived before the
-    # action existed (the page then shows ``updated_at``).
+    # student went to the archive; both are cleared on return.  Students archived before the action existed
+    # were stamped by the migration (``archived_at`` = their ``updated_at`` in naive UTC, no reason).
     archived_at = Column(DateTime, nullable=True)
     archive_reason = Column(String(300), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))

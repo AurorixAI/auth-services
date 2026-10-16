@@ -57,7 +57,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     _check_n13_p21_objects(engine,config,ids)
     _check_n13_p22_objects(engine,config,ids)
     _check_n13_p3_objects(engine,config,ids)
-    _check_n13_archive_objects(engine,config,ids)
+    _check_n13_archive_objects(engine,config,ids,monkeypatch)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -418,7 +418,7 @@ def _check_n13_p3_objects(engine,config,ids):
         assert c.execute(text('SELECT count(*) FROM payroll_sheets')).scalar_one()==1           # and it kept what was there
 
 
-def _check_n13_archive_objects(engine,config,ids):
+def _check_n13_archive_objects(engine,config,ids,monkeypatch):
     """«Ученик ушёл из центра»: the stamp columns, the audit actions, and the one-off clean-up of archived students."""
     from sqlalchemy.exc import IntegrityError
     from src.models.auth import Group,GroupAudit,Student,StudentGroup,User
@@ -482,7 +482,8 @@ def _check_n13_archive_objects(engine,config,ids):
     assert members[mc]==(True,None)                                            # the active student is untouched ...
     assert students[c][:2]==('active',group) and students[a][:2]==('archived',None) and students[b][:2]==('archived',None) and students[d][:2]==('archived',None)
     assert [students[x][2] for x in (a,b,d)]==[datetime(2026,9,2,8,0,0)]*3     # updated_at: the only date of an old archiving
-    assert [students[x][3:] for x in (a,b,c,d)]==[(None,None)]*4               # no stamp is invented
+    legacy=datetime(2026,9,2,8,0,0)                                            # the server is UTC: updated_at as it is
+    assert [students[x][3:] for x in (a,b,c,d)]==[(legacy,None),(legacy,None),(None,None),(legacy,None)]   # archived ones are stamped, no reason invented, the active one untouched
     assert paid==1 and total==dirty[3]                                         # payments, students and memberships are all still there
     with engine.connect() as conn:
         assert conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
@@ -503,6 +504,18 @@ def _check_n13_archive_objects(engine,config,ids):
     members,students,paid,total=snapshot()
     assert members[ma2][0] is False and members[ma2][1] is not None and members[ma2][1]>members[ma1][1]   # closed now
     assert members[ma1]==clean[0][ma1] and students[a][:2]==('archived',None) and students[c][:2]==('active',group) and paid==1
+    # The stamp converts updated_at (written by the database in ITS time zone) to naive UTC: a server in another zone.
+    command.downgrade(config,PREVIOUS)
+    with engine.begin() as conn:
+        conn.execute(text('UPDATE students SET archived_at=NULL WHERE id IN (:a,:d)'),{'a':a,'d':d})
+    monkeypatch.setenv('PGOPTIONS','-c timezone=Asia/Tashkent')                 # the migration's own connection is a UTC+5 session
+    try:
+        command.upgrade(config,'head')
+    finally:
+        monkeypatch.delenv('PGOPTIONS')
+    students=snapshot()[1]
+    assert students[a][3]==datetime(2026,9,2,3,0,0) and students[d][3]==datetime(2026,9,2,3,0,0)   # 08:00 Tashkent = 03:00 UTC
+    assert students[b][3]==legacy and students[c][3] is None                   # an existing stamp is never rewritten
     # A database built from the models (columns and CHECK exist already), then stamped: the revision must not fail.
     command.stamp(config,PREVIOUS)
     command.upgrade(config,'head')

@@ -6,7 +6,8 @@ import pytest
 
 from src.auth.schemas import StartAttendanceRequest
 from src.models.auth import (
-    AttendanceExcuse, Group, GroupAttendance, GroupAudit, Student, StudentGroup, StudentPayment,
+    AttendanceExcuse, Group, GroupAttendance, GroupAudit, Student, StudentDiagnosticResult, StudentGroup,
+    StudentPayment,
 )
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
@@ -188,7 +189,7 @@ def test_a_student_without_a_group_keeps_his_date_and_reason(world):
     assert got["archived_at"] == body["archived_at"] and got["archive_reason"] == "Не стал ходить"
     assert got["archived_groups"] == []
     restored = restore(world, s)
-    assert restored["status"] == "diagnosed" and restored["archived_at"] is None and restored["archive_reason"] is None
+    assert restored["status"] == "new" and restored["archived_at"] is None and restored["archive_reason"] is None   # no ID, no diagnostic
     assert restored["restored_groups"] == [] and restored["skipped"] == []
 
 
@@ -442,15 +443,26 @@ def test_restore_with_a_foreign_or_duplicate_group_and_with_no_groups(two):
     assert [g["group_id"] for g in body["restored_groups"]] == [str(two.group.id)]
     assert [(x["reason"], x["message"]) for x in body["skipped"]] == [("not_found", "Группа не найдена")]
     assert two.db.query(StudentGroup).filter_by(group_id=two.foreign_group.id, student_id=s.id).count() == 0
-    # no display_id and no group: «diagnosed»
+    # no display_id and no completed diagnostic: back to «new»; with a diagnostic result: «diagnosed»
     n = Student(org_id=two.org.id, first_name="Нет", last_name="Номера", class_level=9, status="active")
     two.db.add(n)
     two.db.commit()
     archive(two, n)
-    assert restore(two, n)["status"] == "diagnosed"
+    assert restore(two, n)["status"] == "new"
+    archive(two, n)
+    assert restore(two, n, [])["status"] == "new"
+    assert fresh(two, n).display_id is None
+    two.db.add(StudentDiagnosticResult(student_id=n.id, org_id=two.org.id))
+    two.db.commit()
     archive(two, n)
     assert restore(two, n, [])["status"] == "diagnosed"
-    assert fresh(two, n).display_id is None
+    foreign_result = Student(org_id=two.org.id, first_name="Чужой", last_name="Результат", class_level=9, status="active")
+    two.db.add(foreign_result)
+    two.db.commit()
+    two.db.add(StudentDiagnosticResult(student_id=two.foreign_student.id, org_id=two.other_org.id))   # another centre's result
+    two.db.commit()
+    archive(two, foreign_result)
+    assert restore(two, foreign_result)["status"] == "new"
     # a student WITH a display_id comes back as «active» even into no group
     archive(two, two.students[1])
     assert restore(two, two.students[1])["status"] == "active"
@@ -467,6 +479,69 @@ def test_restore_skips_a_group_whose_lesson_is_in_progress_and_does_the_rest(two
     assert "пока идёт урок" in skipped["message"] and skipped["group_name"] == "Группа"
     after = fresh(two, s)
     assert after.status == "active" and after.group_id == two.second.id
+
+
+def test_a_group_that_fails_unexpectedly_is_skipped_and_the_others_keep_their_journal_row(two, monkeypatch):
+    from src.auth.service import AuthService
+
+    s = two.student
+    third = make_group(two.db, two.org, two.teacher2, "Третья")
+    two.db.commit()
+    third_id, group_id, second_id = third.id, two.group.id, two.second.id
+    archive(two, s)
+    original = AuthService.add_student_to_group
+
+    def flaky(self, org_id, gid, student_id, **kw):
+        if str(gid) == str(second_id):
+            self.db.query(Student).filter_by(id=student_id).update({"comment": "half-done"})   # a dirty session at the failure
+            raise RuntimeError("boom")
+        return original(self, org_id, gid, student_id, **kw)
+
+    monkeypatch.setattr(AuthService, "add_student_to_group", flaky)
+    body = restore(two, s, [group_id, second_id, third_id])                 # the 2nd of three explodes: still 200
+
+    assert body["status"] == "active" and body["group_id"] == str(group_id)
+    assert [g["group_id"] for g in body["restored_groups"]] == [str(group_id), str(third_id)]
+    (skipped,) = body["skipped"]
+    assert skipped == {"group_id": str(second_id), "group_name": "Вторая", "reason": "refused",
+                       "message": "Не удалось вернуть в группу — повторите позже"}
+    after = fresh(two, s)
+    assert after.status == "active" and after.comment is None               # the half-done write was rolled back
+    assert {m.group_id for m in memberships(two, s) if m.is_active} == {group_id, third_id}
+    restored_rows = audit(two, s, "student_restored")
+    assert {r.group_id for r in restored_rows} == {group_id, third_id}       # each group's row, written right after its commit
+
+
+def test_a_failing_journal_row_does_not_undo_the_group_that_was_restored(two, monkeypatch):
+    from src.auth.student_archive import StudentArchiveService
+
+    s = two.student
+    group_id, second_id = two.group.id, two.second.id
+    archive(two, s)
+    original = StudentArchiveService._write_restored_audit
+
+    def broken(self, org_id, student, gid, *args):
+        if gid == str(group_id):
+            raise RuntimeError("journal is down")
+        return original(self, org_id, student, gid, *args)
+
+    monkeypatch.setattr(StudentArchiveService, "_write_restored_audit", broken)
+    body = restore(two, s, [group_id, second_id])
+    assert [g["group_id"] for g in body["restored_groups"]] == [str(group_id), str(second_id)] and body["skipped"] == []
+    assert {m.group_id for m in memberships(two, s) if m.is_active} == {group_id, second_id}
+    assert {r.group_id for r in audit(two, s, "student_restored")} == {second_id}     # only the lost row is missing
+
+
+def test_a_student_archived_by_an_old_image_has_no_date_but_everything_still_answers(two):
+    s = two.student
+    two.db.query(Student).filter_by(id=s.id).update({"status": "archived", "group_id": None})   # the old generic PUT
+    two.db.query(StudentGroup).filter_by(student_id=s.id).update({"is_active": False, "left_at": datetime.utcnow()})
+    two.db.commit()
+    profile = as_admin(two).get(f"{STUDENTS}/{s.id}/profile").json()
+    assert profile["student"]["status"] == "archived" and profile["student"]["archived_at"] is None
+    assert profile["student"]["archive_reason"] is None and profile["archived_groups"] == []
+    assert as_admin(two).get(f"{STUDENTS}/{s.id}").json()["archived_at"] is None
+    assert restore(two, s, [two.group.id])["status"] == "active"
 
 
 def test_restore_of_a_student_who_is_not_archived_is_a_conflict(two):
