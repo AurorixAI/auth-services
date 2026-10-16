@@ -357,7 +357,7 @@ def get_diagnostic_info(code: str, request: Request, db: Session = Depends(get_d
     """
     Получить информацию о диагностике по коду (публичный).
     Ученик открывает QR → видит своё имя → подтверждает.
-    Неудачные поиски считаются на адрес клиента (перебор кода): 20 в минуту и 200 в час, затем 429.
+    Неудачные поиски считаются на адрес клиента (перебор кода): 100 в минуту и 600 в час, затем 429.
     """
     bucket = _guard_diagnostic_code_lookup(request)
     info = _svc(db).get_diagnostic_by_code(code)
