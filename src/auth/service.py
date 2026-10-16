@@ -26,6 +26,13 @@ from . import student_identity
 from .student_id_service import assign_display_id
 from .attendance_excuses import AttendanceExcuseService
 from .diagnostic_level import level_fields, normalize_level_payload
+from .student_archive import (
+    archive_stamp,
+    archived_groups_payload,
+    attach_archived_groups,
+    guard_generic_status_update,
+    student_not_archived,
+)
 from .models import (
     Organization,
     User,
@@ -913,10 +920,13 @@ class AuthService:
         student = (
             self.db.query(Student)
             .filter(Student.id == student_id, Student.org_id == org_id)
+            .with_for_update(key_share=True)  # FOR NO KEY UPDATE: waits for an archiving of this student
+            .populate_existing()
             .first()
         )
         if not student:
             raise ValueError("Ученик не найден")
+        guard_generic_status_update(student, request.status)
 
         update_data = request.model_dump(exclude_none=True)
         requested_group_id = update_data.pop("group_id", None)
@@ -966,6 +976,9 @@ class AuthService:
             return student
         if not actor_id:
             raise PermissionError("Нет доступа к данным ученика")
+        if student.status == "archived":
+            # The archive is for the owner and the administrator; a stale membership changes nothing.
+            raise PermissionError("Нет доступа к данным ученика")
 
         is_primary_group_teacher = bool(
             student.group_id
@@ -999,7 +1012,9 @@ class AuthService:
         student = self._require_student_visibility(
             org_id, student_id, actor_id=actor_id, is_org_admin=is_org_admin
         )
-        return self._build_student_response(student)
+        return attach_archived_groups(
+            self.db, org_id, student, self._build_student_response(student)
+        )
 
     def get_student_profile(
         self,
@@ -1178,6 +1193,7 @@ class AuthService:
 
         return {
             "student": self._build_student_response(student).model_dump(),
+            "archived_groups": archived_groups_payload(self.db, org_id, student),
             "group": group_info,
             "groups": groups_list,
             "group_history": group_history,
@@ -1377,6 +1393,8 @@ class AuthService:
                     Student.id.in_(active_member_ids),
                 )
             )
+            # "My students" never include the archive, whatever a stale membership says.
+            query = query.filter(Student.status != "archived")
 
         if class_level:
             query = query.filter(Student.class_level == class_level)
@@ -1388,6 +1406,7 @@ class AuthService:
                     self.db.query(StudentGroup.student_id).filter(
                         StudentGroup.group_id == group_id,
                         StudentGroup.is_active.is_(True),
+                        student_not_archived(),
                     )
                 )
             )
@@ -1509,6 +1528,7 @@ class AuthService:
                 .filter(
                     StudentGroup.student_id.in_([s.id for s in students]),
                     StudentGroup.is_active.is_(True),
+                    student_not_archived(),
                     Group.org_id == org_id,
                     Group.status == "active",
                 )
@@ -1546,6 +1566,7 @@ class AuthService:
             comment=student.comment,
             status=student.status or "new",
             created_at=student.created_at.isoformat() if student.created_at else None,
+            **archive_stamp(student),
         )
 
     # ═══════════════════════════════════════════════════════════════════
@@ -2207,7 +2228,11 @@ class AuthService:
 
         memberships = (
             self.db.query(StudentGroup)
-            .filter(StudentGroup.group_id == group_uuid, StudentGroup.is_active)
+            .filter(
+                StudentGroup.group_id == group_uuid,
+                StudentGroup.is_active,
+                student_not_archived(),
+            )
             .all()
         )
         student_ids = [m.student_id for m in memberships]
@@ -2276,7 +2301,11 @@ class AuthService:
         if group_ids:
             for group_id, student_id in (
                 self.db.query(StudentGroup.group_id, StudentGroup.student_id)
-                .filter(StudentGroup.group_id.in_(group_ids), StudentGroup.is_active.is_(True))
+                .filter(
+                    StudentGroup.group_id.in_(group_ids),
+                    StudentGroup.is_active.is_(True),
+                    student_not_archived(),
+                )
                 .all()
             ):
                 members.setdefault(group_id, []).append(student_id)
@@ -2336,7 +2365,11 @@ class AuthService:
         student_ids = [
             m.student_id
             for m in self.db.query(StudentGroup)
-            .filter(StudentGroup.group_id == group_uuid, StudentGroup.is_active)
+            .filter(
+                StudentGroup.group_id == group_uuid,
+                StudentGroup.is_active,
+                student_not_archived(),
+            )
             .all()
         ]
         total_students = len(student_ids)
@@ -2656,6 +2689,7 @@ class AuthService:
                 .filter(
                     StudentGroup.group_id == group_id,
                     StudentGroup.is_active.is_(True),
+                    student_not_archived(),
                 )
                 .count()
             )
@@ -2820,7 +2854,11 @@ class AuthService:
     def _build_group_response(self, group: Group) -> GroupResponse:
         student_count = (
             self.db.query(func.count(StudentGroup.id))
-            .filter(StudentGroup.group_id == group.id, StudentGroup.is_active)
+            .filter(
+                StudentGroup.group_id == group.id,
+                StudentGroup.is_active,
+                student_not_archived(),
+            )
             .scalar()
         ) or 0
 
@@ -4356,6 +4394,7 @@ class AuthService:
                 StudentGroup.group_id == group_id,
                 StudentGroup.is_active.is_(True),
                 StudentGroup.left_at.is_(None),
+                student_not_archived(),
             )
             .order_by(StudentGroup.joined_at, StudentGroup.id)
             .all()
@@ -4814,6 +4853,7 @@ class AuthService:
                 .filter(
                     StudentGroup.group_id.in_(group_ids),
                     StudentGroup.is_active.is_(True),
+                    student_not_archived(),
                 )
                 .scalar()
             ) or 0
@@ -4999,6 +5039,7 @@ class AuthService:
                 StudentGroup.group_id == group.id,
                 StudentGroup.is_active.is_(True),
                 StudentGroup.left_at.is_(None),
+                student_not_archived(),
             )
             .all()
         )

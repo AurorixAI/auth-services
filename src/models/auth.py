@@ -306,6 +306,11 @@ class Student(Base):
     display_id = Column(String(32), nullable=True)
 
     status = Column(String(20), nullable=False, default="new")
+    # "Ученик ушёл из центра": when (naive UTC, the instant the memberships were closed) and why the
+    # student went to the archive; both are cleared on return.  NULL for a student archived before the
+    # action existed (the page then shows ``updated_at``).
+    archived_at = Column(DateTime, nullable=True)
+    archive_reason = Column(String(300), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -443,7 +448,7 @@ class GroupAudit(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "action IN ('created', 'updated', 'teacher_changed')",
+            "action IN ('created', 'updated', 'teacher_changed', 'student_archived', 'student_restored')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(

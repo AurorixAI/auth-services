@@ -1,5 +1,6 @@
 """Real Alembic upgrade/rollback on one explicitly disposable PostgreSQL DB."""
 import os
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -11,6 +12,8 @@ from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
+HEAD='x4y5z6a7b8c'          # student archive (N13)
+PREVIOUS='w3x4y5z6a7b'      # lesson type and payroll (N13 P3)
 
 
 def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatch):
@@ -46,7 +49,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     with engine.connect() as connection:
         assert connection.execute(text('SELECT name FROM organizations WHERE id=:id'),{'id':ids['org']}).scalar_one()=='Migration sentinel'
         assert connection.execute(text('SELECT count(*) FROM student_groups WHERE id=:id'),{'id':ids['membership']}).scalar_one()==1
-        assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='w3x4y5z6a7b'
+        assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
     assert 'student_payments' in set(inspect(engine).get_table_names())
     assert {'monthly_fee','monthly_fee_updated_by','monthly_fee_updated_at','transferred_at'} <= {c['name'] for c in inspect(engine).get_columns('student_groups')}
     _check_n13_p1_objects(engine,config,ids)
@@ -54,6 +57,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     _check_n13_p21_objects(engine,config,ids)
     _check_n13_p22_objects(engine,config,ids)
     _check_n13_p3_objects(engine,config,ids)
+    _check_n13_archive_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -112,7 +116,7 @@ def _check_n13_p1_objects(engine,config,ids):
     command.stamp(config,'r8s9t0u1v2w')
     command.upgrade(config,'head')
     with engine.connect() as c:
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='w3x4y5z6a7b'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
         # Backfill restores the snapshot from the group's current teacher.
         assert c.execute(text('SELECT teacher_id FROM group_attendance WHERE id=:a'),params).scalar_one()==teacher
 
@@ -175,7 +179,7 @@ def _check_n13_p2_objects(engine,config,ids):
     with engine.connect() as c:
         assert c.execute(text('SELECT count(*) FROM student_payments')).scalar_one()==0
         assert c.execute(text('SELECT monthly_fee FROM student_groups WHERE id=:m'),params).scalar_one() is None
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='w3x4y5z6a7b'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
 
 
 def _check_n13_p21_objects(engine,config,ids):
@@ -240,7 +244,7 @@ def _check_n13_p21_objects(engine,config,ids):
     command.upgrade(config,'head')
     assert {'carried_from_payment_id','carried_out_at'} <= cols()
     with engine.connect() as c:
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='w3x4y5z6a7b'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
         assert c.execute(text('SELECT count(*) FROM student_payments WHERE org_id=:o'),params).scalar_one()==4
         assert c.execute(text('SELECT carried_from_payment_id FROM student_payments WHERE id=:c'),params).scalar_one() is None
 
@@ -286,7 +290,7 @@ def _check_n13_p22_objects(engine,config,ids):
         version=c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()
     # by created_at inside each organisation, the voided one included, the carry-over without a number
     assert numbers=={'a3':1,'a1':2,'a2':3,'carry':None,'a4':4,'b1':1,'b2':2}, numbers
-    assert partial==0 and version=='w3x4y5z6a7b'
+    assert partial==0 and version==HEAD
     # new rows: NULL receipt allowed (carry-over), partial_period defaults to false, numbers are unique per centre only
     with engine.begin() as c:
         c.execute(text("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,valid_from,valid_to,created_by,receipt_no) VALUES (gen_random_uuid(),:o,:m,:s,:g,9,'2026-12-01','2026-12-01','2026-12-31',:u,5)"),{'o':org,'m':m,'s':s,'g':g,'u':actor})
@@ -326,7 +330,7 @@ def _check_n13_p22_objects(engine,config,ids):
     command.stamp(config,'t1u2v3w4x5y')
     command.upgrade(config,'head')
     with engine.connect() as c:
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='w3x4y5z6a7b'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
         again=[n for (n,) in c.execute(text('SELECT receipt_no FROM student_payments WHERE org_id=:o AND receipt_no IS NOT NULL ORDER BY receipt_no'),{'o':org})]
         assert again==sorted(again) and len(again)==len(set(again)) and len(again)==7      # renumbered once by the downgrade/upgrade, consistently; the carry-over has none
         assert c.execute(text('SELECT count(*) FROM student_payment_files')).scalar_one()==0
@@ -410,5 +414,103 @@ def _check_n13_p3_objects(engine,config,ids):
     command.stamp(config,'u1v2w3x4y5z')
     command.upgrade(config,'head')
     with engine.connect() as c:
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()=='w3x4y5z6a7b'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
         assert c.execute(text('SELECT count(*) FROM payroll_sheets')).scalar_one()==1           # and it kept what was there
+
+
+def _check_n13_archive_objects(engine,config,ids):
+    """«Ученик ушёл из центра»: the stamp columns, the audit actions, and the one-off clean-up of archived students."""
+    from sqlalchemy.exc import IntegrityError
+    from src.models.auth import Group,GroupAudit,Student,StudentGroup,User
+    actor,group2=uuid4(),uuid4()
+    org,group=ids['org'],ids['group']
+    a,b,c,d=(uuid4() for _ in range(4))             # archived with two active memberships / archived with a closed one / ACTIVE (control) / archived, nothing
+    ma1,ma2,mb,mc=(uuid4() for _ in range(4))
+    pay=uuid4()
+    def student_cols(): return {col['name']:col for col in inspect(engine).get_columns('students')}
+    def audit_insert(action):
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO group_audit (id,org_id,group_id,actor_id,actor_role,action,snapshot) VALUES (gen_random_uuid(),:o,:g,:a,'admin',:x,'{}'::jsonb)"),
+                         {'o':org,'g':group,'a':actor,'x':action})
+    with Session(engine) as db:
+        db.add(User(id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='A',last_name='R',role='owner')); db.commit()
+    cols=student_cols()
+    assert {'archived_at','archive_reason'} <= set(cols) and cols['archived_at']['nullable'] and cols['archive_reason']['nullable']
+    assert str(cols['archive_reason']['type'])=='VARCHAR(300)'
+    for action in ('student_archived','student_restored','updated'):
+        audit_insert(action)
+    with pytest.raises(IntegrityError,match='ck_group_audit_action'):
+        audit_insert('student_deleted')
+    # Roll back to the previous head: the old CHECK is back (new rows only), the columns and the rows stay.
+    command.downgrade(config,PREVIOUS)
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==PREVIOUS
+        assert conn.execute(text("SELECT count(*) FROM group_audit WHERE action IN ('student_archived','student_restored')")).scalar_one()==2
+    assert {'archived_at','archive_reason'} <= set(student_cols())
+    with pytest.raises(IntegrityError,match='ck_group_audit_action'):
+        audit_insert('student_archived')
+    audit_insert('teacher_changed')
+    # The data as the generic PUT left it: archived students that still sit in groups.
+    with Session(engine) as db:
+        db.add(Group(id=group2,org_id=org,name='Archive group 2',class_level=9)); db.flush()
+        for sid,status,primary,name in ((a,'archived',group,'A'),(b,'archived',group2,'B'),(c,'active',group,'C'),(d,'archived',None,'D')):
+            db.add(Student(id=sid,org_id=org,first_name=name,last_name='Archive',class_level=9,status=status,group_id=primary))
+        db.flush()
+        db.add(StudentGroup(id=ma1,student_id=a,group_id=group,is_active=True))
+        db.add(StudentGroup(id=ma2,student_id=a,group_id=group2,is_active=True))
+        db.add(StudentGroup(id=mb,student_id=b,group_id=group2,is_active=False,left_at=datetime(2026,9,1,10,0,0)))
+        db.add(StudentGroup(id=mc,student_id=c,group_id=group,is_active=True))
+        db.commit()
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE students SET updated_at='2026-09-02 08:00:00' WHERE id IN (:a,:b,:d)"),{'a':a,'b':b,'d':d})
+        conn.execute(text("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,valid_from,valid_to,created_by,receipt_no) VALUES (:p,:o,:m,:s,:g,450000,'2026-09-01','2026-09-01','2026-09-30',:u,777001)"),
+                     {'p':pay,'o':org,'m':ma1,'s':a,'g':group,'u':actor})
+    def snapshot():
+        with engine.connect() as conn:
+            members={r.id:(r.is_active,r.left_at) for r in conn.execute(text('SELECT id,is_active,left_at FROM student_groups WHERE id IN (:a,:b,:c,:d)'),{'a':ma1,'b':ma2,'c':mb,'d':mc})}
+            students={r.id:(r.status,r.group_id,r.updated_at,r.archived_at,r.archive_reason) for r in conn.execute(text('SELECT id,status,group_id,updated_at,archived_at,archive_reason FROM students WHERE id IN (:a,:b,:c,:d)'),{'a':a,'b':b,'c':c,'d':d})}
+            paid=conn.execute(text('SELECT count(*) FROM student_payments WHERE id=:p AND membership_id=:m AND amount=450000'),{'p':pay,'m':ma1}).scalar_one()
+            total=conn.execute(text('SELECT (SELECT count(*) FROM students),(SELECT count(*) FROM student_groups)')).one()
+        return members,students,paid,tuple(total)
+    dirty=snapshot()
+    assert dirty[0][ma1]==(True,None) and dirty[0][ma2]==(True,None) and dirty[1][a][1]==group and dirty[1][b][1]==group2
+    command.upgrade(config,'head')
+    clean=snapshot()
+    members,students,paid,total=clean
+    assert members[ma1][0] is False and members[ma1][1] is not None and members[ma2][0] is False and members[ma2][1]==members[ma1][1]   # closed, one instant
+    assert members[mb]==(False,datetime(2026,9,1,10,0,0))                      # an already closed membership keeps its day
+    assert members[mc]==(True,None)                                            # the active student is untouched ...
+    assert students[c][:2]==('active',group) and students[a][:2]==('archived',None) and students[b][:2]==('archived',None) and students[d][:2]==('archived',None)
+    assert [students[x][2] for x in (a,b,d)]==[datetime(2026,9,2,8,0,0)]*3     # updated_at: the only date of an old archiving
+    assert [students[x][3:] for x in (a,b,c,d)]==[(None,None)]*4               # no stamp is invented
+    assert paid==1 and total==dirty[3]                                         # payments, students and memberships are all still there
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+        assert conn.execute(text("SELECT count(*) FROM group_audit WHERE action IN ('student_archived','student_restored')")).scalar_one()==2   # the old rows stayed through the round trip
+    audit_insert('student_archived'); audit_insert('student_restored')         # the CHECK accepts the new actions again
+    with pytest.raises(IntegrityError,match='ck_group_audit_action'):
+        audit_insert('student_deleted')
+    # Second run is a no-op ...
+    command.upgrade(config,'head')
+    assert snapshot()==clean
+    # ... and up / down / up on dirty data again: an archived student with an active membership is cleaned once more.
+    command.downgrade(config,PREVIOUS)
+    assert snapshot()==clean                                                   # the downgrade touches no data
+    with engine.begin() as conn:
+        conn.execute(text('UPDATE student_groups SET is_active=true,left_at=NULL WHERE id=:m'),{'m':ma2})
+        conn.execute(text('UPDATE students SET group_id=:g WHERE id=:s'),{'g':group2,'s':a})
+    command.upgrade(config,'head')
+    members,students,paid,total=snapshot()
+    assert members[ma2][0] is False and members[ma2][1] is not None and members[ma2][1]>members[ma1][1]   # closed now
+    assert members[ma1]==clean[0][ma1] and students[a][:2]==('archived',None) and students[c][:2]==('active',group) and paid==1
+    # A database built from the models (columns and CHECK exist already), then stamped: the revision must not fail.
+    command.stamp(config,PREVIOUS)
+    command.upgrade(config,'head')
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+    assert str(student_cols()['archive_reason']['type'])=='VARCHAR(300)'
+    # Real data written through the model with the new columns.
+    with Session(engine) as db:
+        db.add(Student(id=uuid4(),org_id=org,first_name='Z',last_name='Stamp',class_level=9,status='archived',
+                       archived_at=datetime(2026,10,16,9,0,0),archive_reason='Переехал'))
+        db.commit()

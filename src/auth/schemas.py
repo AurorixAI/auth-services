@@ -184,6 +184,15 @@ class StudentUpdateRequest(BaseModel):
         return v
 
 
+class ArchivedGroupOut(BaseModel):
+    """A group the student was removed from by the last archiving (the return window offers it again)."""
+
+    group_id: str
+    group_name: str
+    group_status: str
+    is_full: bool
+
+
 class StudentResponse(BaseModel):
     id: str
     org_id: str
@@ -204,6 +213,13 @@ class StudentResponse(BaseModel):
     # The group the student is in now (primary while it is a live membership, else the earliest one);
     # filled in list responses only, together with groups_count.
     current_group_id: Optional[str] = None
+    # Only for status == "archived" (null otherwise): the instant the student was archived (naive UTC
+    # ISO; ``updated_at`` for a student archived before the action existed) and the reason, if any.
+    archived_at: Optional[str] = None
+    archive_reason: Optional[str] = None
+    # Only GET /org/students/{id} (and the profile) of an archived student: the groups closed by the
+    # last archiving.
+    archived_groups: Optional[List[ArchivedGroupOut]] = None
 
 
 # ============================================================================

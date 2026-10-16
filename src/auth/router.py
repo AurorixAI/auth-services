@@ -18,6 +18,15 @@ from .service import (
     verify_access_token,
 )
 from .attendance_access import is_org_admin, is_org_manager
+from .student_archive import (
+    ArchiveError,
+    ArchiveStudentRequest,
+    ArchiveStudentResponse,
+    RestoreStudentRequest,
+    RestoreStudentResponse,
+    StudentArchiveService,
+    actor_role_for_audit,
+)
 from . import import_service
 from .import_service import ImportPreviewResponse, ImportCommitResponse
 from src.api.rate_limit import client_bucket, enforce_rate_limit, rate_limit
@@ -714,8 +723,54 @@ def update_student(
     """Обновить ученика"""
     try:
         return _svc(db).update_student(user["org_id"], student_id, request)
+    except ArchiveError as e:  # the status goes through «В архив» / «Вернуть из архива» (422)
+        raise HTTPException(e.http_status, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.post("/org/students/{student_id}/archive", response_model=ArchiveStudentResponse)
+def archive_student(
+    student_id: str,
+    request: Optional[ArchiveStudentRequest] = None,
+    user: dict = Depends(require_org_admin),
+    db: Session = Depends(get_db),
+):
+    """Ученик ушёл из центра: в архив. Закрывает все членства, пишет журнал групп; ничего не удаляет."""
+    try:
+        return StudentArchiveService(db).archive(
+            user["org_id"],
+            student_id,
+            actor_id=user["user_id"],
+            actor_role=actor_role_for_audit(user),
+            reason=request.reason if request else None,
+        )
+    except OperationalError as e:
+        raise _concurrent_edit_or_raise(e, db)
+    except ArchiveError as e:
+        raise HTTPException(e.http_status, str(e))
+
+
+@router.post("/org/students/{student_id}/restore", response_model=RestoreStudentResponse)
+def restore_student(
+    student_id: str,
+    request: Optional[RestoreStudentRequest] = None,
+    user: dict = Depends(require_org_admin),
+    db: Session = Depends(get_db),
+):
+    """Вернуть из архива: статус и выбранные группы (заполненные или архивные идут в ``skipped``)."""
+    try:
+        return StudentArchiveService(db).restore(
+            user["org_id"],
+            student_id,
+            actor_id=user["user_id"],
+            actor_role=actor_role_for_audit(user),
+            group_ids=request.group_ids if request else None,
+        )
+    except OperationalError as e:
+        raise _concurrent_edit_or_raise(e, db)
+    except ArchiveError as e:
+        raise HTTPException(e.http_status, str(e))
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
