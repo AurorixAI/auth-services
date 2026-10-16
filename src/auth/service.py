@@ -441,7 +441,7 @@ class AuthService:
                 org_name=org.name,
                 org_id=str(org.id),
                 owner_email=user.email,
-                owner_name=user.full_name,
+                owner_name=f"{user.first_name} {user.last_name}".strip() or user.full_name,
             )
         except Exception:
             logger.exception("Failed to send admin notification email")
