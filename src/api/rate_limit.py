@@ -194,6 +194,28 @@ def hit_window(key: str, window: int) -> Tuple[int, int]:
     return count, max(math.ceil(ends_at - now), 1)
 
 
+def peek_window(key: str) -> Tuple[int, int]:
+    """Hits in the window ``hit_window`` keeps for *key* and the seconds left, WITHOUT counting one: (0, 0) when no window is open.
+
+    For limits that count only some outcomes (failed lookups): read first, refuse when spent, ``hit_window`` after the failure.
+    """
+    r = redis_client.get_redis()
+    if r is not None:
+        try:
+            value = r.get(key)
+            if value is None:
+                return 0, 0
+            return int(value), max(int(r.ttl(key)), 1)
+        except Exception as e:  # noqa: BLE001 - a counter store must never break a request
+            redis_client.mark_down(e)
+    now = _monotonic()
+    with _window_lock:
+        count, ends_at = _window_store.get(key, (0, 0.0))
+    if ends_at <= now:
+        return 0, 0
+    return count, max(math.ceil(ends_at - now), 1)
+
+
 def _check_memory(key: str, max_requests: int, window: int) -> bool:
     """In-memory sliding window fallback."""
     now = time.time()

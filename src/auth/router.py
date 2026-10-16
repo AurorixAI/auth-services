@@ -29,7 +29,7 @@ from .student_archive import (
 )
 from . import import_service
 from .import_service import ImportPreviewResponse, ImportCommitResponse
-from src.api.rate_limit import client_bucket, enforce_rate_limit, rate_limit
+from src.api.rate_limit import client_bucket, enforce_rate_limit, hit_window, peek_window, rate_limit
 from src.core.config import get_settings
 from src.core.exceptions import InvalidCredentialsError
 from . import login_throttle
@@ -116,6 +116,14 @@ SECRET_LOOKUP_IP_LIMIT = "60/minute"
 INVITE_INFO_RATE_ENDPOINT = "auth-invite-info"
 INVITE_ACCEPT_RATE_ENDPOINT = "auth-invite-accept"
 ACTIVATE_RATE_ENDPOINT = "auth-activate"
+
+# A diagnostic invite code (8 characters, 31-letter alphabet) is looked up by the student's browser without a login, and the
+# answer carries the student's name: the code space must not be probed. What a guess costs is a FAILED lookup, so those are
+# budgeted per client address; a valid lookup is not counted (a class behind one school NAT opens ~30 codes in a minute).
+# Calls without X-Real-IP are not a browser: diagnostic-service asks server to server, from our own address, and throttles its
+# own public entries per student address.
+DIAGNOSTIC_CODE_FAIL_LIMITS = ((20, 60), (200, 3600))  # (failed lookups, window in seconds) per client address
+DIAGNOSTIC_CODE_RATE_ENDPOINT = "auth-diagnostic-code-fail"
 
 # ----------- cookie helpers: the policy itself is in cookies.py ----------- #
 
@@ -303,25 +311,59 @@ def activate_account(
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 
+def _diagnostic_code_budget_key(window: int, bucket: str) -> str:
+    return f"rl:{DIAGNOSTIC_CODE_RATE_ENDPOINT}:{window}:{bucket}"
+
+
+def _guard_diagnostic_code_lookup(request: Request) -> Optional[str]:
+    """429 + Retry-After when this browser address has spent its failed-lookup budget; else its bucket (None = not a browser)."""
+    if not request.headers.get("x-real-ip"):
+        return None
+    bucket = client_bucket(request)
+    for limit, window in DIAGNOSTIC_CODE_FAIL_LIMITS:
+        failures, left = peek_window(_diagnostic_code_budget_key(window, bucket))
+        if failures >= limit:
+            wait = f"{max(1, -(-left // 60))} мин" if left > 90 else "минуту"
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                f"Слишком много попыток. Подождите {wait} и попробуйте снова.",
+                headers={"Retry-After": str(left)},
+            )
+    return bucket
+
+
+def _count_diagnostic_code_miss(bucket: Optional[str]) -> None:
+    if bucket is None:
+        return
+    for _, window in DIAGNOSTIC_CODE_FAIL_LIMITS:
+        hit_window(_diagnostic_code_budget_key(window, bucket), window)
+
+
 @router.get("/diagnostic/{code}")
-def get_diagnostic_info(code: str, db: Session = Depends(get_db)):
+def get_diagnostic_info(code: str, request: Request, db: Session = Depends(get_db)):
     """
     Получить информацию о диагностике по коду (публичный).
     Ученик открывает QR → видит своё имя → подтверждает.
+    Неудачные поиски считаются на адрес клиента (перебор кода): 20 в минуту и 200 в час, затем 429.
     """
+    bucket = _guard_diagnostic_code_lookup(request)
     info = _svc(db).get_diagnostic_by_code(code)
     if not info:
+        _count_diagnostic_code_miss(bucket)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Диагностика не найдена")
     return info
 
 
 @router.post("/diagnostic/{code}/confirm")
-def confirm_diagnostic(code: str, db: Session = Depends(get_db)):
+def confirm_diagnostic(code: str, request: Request, db: Session = Depends(get_db)):
     """Подтверждение по коду — переход pending → confirmed. Код сам по себе
     уникально определяет ученика, ввод имени не требуется."""
+    bucket = _guard_diagnostic_code_lookup(request)
     try:
         return _svc(db).confirm_diagnostic(code)
     except ValueError as e:
+        if "не найдена" in str(e):  # an unknown / used code is a guess; an expired link is a state
+            _count_diagnostic_code_miss(bucket)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
 
