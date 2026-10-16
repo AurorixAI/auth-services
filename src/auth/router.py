@@ -18,6 +18,7 @@ from .service import (
     verify_access_token,
 )
 from .attendance_access import is_org_admin, is_org_manager
+from .models import DiagnosticInvite
 from .student_archive import (
     ArchiveError,
     ArchiveStudentRequest,
@@ -122,7 +123,7 @@ ACTIVATE_RATE_ENDPOINT = "auth-activate"
 # budgeted per client address; a valid lookup is not counted (a class behind one school NAT opens ~30 codes in a minute).
 # Calls without X-Real-IP are not a browser: diagnostic-service asks server to server, from our own address, and throttles its
 # own public entries per student address.
-DIAGNOSTIC_CODE_FAIL_LIMITS = ((20, 60), (200, 3600))  # (failed lookups, window in seconds) per client address
+DIAGNOSTIC_CODE_FAIL_LIMITS = ((100, 60), (600, 3600))  # (failed lookups, window in seconds) per client address
 DIAGNOSTIC_CODE_RATE_ENDPOINT = "auth-diagnostic-code-fail"
 
 # ----------- cookie helpers: the policy itself is in cookies.py ----------- #
@@ -316,19 +317,26 @@ def _diagnostic_code_budget_key(window: int, bucket: str) -> str:
 
 
 def _guard_diagnostic_code_lookup(request: Request) -> Optional[str]:
-    """429 + Retry-After when this browser address has spent its failed-lookup budget; else its bucket (None = not a browser)."""
+    """429 + Retry-After when this browser address has spent its failed-lookup budget; else its bucket (None = not a browser).
+
+    Every window is read and the refusal carries the LONGEST wait among the spent ones.
+    """
     if not request.headers.get("x-real-ip"):
         return None
     bucket = client_bucket(request)
+    spent = []
     for limit, window in DIAGNOSTIC_CODE_FAIL_LIMITS:
         failures, left = peek_window(_diagnostic_code_budget_key(window, bucket))
         if failures >= limit:
-            wait = f"{max(1, -(-left // 60))} мин" if left > 90 else "минуту"
-            raise HTTPException(
-                status.HTTP_429_TOO_MANY_REQUESTS,
-                f"Слишком много попыток. Подождите {wait} и попробуйте снова.",
-                headers={"Retry-After": str(left)},
-            )
+            spent.append(left)
+    if spent:
+        left = max(spent)
+        wait = f"{-(-left // 60)} мин" if left > 90 else "минуту"
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Слишком много попыток. Подождите {wait} и попробуйте снова.",
+            headers={"Retry-After": str(left)},
+        )
     return bucket
 
 
@@ -337,6 +345,11 @@ def _count_diagnostic_code_miss(bucket: Optional[str]) -> None:
         return
     for _, window in DIAGNOSTIC_CODE_FAIL_LIMITS:
         hit_window(_diagnostic_code_budget_key(window, bucket), window)
+
+
+def _diagnostic_invite_exists(db: Session, code: str) -> bool:
+    """Whether an invite with this code exists in ANY state (pending, started, completed, expired)."""
+    return db.query(DiagnosticInvite.id).filter(DiagnosticInvite.code == code).first() is not None
 
 
 @router.get("/diagnostic/{code}")
@@ -362,7 +375,9 @@ def confirm_diagnostic(code: str, request: Request, db: Session = Depends(get_db
     try:
         return _svc(db).confirm_diagnostic(code)
     except ValueError as e:
-        if "не найдена" in str(e):  # an unknown / used code is a guess; an expired link is a state
+        # Only a code that exists nowhere is a guess. The service answers «не найдена или уже начата» for a code that is
+        # started / completed / expired too - those are states a legitimate student can meet, and are not counted.
+        if bucket is not None and "не найдена" in str(e) and not _diagnostic_invite_exists(db, code):
             _count_diagnostic_code_miss(bucket)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 

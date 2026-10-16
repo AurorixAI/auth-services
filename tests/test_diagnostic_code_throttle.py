@@ -32,6 +32,8 @@ LIMIT_HOUR = auth_router_module.DIAGNOSTIC_CODE_FAIL_LIMITS[1][0]
 
 @pytest.fixture
 def client(monkeypatch):
+    # the invites that exist in some state (started / completed / expired): the confirm service refuses them like an unknown code
+    monkeypatch.setattr(auth_router_module, "_diagnostic_invite_exists", lambda db, code: code in KNOWN or code.startswith("STATE"))
     def info(self, code):
         return {"id": "i", "student_first_name": "Али", "student_last_name": "Каримов", "status": "confirmed"} if code in KNOWN else None
 
@@ -59,7 +61,7 @@ def confirm(client, code, ip="203.0.113.7"):
 
 
 def test_the_limits_are_what_the_task_decided():
-    assert auth_router_module.DIAGNOSTIC_CODE_FAIL_LIMITS == ((20, 60), (200, 3600))
+    assert auth_router_module.DIAGNOSTIC_CODE_FAIL_LIMITS == ((100, 60), (600, 3600))
 
 
 def test_a_class_behind_one_nat_opens_thirty_codes_in_a_minute(client):
@@ -71,7 +73,7 @@ def test_a_class_behind_one_nat_opens_thirty_codes_in_a_minute(client):
             assert lookup(client, f"CLS{i:05d}").status_code == 200
 
 
-def test_the_twenty_first_wrong_code_in_a_minute_is_refused_with_retry_after(client):
+def test_the_hundred_and_first_wrong_code_in_a_minute_is_refused_with_retry_after(client):
     for n in range(LIMIT_MINUTE):
         assert lookup(client, f"NOPE{n:05d}").status_code == 404
     refused = lookup(client, "CLS00001")  # even a valid code waits: the budget of the address is spent
@@ -87,6 +89,38 @@ def test_confirm_shares_the_budget(client):
         assert confirm(client, f"NOPE{n:05d}").status_code == 400
     assert confirm(client, "CLS00001").status_code == 429
     assert lookup(client, "CLS00001").status_code == 429
+
+
+def test_a_used_or_completed_code_is_not_a_guess_only_an_unknown_one_is(client, monkeypatch):
+    """confirm answers «не найдена или уже начата» for BOTH; only a code that exists nowhere spends the budget."""
+
+    def refuse(self, code):
+        raise ValueError("Диагностика не найдена или уже начата")
+
+    monkeypatch.setattr(AuthService, "confirm_diagnostic", refuse)
+    for n in range(LIMIT_MINUTE + 20):
+        assert confirm(client, f"STATE{n:05d}").status_code == 400  # exists, in_progress / completed / expired
+    assert lookup(client, "CLS00001").status_code == 200  # the budget is untouched
+    for n in range(LIMIT_MINUTE):
+        assert confirm(client, f"NOPE{n:05d}").status_code == 400  # unknown: each one spends
+    assert lookup(client, "CLS00001").status_code == 429
+
+
+def test_retry_after_is_the_longest_of_the_spent_windows(client, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(rl, "_monotonic", lambda: now[0])
+    spent = 0
+    while spent < LIMIT_HOUR:
+        for _ in range(LIMIT_MINUTE):
+            if spent == LIMIT_HOUR:
+                break
+            lookup(client, f"NOPE{spent:05d}")
+            spent += 1
+        if spent < LIMIT_HOUR:
+            now[0] += 61
+    refused = lookup(client, "CLS00001")  # the last minute is full AND the hour is full
+    assert refused.status_code == 429
+    assert int(refused.headers["Retry-After"]) > 3000 and "мин" in refused.json()["detail"]
 
 
 def test_an_expired_link_is_a_state_not_a_guess(client, monkeypatch):
