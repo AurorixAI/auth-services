@@ -783,3 +783,131 @@ def test_the_audit_check_accepts_the_new_actions_and_nothing_else(two):
     with pytest.raises(IntegrityError, match="ck_group_audit_action"):
         two.db.commit()
     two.db.rollback()
+
+
+# ==============================================================================================
+# money is not entered for an archived student (create / replace / fee refused, void and reading allowed)
+# ==============================================================================================
+
+ARCHIVED_MESSAGE = "Ученик в архиве — сначала верните его"
+
+
+def put_fee(w, student, group, fee, expect=200):
+    r = owner(w).put(f"{API}/org/memberships/{mid(w, student, group)}/fee", json={"monthly_fee": fee})
+    assert r.status_code == expect, r.text
+    return r
+
+
+def test_create_replace_and_fee_are_refused_for_an_archived_student_but_void_and_reading_work(two):
+    s = two.student
+    put_fee(two, s, two.group, 500000)
+    first = pay(two, s, two.group)["payment"]
+    second = pay(two, s, two.group, amount=1000, paid_on=(business_today() - timedelta(days=2)).isoformat(),
+                 valid_from=(business_today() - timedelta(days=2)).isoformat(),
+                 valid_to=(business_today() + timedelta(days=20)).isoformat())["payment"]
+    archive(two, s)
+    two.db.expire_all()
+    stored_before = {p.id: (p.amount, p.voided_at) for p in two.db.query(StudentPayment).filter_by(student_id=s.id)}
+    fee_before = two.db.query(StudentGroup).filter_by(id=mid(two, s, two.group)).one().monthly_fee
+
+    r = owner(two).post(f"{API}/org/memberships/{mid(two, s, two.group)}/payments",
+                        json={"amount": 5, "paid_on": business_today().isoformat()})
+    assert r.status_code == 409 and r.json()["detail"] == ARCHIVED_MESSAGE
+    r = owner(two).post(f"{API}/org/payments/{first['id']}/replace",
+                        json={"amount": 7, "paid_on": business_today().isoformat(), "reason": "исправление"})
+    assert r.status_code == 409 and r.json()["detail"] == ARCHIVED_MESSAGE
+    r = owner(two).put(f"{API}/org/memberships/{mid(two, s, two.second)}/fee", json={"monthly_fee": 1})
+    assert r.status_code == 409 and r.json()["detail"] == ARCHIVED_MESSAGE
+    assert put_fee(two, s, two.group, 1, expect=409).json()["detail"] == ARCHIVED_MESSAGE
+
+    two.db.expire_all()
+    assert {p.id: (p.amount, p.voided_at) for p in two.db.query(StudentPayment).filter_by(student_id=s.id)} == stored_before
+    assert two.db.query(StudentGroup).filter_by(id=mid(two, s, two.group)).one().monthly_fee == fee_before
+
+    # reading the history stays allowed ...
+    assert owner(two).get(f"{API}/org/memberships/{mid(two, s, two.group)}/payments").status_code == 200
+    assert owner(two).get(f"{STUDENTS}/{s.id}/memberships").status_code == 200
+    assert owner(two).get(f"{API}/org/payments/{first['id']}/receipt").status_code == 200
+    # ... and so does cancelling a mistake
+    r = owner(two).post(f"{API}/org/payments/{second['id']}/void", json={"reason": "внесено по ошибке"})
+    assert r.status_code == 200 and r.json()["payment"]["voided_at"] is not None
+    two.db.expire_all()
+    assert two.db.get(StudentPayment, second["id"]).voided_at is not None
+
+    # back in the centre: money can be entered again
+    restore(two, s, [two.group.id])
+    assert pay(two, s, two.group, amount=2000)["payment"]["amount"] == 2000
+    put_fee(two, s, two.group, 600000)
+
+
+def test_a_closed_membership_of_a_student_who_is_not_archived_keeps_working_as_before(two):
+    s = two.student
+    first = pay(two, s, two.second)["payment"]
+    two.svc.remove_student_from_group(str(two.org.id), str(two.second.id), str(s.id))      # left ONE group only
+    two.db.expire_all()
+    assert fresh(two, s).status == "active" and not two.db.query(StudentGroup).filter_by(
+        student_id=s.id, group_id=two.second.id).one().is_active
+    assert pay(two, s, two.second, amount=1234)["payment"]["amount"] == 1234               # transfer history: unchanged
+    put_fee(two, s, two.second, 700000)
+    r = owner(two).post(f"{API}/org/payments/{first['id']}/replace",
+                        json={"amount": 99, "paid_on": business_today().isoformat(), "reason": "исправление"})
+    assert r.status_code == 201, r.text
+    assert owner(two).post(f"{API}/org/payments/{r.json()['payment']['id']}/void", json={"reason": "ошибка"}).status_code == 200
+
+
+def test_a_payment_that_waits_for_an_archiving_is_refused_when_it_gets_the_lock(two, engine):
+    """Whoever wins the membership lock sees the outcome of the archiving: no payment slips onto a closed membership."""
+    from sqlalchemy.orm import Session
+
+    from src.auth.payments_schemas import PaymentCreate
+    from src.auth.payments_service import PaymentService, StudentArchived
+
+    s = two.student
+    m = mid(two, s, two.group)
+    holder = Session(engine)                                    # the archiving in flight: student + membership held
+    held_student = holder.query(Student).filter_by(id=s.id).with_for_update(key_share=True).one()
+    held_memberships = holder.query(StudentGroup).filter_by(student_id=s.id).with_for_update(key_share=True).all()
+    thread, outcome = run_in_thread(engine, lambda session: PaymentService(session).create_payment(
+        str(two.org.id), m, str(two.owner.id), PaymentCreate(amount=450000, paid_on=business_today())))
+    wait_until_blocked(engine)
+    for membership in held_memberships:
+        membership.is_active, membership.left_at = False, datetime.utcnow()
+    held_student.status, held_student.group_id = "archived", None
+    holder.commit()
+    holder.close()
+    thread.join(timeout=20)
+    assert isinstance(outcome.get("error"), StudentArchived) and str(outcome["error"]) == ARCHIVED_MESSAGE
+    two.db.expire_all()
+    assert two.db.query(StudentPayment).filter_by(student_id=s.id).count() == 0
+
+
+@pytest.mark.parametrize("round_", range(6))
+def test_archive_and_a_payment_in_parallel_never_deadlock_and_never_leave_a_payment_behind_a_refusal(two, engine, round_):
+    import threading
+
+    from src.auth.payments_schemas import PaymentCreate
+    from src.auth.payments_service import PaymentService, StudentArchived
+
+    student = make_student(two.db, two.org, two.group, f"Гонка{round_}", "Платёж", f"N13-9{round_}")
+    two.db.commit()
+    m = mid(two, student, two.group)
+    barrier = threading.Barrier(2)
+
+    def archive_it(session):
+        barrier.wait()
+        return archive_call(two, student)(session)
+
+    def pay_it(session):
+        barrier.wait()
+        return PaymentService(session).create_payment(
+            str(two.org.id), m, str(two.owner.id), PaymentCreate(amount=450000, paid_on=business_today()))
+
+    t1, archived = run_in_thread(engine, archive_it)
+    t2, paid = run_in_thread(engine, pay_it)
+    t1.join(timeout=30)
+    t2.join(timeout=30)
+    assert "error" not in archived, archived.get("error")                               # the archiving always succeeds
+    assert "value" in paid or isinstance(paid.get("error"), StudentArchived), paid       # paid first, or refused: never a deadlock / 500
+    two.db.expire_all()
+    assert two.db.query(StudentPayment).filter_by(student_id=student.id).count() == (1 if "value" in paid else 0)
+    assert fresh(two, student).status == "archived" and not any(x.is_active for x in memberships(two, student))

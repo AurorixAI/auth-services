@@ -154,6 +154,11 @@ class CarryOverNotReplaceable(PaymentConflict):
     code = "CARRY_OVER_NOT_REPLACEABLE"
 
 
+class StudentArchived(PaymentConflict):
+    """The student left the centre: money is not entered on his closed memberships until he is brought back
+    (a payment can still be voided, and the history can be read)."""
+
+
 class ConcurrentEdit(PaymentConflict):
     """A deadlock with another edit of the same student; nothing was written, repeat the request."""
 
@@ -171,6 +176,7 @@ class PaymentFileUnsupported(PaymentError):
 
 
 CONCURRENT_EDIT_MESSAGE = "Операция совпала с другой правкой. Повторите."
+ARCHIVED_STUDENT_MESSAGE = "Ученик в архиве — сначала верните его"
 
 
 def is_deadlock(exc: BaseException) -> bool:
@@ -1145,7 +1151,17 @@ class PaymentService:
 
     # -------------------------------------------------------------- writing
 
-    def _membership(self, org_id: str, membership_id: UUID, *, lock: bool = False) -> StudentGroup:
+    def _membership(
+        self, org_id: str, membership_id: UUID, *, lock: bool = False, writable: bool = False
+    ) -> StudentGroup:
+        """The membership of this organisation (``lock``: FOR NO KEY UPDATE).
+
+        ``writable``: the caller is about to ENTER money (create / replace / set the fee): refused with 409
+        when the student is archived.  A void is not "entering money" and does not ask for it.  The student's
+        status is read by a statement of its own, AFTER the membership lock: the archiving holds the student
+        and the membership together, so whoever wins the membership lock sees its outcome (the joined read of
+        the first statement would still carry the snapshot from before the wait).  The student row is read,
+        never locked here - the lock order student -> membership -> payment is not touched."""
         query = (
             self.db.query(StudentGroup)
             .join(Student, Student.id == StudentGroup.student_id)
@@ -1163,13 +1179,21 @@ class PaymentService:
         membership = query.first()
         if not membership:
             raise PaymentNotFound("Членство не найдено")
+        if writable:
+            status = (
+                self.db.query(Student.status)
+                .filter(Student.id == membership.student_id)
+                .scalar()
+            )
+            if status == "archived":
+                raise StudentArchived(ARCHIVED_STUDENT_MESSAGE)
         return membership
 
     @deadlock_guard
     def set_fee(
         self, org_id: str, membership_id: UUID, actor_id: str, monthly_fee: Optional[int]
     ) -> MembershipPaymentRow:
-        membership = self._membership(org_id, membership_id, lock=True)
+        membership = self._membership(org_id, membership_id, lock=True, writable=True)
         membership.monthly_fee = monthly_fee
         membership.monthly_fee_updated_by = UUID(str(actor_id))
         membership.monthly_fee_updated_at = _utcnow()
@@ -1398,7 +1422,7 @@ class PaymentService:
         self, org_id: str, membership_id: UUID, actor_id: str, data: PaymentCreate
     ) -> PaymentCreated:
         try:
-            membership = self._membership(org_id, membership_id, lock=True)
+            membership = self._membership(org_id, membership_id, lock=True, writable=True)
             settings = self.get_settings(org_id)
             payment, warnings = self._insert(
                 membership, org_id, actor_id, data, settings, ps.business_today()
@@ -1455,7 +1479,7 @@ class PaymentService:
             probe = self._probe_payment(org_id, payment_id)
             if probe.carried_from_payment_id is not None:
                 raise CarryOverNotReplaceable("Перенос нельзя исправить — исправьте исходную оплату")
-            membership = self._membership(org_id, probe.membership_id, lock=True)
+            membership = self._membership(org_id, probe.membership_id, lock=True, writable=True)
             old = self._lock_payment(org_id, payment_id)
             old.voided_at = _utcnow()
             old.voided_by = UUID(str(actor_id))
