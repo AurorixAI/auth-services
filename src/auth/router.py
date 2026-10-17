@@ -30,10 +30,11 @@ from .student_archive import (
 )
 from . import import_service
 from .import_service import ImportPreviewResponse, ImportCommitResponse
-from src.api.rate_limit import client_bucket, enforce_rate_limit, hit_window, peek_window, rate_limit
+from src.api.rate_limit import client_bucket, client_ip, enforce_rate_limit, hit_window, peek_window, rate_limit
 from src.core.config import get_settings
 from src.core.exceptions import InvalidCredentialsError
 from . import login_throttle
+from .user_sessions import SessionClient
 from .cookies import (
     AUTH_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -145,8 +146,18 @@ def _token_response_with_cookies(tokens: TokenPair) -> JSONResponse:
     return resp
 
 
-def _svc(db: Session) -> AuthService:
-    return AuthService(db)
+def _session_client(request: Optional[Request]) -> Optional[SessionClient]:
+    """Where a sign-in / refresh came from, for the session row: the TRUSTED client address (the same helper the
+    login throttle counts with: X-Real-IP set by nginx, never a header the client chose) and the user agent."""
+    if request is None:
+        return None
+    ip = client_ip(request)
+    return SessionClient(ip=None if ip == "unknown" else ip, user_agent=request.headers.get("user-agent"))
+
+
+def _svc(db: Session, request: Optional[Request] = None) -> AuthService:
+    """The service; pass the HTTP request on every route that creates or rotates a session."""
+    return AuthService(db, _session_client(request))
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
@@ -179,6 +190,7 @@ def login(
     request: LoginRequest,
     bucket: str = Depends(login_throttle.enforce_login_ip_limits),
     db: Session = Depends(get_db),
+    raw_request: Request = None,
 ):
     """Вход в систему — возвращает JWT + org info.
 
@@ -191,7 +203,7 @@ def login(
     паузу не попадают). Ответ 429 + Retry-After выдаётся до поиска пользователя и проверки пароля."""
     attempt = login_throttle.begin(login_throttle.SCOPE_LOGIN, request.email, bucket)
     try:
-        result = _svc(db).login(request)
+        result = _svc(db, raw_request).login(request)
     except (InvalidCredentialsError, ValueError) as e:
         attempt.failed()  # unknown, inactive and wrong-password accounts are all counted the same way
         if isinstance(e, ValueError):  # never echo a library message: the one standard refusal
@@ -225,7 +237,7 @@ def refresh_tokens(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "refresh_token required")
     enforce_rate_limit(hash_token(rt), REFRESH_TOKEN_LIMIT, endpoint="auth-refresh-token")
     try:
-        tokens = _svc(db).refresh_tokens(rt)
+        tokens = _svc(db, raw_request).refresh_tokens(rt)
         return _token_response_with_cookies(tokens)
     except ValueError as e:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
@@ -249,10 +261,10 @@ def get_invite_info(code: str, db: Session = Depends(get_db)):
     status_code=201,
     dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint=INVITE_ACCEPT_RATE_ENDPOINT))],
 )
-def accept_invite(request: AcceptInviteRequest, db: Session = Depends(get_db)):
+def accept_invite(request: AcceptInviteRequest, db: Session = Depends(get_db), raw_request: Request = None):
     """Принять приглашение в организацию — создаёт аккаунт"""
     try:
-        result = _svc(db).accept_invitation(request)
+        result = _svc(db, raw_request).accept_invitation(request)
         resp = _auth_response_with_cookies(result)
         resp.status_code = 201
         return resp
@@ -295,13 +307,14 @@ def admin_approve_organization(
 def activate_account(
     request: ActivateAccountRequest,
     db: Session = Depends(get_db),
+    raw_request: Request = None,
 ):
     """
     Активация аккаунта по токену из письма.
     Активирует организацию и владельца, возвращает JWT.
     """
     try:
-        result = _svc(db).activate_account(request.token)
+        result = _svc(db, raw_request).activate_account(request.token)
         return _auth_response_with_cookies(result)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
@@ -511,9 +524,10 @@ def logout(
     - No credential at all (no auth cookie, no Bearer header): nothing to clear, so 200 WITHOUT any
       Set-Cookie.
     - Otherwise both cookies are ALWAYS cleared, also when the access token inside the (30-day)
-      cookie has expired. The session is revoked server-side when a valid access token identifies the
-      user, or when the refresh cookie is that user's CURRENT refresh token; any other cookie is
-      just removed from the browser.
+      cookie has expired. The session of THIS device (the user may be signed in on others) is revoked
+      server-side when the refresh cookie is that session's CURRENT refresh token; any other cookie is
+      just removed from the browser. A request with an access token only identifies the user, not a
+      device, so it revokes no session.
     """
     if _is_cross_site_request(request):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Запрос выхода должен приходить с сайта ALGO")
@@ -527,11 +541,14 @@ def logout(
         return resp
 
     svc = _svc(db)
-    user_id = _access_subject(request, credentials)
-    if user_id:
-        svc.logout(user_id)
-    elif refresh:
+    if refresh:
+        # The refresh cookie names this device's session: exactly that one is revoked (a token that was rotated
+        # away or is unknown revokes nothing). The user's other devices stay signed in (#101).
         svc.logout_by_refresh_token(refresh)
+    else:
+        user_id = _access_subject(request, credentials)
+        if user_id:
+            svc.logout(user_id)  # an access token names the user, not the device: nothing to revoke
     return clear_auth_cookies(resp)
 
 

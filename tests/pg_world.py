@@ -217,3 +217,21 @@ def make_client(w, user=None, org="own", org_role=None, role=None):
     app.dependency_overrides[get_db] = lambda: w.db
     app.dependency_overrides[get_current_active_user_payload] = lambda: payload
     return TestClient(app)
+
+
+@pytest.fixture
+def session_clock(monkeypatch):
+    """Move the clock of the session logic (src/auth/user_sessions.py) forward: ``session_clock.advance(61)``."""
+    from datetime import timedelta as _td
+
+    from src.auth import user_sessions
+
+    real_now, state = user_sessions._now, {"offset": _td()}
+    monkeypatch.setattr(user_sessions, "_now", lambda: real_now() + state["offset"])
+
+    class Clock:
+        @staticmethod
+        def advance(seconds):
+            state["offset"] += _td(seconds=seconds)
+
+    return Clock

@@ -7,6 +7,7 @@ from src.models.base import Base
 from src.models.auth import (
     Organization,
     User,
+    UserSession,
     OrganizationMember,
     Invitation,
     Student,
@@ -39,6 +40,7 @@ __all__ = [
     # Auth
     "Organization",
     "User",
+    "UserSession",
     "OrganizationMember",
     "Invitation",
     "Student",

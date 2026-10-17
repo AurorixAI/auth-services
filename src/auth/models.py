@@ -7,6 +7,7 @@ This file now simply re-exports them to prevent breaking existing imports.
 from src.models.auth import (
     Organization,
     User,
+    UserSession,
     OrganizationMember,
     Invitation,
     Student,
@@ -29,6 +30,7 @@ from src.models.auth import (
 __all__ = [
     "Organization",
     "User",
+    "UserSession",
     "OrganizationMember",
     "Invitation",
     "Student",

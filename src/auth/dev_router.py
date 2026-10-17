@@ -4,10 +4,11 @@ ALGO V1 - Dev Router (Quick Login for Development)
 НЕ ИСПОЛЬЗОВАТЬ В PRODUCTION!
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from typing import Optional
 from sqlalchemy.orm import Session
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .models import Organization, User, OrganizationMember
 from .service import (
@@ -16,9 +17,11 @@ from .service import (
     create_refresh_token,
     hash_token,
     ACCESS_TOKEN_EXPIRE_MINUTES,
+    REFRESH_TOKEN_EXPIRE_DAYS,
 )
 from .schemas import AuthResponse, UserResponse, TokenPair, OrgResponse
 from .cookies import set_auth_cookies
+from . import user_sessions
 
 from src.core.database import get_db
 
@@ -53,10 +56,23 @@ DEV_PASSWORD = "dev123"
 DEV_ORG_NAME = "ALGO Dev Organization"
 
 
+def _session_client(request: Optional[Request]) -> Optional[user_sessions.SessionClient]:
+    """The trusted client address and the user agent of the quick-login request (see router._session_client)."""
+    if request is None:
+        return None
+    from src.api.rate_limit import client_ip  # late: src.api imports this module while it is being initialised
+
+    ip = client_ip(request)
+    return user_sessions.SessionClient(
+        ip=None if ip == "unknown" else ip, user_agent=request.headers.get("user-agent")
+    )
+
+
 @router.post("/dev-login", response_model=AuthResponse)
 def dev_login(
     role: str = Query(..., description="Role: owner, admin, teacher"),
     db: Session = Depends(get_db),
+    raw_request: Request = None,
 ):
     """
     DEV ONLY: Quick login as any role.
@@ -143,7 +159,14 @@ def dev_login(
         str(user.id), user.role, str(org.id), config["org_role"]
     )
     refresh = create_refresh_token(str(user.id))
-    user.refresh_token_hash = hash_token(refresh)
+    # A new session per quick-login (several browsers can be signed in as the same dev user, #101).
+    user_sessions.issue(
+        db,
+        user.id,
+        hash_token(refresh),
+        timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+        _session_client(raw_request),
+    )
 
     db.commit()
 

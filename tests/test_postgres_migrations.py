@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
-HEAD='z6a7b8c9d0e'          # membership periods (N13 tails, #59)
+HEAD='a7b8c9d0e1f'          # user sessions (N13 tails, #101)
+PERIODS='z6a7b8c9d0e'       # membership periods (N13 tails, #59): the revision before the sessions
 INVITES='y5z6a7b8c9d'       # diagnostic invite «cancelled» (N13 tails, #89)
 ARCHIVE='x4y5z6a7b8c'       # student archive (N13)
 PREVIOUS='w3x4y5z6a7b'      # lesson type and payroll (N13 P3): the revision before the archive
@@ -63,6 +64,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     _check_n13_archive_objects(engine,config,ids,monkeypatch)
     _check_n13_invite_cancelled_objects(engine,config,ids)
     _check_n13_periods_objects(engine,config,ids)
+    _check_n13_sessions_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -734,3 +736,101 @@ def _check_n13_periods_objects(engine,config,ids):
     command.stamp(config,INVITES)
     command.upgrade(config,'head')
     assert {k:v for k,v in periods().items() if k in mem.values()}=={k:v for k,v in got.items() if k in mem.values() and k!=mem[9]}
+
+
+def _check_n13_sessions_objects(engine,config,ids):
+    """#101: ``user_sessions`` - the table, the backfill of the legacy ``users.refresh_token_hash`` (a legacy token keeps
+    working through the new code), idempotence, and the downgrade that makes the legacy column true again."""
+    from datetime import timedelta
+    from sqlalchemy.exc import IntegrityError
+    from src.auth.service import AuthService,create_refresh_token,hash_token
+    from src.auth.user_sessions import MAX_ACTIVE_SESSIONS
+    from src.models.auth import User
+    # --- the table as the head leaves it
+    assert 'user_sessions' in inspect(engine).get_table_names()
+    c={x['name']:x for x in inspect(engine).get_columns('user_sessions')}
+    assert set(c)=={'id','user_id','refresh_token_hash','previous_token_hash','rotated_at','created_at','last_used_at','expires_at','revoked_at','revoke_reason','user_agent','ip'}
+    assert all(not c[n]['nullable'] for n in ('user_id','refresh_token_hash','created_at','last_used_at','expires_at'))
+    assert all(c[n]['nullable'] for n in ('previous_token_hash','rotated_at','revoked_at','revoke_reason','user_agent','ip'))
+    assert c['revoke_reason']['type'].length==40 and c['user_agent']['type'].length==200 and c['ip']['type'].length==64
+    assert {i['name'] for i in inspect(engine).get_indexes('user_sessions')} >= {'ix_user_sessions_user_active','ix_user_sessions_previous_hash','ix_user_sessions_expires_at'}
+    with engine.connect() as conn:   # the partial predicates
+        defs=dict(conn.execute(text("SELECT indexname,indexdef FROM pg_indexes WHERE tablename='user_sessions'")).all())
+    assert 'revoked_at IS NULL' in defs['ix_user_sessions_user_active'] and 'previous_token_hash IS NOT NULL' in defs['ix_user_sessions_previous_hash']
+    assert MAX_ACTIVE_SESSIONS==20
+    def user(n,token_hash=None):
+        uid=uuid4()
+        with Session(engine) as db:
+            db.add(User(id=uid,email=f'sess-{n}-{uid}@m.invalid',password_hash='synthetic-only',first_name='S',last_name=str(n),role='teacher',is_active=True,refresh_token_hash=token_hash)); db.commit()
+        return uid
+    def sessions_of(uid):
+        with engine.connect() as conn:
+            return conn.execute(text('SELECT refresh_token_hash,previous_token_hash,rotated_at,created_at,last_used_at,expires_at,revoked_at,revoke_reason,user_agent,ip FROM user_sessions WHERE user_id=:u ORDER BY created_at,id'),{'u':uid}).all()
+    def insert_session(uid,token_hash,last_used='2026-10-01 10:00:00',revoked=False):
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO user_sessions (id,user_id,refresh_token_hash,created_at,last_used_at,expires_at,revoked_at,revoke_reason) VALUES (gen_random_uuid(),:u,:h,CAST(:l AS timestamp),CAST(:l AS timestamp),'2099-01-01 00:00:00',CASE WHEN :r THEN CAST(:l AS timestamp) END,CASE WHEN :r THEN 'logout' END)"),{'u':uid,'h':token_hash,'l':last_used,'r':revoked})
+    # the hash is unique, and the sessions go with their user (CASCADE)
+    victim=user('cascade'); insert_session(victim,'dup-hash')
+    with pytest.raises(IntegrityError,match='uq_user_sessions_refresh_token_hash'):
+        insert_session(user('dup'),'dup-hash')
+    with engine.begin() as conn:
+        conn.execute(text('DELETE FROM users WHERE id=:u'),{'u':victim})
+    assert sessions_of(victim)==[]
+    # --- the state BEFORE the revision: one refresh token per user, in the users row (raw SQL: the models are newer)
+    command.downgrade(config,PERIODS)
+    assert 'user_sessions' not in inspect(engine).get_table_names()
+    u_legacy=user('legacy'); u_other=user('other'); u_none=user('none'); u_empty=user('empty','')
+    real_token=create_refresh_token(str(u_legacy)); other_token=create_refresh_token(str(u_other))
+    with engine.begin() as conn:
+        conn.execute(text('UPDATE users SET refresh_token_hash=:h WHERE id=:u'),{'h':hash_token(real_token),'u':u_legacy})
+        conn.execute(text('UPDATE users SET refresh_token_hash=:h WHERE id=:u'),{'h':hash_token(other_token),'u':u_other})
+    command.upgrade(config,'head')
+    # --- the backfill: ONE session per user that had a token, none for the others
+    for uid,token in ((u_legacy,real_token),(u_other,other_token)):
+        (row,)=sessions_of(uid)
+        assert row.refresh_token_hash==hash_token(token) and row.previous_token_hash is None and row.rotated_at is None
+        assert row.revoked_at is None and row.revoke_reason is None and row.user_agent is None and row.ip is None
+        assert row.created_at==row.last_used_at and row.expires_at-row.created_at==timedelta(days=30)
+        assert abs((row.created_at-datetime.utcnow()).total_seconds())<600   # naive UTC "now"
+    assert sessions_of(u_none)==[] and sessions_of(u_empty)==[]
+    with engine.connect() as conn:   # the legacy column is kept as it was
+        assert conn.execute(text('SELECT refresh_token_hash FROM users WHERE id=:u'),{'u':u_legacy}).scalar_one()==hash_token(real_token)
+    # --- a token issued BEFORE the migration works after it, and rotates only its own session
+    with Session(engine) as db:
+        pair=AuthService(db).refresh_tokens(real_token)
+    assert pair.refresh_token!=real_token
+    (row,)=sessions_of(u_legacy)
+    assert row.refresh_token_hash==hash_token(pair.refresh_token) and row.previous_token_hash==hash_token(real_token) and row.rotated_at is not None
+    assert sessions_of(u_other)[0].refresh_token_hash==hash_token(other_token)    # the other user's session did not move
+    with Session(engine) as db:
+        pair=AuthService(db).refresh_tokens(pair.refresh_token)    # and the new token keeps rotating
+    # --- idempotent: the same revision again (stamped back) adds nothing - the legacy column still holds the hash
+    #     of the FIRST token, which the code has rotated away since, and it must not come back to life
+    with engine.connect() as conn:
+        count_before=conn.execute(text('SELECT count(*) FROM user_sessions')).scalar_one()
+    command.stamp(config,PERIODS)
+    command.upgrade(config,'head')
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT count(*) FROM user_sessions')).scalar_one()==count_before
+    with pytest.raises(ValueError,match='отозван'):
+        with Session(engine) as db:
+            AuthService(db).refresh_tokens(real_token)    # the first token: rotated away long ago (no grace left to take)
+    # --- the downgrade makes the legacy column true again: per user the CURRENT token of the live session used last;
+    #     a stale hash never revives a signed-out or rotated-away token; users without a live session get NULL
+    u_multi,u_dead=user('multi'),user('dead',hash_token('stale-legacy-hash'))
+    insert_session(u_multi,'multi-old','2026-10-01 10:00:00'); insert_session(u_multi,'multi-newest','2026-10-02 10:00:00'); insert_session(u_multi,'multi-revoked','2026-10-03 10:00:00',revoked=True)
+    insert_session(u_dead,'dead-revoked','2026-10-01 10:00:00',revoked=True)
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE users SET refresh_token_hash='stale-legacy-hash' WHERE id=:u"),{'u':u_multi})
+    live_other=sessions_of(u_other)[0].refresh_token_hash
+    command.downgrade(config,PERIODS)
+    assert 'user_sessions' not in inspect(engine).get_table_names()
+    with engine.connect() as conn:
+        legacy=dict(conn.execute(text('SELECT id,refresh_token_hash FROM users WHERE id=ANY(:ids)'),{'ids':[u_multi,u_dead,u_legacy,u_other,u_none,u_empty]}).all())
+    assert legacy[u_multi]=='multi-newest' and legacy[u_dead] is None and legacy[u_none] is None
+    assert legacy[u_other]==live_other and legacy[u_legacy]==hash_token(pair.refresh_token)
+    assert legacy[u_empty] is None
+    command.upgrade(config,'head')
+    assert [r.refresh_token_hash for r in sessions_of(u_multi)]==['multi-newest'] and sessions_of(u_dead)==[]
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD

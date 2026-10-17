@@ -32,6 +32,7 @@ import src.auth.cookies as cookies_module  # noqa: E402
 from src.api import main_v2  # noqa: E402
 import src.auth.router as auth_router_module  # noqa: E402
 import src.auth.service as service_module  # noqa: E402
+from src.auth import user_sessions  # noqa: E402
 from src.auth.cookies import (  # noqa: E402
     AUTH_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -53,7 +54,7 @@ from src.core.config import get_settings  # noqa: E402
 from src.core.database import get_db  # noqa: E402
 from src.core.exceptions import AlgoException  # noqa: E402
 
-from tests.pg_world import needs_pg, pg_session, world  # noqa: E402,F401  (fixtures)
+from tests.pg_world import needs_pg, pg_session, session_clock, world  # noqa: E402,F401  (fixtures)
 
 THIRTY_DAYS = 30 * 86400
 API = "/api/v1/auth"
@@ -498,9 +499,13 @@ def login(w):
     return r
 
 
-def stored_refresh_hash(w):
+def live_hashes(w, user=None):
+    """The CURRENT refresh-token hashes of the user's live (not revoked) sessions."""
+    from src.models.auth import UserSession
+
     w.db.expire_all()
-    return w.owner.refresh_token_hash
+    rows = w.db.query(UserSession).filter(UserSession.user_id == (user or w.owner).id, UserSession.revoked_at.is_(None))
+    return {row.refresh_token_hash for row in rows}
 
 
 @needs_pg
@@ -514,7 +519,7 @@ def test_login_sets_a_30_day_access_cookie_holding_a_60_minute_jwt(session_world
 
 
 @needs_pg
-def test_idle_hour_flow_expired_cookie_401_then_refresh_then_retry_works(session_world):
+def test_idle_hour_flow_expired_cookie_401_then_refresh_then_retry_works(session_world, session_clock):
     w = session_world
     refresh_cookie = set_cookies(login(w))[REFRESH_COOKIE_NAME].value
     stale = expired_access_token(str(w.owner.id), "owner")
@@ -534,7 +539,8 @@ def test_idle_hour_flow_expired_cookie_401_then_refresh_then_retry_works(session
     r = w.client.get(f"{API}/me", headers=cookie_header(access=access.value, refresh=refresh.value))
     assert r.status_code == 200 and r.json()["id"] == str(w.owner.id)
 
-    # the rotated-away refresh token is dead
+    # the rotated-away refresh token is dead once the 60 s grace (a concurrent tab of the same browser) is over
+    session_clock.advance(61)
     r = w.client.post(f"{API}/refresh", json={}, headers=cookie_header(refresh=refresh_cookie))
     assert r.status_code == 401
 
@@ -554,7 +560,7 @@ def test_retry_with_a_bearer_token_works_even_when_the_stale_cookie_is_still_in_
 def test_expired_cookie_with_a_revoked_refresh_token_is_401_everywhere(session_world):
     w = session_world
     refresh_cookie = set_cookies(login(w))[REFRESH_COOKIE_NAME].value
-    w.owner.refresh_token_hash = None  # password change / logout elsewhere
+    user_sessions.revoke_all(w.db, w.owner.id, "password_changed")  # password change elsewhere
     w.db.commit()
     stale = expired_access_token(str(w.owner.id), "owner")
     assert w.client.get(f"{API}/me", headers=cookie_header(access=stale, refresh=refresh_cookie)).status_code == 401
@@ -576,13 +582,13 @@ def test_login_works_while_a_stale_access_cookie_is_present(session_world):
 def test_logout_with_an_expired_access_cookie_revokes_the_session_and_clears_both_cookies(session_world):
     w = session_world
     refresh_cookie = set_cookies(login(w))[REFRESH_COOKIE_NAME].value
-    assert stored_refresh_hash(w) is not None
+    assert live_hashes(w) == {hash_token(refresh_cookie)}
     stale = expired_access_token(str(w.owner.id), "owner")
 
     r = w.client.post(f"{API}/logout", headers=cookie_header(access=stale, refresh=refresh_cookie))
     assert r.status_code == 200
     assert_cleared(r)
-    assert stored_refresh_hash(w) is None
+    assert live_hashes(w) == set()
     assert w.client.post(f"{API}/refresh", json={}, headers=cookie_header(refresh=refresh_cookie)).status_code == 401
 
 
@@ -594,12 +600,12 @@ def test_logout_with_a_rotated_away_refresh_token_clears_cookies_but_keeps_the_c
     stale = expired_access_token(str(w.owner.id), "owner")
     rotated = w.client.post(f"{API}/refresh", json={}, headers=cookie_header(refresh=old_refresh))
     current_hash = hash_token(set_cookies(rotated)[REFRESH_COOKIE_NAME].value)
-    assert stored_refresh_hash(w) == current_hash
+    assert live_hashes(w) == {current_hash}
 
     r = w.client.post(f"{API}/logout", headers=cookie_header(access=stale, refresh=old_refresh))
     assert r.status_code == 200
     assert_cleared(r)  # this browser forgets its stale cookies ...
-    assert stored_refresh_hash(w) == current_hash  # ... but the live session (another tab/device) lives on
+    assert live_hashes(w) == {current_hash}  # ... but the live session (another tab/device) lives on
 
 
 @needs_pg
@@ -610,9 +616,9 @@ def test_logout_by_refresh_token_service_rules(session_world):
     assert service.logout_by_refresh_token("garbage") is False
     assert service.logout_by_refresh_token(create_access_token(str(w.owner.id), "owner")) is False  # wrong type
     assert service.logout_by_refresh_token(create_refresh_token(str(w.owner.id))) is False  # signed, not the current one
-    assert stored_refresh_hash(w) == hash_token(refresh)
+    assert live_hashes(w) == {hash_token(refresh)}
     assert service.logout_by_refresh_token(refresh) is True
-    assert stored_refresh_hash(w) is None
+    assert live_hashes(w) == set()
     assert service.logout_by_refresh_token(refresh) is False  # already signed out
 
 
@@ -625,7 +631,7 @@ def test_logout_with_a_valid_session_revokes_it_and_clears_both_cookies(session_
     )
     assert r.status_code == 200
     assert_cleared(r)
-    assert stored_refresh_hash(session_world) is None
+    assert live_hashes(session_world) == set()
 
 
 @needs_pg
@@ -633,9 +639,9 @@ def test_logout_never_touches_another_users_session(session_world):
     w = session_world
     login(w)
     other = w.admin
-    other.refresh_token_hash = "someone-elses"
+    theirs = hash_token(f"someone-elses-{other.id}")
+    user_sessions.issue(w.db, other.id, theirs, timedelta(days=30))
     w.db.commit()
     jar = set_cookies(login(w))
-    w.client.post(f"{API}/logout", headers=cookie_header(access=jar[AUTH_COOKIE_NAME].value))
-    w.db.expire_all()
-    assert other.refresh_token_hash == "someone-elses"
+    w.client.post(f"{API}/logout", headers=cookie_header(access=jar[AUTH_COOKIE_NAME].value, refresh=jar[REFRESH_COOKIE_NAME].value))
+    assert live_hashes(w, other) == {theirs}

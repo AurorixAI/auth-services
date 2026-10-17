@@ -24,6 +24,7 @@ from sqlalchemy import func, or_
 
 from . import payment_status as ps
 from . import student_identity
+from . import user_sessions
 from .student_id_service import assign_display_id
 from .attendance_excuses import AttendanceExcuseService
 from .diagnostic_level import level_fields, normalize_level_payload
@@ -326,8 +327,10 @@ class _SchedulePreload:
 
 
 class AuthService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, client: Optional[user_sessions.SessionClient] = None):
         self.db = db
+        # Where the request came from (trusted address + user agent), recorded on the sessions this service creates.
+        self.client = client
 
     # ─── Helpers ───
 
@@ -378,16 +381,29 @@ class AuthService:
             created_at=org.created_at.isoformat() if org.created_at else None,
         )
 
-    def _create_tokens(self, user: User) -> TokenPair:
+    def _issue_token_pair(self, user: User) -> TokenPair:
+        """A fresh access + refresh JWT. Records nothing: the refresh token belongs to a session row, see below."""
         org_id, org_role, _ = self._get_user_org_info(user)
         access = create_access_token(str(user.id), user.role, org_id, org_role)
         refresh = create_refresh_token(str(user.id))
-        user.refresh_token_hash = hash_token(refresh)
         return TokenPair(
             access_token=access,
             refresh_token=refresh,
             expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         )
+
+    def _create_tokens(self, user: User) -> TokenPair:
+        """A sign-in: a token pair and a NEW session of this user (one row per signed-in device); the user's other
+        sessions are not touched (#101)."""
+        tokens = self._issue_token_pair(user)
+        user_sessions.issue(
+            self.db,
+            user.id,
+            hash_token(tokens.refresh_token),
+            timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+            self.client,
+        )
+        return tokens
 
     # ═══════════════════════════════════════════════════════════════════
     # 1. ORG APPLICATION — заявка на регистрацию организации + владелец
@@ -626,35 +642,46 @@ class AuthService:
         user = self.db.query(User).filter(User.id == payload.get("sub")).first()
         if not user or not user.is_active:
             raise ValueError("Пользователь не найден или заблокирован")
-        if user.refresh_token_hash != hash_token(refresh_token):
+
+        # The session of THIS device (found by the hash of the token, row locked); the user's other devices keep
+        # their own sessions (#101, user_sessions.py). A replayed old token revokes its session, and that
+        # revocation must be committed before the refusal, which rolls the request back.
+        ttl = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        claim = user_sessions.claim(self.db, user.id, hash_token(refresh_token))
+        if claim is None:
+            self.db.commit()
             raise ValueError("Refresh token отозван")
 
-        tokens = self._create_tokens(user)
+        tokens = self._issue_token_pair(user)
+        user_sessions.rotate(self.db, claim.session, hash_token(tokens.refresh_token), ttl, self.client)
         self.db.commit()
         return tokens
 
     def logout(self, user_id: str) -> None:
-        user = self.db.query(User).filter(User.id == user_id).first()
-        if user:
-            user.refresh_token_hash = None
-            self.db.commit()
+        """Sign-out from an ACCESS token alone (no refresh token at hand): revokes nothing.
+
+        An access JWT names the user, not the device, and a user may be signed in on several devices; revoking
+        "all of them" would sign out the other devices (the defect #101 fixed). The caller clears the browser's
+        cookies, and the access token itself dies within its lifetime. A request that carries the refresh cookie
+        is handled by ``logout_by_refresh_token``, which does revoke that device's session.
+        """
+        logger.debug("logout without a refresh token: user %s, no session identified, none revoked", user_id)
 
     def logout_by_refresh_token(self, refresh_token: str) -> bool:
-        """Sign out the session that *refresh_token* belongs to, when it is that user's CURRENT token.
+        """Sign out the session that *refresh_token* belongs to, when it is that session's CURRENT token.
 
         A refresh JWT that is merely correctly signed proves nothing about the live session: a token
         that was rotated away (or revoked) must not sign the user out of the session that replaced it.
+        Only that one session is revoked (reason ``logout``); the user's other devices stay signed in.
         Returns whether a session was revoked; a stale token only gets its cookies removed by the caller.
         """
         payload = verify_refresh_token(refresh_token)
         if not payload or not payload.get("sub"):
             return False
-        user = self.db.query(User).filter(User.id == payload["sub"]).first()
-        if not user or not user.refresh_token_hash:
+        if not user_sessions.revoke_by_current_token(
+            self.db, payload["sub"], hash_token(refresh_token), user_sessions.REVOKE_LOGOUT
+        ):
             return False
-        if not hmac.compare_digest(user.refresh_token_hash, hash_token(refresh_token)):
-            return False
-        user.refresh_token_hash = None
         self.db.commit()
         return True
 
@@ -670,7 +697,8 @@ class AuthService:
         if not verify_password(old_password, user.password_hash):
             raise ValueError("Неверный текущий пароль")
         user.password_hash = hash_password(new_password)
-        user.refresh_token_hash = None
+        # Every device signs in again with the new password.
+        user_sessions.revoke_all(self.db, user.id, user_sessions.REVOKE_PASSWORD_CHANGED)
         user.must_change_password = False  # cleared once they set their own
         self.db.commit()
         return True
@@ -902,8 +930,8 @@ class AuthService:
         if user:
             user.is_active = False
             # A removed staff member must not be able to mint a fresh access
-            # token with a previously issued refresh cookie.
-            user.refresh_token_hash = None
+            # token with a previously issued refresh cookie: all their sessions end.
+            user_sessions.revoke_all(self.db, user.id, user_sessions.REVOKE_USER_BLOCKED)
 
         self.db.commit()
         return True

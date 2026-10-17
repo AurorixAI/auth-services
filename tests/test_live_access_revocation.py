@@ -7,7 +7,7 @@ diagnostic services on every protected request.
 
 import os
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -118,7 +118,7 @@ def test_removing_member_revokes_its_refresh_token():
 
     db = MagicMock()
     member = SimpleNamespace(id=uuid4(), org_role="teacher", user_id=uuid4(), is_active=True)
-    user = SimpleNamespace(is_active=True, refresh_token_hash="active-refresh-token")
+    user = SimpleNamespace(id=uuid4(), is_active=True)
 
     def query(model):
         if model is OrganizationMember:
@@ -128,8 +128,9 @@ def test_removing_member_revokes_its_refresh_token():
         raise AssertionError(f"Unexpected model: {model}")
 
     db.query.side_effect = query
-    assert AuthService(db).remove_member(str(uuid4()), str(member.id)) is True
+    with patch("src.auth.service.user_sessions.revoke_all") as revoke_all:
+        assert AuthService(db).remove_member(str(uuid4()), str(member.id)) is True
     assert member.is_active is False
     assert user.is_active is False
-    assert user.refresh_token_hash is None
+    revoke_all.assert_called_once_with(db, user.id, "user_blocked")  # every session of the removed user ends
     db.commit.assert_called_once()

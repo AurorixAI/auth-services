@@ -43,6 +43,8 @@ class UserRepo(BaseRepository[User]):
         self.session.flush()
 
     def set_refresh_token_hash(self, user: User, token_hash: Optional[str]) -> None:
+        """LEGACY: ``users.refresh_token_hash`` is no longer read by the service (sessions live in ``user_sessions``,
+        see ``src/auth/user_sessions.py``); a later migration drops the column together with this helper."""
         user.refresh_token_hash = token_hash
         self.session.flush()
 

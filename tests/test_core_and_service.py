@@ -592,16 +592,14 @@ class TestAuthServiceExtended:
 
     # ─── logout ─────────────────────────────────────────────────────────
 
-    def test_logout_clears_refresh_token(self):
+    def test_logout_from_an_access_token_alone_revokes_no_session(self):
+        """#101: an access token names the user, not the device - signing out "all" would sign out the other
+        devices. The session of a device is revoked through its refresh token (logout_by_refresh_token)."""
         from uuid import uuid4
         service, db = self._make_service()
-        user = self._mock_user()
-        user.refresh_token_hash = "some-hash"
-        uid = str(uuid4())
-        db.query.return_value.filter.return_value.first.return_value = user
-        service.logout(uid)
-        assert user.refresh_token_hash is None
-        db.commit.assert_called()
+        service.logout(str(uuid4()))
+        db.execute.assert_not_called()
+        db.commit.assert_not_called()
 
     def test_logout_no_user_is_noop(self):
         service, db = self._make_service()
@@ -647,10 +645,11 @@ class TestAuthServiceExtended:
         user = self._mock_user()
         user.password_hash = hash_password("old_pass")
         db.query.return_value.filter.return_value.first.return_value = user
-        result = service.change_password("uid", "old_pass", "new_pass_valid")
+        with patch("src.auth.service.user_sessions.revoke_all") as revoke_all:
+            result = service.change_password("uid", "old_pass", "new_pass_valid")
         assert result is True
         assert verify_password("new_pass_valid", user.password_hash)
-        assert user.refresh_token_hash is None
+        revoke_all.assert_called_once_with(db, user.id, "password_changed")  # every device signs in again
         db.commit.assert_called()
 
     # ─── update_profile ─────────────────────────────────────────────────
@@ -756,14 +755,16 @@ class TestAuthServiceExtended:
             service.refresh_tokens(token)
 
     def test_refresh_tokens_hash_mismatch_raises(self):
-        from src.auth.service import create_refresh_token
+        from src.auth.service import create_refresh_token, hash_token
         service, db = self._make_service()
         token = create_refresh_token("user-1")
         user = self._mock_user(is_active=True)
-        user.refresh_token_hash = "wrong-hash"
         db.query.return_value.filter.return_value.first.return_value = user
-        with pytest.raises(ValueError, match="[Оо]тозван"):
-            service.refresh_tokens(token)
+        with patch("src.auth.service.user_sessions.claim", return_value=None) as claim:
+            with pytest.raises(ValueError, match="[Оо]тозван"):
+                service.refresh_tokens(token)
+        assert claim.call_args.args[1:] == (user.id, hash_token(token))  # looked up by the hash of the token
+        db.commit.assert_called()  # a replay revokes its session; that must survive the refusal
 
     # ─── generate_code ──────────────────────────────────────────────────
 
@@ -849,15 +850,18 @@ class TestAuthServiceExtended:
     # ─── _create_tokens (no org) ─────────────────────────────────────────
 
     def test_create_tokens_no_org(self):
-        from src.auth.service import TokenPair
+        from src.auth.service import TokenPair, hash_token
         service, db = self._make_service()
         user = self._mock_user(default_org_id=None, role="teacher")
-        result = service._create_tokens(user)
+        with patch("src.auth.service.user_sessions.issue") as issue:
+            result = service._create_tokens(user)
         assert isinstance(result, TokenPair)
         assert result.access_token
         assert result.refresh_token
-        # refresh_token_hash should be set on user
-        assert user.refresh_token_hash is not None
+        # a NEW session row for the hash of the refresh token (the legacy users column is not written any more)
+        issue.assert_called_once()
+        assert issue.call_args.args[:3] == (db, user.id, hash_token(result.refresh_token))
+        assert user.refresh_token_hash is None
 
     # ─── _build_user_response ────────────────────────────────────────────
 
@@ -925,11 +929,17 @@ class TestAuthServiceExtended:
         service, db = self._make_service()
         token = create_refresh_token("user-abc")
         user = self._mock_user(is_active=True, role="teacher", default_org_id=None)
-        user.refresh_token_hash = hash_token(token)
         db.query.return_value.filter.return_value.first.return_value = user
-        result = service.refresh_tokens(token)
+        session = MagicMock()
+        with patch("src.auth.service.user_sessions.claim", return_value=MagicMock(session=session, graced=False)):
+            with patch("src.auth.service.user_sessions.rotate") as rotate:
+                result = service.refresh_tokens(token)
         assert isinstance(result, TokenPair)
         assert result.access_token
+        assert result.refresh_token != token
+        # the session of THIS token gets the new token; nothing is written to the users row
+        assert rotate.call_args.args[1:3] == (session, hash_token(result.refresh_token))
+        assert user.refresh_token_hash is None
         db.commit.assert_called()
 
 
