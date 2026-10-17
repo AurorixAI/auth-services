@@ -1,4 +1,5 @@
 """The parts of the per-device session logic (ROADMAP #101) that need no database."""
+import json
 import os
 from unittest.mock import MagicMock
 
@@ -13,7 +14,7 @@ import src.api.internal_router  # noqa: E402,F401  (import order: avoids a pre-e
 import src.auth.router as auth_router  # noqa: E402
 from src.auth import user_sessions  # noqa: E402
 from src.auth.service import AuthService, create_access_token, create_refresh_token  # noqa: E402
-from tests.test_session_cookies import API, client_for, cookie_header  # noqa: E402
+from tests.test_session_cookies import API, assert_cleared, client_for, cookie_header, expired_access_token  # noqa: E402
 
 
 def request_with(headers=None, peer="198.51.100.1"):
@@ -87,3 +88,62 @@ def test_logout_by_a_garbage_refresh_token_touches_no_row():
     db = MagicMock()
     assert AuthService(db).logout_by_refresh_token("garbage") is False
     assert db.method_calls == []
+
+
+# ---- the body of /auth/logout is read by anybody's request: it is bounded and can never break the route ---------
+
+HOSTILE_BODIES = [
+    ("deeply nested, small enough to be read: the parser runs out of recursion", "[" * 2000 + "]" * 2000, "application/json"),
+    ("deeply nested and oversized", "[" * 100_000, "application/json"),
+    ("a valid token inside an oversized object", json.dumps({"refresh_token": "x" * 10, "pad": "y" * 5000}), "application/json"),
+    ("not JSON", "not json at all", "application/json"),
+    ("a list", "[1, 2]", "application/json"),
+    ("an empty body", "", "application/json"),
+    ("a token that is not a string", '{"refresh_token": 5}', "application/json"),
+    ("a form", "refresh_token=x", "application/x-www-form-urlencoded"),
+    ("invalid UTF-8", b'{"refresh_token": "\xff\xfe"}', "application/json"),
+]
+
+
+@pytest.mark.parametrize("why,body,content_type", HOSTILE_BODIES, ids=[h[0][:30] for h in HOSTILE_BODIES])
+def test_logout_with_a_hostile_body_is_200_and_clears_the_cookies(calls, why, content_type, body):
+    r = client_for().post(
+        f"{API}/logout",
+        content=body,
+        headers={**cookie_header(access=expired_access_token("u-9")), "content-type": content_type},
+    )
+    assert r.status_code == 200, (why, r.status_code, r.text[:200])
+    assert_cleared(r)
+    assert calls == []  # no token came out of it
+
+
+def test_a_chunked_body_without_a_length_is_cut_at_the_limit():
+    r = client_for().post(
+        f"{API}/logout",
+        content=iter([b"[" * 1000] * 20),  # chunked, no Content-Length, 20 KB
+        headers={**cookie_header(access=expired_access_token("u-9")), "content-type": "application/json"},
+    )
+    assert r.status_code == 200, r.text[:200]
+    assert_cleared(r)
+
+
+@pytest.mark.parametrize("body", ["[" * 2000 + "]" * 2000, "[" * 100_000], ids=["nested", "oversized"])
+def test_a_cross_site_logout_with_a_deeply_nested_body_is_403_not_500(calls, body):
+    r = client_for().post(
+        f"{API}/logout",
+        content=body,
+        headers={**cookie_header(access=expired_access_token("u-9")), "content-type": "application/json", "sec-fetch-site": "cross-site"},
+    )
+    assert r.status_code == 403
+    assert "set-cookie" not in r.headers and calls == []
+
+
+def test_a_json_body_with_a_charset_and_a_token_is_still_read(calls):
+    token = create_refresh_token("u-1")
+    r = client_for().post(
+        f"{API}/logout",
+        content=json.dumps({"refresh_token": token}),
+        headers={**cookie_header(access=expired_access_token("u-1")), "content-type": "application/json; charset=utf-8"},
+    )
+    assert r.status_code == 200
+    assert calls == [("refresh", token)]

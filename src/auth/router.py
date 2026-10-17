@@ -513,16 +513,35 @@ def _access_subject(
     return None
 
 
+LOGOUT_BODY_MAX_BYTES = 4096  # a refresh token is ~250 bytes; the body of an unauthenticated route stays tiny
+
+
 async def _refresh_token_in_body(request: Request) -> Optional[str]:
-    """The ``refresh_token`` of a JSON body, as /auth/refresh accepts it. Lenient: no body, another content type or
-    a body that is not a JSON object just mean "none" (logout has never answered 422)."""
+    """The ``refresh_token`` of a JSON body, as /auth/refresh accepts it, or None.
+
+    The route is open to anybody (the CSRF check runs AFTER this dependency), so the body is read only when it is
+    declared JSON and is at most ``LOGOUT_BODY_MAX_BYTES`` long (the Content-Length header AND the bytes actually
+    received, so a chunked or lying request is cut at the limit). Anything else - another content type, a big body,
+    not JSON, a list, deep nesting that exhausts the parser's recursion - just means "no token" and NEVER raises:
+    logout has never answered 422 or 500 for its body.
+    """
     try:
-        raw = await request.body()
+        media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if media_type != "application/json" and not media_type.endswith("+json"):
+            return None
+        declared = request.headers.get("content-length")
+        if declared is not None and (not declared.strip().isdigit() or int(declared) > LOGOUT_BODY_MAX_BYTES):
+            return None
+        raw = b""
+        async for chunk in request.stream():
+            raw += chunk
+            if len(raw) > LOGOUT_BODY_MAX_BYTES:
+                return None
         data = json.loads(raw) if raw else None
-    except ValueError:  # not JSON / not UTF-8
+        token = data.get("refresh_token") if isinstance(data, dict) else None
+        return token if isinstance(token, str) and token.strip() else None
+    except Exception:  # noqa: BLE001 - not JSON / not UTF-8 / RecursionError / a dropped connection: no token
         return None
-    token = data.get("refresh_token") if isinstance(data, dict) else None
-    return token if isinstance(token, str) and token.strip() else None
 
 
 @router.post("/logout", response_model=MessageResponse)
@@ -543,7 +562,7 @@ def logout(
       server-side when the refresh token is a live token of that session or was superseded at most 60 s
       ago (the browser just raced a refresh); an older superseded token, or any other cookie, is just
       removed from the browser. The refresh token is the cookie or, as in /auth/refresh, ``refresh_token``
-      in the JSON body (the cookie wins when both are present). A request with an access token only
+      in a small (<= 4 KB) JSON body (the cookie wins when both are present). A request with an access token only
       identifies the user, not a device, so it revokes no session.
     """
     if _is_cross_site_request(request):
