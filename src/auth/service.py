@@ -37,6 +37,7 @@ from .membership_periods import (
 from .student_archive import (
     ARCHIVED,
     ARCHIVED_STUDENT_INVITE_MESSAGE,
+    INVITE_CANCEL_REASON,
     INVITE_CANCELLED_MESSAGE,
     ArchiveConflict,
     archive_stamp,
@@ -1713,6 +1714,74 @@ class AuthService:
         if cancelled:
             raise ValueError(INVITE_CANCELLED_MESSAGE)
 
+    @staticmethod
+    def _verified_session_start(invite: DiagnosticInvite, raw_started_at: Any) -> datetime:
+        """The moment the engine's session started (aware UTC), checked against the invite's own time bounds:
+        after it was confirmed, not in the future, before it expired.  Anything else is not a start we can trust."""
+        try:
+            started_at = datetime.fromisoformat(str(raw_started_at or "").replace("Z", "+00:00"))
+            started_at = started_at.replace(tzinfo=timezone.utc) if started_at.tzinfo is None else started_at
+            confirmed_at = invite.confirmed_at
+            if confirmed_at and confirmed_at.tzinfo is None:
+                confirmed_at = confirmed_at.replace(tzinfo=timezone.utc)
+            expires_at = invite.expires_at
+            if expires_at and expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if not confirmed_at or started_at < confirmed_at or started_at > datetime.now(timezone.utc):
+                raise ValueError("Unconfirmed start")
+            if expires_at and started_at >= expires_at:
+                raise ValueError("Start after expiry")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Не подтверждён допустимый старт сессии диагностики") from exc
+        return started_at
+
+    def _revive_cancelled_invite(
+        self, code: str, session_id: UUID, raw_started_at: Any, *, status: str
+    ) -> Optional[DiagnosticInvite]:
+        """«Начатую диагностику дать закончить»: a CANCELLED invite (the student was archived) takes the callbacks
+        of a session that really started BEFORE the cancellation - the invite only said ``confirmed`` because the
+        start callback came late.  All of these must hold, or ``None`` is returned and the cancellation stands:
+
+        * ``cancel_reason == 'student_archived'``;
+        * the session start passes ``_verified_session_start`` (after ``confirmed_at``, before ``expires_at``);
+        * it is strictly BEFORE ``cancelled_at`` (a session that started at or after it never counts);
+        * the invite is not bound to another session.
+
+        The invite becomes ``status`` (``in_progress`` for the start callback, ``confirmed`` for the completion
+        callback, which then completes it), ``cancelled_at`` / ``cancel_reason`` are cleared and the change is
+        logged.  The invite row is locked; the caller commits.
+        """
+        invite = (
+            self.db.query(DiagnosticInvite)
+            .filter(DiagnosticInvite.code == code, DiagnosticInvite.status == "cancelled")
+            .with_for_update()
+            .first()
+        )
+        if invite is None or invite.cancel_reason != INVITE_CANCEL_REASON or invite.cancelled_at is None:
+            return None
+        if invite.cat_session_id is not None and invite.cat_session_id != session_id:
+            return None
+        try:
+            started_at = self._verified_session_start(invite, raw_started_at)
+        except ValueError:
+            return None
+        cancelled_at = invite.cancelled_at
+        if cancelled_at.tzinfo is None:
+            cancelled_at = cancelled_at.replace(tzinfo=timezone.utc)
+        if started_at >= cancelled_at:
+            return None
+        logger.info(
+            "diagnostic_invite_transition invite_id=%s session_id=%s status=%s "
+            "un_cancelled=session_predates_archive cancelled_at=%s session_started_at=%s",
+            invite.id, session_id, status, cancelled_at.isoformat(), started_at.isoformat(),
+        )
+        invite.status = status
+        invite.cancelled_at = None
+        invite.cancel_reason = None
+        if status == "in_progress":
+            invite.started_at = started_at
+        return invite
+
     def get_diagnostic_by_code(self, code: str) -> Optional[dict]:
         """Получить диагностику по коду (публичный, без JWT)"""
         invite = (
@@ -1740,6 +1809,9 @@ class AuthService:
         }
         if invite.status == "cancelled":
             info["message"] = INVITE_CANCELLED_MESSAGE
+            # diagnostic-service lets a session that started BEFORE this moment finish (see _revive_cancelled_invite).
+            info["cancelled_at"] = invite.cancelled_at.isoformat() if invite.cancelled_at else None
+            info["cancel_reason"] = invite.cancel_reason
         return info
 
     def confirm_diagnostic(self, code: str) -> dict:
@@ -1790,12 +1862,18 @@ class AuthService:
             "org_id": str(invite.org_id),
         }
 
-    def start_diagnostic(self, code: str, cat_session_id: Optional[str] = None) -> dict:
+    def start_diagnostic(
+        self, code: str, cat_session_id: Optional[str] = None, session_started_at: Optional[str] = None
+    ) -> dict:
         """Atomically claim an invite for exactly one diagnostic session.
 
         Retrying the same callback is safe.  A different session may never
         replace an already bound ``cat_session_id`` — that would make one
         invite point at two attempts and corrupt the report/placement flow.
+
+        ``session_started_at`` (when the engine created the session) lets a LATE callback reach an invite that
+        was cancelled meanwhile: only when the session started before the cancellation (see
+        ``_revive_cancelled_invite``).
         """
         if not cat_session_id:
             raise ValueError("Не передан идентификатор сессии диагностики")
@@ -1813,6 +1891,10 @@ class AuthService:
             .with_for_update()
             .first()
         )
+        if not invite:
+            invite = self._revive_cancelled_invite(
+                code, requested_session_id, session_started_at, status="in_progress"
+            )
         if not invite:
             self._raise_if_invite_cancelled(code)
             raise ValueError("Диагностика не найдена или уже завершена")
@@ -1864,6 +1946,12 @@ class AuthService:
             .first()
         )
         if not invite:
+            # A cancelled invite whose session started BEFORE the cancellation is completed like a confirmed one
+            # whose start callback was late (the repair below binds the session and re-checks its start).
+            invite = self._revive_cancelled_invite(
+                code, completed_session_id, result_data.get("session_started_at"), status="confirmed"
+            )
+        if not invite:
             self._raise_if_invite_cancelled(code)
             raise ValueError("Диагностика не найдена или не начата")
 
@@ -1872,21 +1960,7 @@ class AuthService:
             # start callback was unavailable. Only the authenticated internal
             # completion callback may repair that projection, using its
             # database creation time and the confirmed invite's time bounds.
-            try:
-                started_at = datetime.fromisoformat(str(result_data.get("session_started_at") or "").replace("Z", "+00:00"))
-                started_at = started_at.replace(tzinfo=timezone.utc) if started_at.tzinfo is None else started_at
-                confirmed_at = invite.confirmed_at
-                if confirmed_at and confirmed_at.tzinfo is None:
-                    confirmed_at = confirmed_at.replace(tzinfo=timezone.utc)
-                expires_at = invite.expires_at
-                if expires_at and expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=timezone.utc)
-                if not confirmed_at or started_at < confirmed_at or started_at > datetime.now(timezone.utc):
-                    raise ValueError("Unconfirmed start")
-                if expires_at and started_at >= expires_at:
-                    raise ValueError("Start after expiry")
-            except (TypeError, ValueError) as exc:
-                raise ValueError("Не подтверждён допустимый старт сессии диагностики") from exc
+            started_at = self._verified_session_start(invite, result_data.get("session_started_at"))
             invite.cat_session_id = completed_session_id
             invite.started_at = started_at
 

@@ -408,3 +408,181 @@ def test_creating_a_link_waits_for_a_running_archiving_and_is_then_refused(world
     finally:
         archiver.close()
     assert results.get("error") == ARCHIVED_CREATE and "created" not in results
+
+
+# ---- «начатую диагностику дать закончить»: a session that started BEFORE the cancellation -----------------
+#
+# The invite can still say ``confirmed`` after the session really started: the start callback of diagnostic-service
+# was late (or lost).  If the student is archived in that gap the invite is cancelled - and the callbacks of the
+# session that predates the archiving must still reach it (start -> in_progress, complete -> completed).
+
+
+def naive_now():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def utc(moment):
+    return moment.replace(tzinfo=timezone.utc)
+
+
+def start_body(session, started_at):
+    body = {"session_id": str(session)}
+    if started_at is not None:
+        body["session_started_at"] = started_at.isoformat()
+    return body
+
+
+def complete_body(session, started_at, **extra):
+    body = {"session_id": str(session), "final_theta": 0.4, "se": 0.3, "total_items": 5, "correct_answers": 3, **extra}
+    if started_at is not None:
+        body["session_started_at"] = started_at.isoformat()
+    return body
+
+
+def cancelled_confirmed(pack, *, cancelled_minutes_ago=None):
+    """The ``confirmed`` invite after the archiving; ``cancelled_minutes_ago`` moves the cancellation back in time."""
+    archive(pack, pack.student)
+    row = reload(pack, pack.invites["confirmed"])
+    assert row.status == "cancelled" and row.cancel_reason == "student_archived"
+    if cancelled_minutes_ago is not None:
+        row.cancelled_at = naive_now() - timedelta(minutes=cancelled_minutes_ago)
+        pack.db.commit()
+    return reload(pack, pack.invites["confirmed"])
+
+
+def test_a_late_start_callback_of_a_session_that_predates_the_archiving_is_accepted(pack):
+    session, started = uuid4(), naive_now() - timedelta(minutes=10)         # confirmed 30 minutes ago, started 10 ago
+    row = cancelled_confirmed(pack)
+    assert row.cancelled_at > started
+    client = public_client(pack)
+    r = client.post(f"{INTERNAL}/diagnostic/{row.code}/start", json=start_body(session, started), headers=token())
+    assert r.status_code == 200, r.text
+    assert r.json() == {"id": str(row.id), "status": "in_progress", "session_id": str(session)}
+    row = reload(pack, row)
+    assert row.status == "in_progress" and row.cat_session_id == session
+    assert row.cancelled_at is None and row.cancel_reason is None            # un-cancelled
+    assert row.started_at == started                                         # the session's own start, not the callback's
+    # a repeated callback of the same session is the usual idempotent one; the student stays archived
+    r = client.post(f"{INTERNAL}/diagnostic/{row.code}/start", json=start_body(session, started), headers=token())
+    assert r.status_code == 200 and reload(pack, row).status == "in_progress"
+    assert pack.db.get(Student, pack.student.id).status == "archived"
+    # the other cancelled link (was pending) is untouched
+    assert reload(pack, pack.invites["pending"]).status == "cancelled"
+
+
+def test_the_un_cancelling_is_logged(pack, caplog):
+    session, started = uuid4(), naive_now() - timedelta(minutes=10)
+    row = cancelled_confirmed(pack)
+    with caplog.at_level("INFO", logger="src.auth.service"):
+        public_client(pack).post(f"{INTERNAL}/diagnostic/{row.code}/start", json=start_body(session, started), headers=token())
+    lines = [r.getMessage() for r in caplog.records if "un_cancelled=session_predates_archive" in r.getMessage()]
+    assert len(lines) == 1 and f"invite_id={row.id}" in lines[0] and "status=in_progress" in lines[0]
+
+
+def test_complete_after_the_archiving_for_a_session_that_started_before_is_accepted_and_attached(pack):
+    session, started = uuid4(), naive_now() - timedelta(minutes=10)
+    row = cancelled_confirmed(pack)
+    client = public_client(pack)
+    # the completion callback comes first (the start callback never arrived): it repairs the projection
+    r = client.post(f"{INTERNAL}/diagnostic/{row.code}/complete", json=complete_body(session, started), headers=token())
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "completed" and r.json()["student_id"] == str(pack.student.id)
+    row = reload(pack, row)
+    assert row.status == "completed" and row.cat_session_id == session and row.started_at == started
+    assert row.cancelled_at is None and row.cancel_reason is None
+    result = pack.db.query(StudentDiagnosticResult).filter_by(invite_id=row.id).one()    # attached to the invite and the student
+    assert result.student_id == pack.student.id and result.session_id == session
+    assert pack.db.get(Student, pack.student.id).status == "archived"                    # finishing does not bring him back
+    # idempotent like any completion
+    r = client.post(f"{INTERNAL}/diagnostic/{row.code}/complete", json=complete_body(session, started), headers=token())
+    assert r.status_code == 200 and pack.db.query(StudentDiagnosticResult).filter_by(invite_id=row.id).count() == 1
+
+
+def test_the_sequence_of_diagnostic_service_start_then_complete_after_the_archiving(pack):
+    """notify_complete repairs a lost start callback by sending the start first (with the session's start), then the result."""
+    session, started = uuid4(), naive_now() - timedelta(minutes=10)
+    row = cancelled_confirmed(pack)
+    client = public_client(pack)
+    assert client.post(f"{INTERNAL}/diagnostic/{row.code}/start", json=start_body(session, started), headers=token()).status_code == 200
+    r = client.post(f"{INTERNAL}/diagnostic/{row.code}/complete", json=complete_body(session, started), headers=token())
+    assert r.status_code == 200 and reload(pack, row).status == "completed"
+    assert pack.db.query(StudentDiagnosticResult).filter_by(invite_id=row.id).count() == 1
+
+
+@pytest.mark.parametrize("how", ["after", "at"])
+def test_a_session_that_started_at_or_after_the_cancellation_is_rejected(pack, how):
+    session = uuid4()
+    row = cancelled_confirmed(pack, cancelled_minutes_ago=20)               # cancelled 20 minutes ago ...
+    started = row.cancelled_at + timedelta(minutes=10) if how == "after" else row.cancelled_at   # ... session after / exactly then
+    assert row.confirmed_at < started < naive_now() + timedelta(seconds=1)
+    client = public_client(pack)
+    for path, body in (
+        ("start", start_body(session, started)),
+        ("complete", complete_body(session, started)),
+    ):
+        r = client.post(f"{INTERNAL}/diagnostic/{row.code}/{path}", json=body, headers=token())
+        assert r.status_code == 400 and r.json()["detail"] == CANCELLED, (path, r.text)
+    row = reload(pack, row)
+    assert row.status == "cancelled" and row.cancelled_at is not None and row.cancel_reason == "student_archived"
+    assert row.cat_session_id is None
+    assert pack.db.query(StudentDiagnosticResult).filter_by(invite_id=row.id).count() == 0
+
+
+def test_a_session_that_started_just_before_the_cancellation_is_accepted(pack):
+    session = uuid4()
+    row = cancelled_confirmed(pack, cancelled_minutes_ago=20)
+    started = row.cancelled_at - timedelta(seconds=1)
+    r = public_client(pack).post(f"{INTERNAL}/diagnostic/{row.code}/start", json=start_body(session, started), headers=token())
+    assert r.status_code == 200 and reload(pack, row).status == "in_progress"
+
+
+@pytest.mark.parametrize("case", ["no_start_time", "before_confirmation", "in_the_future", "other_reason", "never_confirmed", "other_session"])
+def test_an_unprovable_start_never_revives_a_cancelled_invite(pack, case):
+    session = uuid4()
+    row = cancelled_confirmed(pack)
+    started = naive_now() - timedelta(minutes=10)
+    if case == "no_start_time":
+        started = None
+    elif case == "before_confirmation":
+        started = row.confirmed_at - timedelta(minutes=5)
+    elif case == "in_the_future":
+        started = naive_now() + timedelta(hours=1)
+    elif case == "other_reason":
+        row.cancel_reason = "something_else"
+        pack.db.commit()
+    elif case == "never_confirmed":
+        row = reload(pack, pack.invites["pending"])                           # cancelled while still pending: no confirmed_at
+    elif case == "other_session":
+        row.cat_session_id = uuid4()
+        pack.db.commit()
+    client = public_client(pack)
+    code = row.code
+    for path, body in (("start", start_body(session, started)), ("complete", complete_body(session, started))):
+        r = client.post(f"{INTERNAL}/diagnostic/{code}/{path}", json=body, headers=token())
+        assert r.status_code == 400, (case, path, r.text)
+        if case != "other_session":
+            assert r.json()["detail"] == CANCELLED
+    assert reload(pack, row).status == "cancelled"
+    assert pack.db.query(StudentDiagnosticResult).filter_by(invite_id=row.id).count() == 0
+
+
+def test_the_lookup_of_a_cancelled_code_tells_when_it_was_cancelled(pack):
+    row = cancelled_confirmed(pack)
+    info = public_client(pack).get(f"{API}/diagnostic/{row.code}").json()
+    assert info["status"] == "cancelled" and info["message"] == CANCELLED
+    assert info["cancel_reason"] == "student_archived" and info["cancelled_at"] == row.cancelled_at.isoformat()
+    other = public_client(pack).get(f"{API}/diagnostic/{pack.invites['in_progress'].code}").json()
+    assert "cancelled_at" not in other and "cancel_reason" not in other
+
+
+def test_in_progress_invites_are_never_cancelled_and_may_finish(world):
+    student = world.students[2]
+    running = invite(world, student, "in_progress")
+    body = archive(world, student)
+    assert body["diagnostic_invites_cancelled"] == 0 and body["diagnostic_invites_in_progress"] == 1
+    row = reload(world, running)
+    assert row.status == "in_progress" and row.cancelled_at is None and row.cancel_reason is None
+    r = public_client(world).post(
+        f"{INTERNAL}/diagnostic/{row.code}/complete", json=complete_body(row.cat_session_id, None), headers=token()
+    )
+    assert r.status_code == 200 and reload(world, row).status == "completed"

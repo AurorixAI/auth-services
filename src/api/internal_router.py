@@ -114,6 +114,9 @@ def internal_lesson_attendance_status(
 
 class DiagStartCallback(BaseModel):
     session_id: str
+    # When the engine created the session.  Optional (older payloads lack it); needed only for a LATE callback that
+    # reaches an invite cancelled meanwhile: it is accepted when the session started before the cancellation.
+    session_started_at: Optional[datetime] = None
 
 
 class DiagCompleteCallback(BaseModel):
@@ -143,7 +146,11 @@ def internal_start_diagnostic(
     db: Session = Depends(get_db),
 ):
     try:
-        return _svc(db).start_diagnostic(code, cat_session_id=body.session_id)
+        return _svc(db).start_diagnostic(
+            code,
+            cat_session_id=body.session_id,
+            session_started_at=body.session_started_at.isoformat() if body.session_started_at else None,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
