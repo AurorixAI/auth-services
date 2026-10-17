@@ -750,29 +750,97 @@ def test_a_price_write_waits_for_a_holder_of_the_group_but_not_for_an_insert_tha
     assert group_rows(world) == [(day(-3), 111_000, None)]
 
 
-def test_two_concurrent_writes_of_the_same_day_end_clean_with_one_row(world, engine):
+def finish(thread, outcome):
+    thread.join(15)
+    assert not thread.is_alive()
+    return outcome
+
+
+def test_two_concurrent_writes_of_the_same_day_end_clean_one_wins_the_other_is_a_409_or_a_correction(world, engine):
+    """Whichever order the lock gives them: no 500, one row, and the loser is told (409) or - when it began after the
+    winner had written - has simply corrected the day."""
     results = []
     for amount in (111_000, 222_000):
-        thread, outcome = run_in_thread(engine, lambda session, a=amount: pricing.PricingService(session).set_group_price(
-            str(world.org.id), world.group.id, str(world.owner.id), amount=a, valid_from=day(-3)))
-        results.append((thread, outcome))
-    for thread, outcome in results:
-        thread.join(15)
-        assert not thread.is_alive() and "error" not in outcome, outcome.get("error")
+        results.append(run_in_thread(engine, lambda session, a=amount: pricing.PricingService(session).set_group_price(
+            str(world.org.id), world.group.id, str(world.owner.id), amount=a, valid_from=day(-3))))
+    outcomes = [finish(*r) for r in results]
+    errors = [o["error"] for o in outcomes if "error" in o]
+    assert len(errors) <= 1 and all(isinstance(e, pricing.PriceConflict) and e.status_code == 409 for e in errors), errors
     rows = group_rows(world)
     assert len(rows) == 1 and rows[0][1] in (111_000, 222_000)
-    # and the same for the exception of one student
     mids = mid(world)
     results = []
     for amount in (10_000, 20_000):
-        thread, outcome = run_in_thread(engine, lambda session, a=amount: pricing.PricingService(session).set_override(
-            str(world.org.id), mids, str(world.owner.id), amount=a, valid_from=day(-3), reason="гонка"))
-        results.append((thread, outcome))
-    for thread, outcome in results:
-        thread.join(15)
-        assert not thread.is_alive() and "error" not in outcome, outcome.get("error")
+        results.append(run_in_thread(engine, lambda session, a=amount: pricing.PricingService(session).set_override(
+            str(world.org.id), mids, str(world.owner.id), amount=a, valid_from=day(-3), reason="гонка")))
+    outcomes = [finish(*r) for r in results]
+    errors = [o["error"] for o in outcomes if "error" in o]
+    assert len(errors) <= 1 and all(isinstance(e, pricing.PriceConflict) for e in errors), errors
     world.db.expire_all()
     assert world.db.query(MembershipPriceOverride).filter_by(membership_id=mids).count() == 1
+
+
+def written_while_waiting(world, engine, run, lock_sql, write):
+    """``run(session)`` is the request; ``lock_sql`` is held by a holder; the request waits; the holder writes the
+    very row the request is about to write and lets go."""
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+
+    holder = Session(engine)
+    holder.execute(text(lock_sql[0]), lock_sql[1])
+    thread, outcome = run_in_thread(engine, run)
+    wait_until_blocked(engine)
+    write(holder)
+    holder.commit()
+    holder.close()
+    return finish(thread, outcome)
+
+
+def test_a_group_price_written_by_somebody_else_while_this_request_waited_is_a_409_not_an_overwrite(world, engine):
+    def somebody_else(holder):
+        holder.add(GroupPrice(group_id=world.group.id, amount=111_000, valid_from=day(-3), note="чужая",
+                              created_by=world.admin.id, created_at=datetime.utcnow()))
+
+    def request(amount, note=None):
+        return lambda session: pricing.PricingService(session).set_group_price(
+            str(world.org.id), world.group.id, str(world.owner.id), amount=amount, valid_from=day(-3), note=note)
+
+    lock = ("SELECT id FROM groups WHERE id = :g FOR NO KEY UPDATE", {"g": world.group.id})
+    out = written_while_waiting(world, engine, request(222_000), lock, somebody_else)
+    assert isinstance(out.get("error"), pricing.PriceConflict)
+    assert out["error"].detail == {"code": "PRICE_CONFLICT", "message": "Цену только что изменили. Обновите страницу и повторите."}
+    assert group_rows(world) == [(day(-3), 111_000, "чужая")]                          # the other write stands
+    # the same request twice (a double click) is done, not refused
+    world.db.query(GroupPrice).delete()
+    world.db.commit()
+    out = written_while_waiting(world, engine, request(111_000, "чужая"), lock, somebody_else)
+    assert "error" not in out, out.get("error")
+    assert group_rows(world) == [(day(-3), 111_000, "чужая")]
+    # a deliberate correction of a row that existed when the request was made is an update
+    out = finish(*run_in_thread(engine, request(333_000, "исправлено")))
+    assert "error" not in out and group_rows(world) == [(day(-3), 333_000, "исправлено")]
+
+
+def test_an_exception_written_by_somebody_else_while_this_request_waited_is_a_409_not_an_overwrite(world, engine):
+    membership_id = mid(world)
+
+    def somebody_else(holder):
+        holder.add(MembershipPriceOverride(membership_id=membership_id, amount=10_000, valid_from=day(-3), reason="чужая",
+                                           created_by=world.admin.id, created_at=datetime.utcnow()))
+
+    def request(amount):
+        return lambda session: pricing.PricingService(session).set_override(
+            str(world.org.id), membership_id, str(world.owner.id), amount=amount, valid_from=day(-3), reason="чужая")
+
+    lock = ("SELECT id FROM student_groups WHERE id = :m FOR NO KEY UPDATE", {"m": membership_id})
+    out = written_while_waiting(world, engine, request(20_000), lock, somebody_else)
+    assert isinstance(out.get("error"), pricing.PriceConflict) and out["error"].status_code == 409
+    world.db.expire_all()
+    assert [(r.amount, r.reason) for r in world.db.query(MembershipPriceOverride).filter_by(membership_id=membership_id)] == [(10_000, "чужая")]
+    out = finish(*run_in_thread(engine, request(30_000)))                              # a later request corrects the day
+    assert "error" not in out
+    world.db.expire_all()
+    assert [r.amount for r in world.db.query(MembershipPriceOverride).filter_by(membership_id=membership_id)] == [30_000]
 
 
 def test_a_collision_that_slips_through_is_a_clean_409_never_a_500(world, monkeypatch):

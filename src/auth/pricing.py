@@ -29,8 +29,11 @@ Writes
   writers (student -> memberships -> groups FOR UPDATE, see ``AuthService._lock_groups_for_membership_change``): a
   price write never waits for anything after it got the group lock.  ``FOR NO KEY UPDATE`` does not block the
   ``FOR KEY SHARE`` of the inserts that point at the group (attendance, payments).  The same ``valid_from`` again
-  replaces the amount of that day (a correction); a write that still collides with a concurrent one is a 409
-  ``PRICE_CONFLICT``, never a 500.  ``dry_run`` computes the impact and writes nothing.
+  replaces the amount of that day - a deliberate correction of a row that existed when the request was made.  A row
+  of that day that somebody wrote WHILE this request waited for the lock was not seen by the caller: that is a 409
+  ``PRICE_CONFLICT`` ("the price was just changed, refresh and repeat"), not a silent overwrite; the same request
+  twice (a double click) is simply done.  A unique-key collision that still slips through, and a deadlock, are the
+  same 409, never a 500.  ``dry_run`` computes the impact and writes nothing.
 * :meth:`PricingService.set_override` - under ``FOR NO KEY UPDATE`` of the membership (the same lock as every other
   writer of money of a membership), refused for an archived student.  :func:`write_override` is the bare write used
   inside another transaction (adding a student to a group with an individual price).
@@ -353,10 +356,13 @@ def write_override(
     amount: Optional[int],
     valid_from: date,
     reason: Optional[str],
+    seen_before: Optional[datetime] = None,
 ) -> MembershipPriceOverride:
     """Insert (or, for the same day, replace) an exception row inside the caller's transaction.
 
     The caller holds the lock of the membership and has validated the input (:func:`check_override_input`).
+    ``seen_before`` - the instant the request was made: a row of that day written at or after it is one the caller
+    has not seen (somebody wrote it while this request waited for the lock) - 409, unless it says the same thing.
     Nothing is committed here.
     """
     mid = _uuid(membership_id)
@@ -365,6 +371,10 @@ def write_override(
         .filter(MembershipPriceOverride.membership_id == mid, MembershipPriceOverride.valid_from == valid_from)
         .first()
     )
+    if row is not None and seen_before is not None and row.created_at is not None and row.created_at >= seen_before:
+        if row.amount == amount and (row.reason or None) == (reason or None):
+            return row  # the same request twice
+        raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT")
     now, actor = _utcnow(), _uuid(actor_id)
     if row is not None:
         row.amount, row.reason, row.created_by, row.created_at = amount, reason, actor, now
@@ -585,8 +595,10 @@ class PricingService:
         owner_view: bool = False,
     ) -> Dict[str, Any]:
         """Set the price of a group from a day (default: today).  A past day is allowed - the impact says what it
-        touches.  The same day again replaces the amount of that day.  ``dry_run``: only the impact, nothing is
-        written and no lock is taken."""
+        touches.  The same day again corrects the amount of that day; a row of that day written by somebody else
+        while this request waited for the lock is a 409 ``PRICE_CONFLICT`` (see the module docstring).  ``dry_run``:
+        only the impact, nothing is written and no lock is taken."""
+        requested_at = _utcnow()
         today = ps.business_today()
         amount = check_amount(amount)
         valid_from = check_valid_from(valid_from or today, today)
@@ -605,7 +617,11 @@ class PricingService:
                 .filter(GroupPrice.group_id == group.id, GroupPrice.valid_from == valid_from)
                 .first()
             )
-            if row is not None:
+            if row is not None and row.created_at is not None and row.created_at >= requested_at:
+                # written while this request waited for the lock: the caller has not seen it
+                if (int(row.amount), row.note or None) != (amount, note):
+                    raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT")
+            elif row is not None:
                 row.amount, row.note, row.created_by, row.created_at = amount, note, actor, now
             else:
                 self.db.add(
@@ -639,6 +655,7 @@ class PricingService:
         reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """The individual price of a student from a day (reason mandatory), or ``amount=None``: the group price again."""
+        requested_at = _utcnow()
         today = ps.business_today()
         amount, reason = check_override_input(amount, reason)
         valid_from = check_valid_from(valid_from or today, today)
@@ -648,7 +665,8 @@ class PricingService:
             if status == "archived":
                 raise PriceConflict(ARCHIVED_STUDENT_MESSAGE)
             write_override(
-                self.db, membership.id, actor_id, amount=amount, valid_from=valid_from, reason=reason
+                self.db, membership.id, actor_id, amount=amount, valid_from=valid_from, reason=reason,
+                seen_before=requested_at,
             )
             self.db.commit()
         except IntegrityError as exc:
