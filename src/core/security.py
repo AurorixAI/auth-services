@@ -85,16 +85,3 @@ def decode_token(token: str) -> Optional[dict]:
     except JWTError:
         return None
 
-
-def issue_token_pair(user_id: str, role: str, extra: dict = None) -> dict:
-    """
-    Convenience: returns {'access_token': ..., 'refresh_token': ...}.
-
-    Use this in auth_service.py to issue both tokens in one call.
-    """
-    base = _base_payload(user_id, role, extra)
-    return {
-        "access_token": create_access_token(base),
-        "refresh_token": create_refresh_token(base),
-        "token_type": "bearer",
-    }

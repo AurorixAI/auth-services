@@ -194,19 +194,6 @@ class TestUserRepo:
         session.flush.assert_called()
         assert user.login_count == 6
 
-    def test_set_refresh_token_hash(self):
-        repo, session = self._make_repo()
-        user = MagicMock()
-        repo.set_refresh_token_hash(user, "hash-value")
-        assert user.refresh_token_hash == "hash-value"
-        session.flush.assert_called()
-
-    def test_set_refresh_token_hash_none(self):
-        repo, session = self._make_repo()
-        user = MagicMock()
-        repo.set_refresh_token_hash(user, None)
-        assert user.refresh_token_hash is None
-
     def test_list_by_org_calls_scalars(self):
         repo, session = self._make_repo()
         fake_users = [MagicMock(), MagicMock()]

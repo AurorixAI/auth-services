@@ -1,7 +1,7 @@
 """
 ALGO V1 — Auth ORM Models (moved from src/auth/models.py)
 
-Tables: organizations, users, user_sessions, organization_members, invitations,
+Tables: organizations, users, user_sessions, user_session_tokens, organization_members, invitations,
         students, groups, student_groups, diagnostic_invites,
         student_diagnostic_results
 """
@@ -205,15 +205,17 @@ class User(Base):
 
 
 class UserSession(Base):
-    """One signed-in device of a user: the refresh-token chain of that device.
+    """One signed-in device of a user. Its refresh tokens are the rows of ``user_session_tokens``.
 
     Before this table a user had ONE refresh token (``users.refresh_token_hash``) and every login or refresh
-    overwrote it, so a second device signed the first one out at its next refresh. Now every sign-in creates
-    its own row and a refresh rotates only the row it belongs to. The logic lives in ``src/auth/user_sessions.py``.
+    overwrote it, so a second device signed the first one out at its next refresh. Now every sign-in creates its own
+    row and a refresh rotates only the row it belongs to. The logic lives in ``src/auth/user_sessions.py``.
 
-    Every moment is naive UTC (TIME_CONVENTIONS.md, group "UTC"). Only the SHA-256 of a token is stored.
-    ``users.refresh_token_hash`` is a legacy column: nothing reads it since revision a7b8c9d0e1f; a later
-    migration drops it.
+    Every moment is naive UTC (TIME_CONVENTIONS.md, group "UTC"). ``users.refresh_token_hash`` is a legacy column:
+    nothing reads or writes it since revision a7b8c9d0e1f; a later migration drops it.
+
+    Privacy: ``ip`` and ``user_agent`` stay on the row until the session's ``expires_at`` plus the sweep window
+    (``user_sessions.EXPIRED_RETENTION_DAYS``, 30 days), then the row is deleted with them.
     """
 
     __tablename__ = "user_sessions"
@@ -221,13 +223,9 @@ class UserSession(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
-    refresh_token_hash = Column(String(255), nullable=False)  # SHA-256 of the CURRENT refresh token of the device
-    previous_token_hash = Column(String(255))  # the one it replaced: a concurrent tab may still send it for 60 s
-    rotated_at = Column(DateTime)  # when previous_token_hash was replaced; NULL until the first rotation
-
     created_at = Column(DateTime, nullable=False)
-    last_used_at = Column(DateTime, nullable=False)
-    expires_at = Column(DateTime, nullable=False)  # slides: every rotation issues a refresh JWT with a fresh TTL
+    last_used_at = Column(DateTime, nullable=False)  # the last sign-in / refresh
+    expires_at = Column(DateTime, nullable=False)  # slides: every refresh issues a refresh JWT with a fresh TTL
 
     revoked_at = Column(DateTime)
     revoke_reason = Column(String(40))  # logout | refresh_reuse | password_changed | user_blocked | session_cap
@@ -236,14 +234,34 @@ class UserSession(Base):
     ip = Column(String(64))  # the trusted client address (X-Real-IP set by nginx), never a raw header
 
     __table_args__ = (
-        UniqueConstraint("refresh_token_hash", name="uq_user_sessions_refresh_token_hash"),
         Index("ix_user_sessions_user_active", "user_id", postgresql_where=text("revoked_at IS NULL")),
-        Index(
-            "ix_user_sessions_previous_hash",
-            "previous_token_hash",
-            postgresql_where=text("previous_token_hash IS NOT NULL"),
-        ),
         Index("ix_user_sessions_expires_at", "expires_at"),
+    )
+
+
+class UserSessionToken(Base):
+    """One refresh token ever issued to a session (its SHA-256), live or superseded.
+
+    A refresh supersedes every live token of the session and issues one new live token. A token presented again
+    within 60 s of its supersession (another tab of the same browser) is answered with a NEW live sibling, the
+    others stay live; later it is a replay and revokes the session. Superseded tokens are kept for
+    ``user_sessions.SUPERSEDED_RETENTION_DAYS`` (7) for that replay detection, then deleted.
+    """
+
+    __tablename__ = "user_session_tokens"
+
+    token_hash = Column(String(255), primary_key=True)
+    session_id = Column(UUID(as_uuid=True), ForeignKey("user_sessions.id", ondelete="CASCADE"), nullable=False)
+    issued_at = Column(DateTime, nullable=False)
+    superseded_at = Column(DateTime)  # NULL = live
+
+    __table_args__ = (
+        Index("ix_user_session_tokens_session", "session_id"),
+        Index(
+            "ix_user_session_tokens_superseded",
+            "superseded_at",
+            postgresql_where=text("superseded_at IS NOT NULL"),
+        ),
     )
 
 

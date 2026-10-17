@@ -643,7 +643,7 @@ class AuthService:
         if not user or not user.is_active:
             raise ValueError("Пользователь не найден или заблокирован")
 
-        # The session of THIS device (found by the hash of the token, row locked); the user's other devices keep
+        # The session of THIS device (found by the hash of the token, rows locked); the user's other devices keep
         # their own sessions (#101, user_sessions.py). A replayed old token revokes its session, and that
         # revocation must be committed before the refusal, which rolls the request back.
         ttl = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
@@ -653,7 +653,7 @@ class AuthService:
             raise ValueError("Refresh token отозван")
 
         tokens = self._issue_token_pair(user)
-        user_sessions.rotate(self.db, claim.session, hash_token(tokens.refresh_token), ttl, self.client)
+        user_sessions.rotate(self.db, claim, hash_token(tokens.refresh_token), ttl, self.client)
         self.db.commit()
         return tokens
 
@@ -668,17 +668,18 @@ class AuthService:
         logger.debug("logout without a refresh token: user %s, no session identified, none revoked", user_id)
 
     def logout_by_refresh_token(self, refresh_token: str) -> bool:
-        """Sign out the session that *refresh_token* belongs to, when it is that session's CURRENT token.
+        """Sign out the session that *refresh_token* belongs to.
 
-        A refresh JWT that is merely correctly signed proves nothing about the live session: a token
-        that was rotated away (or revoked) must not sign the user out of the session that replaced it.
+        A refresh JWT that is merely correctly signed proves nothing about the live session: it must be a LIVE token
+        of a session, or one superseded at most 60 s ago (the browser raced a refresh and holds the older cookie).
+        An older superseded token must not sign the user out of the session that replaced it.
         Only that one session is revoked (reason ``logout``); the user's other devices stay signed in.
         Returns whether a session was revoked; a stale token only gets its cookies removed by the caller.
         """
         payload = verify_refresh_token(refresh_token)
         if not payload or not payload.get("sub"):
             return False
-        if not user_sessions.revoke_by_current_token(
+        if not user_sessions.revoke_by_token(
             self.db, payload["sub"], hash_token(refresh_token), user_sessions.REVOKE_LOGOUT
         ):
             return False

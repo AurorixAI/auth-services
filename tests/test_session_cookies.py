@@ -500,12 +500,20 @@ def login(w):
 
 
 def live_hashes(w, user=None):
-    """The CURRENT refresh-token hashes of the user's live (not revoked) sessions."""
-    from src.models.auth import UserSession
+    """The hashes of the LIVE refresh tokens of the user's live (not revoked) sessions."""
+    from src.models.auth import UserSession, UserSessionToken
 
     w.db.expire_all()
-    rows = w.db.query(UserSession).filter(UserSession.user_id == (user or w.owner).id, UserSession.revoked_at.is_(None))
-    return {row.refresh_token_hash for row in rows}
+    rows = (
+        w.db.query(UserSessionToken.token_hash)
+        .join(UserSession, UserSession.id == UserSessionToken.session_id)
+        .filter(
+            UserSession.user_id == (user or w.owner).id,
+            UserSession.revoked_at.is_(None),
+            UserSessionToken.superseded_at.is_(None),
+        )
+    )
+    return {row[0] for row in rows}
 
 
 @needs_pg
@@ -593,14 +601,16 @@ def test_logout_with_an_expired_access_cookie_revokes_the_session_and_clears_bot
 
 
 @needs_pg
-def test_logout_with_a_rotated_away_refresh_token_clears_cookies_but_keeps_the_current_session(session_world):
-    """A correctly signed but superseded refresh JWT must not sign the user out of the session that replaced it."""
+def test_logout_with_a_rotated_away_refresh_token_clears_cookies_but_keeps_the_current_session(session_world, session_clock):
+    """A correctly signed refresh JWT superseded longer than the 60 s grace ago must not sign the user out of the
+    session that replaced it (within the grace it does: the browser just raced a refresh, see test_user_sessions_pg)."""
     w = session_world
     old_refresh = set_cookies(login(w))[REFRESH_COOKIE_NAME].value
     stale = expired_access_token(str(w.owner.id), "owner")
     rotated = w.client.post(f"{API}/refresh", json={}, headers=cookie_header(refresh=old_refresh))
     current_hash = hash_token(set_cookies(rotated)[REFRESH_COOKIE_NAME].value)
     assert live_hashes(w) == {current_hash}
+    session_clock.advance(61)
 
     r = w.client.post(f"{API}/logout", headers=cookie_header(access=stale, refresh=old_refresh))
     assert r.status_code == 200

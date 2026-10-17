@@ -73,25 +73,6 @@ class TestCoreSecurity:
         token = create_access_token({"sub": "u3", "role": "admin"})
         assert decode_token(token[:-8] + "XXXXXXXX") is None
 
-    def test_issue_token_pair_keys(self):
-        from src.core.security import issue_token_pair
-        pair = issue_token_pair("user-99", "teacher")
-        assert "access_token" in pair
-        assert "refresh_token" in pair
-        assert pair["token_type"] == "bearer"
-
-    def test_issue_token_pair_with_extra(self):
-        from src.core.security import issue_token_pair, decode_token
-        pair = issue_token_pair("user-99", "owner", extra={"org_id": "org-1"})
-        payload = decode_token(pair["access_token"])
-        assert payload["org_id"] == "org-1"
-        assert payload["role"] == "owner"
-
-    def test_access_and_refresh_tokens_are_different(self):
-        from src.core.security import issue_token_pair
-        pair = issue_token_pair("user-5", "admin")
-        assert pair["access_token"] != pair["refresh_token"]
-
     def test_base_payload_without_extra(self):
         from src.core.security import _base_payload
         p = _base_payload("uid", "teacher")
@@ -930,15 +911,15 @@ class TestAuthServiceExtended:
         token = create_refresh_token("user-abc")
         user = self._mock_user(is_active=True, role="teacher", default_org_id=None)
         db.query.return_value.filter.return_value.first.return_value = user
-        session = MagicMock()
-        with patch("src.auth.service.user_sessions.claim", return_value=MagicMock(session=session, graced=False)):
+        claimed = MagicMock(graced=False)
+        with patch("src.auth.service.user_sessions.claim", return_value=claimed):
             with patch("src.auth.service.user_sessions.rotate") as rotate:
                 result = service.refresh_tokens(token)
         assert isinstance(result, TokenPair)
         assert result.access_token
         assert result.refresh_token != token
         # the session of THIS token gets the new token; nothing is written to the users row
-        assert rotate.call_args.args[1:3] == (session, hash_token(result.refresh_token))
+        assert rotate.call_args.args[1:3] == (claimed, hash_token(result.refresh_token))
         assert user.refresh_token_hash is None
         db.commit.assert_called()
 

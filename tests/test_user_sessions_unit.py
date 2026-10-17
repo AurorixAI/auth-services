@@ -48,6 +48,7 @@ def test_the_limits_are_the_decided_ones():
     assert user_sessions.GRACE_SECONDS == 60
     assert user_sessions.MAX_ACTIVE_SESSIONS == 20
     assert user_sessions.EXPIRED_RETENTION_DAYS == 30
+    assert user_sessions.SUPERSEDED_RETENTION_DAYS == 7
     assert {
         user_sessions.REVOKE_LOGOUT, user_sessions.REVOKE_REFRESH_REUSE, user_sessions.REVOKE_PASSWORD_CHANGED,
         user_sessions.REVOKE_USER_BLOCKED, user_sessions.REVOKE_SESSION_CAP,

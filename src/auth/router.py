@@ -3,6 +3,8 @@ ALGO V1 - Auth Router
 REST API: org application, login, invitations, students, diagnostics, groups
 """
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, UploadFile, File
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials
@@ -511,10 +513,23 @@ def _access_subject(
     return None
 
 
+async def _refresh_token_in_body(request: Request) -> Optional[str]:
+    """The ``refresh_token`` of a JSON body, as /auth/refresh accepts it. Lenient: no body, another content type or
+    a body that is not a JSON object just mean "none" (logout has never answered 422)."""
+    try:
+        raw = await request.body()
+        data = json.loads(raw) if raw else None
+    except ValueError:  # not JSON / not UTF-8
+        return None
+    token = data.get("refresh_token") if isinstance(data, dict) else None
+    return token if isinstance(token, str) and token.strip() else None
+
+
 @router.post("/logout", response_model=MessageResponse)
 def logout(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    body_refresh: Optional[str] = Depends(_refresh_token_in_body),
     db: Session = Depends(get_db),
 ):
     """Revoke the server refresh token and clear both browser cookies.
@@ -525,14 +540,16 @@ def logout(
       Set-Cookie.
     - Otherwise both cookies are ALWAYS cleared, also when the access token inside the (30-day)
       cookie has expired. The session of THIS device (the user may be signed in on others) is revoked
-      server-side when the refresh cookie is that session's CURRENT refresh token; any other cookie is
-      just removed from the browser. A request with an access token only identifies the user, not a
-      device, so it revokes no session.
+      server-side when the refresh token is a live token of that session or was superseded at most 60 s
+      ago (the browser just raced a refresh); an older superseded token, or any other cookie, is just
+      removed from the browser. The refresh token is the cookie or, as in /auth/refresh, ``refresh_token``
+      in the JSON body (the cookie wins when both are present). A request with an access token only
+      identifies the user, not a device, so it revokes no session.
     """
     if _is_cross_site_request(request):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Запрос выхода должен приходить с сайта ALGO")
 
-    refresh = request.cookies.get(REFRESH_COOKIE_NAME)
+    refresh = request.cookies.get(REFRESH_COOKIE_NAME) or body_refresh
     has_credential = bool(
         request.cookies.get(AUTH_COOKIE_NAME) or refresh or (credentials and credentials.credentials)
     )
@@ -542,8 +559,9 @@ def logout(
 
     svc = _svc(db)
     if refresh:
-        # The refresh cookie names this device's session: exactly that one is revoked (a token that was rotated
-        # away or is unknown revokes nothing). The user's other devices stay signed in (#101).
+        # The refresh token (the cookie, else the JSON body) names this device's session: exactly that one is
+        # revoked, by a live token or one superseded at most 60 s ago; an older or unknown token revokes nothing.
+        # The user's other devices stay signed in (#101).
         svc.logout_by_refresh_token(refresh)
     else:
         user_id = _access_subject(request, credentials)

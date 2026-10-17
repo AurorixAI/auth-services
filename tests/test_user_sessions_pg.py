@@ -6,6 +6,7 @@ first device at its next refresh (401 "Refresh token отозван"). Now every
 ``user_sessions`` and a refresh rotates only the row it belongs to. The migration and its backfill are covered in
 ``test_postgres_migrations.py``; the cookie and throttle tests are untouched.
 """
+import json
 import logging
 import threading
 import time
@@ -19,11 +20,13 @@ from src.auth import user_sessions
 from src.auth.cookies import AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME
 from src.auth.schemas import LoginRequest
 from src.auth.service import AuthService, create_refresh_token, hash_password, hash_token
-from src.models.auth import OrganizationMember, User, UserSession
+from src.models.auth import OrganizationMember, User, UserSession, UserSessionToken
 
 from tests.pg_world import needs_pg, pg_session, session_clock, world  # noqa: F401  (fixtures)
 from tests.test_session_cookies import (  # noqa: F401  (session_world is a fixture)
     API,
+    assert_cleared,
+    live_hashes,
     PASSWORD,
     client_for,
     cookie_header,
@@ -80,6 +83,14 @@ class Device:
         )
         assert r.status_code == 200, r.text
 
+    def logout_with(self, cookie_token=None, body=None, content_type="application/json"):
+        """POST /logout with the given refresh cookie and/or request body; returns the response."""
+        headers = cookie_header(refresh=cookie_token) if cookie_token else {}
+        if body is not None:
+            headers = {**headers, "content-type": content_type}
+            return self.client.post(f"{API}/logout", content=body, headers=headers)
+        return self.client.post(f"{API}/logout", headers=headers)
+
 
 def sessions(w, user=None):
     w.db.expire_all()
@@ -95,10 +106,61 @@ def live(w, user=None):
     return [s for s in sessions(w, user) if s.revoked_at is None]
 
 
-def session_of(w, token, user=None):
-    rows = [s for s in sessions(w, user) if token in (s.refresh_token_hash, s.previous_token_hash)]
-    assert len(rows) == 1
-    return rows[0]
+def session_of(w, token_hash):
+    """The session a refresh token (given as its hash; live or superseded) belongs to."""
+    w.db.expire_all()
+    row = w.db.query(UserSessionToken).filter_by(token_hash=token_hash).one()
+    return w.db.query(UserSession).filter_by(id=row.session_id).one()
+
+
+def token_rows(w, session):
+    w.db.expire_all()
+    return w.db.query(UserSessionToken).filter_by(session_id=session.id).order_by(UserSessionToken.issued_at).all()
+
+
+def live_tokens(w, user=None):
+    """Hashes of the LIVE tokens of the user's live sessions."""
+    return live_hashes(w, user)
+
+
+def parallel_refresh(w, tokens, monkeypatch, hold=0.7):
+    """Refresh every token in *tokens* at (nearly) the same time, each in its own database session. The first
+    request holds its row locks for *hold* seconds inside the rotation; the others start while it holds them.
+    Returns (results, elapsed): a TokenPair or the exception per token."""
+    engine = w.db.get_bind()
+    entered, mutex, state = threading.Event(), threading.Lock(), {"first_taken": False}
+    real_rotate = user_sessions.rotate
+
+    def slow_rotate(*args, **kwargs):
+        with mutex:
+            first = not state["first_taken"]
+            state["first_taken"] = True
+        if first:
+            entered.set()  # this transaction now holds the locks ...
+            time.sleep(hold)  # ... for a while
+        return real_rotate(*args, **kwargs)
+
+    monkeypatch.setattr(user_sessions, "rotate", slow_rotate)
+    results, elapsed = [None] * len(tokens), [0.0] * len(tokens)
+
+    def run(i, wait_for_the_lock):
+        if wait_for_the_lock:
+            assert entered.wait(10)
+        began = time.monotonic()
+        with sessionmaker(engine)() as db:
+            try:
+                results[i] = AuthService(db).refresh_tokens(tokens[i])
+            except Exception as exc:  # noqa: BLE001 - reported by the assertions of the caller
+                results[i] = exc
+        elapsed[i] = time.monotonic() - began
+
+    threads = [threading.Thread(target=run, args=(i, i > 0)) for i in range(len(tokens))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    monkeypatch.setattr(user_sessions, "rotate", real_rotate)
+    return results, elapsed
 
 
 def enable_login(w, user):
@@ -130,10 +192,9 @@ def test_two_devices_refresh_alternately_five_times_and_never_sign_each_other_ou
 def test_a_new_login_does_not_touch_the_other_sessions_of_the_user(session_world):
     w = session_world
     a = Device(w).login()
-    before = {s.id: s.refresh_token_hash for s in sessions(w)}
+    before = live_tokens(w)
     Device(w).login()
-    after = {s.id: s.refresh_token_hash for s in sessions(w)}
-    assert len(after) == 2 and all(after[i] == h for i, h in before.items())
+    assert before < live_tokens(w) and len(live_tokens(w)) == 2  # the first token is still live, untouched
     assert a.status_of_refresh() == 200
 
 
@@ -156,6 +217,79 @@ def test_logout_by_access_token_alone_identifies_no_device_and_revokes_nothing(s
     r = a.client.post(f"{API}/logout", headers=cookie_header(access=a.access))
     assert r.status_code == 200
     assert len(live(w)) == 2 and a.status_of_refresh() == 200 and b.status_of_refresh() == 200
+
+
+@needs_pg
+def test_logout_with_a_token_superseded_within_the_grace_revokes_the_session(session_world):
+    """The browser just raced a refresh and still holds the older cookie: it is still this device's session."""
+    w = session_world
+    a, b = Device(w).login(), Device(w).login()
+    old = a.refresh
+    a.refresh_ok()
+    r = a.logout_with(cookie_token=old)
+    assert r.status_code == 200
+    assert_cleared(r)
+    assert session_of(w, hash_token(a.refresh)).revoke_reason == "logout"
+    assert a.status_of_refresh() == 401 and b.status_of_refresh() == 200
+
+
+@needs_pg
+def test_logout_with_any_live_token_of_the_session_revokes_it(session_world):
+    w = session_world
+    a = Device(w).login()
+    t0 = a.refresh
+    a.refresh_ok()
+    t1 = a.refresh
+    sibling = set_cookies(a.refresh_with(t0))[REFRESH_COOKIE_NAME].value  # two live tokens: t1 and the sibling
+    assert live_tokens(w) == {hash_token(t1), hash_token(sibling)}
+    assert a.logout_with(cookie_token=t1).status_code == 200
+    assert live_tokens(w) == set()
+    d = Device(w)
+    d.refresh = sibling
+    assert d.status_of_refresh() == 401
+
+
+@needs_pg
+def test_logout_with_a_token_superseded_longer_ago_revokes_nothing_and_still_clears_the_cookies(session_world, session_clock):
+    w = session_world
+    a = Device(w).login()
+    old = a.refresh
+    a.refresh_ok()
+    session_clock.advance(user_sessions.GRACE_SECONDS + 1)
+    r = a.logout_with(cookie_token=old)
+    assert r.status_code == 200
+    assert_cleared(r)
+    assert len(live(w)) == 1 and a.status_of_refresh() == 200
+
+
+@needs_pg
+def test_logout_accepts_the_refresh_token_in_the_json_body_like_refresh_and_the_cookie_wins(session_world):
+    w = session_world
+    a, b, c, d = (Device(w).login() for _ in range(4))
+    # only the body: it names the session, exactly as /auth/refresh accepts it
+    r = a.logout_with(body=json.dumps({"refresh_token": a.refresh}))
+    assert r.status_code == 200
+    assert_cleared(r)
+    assert a.status_of_refresh() == 401 and b.status_of_refresh() == 200
+    # both: the cookie wins, the body token is left alone
+    r = c.logout_with(cookie_token=c.refresh, body=json.dumps({"refresh_token": d.refresh}))
+    assert r.status_code == 200
+    assert c.status_of_refresh() == 401 and d.status_of_refresh() == 200
+
+
+@needs_pg
+@pytest.mark.parametrize(
+    "body,content_type",
+    [("not json at all", "application/json"), ("[1, 2]", "application/json"), ('{"refresh_token": 5}', "application/json"),
+     ('{"refresh_token": ""}', "application/json"), ("refresh_token=x", "application/x-www-form-urlencoded"),
+     ("anything", "text/plain")],
+)
+def test_logout_never_answers_422_for_an_unusable_body(session_world, body, content_type):
+    w = session_world
+    a = Device(w).login()
+    r = a.logout_with(cookie_token=a.refresh, body=body, content_type=content_type)
+    assert r.status_code == 200, r.text
+    assert a.status_of_refresh() == 401  # the cookie still did its work
 
 
 @needs_pg
@@ -195,12 +329,12 @@ def test_an_expired_session_is_refused_even_with_a_valid_jwt(session_world, sess
     assert r.status_code == 401 and r.json() == REFUSED
 
 
-# ---- rotation: the 60 s grace and the replay ---------------------------------------------------
+# ---- rotation: the 60 s grace, the replay, the siblings -----------------------------------------
 
 
 @needs_pg
-def test_a_just_rotated_token_is_answered_within_the_grace_with_a_valid_pair(session_world):
-    """Another tab of the same browser sent the old cookie at the same moment: no sign-out."""
+def test_a_just_superseded_token_is_answered_within_the_grace_with_a_new_sibling(session_world):
+    """Another tab of the same browser sent the old cookie at the same moment: no sign-out, nothing demoted."""
     w = session_world
     a = Device(w).login()
     t0 = a.refresh
@@ -210,9 +344,11 @@ def test_a_just_rotated_token_is_answered_within_the_grace_with_a_valid_pair(ses
     assert again.status_code == 200, again.text
     t2 = set_cookies(again)[REFRESH_COOKIE_NAME].value
     assert t2 not in (t0, t1)
-    # nothing was revoked; the session now holds t2 (current) and t1 (previous, still in its grace)
-    (row,) = sessions(w)
-    assert row.revoked_at is None and row.refresh_token_hash == hash_token(t2) and row.previous_token_hash == hash_token(t1)
+    # nothing was revoked; BOTH answers are live (the first one was not demoted), the old one is superseded
+    (session,) = sessions(w)
+    assert session.revoked_at is None
+    assert live_tokens(w) == {hash_token(t1), hash_token(t2)}
+    assert [t.superseded_at is None for t in token_rows(w, session)].count(False) == 1
     assert a.refresh_with(t1).status_code == 200  # the tab that got t1 from its own answer
     assert len(live(w)) == 1
 
@@ -233,7 +369,7 @@ def test_a_replayed_old_token_after_the_grace_revokes_only_that_session(session_
     messages = " ".join(rec.getMessage() for rec in caplog.records if rec.levelno == logging.WARNING)
     assert str(w.owner.id) in messages and str(row_a.id) in messages
     assert t0 not in messages and a.refresh not in messages and hash_token(t0) not in messages
-    # the rotated session is dead, the other device is untouched
+    # the replayed session is dead (also with its current token), the other device is untouched
     assert a.status_of_refresh() == 401
     assert b.status_of_refresh() == 200
     assert session_of(w, hash_token(b.refresh)).revoked_at is None
@@ -250,6 +386,26 @@ def test_a_token_replayed_exactly_at_the_end_of_the_grace_is_still_answered(sess
 
 
 @needs_pg
+def test_the_grace_is_counted_from_the_supersession_of_each_token_not_from_the_last_refresh(session_world, session_clock):
+    w = session_world
+    a = Device(w).login()
+    t0 = a.refresh
+    a.refresh_ok()  # t=0: t0 superseded
+    t1 = a.refresh
+    session_clock.advance(40)
+    a.refresh_ok()  # t=40: t1 superseded
+    t2 = a.refresh
+    session_clock.advance(10)  # t=50: t0 is two generations old, superseded 50 s ago
+    assert a.refresh_with(t0).status_code == 200
+    session_clock.advance(11)  # t=61: t1 was superseded 21 s ago, t0 61 s ago
+    assert a.refresh_with(t1).status_code == 200
+    assert a.refresh_with(t0).status_code == 401  # past its own grace: a replay
+    row = session_of(w, hash_token(t2))
+    assert row.revoked_at is not None and row.revoke_reason == "refresh_reuse"
+    assert len(live(w)) == 0
+
+
+@needs_pg
 def test_rotation_slides_the_expiry_and_records_the_last_use(session_world, session_clock):
     w = session_world
     a = Device(w).login()
@@ -259,60 +415,115 @@ def test_rotation_slides_the_expiry_and_records_the_last_use(session_world, sess
     a.refresh_ok()
     (row,) = sessions(w)
     assert row.created_at == created
-    assert row.last_used_at > created and row.rotated_at == row.last_used_at
+    assert row.last_used_at - created >= timedelta(seconds=3590)
     assert row.expires_at - expires >= timedelta(seconds=3590)
+    assert len(token_rows(w, row)) == 2 and len(live_tokens(w)) == 1
 
 
-# ---- parallel refreshes of the same token --------------------------------------------------------
+# ---- parallel refreshes of the same token ----------------------------------------------------------
+
+
+def _new_login_token(w):
+    w.db.refresh(w.owner)
+    return AuthService(w.db).login(LoginRequest(email=w.owner.email, password=PASSWORD)).tokens.refresh_token
 
 
 @needs_pg
-def test_two_parallel_refreshes_of_one_token_one_rotates_the_other_takes_the_grace_path(session_world, monkeypatch):
+@pytest.mark.parametrize("count", [2, 3, 5])
+def test_simultaneous_refreshes_of_one_token_all_succeed_and_every_answer_stays_valid(
+    session_world, session_clock, monkeypatch, count
+):
     w = session_world
-    w.db.refresh(w.owner)
-    token = AuthService(w.db).login(LoginRequest(email=w.owner.email, password=PASSWORD)).tokens.refresh_token
-    engine = w.db.get_bind()
+    token = _new_login_token(w)
+    results, elapsed = parallel_refresh(w, [token] * count, monkeypatch)
+    assert not any(isinstance(r, Exception) for r in results), results
+    answers = [r.refresh_token for r in results]
+    assert len(set(answers)) == count and token not in answers
+    assert max(elapsed[1:]) >= 0.5  # they waited for the session lock instead of rotating from the same token
+    (session,) = sessions(w)
+    assert session.revoked_at is None and session.revoke_reason is None
+    # one superseded token, and every answer is a LIVE sibling
+    assert live_tokens(w) == {hash_token(a) for a in answers}
+    assert [t.superseded_at is not None for t in token_rows(w, session)].count(True) == 1
+    # more than a minute later every answer still refreshes: the first use supersedes the others, which are then
+    # within the grace of THAT supersession
+    session_clock.advance(user_sessions.GRACE_SECONDS * 5)
+    for answer in answers:
+        AuthService(w.db).refresh_tokens(answer)  # raises on a refusal
+    assert sessions(w)[0].revoked_at is None
 
-    first_in_rotation = threading.Event()
-    real_rotate = user_sessions.rotate
 
-    def slow_rotate(db, session, *args, **kwargs):
-        first_in_rotation.set()  # this transaction now holds the row lock ...
-        time.sleep(0.7)  # ... for a while
-        return real_rotate(db, session, *args, **kwargs)
-
-    monkeypatch.setattr(user_sessions, "rotate", slow_rotate)
-    results, elapsed = {}, {}
-
-    def run(name, start_after_lock):
-        if start_after_lock:
-            assert first_in_rotation.wait(10)
-        began = time.monotonic()
-        with sessionmaker(engine)() as db:
-            try:
-                results[name] = AuthService(db).refresh_tokens(token)
-            except Exception as exc:  # noqa: BLE001 - reported by the assertions below
-                results[name] = exc
-        elapsed[name] = time.monotonic() - began
-
-    threads = [threading.Thread(target=run, args=("first", False)), threading.Thread(target=run, args=("second", True))]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(30)
-
-    first, second = results["first"], results["second"]
-    assert not isinstance(first, Exception) and not isinstance(second, Exception), results
-    assert first.refresh_token != second.refresh_token and token not in (first.refresh_token, second.refresh_token)
-    assert elapsed["second"] >= 0.5  # it waited for the row lock instead of rotating from the same hash in parallel
-    (row,) = sessions(w)
-    assert row.revoked_at is None and row.revoke_reason is None
-    assert row.refresh_token_hash == hash_token(second.refresh_token)  # the later one rotated again ...
-    assert row.previous_token_hash == hash_token(first.refresh_token)  # ... from the first rotation's token, not from `token`
-    monkeypatch.setattr(user_sessions, "rotate", real_rotate)
+@needs_pg
+def test_after_a_two_way_race_the_jar_may_end_on_the_first_answer_even_a_long_time_later(session_world, session_clock, monkeypatch):
+    w = session_world
+    token = _new_login_token(w)
+    results, _ = parallel_refresh(w, [token, token], monkeypatch)
+    first, second = results[0].refresh_token, results[1].refresh_token  # whichever the browser kept
+    session_clock.advance(7200)
     d = Device(w)
-    d.refresh = first.refresh_token
-    assert d.status_of_refresh() == 200  # whichever answer the browser kept, it still works
+    d.refresh = first
+    assert d.status_of_refresh() == 200
+    assert sessions(w)[0].revoked_at is None
+    d.refresh = second  # the other answer was superseded by that very refresh: still inside its grace
+    assert d.status_of_refresh() == 200
+
+
+@needs_pg
+def test_two_simultaneous_refreshes_with_two_different_live_siblings_do_not_deadlock(session_world, monkeypatch):
+    """Token first, session second would deadlock here (each holds its own token row, the winner supersedes both)."""
+    w = session_world
+    token = _new_login_token(w)
+    results, _ = parallel_refresh(w, [token, token], monkeypatch, hold=0.1)
+    siblings = [r.refresh_token for r in results]
+    assert len(live_tokens(w)) == 2
+    results, _ = parallel_refresh(w, siblings, monkeypatch, hold=0.7)
+    assert not any(isinstance(r, Exception) for r in results), results
+    assert sessions(w)[0].revoked_at is None
+
+
+# ---- superseded tokens are kept 7 days, then swept ------------------------------------------------------
+
+
+@needs_pg
+def test_superseded_tokens_are_kept_7_days_for_replay_detection_then_deleted(session_world, session_clock):
+    w = session_world
+    a = Device(w).login()
+    t0 = a.refresh
+    a.refresh_ok()
+    t1 = a.refresh
+    session_clock.advance(6 * 86400)  # t0 is 6 days old: still known, so a replay is detected
+    stale = hash_token(t0)
+    assert w.db.query(UserSessionToken).filter_by(token_hash=stale).count() == 1
+    Device(w).login()  # a sign-in sweeps; nothing is 7 days old yet
+    assert w.db.query(UserSessionToken).filter_by(token_hash=stale).count() == 1
+    session_clock.advance(2 * 86400)  # now t0 was superseded 8 days ago
+    Device(w).login()
+    assert w.db.query(UserSessionToken).filter_by(token_hash=stale).count() == 0
+    assert w.db.query(UserSessionToken).filter_by(token_hash=hash_token(t1)).count() == 1  # the live token stays
+    # the replay of a token that is gone is an UNKNOWN token: a plain refusal that revokes nothing
+    r = a.refresh_with(t0)
+    assert r.status_code == 401 and r.json() == REFUSED
+    assert all(s.revoked_at is None for s in sessions(w))
+    # ... while the replay of a token that is still kept revokes (a fresh session for that)
+    b = Device(w).login()
+    old = b.refresh
+    b.refresh_ok()
+    session_clock.advance(user_sessions.GRACE_SECONDS + 1)
+    assert b.refresh_with(old).status_code == 401
+    assert session_of(w, hash_token(b.refresh)).revoke_reason == "refresh_reuse"
+
+
+@needs_pg
+def test_a_refresh_prunes_the_old_superseded_tokens_of_its_own_session(session_world, session_clock):
+    w = session_world
+    a = Device(w).login()
+    for _ in range(3):
+        a.refresh_ok()
+    (session,) = sessions(w)
+    assert len(token_rows(w, session)) == 4
+    session_clock.advance((user_sessions.SUPERSEDED_RETENTION_DAYS + 1) * 86400)
+    a.refresh_with(a.refresh)  # the live token: supersedes itself, the three old superseded ones are deleted
+    assert len(token_rows(w, session)) == 2 and len(live_tokens(w)) == 1
 
 
 # ---- password change, blocking ----------------------------------------------------------------
@@ -383,7 +594,7 @@ def test_at_most_20_active_sessions_the_least_recently_used_beyond_the_cap_is_re
     rows = sessions(w)
     assert len(rows) == 21 and len(live(w)) == 20
     (gone,) = [s for s in rows if s.revoked_at is not None]
-    assert gone.revoke_reason == "session_cap" and gone.refresh_token_hash == hash_token(tokens[1])
+    assert gone.revoke_reason == "session_cap" and gone.id == session_of(w, hash_token(tokens[1])).id
     assert session_of(w, hash_token(newest)).revoked_at is None
     assert session_of(w, hash_token(first.refresh)).revoked_at is None
     # the revoked device is refused like any revoked session
@@ -461,7 +672,7 @@ def test_invitation_accept_and_activation_each_create_a_session(session_world):
     )
     invited = w.db.query(User).filter(User.id == UUID(result.user.id)).one()
     (row,) = sessions(w, invited)
-    assert row.refresh_token_hash == hash_token(result.tokens.refresh_token) and row.revoked_at is None
+    assert live_tokens(w, invited) == {hash_token(result.tokens.refresh_token)} and row.revoked_at is None
 
     # activation of an organisation: a new session for its owner, the owner's other sessions stay
     Device(w).login()
@@ -473,7 +684,7 @@ def test_invitation_accept_and_activation_each_create_a_session(session_world):
     activated = svc.activate_account(token)
     after = live(w)
     assert before <= {s.id for s in after} and len(after) == len(before) + 1
-    assert any(s.refresh_token_hash == hash_token(activated.tokens.refresh_token) for s in after)
+    assert hash_token(activated.tokens.refresh_token) in live_tokens(w)
 
 
 @needs_pg
@@ -495,5 +706,6 @@ def test_dev_quick_login_creates_a_session_per_call(session_world):
         assert r.status_code == 200, r.text
         hashes.append(hash_token(r.json()["tokens"]["refresh_token"]))
     dev_user = w.db.query(User).filter(User.email == "dev_teacher@algo.test").one()
-    rows = {s.refresh_token_hash: s for s in sessions(w, dev_user)}
-    assert set(hashes) <= set(rows) and all(rows[h].revoked_at is None and rows[h].ip == "203.0.113.5" for h in hashes)
+    rows = {h: session_of(w, h) for h in hashes}
+    assert len({r.id for r in rows.values()}) == 2 and set(hashes) <= live_tokens(w, dev_user)
+    assert all(r.revoked_at is None and r.ip == "203.0.113.5" for r in rows.values())
