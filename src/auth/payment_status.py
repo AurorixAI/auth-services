@@ -257,6 +257,26 @@ def latest_payment(payments: Sequence[PaymentRecord]) -> Optional[PaymentRecord]
     return max(payments, key=lambda p: (p.paid_on, p.created_at))
 
 
+def payments_in_force(payments: Sequence[PaymentRecord]) -> list[PaymentRecord]:
+    """The live payments the status reads: a calendar payment that moved away before its period began covers nothing."""
+    return [p for p in payments if not p.covers_nothing]
+
+
+# How the mode of a membership is named outside the status maths (the excuse dialog): a lessons payment is a "package".
+BILLING_CALENDAR = CALENDAR
+BILLING_PACKAGE = "package"
+
+
+def billing_mode(payments: Sequence[PaymentRecord]) -> Optional[str]:
+    """How a membership is billed: ``calendar`` or ``package`` - the mode of its LATEST live payment in force, the very
+    payment ``compute_status`` reads (the centre setting only decides what the NEXT payment will be); ``None`` - no live
+    payment, so nothing is written off a package.  ``payments`` must contain live payments only."""
+    last = latest_payment(payments_in_force(payments))
+    if last is None:
+        return None
+    return BILLING_PACKAGE if last.mode == LESSONS else BILLING_CALENDAR
+
+
 def allocate_lessons_detail(
     payments: Sequence[PaymentRecord], lesson_dates: Iterable[date]
 ) -> list[tuple[PaymentRecord, list[date]]]:
@@ -364,7 +384,7 @@ def compute_status(
 ) -> StatusResult:
     """Status of one membership.  ``payments`` must contain live payments only."""
     # A calendar payment that moved away before its period began covers nothing at all.
-    payments = [p for p in payments if not p.covers_nothing]
+    payments = payments_in_force(payments)
     last = latest_payment(payments)
     if last is None:
         return StatusResult(status=FREE if monthly_fee == 0 else NONE)

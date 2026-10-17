@@ -195,6 +195,10 @@ class ExcuseItem(BaseModel):
     deadline: Optional[Union[ExcuseDateDeadline, ExcuseLessonsDeadline]] = Field(
         default=None, discriminator="kind"
     )
+    # How the student is billed in THIS group: the mode of his latest live payment (``payment_status.billing_mode``),
+    # not the centre setting.  ``package`` - a confirmed excuse gives the lesson back to the package; ``calendar`` -
+    # nothing is written off; ``None`` - no live payment, so there is no package line.  Never an amount.
+    billing_mode: Optional[Literal["calendar", "package"]] = None
 
 
 class ExcuseListResponse(BaseModel):
@@ -396,8 +400,13 @@ class AttendanceExcuseService:
         attendance_keys: Dict[UUID, str],
         *,
         include_review_note: bool,
+        include_billing_mode: bool = False,
     ) -> tuple[Dict[str, Dict[str, Dict[str, Any]]], Dict[str, Dict[str, Any]]]:
-        """``excuses`` and ``corrections`` maps keyed by the journal's lesson key."""
+        """``excuses`` and ``corrections`` maps keyed by the journal's lesson key.
+
+        The administrator-only parts: ``review_note`` (``include_review_note``) and ``billing_mode`` (``include_billing_mode``,
+        the mode of the student's latest live payment in the group, see :class:`ExcuseItem`) - a teacher gets neither,
+        and for him no payment is read."""
         excuses: Dict[str, Dict[str, Dict[str, Any]]] = {}
         corrections: Dict[str, Dict[str, Any]] = {}
         if not attendance_keys:
@@ -436,6 +445,16 @@ class AttendanceExcuseService:
                 .all()
             }
 
+        modes: Dict[tuple, Optional[str]] = {}
+        group_of: Dict[UUID, UUID] = {}
+        if include_billing_mode and rows:
+            group_of = dict(
+                self.db.query(GroupAttendance.id, GroupAttendance.group_id)
+                .filter(GroupAttendance.id.in_({r.attendance_id for r in rows}))
+                .all()
+            )
+            modes = self._billing_modes(org_id, {(r.student_id, group_of[r.attendance_id]) for r in rows})
+
         for row in rows:
             key = attendance_keys.get(row.attendance_id)
             if key is None:
@@ -453,6 +472,8 @@ class AttendanceExcuseService:
             # The administrator's note is not for teachers.
             if include_review_note:
                 entry["review_note"] = row.review_note
+            if include_billing_mode:
+                entry["billing_mode"] = modes.get((row.student_id, group_of.get(row.attendance_id)))
             excuses.setdefault(key, {})[str(row.student_id)] = entry
 
         for att_id, audit in latest_audit.items():
@@ -617,7 +638,11 @@ class AttendanceExcuseService:
         teacher_ids = {a.teacher_id or g.teacher_id for _, a, g, _ in rows}
         user_ids = teacher_ids | {e.reason_by for e, *_ in rows} | {e.reviewed_by for e, *_ in rows}
         users = self._users(user_ids)
-        deadlines = self._deadlines(rows)
+        org_id = rows[0][0].org_id
+        pairs = {(e.student_id, a.group_id) for e, a, _, _ in rows}
+        context = self._payment_context(org_id, pairs)
+        deadlines = self._deadlines(rows, context)
+        modes = self._modes_of(context, pairs)
 
         items: List[ExcuseItem] = []
         for excuse, att, group, student in rows:
@@ -652,22 +677,108 @@ class AttendanceExcuseService:
                     review_note=excuse.review_note,
                     files=files.get(excuse.id, []),
                     deadline=deadlines.get(excuse.id),
+                    billing_mode=modes.get((excuse.student_id, att.group_id)),
                 )
             )
         return items
 
-    def _deadlines(self, rows) -> Dict[UUID, Dict[str, Any]]:
+    def _payment_context(self, org_id: UUID, pairs) -> Optional[SimpleNamespace]:
+        """Memberships of the ``(student_id, group_id)`` pairs and their live payments, loaded ONCE for the whole page.
+
+        Two queries however many pairs there are; shared by the deadlines and by ``billing_mode``.  Columns, not
+        entities: the amount is never loaded here.  ``None`` if it could not be loaded (both then simply go missing).
+        Fields: ``membership_of`` ``{(student, group): membership}``, ``live`` ``{membership: [payment rows]}`` and
+        ``records`` ``{membership: [PaymentRecord]}``.
+        """
+        from . import payment_status as ps
+
+        try:
+            membership_of: Dict[tuple, UUID] = {}
+            live: Dict[UUID, list] = {}
+            if pairs:
+                membership_of = {
+                    (row.student_id, row.group_id): row.id
+                    for row in self.db.query(StudentGroup.id, StudentGroup.student_id, StudentGroup.group_id)
+                    .filter(
+                        StudentGroup.student_id.in_({student for student, _ in pairs}),
+                        StudentGroup.group_id.in_({group for _, group in pairs}),
+                    )
+                    .all()
+                }
+            if membership_of:
+                for payment in (
+                    self.db.query(
+                        StudentPayment.id,
+                        StudentPayment.membership_id,
+                        StudentPayment.paid_on,
+                        StudentPayment.valid_from,
+                        StudentPayment.valid_to,
+                        StudentPayment.lessons_count,
+                        StudentPayment.created_at,
+                        StudentPayment.carried_out_at,
+                        StudentPayment.carried_from_payment_id,
+                    )
+                    .filter(
+                        StudentPayment.org_id == org_id,
+                        StudentPayment.membership_id.in_(set(membership_of.values())),
+                        StudentPayment.voided_at.is_(None),
+                    )
+                    .all()
+                ):
+                    live.setdefault(payment.membership_id, []).append(payment)
+            records = {
+                membership: [
+                    ps.PaymentRecord(
+                        paid_on=p.paid_on,
+                        valid_from=p.valid_from,
+                        valid_to=p.valid_to,
+                        lessons_count=p.lessons_count,
+                        created_at=p.created_at or datetime.min,
+                        id=p.id,
+                        carried_out_at=p.carried_out_at,
+                        membership_id=p.membership_id,
+                        carried_from_id=p.carried_from_payment_id,
+                    )
+                    for p in payments
+                ]
+                for membership, payments in live.items()
+            }
+            return SimpleNamespace(membership_of=membership_of, live=live, records=records)
+        except Exception:
+            logger.exception("Could not load the payments of the excuses")
+            try:
+                self.db.rollback()
+            except Exception:  # pragma: no cover - defensive
+                pass
+            return None
+
+    @staticmethod
+    def _modes_of(context: Optional[SimpleNamespace], pairs) -> Dict[tuple, Optional[str]]:
+        """``{(student, group): "calendar" | "package" | None}`` - the one definition is ``payment_status.billing_mode``."""
+        from . import payment_status as ps
+
+        if context is None:
+            return {}
+        return {
+            pair: ps.billing_mode(context.records.get(context.membership_of.get(pair), ()))
+            for pair in pairs
+        }
+
+    def _billing_modes(self, org_id: UUID, pairs) -> Dict[tuple, Optional[str]]:
+        return self._modes_of(self._payment_context(org_id, pairs), pairs)
+
+    def _deadlines(self, rows, context: Optional[SimpleNamespace]) -> Dict[UUID, Dict[str, Any]]:
         """Confirmation deadline of every pending excuse of the page, in a fixed number of queries.
 
-        Memberships, live payments, the payment settings and (lessons mode only)
+        Memberships and live payments (``context``), the payment settings and (lessons mode only)
         the counted lessons are each loaded once for the whole page.  Only dates
         and lesson counts leave this method; a failure yields no deadline.
         """
         pending = [(e, a, g, s) for e, a, g, s in rows if e.status == "pending"]
-        if not pending:
+        if not pending or context is None:
             return {}
         try:
-            return self._pending_deadlines(pending)
+            return self._pending_deadlines(pending, context)
         except Exception:
             logger.exception("Could not work out excuse deadlines")
             try:
@@ -695,63 +806,15 @@ class AttendanceExcuseService:
             return str(student_id) in roster
         return True
 
-    def _pending_deadlines(self, pending) -> Dict[UUID, Dict[str, Any]]:
+    def _pending_deadlines(self, pending, context: SimpleNamespace) -> Dict[UUID, Dict[str, Any]]:
         from . import excuse_deadline as dl
-        from . import payment_status as ps
         from .payments_service import PaymentService  # lazy: it imports the models only, but is heavy
 
         org_id = pending[0][0].org_id
         settings = PaymentService(self.db).get_settings(str(org_id))
         today = _business_today()
 
-        student_ids = {e.student_id for e, *_ in pending}
-        group_ids = {a.group_id for _, a, *_ in pending}
-        membership_of = {
-            (row.student_id, row.group_id): row.id
-            for row in self.db.query(StudentGroup.id, StudentGroup.student_id, StudentGroup.group_id)
-            .filter(StudentGroup.student_id.in_(student_ids), StudentGroup.group_id.in_(group_ids))
-            .all()
-        }
-        live: Dict[UUID, list] = {}
-        if membership_of:
-            # Columns, not entities: the amount is never loaded here.
-            for payment in (
-                self.db.query(
-                    StudentPayment.id,
-                    StudentPayment.membership_id,
-                    StudentPayment.paid_on,
-                    StudentPayment.valid_from,
-                    StudentPayment.valid_to,
-                    StudentPayment.lessons_count,
-                    StudentPayment.created_at,
-                    StudentPayment.carried_out_at,
-                    StudentPayment.carried_from_payment_id,
-                )
-                .filter(
-                    StudentPayment.org_id == org_id,
-                    StudentPayment.membership_id.in_(set(membership_of.values())),
-                    StudentPayment.voided_at.is_(None),
-                )
-                .all()
-            ):
-                live.setdefault(payment.membership_id, []).append(payment)
-        records = {
-            membership: [
-                ps.PaymentRecord(
-                    paid_on=p.paid_on,
-                    valid_from=p.valid_from,
-                    valid_to=p.valid_to,
-                    lessons_count=p.lessons_count,
-                    created_at=p.created_at or datetime.min,
-                    id=p.id,
-                    carried_out_at=p.carried_out_at,
-                    membership_id=p.membership_id,
-                    carried_from_id=p.carried_from_payment_id,
-                )
-                for p in payments
-            ]
-            for membership, payments in live.items()
-        }
+        membership_of, live, records = context.membership_of, context.live, context.records
 
         # The lessons FIFO is needed only for lessons that no calendar payment covers.
         lesson_dates: Dict[UUID, date] = {}

@@ -184,12 +184,13 @@ def test_journal_exposes_excuses_and_hides_review_note_from_teachers(world):
 
     admin_view = journal(world, world.admin).excuses[key_of(day, lesson_id)][str(world.students[0].id)]
     assert set(admin_view) == {"id", "status", "reason", "reason_by_name", "reason_at", "reviewed_by_name",
-                               "reviewed_at", "review_note", "has_files"}
+                               "reviewed_at", "review_note", "has_files", "billing_mode"}
     assert admin_view["status"] == "confirmed" and admin_view["review_note"] == "Справка есть"
+    assert admin_view["billing_mode"] is None                                         # the student has no live payment
     assert admin_view["reviewed_by_name"] and admin_view["has_files"] is False
 
     teacher_view = journal(world, world.teacher, is_admin=False).excuses[key_of(day, lesson_id)][str(world.students[0].id)]
-    assert "review_note" not in teacher_view and teacher_view["status"] == "confirmed"
+    assert "review_note" not in teacher_view and "billing_mode" not in teacher_view and teacher_view["status"] == "confirmed"
     assert journal(world, world.admin).corrections == {}
 
 

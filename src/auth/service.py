@@ -5413,7 +5413,7 @@ class AuthService:
             historical_students.sort(key=lambda item: (item.get("left_at") or "", item["full_name"]))
 
         excuses_map, corrections_map = AttendanceExcuseService(self.db).journal_payload(
-            org_id, attendance_keys, include_review_note=is_org_manager
+            org_id, attendance_keys, include_review_note=is_org_manager, include_billing_mode=is_org_manager
         )
 
         return GroupAttendanceResponse(
