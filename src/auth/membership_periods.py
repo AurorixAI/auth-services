@@ -180,11 +180,12 @@ def periods_by_membership(
     rows = (
         db.query(StudentGroupPeriod)
         .filter(StudentGroupPeriod.membership_id.in_(ids))
-        # a zero-length stay sorts before the open one that starts at the same instant (NULL is last)
+        # a closed (zero-length) stay sorts before the open one that starts at the same instant: NULLS LAST is
+        # said out loud, because where NULLs sort by default differs between PostgreSQL and SQLite
         .order_by(
             StudentGroupPeriod.membership_id,
             StudentGroupPeriod.joined_at,
-            StudentGroupPeriod.left_at,
+            StudentGroupPeriod.left_at.asc().nulls_last(),
             StudentGroupPeriod.id,
         )
         .all()

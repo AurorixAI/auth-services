@@ -23,7 +23,14 @@ def has_valid_internal_token(token: Optional[str]) -> bool:
     The yes/no form of ``require_internal_service_token``, for a PUBLIC route that answers an internal caller with
     more than it tells the world."""
     expected = get_settings().internal_service_token
-    return bool(expected and token and secrets.compare_digest(token, expected))
+    if not (expected and token):
+        return False
+    try:
+        # Bytes, not str: compare_digest raises TypeError on a non-ASCII str, and a header value from the outside
+        # can be anything (it must be a refusal, never a 500).
+        return secrets.compare_digest(token.encode("utf-8"), expected.encode("utf-8"))
+    except (AttributeError, TypeError, UnicodeError):
+        return False
 
 
 def require_internal_service_token(

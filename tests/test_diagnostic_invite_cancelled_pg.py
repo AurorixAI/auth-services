@@ -749,3 +749,28 @@ def test_complete_takes_the_student_before_the_invite_so_it_cannot_deadlock_with
     row = reload(pack, confirmed)
     assert results["done"]["status"] == "completed" and row.status == "completed" and row.revived_at is not None
     assert pack.db.get(Student, student.id).status == "archived"   # the archiving's status survived the completion
+
+
+# ---- a hostile header value is a refusal, never a 500 ---------------------------------------------------------
+
+
+def test_a_non_ascii_internal_token_is_refused_not_a_server_error(pack):
+    row = cancelled_confirmed(pack)
+    client = public_client(pack)
+    for hostile in (b"\xe9", "é".encode("utf-8"), b"\xff\xfe", b"tok\x80en"):
+        # the PUBLIC lookup: 200, no details (it is not an internal caller)
+        r = client.get(f"{API}/diagnostic/{row.code}", headers={"X-Internal-Service-Token": hostile})
+        assert r.status_code == 200, (hostile, r.text)
+        assert r.json()["status"] == "cancelled" and "cancelled_at" not in r.json() and "cancel_reason" not in r.json()
+        # an INTERNAL route: 403
+        r = client.post(
+            f"{INTERNAL}/diagnostic/{row.code}/start", json=start_body(uuid4(), naive_now()),
+            headers={"X-Internal-Service-Token": hostile},
+        )
+        assert r.status_code == 403, (hostile, r.text)
+    # the right token still works on both
+    assert client.get(f"{API}/diagnostic/{row.code}", headers=token()).json()["cancel_reason"] == "student_archived"
+    from src.api.internal_router import has_valid_internal_token
+
+    assert has_valid_internal_token("é") is False and has_valid_internal_token(None) is False
+    assert has_valid_internal_token(get_settings().internal_service_token) is True

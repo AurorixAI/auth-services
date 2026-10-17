@@ -504,13 +504,18 @@ class StudentGroup(Base):
     student = relationship("Student", back_populates="group_memberships")
     group = relationship("Group", back_populates="student_memberships")
     # Every stay of the student in the group, oldest first (the row above keeps the CURRENT / last one in
-    # joined_at / left_at).  Written only through src/auth/membership_periods.py.
+    # joined_at / left_at).  Written only through src/auth/membership_periods.py.  At the same start a closed stay
+    # (a zero-length one) comes before the open one: ``left_at`` ascending with NULLs LAST in every dialect.
     periods = relationship(
         "StudentGroupPeriod",
         back_populates="membership",
         cascade="all, delete-orphan",
         passive_deletes=True,
-        order_by="(StudentGroupPeriod.joined_at, StudentGroupPeriod.left_at, StudentGroupPeriod.id)",
+        order_by=lambda: (
+            StudentGroupPeriod.joined_at,
+            StudentGroupPeriod.left_at.asc().nulls_last(),
+            StudentGroupPeriod.id,
+        ),
     )
 
     __table_args__ = (

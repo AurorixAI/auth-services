@@ -754,10 +754,11 @@ def test_archive_does_not_deadlock_with_a_payment_being_recorded(two, engine):
     assert two.db.query(StudentPayment).filter_by(student_id=s.id, receipt_no=999001).count() == 1   # the payment is kept
 
 
-def test_archive_waits_for_a_transfer_and_closes_the_membership_it_made(two, engine):
+def test_archive_waits_for_a_transfer_and_closes_the_membership_it_made(two, engine, caplog):
     from sqlalchemy import text
     from sqlalchemy.orm import Session
 
+    caplog.set_level("WARNING", logger="src.auth.membership_periods")
     s = two.students[1]                                          # Бек: only in the first group
     third = make_group(two.db, two.org, two.teacher2, "Третья")
     two.db.commit()
@@ -765,13 +766,19 @@ def test_archive_waits_for_a_transfer_and_closes_the_membership_it_made(two, eng
     holder.execute(text("SELECT id FROM students WHERE id = :s FOR UPDATE"), {"s": s.id})
     thread, outcome = run_in_thread(engine, archive_call(two, s))
     wait_until_blocked(engine)
-    holder.execute(text(                                          # ... and now adds a second membership
-        "INSERT INTO student_groups (id, student_id, group_id, is_active, joined_at) VALUES (gen_random_uuid(), :s, :g, true, now())"),
+    # ... and now adds a second membership - as add_student_to_group does: the row AND its open period
+    holder.execute(text(
+        "INSERT INTO student_groups (id, student_id, group_id, is_active, joined_at) "
+        "VALUES ('00000000-0000-4000-8000-0000000a1c01', :s, :g, true, now())"),
         {"s": s.id, "g": third.id})
+    holder.execute(text(
+        "INSERT INTO student_group_periods (id, membership_id, joined_at) "
+        "VALUES (gen_random_uuid(), '00000000-0000-4000-8000-0000000a1c01', now())"))
     holder.commit()
     holder.close()
     thread.join(timeout=20)
     assert "error" not in outcome, outcome.get("error")
+    assert not [r for r in caplog.records if "close_period" in r.getMessage()], "no membership needed the self-heal"
     assert sorted(g.group_name for g in outcome["value"].closed_groups) == ["Группа", "Третья"]   # the new one is closed too
     two.db.expire_all()
     assert not any(x.is_active for x in two.db.query(StudentGroup).filter_by(student_id=s.id))
