@@ -652,10 +652,11 @@ def test_gives_up_after_ten_conflicts_without_writing_anything(world, monkeypatc
 @pytest.fixture
 def engine():
     from sqlalchemy import create_engine
+    from src.core.db_timezone import utc_connect_args
 
     from tests.pg_world import DB_URL
 
-    engine = create_engine(DB_URL)
+    engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
     yield engine
     engine.dispose()
 

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import func, or_
 
+from . import payment_status as ps
 from . import student_identity
 from .student_id_service import assign_display_id
 from .attendance_excuses import AttendanceExcuseService
@@ -5053,8 +5054,8 @@ class AuthService:
         recent_active_memberships = [
             membership
             for membership in active_memberships
-            if self._membership_event_at(membership)
-            and period_start <= self._membership_event_at(membership).date() <= period_end
+            if (event_at := self._membership_event_at(membership))
+            and period_start <= ps.business_date(event_at) <= period_end
         ]
         membership_events: list[dict[str, Any]] = []
         if recent_active_memberships:

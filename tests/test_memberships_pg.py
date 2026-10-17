@@ -464,3 +464,38 @@ def test_student_list_has_groups_count_and_no_extra_queries_per_row(two):
 
 
 API_ROOT = "/api/v1/auth"
+
+
+# ---- #49 A1: a transfer belongs to the Tashkent day of its instant -----------------
+
+
+@pytest.mark.parametrize(
+    "instant_utc, month, expected",
+    [
+        # 01.11 02:30 in Tashkent: the November journal, not October's (the bug filed it under 31.10)
+        (datetime(2026, 10, 31, 21, 30), "2026-11", ["transferred"]),
+        (datetime(2026, 10, 31, 21, 30), "2026-10", []),
+        # the edge itself: 23:59 Tashkent on 31.10 is still October, 00:00 on 01.11 is November
+        (datetime(2026, 10, 31, 18, 59), "2026-10", ["transferred"]),
+        (datetime(2026, 10, 31, 18, 59), "2026-11", []),
+        (datetime(2026, 10, 31, 19, 0), "2026-11", ["transferred"]),
+        (datetime(2026, 10, 31, 19, 0), "2026-10", []),
+    ],
+)
+def test_transfer_event_is_filed_under_its_tashkent_business_date(two, instant_utc, month, expected):
+    add(two, two.second)
+    # one instant for both sides of the transfer, stored the way the service stores it: naive UTC
+    two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.group.id).update(
+        {"left_at": instant_utc}
+    )
+    two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.second.id).update(
+        {"joined_at": instant_utc}
+    )
+    two.db.commit()
+    two.db.expire_all()
+    response = two.svc.get_group_attendance(
+        str(two.org.id), str(two.second.id), month, actor_id=str(two.admin.id), is_org_admin=True
+    )
+    assert [e["kind"] for e in response.membershipEvents] == expected
+    if expected:
+        assert response.membershipEvents[0]["joined_at"] == instant_utc.isoformat()  # the instant itself stays UTC

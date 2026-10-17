@@ -11,7 +11,7 @@ import logging
 import os
 import traceback
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,6 +66,13 @@ async def lifespan(app: FastAPI):
     """Lifecycle управление приложением"""
     # Startup
     logger.info("Starting ALGO Auth Service...")
+
+    # Сессия БД обязана быть в UTC (ROADMAP #49): иначе now()/aware-значения в naive-колонках сдвинутся.
+    # Проверяем до миграций; при другом поясе сервис не стартует.
+    from src.core.database import engine as _engine
+    from src.core.db_timezone import verify_database_timezone
+
+    verify_database_timezone(_engine)
 
     # Применяем миграции Alembic (только новые, идемпотентно)
     from alembic.config import Config
@@ -261,7 +268,7 @@ async def health_check(db: Session = Depends(get_db)):
         status="healthy" if db_status == "connected" else "degraded",
         version="1.0.0",
         database=db_status,
-        timestamp=datetime.now(),
+        timestamp=datetime.now(timezone.utc),
     )
 
 if __name__ == "__main__":

@@ -674,10 +674,11 @@ def test_payroll_of_a_past_month_does_not_change_when_a_student_is_archived(worl
 @pytest.fixture
 def engine():
     from sqlalchemy import create_engine
+    from src.core.db_timezone import utc_connect_args
 
     from tests.pg_world import DB_URL
 
-    engine = create_engine(DB_URL)
+    engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
     yield engine
     engine.dispose()
 

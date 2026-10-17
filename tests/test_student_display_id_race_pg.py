@@ -18,6 +18,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, func
+from src.core.db_timezone import utc_connect_args
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key-must-be-at-least-32-chars-ok")
@@ -35,7 +36,7 @@ pytestmark = pytest.mark.skipif(not DB_URL, reason="Requires disposable A2 auth 
 @pytest.fixture
 def factory():
     assert DB_URL and DB_URL.endswith("/a2_auth"), "Use only the disposable a2_auth database"
-    engine = create_engine(DB_URL, pool_size=10)
+    engine = create_engine(DB_URL, pool_size=10, connect_args=utc_connect_args(DB_URL))
     Organization.metadata.create_all(engine)
     made: list = []  # org ids to clean up
     yield sessionmaker(engine), made
