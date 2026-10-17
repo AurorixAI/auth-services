@@ -34,11 +34,21 @@ Writes
   ``PRICE_CONFLICT`` ("the price was just changed, refresh and repeat"), not a silent overwrite; the same request
   twice (a double click) is simply done.  A unique-key collision that still slips through, and a deadlock, are the
   same 409, never a 500.  ``dry_run`` computes the impact and writes nothing.
-* :meth:`PricingService.set_override` - under ``FOR NO KEY UPDATE`` of the membership (the same lock as every other
-  writer of money of a membership), refused for an archived student.  :func:`write_override` is the bare write used
-  inside another transaction (adding a student to a group with an individual price).  The audit row points at the
-  group (FOR KEY SHARE): a membership change that holds the group FOR UPDATE and then asks for this membership
-  (``remove_student_from_group``) can close a lock cycle, which PostgreSQL breaks as a deadlock - a 409 here too.
+* :meth:`PricingService.set_override` - refused for an archived student.  :func:`write_override` is the bare write
+  used inside another transaction (adding a student to a group with an individual price): it takes NO lock of its own.
+
+Lock order of an individual price (``set_override``): the STUDENT row, then the GROUP row, then the MEMBERSHIP, every
+one FOR NO KEY UPDATE.  The writers that touch both a group and a membership of a student disagree among themselves:
+``add_student_to_group`` and the archiving take student -> membership -> group (FOR UPDATE), ``remove_student_from_group``
+student -> group -> membership.  They never meet, because each of them starts with the student row (FOR UPDATE /
+FOR NO KEY UPDATE) and so excludes every other of them for that student - and the price write, which starts with the
+same student lock, joins that exclusion.  Without it the audit row, whose foreign keys take FOR KEY SHARE on the group,
+closed a cycle with ``remove_student_from_group`` (PostgreSQL broke it as 40P01).  The group comes before the
+membership like in ``set_group_price`` (which holds only the group), so the price write waits for the group before it
+holds anything a payment of that membership could be waiting for.  The student's status is read after the three
+locks: an archiving that won the student lock is seen (409), never overwritten.  A payment (membership only, then
+FOR KEY SHARE on the student) is compatible with all three.  A deadlock that PostgreSQL still finds is a 409
+(``_guard``), never a 500.
 
 Impact of a change of the group price (what the confirmation window shows): ``students_following`` (active
 students of the group who follow the group price on the day the change reaches them), ``students_with_override``
@@ -864,9 +874,23 @@ class PricingService:
         amount, reason = check_override_input(amount, reason)
         valid_from = check_valid_from(valid_from or today, today)
         try:
+            # The lock order is in the module docstring: student -> group -> membership, every one FOR NO KEY UPDATE.
+            # The ids come from an unlocked read (a membership never changes its student or its group).
+            known = self._membership(org_id, membership_id)
+            student = (
+                self.db.query(Student)
+                .filter(Student.id == known.student_id, Student.org_id == org_id)
+                .with_for_update(key_share=True)
+                .populate_existing()
+                .first()
+            )
+            if student is None:
+                raise PriceNotFound("Членство не найдено")
+            self._group(org_id, known.group_id, lock=True)
             membership = self._membership(org_id, membership_id, lock=True)
-            status = self.db.query(Student.status).filter(Student.id == membership.student_id).scalar()
-            if status == "archived":
+            if membership.student_id != student.id or membership.group_id != known.group_id:
+                raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT")
+            if student.status == "archived":  # read after the locks: an archiving that held the student is seen
                 raise PriceConflict(ARCHIVED_STUDENT_MESSAGE)
             write_override(
                 self.db, membership.id, actor_id, amount=amount, valid_from=valid_from, reason=reason,

@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from src.auth import pricing
+from src.auth.service import AuthService
 from src.models.auth import (
     GroupAttendance, GroupAudit, GroupPrice, MembershipPriceOverride, Organization, Student, StudentGroup,
     StudentPayment,
@@ -1169,38 +1170,143 @@ def test_the_price_and_its_audit_row_commit_or_roll_back_together(world, engine,
         (450_000, 300_000), (300_000, 888_000)]
 
 
-def test_an_audit_insert_that_closes_a_lock_cycle_with_a_membership_change_ends_clean(world, engine):
-    """The audit row points at the group (FOR KEY SHARE).  ``remove_student_from_group`` holds the group FOR UPDATE and
-    then asks for the membership this write already holds: PostgreSQL breaks that cycle (40P01).  Whoever is the
-    victim, it is a clean 409 / a deadlock error, never a hang, and the exception and its audit row stay together."""
-    import threading
-
+def blocked_probe(engine, sql, **params):
+    """``True`` if the row lock asked for by ``sql`` (… FOR NO KEY UPDATE NOWAIT) is held by somebody else."""
     from sqlalchemy import text
     from sqlalchemy.orm import Session
 
-    membership_id = mid(world)
+    with Session(engine) as probe:
+        try:
+            probe.execute(text(sql), params)
+            return False
+        except OperationalError as exc:
+            assert exc.orig.pgcode == "55P03", exc
+            return True
+        finally:
+            probe.rollback()
+
+
+def test_a_price_write_holds_the_student_then_waits_for_the_group_before_it_takes_the_membership(world, engine):
+    """The lock order of an individual price is student -> group -> membership (module docstring of ``pricing``).  A holder
+    of the group that then asks for the membership - ``remove_student_from_group`` - used to close a cycle with the audit
+    row (the foreign key to the group); now the write waits for the group holding the student only, the membership is free."""
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+
+    student, membership_id = world.students[0], mid(world)
     holder = Session(engine)
     holder.execute(text("SELECT id FROM groups WHERE id = :g FOR UPDATE"), {"g": world.group.id})      # the group first ...
     thread, outcome = run_in_thread(engine, lambda session: pricing.PricingService(session).set_override(
-        str(world.org.id), membership_id, str(world.owner.id), amount=1_000, valid_from=day(-3), reason="цикл"))
-    wait_until_blocked(engine)                                                      # the write holds the membership, waits for the group
-    holder_error = None
-    try:
-        holder.execute(text("SELECT id FROM student_groups WHERE id = :m FOR NO KEY UPDATE"), {"m": membership_id})   # ... then the membership
-    except OperationalError as exc:
-        holder_error = exc
-    finally:
-        holder.rollback()
-        holder.close()
+        str(world.org.id), membership_id, str(world.owner.id), amount=1_000, valid_from=day(-3), reason="порядок"))
+    wait_until_blocked(engine)                                                      # the write waits for the group ...
+    assert blocked_probe(engine, "SELECT id FROM students WHERE id = :s FOR NO KEY UPDATE NOWAIT", s=student.id)    # ... holding the student
+    assert not blocked_probe(engine, "SELECT id FROM student_groups WHERE id = :m FOR NO KEY UPDATE NOWAIT", m=membership_id)   # ... not the membership
+    holder.execute(text("SELECT id FROM student_groups WHERE id = :m FOR NO KEY UPDATE NOWAIT"), {"m": membership_id})   # ... then the membership: at once
+    holder.commit()
+    holder.close()
     out = finish(thread, outcome)
-    assert (holder_error is not None) != ("error" in out), (holder_error, out)          # exactly one side was the victim
-    if holder_error is not None:
-        assert holder_error.orig.pgcode == "40P01" and "value" in out
-    else:
-        assert isinstance(out["error"], pricing.PriceConflict) and out["error"].detail["code"] == "PRICE_CONFLICT"
+    assert "error" not in out, out.get("error")
     world.db.expire_all()
-    stored = world.db.query(MembershipPriceOverride).filter_by(membership_id=membership_id).count()
-    assert stored == len(audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE)) == (0 if "error" in out else 1)
+    assert world.db.query(MembershipPriceOverride).filter_by(membership_id=membership_id).count() == 1
+    assert len(audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE)) == 1
+
+
+def test_a_price_write_waiting_for_an_archiving_sees_the_archive_and_writes_nothing(world, engine):
+    """The status of the student is read after the locks: an archiving in flight (it holds the student row) is waited for
+    and seen - the clean 409, no override, no audit row - never a write on the stale 'active'."""
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+
+    student, membership_id = world.students[0], mid(world)
+    holder = Session(engine)
+    holder.execute(text("UPDATE students SET status = 'archived', archived_at = now() WHERE id = :s"), {"s": student.id})
+    thread, outcome = run_in_thread(engine, lambda session: pricing.PricingService(session).set_override(
+        str(world.org.id), membership_id, str(world.owner.id), amount=1_000, valid_from=day(-3), reason="архив"))
+    wait_until_blocked(engine)                                                      # it waits for the student row
+    holder.commit()
+    holder.close()
+    out = finish(thread, outcome)
+    assert isinstance(out.get("error"), pricing.PriceConflict) and out["error"].message == "Ученик в архиве — сначала верните его"
+    world.db.expire_all()
+    assert world.db.query(MembershipPriceOverride).filter_by(membership_id=membership_id).count() == 0
+    assert audit_rows(world) == []
+
+
+def race_price_write_with(world, engine, monkeypatch, caplog, rounds, competitor, reset=None):
+    """``rounds`` times: a price write on a membership and ``competitor(session)`` (a writer of the SAME student) right
+    behind it.  The audit insert is slowed to 40 ms and the competitor starts only once the price write holds the student
+    row, so it arrives while the price write is inside its transaction - the window of the old cycle is wide open.  Every round must end clean on both sides: PostgreSQL
+    aborts exactly one participant of a deadlock, so a missing error is a missing deadlock."""
+    import logging
+    import time
+
+    original = pricing._add_audit
+
+    def slow_audit(*args, **kwargs):
+        time.sleep(0.04)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pricing, "_add_audit", slow_audit)
+    membership_id = mid(world)
+    caplog.set_level(logging.WARNING, logger="src.auth.pricing")
+    for n in range(rounds):
+        price_thread, price_out = run_in_thread(engine, lambda session, n=n: pricing.PricingService(session).set_override(
+            str(world.org.id), membership_id, str(world.owner.id), amount=100_000 + n, valid_from=day(-3), reason=f"гонка {n}"))
+        deadline = time.time() + 10
+        while not blocked_probe(engine, "SELECT id FROM students WHERE id = :s FOR NO KEY UPDATE NOWAIT", s=world.students[0].id):
+            assert time.time() < deadline, "the price write never took the student row"
+            time.sleep(0.001)                                                       # the price write is first, inside its locks
+        other_thread, other_out = run_in_thread(engine, competitor)
+        outcomes = (finish(price_thread, price_out), finish(other_thread, other_out))
+        assert all("error" not in o for o in outcomes), (n, [o.get("error") for o in outcomes])
+        world.db.expire_all()
+        if reset:
+            reset(n)
+    monkeypatch.undo()
+    assert not [r for r in caplog.records if "deadlock" in r.getMessage()]           # the safety net of _guard never had to act
+    world.db.expire_all()
+    amounts = [r.snapshot["new_amount"] for r in audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE)
+               if r.snapshot["reason"] and r.snapshot["reason"].startswith("гонка")]
+    assert amounts == [100_000 + n for n in range(rounds)]                          # every price write is there, once, in order
+
+
+def test_remove_student_and_a_price_write_on_the_same_membership_never_deadlock(world, engine, monkeypatch, caplog):
+    student = world.students[0]
+
+    def remove(session):
+        return AuthService(session).remove_student_from_group(str(world.org.id), str(world.group.id), str(student.id))
+
+    def back(n):                                                                    # the student returns to the group for the next round
+        world.svc.add_student_to_group(str(world.org.id), str(world.group.id), str(student.id), mode="transfer")
+
+    race_price_write_with(world, engine, monkeypatch, caplog, 25, remove, back)
+
+
+def test_archiving_and_a_price_write_on_the_same_membership_never_deadlock(world, engine, monkeypatch, caplog):
+    from src.auth.student_archive import StudentArchiveService
+
+    student = world.students[0]
+
+    def archive(session):
+        return StudentArchiveService(session).archive(str(world.org.id), str(student.id), actor_id=str(world.owner.id),
+                                                      actor_role="owner")
+
+    def restore(n):
+        StudentArchiveService(world.db).restore(str(world.org.id), str(student.id), actor_id=str(world.owner.id),
+                                                actor_role="owner", group_ids=[world.group.id])
+
+    race_price_write_with(world, engine, monkeypatch, caplog, 10, archive, restore)
+
+
+def test_enrolment_with_an_individual_price_and_a_price_write_on_the_same_membership_never_deadlock(world, engine, monkeypatch, caplog):
+    student = world.students[0]
+
+    def enrol(session):                                                             # the student is in the group: the "nothing moves" path writes the exception
+        return AuthService(session).add_student_to_group(
+            str(world.org.id), str(world.group.id), str(student.id), mode="transfer",
+            price_override=SimpleNamespace(amount=222_000, reason="при зачислении"), actor_id=str(world.admin.id))
+
+    race_price_write_with(world, engine, monkeypatch, caplog, 10, enrol)
 
 
 def test_the_audit_trail_is_for_the_money_roles_only(world):
