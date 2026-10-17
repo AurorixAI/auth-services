@@ -24,7 +24,7 @@ def test_created_invite_names_the_student_last_name_first_without_a_database():
     student = Student(first_name="Алия", last_name="Каримова", class_level=9)
     student.id = "00000000-0000-0000-0000-000000000001"
     db = MagicMock()
-    db.query.return_value.filter.return_value.first.return_value = student
+    db.query.return_value.filter.return_value.with_for_update.return_value.first.return_value = student
     out = AuthService(db).create_diagnostic_invite(
         "org-1", "creator-1", DiagnosticCreateRequest(student_id=str(student.id), class_level=9)
     )
@@ -35,7 +35,7 @@ def test_a_missing_part_of_the_name_leaves_no_stray_space():
     student = Student(first_name="", last_name="Каримова", class_level=9)
     student.id = "00000000-0000-0000-0000-000000000002"
     db = MagicMock()
-    db.query.return_value.filter.return_value.first.return_value = student
+    db.query.return_value.filter.return_value.with_for_update.return_value.first.return_value = student
     out = AuthService(db).create_diagnostic_invite(
         "org-1", "creator-1", DiagnosticCreateRequest(student_id=str(student.id), class_level=9)
     )

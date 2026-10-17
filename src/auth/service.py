@@ -27,6 +27,10 @@ from .student_id_service import assign_display_id
 from .attendance_excuses import AttendanceExcuseService
 from .diagnostic_level import level_fields, normalize_level_payload
 from .student_archive import (
+    ARCHIVED,
+    ARCHIVED_STUDENT_INVITE_MESSAGE,
+    INVITE_CANCELLED_MESSAGE,
+    ArchiveConflict,
     archive_stamp,
     archived_groups_payload,
     attach_archived_groups,
@@ -162,6 +166,7 @@ REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TTL_DAYS", "30"))
 DIAGNOSTIC_CODE_LENGTH = 8
 INVITE_CODE_LENGTH = 8
 BASE_DIAGNOSTIC_URL = os.getenv("DIAGNOSTIC_BASE_URL", "http://localhost:3000/d")
+# "cancelled" is deliberately absent: a cancelled invite never turns into "expired" when its time passes.
 _EXPIRABLE_DIAGNOSTIC_STATUSES = ("pending", "confirmed", "in_progress")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -1139,6 +1144,8 @@ class AuthService:
                 "created_at": inv.created_at.isoformat() if inv.created_at else None,
                 "started_at": inv.started_at.isoformat() if inv.started_at else None,
                 "completed_at": inv.completed_at.isoformat() if inv.completed_at else None,
+                "cancelled_at": inv.cancelled_at.isoformat() if inv.cancelled_at else None,
+                "cancel_reason": inv.cancel_reason,
                 "result": matching_res,
             })
 
@@ -1580,10 +1587,14 @@ class AuthService:
         student = (
             self.db.query(Student)
             .filter(Student.id == request.student_id, Student.org_id == org_id)
+            .with_for_update(read=True)  # FOR SHARE: waits for an archiving (FOR NO KEY UPDATE) and re-reads the status
             .first()
         )
         if not student:
             raise ValueError("Ученик не найден")
+        if student.status == ARCHIVED:
+            self.db.rollback()
+            raise ArchiveConflict(ARCHIVED_STUDENT_INVITE_MESSAGE)
 
         code = generate_code(DIAGNOSTIC_CODE_LENGTH, digits_only=False, exclude_ambiguous=True)
 
@@ -1680,6 +1691,16 @@ class AuthService:
             logger.info("diagnostic_invites_expired org_id=%s count=%s", org_id, updated)
         return int(updated or 0)
 
+    def _raise_if_invite_cancelled(self, code: str) -> None:
+        """A cancelled invite is refused with its own text, like an expired one - not as «not found»."""
+        cancelled = (
+            self.db.query(DiagnosticInvite.id)
+            .filter(DiagnosticInvite.code == code, DiagnosticInvite.status == "cancelled")
+            .first()
+        )
+        if cancelled:
+            raise ValueError(INVITE_CANCELLED_MESSAGE)
+
     def get_diagnostic_by_code(self, code: str) -> Optional[dict]:
         """Получить диагностику по коду (публичный, без JWT)"""
         invite = (
@@ -1694,7 +1715,7 @@ class AuthService:
 
         student = self.db.query(Student).filter(Student.id == invite.student_id).first()
 
-        return {
+        info = {
             "id": str(invite.id),
             "student_id": str(invite.student_id) if invite.student_id else None,
             "student_first_name": student.first_name if student else None,
@@ -1705,6 +1726,9 @@ class AuthService:
             "org_id": str(invite.org_id),
             "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
         }
+        if invite.status == "cancelled":
+            info["message"] = INVITE_CANCELLED_MESSAGE
+        return info
 
     def confirm_diagnostic(self, code: str) -> dict:
         """Подтверждение перехода pending → confirmed (idempotent).
@@ -1722,9 +1746,11 @@ class AuthService:
                 DiagnosticInvite.code == code,
                 DiagnosticInvite.status.in_(["pending", "confirmed"]),
             )
+            .with_for_update()  # an archiving that cancels the invite meanwhile is not overwritten by this confirm
             .first()
         )
         if not invite:
+            self._raise_if_invite_cancelled(code)
             raise ValueError("Диагностика не найдена или уже начата")
 
         if invite.expires_at:
@@ -1776,6 +1802,7 @@ class AuthService:
             .first()
         )
         if not invite:
+            self._raise_if_invite_cancelled(code)
             raise ValueError("Диагностика не найдена или уже завершена")
 
         if invite.expires_at:
@@ -1825,6 +1852,7 @@ class AuthService:
             .first()
         )
         if not invite:
+            self._raise_if_invite_cancelled(code)
             raise ValueError("Диагностика не найдена или не начата")
 
         if invite.cat_session_id is None and invite.status in {"confirmed", "expired"}:
@@ -2010,6 +2038,10 @@ class AuthService:
                     "completed_at": inv.completed_at.isoformat()
                     if inv.completed_at
                     else None,
+                    "cancelled_at": inv.cancelled_at.isoformat()
+                    if inv.cancelled_at
+                    else None,
+                    "cancel_reason": inv.cancel_reason,
                 }
             )
         return result, total
@@ -3169,6 +3201,8 @@ class AuthService:
             "created_at": invite.created_at.isoformat() if invite.created_at else None,
             "started_at": invite.started_at.isoformat() if invite.started_at else None,
             "completed_at": invite.completed_at.isoformat() if invite.completed_at else None,
+            "cancelled_at": invite.cancelled_at.isoformat() if invite.cancelled_at else None,
+            "cancel_reason": invite.cancel_reason,
         }
 
     def acknowledge_initial_diagnostic_report(

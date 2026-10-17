@@ -12,8 +12,9 @@ from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
-HEAD='x4y5z6a7b8c'          # student archive (N13)
-PREVIOUS='w3x4y5z6a7b'      # lesson type and payroll (N13 P3)
+HEAD='y5z6a7b8c9d'          # diagnostic invite «cancelled» (N13 tails, #89)
+ARCHIVE='x4y5z6a7b8c'       # student archive (N13)
+PREVIOUS='w3x4y5z6a7b'      # lesson type and payroll (N13 P3): the revision before the archive
 
 
 def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatch):
@@ -58,6 +59,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     _check_n13_p22_objects(engine,config,ids)
     _check_n13_p3_objects(engine,config,ids)
     _check_n13_archive_objects(engine,config,ids,monkeypatch)
+    _check_n13_invite_cancelled_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -456,11 +458,12 @@ def _check_n13_archive_objects(engine,config,ids,monkeypatch):
         for sid,status,primary,name in ((a,'archived',group,'A'),(b,'archived',group2,'B'),(c,'active',group,'C'),(d,'archived',None,'D')):
             db.add(Student(id=sid,org_id=org,first_name=name,last_name='Archive',class_level=9,status=status,group_id=primary))
         db.flush()
-        db.add(StudentGroup(id=ma1,student_id=a,group_id=group,is_active=True))
-        db.add(StudentGroup(id=ma2,student_id=a,group_id=group2,is_active=True))
-        db.add(StudentGroup(id=mb,student_id=b,group_id=group2,is_active=False,left_at=datetime(2026,9,1,10,0,0)))
-        db.add(StudentGroup(id=mc,student_id=c,group_id=group,is_active=True))
         db.commit()
+    with engine.begin() as conn:    # raw SQL: the database is at an OLDER head here, the models are not
+        conn.execute(text("INSERT INTO student_groups (id,student_id,group_id,is_active,joined_at) VALUES (:i,:s,:g,true,now())"),{'i':ma1,'s':a,'g':group})
+        conn.execute(text("INSERT INTO student_groups (id,student_id,group_id,is_active,joined_at) VALUES (:i,:s,:g,true,now())"),{'i':ma2,'s':a,'g':group2})
+        conn.execute(text("INSERT INTO student_groups (id,student_id,group_id,is_active,joined_at,left_at) VALUES (:i,:s,:g,false,now(),'2026-09-01 10:00:00')"),{'i':mb,'s':b,'g':group2})
+        conn.execute(text("INSERT INTO student_groups (id,student_id,group_id,is_active,joined_at) VALUES (:i,:s,:g,true,now())"),{'i':mc,'s':c,'g':group})
     with engine.begin() as conn:
         conn.execute(text("UPDATE students SET updated_at='2026-09-02 08:00:00' WHERE id IN (:a,:b,:d)"),{'a':a,'b':b,'d':d})
         conn.execute(text("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,valid_from,valid_to,created_by,receipt_no) VALUES (:p,:o,:m,:s,:g,450000,'2026-09-01','2026-09-01','2026-09-30',:u,777001)"),
@@ -527,3 +530,63 @@ def _check_n13_archive_objects(engine,config,ids,monkeypatch):
         db.add(Student(id=uuid4(),org_id=org,first_name='Z',last_name='Stamp',class_level=9,status='archived',
                        archived_at=datetime(2026,10,16,9,0,0),archive_reason='Переехал'))
         db.commit()
+
+
+def _check_n13_invite_cancelled_objects(engine,config,ids):
+    """#89: ``cancelled`` is a valid invite status, with its date and reason; the downgrade maps it to ``expired``."""
+    from sqlalchemy.exc import IntegrityError
+    from src.models.auth import User
+    org,student,creator=ids['org'],ids['student'],uuid4()
+    with Session(engine) as db:
+        db.add(User(id=creator,email=f'{creator}@m.invalid',password_hash='synthetic-only',first_name='I',last_name='C',role='owner')); db.commit()
+    def cols(): return {c['name']:c for c in inspect(engine).get_columns('diagnostic_invites')}
+    def add(status,code,reason=None):
+        """Raw SQL: the models describe the NEWEST head, the database may be at an older one."""
+        extra=cols().keys() & {'cancelled_at','cancel_reason'}
+        names=',cancelled_at,cancel_reason' if extra else ''
+        values=",CASE WHEN :st='cancelled' THEN now() END,:r" if extra else ''
+        params={'o':org,'s':student,'u':creator,'c':code,'st':status,'r':reason}
+        with engine.begin() as conn:
+            conn.execute(text(f"INSERT INTO diagnostic_invites (id,org_id,student_id,created_by,code,class_level,status,expires_at{names}) "
+                              f"VALUES (gen_random_uuid(),:o,:s,:u,:c,9,:st,now()+interval '1 day'{values})"),params)
+    def status_of(code):
+        with engine.connect() as conn:
+            return conn.execute(text('SELECT status FROM diagnostic_invites WHERE code=:c'),{'c':code}).scalar_one()
+    c=cols()
+    assert {'cancelled_at','cancel_reason'} <= set(c) and c['cancelled_at']['nullable'] and c['cancel_reason']['nullable']
+    assert str(c['cancel_reason']['type'])=='VARCHAR(50)' and str(c['cancelled_at']['type'])=='TIMESTAMP'
+    for status,code in (('pending','M89PEND'),('in_progress','M89PROG'),('expired','M89EXPI')):
+        add(status,code)
+    add('cancelled','M89CANC','student_archived')
+    with pytest.raises(IntegrityError,match='ck_diagnostic_invites_status'):
+        add('bogus','M89BOGU')
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT cancel_reason FROM diagnostic_invites WHERE code='M89CANC' AND cancelled_at IS NOT NULL")).scalar_one()=='student_archived'
+        assert conn.execute(text("SELECT count(*) FROM diagnostic_invites WHERE code='M89PEND' AND cancelled_at IS NULL AND cancel_reason IS NULL")).scalar_one()==1
+    # Roll back one revision: cancelled -> expired, the columns go, the old CHECK is back; nothing else changes.
+    command.downgrade(config,ARCHIVE)
+    assert not ({'cancelled_at','cancel_reason'} & set(cols()))
+    assert [status_of(x) for x in ('M89PEND','M89PROG','M89EXPI','M89CANC')]==['pending','in_progress','expired','expired']
+    with pytest.raises(IntegrityError,match='ck_diagnostic_invites_status'):
+        add('cancelled','M89AGAIN')
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==ARCHIVE
+    # ... and up again: the same data, the new status is accepted again (the date and the reason of the old one are gone).
+    # The CHECK of a database made by the SQL scripts carries the PostgreSQL default name: it is found by what it says.
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE diagnostic_invites RENAME CONSTRAINT ck_diagnostic_invites_status TO diagnostic_invites_status_check'))
+    command.upgrade(config,'head')
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT conname FROM pg_constraint WHERE conrelid='diagnostic_invites'::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%pending%'")).scalars().all()==['ck_diagnostic_invites_status']
+    assert {'cancelled_at','cancel_reason'} <= set(cols())
+    assert status_of('M89CANC')=='expired'
+    add('cancelled','M89AGAIN','student_archived')
+    assert status_of('M89AGAIN')=='cancelled'
+    # A second run is a no-op, and a database built from the models (columns and CHECK exist already) then stamped is fine.
+    command.upgrade(config,'head')
+    command.stamp(config,ARCHIVE)
+    command.upgrade(config,'head')
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+        assert conn.execute(text("SELECT count(*) FROM pg_constraint WHERE conrelid='diagnostic_invites'::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%pending%'")).scalar_one()==1   # one status CHECK, not two
+    add('cancelled','M89LAST','student_archived')

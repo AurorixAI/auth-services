@@ -543,6 +543,10 @@ class DiagnosticInvite(Base):
     completed_at = Column(DateTime)
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=func.now())
+    # «cancelled»: switched off by the centre (today: the student was archived).  Naive UTC; the reason is
+    # a machine code (``student_archived``).  Both stay NULL for every invite that was not cancelled.
+    cancelled_at = Column(DateTime, nullable=True)
+    cancel_reason = Column(String(50), nullable=True)
 
     student = relationship("Student", back_populates="diagnostic_invites")
     organization = relationship("Organization")
@@ -550,7 +554,8 @@ class DiagnosticInvite(Base):
     __table_args__ = (
         CheckConstraint("diagnostic_type IN ('initial', 'recheck', 'pre_exam')"),
         CheckConstraint(
-            "status IN ('pending', 'confirmed', 'in_progress', 'completed', 'expired')"
+            "status IN ('pending', 'confirmed', 'in_progress', 'completed', 'expired', 'cancelled')",
+            name="ck_diagnostic_invites_status",
         ),
     )
 

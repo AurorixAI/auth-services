@@ -16,6 +16,12 @@ the student is locked FOR NO KEY UPDATE (it still excludes the FOR UPDATE of ``a
 on the student through its foreign key - a plain FOR UPDATE here could deadlock with a payment being
 recorded), then the memberships FOR NO KEY UPDATE (as the payments module does), then the groups.
 
+Diagnostic invites (ROADMAP #89): in the same transaction every unfinished link of the student - status
+``pending`` or ``confirmed`` - becomes ``cancelled`` (``cancelled_at`` = the archiving instant,
+``cancel_reason`` = ``student_archived``), so the code stops working at once.  A ``in_progress`` invite is NOT
+cancelled: the student may finish, and the result stays on his card.  ``completed`` / ``expired`` stay as they
+are.  Restoring the student does not revive a cancelled invite (a new one is created).
+
 The module imports ``AuthService`` lazily: ``service.py`` imports this module for the guards.
 """
 from __future__ import annotations
@@ -30,7 +36,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from .models import Group, GroupAudit, Student, StudentDiagnosticResult, StudentGroup
+from .models import DiagnosticInvite, Group, GroupAudit, Student, StudentDiagnosticResult, StudentGroup
 from .payments_service import CONCURRENT_EDIT_MESSAGE, is_deadlock
 from .schemas import ArchivedGroupOut, StudentResponse
 
@@ -43,6 +49,13 @@ REASON_MAX = 300
 RESTORE_GROUPS_MAX = 50
 GENERIC_STATUS_MESSAGE = "Используйте «В архив» / «Вернуть из архива»"
 RESTORE_FAILED_MESSAGE = "Не удалось вернуть в группу — повторите позже"
+INVITE_CANCEL_REASON = "student_archived"
+INVITE_CANCELLED_MESSAGE = "Приглашение отменено"
+ARCHIVED_STUDENT_INVITE_MESSAGE = (
+    "Ученик в архиве: диагностику создать нельзя. Сначала верните ученика из архива."
+)
+# Invite states the archiving switches off / leaves alone (the others are over already).
+INVITE_CANCELLABLE = ("pending", "confirmed")
 
 
 # ---------------------------------------------------------------------------------------------- errors
@@ -105,6 +118,10 @@ class SkippedGroupOut(BaseModel):
 
 class ArchiveStudentResponse(StudentResponse):
     closed_groups: List[ClosedGroupOut] = []
+    # ROADMAP #89: unfinished diagnostic links switched off by this archiving, and the ones left running
+    # (``in_progress``: the student may finish, the result stays on his card).
+    diagnostic_invites_cancelled: int = 0
+    diagnostic_invites_in_progress: int = 0
 
 
 class RestoreStudentResponse(StudentResponse):
@@ -319,6 +336,7 @@ class StudentArchiveService:
         for membership in memberships:
             membership.is_active = False
             membership.left_at = now
+        invites_cancelled, invites_in_progress = self._cancel_open_invites(org_id, student.id, now)
         student.status = ARCHIVED
         student.group_id = None
         student.archived_at = now
@@ -354,7 +372,8 @@ class StudentArchiveService:
             )
         self.db.commit()
         logger.info(
-            "student archived student=%s groups=%d actor=%s", student.id, len(memberships), actor_id
+            "student archived student=%s groups=%d invites_cancelled=%d invites_in_progress=%d actor=%s",
+            student.id, len(memberships), invites_cancelled, invites_in_progress, actor_id,
         )
         base = self._response(student)
         return ArchiveStudentResponse(
@@ -366,7 +385,44 @@ class StudentArchiveService:
                 )
                 for m in ordered
             ],
+            diagnostic_invites_cancelled=invites_cancelled,
+            diagnostic_invites_in_progress=invites_in_progress,
         )
+
+    def _cancel_open_invites(self, org_id: str, student_id: UUID, now: datetime) -> tuple:
+        """Switch off the student's unfinished diagnostic links; ``(cancelled, left_in_progress)``.
+
+        One UPDATE with the status in its WHERE clause: an invite that a concurrent ``start`` just moved to
+        ``in_progress`` (it holds the row lock; this UPDATE waits and re-reads the row) is left alone, and one
+        that a concurrent ``confirm`` moved to ``confirmed`` is cancelled.  Runs in the archiving transaction.
+        """
+        cancelled = (
+            self.db.query(DiagnosticInvite)
+            .filter(
+                DiagnosticInvite.org_id == org_id,
+                DiagnosticInvite.student_id == student_id,
+                DiagnosticInvite.status.in_(INVITE_CANCELLABLE),
+            )
+            .update(
+                {
+                    "status": "cancelled",
+                    "cancelled_at": now,
+                    "cancel_reason": INVITE_CANCEL_REASON,
+                },
+                synchronize_session=False,
+            )
+        )
+        in_progress = (
+            self.db.query(func.count(DiagnosticInvite.id))
+            .filter(
+                DiagnosticInvite.org_id == org_id,
+                DiagnosticInvite.student_id == student_id,
+                DiagnosticInvite.status == "in_progress",
+            )
+            .scalar()
+            or 0
+        )
+        return int(cancelled or 0), int(in_progress)
 
     # -- restore ------------------------------------------------------------------------------
 

@@ -348,7 +348,7 @@ def _count_diagnostic_code_miss(bucket: Optional[str]) -> None:
 
 
 def _diagnostic_invite_exists(db: Session, code: str) -> bool:
-    """Whether an invite with this code exists in ANY state (pending, started, completed, expired)."""
+    """Whether an invite with this code exists in ANY state (pending, started, completed, expired, cancelled)."""
     return db.query(DiagnosticInvite.id).filter(DiagnosticInvite.code == code).first() is not None
 
 
@@ -376,7 +376,7 @@ def confirm_diagnostic(code: str, request: Request, db: Session = Depends(get_db
         return _svc(db).confirm_diagnostic(code)
     except ValueError as e:
         # Only a code that exists nowhere is a guess. The service answers «не найдена или уже начата» for a code that is
-        # started / completed / expired too - those are states a legitimate student can meet, and are not counted.
+        # started / completed / expired too (a cancelled one has a text of its own) - those are states a legitimate student can meet, and are not counted.
         if bucket is not None and "не найдена" in str(e) and not _diagnostic_invite_exists(db, code):
             _count_diagnostic_code_miss(bucket)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
@@ -843,11 +843,15 @@ def create_diagnostic(
     user: dict = Depends(require_org_admin),
     db: Session = Depends(get_db),
 ):
-    """Создать диагностику для существующего ученика — возвращает код/QR"""
+    """Создать диагностику для существующего ученика — возвращает код/QR.
+
+    Ученику в архиве ссылку не выдаём: 409 (ArchiveConflict), пока его не вернут из архива."""
     try:
         return _svc(db).create_diagnostic_invite(
             user["org_id"], user["user_id"], request
         )
+    except ArchiveError as e:
+        raise HTTPException(e.http_status, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
