@@ -9,6 +9,9 @@ Create Date: 2026-10-17
   flipped to ``expired`` by the expiry helpers.
 * ``diagnostic_invites.cancelled_at`` (TIMESTAMP, naive UTC) and ``cancel_reason`` (VARCHAR(50), a machine code:
   ``student_archived``) - both NULL for every invite that was not cancelled.  Nullable and additive.
+* ``diagnostic_invites.revived_at`` (TIMESTAMP, naive UTC): set when a cancelled invite is taken back because the
+  session it carries really started BEFORE the cancellation (the start callback came late) - the trail of the
+  un-cancelling, since ``cancelled_at`` / ``cancel_reason`` are cleared then.  NULL for every other invite.
 
 No data is changed: nothing is cancelled retroactively (the archived students that exist today keep whatever
 invites they have; the next archiving cancels its own).
@@ -58,6 +61,8 @@ def upgrade() -> None:
         op.add_column(TABLE, sa.Column("cancelled_at", sa.DateTime(), nullable=True))
     if "cancel_reason" not in columns:
         op.add_column(TABLE, sa.Column("cancel_reason", sa.String(length=50), nullable=True))
+    if "revived_at" not in columns:
+        op.add_column(TABLE, sa.Column("revived_at", sa.DateTime(), nullable=True))
 
     _drop_status_checks()
     op.execute(f"ALTER TABLE {TABLE} ADD CONSTRAINT {CHECK_NAME} CHECK ({STATUS_NEW})")
@@ -73,6 +78,8 @@ def downgrade() -> None:
     _drop_status_checks()
     op.execute(f"ALTER TABLE {TABLE} ADD CONSTRAINT {CHECK_NAME} CHECK ({STATUS_OLD})")
 
+    if "revived_at" in columns:
+        op.drop_column(TABLE, "revived_at")
     if "cancel_reason" in columns:
         op.drop_column(TABLE, "cancel_reason")
     if "cancelled_at" in columns:

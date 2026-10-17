@@ -510,7 +510,7 @@ class StudentGroup(Base):
         back_populates="membership",
         cascade="all, delete-orphan",
         passive_deletes=True,
-        order_by="(StudentGroupPeriod.joined_at, StudentGroupPeriod.id)",
+        order_by="(StudentGroupPeriod.joined_at, StudentGroupPeriod.left_at, StudentGroupPeriod.id)",
     )
 
     __table_args__ = (
@@ -549,6 +549,7 @@ class StudentGroupPeriod(Base):
             "membership_id",
             unique=True,
             postgresql_where=text("left_at IS NULL"),
+            sqlite_where=text("left_at IS NULL"),
         ),
         CheckConstraint("left_at IS NULL OR left_at >= joined_at", name="ck_student_group_periods_order"),
     )
@@ -580,6 +581,7 @@ def give_new_memberships_a_period(session, flush_context, instances):
         if not active:
             left = _as_naive_utc(obj.left_at) or started
             left = max(left, started)
+            obj.left_at = left  # the row mirrors its last period (a closed membership always has an end)
         obj.periods.append(StudentGroupPeriod(joined_at=started, left_at=left))
 
 
@@ -622,6 +624,9 @@ class DiagnosticInvite(Base):
     # a machine code (``student_archived``).  Both stay NULL for every invite that was not cancelled.
     cancelled_at = Column(DateTime, nullable=True)
     cancel_reason = Column(String(50), nullable=True)
+    # Set when a cancelled invite is taken back because its session started BEFORE the cancellation (the start
+    # callback came late); cancelled_at / cancel_reason are cleared then, this is the trail.
+    revived_at = Column(DateTime, nullable=True)
 
     student = relationship("Student", back_populates="diagnostic_invites")
     organization = relationship("Organization")

@@ -1156,6 +1156,7 @@ class AuthService:
                 "completed_at": inv.completed_at.isoformat() if inv.completed_at else None,
                 "cancelled_at": inv.cancelled_at.isoformat() if inv.cancelled_at else None,
                 "cancel_reason": inv.cancel_reason,
+                "revived_at": inv.revived_at.isoformat() if inv.revived_at else None,
                 "result": matching_res,
             })
 
@@ -1749,8 +1750,9 @@ class AuthService:
         * the invite is not bound to another session.
 
         The invite becomes ``status`` (``in_progress`` for the start callback, ``confirmed`` for the completion
-        callback, which then completes it), ``cancelled_at`` / ``cancel_reason`` are cleared and the change is
-        logged.  The invite row is locked; the caller commits.
+        callback, which then completes it), ``cancelled_at`` / ``cancel_reason`` are cleared, ``revived_at`` says
+        when (the trail that outlives the log line) and the change is logged.  The invite row is locked; the
+        caller commits.
         """
         invite = (
             self.db.query(DiagnosticInvite)
@@ -1779,12 +1781,17 @@ class AuthService:
         invite.status = status
         invite.cancelled_at = None
         invite.cancel_reason = None
+        invite.revived_at = datetime.now(timezone.utc).replace(tzinfo=None)
         if status == "in_progress":
             invite.started_at = started_at
         return invite
 
-    def get_diagnostic_by_code(self, code: str) -> Optional[dict]:
-        """Получить диагностику по коду (публичный, без JWT)"""
+    def get_diagnostic_by_code(self, code: str, *, include_cancel_details: bool = False) -> Optional[dict]:
+        """Получить диагностику по коду (публичный, без JWT).
+
+        ``include_cancel_details`` is for the internal caller only (a valid X-Internal-Service-Token): the public
+        answer for a cancelled invite is ``status`` + ``message`` and nothing that says WHY (that the student was
+        archived is not for whoever holds the link)."""
         invite = (
             self.db.query(DiagnosticInvite)
             .filter(DiagnosticInvite.code == code)
@@ -1810,9 +1817,10 @@ class AuthService:
         }
         if invite.status == "cancelled":
             info["message"] = INVITE_CANCELLED_MESSAGE
-            # diagnostic-service lets a session that started BEFORE this moment finish (see _revive_cancelled_invite).
-            info["cancelled_at"] = invite.cancelled_at.isoformat() if invite.cancelled_at else None
-            info["cancel_reason"] = invite.cancel_reason
+            if include_cancel_details:
+                # diagnostic-service lets a session that started BEFORE this moment finish (see _revive_cancelled_invite).
+                info["cancelled_at"] = invite.cancelled_at.isoformat() if invite.cancelled_at else None
+                info["cancel_reason"] = invite.cancel_reason
         return info
 
     def confirm_diagnostic(self, code: str) -> dict:
@@ -1936,6 +1944,14 @@ class AuthService:
             completed_session_id = UUID(str(session_value))
         except (TypeError, ValueError) as exc:
             raise ValueError("Некорректный идентификатор завершённой сессии") from exc
+
+        # Lock order, the same everywhere: student -> membership -> group -> invite.  The archiving holds the student
+        # and then updates the invite rows; this method may change the student's status below, so it takes the
+        # student BEFORE the invite - the other order could deadlock with an archiving.  (start / confirm never touch
+        # the student, create takes it FOR SHARE first.)
+        owner_id = self.db.query(DiagnosticInvite.student_id).filter(DiagnosticInvite.code == code).scalar()
+        if owner_id is not None:
+            self.db.query(Student).filter(Student.id == owner_id).with_for_update(key_share=True).first()
 
         invite = (
             self.db.query(DiagnosticInvite)
@@ -2129,6 +2145,9 @@ class AuthService:
                     if inv.cancelled_at
                     else None,
                     "cancel_reason": inv.cancel_reason,
+                    "revived_at": inv.revived_at.isoformat()
+                    if inv.revived_at
+                    else None,
                 }
             )
         return result, total
@@ -3288,6 +3307,7 @@ class AuthService:
             "completed_at": invite.completed_at.isoformat() if invite.completed_at else None,
             "cancelled_at": invite.cancelled_at.isoformat() if invite.cancelled_at else None,
             "cancel_reason": invite.cancel_reason,
+            "revived_at": invite.revived_at.isoformat() if invite.revived_at else None,
         }
 
     def acknowledge_initial_diagnostic_report(

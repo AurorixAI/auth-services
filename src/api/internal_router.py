@@ -17,6 +17,15 @@ from src.auth.service import AuthService
 from src.core.config import get_settings
 
 
+def has_valid_internal_token(token: Optional[str]) -> bool:
+    """Whether ``token`` is the first-party service token (constant-time compare; no secret configured = never).
+
+    The yes/no form of ``require_internal_service_token``, for a PUBLIC route that answers an internal caller with
+    more than it tells the world."""
+    expected = get_settings().internal_service_token
+    return bool(expected and token and secrets.compare_digest(token, expected))
+
+
 def require_internal_service_token(
     x_internal_service_token: Optional[str] = Header(None, alias="X-Internal-Service-Token"),
 ) -> None:
@@ -32,9 +41,7 @@ def require_internal_service_token(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Внутренняя связка сервисов не настроена",
         )
-    if not x_internal_service_token or not secrets.compare_digest(
-        x_internal_service_token, expected
-    ):
+    if not has_valid_internal_token(x_internal_service_token):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Недействительный внутренний токен сервиса",

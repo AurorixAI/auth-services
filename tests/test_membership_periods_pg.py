@@ -520,3 +520,106 @@ def test_the_roster_at_an_instant_is_one_membership_query_plus_the_students(worl
     statements = _count_statements(world, lambda: world.svc._attendance_roster_at(gid, instant))
     assert len(statements) == 2
     assert "student_group_periods" in statements[0]
+
+
+# ---- self-healing and the safety net --------------------------------------------------------------------------
+
+
+def test_closing_an_active_membership_without_an_open_period_heals_it_and_warns(world, clock, caplog):
+    """A hand-made SQL edit left the membership active with every period closed: closing it must not claim success
+    while ``is_active`` stays true."""
+    s = newcomer(world)
+    clock.at(9, 1)
+    add(world, world.group, s)
+    clock.at(9, 20)
+    remove(world, world.group, s)
+    clock.at(10, 1)
+    add(world, world.group, s)                                            # open again (Oct 1)
+    m = membership(world, s, world.group)
+    for stay in m.periods:
+        if stay.left_at is None:
+            stay.left_at = D(2026, 10, 3, 12)                             # ... and somebody closed the period by hand
+    world.db.commit()
+    assert any("open period" in p for p in membership_period_violations(world.db, [m.id]))
+
+    clock.at(10, 5)
+    with caplog.at_level("WARNING", logger="src.auth.membership_periods"):
+        remove(world, world.group, s)
+    healed = membership(world, s, world.group)
+    assert healed.is_active is False and healed.left_at == D(2026, 10, 5, 12)
+    assert stays(world, s, world.group) == [
+        (D(2026, 9, 1, 12), D(2026, 9, 20, 12)),
+        (D(2026, 10, 1, 12), D(2026, 10, 3, 12)),                         # the hand-closed one stays as it was
+        (D(2026, 10, 3, 12), D(2026, 10, 5, 12)),                         # the healed stay: never starts before the previous ended
+    ]
+    assert healed.joined_at == D(2026, 10, 3, 12)                         # and the row mirrors its last period
+    assert [r.getMessage() for r in caplog.records if str(healed.id) in r.getMessage() and r.levelname == "WARNING"]
+    assert membership_period_violations(world.db, [healed.id]) == []
+
+
+def test_closing_an_active_membership_with_no_period_at_all_heals_it_too(world, caplog):
+    s = newcomer(world)
+    m = StudentGroup(student_id=s.id, group_id=world.group.id, is_active=True, joined_at=D(2026, 9, 3, 9))
+    world.db.add(m)
+    world.db.commit()
+    world.db.query(StudentGroupPeriod).filter_by(membership_id=m.id).delete()      # a row written outside the application
+    world.db.commit()
+    world.db.expire_all()
+    m = world.db.get(StudentGroup, m.id)
+    with caplog.at_level("WARNING", logger="src.auth.membership_periods"):
+        period = close_period(m, D(2026, 9, 20, 9))
+    world.db.commit()
+    assert period is not None and (period.joined_at, period.left_at) == (D(2026, 9, 3, 9), D(2026, 9, 20, 9))
+    assert m.is_active is False and m.left_at == D(2026, 9, 20, 9)
+    assert any(str(m.id) in r.getMessage() for r in caplog.records)
+    assert membership_period_violations(world.db, [m.id]) == []
+
+
+def test_closing_a_membership_that_is_already_closed_changes_nothing_and_does_not_warn(world, caplog):
+    s = newcomer(world)
+    m = StudentGroup(student_id=s.id, group_id=world.group.id, is_active=False,
+                     joined_at=D(2026, 9, 3, 9), left_at=D(2026, 9, 10, 9))
+    world.db.add(m)
+    world.db.commit()
+    with caplog.at_level("WARNING", logger="src.auth.membership_periods"):
+        assert close_period(m, D(2026, 12, 1)) is None
+    assert m.left_at == D(2026, 9, 10, 9) and not caplog.records
+
+
+def test_a_new_closed_membership_without_left_at_gets_one_from_the_net(world):
+    s = newcomer(world)
+    m = StudentGroup(student_id=s.id, group_id=world.group.id, is_active=False, joined_at=D(2026, 9, 3, 9))
+    world.db.add(m)
+    world.db.commit()
+    world.db.refresh(m)
+    assert m.left_at == D(2026, 9, 3, 9)                                  # the closing moment: the row mirrors its period
+    assert stays(world, s, world.group) == [(D(2026, 9, 3, 9), D(2026, 9, 3, 9))]
+    assert membership_period_violations(world.db, [m.id]) == []
+    # a left_at BEFORE joined_at is lifted to it (a period never ends before it starts) and the row follows
+    other = newcomer(world, "Обратный")
+    n = StudentGroup(student_id=other.id, group_id=world.group.id, is_active=False,
+                     joined_at=D(2026, 9, 3, 9), left_at=D(2026, 9, 1, 9))
+    world.db.add(n)
+    world.db.commit()
+    world.db.refresh(n)
+    assert n.left_at == D(2026, 9, 3, 9) and membership_period_violations(world.db, [n.id]) == []
+
+
+def test_the_open_period_index_holds_on_sqlite_too():
+    """The one-open-period rule is a partial unique index; the unit tests that run on SQLite get it as well."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import IntegrityError
+
+    engine = create_engine("sqlite://")
+    StudentGroupPeriod.__table__.create(engine)
+    membership_id, other_id = uuid4(), uuid4()
+    with engine.begin() as conn:
+        conn.execute(StudentGroupPeriod.__table__.insert(), [
+            {"id": uuid4(), "membership_id": membership_id, "joined_at": D(2026, 9, 1), "left_at": D(2026, 9, 5)},
+            {"id": uuid4(), "membership_id": membership_id, "joined_at": D(2026, 10, 1), "left_at": None},
+            {"id": uuid4(), "membership_id": other_id, "joined_at": D(2026, 10, 1), "left_at": None},
+        ])
+    with pytest.raises(IntegrityError):
+        with engine.begin() as conn:
+            conn.execute(StudentGroupPeriod.__table__.insert(), [
+                {"id": uuid4(), "membership_id": membership_id, "joined_at": D(2026, 11, 1), "left_at": None}])

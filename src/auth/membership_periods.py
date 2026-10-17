@@ -30,6 +30,7 @@ member now" keeps asking ``is_active``.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
@@ -38,6 +39,8 @@ from sqlalchemy import and_, exists, or_
 from sqlalchemy.orm import Session
 
 from src.models.auth import StudentGroup, StudentGroupPeriod
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------------------------- moments
@@ -88,20 +91,34 @@ def open_period(membership: StudentGroup, at: Optional[datetime] = None) -> Stud
 def close_period(membership: StudentGroup, at: Optional[datetime] = None) -> Optional[StudentGroupPeriod]:
     """The student leaves the group (removed, transferred out, archived): the open period ends at ``at``.
 
-    A membership that is not active and has no open period is left as it is (returns ``None``).  A membership
-    that has no period at all (a row inserted outside the application) gets the closed one it should have had.
+    A membership that is not active and has no open period is already closed: left as it is (returns ``None``).
+
+    A membership that is ACTIVE but has no open period (a hand-made SQL edit, a row written by an older image after
+    a rollback) breaks the invariant "an open period exists iff the membership is active".  It is not left that
+    way and the caller is not told "done" while ``is_active`` stays true: the membership is closed at ``at`` and
+    gets the closed period it should have had - from its own ``joined_at`` (never before the end of an earlier
+    period) to ``at`` - and a WARNING names the membership.
     """
     moment = naive_utc(at) or utcnow_naive()
     periods = list(membership.periods)
     open_periods = [p for p in periods if p.left_at is None]
     if not open_periods:
-        if periods or not membership.is_active:
+        if not membership.is_active:
             return None
         started = naive_utc(membership.joined_at) or moment
+        previous_end = max((p.left_at for p in periods if p.left_at is not None), default=None)
+        if previous_end is not None and started < previous_end:
+            started = previous_end
         period = StudentGroupPeriod(joined_at=started, left_at=max(moment, started))
         membership.periods.append(period)
         membership.is_active = False
+        membership.joined_at = period.joined_at  # the row mirrors its last period
         membership.left_at = period.left_at
+        logger.warning(
+            "close_period: membership %s is active but has no open period (%d on record); "
+            "closed it at %s with the period %s..%s",
+            membership.id, len(periods), moment, period.joined_at, period.left_at,
+        )
         return period
     closed = None
     for period in open_periods:
@@ -163,7 +180,13 @@ def periods_by_membership(
     rows = (
         db.query(StudentGroupPeriod)
         .filter(StudentGroupPeriod.membership_id.in_(ids))
-        .order_by(StudentGroupPeriod.membership_id, StudentGroupPeriod.joined_at, StudentGroupPeriod.id)
+        # a zero-length stay sorts before the open one that starts at the same instant (NULL is last)
+        .order_by(
+            StudentGroupPeriod.membership_id,
+            StudentGroupPeriod.joined_at,
+            StudentGroupPeriod.left_at,
+            StudentGroupPeriod.id,
+        )
         .all()
     )
     for period in rows:

@@ -14,7 +14,16 @@ Lock order (the one of the payments module: student -> membership -> payment; gr
 the student is locked FOR NO KEY UPDATE (it still excludes the FOR UPDATE of ``add_student_to_group`` and
 ``remove_student_from_group`` and another archiving, but not the FOR KEY SHARE that a payment insert takes
 on the student through its foreign key - a plain FOR UPDATE here could deadlock with a payment being
-recorded), then the memberships FOR NO KEY UPDATE (as the payments module does), then the groups.
+recorded), then the memberships FOR NO KEY UPDATE (as the payments module does), then the groups, then the
+diagnostic invites (the UPDATE that cancels them).  The same order holds everywhere that touches a student and
+his invites: student -> membership -> group -> invite (``create_diagnostic_invite`` takes the student FOR SHARE,
+``complete_diagnostic`` the student before the invite) - so no cycle is possible.
+
+ONE instant per archiving, taken after every lock is held: ``students.archived_at``, the ``left_at`` of the closed
+memberships and periods, ``diagnostic_invites.cancelled_at`` and the journal rows.  A session that the engine
+creates while this transaction waits for its locks therefore started BEFORE the cancellation (the callbacks of such
+a session are still accepted, see ``AuthService._revive_cancelled_invite``); taking the instant first would call
+it «after the archiving» and cut a student off who really was in the test.
 
 Membership periods (ROADMAP #59): closing a membership ends its open period (``close_period``); a return to the
 same group (``restore`` goes through ``add_student_to_group``) opens a new one on the same membership row, so the
@@ -36,7 +45,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -309,7 +318,6 @@ class StudentArchiveService:
     ) -> ArchiveStudentResponse:
         from .service import AuthService  # lazy: service imports this module
 
-        now = _utcnow_naive()
         student = self._lock_student(org_id, student_id)
         if student.status == ARCHIVED:
             self.db.rollback()
@@ -337,10 +345,13 @@ class StudentArchiveService:
             g.id: g for g in self.db.query(Group).filter(Group.id.in_(group_ids)).all()
         } if group_ids else {}
 
+        # The archiving instant: every lock is held now (see the module docstring).
+        now = _utcnow_naive()
         primary_group_id = student.group_id
         for membership in memberships:
             close_period(membership, now)  # the open period ends with the membership; earlier ones stay
-        invites_cancelled, invites_in_progress = self._cancel_open_invites(org_id, student.id, now)
+        cancelled_ids, in_progress_ids = self._cancel_open_invites(org_id, student.id, now)
+        invites_cancelled, invites_in_progress = len(cancelled_ids), len(in_progress_ids)
         student.status = ARCHIVED
         student.group_id = None
         student.archived_at = now
@@ -370,6 +381,10 @@ class StudentArchiveService:
                         "joined_at": membership.joined_at.isoformat() if membership.joined_at else None,
                         "archived_at": now.isoformat(),
                         "reason": reason,
+                        # the student's diagnostic links this archiving switched off / left running (all groups
+                        # of one archiving list the same ids: it is one event)
+                        "diagnostic_invites_cancelled": cancelled_ids,
+                        "diagnostic_invites_in_progress": in_progress_ids,
                     },
                     created_at=now,
                 )
@@ -394,39 +409,34 @@ class StudentArchiveService:
         )
 
     def _cancel_open_invites(self, org_id: str, student_id: UUID, now: datetime) -> tuple:
-        """Switch off the student's unfinished diagnostic links; ``(cancelled, left_in_progress)``.
+        """Switch off the student's unfinished diagnostic links; ``(cancelled_ids, left_in_progress_ids)`` (strings).
 
         One UPDATE with the status in its WHERE clause: an invite that a concurrent ``start`` just moved to
         ``in_progress`` (it holds the row lock; this UPDATE waits and re-reads the row) is left alone, and one
         that a concurrent ``confirm`` moved to ``confirmed`` is cancelled.  Runs in the archiving transaction.
         """
-        cancelled = (
-            self.db.query(DiagnosticInvite)
-            .filter(
+        cancelled = self.db.execute(
+            update(DiagnosticInvite)
+            .where(
                 DiagnosticInvite.org_id == org_id,
                 DiagnosticInvite.student_id == student_id,
                 DiagnosticInvite.status.in_(INVITE_CANCELLABLE),
             )
-            .update(
-                {
-                    "status": "cancelled",
-                    "cancelled_at": now,
-                    "cancel_reason": INVITE_CANCEL_REASON,
-                },
-                synchronize_session=False,
-            )
-        )
+            .values(status="cancelled", cancelled_at=now, cancel_reason=INVITE_CANCEL_REASON)
+            .returning(DiagnosticInvite.id)
+            .execution_options(synchronize_session=False)
+        ).scalars().all()
         in_progress = (
-            self.db.query(func.count(DiagnosticInvite.id))
+            self.db.query(DiagnosticInvite.id)
             .filter(
                 DiagnosticInvite.org_id == org_id,
                 DiagnosticInvite.student_id == student_id,
                 DiagnosticInvite.status == "in_progress",
             )
-            .scalar()
-            or 0
+            .order_by(DiagnosticInvite.id)
+            .all()
         )
-        return int(cancelled or 0), int(in_progress)
+        return sorted(str(i) for i in cancelled), [str(row[0]) for row in in_progress]
 
     # -- restore ------------------------------------------------------------------------------
 

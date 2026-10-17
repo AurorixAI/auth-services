@@ -573,7 +573,8 @@ def _check_n13_invite_cancelled_objects(engine,config,ids):
         with engine.connect() as conn:
             return conn.execute(text('SELECT status FROM diagnostic_invites WHERE code=:c'),{'c':code}).scalar_one()
     c=cols()
-    assert {'cancelled_at','cancel_reason'} <= set(c) and c['cancelled_at']['nullable'] and c['cancel_reason']['nullable']
+    assert {'cancelled_at','cancel_reason','revived_at'} <= set(c) and c['cancelled_at']['nullable'] and c['cancel_reason']['nullable'] and c['revived_at']['nullable']
+    assert str(c['revived_at']['type'])=='TIMESTAMP'
     assert str(c['cancel_reason']['type'])=='VARCHAR(50)' and str(c['cancelled_at']['type'])=='TIMESTAMP'
     for status,code in (('pending','M89PEND'),('in_progress','M89PROG'),('expired','M89EXPI')):
         add(status,code)
@@ -585,7 +586,7 @@ def _check_n13_invite_cancelled_objects(engine,config,ids):
         assert conn.execute(text("SELECT count(*) FROM diagnostic_invites WHERE code='M89PEND' AND cancelled_at IS NULL AND cancel_reason IS NULL")).scalar_one()==1
     # Roll back one revision: cancelled -> expired, the columns go, the old CHECK is back; nothing else changes.
     command.downgrade(config,ARCHIVE)
-    assert not ({'cancelled_at','cancel_reason'} & set(cols()))
+    assert not ({'cancelled_at','cancel_reason','revived_at'} & set(cols()))
     assert [status_of(x) for x in ('M89PEND','M89PROG','M89EXPI','M89CANC')]==['pending','in_progress','expired','expired']
     with pytest.raises(IntegrityError,match='ck_diagnostic_invites_status'):
         add('cancelled','M89AGAIN')
@@ -598,7 +599,7 @@ def _check_n13_invite_cancelled_objects(engine,config,ids):
     command.upgrade(config,'head')
     with engine.connect() as conn:
         assert conn.execute(text("SELECT conname FROM pg_constraint WHERE conrelid='diagnostic_invites'::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%pending%'")).scalars().all()==['ck_diagnostic_invites_status']
-    assert {'cancelled_at','cancel_reason'} <= set(cols())
+    assert {'cancelled_at','cancel_reason','revived_at'} <= set(cols())
     assert status_of('M89CANC')=='expired'
     add('cancelled','M89AGAIN','student_archived')
     assert status_of('M89AGAIN')=='cancelled'
@@ -635,14 +636,14 @@ def _check_n13_periods_objects(engine,config,ids):
     command.downgrade(config,INVITES)
     assert 'student_group_periods' not in inspect(engine).get_table_names()
     g1,g2=uuid4(),uuid4()
-    students={n:uuid4() for n in range(1,10)}
+    students={n:uuid4() for n in range(1,11)}
     with Session(engine) as db:
         db.add(Group(id=g1,org_id=org,name='Periods 1',class_level=9,created_at=datetime(2026,7,1,9,0,0)))
         db.add(Group(id=g2,org_id=org,name='Periods 2',class_level=9,created_at=datetime(2026,7,1,9,0,0)))
         for n,sid in students.items():
             db.add(Student(id=sid,org_id=org,first_name=f'P{n}',last_name='Periods',class_level=9,status='active',created_at=datetime(2026,8,1,10,0,0)))
         db.commit()
-    mem={n:uuid4() for n in range(1,10)}
+    mem={n:uuid4() for n in range(1,11)}
     def membership(n,group,active,joined,left):
         with engine.begin() as conn:
             conn.execute(text("INSERT INTO student_groups (id,student_id,group_id,is_active,joined_at,left_at) VALUES (:i,:s,:g,:a,:j,:l)"),
@@ -673,6 +674,10 @@ def _check_n13_periods_objects(engine,config,ids):
     archived_row(8,'2026-09-02T08:00:00','2026-10-10T12:00:00',student_id=students[1])             # another student's membership
     membership(9,g2,False,datetime(2026,9,1,8,0),datetime(2026,10,31,12,0)) # a journal row that overlaps the existing period
     archived_row(9,'2026-09-15T08:00:00','2026-10-01T08:00:00')
+    membership(10,g2,True,datetime(2026,11,1,9,0),None)                      # snapshots that contradict each other
+    archived_row(10,'2026-09-02T08:00:00','2026-10-10T12:00:00')
+    archived_row(10,'2026-09-20T08:00:00','2026-10-15T12:00:00')              # starts inside the first one: dropped
+    archived_row(10,'2026-10-10T12:00:00','2026-10-20T12:00:00')              # starts exactly when the first ended: kept
     def periods():
         with engine.connect() as conn:
             rows=conn.execute(text('SELECT membership_id,joined_at,left_at FROM student_group_periods ORDER BY membership_id,joined_at')).all()
@@ -695,6 +700,9 @@ def _check_n13_periods_objects(engine,config,ids):
     assert got[mem[7]]==[(dt(2026,9,2,8,0),dt(2026,10,10,12,0))]             # no duplicate of the current period
     assert got[mem[8]]==[(dt(2026,11,1,9,0),None)]                           # nothing invented
     assert got[mem[9]]==[(dt(2026,9,1,8,0),dt(2026,10,31,12,0))]
+    assert got[mem[10]]==[(dt(2026,9,2,8,0),dt(2026,10,10,12,0)),(dt(2026,10,10,12,0),dt(2026,10,20,12,0)),(dt(2026,11,1,9,0),None)]   # the earliest of two overlapping snapshots, not both
+    with engine.connect() as conn:                                           # no membership of this block has overlapping periods
+        assert conn.execute(text("SELECT count(*) FROM student_group_periods a JOIN student_group_periods b ON a.membership_id=b.membership_id AND a.id<>b.id AND a.joined_at < COALESCE(b.left_at,'infinity') AND b.joined_at < COALESCE(a.left_at,'infinity') WHERE a.membership_id = ANY(:ids)"),{'ids':list(mem.values())}).scalar_one()==0
     assert memberships_snapshot()==rows_before                               # the membership rows are not touched
     with engine.connect() as conn:                                           # one open period iff active (for every membership of this block)
         assert conn.execute(text("SELECT count(*) FROM student_groups sg WHERE sg.id = ANY(:ids) AND (sg.is_active IS TRUE) <> EXISTS (SELECT 1 FROM student_group_periods p WHERE p.membership_id=sg.id AND p.left_at IS NULL)"),{'ids':list(mem.values())}).scalar_one()==0

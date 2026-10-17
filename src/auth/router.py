@@ -101,7 +101,7 @@ from sqlalchemy.exc import OperationalError
 
 from .payments_service import CONCURRENT_EDIT_MESSAGE, is_deadlock
 from src.core.database import get_db
-from src.api.internal_router import require_internal_service_token
+from src.api.internal_router import has_valid_internal_token, require_internal_service_token
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -360,7 +360,10 @@ def get_diagnostic_info(code: str, request: Request, db: Session = Depends(get_d
     Неудачные поиски считаются на адрес клиента (перебор кода): 100 в минуту и 600 в час, затем 429.
     """
     bucket = _guard_diagnostic_code_lookup(request)
-    info = _svc(db).get_diagnostic_by_code(code)
+    # Why an invite was cancelled (the student was archived) is for diagnostic-service only: a valid internal token.
+    info = _svc(db).get_diagnostic_by_code(
+        code, include_cancel_details=has_valid_internal_token(request.headers.get("x-internal-service-token"))
+    )
     if not info:
         _count_diagnostic_code_miss(bucket)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Диагностика не найдена")

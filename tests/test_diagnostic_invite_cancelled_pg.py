@@ -461,6 +461,7 @@ def test_a_late_start_callback_of_a_session_that_predates_the_archiving_is_accep
     row = reload(pack, row)
     assert row.status == "in_progress" and row.cat_session_id == session
     assert row.cancelled_at is None and row.cancel_reason is None            # un-cancelled
+    assert row.revived_at is not None and abs((naive_now() - row.revived_at).total_seconds()) < 60   # the trail
     assert row.started_at == started                                         # the session's own start, not the callback's
     # a repeated callback of the same session is the usual idempotent one; the student stays archived
     r = client.post(f"{INTERNAL}/diagnostic/{row.code}/start", json=start_body(session, started), headers=token())
@@ -489,7 +490,7 @@ def test_complete_after_the_archiving_for_a_session_that_started_before_is_accep
     assert r.json()["status"] == "completed" and r.json()["student_id"] == str(pack.student.id)
     row = reload(pack, row)
     assert row.status == "completed" and row.cat_session_id == session and row.started_at == started
-    assert row.cancelled_at is None and row.cancel_reason is None
+    assert row.cancelled_at is None and row.cancel_reason is None and row.revived_at is not None
     result = pack.db.query(StudentDiagnosticResult).filter_by(invite_id=row.id).one()    # attached to the invite and the student
     assert result.student_id == pack.student.id and result.session_id == session
     assert pack.db.get(Student, pack.student.id).status == "archived"                    # finishing does not bring him back
@@ -524,7 +525,7 @@ def test_a_session_that_started_at_or_after_the_cancellation_is_rejected(pack, h
         assert r.status_code == 400 and r.json()["detail"] == CANCELLED, (path, r.text)
     row = reload(pack, row)
     assert row.status == "cancelled" and row.cancelled_at is not None and row.cancel_reason == "student_archived"
-    assert row.cat_session_id is None
+    assert row.cat_session_id is None and row.revived_at is None
     assert pack.db.query(StudentDiagnosticResult).filter_by(invite_id=row.id).count() == 0
 
 
@@ -566,13 +567,27 @@ def test_an_unprovable_start_never_revives_a_cancelled_invite(pack, case):
     assert pack.db.query(StudentDiagnosticResult).filter_by(invite_id=row.id).count() == 0
 
 
-def test_the_lookup_of_a_cancelled_code_tells_when_it_was_cancelled(pack):
+def test_the_public_lookup_of_a_cancelled_code_does_not_say_why_but_the_internal_one_does(pack):
+    """That the student was archived is not for whoever holds the link; diagnostic-service (the token) needs it."""
     row = cancelled_confirmed(pack)
-    info = public_client(pack).get(f"{API}/diagnostic/{row.code}").json()
+    client = public_client(pack)
+    for headers in ({}, {"X-Internal-Service-Token": "wrong"}, {"X-Internal-Service-Token": ""}):
+        info = client.get(f"{API}/diagnostic/{row.code}", headers=headers).json()
+        assert info["status"] == "cancelled" and info["message"] == CANCELLED
+        assert "cancelled_at" not in info and "cancel_reason" not in info and "student_archived" not in repr(info)
+    info = client.get(f"{API}/diagnostic/{row.code}", headers=token()).json()
     assert info["status"] == "cancelled" and info["message"] == CANCELLED
     assert info["cancel_reason"] == "student_archived" and info["cancelled_at"] == row.cancelled_at.isoformat()
-    other = public_client(pack).get(f"{API}/diagnostic/{pack.invites['in_progress'].code}").json()
-    assert "cancelled_at" not in other and "cancel_reason" not in other
+    # a code that is not cancelled never has them, token or not
+    other = client.get(f"{API}/diagnostic/{pack.invites['in_progress'].code}", headers=token()).json()
+    assert "cancelled_at" not in other and "cancel_reason" not in other and "message" not in other
+
+
+def test_without_a_configured_secret_nobody_is_internal(pack, monkeypatch):
+    row = cancelled_confirmed(pack)
+    monkeypatch.setattr(get_settings(), "internal_service_token", "")
+    info = public_client(pack).get(f"{API}/diagnostic/{row.code}", headers={"X-Internal-Service-Token": ""}).json()
+    assert "cancelled_at" not in info and "cancel_reason" not in info
 
 
 def test_in_progress_invites_are_never_cancelled_and_may_finish(world):
@@ -586,3 +601,151 @@ def test_in_progress_invites_are_never_cancelled_and_may_finish(world):
         f"{INTERNAL}/diagnostic/{row.code}/complete", json=complete_body(row.cat_session_id, None), headers=token()
     )
     assert r.status_code == 200 and reload(world, row).status == "completed"
+
+
+# ---- the trail of the cancelling and of the un-cancelling -----------------------------------------------------
+
+
+def test_the_archive_journal_lists_the_cancelled_and_the_running_invites(pack):
+    from src.models.auth import GroupAudit
+
+    archive(pack, pack.student)
+    pack.db.expire_all()
+    rows = pack.db.query(GroupAudit).filter_by(action="student_archived", org_id=pack.org.id).all()
+    mine = [r for r in rows if r.snapshot["student_id"] == str(pack.student.id)]
+    assert mine, "one journal row per closed group"
+    cancelled = sorted([str(pack.invites["pending"].id), str(pack.invites["confirmed"].id)])
+    for row in mine:
+        assert row.snapshot["diagnostic_invites_cancelled"] == cancelled
+        assert row.snapshot["diagnostic_invites_in_progress"] == [str(pack.invites["in_progress"].id)]
+
+
+def test_a_student_without_invites_has_empty_lists_in_the_journal(world):
+    from src.models.auth import GroupAudit
+
+    archive(world, world.students[1])
+    world.db.expire_all()
+    row = world.db.query(GroupAudit).filter_by(action="student_archived", org_id=world.org.id).one()
+    assert row.snapshot["diagnostic_invites_cancelled"] == [] and row.snapshot["diagnostic_invites_in_progress"] == []
+
+
+def test_revived_at_is_shown_to_staff_next_to_cancelled_at(pack):
+    admin = make_client(pack, user=pack.admin)
+    session, started = uuid4(), naive_now() - timedelta(minutes=10)
+    row = cancelled_confirmed(pack)
+    public_client(pack).post(f"{INTERNAL}/diagnostic/{row.code}/start", json=start_body(session, started), headers=token())
+    revived_iso = reload(pack, row).revived_at.isoformat()
+
+    listing = {i["id"]: i for i in admin.get(f"{API}/org/diagnostics", params={"limit": 100}).json()}
+    assert listing[str(row.id)]["revived_at"] == revived_iso and listing[str(row.id)]["cancelled_at"] is None
+    assert listing[str(pack.invites["pending"].id)]["revived_at"] is None and listing[str(pack.invites["pending"].id)]["cancelled_at"]
+    detail = admin.get(f"{API}/org/diagnostics/{row.id}").json()
+    assert detail["revived_at"] == revived_iso and detail["status"] == "in_progress"
+    profile = {d["invite_id"]: d for d in admin.get(f"{STUDENTS}/{pack.student.id}/profile").json()["diagnostics"]}
+    assert profile[str(row.id)]["revived_at"] == revived_iso
+    assert profile[str(pack.invites["completed"].id)]["revived_at"] is None
+
+
+# ---- one instant, taken after the locks -----------------------------------------------------------------------
+
+
+def test_the_archiving_instant_is_taken_after_the_locks_and_is_the_same_everywhere(pack):
+    """A session the engine creates while the archiving waits for a lock started BEFORE the cancellation."""
+    from src.models.auth import StudentGroup, StudentGroupPeriod
+
+    holder = _own_session(pack)
+    try:
+        holder.query(type(pack.group)).filter_by(id=pack.group.id).with_for_update().one()   # a lock the archiving needs
+        results = {}
+
+        def run():
+            session = _own_session(pack)
+            try:
+                from src.auth.student_archive import StudentArchiveService
+
+                results["body"] = StudentArchiveService(session).archive(
+                    str(pack.org.id), str(pack.student.id), actor_id=str(pack.admin.id), actor_role="admin"
+                )
+            finally:
+                session.close()
+
+        thread = Thread(target=run)
+        thread.start()
+        thread.join(timeout=1.0)
+        assert thread.is_alive(), "the archiving must wait for the group lock"
+        session_created = naive_now()                      # a session starts during the wait
+        holder.commit()
+        thread.join(timeout=15)
+        assert not thread.is_alive()
+    finally:
+        holder.close()
+    pack.db.expire_all()
+    student = pack.db.get(Student, pack.student.id)
+    cancelled = reload(pack, pack.invites["confirmed"])
+    assert cancelled.status == "cancelled"
+    assert cancelled.cancelled_at > session_created, "the instant is taken after the wait, not before it"
+    # ONE instant: the stamp, the closed membership and period, the journal row
+    member = pack.db.query(StudentGroup).filter_by(student_id=student.id).one()
+    stay = pack.db.query(StudentGroupPeriod).filter_by(membership_id=member.id).one()
+    from src.models.auth import GroupAudit
+
+    audit = pack.db.query(GroupAudit).filter_by(action="student_archived").all()
+    audit = [a for a in audit if a.snapshot["student_id"] == str(student.id)]
+    assert student.archived_at == cancelled.cancelled_at == member.left_at == stay.left_at == audit[0].created_at
+    assert audit[0].snapshot["archived_at"] == student.archived_at.isoformat()
+    # and so the callbacks of the session created during the wait are accepted
+    session_id = uuid4()
+    r = public_client(pack).post(
+        f"{INTERNAL}/diagnostic/{cancelled.code}/start", json=start_body(session_id, session_created), headers=token()
+    )
+    assert r.status_code == 200 and reload(pack, cancelled).status == "in_progress"
+
+
+# ---- lock order: student -> invite everywhere -----------------------------------------------------------------
+
+
+def test_complete_takes_the_student_before_the_invite_so_it_cannot_deadlock_with_an_archiving(pack):
+    """The archiving holds the student and then updates the invite rows.  A completion that locked the invite first
+    and then wanted the student (a 'new' student becomes 'diagnosed') would wait for the archiving while the
+    archiving waits for the invite: a deadlock.  Now it waits for the student BEFORE it holds the invite."""
+    student = pack.student
+    assert student.status == "new"
+    confirmed = pack.invites["confirmed"]
+    code, session_id, started = confirmed.code, uuid4(), naive_now() - timedelta(minutes=10)
+    archiver = _own_session(pack)
+    try:
+        # the archiving's first lock ...
+        archiver.query(Student).filter_by(id=student.id).with_for_update(key_share=True).one()
+        results = {}
+
+        def run():
+            session = _own_session(pack)
+            try:
+                try:
+                    results["done"] = AuthService(session).complete_diagnostic(
+                        code, {"session_id": str(session_id), "session_started_at": started.isoformat(),
+                               "final_theta": 0.4, "se": 0.3, "total_items": 5, "correct_answers": 3},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    results["error"] = repr(exc)
+            finally:
+                session.close()
+
+        thread = Thread(target=run)
+        thread.start()
+        thread.join(timeout=1.0)
+        assert thread.is_alive(), "the completion must wait for the student lock"
+        # ... then its UPDATE of the invites, which must NOT wait for the completion (it holds no invite lock yet)
+        archiver.query(DiagnosticInvite).filter(
+            DiagnosticInvite.student_id == student.id, DiagnosticInvite.status.in_(["pending", "confirmed"])
+        ).update({"status": "cancelled", "cancel_reason": "student_archived", "cancelled_at": naive_now()}, synchronize_session=False)
+        archiver.query(Student).filter_by(id=student.id).update({"status": "archived"})
+        archiver.commit()
+        thread.join(timeout=15)
+        assert not thread.is_alive()
+    finally:
+        archiver.close()
+    assert "error" not in results, results.get("error")       # no deadlock (PostgreSQL would have aborted one of them)
+    row = reload(pack, confirmed)
+    assert results["done"]["status"] == "completed" and row.status == "completed" and row.revived_at is not None
+    assert pack.db.get(Student, student.id).status == "archived"   # the archiving's status survived the completion

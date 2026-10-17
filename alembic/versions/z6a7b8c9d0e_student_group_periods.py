@@ -37,7 +37,8 @@ Backfill (idempotent: memberships that already have a period are skipped):
   the period AT THE MOMENT of archiving) and ``archived_at`` (its end).  When the student was brought back into
   the same group the return overwrote that start - and the journal row still holds the whole period.  It is
   added when it ends no later than the membership's current period starts and overlaps no period of the
-  membership.  NOTHING else is rebuilt: a leave-and-return without the archive left no trace with a time in it
+  membership - nor an earlier snapshot of the same membership (of two overlapping ones the earliest is kept; they
+  contradict each other).  NOTHING else is rebuilt: a leave-and-return without the archive left no trace with a time in it
   (the journal records no join / leave events; attendance snapshots and payments say "he was there", not when
   he came and went), and history is not invented.
 
@@ -141,13 +142,15 @@ def upgrade() -> None:
     )
 
     # 2. The earlier periods the journal of archivings still holds, whole and unambiguous.
-    op.execute(
-        f"""
-        INSERT INTO student_group_periods (id, membership_id, joined_at, left_at)
-        SELECT gen_random_uuid(), r.membership_id, r.joined_at, r.archived_at
-        FROM (
-            SELECT DISTINCT
-                   a.membership_id, a.joined_at, a.archived_at
+    #    The candidates are read first (the guards that need only the table as it is now stay in SQL) and chosen in a
+    #    deterministic pass: per membership the EARLIEST stay first, a later one is dropped when it starts before the
+    #    one kept ends.  Two snapshots of one membership that overlap contradict each other - one archiving cannot
+    #    begin before the previous one ended - and a single INSERT ... SELECT would add both, because its
+    #    NOT EXISTS sees only the rows that were there before the statement.
+    candidates = bind.execute(
+        sa.text(
+            f"""
+            SELECT DISTINCT a.membership_id, a.joined_at, a.archived_at
             FROM (
                 SELECT CASE WHEN ga.snapshot->>'membership_id' ~ '{_UUID_RE}'
                             THEN (ga.snapshot->>'membership_id')::uuid END AS membership_id,
@@ -173,9 +176,31 @@ def upgrade() -> None:
                     WHERE p.membership_id = sg.id
                       AND p.joined_at < a.archived_at
                       AND COALESCE(p.left_at, 'infinity'::timestamp) > a.joined_at)
-        ) AS r
-        """
-    )
+            ORDER BY a.membership_id, a.joined_at, a.archived_at
+            """
+        )
+    ).all()
+    kept, last_end, dropped = [], {}, 0
+    for membership_id, joined_at, archived_at in candidates:
+        if membership_id in last_end and joined_at < last_end[membership_id]:
+            dropped += 1
+            continue
+        last_end[membership_id] = archived_at
+        kept.append({"m": membership_id, "j": joined_at, "a": archived_at})
+    if dropped:
+        log.warning(
+            "student_group_periods backfill: %s archive snapshot(s) overlap an earlier one of the same membership "
+            "and were not used",
+            dropped,
+        )
+    if kept:
+        bind.execute(
+            sa.text(
+                "INSERT INTO student_group_periods (id, membership_id, joined_at, left_at) "
+                "VALUES (gen_random_uuid(), :m, :j, :a)"
+            ),
+            kept,
+        )
 
 
 def downgrade() -> None:

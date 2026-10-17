@@ -34,7 +34,7 @@ LIMIT_HOUR = auth_router_module.DIAGNOSTIC_CODE_FAIL_LIMITS[1][0]
 def client(monkeypatch):
     # the invites that exist in some state (started / completed / expired): the confirm service refuses them like an unknown code
     monkeypatch.setattr(auth_router_module, "_diagnostic_invite_exists", lambda db, code: code in KNOWN or code.startswith("STATE"))
-    def info(self, code):
+    def info(self, code, include_cancel_details=False):
         return {"id": "i", "student_first_name": "Али", "student_last_name": "Каримов", "status": "confirmed"} if code in KNOWN else None
 
     def confirm(self, code):
