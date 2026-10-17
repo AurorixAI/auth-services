@@ -177,6 +177,16 @@ class GroupPriceCurrent(BaseModel):
     note: Optional[str] = None
 
 
+class GroupPriceChange(BaseModel):
+    """One write of the price of a day (the audit trail, ``group_audit``): who, when, from what to what."""
+
+    at: Optional[str] = None  # naive UTC, ISO
+    actor_name: Optional[str] = None
+    old_amount: Optional[int] = None  # in force on that day just before the write; null - none
+    new_amount: int
+    note: Optional[str] = None
+
+
 class GroupPriceRow(BaseModel):
     id: str
     amount: int
@@ -187,6 +197,7 @@ class GroupPriceRow(BaseModel):
     created_at: Optional[str] = None
     is_current: bool = False  # the row that gives the price today
     is_future: bool = False  # valid_from is after today
+    changes: List[GroupPriceChange] = Field(default_factory=list)  # the writes of THIS valid_from, newest first
 
 
 class GroupPricesOut(BaseModel):
@@ -237,6 +248,17 @@ class GroupPriceChanged(BaseModel):
     history: Optional[List[GroupPriceRow]] = None
 
 
+class PriceOverrideChange(BaseModel):
+    """One write of the individual price of a day (the audit trail, ``group_audit``)."""
+
+    at: Optional[str] = None  # naive UTC, ISO
+    actor_name: Optional[str] = None
+    old_amount: Optional[int] = None  # the EFFECTIVE price that day just before the write; null - none
+    old_source: Optional[PriceSource] = None  # where it came from: group / override / none
+    new_amount: Optional[int] = None  # null = "from this day the price of the group again"
+    reason: Optional[str] = None
+
+
 class PriceOverrideRow(BaseModel):
     id: str
     amount: Optional[int] = None  # null = "from this day the price of the group again"
@@ -247,6 +269,7 @@ class PriceOverrideRow(BaseModel):
     created_at: Optional[str] = None
     is_current: bool = False
     is_future: bool = False
+    changes: List[PriceOverrideChange] = Field(default_factory=list)  # the writes of THIS valid_from, newest first
 
 
 class MembershipPriceOut(BaseModel):

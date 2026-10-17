@@ -8,11 +8,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from src.auth import pricing
 from src.models.auth import (
-    GroupAttendance, GroupPrice, MembershipPriceOverride, Organization, Student, StudentGroup, StudentPayment,
+    GroupAttendance, GroupAudit, GroupPrice, MembershipPriceOverride, Organization, Student, StudentGroup,
+    StudentPayment,
 )
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
@@ -881,6 +883,371 @@ def test_a_foreign_group_or_membership_is_a_404_and_nothing_is_written(world):
     assert put_override(world, client=foreign, expect=404)["detail"] == "Членство не найдено"
     assert get_override(world, client=foreign, expect=404)
     assert group_rows(world) == []
+
+
+# ============================================================================================
+# the audit trail: every write of a price leaves a row in group_audit, in the same transaction
+# ============================================================================================
+
+PRICE_ACTIONS = (pricing.ACTION_GROUP_PRICE, pricing.ACTION_MEMBERSHIP_PRICE)
+
+
+def audit_rows(w, action=None, group=None):
+    """The price rows of ``group_audit`` of the group, oldest first."""
+    w.db.expire_all()
+    query = w.db.query(GroupAudit).filter(GroupAudit.group_id == (group or w.group).id,
+                                          GroupAudit.action.in_([action] if action else PRICE_ACTIONS))
+    return query.order_by(GroupAudit.created_at, GroupAudit.id).all()
+
+
+def committed(engine, sql, **params):
+    """A number read on its OWN connection: only what has been committed is there."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        return conn.execute(text(sql), params).scalar_one()
+
+
+def committed_state(engine, w):
+    """``(group price rows, override rows, price audit rows)`` of the group, committed."""
+    return (
+        committed(engine, "SELECT count(*) FROM group_prices WHERE group_id = :g", g=w.group.id),
+        committed(engine, "SELECT count(*) FROM membership_price_overrides o JOIN student_groups sg ON sg.id = o.membership_id "
+                          "WHERE sg.group_id = :g", g=w.group.id),
+        committed(engine, "SELECT count(*) FROM group_audit WHERE group_id = :g AND action IN ('group_price_set', 'membership_price_set')",
+                  g=w.group.id),
+    )
+
+
+def stamp_of_group_price(w):
+    w.db.expire_all()
+    return w.db.query(GroupPrice.id, GroupPrice.created_at, GroupPrice.created_by).filter_by(
+        group_id=w.group.id, valid_from=day(-3)).one()
+
+
+def stamp_of_override(w, student):
+    w.db.expire_all()
+    return w.db.query(MembershipPriceOverride.id, MembershipPriceOverride.created_at,
+                      MembershipPriceOverride.created_by).filter_by(membership_id=mid(w, student), valid_from=day(-3)).one()
+
+
+def trail(got, valid_from):
+    return next(h for h in got["history"] if h["valid_from"] == valid_from.isoformat())["changes"]
+
+
+def test_a_correction_leaves_two_audit_rows_with_the_right_old_and_new(world):
+    put_price(world, 400_000, valid_from=day(-10), note="первая")
+    put_price(world, 450_000, valid_from=day(-10), note="исправили опечатку")          # the same day: a correction
+    put_price(world, 600_000, valid_from=day(5), note="с нового сезона")               # a new step: old = the price in force that day
+    first, second, third = audit_rows(world)
+    assert [(r.action, r.snapshot["valid_from"], r.snapshot["old_amount"], r.snapshot["new_amount"], r.snapshot["note"],
+             r.snapshot["corrected"]) for r in (first, second, third)] == [
+        ("group_price_set", day(-10).isoformat(), None, 400_000, "первая", False),
+        ("group_price_set", day(-10).isoformat(), 400_000, 450_000, "исправили опечатку", True),
+        ("group_price_set", day(5).isoformat(), 450_000, 600_000, "с нового сезона", False),
+    ]
+    assert second.snapshot["old_note"] == "первая" and first.snapshot["old_note"] is None
+    # the whole snapshot, the columns and the author
+    assert set(first.snapshot) == {"actor_id", "group_id", "valid_from", "old_amount", "old_note", "new_amount", "note",
+                                   "corrected", "impact"}
+    assert first.snapshot["actor_id"] == str(world.owner.id) and first.snapshot["group_id"] == str(world.group.id)
+    assert first.snapshot["impact"] == {"students_following": 3, "students_with_override": 0, "stale_payroll_sheets": 0}
+    for r in (first, second, third):
+        assert (r.actor_id, r.actor_role, r.org_id, r.group_id, r.assigned_teacher_id) == (
+            world.owner.id, "owner", world.org.id, world.group.id, world.teacher.id)
+    # the price rows themselves
+    assert group_rows(world) == [(day(-10), 450_000, "исправили опечатку"), (day(5), 600_000, "с нового сезона")]
+    # the trail on the API: newest first, only the rows of that valid_from, the old fields of the history unchanged
+    got = get_prices(world)
+    changes = trail(got, day(-10))
+    assert [(c["old_amount"], c["new_amount"], c["note"], c["actor_name"]) for c in changes] == [
+        (400_000, 450_000, "исправили опечатку", "Иван Owner"), (None, 400_000, "первая", "Иван Owner")]
+    assert [c["at"] for c in changes] == [second.created_at.isoformat(), first.created_at.isoformat()]
+    assert set(changes[0]) == {"at", "actor_name", "old_amount", "new_amount", "note"}
+    assert [(c["old_amount"], c["new_amount"]) for c in trail(got, day(5))] == [(450_000, 600_000)]
+    assert set(got["history"][0]) == {"id", "amount", "valid_from", "note", "created_by", "created_by_name", "created_at",
+                                      "is_current", "is_future", "changes"}
+    assert put_price(world, 450_000, valid_from=day(-10), note="исправили опечатку")["history"] == got["history"]   # the answer of a PUT carries it too
+    # a price written before the trail (the migration, a fixture) has an empty one
+    give_group_price(world.db, world.group, 100_000, valid_from=EPOCH)
+    assert trail(get_prices(world), EPOCH) == []
+
+
+def test_a_correction_that_changes_only_the_note_is_audited_with_the_same_amount(world):
+    put_price(world, 450_000, valid_from=day(-3), note="сентябрь")
+    put_price(world, 450_000, valid_from=day(-3), note="сентябрь, по договору")
+    old, new = audit_rows(world)[1].snapshot["old_amount"], audit_rows(world)[1].snapshot["new_amount"]
+    assert (old, new) == (450_000, 450_000) and audit_rows(world)[1].snapshot["old_note"] == "сентябрь"
+
+
+def test_a_double_click_leaves_one_audit_row_and_changes_nothing(world):
+    first = put_price(world, 450_000, valid_from=day(-3), note="сентябрь")
+    stored = stamp_of_group_price(world)
+    again = put_price(world, 450_000, valid_from=day(-3), note="сентябрь")
+    assert len(audit_rows(world)) == 1
+    assert again["history"] == first["history"] and again["current"] == first["current"]
+    assert stamp_of_group_price(world) == stored                                                          # not even the stamp moved
+    # the same request from another admin with the money right is the same request: nothing moves, no row
+    allow_admin(world)
+    put_price(world, 450_000, valid_from=day(-3), note="сентябрь", client=make_client(world, user=world.admin))
+    assert len(audit_rows(world)) == 1
+    assert stamp_of_group_price(world) == stored
+    # an empty note and no note are the same note
+    put_price(world, 500_000, valid_from=day(-2))
+    put_price(world, 500_000, valid_from=day(-2), note="  ")
+    assert len(audit_rows(world)) == 2
+    # a different amount, note or day IS a write
+    put_price(world, 451_000, valid_from=day(-3), note="сентябрь")
+    put_price(world, 451_000, valid_from=day(-3), note="сентябрь+")
+    put_price(world, 451_000, valid_from=day(-1), note="сентябрь+")
+    assert len(audit_rows(world)) == 5
+    # the same for an individual price
+    s0 = world.students[0]
+    put_override(world, s0, amount=300_000, reason="скидка", valid_from=day(-3))
+    stored = stamp_of_override(world, s0)
+    put_override(world, s0, amount=300_000, reason="скидка", valid_from=day(-3))
+    put_override(world, s0, amount=300_000, reason=" скидка ", valid_from=day(-3), client=make_client(world, user=world.admin))
+    assert len(audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE)) == 1
+    assert stamp_of_override(world, s0) == stored
+    put_override(world, s0, amount=300_000, reason="скидка за двоих", valid_from=day(-3))
+    put_override(world, s0, amount=310_000, reason="скидка за двоих", valid_from=day(-3))
+    assert len(audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE)) == 3
+    # "the group price again" twice is also one write
+    put_override(world, s0, amount=None, reason=None, valid_from=day(-1))
+    put_override(world, s0, amount=None, reason=None, valid_from=day(-1))
+    assert len(audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE)) == 4
+
+
+def test_an_individual_price_is_audited_with_its_old_effective_price_and_source(world):
+    s0, s1 = world.students[0], world.students[1]
+    assert put_override(world, s1, amount=100_000, reason="без цены группы", valid_from=day(-9))["price"]["amount"] == 100_000
+    only = audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE)[0].snapshot
+    assert (only["old_amount"], only["old_source"], only["new_amount"]) == (None, "none", 100_000)    # nothing was there
+    put_price(world, 500_000, valid_from=day(-30))
+    put_override(world, s0, amount=300_000, reason="скидка", valid_from=day(-5))
+    put_override(world, s0, amount=250_000, reason="скидка больше", valid_from=day(-5))              # a correction of that day
+    rows = [r for r in audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE) if r.snapshot["membership_id"] == str(mid(world, s0))]
+    assert [(r.snapshot["old_amount"], r.snapshot["old_source"], r.snapshot["new_amount"], r.snapshot["reason"],
+             r.snapshot["old_reason"], r.snapshot["corrected"]) for r in rows] == [
+        (500_000, "group", 300_000, "скидка", None, False),                   # the price of the group was in force
+        (300_000, "override", 250_000, "скидка больше", "скидка", True),      # the row of that day is what is replaced
+    ]
+    snap = rows[0].snapshot
+    assert set(snap) == {"actor_id", "group_id", "membership_id", "student_id", "valid_from", "old_amount", "old_source",
+                         "old_reason", "new_amount", "reason", "corrected"}
+    assert (snap["actor_id"], snap["group_id"], snap["student_id"], snap["valid_from"]) == (
+        str(world.owner.id), str(world.group.id), str(s0.id), day(-5).isoformat())
+    assert (rows[0].actor_id, rows[0].actor_role, rows[0].org_id, rows[0].assigned_teacher_id) == (
+        world.owner.id, "owner", world.org.id, world.teacher.id)
+    got = get_override(world, s0)
+    changes = trail(got, day(-5))
+    assert [(c["old_amount"], c["old_source"], c["new_amount"], c["reason"], c["actor_name"]) for c in changes] == [
+        (300_000, "override", 250_000, "скидка больше", "Иван Owner"), (500_000, "group", 300_000, "скидка", "Иван Owner")]
+    assert set(changes[0]) == {"at", "actor_name", "old_amount", "old_source", "new_amount", "reason"}
+    assert get_override(world, s1)["history"][0]["changes"][0]["old_source"] == "none"            # another student: his own trail only
+    assert len(trail(got, day(-5))) == 2 and all(len(h["changes"]) == 2 for h in got["history"])
+
+
+def test_the_way_back_to_the_group_price_is_audited(world):
+    s0 = world.students[0]
+    put_price(world, 500_000, valid_from=day(-30))
+    put_override(world, s0, amount=300_000, reason="скидка", valid_from=day(-5))
+    out = put_override(world, s0, amount=None, reason=None, valid_from=day())                # «вернуть цену группы»
+    assert out["price"]["source"] == "group" and out["price"]["amount"] == 500_000
+    back = audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE)[-1]
+    assert back.action == "membership_price_set" and back.actor_id == world.owner.id
+    assert (back.snapshot["old_amount"], back.snapshot["old_source"], back.snapshot["new_amount"], back.snapshot["reason"]) == (
+        300_000, "override", None, None)
+    assert trail(out, day()) == [{"at": back.created_at.isoformat(), "actor_name": "Иван Owner", "old_amount": 300_000,
+                                  "old_source": "override", "new_amount": None, "reason": None}]
+    # the way back with a reason; then a sum on the very day of the way back: the old price is the group's again
+    put_override(world, s0, amount=None, reason="вернули по просьбе родителей", valid_from=day())
+    again = put_override(world, s0, amount=280_000, reason="снова скидка", valid_from=day())
+    last, before = trail(again, day())[:2]
+    assert (last["old_amount"], last["old_source"], last["new_amount"]) == (500_000, "group", 280_000)
+    assert (before["old_amount"], before["old_source"], before["new_amount"], before["reason"]) == (
+        500_000, "group", None, "вернули по просьбе родителей")                        # the row being corrected had no amount: the group price was in force
+    # a group price of the day is audited the same way when its row is the first one: no price before -> old null
+    fresh = make_group(world.db, world.org, world.teacher2, "Новая")
+    world.db.commit()
+    put_price(world, 100_000, group=fresh, valid_from=day(-1))
+    (row,) = audit_rows(world, group=fresh)
+    assert (row.snapshot["old_amount"], row.snapshot["new_amount"], row.snapshot["impact"]["students_following"]) == (None, 100_000, 0)
+
+
+def test_adding_a_student_with_an_individual_price_is_audited_too(world):
+    other = make_group(world.db, world.org, world.teacher2, "Другая")
+    world.db.commit()
+    put_price(world, 500_000, group=other, valid_from=day(-30))
+    student = world.students[0]
+    world.svc.add_student_to_group(str(world.org.id), str(other.id), str(student.id), mode="transfer",
+                                   price_override=SimpleNamespace(amount=450_000, reason="скидка"), actor_id=str(world.admin.id))
+    (row,) = audit_rows(world, group=other, action=pricing.ACTION_MEMBERSHIP_PRICE)
+    assert (row.actor_id, row.actor_role, row.snapshot["old_amount"], row.snapshot["old_source"], row.snapshot["new_amount"],
+            row.snapshot["student_id"]) == (world.admin.id, "admin", 500_000, "group", 450_000, str(student.id))
+    # the student is already there (his only group): the same exception again is nothing, another sum corrects that day
+    world.svc.add_student_to_group(str(world.org.id), str(other.id), str(student.id), mode="transfer",
+                                   price_override=SimpleNamespace(amount=450_000, reason="скидка"), actor_id=str(world.admin.id))
+    assert len(audit_rows(world, group=other, action=pricing.ACTION_MEMBERSHIP_PRICE)) == 1
+    world.svc.add_student_to_group(str(world.org.id), str(other.id), str(student.id), mode="transfer",
+                                   price_override=SimpleNamespace(amount=400_000, reason="больше скидка"), actor_id=str(world.admin.id))
+    assert [r.snapshot["new_amount"] for r in audit_rows(world, group=other, action=pricing.ACTION_MEMBERSHIP_PRICE)] == [
+        450_000, 400_000]
+    # a membership write nobody can attribute is refused: the trail has no row without an actor
+    with pytest.raises(ValueError):
+        pricing.write_override(world.db, mid(world, student, other), None, amount=1, valid_from=day(), reason="без автора")
+    world.db.rollback()
+
+
+def test_the_price_and_its_audit_row_commit_or_roll_back_together(world, engine, monkeypatch):
+    from sqlalchemy import event
+
+    class Boom(RuntimeError):
+        pass
+
+    def after_audit_insert(mapper, connection, target):
+        raise Boom("the audit row was inserted, then something failed")
+
+    def fail_commit():
+        raise Boom("the commit failed after both rows were written")
+
+    owner = money_owner(world)
+    s0 = world.students[0]
+    group_body = {"amount": 450_000, "valid_from": day(-3).isoformat(), "note": "n"}
+    override_url = f"{API}/org/memberships/{mid(world, s0)}/price-override"
+    override_body = {"amount": 300_000, "reason": "скидка", "valid_from": day(-3).isoformat()}
+    group_url = f"{API}/org/groups/{world.group.id}/price"
+
+    def put_group():
+        return owner.put(group_url, json=group_body)
+
+    def put_member():
+        return owner.put(override_url, json=override_body)
+
+    assert committed_state(engine, world) == (0, 0, 0)
+    for request in (put_group, put_member):
+        # a failure AFTER the audit row was inserted in the transaction (the price row went in before it) ...
+        event.listen(GroupAudit, "after_insert", after_audit_insert)
+        try:
+            with pytest.raises(Boom):
+                request()
+        finally:
+            event.remove(GroupAudit, "after_insert", after_audit_insert)
+        assert committed_state(engine, world) == (0, 0, 0)
+        # ... and a failure of the commit itself, both rows written
+        monkeypatch.setattr(world.db, "commit", fail_commit)
+        try:
+            with pytest.raises(Boom):
+                request()
+        finally:
+            monkeypatch.undo()
+        assert committed_state(engine, world) == (0, 0, 0)
+    # the control: without the failure both are there, together
+    assert put_group().status_code == 200 and committed_state(engine, world) == (1, 0, 1)
+    assert put_member().status_code == 200 and committed_state(engine, world) == (1, 1, 2)
+    # a failed CORRECTION keeps the old amount and adds no row: the update and the audit row go together too
+    group_body["amount"], override_body["amount"] = 999_000, 888_000
+    for request, kept, table_sql, key in (
+        (put_group, 450_000, "SELECT amount FROM group_prices WHERE group_id = :k", world.group.id),
+        (put_member, 300_000, "SELECT amount FROM membership_price_overrides WHERE membership_id = :k", mid(world, s0)),
+    ):
+        before = committed_state(engine, world)
+        event.listen(GroupAudit, "after_insert", after_audit_insert)
+        try:
+            with pytest.raises(Boom):
+                request()
+        finally:
+            event.remove(GroupAudit, "after_insert", after_audit_insert)
+        assert committed_state(engine, world) == before
+        assert committed(engine, table_sql, k=key) == kept
+        assert request().status_code == 200                                     # the session is clean: the retry is a correction
+        assert committed_state(engine, world) == (before[0], before[1], before[2] + 1)
+    assert committed(engine, "SELECT amount FROM group_prices WHERE group_id = :g", g=world.group.id) == 999_000
+    assert [(r.snapshot["old_amount"], r.snapshot["new_amount"]) for r in audit_rows(world, pricing.ACTION_GROUP_PRICE)] == [
+        (None, 450_000), (450_000, 999_000)]
+    assert [(r.snapshot["old_amount"], r.snapshot["new_amount"]) for r in audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE)] == [
+        (450_000, 300_000), (300_000, 888_000)]
+
+
+def test_an_audit_insert_that_closes_a_lock_cycle_with_a_membership_change_ends_clean(world, engine):
+    """The audit row points at the group (FOR KEY SHARE).  ``remove_student_from_group`` holds the group FOR UPDATE and
+    then asks for the membership this write already holds: PostgreSQL breaks that cycle (40P01).  Whoever is the
+    victim, it is a clean 409 / a deadlock error, never a hang, and the exception and its audit row stay together."""
+    import threading
+
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+
+    membership_id = mid(world)
+    holder = Session(engine)
+    holder.execute(text("SELECT id FROM groups WHERE id = :g FOR UPDATE"), {"g": world.group.id})      # the group first ...
+    thread, outcome = run_in_thread(engine, lambda session: pricing.PricingService(session).set_override(
+        str(world.org.id), membership_id, str(world.owner.id), amount=1_000, valid_from=day(-3), reason="цикл"))
+    wait_until_blocked(engine)                                                      # the write holds the membership, waits for the group
+    holder_error = None
+    try:
+        holder.execute(text("SELECT id FROM student_groups WHERE id = :m FOR NO KEY UPDATE"), {"m": membership_id})   # ... then the membership
+    except OperationalError as exc:
+        holder_error = exc
+    finally:
+        holder.rollback()
+        holder.close()
+    out = finish(thread, outcome)
+    assert (holder_error is not None) != ("error" in out), (holder_error, out)          # exactly one side was the victim
+    if holder_error is not None:
+        assert holder_error.orig.pgcode == "40P01" and "value" in out
+    else:
+        assert isinstance(out["error"], pricing.PriceConflict) and out["error"].detail["code"] == "PRICE_CONFLICT"
+    world.db.expire_all()
+    stored = world.db.query(MembershipPriceOverride).filter_by(membership_id=membership_id).count()
+    assert stored == len(audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE)) == (0 if "error" in out else 1)
+
+
+def test_the_audit_trail_is_for_the_money_roles_only(world):
+    s0 = world.students[0]
+    put_price(world, 450_000, valid_from=day(-3), note="секретная заметка")
+    put_price(world, 460_000, valid_from=day(-3), note="секретная заметка")
+    put_override(world, s0, amount=311_111, reason="секретная причина", valid_from=day(-3))
+    prices, override = f"{API}/org/groups/{world.group.id}/prices", f"{API}/org/memberships/{mid(world)}/price-override"
+    before = len(audit_rows(world))
+    # a teacher and an admin without the money right: 403 on the trail and on every write that would make a row
+    for user in (world.teacher, world.admin):
+        client = make_client(world, user=user)
+        assert client.get(prices).status_code == 403 and client.get(override).status_code == 403
+        assert client.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 1}).status_code == 403
+        assert client.put(override, json={"amount": 1, "reason": "проверка"}).status_code == 403
+        assert client.put(override, json={"amount": None}).status_code == 403
+        for url in (f"{API}/org/groups/{world.group.id}", f"{API}/org/students/{world.students[0].id}/profile",
+                    f"{API}/org/students/{world.students[0].id}/memberships", f"{API}/org/groups"):
+            r = client.get(url)
+            for secret in ("changes", "group_price_set", "membership_price_set", "секретная", "311111", "460000"):
+                assert secret not in r.text, (user.role, url, secret)
+    assert len(audit_rows(world)) == before
+    # the admin with the owner's permission sees the trail and writes into it with his own name and role
+    allow_admin(world)
+    admin = make_client(world, user=world.admin)
+    assert [c["new_amount"] for c in trail(get_prices(world, client=admin), day(-3))] == [460_000, 450_000]
+    assert trail(get_override(world, s0, client=admin), day(-3))[0]["new_amount"] == 311_111
+    put_price(world, 470_000, valid_from=day(-3), client=admin)
+    last = audit_rows(world, pricing.ACTION_GROUP_PRICE)[-1]
+    assert (last.actor_id, last.actor_role, last.snapshot["old_amount"]) == (world.admin.id, "admin", 460_000)
+    assert trail(get_prices(world), day(-3))[0]["actor_name"] == "Иван Admin"
+    # the trail of another centre is not reachable: 404, not a leak
+    foreign = make_client(world, user=world.foreign_admin, org="other", org_role="owner", role="owner")
+    world.db.query(__import__("src.models.auth", fromlist=["OrganizationMember"]).OrganizationMember).filter_by(
+        user_id=world.foreign_admin.id).update({"org_role": "owner"})
+    world.db.commit()
+    assert get_prices(world, client=foreign, expect=404) and get_override(world, client=foreign, expect=404)
+
+
+def test_a_dry_run_and_a_refused_write_leave_no_audit_row(world):
+    put_price(world, 450_000, dry=True)
+    put_price(world, -5, expect=422)
+    put_override(world, amount=1, reason="  ", expect=422)
+    world.db.query(Student).filter_by(id=world.students[0].id).update({"status": "archived"})
+    world.db.commit()
+    put_override(world, world.students[0], amount=1, reason="архив", expect=409)
+    assert audit_rows(world) == []
 
 
 # ============================================================================================

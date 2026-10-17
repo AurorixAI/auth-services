@@ -876,9 +876,21 @@ def _check_n13_group_price_objects(engine,config,ids):
         for name,gid in groups.items():
             db.add(Group(id=gid,org_id=org,name=name,class_level=9))
         db.commit()
-    # --- the revision before the group price: no tables
+    # --- the revision before the group price: no tables, and the audit CHECK has no price actions
+    def audit(action):
+        with engine.begin() as c:
+            c.execute(text("INSERT INTO group_audit (id,org_id,group_id,actor_id,actor_role,action,snapshot,created_at) VALUES (gen_random_uuid(),:o,:g,:u,'owner',:a,CAST('{}' AS jsonb),now())"),{'o':org,'g':groups['majority'],'u':owner,'a':action})
+    def audit_actions():
+        with engine.connect() as c:
+            return sorted(r[0] for r in c.execute(text("SELECT action FROM group_audit WHERE org_id=:o"),{'o':org}))
+    def audit_check():
+        with engine.connect() as c:
+            return c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='ck_group_audit_action' AND conrelid='group_audit'::regclass")).scalar_one()
+    price_actions=('group_price_set','membership_price_set')
     command.downgrade(config,SESSIONS)
     assert not {'group_prices','membership_price_overrides'} & set(inspect(engine).get_table_names())
+    assert not any(a in audit_check() for a in price_actions) and 'student_restored' in audit_check()
+    with pytest.raises(IntegrityError,match='ck_group_audit_action'): audit('group_price_set')
     def member(group,fee,*,active=True,status='active',updated=None):
         sid,mid=uuid4(),uuid4()
         with Session(engine) as db:
@@ -942,6 +954,10 @@ def _check_n13_group_price_objects(engine,config,ids):
             with engine.begin() as c: c.execute(text(sql),params)
     with engine.begin() as c:       # "the group price again" needs no reason; a NULL amount is allowed
         c.execute(text("INSERT INTO membership_price_overrides (id,membership_id,amount,valid_from,reason,created_at) VALUES (gen_random_uuid(),:m,NULL,'2026-10-01',NULL,now())"),{'m':m['maj3']})
+    # --- audit trail: the CHECK of group_audit.action takes the two price actions, keeps the old ones and refuses the rest
+    assert all(a in audit_check() for a in price_actions) and 'student_archived' in audit_check()
+    for action in ('created','updated','teacher_changed','student_archived','student_restored',*price_actions): audit(action)
+    with pytest.raises(IntegrityError,match='ck_group_audit_action'): audit('price_set')
     # --- post-release changes: a new group price (today), an individual price from today for a follower
     with engine.begin() as c:
         c.execute(text("INSERT INTO group_prices (id,group_id,amount,valid_from,note,created_by,created_at) VALUES (gen_random_uuid(),:g,600000,'2026-10-01','повышение',:u,now())"),{'g':gid,'u':owner})
@@ -950,6 +966,12 @@ def _check_n13_group_price_objects(engine,config,ids):
     # --- downgrade: monthly_fee = the effective price TODAY, NULL when there is none; the tables are gone
     command.downgrade(config,SESSIONS)
     assert not {'group_prices','membership_price_overrides'} & set(inspect(engine).get_table_names())
+    # the trail of the prices went with them, the other audit rows stay, the old list of actions is back (and holds)
+    assert audit_actions()==sorted(['created','updated','teacher_changed','student_archived','student_restored'])
+    assert not any(a in audit_check() for a in price_actions) and all(a in audit_check() for a in ('created','updated','teacher_changed','student_archived','student_restored'))
+    for action in price_actions:
+        with pytest.raises(IntegrityError,match='ck_group_audit_action'): audit(action)
+    audit('student_archived')                                                                  # an old action is still accepted
     with engine.connect() as c:
         back={r.id:r.monthly_fee for r in c.execute(text("SELECT sg.id,sg.monthly_fee FROM student_groups sg JOIN groups g ON g.id=sg.group_id WHERE g.org_id=:o"),{'o':org})}
         assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==SESSIONS
@@ -960,6 +982,9 @@ def _check_n13_group_price_objects(engine,config,ids):
     assert back[m['an1']] is None and back[m['io2']] is None and back[m['io1']]==350000 and back[m['fr1']]==0
     # --- upgrade again: the same effective prices come back (nothing was lost but the history of changes)
     command.upgrade(config,'head')
+    assert audit_actions()==sorted(['created','updated','teacher_changed','student_archived','student_archived','student_restored'])   # no price row comes back
+    for action in price_actions: audit(action)                                                  # the CHECK takes them again
+    assert all(a in audit_check() for a in price_actions)
     again=effective()
     assert {k:v for k,v in again.items() if back[k] is not None}=={k:v for k,v in back.items() if v is not None}
     assert prices()['majority'][0]==600000 and overrides()[m['maj2']][0]==550000

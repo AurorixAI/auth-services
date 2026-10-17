@@ -36,7 +36,9 @@ Writes
   same 409, never a 500.  ``dry_run`` computes the impact and writes nothing.
 * :meth:`PricingService.set_override` - under ``FOR NO KEY UPDATE`` of the membership (the same lock as every other
   writer of money of a membership), refused for an archived student.  :func:`write_override` is the bare write used
-  inside another transaction (adding a student to a group with an individual price).
+  inside another transaction (adding a student to a group with an individual price).  The audit row points at the
+  group (FOR KEY SHARE): a membership change that holds the group FOR UPDATE and then asks for this membership
+  (``remove_student_from_group``) can close a lock cycle, which PostgreSQL breaks as a deadlock - a 409 here too.
 
 Impact of a change of the group price (what the confirmation window shows): ``students_following`` (active
 students of the group who follow the group price on the day the change reaches them), ``students_with_override``
@@ -45,6 +47,27 @@ students of the group who follow the group price on the day the change reaches t
 computed twice, with the current prices and with the new one (``PayrollService.sheets_changed_by_group_price``);
 a sheet whose fingerprint differs would turn "данные изменились".  Payments already entered never change: the
 amount is stored in the payment itself.
+
+Audit trail
+-----------
+Every write of a group price and of an individual price leaves ONE row in ``group_audit`` (``group_price_set`` /
+``membership_price_set``), inserted in the SAME transaction as the price row: both are committed or both are rolled
+back, whatever fails in between.  That covers a new row, a same-day correction and "вернуть цену группы" (amount
+NULL).  The request that changes nothing - the same amount, note / reason and ``valid_from`` as the row already there
+(a double click) - writes no second audit row and does not touch the price row either.  ``snapshot`` (JSONB):
+
+* group price: ``actor_id``, ``group_id``, ``valid_from`` (ISO date), ``old_amount``, ``new_amount``, ``note``,
+  ``old_note``, ``corrected`` (the day had a row that was replaced) and ``impact`` (``students_following``,
+  ``students_with_override``, ``stale_payroll_sheets`` - the numbers the confirmation window showed);
+* individual price: ``actor_id``, ``group_id``, ``membership_id``, ``student_id``, ``valid_from``, ``old_amount``,
+  ``old_source`` (``group`` / ``override`` / ``none``), ``new_amount`` (NULL = "the group price again"), ``reason``,
+  ``old_reason``, ``corrected``.
+
+``old_amount`` is the price in force on ``valid_from`` just BEFORE the write: the row of that very day that is being
+replaced, otherwise the last step before it (NULL if there is none).  For an individual price it is the EFFECTIVE price
+of the membership that day, so ``old_source`` says whether it was the group price or an exception (a replaced
+"group price again" row falls to the group price).  The trail is read through the ``changes`` of the ``history`` items
+(:meth:`PricingService.group_prices`, :meth:`PricingService.override_history`) - money roles only.
 
 Money never reaches a teacher: the only callers are the endpoints under ``require_payments_access`` and the
 services that build money responses.  Logs carry ids and the actor, never amounts.
@@ -64,8 +87,10 @@ from sqlalchemy.orm import Session
 
 from src.models.auth import (
     Group,
+    GroupAudit,
     GroupPrice,
     MembershipPriceOverride,
+    OrganizationMember,
     Student,
     StudentGroup,
     User,
@@ -79,6 +104,9 @@ logger = logging.getLogger(__name__)
 SOURCE_GROUP = "group"
 SOURCE_OVERRIDE = "override"
 SOURCE_NONE = "none"
+
+ACTION_GROUP_PRICE = "group_price_set"  # group_audit.action of a write of a group price
+ACTION_MEMBERSHIP_PRICE = "membership_price_set"  # ... of an individual price (also "the group price again")
 
 # "Always so": the valid_from of the prices the migration made from the old per-student fees (past months are
 # calculated as they were).  Also the earliest day a price can start.
@@ -348,6 +376,50 @@ def check_override_input(amount: Optional[int], reason: Optional[str]) -> Tuple[
     return amount, reason
 
 
+def _audit_role(db: Session, org_id: UUID, actor: UUID) -> str:
+    """The ``group_audit.actor_role`` of the author of a price write: his role in the centre (owner / admin - the
+    only ones the money guard lets in), a platform superadmin, else admin (like ``student_archive.actor_role_for_audit``)."""
+    role = (
+        db.query(OrganizationMember.org_role)
+        .filter(
+            OrganizationMember.org_id == org_id,
+            OrganizationMember.user_id == actor,
+            OrganizationMember.is_active.is_(True),
+        )
+        .scalar()
+    )
+    if role in ("owner", "admin"):
+        return role
+    return "superadmin" if db.query(User.role).filter(User.id == actor).scalar() == "superadmin" else "admin"
+
+
+def _add_audit(
+    db: Session,
+    *,
+    org_id: UUID,
+    group_id: UUID,
+    teacher_id: Optional[UUID],
+    actor: UUID,
+    action: str,
+    snapshot: Dict[str, Any],
+    at: datetime,
+) -> GroupAudit:
+    """The audit row of a price write.  Flushed, never committed: it lives and dies with the transaction of the write."""
+    row = GroupAudit(
+        org_id=org_id,
+        group_id=group_id,
+        actor_id=actor,
+        actor_role=_audit_role(db, org_id, actor),
+        action=action,
+        assigned_teacher_id=teacher_id,
+        snapshot=snapshot,
+        created_at=at,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
 def write_override(
     db: Session,
     membership_id: Any,
@@ -358,24 +430,41 @@ def write_override(
     reason: Optional[str],
     seen_before: Optional[datetime] = None,
 ) -> MembershipPriceOverride:
-    """Insert (or, for the same day, replace) an exception row inside the caller's transaction.
+    """Insert (or, for the same day, replace) an exception row inside the caller's transaction, with its audit row.
 
     The caller holds the lock of the membership and has validated the input (:func:`check_override_input`).
     ``seen_before`` - the instant the request was made: a row of that day written at or after it is one the caller
     has not seen (somebody wrote it while this request waited for the lock) - 409, unless it says the same thing.
-    Nothing is committed here.
+    The same ``amount`` and ``reason`` as the row of that day is a repeated request: nothing is written, no audit row.
+    Otherwise ONE ``membership_price_set`` row goes to ``group_audit`` (module docstring) in the caller's
+    transaction.  Nothing is committed here; a write without an author is refused (the trail has no row without one).
     """
+    actor = _uuid(actor_id)
+    if actor is None:
+        raise ValueError("A price write needs its author: the audit trail has no row without an actor")
     mid = _uuid(membership_id)
     row = (
         db.query(MembershipPriceOverride)
         .filter(MembershipPriceOverride.membership_id == mid, MembershipPriceOverride.valid_from == valid_from)
         .first()
     )
-    if row is not None and seen_before is not None and row.created_at is not None and row.created_at >= seen_before:
+    if row is not None:
         if row.amount == amount and (row.reason or None) == (reason or None):
-            return row  # the same request twice
-        raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT")
-    now, actor = _utcnow(), _uuid(actor_id)
+            return row  # the same request twice: nothing changes, nothing to audit
+        if seen_before is not None and row.created_at is not None and row.created_at >= seen_before:
+            raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT")
+    ctx = (
+        db.query(StudentGroup.group_id, StudentGroup.student_id, Group.org_id, Group.teacher_id)
+        .join(Group, Group.id == StudentGroup.group_id)
+        .filter(StudentGroup.id == mid)
+        .first()
+    )
+    if ctx is None:
+        raise PriceNotFound("Членство не найдено")
+    # what the membership paid that day before this write (the row being replaced is part of the books)
+    old = load_books(db, [ctx.group_id], [mid]).price(mid, ctx.group_id, valid_from)
+    corrected, old_reason = row is not None, (row.reason if row is not None else None)
+    now = _utcnow()
     if row is not None:
         row.amount, row.reason, row.created_by, row.created_at = amount, reason, actor, now
     else:
@@ -384,6 +473,28 @@ def write_override(
         )
         db.add(row)
     db.flush()
+    _add_audit(
+        db,
+        org_id=ctx.org_id,
+        group_id=ctx.group_id,
+        teacher_id=ctx.teacher_id,
+        actor=actor,
+        action=ACTION_MEMBERSHIP_PRICE,
+        snapshot={
+            "actor_id": str(actor),
+            "group_id": str(ctx.group_id),
+            "membership_id": str(mid),
+            "student_id": str(ctx.student_id),
+            "valid_from": valid_from.isoformat(),
+            "old_amount": old.amount,
+            "old_source": old.source,
+            "old_reason": old_reason,
+            "new_amount": amount,
+            "reason": reason,
+            "corrected": corrected,
+        },
+        at=now,
+    )
     return row
 
 
@@ -425,8 +536,28 @@ class PricingService:
             for u in self.db.query(User).filter(User.id.in_(wanted)).all()
         }
 
+    def _audit_by_day(
+        self, group_id: UUID, action: str, *, membership_id: Optional[UUID] = None
+    ) -> Tuple[Dict[Optional[str], List[GroupAudit]], Dict[UUID, Optional[str]]]:
+        """The audit rows of ``action`` of a group (of one membership), newest first, keyed by the ``valid_from`` (ISO
+        date) of their snapshot - and the names of their authors.  Two queries however many rows there are."""
+        query = self.db.query(GroupAudit).filter(GroupAudit.group_id == group_id, GroupAudit.action == action)
+        if membership_id is not None:
+            query = query.filter(GroupAudit.snapshot["membership_id"].astext == str(membership_id))
+        by_day: Dict[Optional[str], List[GroupAudit]] = {}
+        rows = query.order_by(GroupAudit.created_at.desc(), GroupAudit.id.desc()).all()
+        for row in rows:
+            by_day.setdefault((row.snapshot or {}).get("valid_from"), []).append(row)
+        return by_day, self._names(row.actor_id for row in rows)
+
     def group_prices(self, org_id: str, group_id: UUID) -> Dict[str, Any]:
-        """``current`` (on the business today) and the whole ``history`` of a group, newest first."""
+        """``current`` (on the business today) and the whole ``history`` of a group, newest first.
+
+        Every ``history`` item carries ``changes`` - the audit trail of THAT ``valid_from`` (``group_audit``, action
+        ``group_price_set``), newest first: ``at`` (naive UTC, ISO), ``actor_name``, ``old_amount`` (in force on that
+        day before the write; null - none), ``new_amount`` and ``note``.  The first item is the write that created the
+        row, the next ones are its corrections; a row made by the migration has none.  Money roles only: the
+        endpoint is under ``require_payments_access``."""
         group = self._group(org_id, group_id)
         today = ps.business_today()
         rows = (
@@ -440,6 +571,7 @@ class PricingService:
         names = self._names(r.created_by for r in rows)
         mode, label = self._label(org_id)
         by_day = {r.valid_from: r for r in rows}
+        trail, trail_names = self._audit_by_day(group.id, ACTION_GROUP_PRICE)
         return {
             "group_id": str(group.id),
             "group_name": group.name,
@@ -466,6 +598,16 @@ class PricingService:
                     "created_at": r.created_at.isoformat() if r.created_at else None,
                     "is_current": bool(current and r.valid_from == current[0]),
                     "is_future": r.valid_from > today,
+                    "changes": [
+                        {
+                            "at": a.created_at.isoformat() if a.created_at else None,
+                            "actor_name": trail_names.get(a.actor_id),
+                            "old_amount": a.snapshot.get("old_amount"),
+                            "new_amount": a.snapshot.get("new_amount"),
+                            "note": a.snapshot.get("note"),
+                        }
+                        for a in trail.get(r.valid_from.isoformat(), [])
+                    ],
                 }
                 for r in rows
             ],
@@ -487,7 +629,12 @@ class PricingService:
         return membership
 
     def override_history(self, org_id: str, membership_id: UUID) -> Dict[str, Any]:
-        """The exception history of a membership (newest first) and the price it has today."""
+        """The exception history of a membership (newest first) and the price it has today.
+
+        Every ``history`` item carries ``changes`` - the audit trail of THAT ``valid_from`` (``group_audit``, action
+        ``membership_price_set``), newest first: ``at``, ``actor_name``, ``old_amount`` and ``old_source`` (the
+        EFFECTIVE price of the membership that day before the write and where it came from: ``group`` / ``override``
+        / ``none``), ``new_amount`` (null - "the group price again") and ``reason``.  Money roles only."""
         membership = self._membership(org_id, membership_id)
         today = ps.business_today()
         rows = (
@@ -500,6 +647,9 @@ class PricingService:
         current = books.override_book(membership.id).at(today)
         names = self._names(r.created_by for r in rows)
         mode, label = self._label(org_id)
+        trail, trail_names = self._audit_by_day(
+            membership.group_id, ACTION_MEMBERSHIP_PRICE, membership_id=membership.id
+        )
         return {
             "membership_id": str(membership.id),
             "group_id": str(membership.group_id),
@@ -518,6 +668,17 @@ class PricingService:
                     "created_at": r.created_at.isoformat() if r.created_at else None,
                     "is_current": bool(current and r.valid_from == current[0]),
                     "is_future": r.valid_from > today,
+                    "changes": [
+                        {
+                            "at": a.created_at.isoformat() if a.created_at else None,
+                            "actor_name": trail_names.get(a.actor_id),
+                            "old_amount": a.snapshot.get("old_amount"),
+                            "old_source": a.snapshot.get("old_source"),
+                            "new_amount": a.snapshot.get("new_amount"),
+                            "reason": a.snapshot.get("reason"),
+                        }
+                        for a in trail.get(r.valid_from.isoformat(), [])
+                    ],
                 }
                 for r in rows
             ],
@@ -596,8 +757,10 @@ class PricingService:
     ) -> Dict[str, Any]:
         """Set the price of a group from a day (default: today).  A past day is allowed - the impact says what it
         touches.  The same day again corrects the amount of that day; a row of that day written by somebody else
-        while this request waited for the lock is a 409 ``PRICE_CONFLICT`` (see the module docstring).  ``dry_run``:
-        only the impact, nothing is written and no lock is taken."""
+        while this request waited for the lock is a 409 ``PRICE_CONFLICT`` (see the module docstring).  The same
+        amount and note as the row of that day (a double click) change nothing and leave no audit row; every other
+        write leaves one ``group_price_set`` row in ``group_audit``, committed with the price.  ``dry_run``: only the
+        impact, nothing is written and no lock is taken."""
         requested_at = _utcnow()
         today = ps.business_today()
         amount = check_amount(amount)
@@ -617,18 +780,53 @@ class PricingService:
                 .filter(GroupPrice.group_id == group.id, GroupPrice.valid_from == valid_from)
                 .first()
             )
-            if row is not None and row.created_at is not None and row.created_at >= requested_at:
+            if row is not None and (int(row.amount), row.note or None) == (amount, note):
+                pass  # the same request twice (a double click, or one that raced and lost): nothing to write or audit
+            elif row is not None and row.created_at is not None and row.created_at >= requested_at:
                 # written while this request waited for the lock: the caller has not seen it
-                if (int(row.amount), row.note or None) != (amount, note):
-                    raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT")
-            elif row is not None:
-                row.amount, row.note, row.created_by, row.created_at = amount, note, actor, now
+                raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT")
             else:
-                self.db.add(
-                    GroupPrice(
-                        group_id=group.id, amount=amount, valid_from=valid_from, note=note, created_by=actor,
-                        created_at=now,
+                # what was in force on that day before this write: the row being replaced, else the last step before it
+                before = row or (
+                    self.db.query(GroupPrice)
+                    .filter(GroupPrice.group_id == group.id, GroupPrice.valid_from < valid_from)
+                    .order_by(GroupPrice.valid_from.desc())
+                    .first()
+                )
+                old_amount = None if before is None else int(before.amount)
+                corrected, old_note = row is not None, (row.note if row is not None else None)
+                if row is not None:
+                    row.amount, row.note, row.created_by, row.created_at = amount, note, actor, now
+                else:
+                    self.db.add(
+                        GroupPrice(
+                            group_id=group.id, amount=amount, valid_from=valid_from, note=note, created_by=actor,
+                            created_at=now,
+                        )
                     )
+                self.db.flush()
+                _add_audit(
+                    self.db,
+                    org_id=group.org_id,
+                    group_id=group.id,
+                    teacher_id=group.teacher_id,
+                    actor=actor,
+                    action=ACTION_GROUP_PRICE,
+                    snapshot={
+                        "actor_id": str(actor),
+                        "group_id": str(group.id),
+                        "valid_from": valid_from.isoformat(),
+                        "old_amount": old_amount,
+                        "old_note": old_note,
+                        "new_amount": amount,
+                        "note": note,
+                        "corrected": corrected,
+                        "impact": {
+                            key: impact[key]
+                            for key in ("students_following", "students_with_override", "stale_payroll_sheets")
+                        },
+                    },
+                    at=now,
                 )
             self.db.commit()
         except IntegrityError as exc:  # a concurrent write of the same day slipped through
@@ -636,6 +834,9 @@ class PricingService:
             logger.info("group price write lost a race group=%s", group_id)
             raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT") from exc
         except PriceError:
+            self.db.rollback()
+            raise
+        except Exception:  # whatever fails after the first insert takes the price AND its audit row down together
             self.db.rollback()
             raise
         logger.info("group price set group=%s valid_from=%s actor=%s", group_id, valid_from, actor_id)
@@ -654,7 +855,10 @@ class PricingService:
         valid_from: Optional[date] = None,
         reason: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """The individual price of a student from a day (reason mandatory), or ``amount=None``: the group price again."""
+        """The individual price of a student from a day (reason mandatory), or ``amount=None``: the group price again.
+
+        One ``membership_price_set`` row goes to ``group_audit`` in the same transaction (module docstring); the same
+        amount and reason as the row of that day (a double click) change nothing and leave no audit row."""
         requested_at = _utcnow()
         today = ps.business_today()
         amount, reason = check_override_input(amount, reason)
@@ -674,6 +878,9 @@ class PricingService:
             logger.info("price override write lost a race membership=%s", membership_id)
             raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT") from exc
         except PriceError:
+            self.db.rollback()
+            raise
+        except Exception:  # the exception and its audit row go together
             self.db.rollback()
             raise
         logger.info(

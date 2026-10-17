@@ -32,14 +32,19 @@ imports the very same function, so what it prints is what this migration does):
 reads or writes it; a LATER migration drops it. Do not drop it before the image that stopped using it has been live
 and the rollback window is over.
 
+Audit trail: ``group_audit.action`` (CHECK ``ck_group_audit_action``) also accepts ``group_price_set`` and
+``membership_price_set`` - every write of a group price and of an individual price leaves one row there, in the same
+transaction (see ``src/auth/pricing.py``).  The rows the backfill below makes are NOT audited (no author, no change).
+
 Idempotent: the tables are created only when missing (a database built from the models by ``create_all`` and stamped
 back is fine); the backfill inserts ``ON CONFLICT DO NOTHING`` on the unique keys, so a re-run changes nothing that
 exists.
 
 Rollback (downgrade): ``monthly_fee`` of EVERY membership is refilled with its effective price TODAY (the business
 day of Tashkent: the last exception with an amount, else the price of the group; NULL when neither exists), then
-both tables are dropped. The prices set after the release are thus kept in the old column; the history of price
-changes is lost. An older auth image cannot start on a database at this head (unknown revision): downgrade first,
+both tables are dropped, the ``group_price_set`` / ``membership_price_set`` rows of ``group_audit`` are deleted and the
+action CHECK goes back to the previous list. The prices set after the release are thus kept in the old column; the
+history of price changes (and its audit trail) is lost. An older auth image cannot start on a database at this head (unknown revision): downgrade first,
 roll the image back afterwards.
 """
 # (no ``from __future__ import annotations``: Alembic and scripts/group_price_dry_run.py load this file without registering
@@ -65,6 +70,15 @@ OVERRIDES = "membership_price_overrides"
 EPOCH = date(2000, 1, 1)
 OVERRIDE_REASON = "Цена до введения цены группы"
 GROUP_NOTE = "Перенос из «оплаты в месяц» учеников"
+
+# ``group_audit.action``: the list of the previous revision (student archive) and the list with the price actions.
+GROUP_AUDIT = "group_audit"
+PRICE_ACTIONS = ("group_price_set", "membership_price_set")
+GROUP_AUDIT_OLD = "action IN ('created', 'updated', 'teacher_changed', 'student_archived', 'student_restored')"
+GROUP_AUDIT_NEW = (
+    "action IN ('created', 'updated', 'teacher_changed', 'student_archived', 'student_restored', "
+    "'group_price_set', 'membership_price_set')"
+)
 
 # The memberships with a fee, their group and organisation (the names are for the dry-run report only).
 # "Active" = the membership is active (NULL is not) and the student is not archived.
@@ -183,6 +197,16 @@ def fetch_rows(connection) -> List[Dict[str, Any]]:
 # ============================================================================
 
 
+def _replace_check(table: str, name: str, expression: str, *, not_valid: bool = False) -> None:
+    op.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {name}")
+    # Older local databases may carry the PostgreSQL default name instead.
+    op.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {table}_action_check")
+    op.execute(
+        f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK ({expression})"
+        + (" NOT VALID" if not_valid else "")
+    )
+
+
 def upgrade() -> None:
     # Fail fast instead of queueing behind a long transaction.
     op.execute("SET LOCAL lock_timeout = '5s'")
@@ -230,6 +254,9 @@ def upgrade() -> None:
                 name="ck_membership_price_overrides_reason",
             ),
         )
+
+    # ---- audit trail: the two price actions are allowed in ``group_audit``
+    _replace_check(GROUP_AUDIT, "ck_group_audit_action", GROUP_AUDIT_NEW)
 
     # ---- backfill: the rules in the module docstring
     plans = plan_backfill(fetch_rows(bind))
@@ -295,3 +322,7 @@ def downgrade() -> None:
         )
     op.execute(f"DROP TABLE IF EXISTS {OVERRIDES}")
     op.execute(f"DROP TABLE IF EXISTS {GROUP_PRICES}")
+    # The audit trail of the prices goes with the prices; only then can the old list of actions come back.
+    actions = ", ".join(f"'{action}'" for action in PRICE_ACTIONS)
+    op.execute(f"DELETE FROM {GROUP_AUDIT} WHERE action IN ({actions})")
+    _replace_check(GROUP_AUDIT, "ck_group_audit_action", GROUP_AUDIT_OLD, not_valid=True)

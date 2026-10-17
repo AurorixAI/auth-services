@@ -146,7 +146,11 @@ def set_membership_fee_gone(membership_id: UUID, user: dict = Depends(require_pa
 def group_prices(
     group_id: UUID, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)
 ):
-    """Цена группы на сегодня (``current``, null — не задана) и история изменений, новые сверху."""
+    """Цена группы на сегодня (``current``, null — не задана) и история изменений, новые сверху.
+
+    След изменений (аудит денег) — в ``history[].changes``: все записи ЭТОЙ даты ``valid_from``, новые сверху:
+    ``at``, ``actor_name``, ``old_amount`` (что действовало в этот день до записи; null — ничего), ``new_amount``,
+    ``note``. Первая — запись, создавшая строку, остальные — её исправления. Только денежные роли."""
     try:
         return pricing.PricingService(db).group_prices(user["org_id"], group_id)
     except pricing.PriceError as exc:
@@ -166,7 +170,11 @@ def set_group_price(
     В ответе — новая история и ``impact``: сколько учеников возьмут цену (``students_following``), у скольких
     индивидуальная (``students_with_override``) и сколько сохранённых ведомостей зарплаты станут «данные изменились»
     (``stale_payroll_sheets``; их список ``stale_sheets`` — только владельцу). ``?dry_run=1`` — только ``impact``.
-    Оплаты, уже внесённые, не меняются никогда."""
+    Оплаты, уже внесённые, не меняются никогда.
+
+    Каждая запись (новая, исправление той же даты) оставляет строку аудита (``group_audit``, ``group_price_set``) в той
+    же транзакции — она видна в ``history[].changes``. Тот же запрос ещё раз (двойной клик: сумма, примечание и
+    ``valid_from`` те же) ничего не меняет и вторую строку аудита не пишет."""
     try:
         return pricing.PricingService(db).set_group_price(
             user["org_id"], group_id, user["user_id"], amount=request.amount, valid_from=request.valid_from,
@@ -180,7 +188,11 @@ def set_group_price(
 def get_price_override(
     membership_id: UUID, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)
 ):
-    """Действующая цена членства сегодня и история индивидуальных цен."""
+    """Действующая цена членства сегодня и история индивидуальных цен.
+
+    След изменений — в ``history[].changes`` (записи этой даты ``valid_from``, новые сверху): ``at``, ``actor_name``,
+    ``old_amount`` + ``old_source`` (действующая цена ученика в этот день до записи и откуда она: ``group`` /
+    ``override`` / ``none``), ``new_amount`` (null — «вернули цену группы»), ``reason``. Только денежные роли."""
     try:
         return pricing.PricingService(db).override_history(user["org_id"], membership_id)
     except pricing.PriceError as exc:
@@ -195,7 +207,11 @@ def set_price_override(
     db: Session = Depends(get_db),
 ):
     """«Индивидуальная цена» (``amount`` + причина обязательна) или «Вернуть цену группы» (``amount`` null) — с даты
-    ``valid_from`` (по умолчанию сегодня). Ответ — история и обновлённая строка членства (``row``)."""
+    ``valid_from`` (по умолчанию сегодня). Ответ — история и обновлённая строка членства (``row``).
+
+    Каждая запись, включая «вернуть цену группы», оставляет строку аудита (``group_audit``, ``membership_price_set``) в
+    той же транзакции — она видна в ``history[].changes``. Повтор того же запроса (сумма, причина, ``valid_from``)
+    ничего не меняет и аудит не дублирует."""
     try:
         out = pricing.PricingService(db).set_override(
             user["org_id"], membership_id, user["user_id"], amount=request.amount,

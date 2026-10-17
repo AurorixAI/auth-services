@@ -492,7 +492,10 @@ class Group(Base):
 
 
 class GroupAudit(Base):
-    """Immutable provenance for group creation and future lifecycle events."""
+    """Immutable provenance for group creation and lifecycle events.
+
+    ``group_price_set`` / ``membership_price_set`` (ROADMAP #105) are the audit trail of the money: one row per write of
+    a group price / of an individual price, written in the transaction of the write (``src/auth/pricing.py``)."""
 
     __tablename__ = "group_audit"
 
@@ -516,7 +519,8 @@ class GroupAudit(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "action IN ('created', 'updated', 'teacher_changed', 'student_archived', 'student_restored')",
+            "action IN ('created', 'updated', 'teacher_changed', 'student_archived', 'student_restored', "
+            "'group_price_set', 'membership_price_set')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(
