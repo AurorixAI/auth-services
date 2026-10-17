@@ -907,10 +907,11 @@ def test_a_package_through_a_b_a_b_is_conserved_and_follows_late_changes(two, mo
 @pytest.fixture
 def engine():
     from sqlalchemy import create_engine
+    from src.core.db_timezone import utc_connect_args
 
     from tests.pg_world import DB_URL
 
-    engine = create_engine(DB_URL)
+    engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
     yield engine
     engine.dispose()
 

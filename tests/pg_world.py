@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine
+from src.core.db_timezone import utc_connect_args
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key-must-be-at-least-32-chars-ok")
@@ -109,7 +110,7 @@ def make_student(db, org, group, first="Алия", last="Каримова", disp
 @pytest.fixture
 def pg_session():
     assert DB_URL and DB_URL.endswith("/a2_auth"), "Use only the disposable a2_auth database"
-    engine = create_engine(DB_URL)
+    engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
     Organization.metadata.create_all(engine)
     with sessionmaker(engine)() as db:
         yield db

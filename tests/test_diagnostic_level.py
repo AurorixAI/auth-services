@@ -10,6 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from src.core.db_timezone import utc_connect_args
 from sqlalchemy.orm import sessionmaker
 
 from src.api.database import get_db
@@ -79,7 +80,7 @@ needs_db = pytest.mark.skipif(not DB_URL, reason="Requires disposable A2 auth Po
 @pytest.fixture
 def world():
     assert DB_URL and DB_URL.endswith("/a2_auth"), "Use only the disposable a2_auth database"
-    engine = create_engine(DB_URL)
+    engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
     Organization.metadata.create_all(engine)
     factory = sessionmaker(engine)
     with factory() as db:

@@ -17,6 +17,9 @@ from alembic import context
 # Добавляем корень проекта в sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+# Миграции идут в той же UTC-сессии, что и сервис (ROADMAP #49)
+from src.core.db_timezone import utc_connect_args
+
 # Импортируем только модели, принадлежащие auth-service
 from src.models import *  # noqa: F403  (Base + auth + analytics)
 
@@ -88,6 +91,7 @@ def run_migrations_online() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=utc_connect_args(config.get_main_option("sqlalchemy.url")),
     )
 
     with connectable.connect() as connection:

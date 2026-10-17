@@ -8,6 +8,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
+from src.core.db_timezone import utc_connect_args
 from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
@@ -20,7 +21,7 @@ PREVIOUS='w3x4y5z6a7b'      # lesson type and payroll (N13 P3): the revision bef
 
 def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatch):
     assert URL and URL.endswith('/a5_auth_migrations'), 'Use only the disposable migration database'
-    engine=create_engine(URL)
+    engine=create_engine(URL, connect_args=utc_connect_args(URL))
     assert not inspect(engine).get_table_names(), 'The migration fixture must start empty'
     monkeypatch.setenv('DATABASE_URL',URL)
     root=Path(__file__).resolve().parents[1]
@@ -513,14 +514,31 @@ def _check_n13_archive_objects(engine,config,ids,monkeypatch):
     command.downgrade(config,PREVIOUS)
     with engine.begin() as conn:
         conn.execute(text('UPDATE students SET archived_at=NULL WHERE id IN (:a,:d)'),{'a':a,'d':d})
+    # Alembic pins its session to UTC (#49), so a UTC+5 session no longer happens on its own: switch the pin off to keep
+    # proving that the stamp is right for rows written by a server in another zone.
     monkeypatch.setenv('PGOPTIONS','-c timezone=Asia/Tashkent')                 # the migration's own connection is a UTC+5 session
+    with monkeypatch.context() as unpinned:
+        unpinned.setattr('src.core.db_timezone.utc_connect_args',lambda url,connect_args=None: dict(connect_args or {}))
+        try:
+            command.upgrade(config,'head')
+        finally:
+            monkeypatch.delenv('PGOPTIONS')
+    students=snapshot()[1]
+    assert students[a][3]==datetime(2026,9,2,3,0,0) and students[d][3]==datetime(2026,9,2,3,0,0)   # 08:00 Tashkent = 03:00 UTC
+    assert students[b][3]==legacy and students[c][3] is None                   # an existing stamp is never rewritten
+    # #49: with the pin on, the same UTC+5 environment cannot move the migration out of UTC - the session is UTC, so the
+    # stored 08:00 is already UTC (the stamp must not shift by the environment's zone).
+    command.downgrade(config,PREVIOUS)
+    with engine.begin() as conn:
+        conn.execute(text('UPDATE students SET archived_at=NULL WHERE id IN (:a,:d)'),{'a':a,'d':d})
+    monkeypatch.setenv('PGOPTIONS','-c timezone=Asia/Tashkent')
     try:
         command.upgrade(config,'head')
     finally:
         monkeypatch.delenv('PGOPTIONS')
     students=snapshot()[1]
-    assert students[a][3]==datetime(2026,9,2,3,0,0) and students[d][3]==datetime(2026,9,2,3,0,0)   # 08:00 Tashkent = 03:00 UTC
-    assert students[b][3]==legacy and students[c][3] is None                   # an existing stamp is never rewritten
+    assert students[a][3]==datetime(2026,9,2,8,0,0) and students[d][3]==datetime(2026,9,2,8,0,0)
+    assert students[b][3]==legacy and students[c][3] is None
     # A database built from the models (columns and CHECK exist already), then stamped: the revision must not fail.
     command.stamp(config,PREVIOUS)
     command.upgrade(config,'head')

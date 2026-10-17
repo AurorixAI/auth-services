@@ -12,6 +12,8 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from src.core.db_timezone import utc_connect_args
+
 DATABASE_URL: str = os.getenv(
     "DATABASE_URL",
     "postgresql://postgres:password@localhost:5432/algo_v1",
@@ -19,7 +21,7 @@ DATABASE_URL: str = os.getenv(
 
 DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
 
-engine = create_engine(DATABASE_URL, echo=DEBUG)
+engine = create_engine(DATABASE_URL, echo=DEBUG, connect_args=utc_connect_args(DATABASE_URL))
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
