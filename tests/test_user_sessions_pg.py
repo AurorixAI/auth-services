@@ -14,6 +14,7 @@ from datetime import timedelta
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import delete
 from sqlalchemy.orm import sessionmaker
 
 from src.auth import user_sessions
@@ -84,12 +85,14 @@ class Device:
         assert r.status_code == 200, r.text
 
     def logout_with(self, cookie_token=None, body=None, content_type="application/json"):
-        """POST /logout with the given refresh cookie and/or request body; returns the response."""
+        """POST /logout with the given refresh cookie and/or request body; returns the response. A client with an
+        empty cookie jar: the jar of ``self.client`` holds this device's own cookies and would be sent along."""
+        client = client_for(self.w.db)
         headers = cookie_header(refresh=cookie_token) if cookie_token else {}
         if body is not None:
             headers = {**headers, "content-type": content_type}
-            return self.client.post(f"{API}/logout", content=body, headers=headers)
-        return self.client.post(f"{API}/logout", headers=headers)
+            return client.post(f"{API}/logout", content=body, headers=headers)
+        return client.post(f"{API}/logout", headers=headers)
 
 
 def sessions(w, user=None):
@@ -116,6 +119,14 @@ def session_of(w, token_hash):
 def token_rows(w, session):
     w.db.expire_all()
     return w.db.query(UserSessionToken).filter_by(session_id=session.id).order_by(UserSessionToken.issued_at).all()
+
+
+def forget_superseded_tokens(w):
+    """The global sweep deletes the SWEEP_BATCH oldest candidates per sign-in, so superseded tokens that other tests (or
+    an earlier run on the same database) left behind would take the batch before the tokens of the test at hand.
+    A test of the sweep starts from none."""
+    w.db.execute(delete(UserSessionToken).where(UserSessionToken.superseded_at.is_not(None)))
+    w.db.commit()
 
 
 def live_tokens(w, user=None):
@@ -275,6 +286,19 @@ def test_logout_accepts_the_refresh_token_in_the_json_body_like_refresh_and_the_
     r = c.logout_with(cookie_token=c.refresh, body=json.dumps({"refresh_token": d.refresh}))
     assert r.status_code == 200
     assert c.status_of_refresh() == 401 and d.status_of_refresh() == 200
+
+
+@needs_pg
+def test_logout_reads_only_a_small_json_body_a_valid_token_in_a_big_one_is_ignored(session_world):
+    w = session_world
+    a, b = Device(w).login(), Device(w).login()
+    big = json.dumps({"refresh_token": a.refresh, "pad": "x" * (4096 + 1)})
+    assert a.logout_with(body=big).status_code == 200  # the body is not even read
+    assert len(live(w)) == 2 and a.status_of_refresh() == 200
+    small = json.dumps({"refresh_token": b.refresh})
+    r = b.logout_with(body=small, content_type="application/json; charset=utf-8")
+    assert r.status_code == 200
+    assert b.status_of_refresh() == 401 and a.status_of_refresh() == 200
 
 
 @needs_pg
@@ -487,6 +511,7 @@ def test_two_simultaneous_refreshes_with_two_different_live_siblings_do_not_dead
 @needs_pg
 def test_superseded_tokens_are_kept_7_days_for_replay_detection_then_deleted(session_world, session_clock):
     w = session_world
+    forget_superseded_tokens(w)  # independent of the rows other tests left (the sweep takes the 100 oldest)
     a = Device(w).login()
     t0 = a.refresh
     a.refresh_ok()
@@ -511,6 +536,33 @@ def test_superseded_tokens_are_kept_7_days_for_replay_detection_then_deleted(ses
     session_clock.advance(user_sessions.GRACE_SECONDS + 1)
     assert b.refresh_with(old).status_code == 401
     assert session_of(w, hash_token(b.refresh)).revoke_reason == "refresh_reuse"
+
+
+@needs_pg
+def test_a_sign_in_sweeps_at_most_one_batch_of_old_superseded_tokens(session_world):
+    w = session_world
+    forget_superseded_tokens(w)
+    a = Device(w).login()
+    (session,) = sessions(w)
+    old = user_sessions._now() - timedelta(days=user_sessions.SUPERSEDED_RETENTION_DAYS + 1)
+    batch = user_sessions.SWEEP_BATCH
+    w.db.add_all(
+        UserSessionToken(token_hash=f"old-{uuid4()}", session_id=session.id, issued_at=old, superseded_at=old)
+        for _ in range(batch * 2 + 50)
+    )
+    w.db.commit()
+
+    def superseded():
+        return w.db.query(UserSessionToken).filter(UserSessionToken.superseded_at.is_not(None)).count()
+
+    assert superseded() == batch * 2 + 50
+    Device(w).login()
+    assert superseded() == batch + 50  # one sign-in: one batch, never the whole backlog
+    Device(w).login()
+    assert superseded() == 50
+    Device(w).login()
+    assert superseded() == 0
+    assert live_tokens(w) >= {hash_token(a.refresh)}  # live tokens are never swept
 
 
 @needs_pg
