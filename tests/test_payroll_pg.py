@@ -15,7 +15,8 @@ from src.models.auth import (
 )
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    business_today, make_client, make_group, make_member, make_student, make_user, needs_pg, pg_session, world,
+    business_today, give_group_price, give_price, make_client, make_group, make_member, make_student, make_user,
+    needs_pg, pg_session, world,
 )
 
 pytestmark = needs_pg
@@ -53,8 +54,8 @@ def student_group(w, student, group=None):
 
 
 def set_fee(w, student, fee, group=None):
-    student_group(w, student, group).monthly_fee = fee
-    w.db.commit()
+    """The price of the student (an individual price from always; ``None`` - no price of his own)."""
+    give_price(w.db, student_group(w, student, group), fee)
 
 
 def lesson(w, day_, marks, *, group=None, teacher=None, roster=None, status="completed", lesson_id=None):
@@ -75,7 +76,7 @@ def lesson(w, day_, marks, *, group=None, teacher=None, roster=None, status="com
 def pay_calendar(w, student, first, last, *, group=None, fee=FEE, paid_on=None):
     membership = student_group(w, student, group)
     if fee is not None:
-        membership.monthly_fee = fee
+        give_price(w.db, membership, fee)
     w.db.add(StudentPayment(
         org_id=w.org.id, membership_id=membership.id, student_id=student.id, group_id=membership.group_id,
         amount=fee or 1, paid_on=paid_on or first, valid_from=first, valid_to=last, created_by=w.owner.id,
@@ -86,7 +87,7 @@ def pay_calendar(w, student, first, last, *, group=None, fee=FEE, paid_on=None):
 def pay_package(w, student, valid_from, size, *, group=None, fee=FEE, paid_on=None):
     membership = student_group(w, student, group)
     if fee is not None:
-        membership.monthly_fee = fee
+        give_price(w.db, membership, fee)
     payment = StudentPayment(
         org_id=w.org.id, membership_id=membership.id, student_id=student.id, group_id=membership.group_id,
         amount=fee or 1, paid_on=paid_on or valid_from, valid_from=valid_from, lessons_count=size, created_by=w.owner.id,
@@ -554,7 +555,9 @@ def test_transfer_in_the_middle_of_the_month_splits_the_lessons_and_the_payment_
     w, m = two, previous_month()
     s = w.student
     moved = m.d(15)
-    pay_calendar(w, s, m.first, m.last, fee=FEE)
+    give_group_price(w.db, w.group, FEE)
+    give_group_price(w.db, w.second, 500_000)                                           # the new group has ITS price
+    pay_calendar(w, s, m.first, m.last, fee=None)
     for n in range(10, 15):
         lesson(w, m.d(n), {s: "present"})                                               # first group, teacher 1
     with clock(monkeypatch, moved, 10):
@@ -567,7 +570,8 @@ def test_transfer_in_the_middle_of_the_month_splits_the_lessons_and_the_payment_
     assert a["group_name"] == "Группа" and b["group_name"] == "Вторая" and a["membership_id"] != b["membership_id"]
     assert (a["counted"], a["unpaid"], a["amount"]) == (5, 0, FEE * 50 * 5 // 1200)
     assert (b["counted"], b["unpaid"]) == (5, 0), b["marks"]                           # covered by the carry-over
-    assert b["monthly_fee"] == FEE and b["amount"] == FEE * 50 * 5 // 1200            # the fee travelled with the student
+    # the price did NOT travel with the student (#105): in the new group he is priced by the price of that group
+    assert b["monthly_fee"] == 500_000 and b["amount"] == 104_167 and b["price_source"] == "group"        # 500 000 * 50 % * 5 / 12 = 104 166.67
     # the same student is in two lines of two teachers: nothing is counted twice
     assert a["membership_id"] != b["membership_id"] and len(first["lines"]) == 1 and len(second["lines"]) == 1
 
@@ -589,7 +593,9 @@ def test_a_lesson_after_the_transfer_in_the_old_group_is_not_the_old_payments(tw
 def test_package_carry_over_keeps_the_size_of_the_original_package(two, monkeypatch):
     w, m = two, previous_month()
     s = w.student
-    pay_package(w, s, m.first, 8, fee=480_000)
+    give_group_price(w.db, w.group, 480_000)
+    give_group_price(w.db, w.second, 480_000)
+    pay_package(w, s, m.first, 8, fee=None)
     for n in range(2, 5):
         lesson(w, m.d(n), {s: "present"})                                                # 3 lessons in group 1
     with clock(monkeypatch, m.d(10), 10):
@@ -1227,7 +1233,7 @@ def build_centre(w, teachers, students_per, lessons=8):
                 roster_snapshot=[{"student_id": str(s.id)} for s in pupils], teacher_id=teacher.id))
         for i, s in enumerate(pupils):
             membership = memberships[s.id]
-            membership.monthly_fee = 300_000 + 1000 * i
+            give_price(w.db, membership, 300_000 + 1000 * i)
             if i % 3 == 0:
                 w.db.add(StudentPayment(org_id=w.org.id, membership_id=membership.id, student_id=s.id, group_id=group.id,
                                         amount=1, paid_on=m.first, valid_from=m.first, valid_to=m.last, created_by=w.owner.id))

@@ -28,6 +28,11 @@ profile payload carries an amount.  Status maths is ``payment_status.py``
 * Locks, in this order everywhere: student -> membership(s) -> payment(s), a source payment
   before its carry-overs; membership locks are FOR NO KEY UPDATE so that inserting a
   carry-over (foreign key: FOR KEY SHARE) into a membership someone else holds does not wait.  A deadlock PostgreSQL still finds is a 409 (``deadlock_guard``).
+* ROADMAP #105.  The price is no longer a property of the membership: ``pricing.py`` resolves the effective price
+  (the price of the group, or the individual exception of the student) on a day.  The status uses the price of
+  today ("не задана" / free), the amount hint (``quote``) the price at the start of the payment's period, the
+  soft warning of a short period the same.  The sum of a payment is stored in the payment itself, so a change of a
+  price - also a backdated one - never alters a payment already entered.
 * N13 P2.2.  One payment day for the centre (``billing_anchor = fixed_day``): ``quote`` suggests the dates and
   the amount of a payment with the very code that creates it (``_resolve_period``), writing nothing.  Every
   payment but a carry-over gets a receipt number ``max + 1`` inside the organisation, taken in a SAVEPOINT and
@@ -63,6 +68,7 @@ from src.models.auth import (
 )
 
 from . import payment_status as ps
+from . import pricing
 from .money_words import amount_words
 from .payments_files import (
     MAX_FILE_BYTES,
@@ -89,6 +95,7 @@ from .payments_schemas import (
     PaymentStatusPage,
     PaymentVoided,
     PaymentWarningOut,
+    PriceOut,
     QuotePartOut,
     ReceiptOut,
 )
@@ -311,6 +318,7 @@ class _Entry:
     teacher: Optional[User]
     live: List[StudentPayment]
     result: ps.StatusResult
+    price: pricing.Price = pricing.NO_PRICE  # the effective price today (#105)
 
     @property
     def student_name(self) -> str:
@@ -392,7 +400,8 @@ class PaymentService:
         1. memberships + student + group + teacher (filters in SQL);
         2. the live payments of those memberships;
         3. lessons mode only: the completed lessons of the involved groups and
-           the confirmed excuses of those lessons.
+           the confirmed excuses of those lessons;
+        4. the price history of those groups and memberships (two queries): the status takes the price of today.
         """
         query = (
             self.db.query(StudentGroup, Student, Group, User)
@@ -462,11 +471,13 @@ class PaymentService:
             records[m.id] = [state.records.get(r.id, r) for r in records[m.id]]
 
         status_settings = self._status_settings(settings)
+        books = pricing.load_books(self.db, {g.id for _, _, g, _ in rows}, ids)  # 4. the price histories
         entries = []
         for membership, student, group, teacher in rows:
+            price = books.price(membership.id, membership.group_id, today)
             result = ps.compute_status(
                 today=today,
-                monthly_fee=membership.monthly_fee,
+                monthly_fee=price.amount,
                 payments=records.get(membership.id, ()),
                 lesson_dates=lesson_dates.get(membership.id, ()),
                 settings=status_settings,
@@ -474,7 +485,7 @@ class PaymentService:
             entries.append(
                 _Entry(
                     membership, student, group, teacher,
-                    live_by_membership.get(membership.id, []), result,
+                    live_by_membership.get(membership.id, []), result, price,
                 )
             )
         return entries
@@ -1016,7 +1027,8 @@ class PaymentService:
                     teacher_name=_person(e.teacher),
                     is_primary=str(e.student.group_id or "") == str(e.group.id),
                     is_active=bool(e.membership.is_active),
-                    monthly_fee=int(e.membership.monthly_fee) if e.membership.monthly_fee is not None else None,
+                    price=PriceOut(**pricing.price_dict(e.price)),
+                    monthly_fee=e.price.amount,
                     status=r.status,
                     period_mode=r.period_mode,
                     paid_until=r.paid_until,
@@ -1188,18 +1200,6 @@ class PaymentService:
             if status == "archived":
                 raise StudentArchived(ARCHIVED_STUDENT_MESSAGE)
         return membership
-
-    @deadlock_guard
-    def set_fee(
-        self, org_id: str, membership_id: UUID, actor_id: str, monthly_fee: Optional[int]
-    ) -> MembershipPaymentRow:
-        membership = self._membership(org_id, membership_id, lock=True, writable=True)
-        membership.monthly_fee = monthly_fee
-        membership.monthly_fee_updated_by = UUID(str(actor_id))
-        membership.monthly_fee_updated_at = _utcnow()
-        self.db.commit()
-        logger.info("membership fee updated membership=%s actor=%s", membership_id, actor_id)
-        return self._row(org_id, membership_id)
 
     @staticmethod
     def _fixed_day(settings: PaymentSettings) -> bool:
@@ -1402,7 +1402,8 @@ class PaymentService:
                 valid_to=valid_to,
                 existing=[self._record(p) for p in live],
                 amount=data.amount,
-                monthly_fee=int(membership.monthly_fee) if membership.monthly_fee is not None else None,
+                # the price at the start of the paid period, like the amount hint
+                monthly_fee=pricing.effective_price(self.db, membership, valid_from).amount,
             )
         ]
         return payment, warnings
@@ -1583,12 +1584,13 @@ class PaymentService:
     ) -> PaymentQuote:
         """Suggested dates and amount for a payment of this membership.  Reads only, writes nothing.
 
-        ``monthly_fee`` (the fee typed in the form, e.g. together with the first payment of a new student)
-        replaces the saved fee of the membership for this calculation only; the answer's ``monthly_fee`` is
-        the fee that was actually used.
+        The base is the effective price of the membership (group price or individual price, ``pricing.py``) ON THE
+        FIRST DAY OF THE PERIOD being paid.  ``monthly_fee`` (a sum typed in the form) replaces it for this
+        calculation only - a one-off correction of the suggestion, nothing is saved; the answer's ``monthly_fee``
+        is the sum that was actually used and ``price`` the price at the start of the period.
 
         The dates come from ``_resolve_period`` - the code that saves a payment - and fail with the same 422
-        texts.  The amount rules (``PaymentSettings`` of the centre, ``monthly_fee`` of the membership):
+        texts.  The amount rules (``PaymentSettings`` of the centre, the price above):
 
         * no fee -> no amount (``basis`` ``none``);
         * a lessons package: the fee for the centre's package size, else ``fee * lessons / package size``
@@ -1607,10 +1609,8 @@ class PaymentService:
             settings=settings, live=self._live_payments(org_id, membership.id), today=today,
             membership_start=self._membership_start(membership),
         )
-        if monthly_fee is not None:
-            fee = int(monthly_fee)
-        else:
-            fee = int(membership.monthly_fee) if membership.monthly_fee is not None else None
+        price = pricing.effective_price(self.db, membership, start)
+        fee = int(monthly_fee) if monthly_fee is not None else price.amount
         # "Оплата в месяц" for a calendar period, "Стоимость пакета" for a lessons package.
         price_name = "Оплата в месяц" if end is not None else "Стоимость пакета"
         fixed = end is not None and self._fixed_day(settings)
@@ -1663,6 +1663,7 @@ class PaymentService:
             lessons_count=count,
             partial=bool(partial),
             monthly_fee=fee,
+            price=PriceOut(**pricing.price_dict(price)),
             suggested_amount=amount,
             basis=basis,
             parts=[
@@ -1912,32 +1913,6 @@ class PaymentService:
             return {}
         return self._lessons_state(org_id, pairs, live_by_membership).left
 
-    @staticmethod
-    def _copy_fee(
-        target: StudentGroup,
-        sources: Sequence[StudentGroup],
-        actor_id: Optional[str],
-        primary_group_id: Optional[UUID],
-    ) -> None:
-        """A new group without a fee takes the fee of the group the student leaves.
-
-        An amount passed in the transfer request is already on ``target`` and wins.
-        The student's previous primary group is the donor if it has a fee, else
-        the most recently joined group that has one.
-        """
-        if target.monthly_fee is not None:
-            return
-        donors = [m for m in sources if m.monthly_fee is not None]
-        if not donors:
-            return
-        donor = next(
-            (m for m in donors if primary_group_id and str(m.group_id) == str(primary_group_id)),
-            None,
-        ) or max(donors, key=lambda m: m.joined_at or datetime.min)
-        target.monthly_fee = int(donor.monthly_fee)
-        target.monthly_fee_updated_by = UUID(str(actor_id)) if actor_id else None
-        target.monthly_fee_updated_at = _utcnow()
-
     def carry_over_on_transfer(
         self,
         org_id: str,
@@ -1945,7 +1920,6 @@ class PaymentService:
         sources: Sequence[StudentGroup],
         target: StudentGroup,
         *,
-        primary_group_id: Optional[UUID] = None,
         detailed: bool = False,
         moment: Optional[datetime] = None,
     ) -> List[Dict[str, str]]:
@@ -1972,14 +1946,13 @@ class PaymentService:
         what it has consumed) is carried again and stamped in its turn - nothing is counted twice
         and no lesson falls between the two memberships.
 
-        Also copies the fee of the closed group to ``target`` if the target has none.  Returns the
-        ``warnings`` entries for the response: dates / lessons when ``detailed`` (the caller may
-        see payments), else one generic sentence; no amount in either.
+        The price is NOT carried (#105): the student takes the price of the new group, an individual price of the
+        closed group stays with that membership.  Returns the ``warnings`` entries for the response: dates / lessons
+        when ``detailed`` (the caller may see payments), else one generic sentence; no amount in either.
         """
         sources = [m for m in sources if m.id != target.id]
         if not sources:
             return []
-        self._copy_fee(target, sources, actor_id, primary_group_id)
         if not actor_id:  # created_by is mandatory; an internal call without an actor carries nothing
             return []
 

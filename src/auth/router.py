@@ -6,11 +6,13 @@ REST API: org application, login, invitations, students, diagnostics, groups
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, UploadFile, File
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import Literal, Optional
 from datetime import date, datetime
+from uuid import UUID
 
 from .service import (
     AuthService,
@@ -1011,14 +1013,24 @@ def list_groups(
     user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
-    """Список групп организации"""
-    return _svc(db).list_groups(
+    """Список групп организации (для денежных ролей — с ``price_current``, цена группы на сегодня)"""
+    groups = _svc(db).list_groups(
         user["org_id"],
         teacher_id=teacher_id,
         class_level=class_level,
         actor_id=user["user_id"],
         is_org_admin=is_org_admin(user),
     )
+    if groups and has_payments_access(user, db):
+        # The money roles get ``price_current`` on every group.  The price is NOT a field of ``GroupResponse`` (the
+        # group schema carries no money, a teacher's answer is that schema as it is): the answer is built here.
+        from . import pricing  # lazy: money modules
+
+        prices = pricing.current_group_prices(db, [g.id for g in groups])
+        return JSONResponse(
+            jsonable_encoder([{**g.model_dump(), "price_current": prices.get(UUID(g.id))} for g in groups])
+        )
+    return groups
 
 
 @router.get("/org/groups/{group_id}")
@@ -1027,14 +1039,21 @@ def get_group(
     user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
-    """Детали группы + список учеников (с последним θ/уровнем, если есть)."""
+    """Детали группы + список учеников (с последним θ/уровнем, если есть).
+
+    Для денежных ролей — ещё ``price_current`` (цена группы на сегодня или null); остальным ключа нет."""
     try:
-        return _svc(db).get_group_detail(
+        detail = _svc(db).get_group_detail(
             user["org_id"],
             group_id,
             actor_id=user["user_id"],
             is_org_admin=is_org_admin(user),
         )
+        if has_payments_access(user, db):
+            from . import pricing  # lazy: money modules
+
+            detail["price_current"] = pricing.current_group_prices(db, [group_id]).get(UUID(str(group_id)))
+        return detail
     except PermissionError as e:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(e))
     except ValueError as e:
@@ -1089,9 +1108,9 @@ def _concurrent_edit_or_raise(exc: OperationalError, db: Session) -> HTTPExcepti
     return HTTPException(status.HTTP_409_CONFLICT, CONCURRENT_EDIT_MESSAGE)
 
 
-def _check_fee_right(monthly_fee: Optional[int], user: dict, db: Session) -> None:
-    """The amount is money: only a caller with the payments right may send it."""
-    if monthly_fee is not None:
+def _check_fee_right(price_override: Optional[object], user: dict, db: Session) -> None:
+    """An individual price is money: only a caller with the payments right may send it."""
+    if price_override is not None:
         ensure_payments_access(user, db)
 
 
@@ -1108,11 +1127,11 @@ def bulk_add_students(
     Registered before /students/{student_id} — a generic path param would
     otherwise greedily match the literal "bulk" segment first.
     """
-    _check_fee_right(request.monthly_fee, user, db)
+    _check_fee_right(request.price_override, user, db)
     try:
         return _svc(db).bulk_add_students(
             user["org_id"], group_id, request.student_ids,
-            mode=mode, monthly_fee=request.monthly_fee, actor_id=user["user_id"],
+            mode=mode, price_override=request.price_override, actor_id=user["user_id"],
             payments_detail=has_payments_access(user, db),
         )
     except OperationalError as e:
@@ -1131,12 +1150,12 @@ def add_student_to_group(
     db: Session = Depends(get_db),
 ):
     """Добавить ученика в группу: перевести (по умолчанию) или добавить ещё одну группу."""
-    monthly_fee = request.monthly_fee if request else None
-    _check_fee_right(monthly_fee, user, db)
+    price_override = request.price_override if request else None
+    _check_fee_right(price_override, user, db)
     try:
         return _svc(db).add_student_to_group(
             user["org_id"], group_id, student_id,
-            mode=mode, monthly_fee=monthly_fee, actor_id=user["user_id"],
+            mode=mode, price_override=price_override, actor_id=user["user_id"],
             payments_detail=has_payments_access(user, db),
         )
     except MembershipConflict as e:

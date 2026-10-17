@@ -17,6 +17,7 @@ from io import BytesIO
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.properties import PageSetupProperties
@@ -89,6 +90,23 @@ def _put(ws, row: int, column: int, value: Any, **style: Any):
     for key, item in style.items():
         setattr(cell, key, item)
     return cell
+
+
+def _price_note(line: Mapping[str, Any]) -> Optional[str]:
+    """The comment of the price cell: a price that changed inside the month (with the steps), or an individual one."""
+    if line.get("fee_overridden"):
+        return None  # the owner wrote this sum on the sheet; nothing to explain
+    parts: List[str] = []
+    if line.get("price_changed"):
+        steps = []
+        for step in line.get("price_steps") or ():
+            day = date.fromisoformat(step["date"])
+            amount = step.get("amount")
+            steps.append(f"с {day:%d.%m}: " + ("не задана" if amount is None else f"{amount:,}".replace(",", " ")))
+        parts.append("Цена менялась в этом месяце — " + "; ".join(steps))
+    if line.get("price_source") == "override":
+        parts.append("Индивидуальная цена ученика")
+    return clean_text(". ".join(parts)) or None
 
 
 def sheet_title(name: Optional[str], taken: Sequence[str]) -> str:
@@ -190,7 +208,12 @@ def write_sheet(ws, sheet: Mapping[str, Any]) -> None:
         _put(ws, row, 2, engine.LESSON_TYPE_LABELS.get(line["lesson_type"], line["lesson_type"]), border=BORDER)
         _put(ws, row, 3, line.get("lesson_time") or "", border=BORDER)
         _put(ws, row, 4, line["student_name"], border=BORDER)
-        _put(ws, row, 5, line.get("monthly_fee"), border=BORDER, number_format=MONEY)
+        fee_cell = _put(ws, row, 5, line.get("monthly_fee"), border=BORDER, number_format=MONEY)
+        note = _price_note(line)
+        if note:
+            fee_cell.comment = Comment(note, "ALGO", width=320, height=90)
+            if line.get("price_changed") and not line.get("fee_overridden"):
+                fee_cell.fill = YELLOW_FILL
         percent = float(line["percent"]) if line.get("percent") is not None else None
         _put(ws, row, 6, percent, border=BORDER,
              number_format=PERCENT_WHOLE if percent is None or percent == int(percent) else PERCENT_FRACTION)

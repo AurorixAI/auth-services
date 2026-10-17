@@ -8,7 +8,7 @@ from src.auth.schemas import GroupResponse, StudentResponse, UserResponse
 from src.models.auth import Organization, StudentGroup, StudentPayment
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    business_today, make_client, make_member, make_user, needs_pg, pg_session, world,
+    business_today, give_group_price, make_client, make_member, make_user, needs_pg, pg_session, world,
 )
 
 pytestmark = needs_pg
@@ -20,10 +20,9 @@ SECRET_FEE = 8765432
 
 @pytest.fixture
 def money(world):
-    """A fee and a payment in the first group; ids for the parametrised URLs."""
+    """A price of the group and a payment in the first group; ids for the parametrised URLs."""
     m = world.db.query(StudentGroup).filter_by(student_id=world.students[0].id, group_id=world.group.id).one()
-    r = make_client(world, user=world.owner).put(f"{API}/org/memberships/{m.id}/fee", json={"monthly_fee": SECRET_FEE})
-    assert r.status_code == 200, r.text
+    give_group_price(world.db, world.group, SECRET_FEE)
     r = make_client(world, user=world.owner).post(
         f"{API}/org/memberships/{m.id}/payments",
         json={"amount": SECRET_AMOUNT, "paid_on": business_today().isoformat()},
@@ -49,7 +48,12 @@ def endpoints(w):
         ("GET", f"{API}/org/payments/summary", None, 200, False),
         ("GET", f"{API}/org/payments/status", None, 200, False),
         ("GET", f"{API}/org/students/{w.students[0].id}/memberships", None, 200, False),
-        ("PUT", f"{API}/org/memberships/{m}/fee", {"monthly_fee": 1}, 200, False),
+        ("PUT", f"{API}/org/memberships/{m}/fee", {"monthly_fee": 1}, 410, False),     # retired by #105
+        ("GET", f"{API}/org/groups/{w.group.id}/prices", None, 200, False),
+        ("PUT", f"{API}/org/groups/{w.group.id}/price", {"amount": 600000}, 200, False),
+        ("PUT", f"{API}/org/groups/{w.group.id}/price?dry_run=1", {"amount": 600000}, 200, False),
+        ("GET", f"{API}/org/memberships/{m}/price-override", None, 200, False),
+        ("PUT", f"{API}/org/memberships/{m}/price-override", {"amount": 1, "reason": "проверка прав"}, 200, False),
         ("GET", f"{API}/org/memberships/{m}/payments", None, 200, False),
         ("POST", f"{API}/org/memberships/{m}/payments", {"amount": 5, "paid_on": today}, 201, False),
         ("POST", f"{API}/org/payments/{p}/replace", {"amount": 6, "paid_on": today}, 201, False),
@@ -57,7 +61,8 @@ def endpoints(w):
     ]
 
 
-IDS = ["settings-get", "settings-put", "summary", "status", "memberships", "fee", "payments-list",
+IDS = ["settings-get", "settings-put", "summary", "status", "memberships", "fee", "group-prices", "group-price-put",
+       "group-price-dry-run", "override-get", "override-put", "payments-list",
        "payment-create", "payment-replace", "payment-void"]
 
 
@@ -122,15 +127,16 @@ def test_admin_with_the_switch_can_do_the_whole_flow_and_is_recorded(money):
     assert r.status_code == 201 and r.json()["payment"]["created_by"] == str(money.admin.id)
 
 
-def test_monthly_fee_when_adding_a_student_needs_the_right(money):
+def test_an_individual_price_when_adding_a_student_needs_the_right(money):
     from tests.pg_world import make_group
     target = make_group(money.db, money.org, money.teacher2, "Вторая")
     money.db.commit()
     url = f"{API}/org/groups/{target.id}/students/{money.students[1].id}?mode=add"
-    assert make_client(money, user=money.admin).post(url, json={"monthly_fee": 1000}).status_code == 403
-    assert make_client(money, user=money.teacher).post(url, json={"monthly_fee": 1000}).status_code == 403
+    body = {"price_override": {"amount": 1000, "reason": "скидка"}}
+    assert make_client(money, user=money.admin).post(url, json=body).status_code == 403
+    assert make_client(money, user=money.teacher).post(url, json=body).status_code == 403
     allow_admin(money)
-    assert make_client(money, user=money.admin).post(url, json={"monthly_fee": 1000}).status_code == 200
+    assert make_client(money, user=money.admin).post(url, json=body).status_code == 200
 
 
 # ---- money never leaks ---------------------------------------------------------------
@@ -166,7 +172,16 @@ def test_no_money_in_student_profile_group_roster_lists_or_me(money):
             if r.status_code != 200:
                 assert r.status_code in (403, 404, 422), (url, r.status_code)
                 continue
-            text = json.dumps(r.json(), ensure_ascii=False)
+            body = r.json()
+            if user is money.owner and url.rstrip("/").endswith(("/groups", str(money.group.id))):
+                # #105: the group list and card carry ``price_current`` for the money roles - and only that
+                rows = body if isinstance(body, list) else [body]
+                assert all(set(row) & {"price_current"} for row in rows)
+                for row in rows:
+                    row.pop("price_current")
+            else:
+                assert "price_current" not in json.dumps(body), (user.role, url)
+            text = json.dumps(body, ensure_ascii=False)
             assert str(SECRET_AMOUNT) not in text and str(SECRET_FEE) not in text, (user.role, url)
             assert "monthly_fee" not in text and '"amount"' not in text, (user.role, url)
     # enrolment responses carry no amounts either, even for the owner who set one
@@ -174,6 +189,7 @@ def test_no_money_in_student_profile_group_roster_lists_or_me(money):
     target = make_group(money.db, money.org, money.teacher2, "Вторая")
     money.db.commit()
     r = make_client(money, user=money.owner).post(
-        f"{API}/org/groups/{target.id}/students/{second.id}?mode=add", json={"monthly_fee": SECRET_FEE}
+        f"{API}/org/groups/{target.id}/students/{second.id}?mode=add",
+        json={"price_override": {"amount": SECRET_FEE, "reason": "договорённость"}},
     )
     assert r.status_code == 200 and str(SECRET_FEE) not in r.text and "monthly_fee" not in r.text

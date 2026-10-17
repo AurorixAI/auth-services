@@ -12,7 +12,7 @@ from src.models.auth import (
 )
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    business_today, make_client, make_group, make_member, make_student, make_user, needs_pg, pg_session,
+    business_today, give_price, make_client, make_group, make_member, make_student, make_user, needs_pg, pg_session,
     reconcile, save, world,
 )
 
@@ -288,8 +288,9 @@ def test_status_boundaries_through_the_api(world, offset, status):
 
 def test_free_and_none_statuses(world):
     assert row_of(world)["status"] == "none"
-    fee = owner(world).put(f"{API}/org/memberships/{mid(world)}/fee", json={"monthly_fee": 0})
-    assert fee.status_code == 200 and fee.json()["status"] == "free" and fee.json()["monthly_fee"] == 0
+    fee = owner(world).put(f"{API}/org/memberships/{mid(world)}/price-override", json={"amount": 0, "reason": "грант"})
+    assert fee.status_code == 200 and fee.json()["row"]["status"] == "free" and fee.json()["row"]["monthly_fee"] == 0
+    assert fee.json()["row"]["price"]["amount"] == 0 and fee.json()["row"]["price"]["source"] == "override"
     s = summary(world)
     assert (s["free"], s["active"], s["none"]) == (1, 1, 2)
     assert status_page(world, bucket="active")["items"][0]["status"] == "free"
@@ -450,8 +451,7 @@ def build_mixed(w, extra=0):
         pay(w, st, paid_on=day(-30), valid_from=day(-30), valid_to=day(offset))
         plan[name] = offset
     free = make_student(w.db, w.org, w.group, "Ноль", "Тестов", "N13-190")
-    w.db.query(StudentGroup).filter_by(student_id=free.id).update({"monthly_fee": 0})
-    w.db.commit()
+    give_price(w.db, w.db.query(StudentGroup).filter_by(student_id=free.id).one(), 0, reason="грант")
     return plan
 
 
@@ -540,19 +540,19 @@ def test_status_and_summary_use_a_bounded_number_of_queries(world, mode):
 # ---- fee, settings, tenancy -------------------------------------------------------
 
 
-def test_fee_can_be_set_cleared_and_validated(world):
+def test_the_old_fee_endpoint_is_gone_and_says_where_to_go(world):
     client = owner(world)
     url = f"{API}/org/memberships/{mid(world)}/fee"
-    r = client.put(url, json={"monthly_fee": 450000})
-    assert r.status_code == 200 and r.json()["monthly_fee"] == 450000
+    for body in ({"monthly_fee": 450000}, {"monthly_fee": None}, {"monthly_fee": -1}, {}):
+        r = client.put(url, json=body)
+        assert r.status_code == 410, (body, r.text)                     # whatever the body: it is gone, not invalid
+        detail = r.json()["detail"]
+        assert detail["code"] == "FEE_ENDPOINT_GONE"
+        assert "/org/groups/{group_id}/price" in detail["message"] and "/org/memberships/{membership_id}/price-override" in detail["message"]
+    assert client.put(f"{API}/org/memberships/{uuid4()}/fee", json={"monthly_fee": 1}).status_code == 410
     world.db.expire_all()
     m = world.db.get(StudentGroup, mid(world))
-    assert m.monthly_fee == 450000 and m.monthly_fee_updated_by == world.owner.id and m.monthly_fee_updated_at
-    assert client.put(url, json={"monthly_fee": None}).json()["monthly_fee"] is None
-    assert client.put(url, json={"monthly_fee": -1}).status_code == 422
-    assert client.put(url, json={"monthly_fee": 10_000_000_001}).status_code == 422
-    assert client.put(url, json={"monthly_fee": 10_000_000_000}).status_code == 200
-    assert client.put(f"{API}/org/memberships/{uuid4()}/fee", json={"monthly_fee": 1}).status_code == 404
+    assert m.monthly_fee is None and m.monthly_fee_updated_at is None   # nothing was written
 
 
 def test_settings_defaults_patch_semantics_and_audit_stamp(world):
@@ -599,7 +599,10 @@ def test_other_organisation_gets_404_everywhere_and_sees_nothing(world):
     day_body = {"amount": 1, "paid_on": day().isoformat()}
     assert foreign.get(f"{API}/org/memberships/{m}/payments").status_code == 404
     assert foreign.post(f"{API}/org/memberships/{m}/payments", json=day_body).status_code == 404
-    assert foreign.put(f"{API}/org/memberships/{m}/fee", json={"monthly_fee": 1}).status_code == 404
+    assert foreign.put(f"{API}/org/memberships/{m}/price-override", json={"amount": 1, "reason": "чужая"}).status_code == 404
+    assert foreign.get(f"{API}/org/memberships/{m}/price-override").status_code == 404
+    assert foreign.get(f"{API}/org/groups/{world.group.id}/prices").status_code == 404
+    assert foreign.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 1}).status_code == 404
     assert foreign.post(f"{API}/org/payments/{p['id']}/replace", json=day_body).status_code == 404
     assert foreign.post(f"{API}/org/payments/{p['id']}/void", json={"reason": "чужая"}).status_code == 404
     assert foreign.get(f"{API}/org/students/{world.students[0].id}/memberships").status_code == 404

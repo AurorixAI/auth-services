@@ -52,7 +52,7 @@ period of a calendar payment through ``PaymentRecord.end`` (never the raw ``vali
 the lessons of a package through ``allocate_lessons_detail``; the carry-over rows (amount 0,
 ``carried_from_payment_id``) are ordinary live payments of the new group and cover it from T.
 A lesson belongs to one group, so a lesson is paid by exactly one membership.  The money for
-payroll is ``monthly_fee`` of the membership, never a payment ``amount``.
+payroll is the effective PRICE of the student on the day of the lesson (``pricing.py``), never a payment ``amount``.
 
 N13 P2.2 - one payment day for the centre (``billing_anchor = fixed_day``, ``billing_day`` 1..28).
 The centre's periods then start on ``billing_day`` of every month (day 1: 01.10-31.10, day 10:

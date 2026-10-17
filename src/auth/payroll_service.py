@@ -13,6 +13,12 @@ ALGO - Payroll service (N13 P3).  Owner only; money lives here and in ``payroll_
   history is append-only (``payroll_sheet_revisions``).  ``source_fingerprint`` hashes the data a
   calculation read, so "the data changed" is a comparison of two hashes.
 * Logs carry ids and the actor, never amounts.
+* The price of a lesson is the effective price of the student ON THE BUSINESS DAY OF THAT LESSON (ROADMAP #105,
+  ``pricing.py``): the history of the groups and of the students' exceptions is loaded once per calculation (two
+  queries) and resolved in memory for every lesson.  The data fingerprint keeps its shape for a line whose price
+  did not change inside the month (so sheets saved before #105 stay "not stale"); a line whose price changed adds
+  the steps of the price.  A price changed after a sheet was saved - also backdated - changes the fingerprint of
+  the months it touches, so the saved sheet turns "данные изменились"; the sheet itself never changes by itself.
 * The kind of lessons (``groups.lesson_type``) of a line is read from the group when the calculation
   runs, not from the day of the lesson.  Changing it is audited (``group_audit``) and flips ``stale`` of
   the sheets it touches (the kind is part of the data fingerprint), so a saved sheet never changes by
@@ -51,6 +57,7 @@ from src.models.auth import (
 
 from . import payment_status as ps
 from . import payroll_engine as engine
+from . import pricing
 from .payments_files import person_name, staff_name
 from .payments_service import PaymentService
 from .payroll_schemas import (
@@ -169,28 +176,33 @@ def month_label(first: date) -> str:
 def fingerprint_of(month: date, teacher_id: UUID, lines: List["LineSeed"]) -> str:
     """Stable hash of everything a calculation of one teacher's month read.
 
-    Per line: the membership, the group and its kind of lessons, the fee of the membership, the
-    pending-excuse count and every lesson column - date, id, state (counted / excused / unpaid / not
-    in group) and the divisor.  It is what the payments module decided about each lesson, so a changed
-    mark, excuse decision, payment, fee, teacher snapshot or divisor changes the hash; names, the
-    order of the rows and the owner's overrides do not.
+    Per line: the membership, the group and its kind of lessons, the price of the line on its reference day
+    (``source_fee``), the pending-excuse count and every lesson column - date, id, state (counted / excused /
+    unpaid / not in group) and the divisor; when the price CHANGED inside the line's lessons, also the steps of
+    the price (the first day of every new price).  It is what the payments module decided about each lesson, so
+    a changed mark, excuse decision, payment, price (also a backdated one), teacher snapshot or divisor changes
+    the hash; names, the order of the rows and the owner's overrides do not.  A price that is the same for all the
+    lessons of a line adds nothing to the item, so the hash of a sheet saved before #105 is still the hash of the
+    same data.
     """
     items = []
     for line in lines:
         ident = line.identity
-        items.append(
-            [
-                ident["membership_id"],
-                ident["group_id"],
-                ident["lesson_type"],
-                line.source_fee,
-                line.pending_excused,
-                sorted(
-                    ([m.day.isoformat(), m.lesson_id, m.state, m.divisor or 0] for m in line.marks),
-                    key=lambda item: (item[0], item[1], item[2], item[3]),
-                ),
-            ]
-        )
+        item = [
+            ident["membership_id"],
+            ident["group_id"],
+            ident["lesson_type"],
+            line.source_fee,
+            line.pending_excused,
+            sorted(
+                ([m.day.isoformat(), m.lesson_id, m.state, m.divisor or 0] for m in line.marks),
+                key=lambda item: (item[0], item[1], item[2], item[3]),
+            ),
+        ]
+        steps = engine.price_steps(line.marks)
+        if len(steps) > 1:
+            item.append(steps)
+        items.append(item)
     items.sort(key=lambda item: (item[0], item[1]))
     blob = json.dumps(
         {"v": FINGERPRINT_VERSION, "month": month.isoformat(), "teacher": str(teacher_id), "lines": items},
@@ -206,12 +218,14 @@ def fingerprint_of(month: date, teacher_id: UUID, lines: List["LineSeed"]) -> st
 
 @dataclass
 class LineSeed:
-    """A line before percent / overrides: identity, the lesson columns and the fee of the membership."""
+    """A line before percent / overrides: identity, the lesson columns (each with the price of its day) and the
+    price of the line on its reference day."""
 
     identity: Dict[str, Any]
     marks: List[engine.Mark]
     source_fee: Optional[int]
     pending_excused: int
+    price_source: Optional[str] = None
 
 
 @dataclass
@@ -341,6 +355,7 @@ class PayrollService:
         *,
         teacher_ids: Optional[Set[UUID]] = None,
         with_open: bool = False,
+        group_books: Optional[Dict[UUID, pricing.GroupBook]] = None,
     ) -> MonthSeed:
         """Everything the month's calculation needs, in a fixed number of queries.
 
@@ -349,7 +364,10 @@ class PayrollService:
         3. their groups; 4. the memberships (and students) of those groups;
         5. the excuses of the lessons that have an "excused" mark;
         6. what pays for every counted lesson - ``PaymentService.lesson_coverage``;
-        7. the schedule of those groups (lesson times).
+        7. the schedule of those groups (lesson times);
+        8. the price history of those groups and memberships (two queries) - every lesson is priced in memory.
+
+        ``group_books`` replaces the price history of some groups ("what if", see ``sheets_changed_by_group_price``).
         """
         divisor = self.divisor(org_id)
         seed = MonthSeed(first, last, divisor)
@@ -452,6 +470,9 @@ class PayrollService:
         coverage = PaymentService(self.db).lesson_coverage(
             org_id, [membership.id for membership, _ in memberships.values()], first, last
         )
+        books = pricing.load_books(self.db, group_ids, [membership.id for membership, _ in memberships.values()])
+        if group_books:
+            books = books.with_group_books(group_books)
         times = self._lesson_times([groups[gid] for gid in group_ids if gid in groups], first, last)
 
         for (teacher_id, group_id), lessons in by_pair.items():
@@ -502,7 +523,17 @@ class PayrollService:
                         state = engine.EXCUSED_PENDING
                     else:
                         state = engine.COUNTED
-                    marks.append(engine.Mark(lesson.day, lesson.lesson_id, state, lesson_divisor))
+                    price = books.price(membership.id, membership.group_id, lesson.day)
+                    marks.append(
+                        engine.Mark(
+                            lesson.day, lesson.lesson_id, state, lesson_divisor, price.amount, True, price.source
+                        )
+                    )
+                # the price of the line on its reference day: the last lesson that carries money, else the last one
+                money_days = [m.day for m in marks if m.carries_money]
+                reference = books.price(
+                    membership.id, membership.group_id, max(money_days) if money_days else marks[-1].day
+                )
                 teacher.lines.append(
                     LineSeed(
                         identity={
@@ -516,8 +547,9 @@ class PayrollService:
                             "lesson_time": lesson_time,
                         },
                         marks=marks,
-                        source_fee=membership.monthly_fee,
+                        source_fee=reference.amount,
                         pending_excused=pending,
+                        price_source=reference.source,
                     )
                 )
 
@@ -621,6 +653,7 @@ class PayrollService:
                     percent=percents.get(seed.identity["lesson_type"]),
                     pending_excused=seed.pending_excused,
                     default_divisor=divisor,
+                    price_source=seed.price_source,
                 )
             )
         return lines
@@ -1247,6 +1280,54 @@ class PayrollService:
             delta_amount=fresh_total - saved_total,
             lines=[DiffLine(**row) for row in rows],
         )
+
+    # ---------------------------------------------------- price changes (#105)
+
+    def sheets_changed_by_group_price(
+        self, org_id: str, group_id: UUID, book: pricing.GroupBook, since: date
+    ) -> List[Dict[str, Any]]:
+        """Saved sheets that would turn "данные изменились" if the price history of ``group_id`` were ``book``.
+
+        Candidates: the saved sheets of the months from ``since`` on that have a line of this group.  For each
+        month the data fingerprint of those teachers is computed twice - with the prices as they are and with
+        ``book`` - and a sheet is listed when the two differ (a change that touches no lesson of the sheet, or
+        only a student with an individual price, leaves the fingerprint alone).  Reads only.
+        """
+        rows = (
+            self.db.query(PayrollSheet.id, PayrollSheet.teacher_id, PayrollSheet.period_month)
+            .filter(
+                PayrollSheet.org_id == org_id,
+                PayrollSheet.period_month >= since.replace(day=1),
+                PayrollSheet.lines.contains([{"group_id": str(group_id)}]),
+            )
+            .order_by(PayrollSheet.period_month, PayrollSheet.teacher_id)
+            .all()
+        )
+        by_month: Dict[date, List[Any]] = {}
+        for row in rows:
+            by_month.setdefault(row.period_month, []).append(row)
+        names = self._names(row.teacher_id for row in rows)
+        changed: List[Dict[str, Any]] = []
+        for first, sheets in by_month.items():
+            last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
+            teachers = {row.teacher_id for row in sheets}
+            now = self._collect(org_id, first, last, teacher_ids=teachers)
+            then = self._collect(org_id, first, last, teacher_ids=teachers, group_books={group_id: book})
+            for row in sheets:
+                before, after = now.teachers.get(row.teacher_id), then.teachers.get(row.teacher_id)
+                empty = fingerprint_of(first, row.teacher_id, [])
+                if (before.fingerprint if before and before.fingerprint else empty) != (
+                    after.fingerprint if after and after.fingerprint else empty
+                ):
+                    changed.append(
+                        {
+                            "sheet_id": str(row.id),
+                            "month": month_label(first),
+                            "teacher_id": str(row.teacher_id),
+                            "teacher_name": names.get(row.teacher_id),
+                        }
+                    )
+        return changed
 
     # --------------------------------------------------------------- export
 

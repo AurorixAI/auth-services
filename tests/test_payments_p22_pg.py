@@ -10,11 +10,12 @@ from src.auth import payment_status as ps
 from src.auth.payments_schemas import PaymentCreate
 from src.auth.payments_service import RECEIPT_ATTEMPTS, PaymentConflict, PaymentService
 from src.models.auth import (
-    GroupAttendance, GroupScheduleOneOffLesson, StudentGroup, StudentPayment, StudentPaymentFile,
+    GroupAttendance, GroupScheduleOneOffLesson, MembershipPriceOverride, StudentGroup, StudentPayment,
+    StudentPaymentFile,
 )
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    business_today, make_client, make_group, make_member, make_user, needs_pg, pg_session, world,
+    business_today, give_price, make_client, make_group, make_member, make_user, needs_pg, pg_session, world,
 )
 from tests.test_payment_carry_over_pg import transfer, two  # noqa: F401  (two = fixture)
 from tests.test_payments_service_pg import API, day, mid, owner, pay, row_of, set_settings
@@ -74,7 +75,7 @@ def setup_mwf(w, fee=450_000, billing_day=1, joined=None, anchor="fixed_day"):
         for name, dow in (("mon", 1), ("wed", 3), ("fri", 5))
     ]
     membership = w.db.get(StudentGroup, membership_id)
-    membership.monthly_fee = fee
+    give_price(w.db, membership, fee)
     if joined is not None:
         membership.joined_at = joined
         for stay in membership.periods:              # the last stay mirrors the row (src/auth/membership_periods.py)
@@ -297,8 +298,7 @@ def test_quote_a_group_without_a_schedule_is_counted_by_days(world):
 
 def test_quote_without_a_monthly_fee_suggests_no_amount(world):
     setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    world.db.get(StudentGroup, mid(world)).monthly_fee = None
-    world.db.commit()
+    give_price(world.db, world.db.get(StudentGroup, mid(world)), None)
     q = quote(world, paid_on=D(2026, 3, 17))
     assert (q["suggested_amount"], q["basis"], q["monthly_fee"], q["parts"]) == (None, "none", None, [])
     assert q["explanation"] == "Оплата в месяц не задана" and q["valid_from"] == "2026-03-15"   # the dates still come
@@ -315,8 +315,7 @@ def test_quote_from_the_payment_date_standard_and_custom_periods(world):
     assert q["explanation"] == "Нестандартный период — укажите сумму"
     q = quote(world, paid_on=D(2026, 3, 31))                        # 31.03 -> 30.04
     assert (q["valid_to"], q["suggested_amount"]) == ("2026-04-30", 450_000)
-    world.db.get(StudentGroup, mid(world)).monthly_fee = None
-    world.db.commit()
+    give_price(world.db, world.db.get(StudentGroup, mid(world)), None)
     assert quote(world, paid_on=D(2026, 3, 5))["basis"] == "none"
 
 
@@ -348,7 +347,7 @@ def test_quote_given_fee_replaces_the_saved_fee_for_the_calculation_only(world):
     assert q["monthly_fee"] == 600_000                                     # the fee that was used
     assert q["suggested_amount"] == 323_000 and q["parts"][0]["amount"] == 323_000      # 600000 * 7 / 13 = 323 076
     assert q["explanation"] == "Неполный месяц: 7 уроков из 13 по расписанию — 323 000 сум из 600 000"
-    assert world.db.get(StudentGroup, mid(world)).monthly_fee == 450_000   # nothing was written
+    assert [x.amount for x in world.db.query(MembershipPriceOverride).filter_by(membership_id=mid(world))] == [450_000]   # nothing was written
     assert quote(world, paid_on=D(2026, 3, 17))["monthly_fee"] == 450_000
     assert quote(world, paid_on=D(2026, 3, 17), monthly_fee="")["monthly_fee"] == 450_000   # blank = not given
     # a given fee of 0 is a fee (free), not "not given"
@@ -366,13 +365,12 @@ def test_quote_given_fee_replaces_the_saved_fee_for_the_calculation_only(world):
 
 def test_quote_given_fee_when_nothing_is_saved(world):
     setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    world.db.get(StudentGroup, mid(world)).monthly_fee = None
-    world.db.commit()
+    give_price(world.db, world.db.get(StudentGroup, mid(world)), None)
     none = quote(world, paid_on=D(2026, 3, 17))
     assert (none["monthly_fee"], none["suggested_amount"], none["basis"]) == (None, None, "none")
     q = quote(world, paid_on=D(2026, 3, 17), monthly_fee=450_000)
     assert (q["monthly_fee"], q["suggested_amount"], q["basis"]) == (450_000, 242_000, "lessons")
-    assert world.db.get(StudentGroup, mid(world)).monthly_fee is None      # still not saved
+    assert world.db.query(MembershipPriceOverride).filter_by(membership_id=mid(world)).count() == 0            # still not saved
 
 
 def test_quote_given_fee_is_validated(world):
@@ -394,8 +392,7 @@ def test_quote_given_fee_is_validated(world):
 def test_explanations_name_the_package_in_lessons_mode(world):
     setup_mwf(world, fee=600_000)
     set_settings(world, period_mode="lessons", lessons_per_payment=12)
-    world.db.get(StudentGroup, mid(world)).monthly_fee = None
-    world.db.commit()
+    give_price(world.db, world.db.get(StudentGroup, mid(world)), None)
     q = quote(world, paid_on=D(2026, 3, 5))
     assert (q["basis"], q["explanation"]) == ("none", "Стоимость пакета не задана")
     q = quote(world, paid_on=D(2026, 3, 5), monthly_fee=0)

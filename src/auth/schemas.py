@@ -316,16 +316,57 @@ class GroupResponse(BaseModel):
 MAX_MONEY = 10_000_000_000
 
 
-class AddStudentToGroupRequest(BaseModel):
-    """Optional body of "add a student to a group"; the fee needs the payments right."""
+class PriceOverrideInput(BaseModel):
+    """An individual price given together with the enrolment (ROADMAP #105): a sum and the reason, both mandatory."""
 
-    monthly_fee: Optional[int] = Field(None, ge=0, le=MAX_MONEY)
+    amount: int = Field(..., ge=0, le=MAX_MONEY)
+    reason: str = Field(..., max_length=200)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, value: str) -> str:
+        value = (value or "").strip()
+        if len(value) < 3:
+            raise ValueError("Причина индивидуальной цены: от 3 до 200 символов")
+        return value
+
+
+RETIRED_FEE_MESSAGE = (
+    "Поле monthly_fee больше не используется: ученик берёт цену группы. "
+    "Индивидуальная цена — поле price_override {amount, reason}"
+)
+
+
+class AddStudentToGroupRequest(BaseModel):
+    """Optional body of "add a student to a group".
+
+    Without a body the student follows the price of the group.  ``price_override`` is an explicit individual
+    price (sum + reason) and needs the right to manage payments.
+    """
+
+    price_override: Optional[PriceOverrideInput] = None
+    monthly_fee: Optional[int] = None  # retired (#105): refused with a message, never silently dropped
+
+    @field_validator("monthly_fee")
+    @classmethod
+    def _retired(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None:
+            raise ValueError(RETIRED_FEE_MESSAGE)
+        return value
 
 
 class BulkAddStudentsRequest(BaseModel):
     student_ids: list[str] = Field(..., min_length=1)
-    # One amount for everybody, or none.  Needs the right to manage payments.
-    monthly_fee: Optional[int] = Field(None, ge=0, le=MAX_MONEY)
+    # One individual price for everybody, or none.  Needs the right to manage payments.
+    price_override: Optional[PriceOverrideInput] = None
+    monthly_fee: Optional[int] = None  # retired (#105), see AddStudentToGroupRequest
+
+    @field_validator("monthly_fee")
+    @classmethod
+    def _retired(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None:
+            raise ValueError(RETIRED_FEE_MESSAGE)
+        return value
 
 
 # ============================================================================

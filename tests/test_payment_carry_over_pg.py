@@ -11,7 +11,8 @@ from src.auth.schemas import SaveAttendanceRequest, StartAttendanceRequest
 from src.models.auth import GroupAttendance, Organization, Student, StudentGroup, StudentPayment
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    LIVE_SLOT, business_today, make_client, make_group, make_student, needs_pg, pg_session, reconcile, world,
+    LIVE_SLOT, business_today, give_group_price, give_price, make_client, make_group, make_student, needs_pg,
+    pg_session, reconcile, world,
 )
 from tests.test_payments_service_pg import (  # noqa: F401
     API, day, lesson_marks, mid, owner, pay, row_of, set_settings, status_page, summary,
@@ -120,8 +121,16 @@ def complete_in(w, group, offset_days):
 
 
 def set_fee(w, group, fee, student=None):
-    r = owner(w).put(f"{API}/org/memberships/{mid(w, student or w.student, group)}/fee", json={"monthly_fee": fee})
+    """The individual price of the student in ``group`` (the only way a student gets a price of his own)."""
+    r = owner(w).put(f"{API}/org/memberships/{mid(w, student or w.student, group)}/price-override",
+                     json={"amount": fee, "reason": "тест"})
     assert r.status_code == 200, r.text
+
+
+def price_of(w, group, student=None):
+    r = owner(w).get(f"{API}/org/memberships/{mid(w, student or w.student, group)}/price-override")
+    assert r.status_code == 200, r.text
+    return r.json()["price"]["amount"], r.json()["price"]["source"]
 
 
 # ---- calendar -----------------------------------------------------------------------
@@ -249,13 +258,13 @@ def test_only_the_mode_of_the_latest_payment_is_carried(two):
 # ---- when nothing moves -----------------------------------------------------------------
 
 
-def test_add_mode_never_carries_and_never_copies_the_fee(two):
+def test_add_mode_never_carries_and_never_copies_the_price(two):
     set_fee(two, two.group, 300000)
     pay(two, paid_on=day(-10), valid_from=day(-10), valid_to=day(20))
     result = transfer(two, two.second, mode="add")
     assert carry_warnings(result) == []
     assert history(two, two.second) == [] and len(history(two, two.group)) == 1
-    assert membership(two, two.second).monthly_fee is None
+    assert price_of(two, two.second) == (None, "none") and price_of(two, two.group) == (300000, "override")
     assert membership(two, two.group).is_active is True
 
 
@@ -308,39 +317,51 @@ def test_bulk_add_mode_carries_nothing(two):
     assert history(two, two.second) == []
 
 
-# ---- fee -------------------------------------------------------------------------------------
+# ---- price (ROADMAP #105: the student takes the price of the NEW group, an exception is not carried) ----------------
 
 
-def test_fee_is_copied_when_the_new_group_has_none(two):
-    set_fee(two, two.group, 300000)
+def test_the_individual_price_is_not_carried_the_student_takes_the_price_of_the_new_group(two):
+    give_group_price(two.db, two.group, 400000)
+    give_group_price(two.db, two.second, 500000)
+    set_fee(two, two.group, 300000)                                       # an exception in the group being left
+    assert price_of(two, two.group) == (300000, "override")
     transfer(two, two.second)
-    m = membership(two, two.second)
-    assert m.monthly_fee == 300000 and m.monthly_fee_updated_by == two.owner.id and m.monthly_fee_updated_at
-    assert membership(two, two.group).monthly_fee == 300000          # the old one keeps its own
+    assert price_of(two, two.second) == (500000, "group")                 # the price of the new group, no exception
+    assert price_of(two, two.group) == (300000, "override")               # the old membership keeps its own history
+    assert row_of(two, two.student, two.second)["monthly_fee"] == 500000
 
 
-def test_explicit_fee_wins_over_the_copy(two):
-    set_fee(two, two.group, 300000)
-    transfer(two, two.second, body={"monthly_fee": 500000})
-    assert membership(two, two.second).monthly_fee == 500000
+def test_a_group_price_on_either_side_is_never_copied_to_a_group_without_one(two):
+    give_group_price(two.db, two.group, 400000)
+    transfer(two, two.second)
+    assert price_of(two, two.second) == (None, "none")                    # the new group has no price: nothing is copied
 
 
-def test_existing_fee_of_the_new_group_is_kept_and_a_free_group_copies_zero(two):
+def test_an_individual_price_given_with_the_transfer_wins_for_the_new_membership_only(two):
+    give_group_price(two.db, two.second, 500000)
+    transfer(two, two.second, body={"price_override": {"amount": 350000, "reason": "льгота"}})
+    assert price_of(two, two.second) == (350000, "override")
+    assert row_of(two, two.student, two.second)["price"]["group_amount"] == 500000
+    assert price_of(two, two.group) == (None, "none")
+
+
+def test_a_returning_membership_keeps_its_own_history_of_prices(two):
     s0, s1 = two.students[:2]
-    set_fee(two, two.group, 300000, s0)
     two.db.add(StudentGroup(student_id=s0.id, group_id=two.second.id, is_active=False,
-                            joined_at=datetime.now() - timedelta(days=90), monthly_fee=777000))
+                            joined_at=datetime.now() - timedelta(days=90)))
     two.db.commit()
-    transfer(two, two.second, s0)                                     # reactivated membership keeps 777000
-    assert membership(two, two.second, s0).monthly_fee == 777000
-    set_fee(two, two.group, 0, s1)
+    give_price(two.db, membership(two, two.second, s0), 777000, reason="прежняя договорённость")
+    give_group_price(two.db, two.second, 500000)
+    transfer(two, two.second, s0)                                     # the reactivated membership keeps its exception ...
+    assert price_of(two, two.second, s0) == (777000, "override")
+    set_fee(two, two.group, 0, s1)                                    # ... a free student of the old group is not free in the new one
     transfer(two, two.second, s1)
-    assert membership(two, two.second, s1).monthly_fee == 0           # "free" is a fee that is set
+    assert price_of(two, two.second, s1) == (500000, "group")
 
 
-def test_no_fee_on_either_side_stays_empty(two):
+def test_no_price_on_either_side_stays_empty(two):
     transfer(two, two.second)
-    assert membership(two, two.second).monthly_fee is None
+    assert price_of(two, two.second) == (None, "none")
 
 
 # ---- cascades --------------------------------------------------------------------------------

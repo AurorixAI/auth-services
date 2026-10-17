@@ -146,6 +146,44 @@ def world(pg_session, monkeypatch):
     )
 
 
+# ---- prices (ROADMAP #105): fixtures write the rows the price code reads -----------------------------
+
+EPOCH = date(2000, 1, 1)  # "it has always been so": the valid_from of the migrated prices
+
+
+def give_price(db, membership, amount, *, reason="тест", valid_from=EPOCH):
+    """The individual price of a membership from ``valid_from`` (default: always); ``amount=None`` removes every
+    exception of the membership - it then follows the price of its group (or has none)."""
+    from src.models.auth import MembershipPriceOverride
+
+    if amount is None:
+        db.query(MembershipPriceOverride).filter_by(membership_id=membership.id).delete()
+    else:
+        row = db.query(MembershipPriceOverride).filter_by(membership_id=membership.id, valid_from=valid_from).first()
+        if row is None:
+            db.add(MembershipPriceOverride(membership_id=membership.id, amount=amount, valid_from=valid_from,
+                                           reason=reason, created_at=datetime.utcnow()))
+        else:
+            row.amount, row.reason = amount, reason
+    db.commit()
+
+
+def give_group_price(db, group, amount, valid_from=EPOCH, note=None):
+    """The price of a group from ``valid_from`` (default: always); ``amount=None`` removes the whole history."""
+    from src.models.auth import GroupPrice
+
+    if amount is None:
+        db.query(GroupPrice).filter_by(group_id=group.id).delete()
+    else:
+        row = db.query(GroupPrice).filter_by(group_id=group.id, valid_from=valid_from).first()
+        if row is None:
+            db.add(GroupPrice(group_id=group.id, amount=amount, valid_from=valid_from, note=note,
+                              created_at=datetime.utcnow()))
+        else:
+            row.amount = amount
+    db.commit()
+
+
 # ---- lesson helpers (go through the real service paths) --------------------
 
 

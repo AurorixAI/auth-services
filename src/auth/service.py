@@ -2708,7 +2708,7 @@ class AuthService:
         student_ids: list[str],
         *,
         mode: str = "transfer",
-        monthly_fee: Optional[int] = None,
+        price_override: Optional[Any] = None,
         actor_id: Optional[str] = None,
         payments_detail: bool = False,
     ) -> dict:
@@ -2719,7 +2719,7 @@ class AuthService:
             try:
                 result = self.add_student_to_group(
                     org_id, group_id, student_id,
-                    mode=mode, monthly_fee=monthly_fee, actor_id=actor_id,
+                    mode=mode, price_override=price_override, actor_id=actor_id,
                     payments_detail=payments_detail,
                 )
                 added += 1
@@ -2745,7 +2745,7 @@ class AuthService:
         student_id: str,
         *,
         mode: str = "transfer",
-        monthly_fee: Optional[int] = None,
+        price_override: Optional[Any] = None,
         actor_id: Optional[str] = None,
         payments_detail: bool = False,
     ) -> dict:
@@ -2753,16 +2753,30 @@ class AuthService:
 
         ``transfer`` (default): every other active membership is closed and the
         group becomes the primary one.  ``add``: other memberships stay, the
-        primary group changes only if the student had none.  ``monthly_fee`` is
-        written to the membership; the caller must have checked the right to
-        manage payments.  Warnings (never refusals) are returned in ``warnings``.
+        primary group changes only if the student had none.
 
-        A ``transfer`` also carries the payments in force over to the new group (and copies the
-        fee when it has none) - see ``PaymentService.carry_over_on_transfer``; ``payments_detail``
-        lets the note in ``warnings`` name dates / lessons (callers who may see payments).
+        The student follows the PRICE OF THE GROUP (ROADMAP #105); an individual price of another group is not
+        carried.  ``price_override`` (``.amount`` + ``.reason``, both mandatory) is an explicit exception written for
+        the membership from today; the caller must have checked the right to manage payments.  A membership that
+        comes back to a group it had before keeps its earlier exceptions, like the rest of its history.
+        Warnings (never refusals) are returned in ``warnings``.
+
+        A ``transfer`` also carries the payments in force over to the new group - see
+        ``PaymentService.carry_over_on_transfer``; ``payments_detail`` lets the note in ``warnings`` name
+        dates / lessons (callers who may see payments).
         """
         if mode not in MEMBERSHIP_MODES:
             raise ValueError("Неизвестный способ добавления в группу")
+        override_amount = override_reason = None
+        if price_override is not None:
+            from . import pricing  # lazy: pulls in the payments modules
+
+            try:
+                override_amount, override_reason = pricing.check_override_input(
+                    price_override.amount, price_override.reason
+                )
+            except pricing.PriceError as exc:
+                raise ValueError(exc.message) from exc
         # Serialize every membership change for this student.  Without this
         # row lock, two concurrent admin requests could both observe the old
         # group and create two active memberships despite the service rule.
@@ -2821,11 +2835,12 @@ class AuthService:
             and not other_active_memberships
             and str(student.group_id) == str(group.id)
         ):
-            if monthly_fee is not None:
-                # Nothing moves, but an authorised amount is still the admin's intent.
-                existing.monthly_fee = int(monthly_fee)
-                existing.monthly_fee_updated_by = UUID(str(actor_id)) if actor_id else None
-                existing.monthly_fee_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            if price_override is not None:
+                # Nothing moves, but an authorised individual price is still the admin's intent.
+                pricing.write_override(
+                    self.db, existing.id, actor_id, amount=override_amount,
+                    valid_from=ps.business_today(), reason=override_reason,
+                )
                 self.db.commit()
             return {
                 "student_id": str(student_id),
@@ -2881,14 +2896,15 @@ class AuthService:
             open_period(membership, now_dt)
             self.db.add(membership)
 
-        if monthly_fee is not None:
-            membership.monthly_fee = int(monthly_fee)
-            membership.monthly_fee_updated_by = UUID(str(actor_id)) if actor_id else None
-            membership.monthly_fee_updated_at = now_dt.replace(tzinfo=None)
+        if price_override is not None:
+            self.db.flush()  # a new membership gets its id here
+            pricing.write_override(
+                self.db, membership.id, actor_id, amount=override_amount,
+                valid_from=ps.business_date(now_dt), reason=override_reason,
+            )
 
-        # N13 P2.1: a transfer carries the payments in force over to the new group and copies
-        # the fee when the new group has none.  Before the primary group moves: the donor of
-        # the fee is the group the student is leaving.
+        # N13 P2.1: a transfer carries the payments in force over to the new group.  The price is not carried
+        # (#105): in the new group the student follows the price of that group.
         carried: list[dict[str, str]] = []
         if closing:
             from .payments_service import PaymentService  # lazy: pulls in the status maths
@@ -2896,7 +2912,7 @@ class AuthService:
             self.db.flush()
             carried = PaymentService(self.db).carry_over_on_transfer(
                 org_id, actor_id, closing, membership,
-                primary_group_id=student.group_id, detailed=payments_detail, moment=now_dt,
+                detailed=payments_detail, moment=now_dt,
             )
 
         # The primary group: a transfer always moves it, "add" only fills a gap.

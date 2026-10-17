@@ -141,11 +141,22 @@ class MarkOut(BaseModel):
     mark: Optional[int] = None  # 1 counted, 0 not counted (confirmed excuse), null - not in the group
     state: str  # counted | excused_confirmed | excused_pending | not_in_group | unpaid
     divisor: Optional[int] = None
+    # ROADMAP #105: the price of the student ON THE DAY of this lesson (only on a lesson that carries money, and only
+    # on a sheet calculated after #105) and where it came from: group | override | none.
+    price: Optional[int] = None
+    price_source: Optional[str] = None
 
 
 class WarningOut(BaseModel):
     code: str
     message: str
+
+
+class PriceStepOut(BaseModel):
+    """The price of a line changed inside the month: ``date`` is the first lesson day with this price."""
+
+    date: str
+    amount: Optional[int] = None  # null - no price was set
 
 
 class LineOut(BaseModel):
@@ -157,9 +168,17 @@ class LineOut(BaseModel):
     group_name: str
     lesson_type: str
     lesson_time: Optional[str] = None
+    # The price of the line (ROADMAP #105): the effective price on the last lesson that carries money (an overwrite on
+    # the sheet - ``fee_overridden`` - replaces the price of every lesson).  ``source_fee`` is the same price before the
+    # overwrite.  The amount of the line is the sum over its lessons, each at the price of ITS day (``marks[].price``).
     monthly_fee: Optional[int] = None
     source_fee: Optional[int] = None
     fee_overridden: bool = False
+    price_source: Optional[str] = None  # group | override ("индивидуальная цена") | none
+    price_changed: bool = False  # the price changed inside the month; ``price_steps`` lists the changes
+    price_steps: List[PriceStepOut] = Field(default_factory=list)
+    no_price_lessons: Optional[int] = None  # lessons of the line that have no price (null on a sheet saved before #105)
+    unpaid_due: Optional[int] = None  # unpaid lessons that cost something (null on a sheet saved before #105)
     percent: Optional[str] = None
     divisor: Optional[int] = None
     marks: List[MarkOut] = Field(default_factory=list)

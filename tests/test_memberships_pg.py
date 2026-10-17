@@ -1,10 +1,12 @@
 """N13 P2: a student in several groups - add vs transfer, primary group, journal, filters (PostgreSQL)."""
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
 import pytest
 
 from src.auth.schemas import SaveAttendanceRequest
 from src.models.auth import (
-    DiagnosticInvite, Group, Student, StudentDiagnosticResult, StudentGroup,
+    DiagnosticInvite, Group, MembershipPriceOverride, Student, StudentDiagnosticResult, StudentGroup,
 )
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
@@ -23,6 +25,14 @@ def two(world):
     world.db.commit()
     world.student = world.students[0]
     return world
+
+
+def override_rows(w, group, student=None):
+    w.db.expire_all()
+    m = w.db.query(StudentGroup).filter_by(student_id=(student or w.student).id, group_id=group.id).first()
+    if m is None:
+        return []
+    return w.db.query(MembershipPriceOverride).filter_by(membership_id=m.id).order_by(MembershipPriceOverride.valid_from).all()
 
 
 def add(w, group, student=None, **kw):
@@ -219,7 +229,7 @@ def test_both_teachers_see_the_student_and_the_group_filter_finds_the_second_gro
 
 
 def test_profile_lists_every_active_group_without_money(two):
-    add(two, two.second, mode="add", monthly_fee=450000, actor_id=str(two.owner.id))
+    add(two, two.second, mode="add", price_override=SimpleNamespace(amount=450000, reason="скидка"), actor_id=str(two.owner.id))
     profile = two.svc.get_student_profile(str(two.org.id), str(two.student.id), actor_id=str(two.admin.id), is_org_admin=True)
     groups = profile["groups"]
     assert [g["group_id"] for g in groups] == [str(two.group.id), str(two.second.id)]
@@ -339,30 +349,56 @@ def test_verify_group_student_knows_only_current_members(two):
     assert verify(two.second, two.students[1]) is False
 
 
-# ---- fee on enrolment needs the payments right ---------------------------------
+# ---- an individual price on enrolment needs the payments right -------------------
 
 
-def test_monthly_fee_on_enrolment_requires_the_payments_right(two):
-    body = {"monthly_fee": 450000}
+def test_an_individual_price_on_enrolment_requires_the_payments_right(two):
+    body = {"price_override": {"amount": 450000, "reason": "договорённость с родителем"}}
     url = f"{BASE}/{two.second.id}/students/{two.student.id}?mode=add"
     r = make_client(two, user=two.admin).post(url, json=body)
     assert r.status_code == 403
     assert active_groups(two) == {two.group.id}  # nothing happened
     r = make_client(two, user=two.owner).post(url, json=body)
     assert r.status_code == 200, r.text
-    row = two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.second.id).one()
-    assert row.monthly_fee == 450000 and row.monthly_fee_updated_by == two.owner.id
-    # without a fee the admin may still add (no body at all)
+    (row,) = override_rows(two, two.second)
+    assert (row.amount, row.reason, row.valid_from, row.created_by) == (
+        450000, "договорённость с родителем", business_today(), two.owner.id)
+    # without an individual price the admin may still add (no body at all): the student follows the group price
     other = two.students[1]
     r = make_client(two, user=two.admin).post(f"{BASE}/{two.second.id}/students/{other.id}?mode=add")
     assert r.status_code == 200 and r.json()["warnings"] == []
+    assert override_rows(two, two.second, other) == []
     # bulk: same rule
     bulk = f"{BASE}/{two.second.id}/students/bulk?mode=add"
-    r = make_client(two, user=two.admin).post(bulk, json={"student_ids": [str(two.students[2].id)], "monthly_fee": 1})
+    given = {"amount": 1, "reason": "проверка"}
+    r = make_client(two, user=two.admin).post(bulk, json={"student_ids": [str(two.students[2].id)], "price_override": given})
     assert r.status_code == 403
-    r = make_client(two, user=two.owner).post(bulk, json={"student_ids": [str(two.students[2].id)], "monthly_fee": 300000})
+    r = make_client(two, user=two.owner).post(bulk, json={"student_ids": [str(two.students[2].id)], "price_override": {**given, "amount": 300000}})
     assert r.status_code == 200 and r.json()["added"] == 1
-    assert make_client(two, user=two.owner).post(url, json={"monthly_fee": -1}).status_code == 422
+    assert [x.amount for x in override_rows(two, two.second, two.students[2])] == [300000]
+
+
+def test_the_individual_price_needs_a_reason_a_sane_sum_and_the_old_field_is_refused_loudly(two):
+    url = f"{BASE}/{two.second.id}/students/{two.student.id}?mode=add"
+    owner_client = make_client(two, user=two.owner)
+    for body in (
+        {"price_override": {"amount": 450000}},                              # no reason
+        {"price_override": {"amount": 450000, "reason": "  "}},             # a blank reason
+        {"price_override": {"amount": 450000, "reason": "ab"}},             # shorter than 3
+        {"price_override": {"amount": -1, "reason": "скидка"}},
+        {"price_override": {"amount": 10_000_000_001, "reason": "скидка"}},
+        {"price_override": {"amount": 1, "reason": "я" * 201}},
+    ):
+        assert owner_client.post(url, json=body).status_code == 422, body
+    # the retired field is an explicit error pointing at the new one - never silently dropped
+    for body in ({"monthly_fee": 450000}, {"monthly_fee": -1}):
+        r = owner_client.post(url, json=body)
+        assert r.status_code == 422, body
+    assert "price_override" in owner_client.post(url, json={"monthly_fee": 450000}).text
+    bulk = owner_client.post(f"{BASE}/{two.second.id}/students/bulk?mode=add",
+                             json={"student_ids": [str(two.student.id)], "monthly_fee": 1})
+    assert bulk.status_code == 422 and "price_override" in bulk.text
+    assert active_groups(two) == {two.group.id} and override_rows(two, two.second) == []   # nothing was written
 
 
 # ---- review follow-ups: transfer into an existing membership, no-op fee, counts ------
@@ -411,23 +447,25 @@ def test_transfer_window_covers_a_legacy_row_written_with_the_database_clock(two
     assert journal(two, two.second).membershipEvents == []
 
 
-def test_noop_transfer_still_applies_an_authorised_fee(two):
-    r = make_client(two, user=two.owner).post(f"{BASE}/{two.group.id}/students/{two.student.id}", json={"monthly_fee": 450000})
+def test_noop_transfer_still_applies_an_authorised_individual_price(two):
+    url = f"{BASE}/{two.group.id}/students/{two.student.id}"
+    r = make_client(two, user=two.owner).post(url, json={"price_override": {"amount": 450000, "reason": "скидка"}})
     assert r.status_code == 200 and r.json()["status"] == "unchanged"
-    row = two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.group.id).one()
-    two.db.refresh(row)
-    assert row.monthly_fee == 450000 and row.monthly_fee_updated_by == two.owner.id
+    assert [(x.amount, x.created_by) for x in override_rows(two, two.group)] == [(450000, two.owner.id)]
     # without the right the amount is refused before anything happens
-    r = make_client(two, user=two.admin).post(f"{BASE}/{two.group.id}/students/{two.student.id}", json={"monthly_fee": 1})
+    r = make_client(two, user=two.admin).post(url, json={"price_override": {"amount": 1, "reason": "проверка"}})
     assert r.status_code == 403
-    two.db.refresh(row)
-    assert row.monthly_fee == 450000
+    assert [x.amount for x in override_rows(two, two.group)] == [450000]
+    # the same day again corrects the sum (one row per student and day)
+    r = make_client(two, user=two.owner).post(url, json={"price_override": {"amount": 400000, "reason": "новая договорённость"}})
+    assert r.status_code == 200
+    assert [(x.amount, x.reason) for x in override_rows(two, two.group)] == [(400000, "новая договорённость")]
 
 
 def test_bulk_enrolment_with_a_fee_is_403_for_an_admin_without_the_switch(two):
     url = f"{BASE}/{two.second.id}/students/bulk?mode=add"
     ids = [str(s.id) for s in two.students]
-    r = make_client(two, user=two.admin).post(url, json={"student_ids": ids, "monthly_fee": 100000})
+    r = make_client(two, user=two.admin).post(url, json={"student_ids": ids, "price_override": {"amount": 100000, "reason": "скидка"}})
     assert r.status_code == 403
     assert not two.db.query(StudentGroup).filter_by(group_id=two.second.id).count()
     r = make_client(two, user=two.admin).post(url, json={"student_ids": ids})            # no amount: fine

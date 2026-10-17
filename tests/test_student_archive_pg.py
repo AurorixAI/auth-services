@@ -11,7 +11,8 @@ from src.models.auth import (
 )
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    LIVE_SLOT, business_today, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save, world,
+    LIVE_SLOT, business_today, give_price, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save,
+    world,
 )
 from tests.test_payments_service_pg import API, mid, owner, pay, row_of, status_page, summary  # noqa: F401
 
@@ -380,7 +381,8 @@ def test_a_stale_active_membership_of_an_archived_student_counts_nowhere(two):
 def test_restore_returns_the_student_to_the_chosen_groups(two):
     s = two.student
     pay(two, s, two.group)
-    fee_before = {m.group_id: m.monthly_fee for m in memberships(two, s)}
+    give_price(two.db, memberships(two, s)[0], 450000, reason="договорённость")
+    fee_before = {m.group_id: price_rows(two, s, m.group_id) for m in memberships(two, s)}
     old_joined = {m.group_id: m.joined_at for m in memberships(two, s)}
     archive(two, s, reason="Уехал")
 
@@ -395,7 +397,8 @@ def test_restore_returns_the_student_to_the_chosen_groups(two):
     rows = {m.group_id: m for m in memberships(two, s)}
     assert len(rows) == 2 and all(m.is_active and m.left_at is None for m in rows.values())
     for gid, m in rows.items():                                          # the membership is the OLD one: new period
-        assert m.joined_at > old_joined[gid] and m.monthly_fee == fee_before[gid]
+        assert m.joined_at > old_joined[gid] and price_rows(two, s, gid) == fee_before[gid]
+    assert [v for v in fee_before.values() if v] == [[(450000, "договорённость")]]        # the exception survived the archive
     assert two.db.query(StudentPayment).filter_by(student_id=s.id).count() == 1
     assert row_of(two, s, two.group)["last_payment"] is not None          # its payments are attached again
     assert {r.group_id for r in audit(two, s, "student_restored")} == {two.group.id, two.second.id}
@@ -875,8 +878,20 @@ def test_the_audit_check_accepts_the_new_actions_and_nothing_else(two):
 ARCHIVED_MESSAGE = "Ученик в архиве — сначала верните его"
 
 
+def price_rows(w, student, group):
+    """``[(amount, reason)]`` of the individual prices of a membership (``group`` is a group or its id)."""
+    from src.models.auth import MembershipPriceOverride
+
+    w.db.expire_all()
+    group_id = getattr(group, "id", group)
+    m = w.db.query(StudentGroup).filter_by(student_id=student.id, group_id=group_id).one()
+    return [(r.amount, r.reason) for r in w.db.query(MembershipPriceOverride).filter_by(membership_id=m.id)
+            .order_by(MembershipPriceOverride.valid_from)]
+
+
 def put_fee(w, student, group, fee, expect=200):
-    r = owner(w).put(f"{API}/org/memberships/{mid(w, student, group)}/fee", json={"monthly_fee": fee})
+    r = owner(w).put(f"{API}/org/memberships/{mid(w, student, group)}/price-override",
+                     json={"amount": fee, "reason": "тест"})
     assert r.status_code == expect, r.text
     return r
 
@@ -891,7 +906,7 @@ def test_create_replace_and_fee_are_refused_for_an_archived_student_but_void_and
     archive(two, s)
     two.db.expire_all()
     stored_before = {p.id: (p.amount, p.voided_at) for p in two.db.query(StudentPayment).filter_by(student_id=s.id)}
-    fee_before = two.db.query(StudentGroup).filter_by(id=mid(two, s, two.group)).one().monthly_fee
+    fee_before = price_rows(two, s, two.group)
 
     r = owner(two).post(f"{API}/org/memberships/{mid(two, s, two.group)}/payments",
                         json={"amount": 5, "paid_on": business_today().isoformat()})
@@ -899,13 +914,13 @@ def test_create_replace_and_fee_are_refused_for_an_archived_student_but_void_and
     r = owner(two).post(f"{API}/org/payments/{first['id']}/replace",
                         json={"amount": 7, "paid_on": business_today().isoformat(), "reason": "исправление"})
     assert r.status_code == 409 and r.json()["detail"] == ARCHIVED_MESSAGE
-    r = owner(two).put(f"{API}/org/memberships/{mid(two, s, two.second)}/fee", json={"monthly_fee": 1})
+    r = owner(two).put(f"{API}/org/memberships/{mid(two, s, two.second)}/price-override", json={"amount": 1, "reason": "тест"})
     assert r.status_code == 409 and r.json()["detail"] == ARCHIVED_MESSAGE
     assert put_fee(two, s, two.group, 1, expect=409).json()["detail"] == ARCHIVED_MESSAGE
 
     two.db.expire_all()
     assert {p.id: (p.amount, p.voided_at) for p in two.db.query(StudentPayment).filter_by(student_id=s.id)} == stored_before
-    assert two.db.query(StudentGroup).filter_by(id=mid(two, s, two.group)).one().monthly_fee == fee_before
+    assert price_rows(two, s, two.group) == fee_before == [(500000, "тест")]          # the individual price stayed
 
     # reading the history stays allowed ...
     assert owner(two).get(f"{API}/org/memberships/{mid(two, s, two.group)}/payments").status_code == 200

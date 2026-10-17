@@ -3,9 +3,12 @@ ALGO - Payroll engine (N13 P3).  Pure functions, no database, no clock.
 
 A payroll LINE is one membership (student x group) of one teacher in one calendar month:
 
-    amount = round_half_up( monthly_fee * p / 100 * sum over the paid lessons of 1 / D_lesson )
+    amount = round_half_up( sum over the paid lessons of price_lesson * p / 100 / D_lesson )
 
-* ``monthly_fee`` - "оплата в месяц" of the membership (the owner may overwrite it on the sheet);
+* ``price_lesson`` - the effective price of the student (group price or his individual one, ``pricing.py``) on the
+  business day of THAT lesson (ROADMAP #105): a price raised from the 15th splits the month correctly.  Every mark of
+  a line carries it (``Mark.price``); a line saved before #105 has marks without a price and uses ``source_fee`` for
+  all of them.  The owner may overwrite the price on the sheet: one sum for every lesson of the line;
 * ``p`` - the teacher's percent for the kind of lessons of the group, 0..100, at most 2 decimals;
 * ``D_lesson`` - the divisor of ONE lesson: the centre's divisor (12 by default) for a lesson paid by
   a calendar payment, the size of the covering package for a lesson taken from a lessons package.  A
@@ -32,7 +35,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 LESSON_TYPES = ("group", "mini_group", "pair", "individual")
 LESSON_TYPE_LABELS = {
@@ -119,6 +122,20 @@ def line_amount(fee: Optional[int], percent: Decimal, divisors: Iterable[int]) -
     return round_half_up(total)
 
 
+def lessons_amount(percent: Decimal, lessons: Iterable[Tuple[Optional[int], int]]) -> int:
+    """Amount of a line whose lessons may have DIFFERENT prices: ``sum(price * p / 100 / D)`` over ``(price, D)``,
+    rounded once.  A lesson without a price (None) or with price 0 adds nothing."""
+    share = Fraction(percent) / 100
+    total = Fraction(0)
+    for fee, divisor in lessons:
+        if not fee:
+            continue
+        if divisor < 1:
+            raise ValueError("divisor must be positive")
+        total += Fraction(fee) * share / divisor
+    return round_half_up(total)
+
+
 # ---------------------------------------------------------------- lessons ----
 
 
@@ -130,6 +147,12 @@ class Mark:
     lesson_id: str
     state: str
     divisor: Optional[int] = None  # D of the lesson when it can be in the sum (counted / pending / unpaid)
+    # The price of the student on the day of THIS lesson (ROADMAP #105).  ``priced`` says the mark carries one
+    # (``price`` None = not set that day); a mark of a sheet saved before #105 is not priced and the line's
+    # ``source_fee`` stands for it.  ``price_source``: group | override | none.
+    price: Optional[int] = None
+    priced: bool = False
+    price_source: Optional[str] = None
 
     @property
     def mark(self) -> Optional[int]:
@@ -139,13 +162,17 @@ class Mark:
         return 0 if self.state == EXCUSED_CONFIRMED else 1
 
     def as_dict(self) -> Dict[str, Any]:
-        return {
+        out = {
             "date": self.day.isoformat(),
             "lesson_id": self.lesson_id,
             "mark": self.mark,
             "state": self.state,
             "divisor": self.divisor,
         }
+        if self.priced:
+            out["price"] = self.price
+            out["price_source"] = self.price_source
+        return out
 
     @staticmethod
     def from_dict(item: Mapping[str, Any]) -> "Mark":
@@ -154,7 +181,30 @@ class Mark:
             lesson_id=str(item.get("lesson_id") or ""),
             state=item["state"],
             divisor=item.get("divisor"),
+            price=item.get("price"),
+            priced="price" in item,
+            price_source=item.get("price_source"),
         )
+
+    @property
+    def carries_money(self) -> bool:
+        """The lesson can be in the sum (counted / pending excuse) or is waiting for a payment (unpaid)."""
+        return self.state in (COUNTED, EXCUSED_PENDING, UNPAID)
+
+
+def price_steps(marks: Iterable[Mark]) -> List[List[Any]]:
+    """``[[first day, price], ...]`` - where the price of the money lessons CHANGES along the month.
+
+    Only priced marks that carry money take part; one entry per change (the first lesson at a new price).  A
+    single entry (or none) means the price was the same for the whole line.
+    """
+    steps: List[List[Any]] = []
+    last: Any = object()
+    for mark in sorted((m for m in marks if m.priced and m.carries_money), key=lambda m: (m.day, m.lesson_id)):
+        if not steps or mark.price != last:
+            steps.append([mark.day.isoformat(), mark.price])
+            last = mark.price
+    return steps
 
 
 def _warning(code: str, message: str) -> Dict[str, str]:
@@ -171,32 +221,54 @@ def compute_line(
     percent: Optional[Decimal] = None,
     pending_excused: int = 0,
     default_divisor: int = DEFAULT_DIVISOR,
+    price_source: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The JSON line of a sheet.
 
     ``identity``: membership_id, student_id, student_name, display_id, group_id, group_name,
-    lesson_type, lesson_time.  ``fee_override`` replaces the fee of the membership (``source_fee``) on
-    this sheet.  ``percent`` None = not given: the amount is 0 and the line says why.
+    lesson_type, lesson_time.  ``source_fee`` is the price of the line on its reference day (the last lesson
+    that carries money, else the last lesson) and ``price_source`` where it came from; the prices of the lessons
+    themselves are on the marks.  ``fee_override`` replaces the price of EVERY lesson of the line on this sheet.
+    ``percent`` None = not given: the amount is 0 and the line says why.
     """
-    fee = source_fee if fee_override is None else fee_override
     paid = [m for m in marks if m.state in (COUNTED, EXCUSED_PENDING)]
     unpaid = [m for m in marks if m.state == UNPAID]
     in_sum = paid + (unpaid if include_unpaid else [])
-    divisors = [m.divisor or default_divisor for m in in_sum]
-    amount = line_amount(fee, percent, divisors) if percent is not None else 0
+    money = sorted(paid + unpaid, key=lambda m: (m.day, m.lesson_id))
+
+    def lesson_fee(mark: Mark) -> Optional[int]:
+        if fee_override is not None:
+            return fee_override
+        return mark.price if mark.priced else source_fee
+
+    last = money[-1] if money else None
+    if fee_override is not None:
+        fee = fee_override
+    elif last is not None and last.priced:
+        fee, price_source = last.price, last.price_source
+    else:
+        fee = source_fee
+    steps = [] if fee_override is not None else price_steps(marks)
+    no_price = sum(1 for m in money if lesson_fee(m) is None)
+    unpaid_due = sum(1 for m in unpaid if lesson_fee(m) != 0)  # a free lesson (price 0) is paid by nobody
+    amount = (
+        lessons_amount(percent, [(lesson_fee(m), m.divisor or default_divisor) for m in in_sum])
+        if percent is not None
+        else 0
+    )
 
     warnings: List[Dict[str, str]] = []
     if percent is None:
         warnings.append(_warning(PERCENT_REQUIRED, "Не указан процент преподавателя"))
-    if fee is None:
+    if fee is None or no_price:
         warnings.append(_warning(NO_FEE, "Не задана оплата в месяц"))
     if pending_excused:
         warnings.append(
             _warning(EXCUSE_PENDING, f"Уважительных пропусков ожидает подтверждения: {pending_excused}")
         )
-    if unpaid and fee != 0:  # a free student (fee 0) pays nothing, so "not paid" is no news
+    if unpaid_due:  # a free student (price 0) pays nothing, so "not paid" is no news
         tail = " (включены в расчёт)" if include_unpaid else ""
-        warnings.append(_warning(UNPAID_LESSONS, f"Не оплачено уроков: {len(unpaid)}{tail}"))
+        warnings.append(_warning(UNPAID_LESSONS, f"Не оплачено уроков: {unpaid_due}{tail}"))
 
     used = {m.divisor or default_divisor for m in in_sum}
     line = dict(identity)
@@ -205,6 +277,13 @@ def compute_line(
             "monthly_fee": fee,
             "source_fee": source_fee,
             "fee_overridden": fee_override is not None,
+            # where the price of the line comes from (group | override | none) and whether it changed inside the
+            # month (then ``price_steps`` lists the first lesson ``date`` of every new price)
+            "price_source": price_source,
+            "price_changed": len(steps) > 1,
+            "price_steps": [{"date": day, "amount": amount_} for day, amount_ in steps] if len(steps) > 1 else [],
+            "no_price_lessons": no_price,
+            "unpaid_due": unpaid_due,
             "percent": format_percent(percent) if percent is not None else None,
             # one D for the whole line, or None when lessons of both kinds are in it (each mark has its own)
             "divisor": next(iter(used)) if len(used) == 1 else (default_divisor if not used else None),
@@ -260,6 +339,7 @@ def recompute_line(
         percent=percent,
         pending_excused=int(line.get("pending_excused") or 0),
         default_divisor=default_divisor,
+        price_source=line.get("price_source"),
     )
 
 
@@ -275,14 +355,24 @@ def sheet_counters(lines: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
     return {
         "total_amount": sheet_total(lines),
         "counted": sum(int(line["counted"]) for line in lines),
-        # lessons nobody paid for - not counting the free students (fee 0): they owe nothing
-        "unpaid": sum(int(line["unpaid"]) for line in lines if line.get("monthly_fee") != 0),
+        # lessons nobody paid for - not counting the free lessons (price 0): they owe nothing
+        "unpaid": sum(_unpaid_due(line) for line in lines),
         "pending_excused": sum(int(line["pending_excused"]) for line in lines),
-        # lines that have lessons to pay for but no fee (a line without lessons costs nothing either way)
-        "no_fee": sum(
-            1 for line in lines if line.get("monthly_fee") is None and (line["counted"] or line["unpaid"])
-        ),
+        # lines that have lessons to pay for but no price (a line without lessons costs nothing either way)
+        "no_fee": sum(1 for line in lines if _lacks_price(line)),
     }
+
+
+def _unpaid_due(line: Mapping[str, Any]) -> int:
+    if line.get("unpaid_due") is not None:
+        return int(line["unpaid_due"])
+    return int(line["unpaid"]) if line.get("monthly_fee") != 0 else 0  # a line saved before #105
+
+
+def _lacks_price(line: Mapping[str, Any]) -> bool:
+    if line.get("no_price_lessons") is not None:
+        return int(line["no_price_lessons"]) > 0
+    return line.get("monthly_fee") is None and bool(line["counted"] or line["unpaid"])  # saved before #105
 
 
 def group_blocks(lines: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:

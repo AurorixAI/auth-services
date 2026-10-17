@@ -13,6 +13,23 @@ PeriodMode = Literal["calendar", "lessons"]
 BillingAnchor = Literal["payment_date", "fixed_day"]
 QuoteBasis = Literal["full", "lessons", "days", "package", "custom", "none"]
 MembershipStatus = Literal["none", "free", "expired", "ends_today", "expiring", "active"]
+PriceSource = Literal["group", "override", "none"]
+
+
+class PriceOut(BaseModel):
+    """The effective price of a membership on a day (ROADMAP #105, ``src/auth/pricing.py``).
+
+    ``source``: ``group`` - the price of the group; ``override`` - the individual price of the student (then
+    ``reason`` says why and ``group_amount`` is what the group price would be); ``none`` - not set anywhere.
+    ``valid_from`` - the day the row that gave the price started.  The sum means "Оплата в месяц" (calendar
+    periods) or "Стоимость пакета" (lesson packages) as the centre's billing mode says.
+    """
+
+    amount: Optional[int] = None
+    source: PriceSource = "none"
+    valid_from: Optional[date_type] = None
+    group_amount: Optional[int] = None
+    reason: Optional[str] = None
 
 
 class PaymentSettings(BaseModel):
@@ -114,6 +131,9 @@ class MembershipPaymentRow(BaseModel):
     teacher_name: Optional[str] = None
     is_primary: bool
     is_active: bool
+    # ROADMAP #105: the effective price today.  ``monthly_fee`` is the same sum under the old name (nothing writes it
+    # any more; PUT /org/memberships/{id}/fee answers 410) - the front switches to ``price`` and drops it.
+    price: PriceOut = Field(default_factory=PriceOut)
     monthly_fee: Optional[int] = None
     status: MembershipStatus
     period_mode: Optional[PeriodMode] = None
@@ -148,8 +168,110 @@ class PaymentStatusPage(BaseModel):
     as_of: str
 
 
-class FeeUpdate(BaseModel):
-    monthly_fee: Optional[int] = Field(None, ge=0, le=MAX_MONEY)
+# ---- group price and individual price (ROADMAP #105) ------------------------------------------------
+
+
+class GroupPriceCurrent(BaseModel):
+    amount: int
+    valid_from: date_type
+    note: Optional[str] = None
+
+
+class GroupPriceRow(BaseModel):
+    id: str
+    amount: int
+    valid_from: date_type
+    note: Optional[str] = None
+    created_by: Optional[str] = None  # empty on a row made by the migration (valid_from 2000-01-01)
+    created_by_name: Optional[str] = None
+    created_at: Optional[str] = None
+    is_current: bool = False  # the row that gives the price today
+    is_future: bool = False  # valid_from is after today
+
+
+class GroupPricesOut(BaseModel):
+    """``GET /org/groups/{id}/prices``: the price today and the history, newest first."""
+
+    group_id: str
+    group_name: str
+    as_of: str  # the business today (Tashkent) the ``current`` is for
+    period_mode: PeriodMode
+    price_label: str  # «Оплата в месяц» (calendar) | «Стоимость пакета» (lessons)
+    current: Optional[GroupPriceCurrent] = None
+    history: List[GroupPriceRow] = Field(default_factory=list)
+
+
+class PriceImpactSheet(BaseModel):
+    sheet_id: str
+    month: str
+    teacher_id: str
+    teacher_name: Optional[str] = None
+
+
+class PriceImpact(BaseModel):
+    """What a change of the group price touches.  Payments already entered never change."""
+
+    students_following: int  # active students who follow the group price and so get the new one
+    students_with_override: int  # active students with an individual price: not touched
+    stale_payroll_sheets: int  # saved payroll sheets that would turn «данные изменились»
+    stale_sheets: List[PriceImpactSheet] = Field(default_factory=list)  # the sheets themselves: the owner only
+
+
+class GroupPriceUpdate(BaseModel):
+    amount: int = Field(..., ge=0, le=MAX_MONEY)
+    valid_from: Optional[date_type] = None  # default: today (Tashkent); a past day is allowed
+    note: Optional[str] = Field(None, max_length=200)
+
+
+class GroupPriceChanged(BaseModel):
+    """``PUT /org/groups/{id}/price``: the new state + the impact; with ``?dry_run=1`` only the impact."""
+
+    dry_run: bool = False
+    impact: PriceImpact
+    group_id: Optional[str] = None
+    group_name: Optional[str] = None
+    as_of: Optional[str] = None
+    period_mode: Optional[PeriodMode] = None
+    price_label: Optional[str] = None
+    current: Optional[GroupPriceCurrent] = None
+    history: Optional[List[GroupPriceRow]] = None
+
+
+class PriceOverrideRow(BaseModel):
+    id: str
+    amount: Optional[int] = None  # null = "from this day the price of the group again"
+    valid_from: date_type
+    reason: Optional[str] = None
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: Optional[str] = None
+    is_current: bool = False
+    is_future: bool = False
+
+
+class MembershipPriceOut(BaseModel):
+    """``GET /org/memberships/{id}/price-override``: the price today and the history of the exceptions."""
+
+    membership_id: str
+    group_id: str
+    as_of: str
+    period_mode: PeriodMode
+    price_label: str
+    price: PriceOut
+    history: List[PriceOverrideRow] = Field(default_factory=list)
+
+
+class PriceOverrideUpdate(BaseModel):
+    """``amount`` a sum: the individual price from ``valid_from`` (``reason`` 3..200 characters is mandatory);
+    ``amount`` null: from that day the price of the group again (``reason`` optional)."""
+
+    amount: Optional[int] = Field(None, ge=0, le=MAX_MONEY)
+    valid_from: Optional[date_type] = None
+    reason: Optional[str] = Field(None, max_length=200)
+
+
+class PriceOverrideChanged(MembershipPriceOut):
+    row: "MembershipPaymentRow"
 
 
 class PaymentCreate(BaseModel):
@@ -232,6 +354,9 @@ class PaymentQuote(BaseModel):
     lessons_count: Optional[int] = None
     partial: bool
     monthly_fee: Optional[int] = None
+    # The price of the membership at the start of the period (the base of the suggestion).  ``monthly_fee`` above is
+    # the sum that was actually used: the typed one when the caller sent ``monthly_fee``, else ``price.amount``.
+    price: PriceOut = Field(default_factory=PriceOut)
     suggested_amount: Optional[int] = None
     basis: QuoteBasis
     parts: List[QuotePartOut] = Field(default_factory=list)

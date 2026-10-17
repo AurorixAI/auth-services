@@ -6,6 +6,9 @@ token and guarded by ``require_payments_access`` (owner always; admin only when
 the owner switched ``admin_can_manage`` on; teacher never).  The settings
 endpoints are the owner's alone.  Money is returned by nothing else - that
 includes the amount hint (``quote``), the receipt and the cheque files (N13 P2.2).
+
+ROADMAP #105 - the price of a group and the individual price of a student live here too (``pricing.py``): the same
+guard, so a teacher never sees a price and an admin sees it only when the owner allowed money.
 """
 from datetime import date
 from typing import Annotated, Literal, Optional
@@ -20,12 +23,16 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from src.core.database import get_db
 
+from . import pricing
 from .dependencies import require_payments_access, require_payments_settings
 from .payments_files import MAX_BODY_BYTES, MAX_FILE_BYTES, file_headers
 from .payments_schemas import (
     MAX_MONEY,
-    FeeUpdate,
+    GroupPriceChanged,
+    GroupPricesOut,
+    GroupPriceUpdate,
     MembershipPaymentRow,
+    MembershipPriceOut,
     PaymentCreate,
     PaymentCreated,
     PaymentFileOut,
@@ -38,6 +45,8 @@ from .payments_schemas import (
     PaymentStatusPage,
     PaymentVoid,
     PaymentVoided,
+    PriceOverrideChanged,
+    PriceOverrideUpdate,
     ReceiptOut,
 )
 from .payments_service import PaymentError, PaymentService
@@ -45,7 +54,7 @@ from .payments_service import PaymentError, PaymentService
 router = APIRouter(prefix="/auth", tags=["Payments"])
 
 
-def _http(exc: PaymentError) -> HTTPException:
+def _http(exc: PaymentError | pricing.PriceError) -> HTTPException:
     return HTTPException(exc.status_code, exc.detail)
 
 
@@ -107,26 +116,94 @@ def payments_status(
 def student_memberships(
     student_id: UUID, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)
 ):
-    """Группы ученика с оплатой в месяц и статусом."""
+    """Группы ученика с ценой (``price``) и статусом оплаты."""
     try:
         return PaymentService(db).student_memberships(user["org_id"], student_id)
     except PaymentError as exc:
         raise _http(exc)
 
 
-@router.put("/org/memberships/{membership_id}/fee", response_model=MembershipPaymentRow)
-def set_membership_fee(
-    membership_id: UUID,
-    request: FeeUpdate,
+FEE_GONE = {
+    "code": "FEE_ENDPOINT_GONE",
+    "message": (
+        "«Оплата в месяц» ученика больше не задаётся. Цена задаётся у группы: "
+        "PUT /api/v1/auth/org/groups/{group_id}/price. Индивидуальная цена ученика — "
+        "PUT /api/v1/auth/org/memberships/{membership_id}/price-override"
+    ),
+}
+
+
+@router.put("/org/memberships/{membership_id}/fee", status_code=410, include_in_schema=False)
+def set_membership_fee_gone(membership_id: UUID, user: dict = Depends(require_payments_access)):
+    """Снято (ROADMAP #105): 410 с указанием новых путей. Права проверяются, как у всех денежных ручек."""
+    raise HTTPException(410, FEE_GONE)
+
+
+# ---- group price and individual price (ROADMAP #105) ------------------------------------------------
+
+
+@router.get("/org/groups/{group_id}/prices", response_model=GroupPricesOut)
+def group_prices(
+    group_id: UUID, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)
+):
+    """Цена группы на сегодня (``current``, null — не задана) и история изменений, новые сверху."""
+    try:
+        return pricing.PricingService(db).group_prices(user["org_id"], group_id)
+    except pricing.PriceError as exc:
+        raise _http(exc)
+
+
+@router.put("/org/groups/{group_id}/price", response_model=GroupPriceChanged)
+def set_group_price(
+    group_id: UUID,
+    request: GroupPriceUpdate,
+    dry_run: bool = Query(False, description="1 — только последствия (impact), ничего не записывать"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Задать «оплату в месяц» членства (null — сбросить)."""
+    """Задать цену группы: сумма + «действует с» (по умолчанию сегодня; прошлая дата разрешена) + примечание.
+
+    В ответе — новая история и ``impact``: сколько учеников возьмут цену (``students_following``), у скольких
+    индивидуальная (``students_with_override``) и сколько сохранённых ведомостей зарплаты станут «данные изменились»
+    (``stale_payroll_sheets``; их список ``stale_sheets`` — только владельцу). ``?dry_run=1`` — только ``impact``.
+    Оплаты, уже внесённые, не меняются никогда."""
     try:
-        return PaymentService(db).set_fee(
-            user["org_id"], membership_id, user["user_id"], request.monthly_fee
+        return pricing.PricingService(db).set_group_price(
+            user["org_id"], group_id, user["user_id"], amount=request.amount, valid_from=request.valid_from,
+            note=request.note, dry_run=dry_run, owner_view=user.get("org_role") == "owner",
         )
-    except PaymentError as exc:
+    except pricing.PriceError as exc:
+        raise _http(exc)
+
+
+@router.get("/org/memberships/{membership_id}/price-override", response_model=MembershipPriceOut)
+def get_price_override(
+    membership_id: UUID, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)
+):
+    """Действующая цена членства сегодня и история индивидуальных цен."""
+    try:
+        return pricing.PricingService(db).override_history(user["org_id"], membership_id)
+    except pricing.PriceError as exc:
+        raise _http(exc)
+
+
+@router.put("/org/memberships/{membership_id}/price-override", response_model=PriceOverrideChanged)
+def set_price_override(
+    membership_id: UUID,
+    request: PriceOverrideUpdate,
+    user: dict = Depends(require_payments_access),
+    db: Session = Depends(get_db),
+):
+    """«Индивидуальная цена» (``amount`` + причина обязательна) или «Вернуть цену группы» (``amount`` null) — с даты
+    ``valid_from`` (по умолчанию сегодня). Ответ — история и обновлённая строка членства (``row``)."""
+    try:
+        out = pricing.PricingService(db).set_override(
+            user["org_id"], membership_id, user["user_id"], amount=request.amount,
+            valid_from=request.valid_from, reason=request.reason,
+        )
+        out["row"] = PaymentService(db)._row(user["org_id"], membership_id)
+        return out
+    except (PaymentError, pricing.PriceError) as exc:
         raise _http(exc)
 
 
@@ -161,7 +238,8 @@ def payment_quote(
     """Подсказка периода и суммы для формы оплаты; ничего не записывает.
 
     Даты по умолчанию считаются тем же кодом, что при внесении оплаты; ошибки — те же 422.
-    ``monthly_fee`` (необязательно) заменяет сохранённую «оплату в месяц» только для этого расчёта;
+    База — действующая цена ученика (цена группы или индивидуальная) на первый день оплачиваемого периода
+    (``price`` в ответе). ``monthly_fee`` (необязательно) заменяет её только для этого расчёта, ничего не сохраняя;
     в ответе ``monthly_fee`` — та сумма, по которой считали."""
     try:
         return PaymentService(db).quote(
