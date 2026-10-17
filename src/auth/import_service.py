@@ -39,6 +39,7 @@ from src.models.auth import (
     User,
 )
 
+from .membership_periods import open_period
 from .student_id_service import DisplayIdAllocator
 
 # ── Sheet + column names (the template we dictate) ──────────────────────────
@@ -519,7 +520,9 @@ def commit(org_id: str, creator_id: str, data: bytes, db: Session) -> ImportComm
                 id_allocator = DisplayIdAllocator(db, org_id)
             id_allocator.allocate(student)  # проставит sequence_number + display_id
             if group_id:
-                db.add(StudentGroup(student_id=student.id, group_id=group_id))
+                membership = StudentGroup(student_id=student.id, group_id=group_id)
+                open_period(membership)  # the first stay of the student in the group
+                db.add(membership)
 
         db.commit()
     except Exception as exc:  # noqa: BLE001 — surface as a single import failure

@@ -77,6 +77,8 @@ def setup_mwf(w, fee=450_000, billing_day=1, joined=None, anchor="fixed_day"):
     membership.monthly_fee = fee
     if joined is not None:
         membership.joined_at = joined
+        for stay in membership.periods:              # the last stay mirrors the row (src/auth/membership_periods.py)
+            stay.joined_at = joined
     w.db.commit()
     set_settings(w, period_mode="calendar", billing_anchor=anchor, billing_day=billing_day)
     return membership
@@ -161,7 +163,8 @@ def test_a_student_who_rejoins_reuses_the_row_and_starts_on_the_return_day(world
     student = world.students[0]
     old_id = mid(world)
     pay(world, paid_on=D(2026, 2, 1), valid_from=D(2026, 2, 1), valid_to=D(2026, 2, 28))   # paid until 28.02
-    assert owner(world).delete(f"{GROUPS}/{world.group.id}/students/{student.id}").status_code == 200
+    with clock(monkeypatch, D(2026, 3, 1), 11):      # he leaves before he returns (a stay never starts before the last one ended)
+        assert owner(world).delete(f"{GROUPS}/{world.group.id}/students/{student.id}").status_code == 200
     with clock(monkeypatch, D(2026, 3, 15), 11):
         r = owner(world).post(f"{GROUPS}/{world.group.id}/students/{student.id}")
         assert r.status_code == 200, r.text

@@ -433,12 +433,20 @@ class TestStudentGroupRepo:
         session.flush.assert_not_called()
 
     def test_remove_student_when_member(self):
+        from datetime import datetime
+
+        from src.auth.membership_periods import open_period
+        from src.models.auth import StudentGroup
+
         repo, session = self._make_repo()
-        membership = MagicMock()
+        membership = StudentGroup(student_id=uuid4(), group_id=uuid4())
+        open_period(membership, datetime(2026, 9, 1, 8, 0))
         session.scalar.return_value = membership
-        result = repo.remove_student(uuid4(), uuid4())
+        result = repo.remove_student(membership.student_id, membership.group_id)
         assert result is True
-        assert membership.is_active is False
+        # the membership AND its open period are closed by the same instant
+        assert membership.is_active is False and membership.left_at is not None
+        assert [(p.joined_at, p.left_at) for p in membership.periods] == [(datetime(2026, 9, 1, 8, 0), membership.left_at)]
         session.flush.assert_called()
 
 

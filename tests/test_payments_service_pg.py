@@ -359,7 +359,11 @@ def test_student_not_in_the_roster_snapshot_is_not_charged(world):
     s0 = world.students[0]
     set_settings(world, period_mode="lessons", lessons_per_payment=5)
     newcomer = make_student(world.db, world.org, world.group, "Новая", "Ученица", "N13-010")
-    world.db.query(StudentGroup).filter_by(student_id=newcomer.id).update({"joined_at": datetime.now() + timedelta(days=1)})
+    later = datetime.now() + timedelta(days=1)
+    member = world.db.query(StudentGroup).filter_by(student_id=newcomer.id).one()
+    member.joined_at = later
+    for stay in member.periods:                             # the roster of a lesson asks the periods
+        stay.joined_at = later
     world.db.commit()                                       # joins after the lesson: not in its roster
     d, _ = lesson_marks(world, 1, {s0: "present"})
     # A stray mark for somebody who was not in the frozen roster must not spend a lesson.

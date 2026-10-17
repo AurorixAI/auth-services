@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
-HEAD='y5z6a7b8c9d'          # diagnostic invite «cancelled» (N13 tails, #89)
+HEAD='z6a7b8c9d0e'          # membership periods (N13 tails, #59)
+INVITES='y5z6a7b8c9d'       # diagnostic invite «cancelled» (N13 tails, #89)
 ARCHIVE='x4y5z6a7b8c'       # student archive (N13)
 PREVIOUS='w3x4y5z6a7b'      # lesson type and payroll (N13 P3): the revision before the archive
 
@@ -60,6 +61,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     _check_n13_p3_objects(engine,config,ids)
     _check_n13_archive_objects(engine,config,ids,monkeypatch)
     _check_n13_invite_cancelled_objects(engine,config,ids)
+    _check_n13_periods_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -590,3 +592,119 @@ def _check_n13_invite_cancelled_objects(engine,config,ids):
         assert conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
         assert conn.execute(text("SELECT count(*) FROM pg_constraint WHERE conrelid='diagnostic_invites'::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%pending%'")).scalar_one()==1   # one status CHECK, not two
     add('cancelled','M89LAST','student_archived')
+
+
+def _check_n13_periods_objects(engine,config,ids):
+    """#59: ``student_group_periods`` - the table, its constraints, the backfill (incl. the rebuild from the archive
+    journal), idempotence, and the downgrade that keeps every membership row."""
+    import json
+    from sqlalchemy.exc import IntegrityError
+    from src.models.auth import Group,Student,User
+    org=ids['org']
+    actor=uuid4()
+    with Session(engine) as db:
+        db.add(User(id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='A',role='owner')); db.commit()
+    # --- the table as the head leaves it
+    assert 'student_group_periods' in inspect(engine).get_table_names()
+    c={x['name']:x for x in inspect(engine).get_columns('student_group_periods')}
+    assert set(c)=={'id','membership_id','joined_at','left_at','created_at'}
+    assert not c['joined_at']['nullable'] and c['left_at']['nullable'] and not c['membership_id']['nullable']
+    assert {i['name'] for i in inspect(engine).get_indexes('student_group_periods')} >= {'ix_student_group_periods_membership','uq_student_group_periods_open'}
+    # the membership of the first check got its period from the backfill (or the model) - exactly one, and open
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT count(*) FROM student_group_periods WHERE membership_id=:m AND left_at IS NULL'),{'m':ids['membership']}).scalar_one()==1
+    # --- go back to the revision before the table and build the data a backfill must understand (raw SQL: the models are newer)
+    command.downgrade(config,INVITES)
+    assert 'student_group_periods' not in inspect(engine).get_table_names()
+    g1,g2=uuid4(),uuid4()
+    students={n:uuid4() for n in range(1,10)}
+    with Session(engine) as db:
+        db.add(Group(id=g1,org_id=org,name='Periods 1',class_level=9,created_at=datetime(2026,7,1,9,0,0)))
+        db.add(Group(id=g2,org_id=org,name='Periods 2',class_level=9,created_at=datetime(2026,7,1,9,0,0)))
+        for n,sid in students.items():
+            db.add(Student(id=sid,org_id=org,first_name=f'P{n}',last_name='Periods',class_level=9,status='active',created_at=datetime(2026,8,1,10,0,0)))
+        db.commit()
+    mem={n:uuid4() for n in range(1,10)}
+    def membership(n,group,active,joined,left):
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO student_groups (id,student_id,group_id,is_active,joined_at,left_at) VALUES (:i,:s,:g,:a,:j,:l)"),
+                         {'i':mem[n],'s':students[n],'g':group,'a':active,'j':joined,'l':left})
+    def archived_row(n,joined_at,archived_at,membership_id=None,student_id=None):
+        snap={'membership_id':str(membership_id or mem[n]),'student_id':str(student_id or students[n]),'joined_at':joined_at,'archived_at':archived_at}
+        snap={k:v for k,v in snap.items() if v is not None}
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO group_audit (id,org_id,group_id,actor_id,actor_role,action,snapshot) VALUES (gen_random_uuid(),:o,:g,:a,'admin','student_archived',CAST(:s AS jsonb))"),
+                         {'o':org,'g':g1,'a':actor,'s':json.dumps(snap)})
+    membership(1,g1,True ,datetime(2026,9,1,8,0),None)                       # active
+    membership(2,g1,False,datetime(2026,9,1,8,0),datetime(2026,9,30,12,0))   # closed
+    membership(3,g1,True ,None,None)                                         # no joined_at: falls back to the student's created_at
+    membership(4,g1,False,datetime(2026,9,5,8,0),None)                       # inactive without left_at: a zero-length period
+    membership(5,g1,True ,datetime(2026,11,1,9,0),None)                      # archived in October, brought back in November
+    archived_row(5,'2026-09-02T08:00:00','2026-10-10T12:30:00.123456')
+    membership(6,g2,True ,datetime(2026,12,1,9,0),None)                      # archived twice, brought back twice
+    archived_row(6,'2026-09-02T08:00:00','2026-10-10T12:00:00')
+    archived_row(6,'2026-10-20T09:00:00','2026-11-15T10:00:00')
+    membership(7,g2,False,datetime(2026,9,2,8,0),datetime(2026,10,10,12,0))  # still archived: the journal row IS the current period
+    archived_row(7,'2026-09-02T08:00:00','2026-10-10T12:00:00')
+    membership(8,g2,True ,datetime(2026,11,1,9,0),None)                      # journal rows that must NOT be believed
+    archived_row(8,'yesterday','2026-10-10T12:00:00')                        # not a moment
+    archived_row(8,'2026-10-01T08:00:00',None)                               # no end
+    archived_row(8,'2026-10-25T00:00:00','2026-11-20T00:00:00')              # ends after the current period starts
+    archived_row(8,'2026-10-12T10:00:00','2026-10-12T09:00:00')              # ends before it starts
+    archived_row(8,'2026-09-02T08:00:00','2026-10-10T12:00:00',membership_id=uuid4())              # a membership that is gone
+    archived_row(8,'2026-09-02T08:00:00','2026-10-10T12:00:00',student_id=students[1])             # another student's membership
+    membership(9,g2,False,datetime(2026,9,1,8,0),datetime(2026,10,31,12,0)) # a journal row that overlaps the existing period
+    archived_row(9,'2026-09-15T08:00:00','2026-10-01T08:00:00')
+    def periods():
+        with engine.connect() as conn:
+            rows=conn.execute(text('SELECT membership_id,joined_at,left_at FROM student_group_periods ORDER BY membership_id,joined_at')).all()
+        out={}
+        for m,j,l in rows: out.setdefault(m,[]).append((j,l))
+        return out
+    def memberships_snapshot():
+        with engine.connect() as conn:
+            return conn.execute(text('SELECT id,student_id,group_id,is_active,joined_at,left_at FROM student_groups ORDER BY id')).all()
+    rows_before=memberships_snapshot()
+    command.upgrade(config,'head')
+    got=periods()
+    dt=datetime
+    assert got[mem[1]]==[(dt(2026,9,1,8,0),None)]
+    assert got[mem[2]]==[(dt(2026,9,1,8,0),dt(2026,9,30,12,0))]
+    assert got[mem[3]]==[(dt(2026,8,1,10,0),None)]                           # student.created_at
+    assert got[mem[4]]==[(dt(2026,9,5,8,0),dt(2026,9,5,8,0))]                # zero-length: covers no instant
+    assert got[mem[5]]==[(dt(2026,9,2,8,0),dt(2026,10,10,12,30,0,123456)),(dt(2026,11,1,9,0),None)]   # rebuilt from the journal
+    assert got[mem[6]]==[(dt(2026,9,2,8,0),dt(2026,10,10,12,0)),(dt(2026,10,20,9,0),dt(2026,11,15,10,0)),(dt(2026,12,1,9,0),None)]
+    assert got[mem[7]]==[(dt(2026,9,2,8,0),dt(2026,10,10,12,0))]             # no duplicate of the current period
+    assert got[mem[8]]==[(dt(2026,11,1,9,0),None)]                           # nothing invented
+    assert got[mem[9]]==[(dt(2026,9,1,8,0),dt(2026,10,31,12,0))]
+    assert memberships_snapshot()==rows_before                               # the membership rows are not touched
+    with engine.connect() as conn:                                           # one open period iff active (for every membership of this block)
+        assert conn.execute(text("SELECT count(*) FROM student_groups sg WHERE sg.id = ANY(:ids) AND (sg.is_active IS TRUE) <> EXISTS (SELECT 1 FROM student_group_periods p WHERE p.membership_id=sg.id AND p.left_at IS NULL)"),{'ids':list(mem.values())}).scalar_one()==0
+    # --- idempotent: the same revision again (stamped back) changes nothing
+    command.stamp(config,INVITES)
+    command.upgrade(config,'head')
+    assert periods()==got
+    # --- the constraints
+    with pytest.raises(IntegrityError,match='uq_student_group_periods_open'):
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO student_group_periods (id,membership_id,joined_at) VALUES (gen_random_uuid(),:m,'2026-12-24 08:00:00')"),{'m':mem[1]})
+    with pytest.raises(IntegrityError,match='ck_student_group_periods_order'):
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO student_group_periods (id,membership_id,joined_at,left_at) VALUES (gen_random_uuid(),:m,'2026-12-24 08:00:00','2026-12-23 08:00:00')"),{'m':mem[2]})
+    # a payment keeps the membership row (RESTRICT) - the periods hang on the row and go with it (CASCADE)
+    with engine.begin() as conn:
+        conn.execute(text('DELETE FROM student_groups WHERE id=:m'),{'m':mem[9]})
+    assert mem[9] not in periods() and mem[8] in periods()
+    # --- the downgrade drops the table only; every membership row stays as it was
+    rows_before=memberships_snapshot()
+    command.downgrade(config,INVITES)
+    assert 'student_group_periods' not in inspect(engine).get_table_names()
+    assert memberships_snapshot()==rows_before
+    command.upgrade(config,'head')
+    assert {k:v for k,v in periods().items() if k in mem.values()}=={k:v for k,v in got.items() if k in mem.values() and k!=mem[9]}   # the same periods come back, the journal still holds the old ones
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+    # --- a database whose table and indexes exist already, stamped back: the revision does not fail and adds nothing
+    command.stamp(config,INVITES)
+    command.upgrade(config,'head')
+    assert {k:v for k,v in periods().items() if k in mem.values()}=={k:v for k,v in got.items() if k in mem.values() and k!=mem[9]}

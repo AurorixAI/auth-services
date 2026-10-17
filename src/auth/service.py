@@ -26,6 +26,14 @@ from . import student_identity
 from .student_id_service import assign_display_id
 from .attendance_excuses import AttendanceExcuseService
 from .diagnostic_level import level_fields, normalize_level_payload
+from .membership_periods import (
+    close_period,
+    group_period_spans,
+    member_at,
+    open_period,
+    periods_by_membership,
+    periods_payload,
+)
 from .student_archive import (
     ARCHIVED,
     ARCHIVED_STUDENT_INVITE_MESSAGE,
@@ -1157,6 +1165,8 @@ class AuthService:
             .order_by(StudentGroup.joined_at.desc())
             .all()
         )
+        # Every stay in every group (a student who came back has several), one query for all the memberships.
+        period_map = periods_by_membership(self.db, [m.id for m in memberships])
         group_history = []
         for m in memberships:
             group_history.append({
@@ -1166,6 +1176,7 @@ class AuthService:
                 "is_active": m.is_active,
                 "joined_at": m.joined_at.isoformat() if m.joined_at else None,
                 "left_at": m.left_at.isoformat() if m.left_at else None,
+                "periods": periods_payload(period_map.get(m.id, [])),
             })
 
         # 5. Every active membership (primary first); no money here.
@@ -1193,6 +1204,7 @@ class AuthService:
                 "class_level": g.class_level,
                 "is_primary": str(student.group_id or "") == str(g.id),
                 "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+                "periods": periods_payload(period_map.get(m.id, [])),
             }
             for m, g, t in group_rows
         ]
@@ -2272,6 +2284,7 @@ class AuthService:
             s.id: s
             for s in self.db.query(Student).filter(Student.id.in_(student_ids)).all()
         } if student_ids else {}
+        period_map = periods_by_membership(self.db, [m.id for m in memberships])
         latest_results = self._latest_diagnostic_results(student_ids)
 
         students_out = []
@@ -2296,6 +2309,7 @@ class AuthService:
                 "display_id": s.display_id,
                 "student_phone": s.student_phone,
                 "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+                "periods": periods_payload(period_map.get(m.id, [])),
                 "last_theta": theta,
                 "last_level": lvl["recommended_level"],
                 "last_level_status": lvl["level_status"],
@@ -2710,8 +2724,7 @@ class AuthService:
         self._lock_groups_for_membership_change(org_id, affected_group_ids)
         self._assert_no_open_attendance_for_groups(org_id, affected_group_ids)
         for om in closing:
-            om.is_active = False
-            om.left_at = now_dt
+            close_period(om, now_dt)
 
         # Target membership is either a historical inactive record that will
         # be reactivated (its payment history stays attached), or a new one.
@@ -2730,11 +2743,10 @@ class AuthService:
 
         if existing:
             if not already_member:
-                existing.is_active = True
                 # Returning to a historical group starts a new membership
-                # period; recorded attendance stays tied to past lessons.
-                existing.joined_at = now_dt
-                existing.left_at = None
+                # period (the earlier ones stay in ``student_group_periods``);
+                # recorded attendance stays tied to past lessons.
+                open_period(existing, now_dt)
             if closing:
                 # A transfer into a group the student already belongs to keeps
                 # its old joined_at (past rosters need it); this instant lets
@@ -2742,9 +2754,8 @@ class AuthService:
                 existing.transferred_at = now_dt
             membership = existing
         else:
-            membership = StudentGroup(
-                student_id=student_id, group_id=group_id, is_active=True, joined_at=now_dt
-            )
+            membership = StudentGroup(student_id=student_id, group_id=group_id)
+            open_period(membership, now_dt)
             self.db.add(membership)
 
         if monthly_fee is not None:
@@ -2856,8 +2867,7 @@ class AuthService:
             raise ValueError("Ученик не в этой группе")
         self._lock_groups_for_membership_change(org_id, [group.id])
         self._assert_no_open_attendance_for_groups(org_id, [group.id])
-        sg.is_active = False
-        sg.left_at = datetime.now(timezone.utc)
+        close_period(sg, datetime.now(timezone.utc))
         self.db.flush()
 
         if str(student.group_id or "") == str(group.id):
@@ -4466,8 +4476,8 @@ class AuthService:
             self.db.query(StudentGroup)
             .filter(
                 StudentGroup.group_id == group_id,
-                or_(StudentGroup.joined_at.is_(None), StudentGroup.joined_at <= occurred_at),
-                or_(StudentGroup.left_at.is_(None), StudentGroup.left_at > occurred_at),
+                # ANY stay of the student covers the instant, not only the last one.
+                member_at(occurred_at),
             )
             .order_by(StudentGroup.joined_at, StudentGroup.id)
             .all()
@@ -4630,15 +4640,8 @@ class AuthService:
         memberships_by_group: Dict[Any, list[tuple[Optional[datetime], Optional[datetime]]]] = {}
         if group_ids:
             window_start_utc = lesson_start_as_naive_utc(reconciliation_from, 0)
-            for member_group_id, joined_at, left_at in (
-                self.db.query(StudentGroup.group_id, StudentGroup.joined_at, StudentGroup.left_at)
-                .filter(
-                    StudentGroup.group_id.in_(group_ids),
-                    or_(StudentGroup.left_at.is_(None), StudentGroup.left_at > window_start_utc),
-                )
-                .all()
-            ):
-                memberships_by_group.setdefault(member_group_id, []).append((joined_at, left_at))
+            # Every STAY counts (a student who came back has several), still one query for all the groups.
+            memberships_by_group = group_period_spans(self.db, group_ids, not_before=window_start_utc)
 
         actions: list[OpenAttendanceActionResponse] = []
         for attendance, group in open_rows:
@@ -5223,6 +5226,7 @@ class AuthService:
                 .all()
             ) if former_uuid_ids else []
             memberships_by_student_id = {membership.student_id: membership for membership in memberships}
+            period_map = periods_by_membership(self.db, [membership.id for membership in memberships])
             destination_rows = (
                 self.db.query(StudentGroup, Group)
                 .join(Group, Group.id == StudentGroup.group_id)
@@ -5263,6 +5267,7 @@ class AuthService:
                     "class_level": student.class_level,
                     "display_id": student.display_id,
                     "left_at": membership.left_at.isoformat() if membership and membership.left_at else None,
+                    "periods": periods_payload(period_map.get(membership.id, [])) if membership else [],
                     "transferred_to_group_name": destinations_by_student_id.get(student.id),
                 })
             historical_students.sort(key=lambda item: (item.get("left_at") or "", item["full_name"]))

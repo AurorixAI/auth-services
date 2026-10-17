@@ -16,6 +16,10 @@ the student is locked FOR NO KEY UPDATE (it still excludes the FOR UPDATE of ``a
 on the student through its foreign key - a plain FOR UPDATE here could deadlock with a payment being
 recorded), then the memberships FOR NO KEY UPDATE (as the payments module does), then the groups.
 
+Membership periods (ROADMAP #59): closing a membership ends its open period (``close_period``); a return to the
+same group (``restore`` goes through ``add_student_to_group``) opens a new one on the same membership row, so the
+time before the archiving is not lost.
+
 Diagnostic invites (ROADMAP #89): in the same transaction every unfinished link of the student - status
 ``pending`` or ``confirmed`` - becomes ``cancelled`` (``cancelled_at`` = the archiving instant,
 ``cancel_reason`` = ``student_archived``), so the code stops working at once.  A ``in_progress`` invite is NOT
@@ -36,6 +40,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from .membership_periods import close_period
 from .models import DiagnosticInvite, Group, GroupAudit, Student, StudentDiagnosticResult, StudentGroup
 from .payments_service import CONCURRENT_EDIT_MESSAGE, is_deadlock
 from .schemas import ArchivedGroupOut, StudentResponse
@@ -334,8 +339,7 @@ class StudentArchiveService:
 
         primary_group_id = student.group_id
         for membership in memberships:
-            membership.is_active = False
-            membership.left_at = now
+            close_period(membership, now)  # the open period ends with the membership; earlier ones stay
         invites_cancelled, invites_in_progress = self._cancel_open_invites(org_id, student.id, now)
         student.status = ARCHIVED
         student.group_id = None

@@ -6,6 +6,7 @@ Tables: organizations, users, organization_members, invitations,
         student_diagnostic_results
 """
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -24,10 +25,11 @@ from sqlalchemy import (
     BigInteger,
     SmallInteger,
     Date,
+    event,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Session, relationship
 from sqlalchemy.sql import func
 
 from src.models.base import Base
@@ -501,11 +503,84 @@ class StudentGroup(Base):
 
     student = relationship("Student", back_populates="group_memberships")
     group = relationship("Group", back_populates="student_memberships")
+    # Every stay of the student in the group, oldest first (the row above keeps the CURRENT / last one in
+    # joined_at / left_at).  Written only through src/auth/membership_periods.py.
+    periods = relationship(
+        "StudentGroupPeriod",
+        back_populates="membership",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="(StudentGroupPeriod.joined_at, StudentGroupPeriod.id)",
+    )
 
     __table_args__ = (
         UniqueConstraint("student_id", "group_id", name="uq_student_group"),
         CheckConstraint("monthly_fee >= 0", name="ck_student_groups_monthly_fee"),
     )
+
+
+class StudentGroupPeriod(Base):
+    """One stay of a student in a group (ROADMAP #59): ``student_groups`` is ONE row per student and group - the
+    payments hang on it - so a student who leaves and returns has several periods on that one row.
+
+    Naive UTC, like ``student_groups.joined_at`` / ``left_at``.  At most one open period (``left_at IS NULL``)
+    per membership (partial unique index); an open period exists iff the membership is active; the last period
+    mirrors the membership's own ``joined_at`` / ``left_at``.  See ``src/auth/membership_periods.py``.
+    """
+
+    __tablename__ = "student_group_periods"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    membership_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("student_groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    joined_at = Column(DateTime, nullable=False)
+    left_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    membership = relationship("StudentGroup", back_populates="periods")
+
+    __table_args__ = (
+        Index("ix_student_group_periods_membership", "membership_id", "joined_at"),
+        Index(
+            "uq_student_group_periods_open",
+            "membership_id",
+            unique=True,
+            postgresql_where=text("left_at IS NULL"),
+        ),
+        CheckConstraint("left_at IS NULL OR left_at >= joined_at", name="ck_student_group_periods_order"),
+    )
+
+
+def _as_naive_utc(moment):
+    if not isinstance(moment, datetime):
+        return None
+    if moment.tzinfo is not None:
+        return moment.astimezone(timezone.utc).replace(tzinfo=None)
+    return moment
+
+
+@event.listens_for(Session, "before_flush")
+def give_new_memberships_a_period(session, flush_context, instances):
+    """Safety net: a membership added to the session WITHOUT a period (a fixture, a script, a bulk import)
+    gets the one it should have - open while it is active, closed with its ``left_at`` otherwise.  The write
+    points of the application open and close periods explicitly (``open_period`` / ``close_period``); a
+    membership that already has one is not touched here."""
+    for obj in list(session.new):
+        if not isinstance(obj, StudentGroup) or obj.periods:
+            continue
+        started = _as_naive_utc(obj.joined_at)
+        if started is None:
+            started = datetime.now(timezone.utc).replace(tzinfo=None)
+            obj.joined_at = started
+        active = obj.is_active is not False  # NULL = the column default, true
+        left = None
+        if not active:
+            left = _as_naive_utc(obj.left_at) or started
+            left = max(left, started)
+        obj.periods.append(StudentGroupPeriod(joined_at=started, left_at=left))
 
 
 # ============================================================================

@@ -59,9 +59,8 @@ class StudentGroupRepo(BaseRepository[StudentGroup]):
         membership = self.get_membership(student_id, group_id)
         if not membership:
             return False
-        from sqlalchemy.sql import func
+        from src.auth.membership_periods import close_period  # lazy: the auth package imports the repositories
 
-        membership.is_active = False
-        membership.left_at = func.now()
+        close_period(membership)  # is_active / left_at AND the open period, kept in step
         self.session.flush()
         return True

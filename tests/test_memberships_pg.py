@@ -225,7 +225,7 @@ def test_profile_lists_every_active_group_without_money(two):
     assert [g["group_id"] for g in groups] == [str(two.group.id), str(two.second.id)]
     assert [g["is_primary"] for g in groups] == [True, False]
     assert groups[1]["teacher_name"].startswith("Мария") and groups[1]["class_level"] == 9
-    assert set(groups[0]) == {"membership_id", "group_id", "group_name", "teacher_id", "teacher_name", "class_level", "is_primary", "joined_at"}
+    assert set(groups[0]) == {"membership_id", "group_id", "group_name", "teacher_id", "teacher_name", "class_level", "is_primary", "joined_at", "periods"}
     assert profile["group"]["id"] == str(two.group.id)  # the old field stays
     assert "450000" not in repr(profile) and "monthly_fee" not in repr(profile)
 
