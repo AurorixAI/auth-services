@@ -556,8 +556,9 @@ class StudentGroup(Base):
     initial_diagnostic_reviewed_at = Column(DateTime)
     initial_diagnostic_reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
 
-    # "Оплата в месяц" in whole sums.  NULL = not set, 0 = free.  Money is
-    # never returned by student/group endpoints - only by the payment API.
+    # LEGACY (ROADMAP #105): "Оплата в месяц" of the membership before the group price.  Kept for the rollback
+    # only; the code neither reads nor writes it - the price is ``group_prices`` + ``membership_price_overrides``
+    # (``src/auth/pricing.py``); the downgrade of b8c9d0e1f2a refills it.  Drop in a later migration.
     monthly_fee = Column(BigInteger, nullable=True)
     monthly_fee_updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     monthly_fee_updated_at = Column(DateTime, nullable=True)
@@ -587,6 +588,66 @@ class StudentGroup(Base):
     __table_args__ = (
         UniqueConstraint("student_id", "group_id", name="uq_student_group"),
         CheckConstraint("monthly_fee >= 0", name="ck_student_groups_monthly_fee"),
+    )
+
+
+class GroupPrice(Base):
+    """Цена группы (ROADMAP #105): сумма и день, с которого она действует.
+
+    Цена на день *d* - строка с наибольшим ``valid_from <= d``; строки нет - «цена не задана».  Смысл суммы
+    задаёт режим оплаты центра: календарный период - «Оплата в месяц», пакет уроков - «Стоимость пакета».
+    ``valid_from`` - деловой день Ташкента (группа «Ташкент» в TIME_CONVENTIONS.md), ``created_at`` - UTC.
+    Строки не удаляются: правка того же дня заменяет сумму, новая дата добавляет шаг истории.  ``created_by``
+    пуст у строк, которые создала миграция (``valid_from = 2000-01-01``: «всегда так было»).
+    Читает и пишет только ``src/auth/pricing.py``; деньги отдают только ручки оплат.
+    """
+
+    __tablename__ = "group_prices"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    group_id = Column(
+        UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
+    )
+    amount = Column(BigInteger, nullable=False)
+    valid_from = Column(Date, nullable=False)
+    note = Column(String(200), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+    __table_args__ = (
+        UniqueConstraint("group_id", "valid_from", name="uq_group_prices_group_from"),
+        CheckConstraint("amount >= 0", name="ck_group_prices_amount"),
+    )
+
+
+class MembershipPriceOverride(Base):
+    """Индивидуальная цена ученика в группе - явное исключение (ROADMAP #105).
+
+    Действующее исключение на день *d* - строка с наибольшим ``valid_from <= d``.  ``amount`` задан - это цена
+    ученика; ``amount IS NULL`` - «с этой даты снова цена группы».  Для заданной суммы причина обязательна
+    (сервис и CHECK).  Виснет на членстве (``student_groups``), поэтому при переводе в другую группу не
+    переносится: в новой группе ученик берёт цену группы.
+    """
+
+    __tablename__ = "membership_price_overrides"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    membership_id = Column(
+        UUID(as_uuid=True), ForeignKey("student_groups.id", ondelete="CASCADE"), nullable=False
+    )
+    amount = Column(BigInteger, nullable=True)
+    valid_from = Column(Date, nullable=False)
+    reason = Column(String(200), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+    __table_args__ = (
+        UniqueConstraint("membership_id", "valid_from", name="uq_membership_price_overrides_from"),
+        CheckConstraint("amount IS NULL OR amount >= 0", name="ck_membership_price_overrides_amount"),
+        CheckConstraint(
+            "amount IS NULL OR (reason IS NOT NULL AND length(btrim(reason)) > 0)",
+            name="ck_membership_price_overrides_reason",
+        ),
     )
 
 

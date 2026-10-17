@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
-HEAD='a7b8c9d0e1f'          # user sessions (N13 tails, #101)
+HEAD='b8c9d0e1f2a'          # group price + individual prices (N13 P4, #105)
+SESSIONS='a7b8c9d0e1f'      # user sessions (N13 tails, #101): the revision before the group price
 PERIODS='z6a7b8c9d0e'       # membership periods (N13 tails, #59): the revision before the sessions
 INVITES='y5z6a7b8c9d'       # diagnostic invite «cancelled» (N13 tails, #89)
 ARCHIVE='x4y5z6a7b8c'       # student archive (N13)
@@ -65,6 +66,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     _check_n13_invite_cancelled_objects(engine,config,ids)
     _check_n13_periods_objects(engine,config,ids)
     _check_n13_sessions_objects(engine,config,ids)
+    _check_n13_group_price_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -856,3 +858,122 @@ def _check_n13_sessions_objects(engine,config,ids):
     assert live_of(u_legacy)=={live_legacy}
     with engine.connect() as conn:
         assert conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+
+
+def _check_n13_group_price_objects(engine,config,ids):
+    """#105: ``group_prices`` + ``membership_price_overrides`` - the backfill on MIXED data (the most frequent fee, a tie by
+    the later date, then the smaller sum, NULL fees, inactive and archived memberships, free), the constraints, the
+    downgrade that refills ``monthly_fee`` with today's effective price, the round trip and idempotence."""
+    from datetime import date,datetime
+    from sqlalchemy.exc import IntegrityError
+    from src.models.auth import Group,Organization,Student,User
+    org,owner=uuid4(),uuid4()
+    with Session(engine) as db:
+        db.add(Organization(id=org,name='Price migration org',status='active')); db.flush()
+        db.add(User(id=owner,email=f'{owner}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='P',role='owner')); db.commit()
+    groups={n:uuid4() for n in ('majority','tie_date','tie_sum','all_null','inactive_only','free','empty')}
+    with Session(engine) as db:
+        for name,gid in groups.items():
+            db.add(Group(id=gid,org_id=org,name=name,class_level=9))
+        db.commit()
+    # --- the revision before the group price: no tables
+    command.downgrade(config,SESSIONS)
+    assert not {'group_prices','membership_price_overrides'} & set(inspect(engine).get_table_names())
+    def member(group,fee,*,active=True,status='active',updated=None):
+        sid,mid=uuid4(),uuid4()
+        with Session(engine) as db:
+            db.add(Student(id=sid,org_id=org,first_name='S',last_name=group,class_level=9,status=status)); db.commit()
+        with engine.begin() as c:
+            c.execute(text("INSERT INTO student_groups (id,student_id,group_id,is_active,joined_at,left_at,monthly_fee,monthly_fee_updated_at) VALUES (:m,:s,:g,:a,'2026-09-01 08:00:00',CASE WHEN :a THEN NULL ELSE TIMESTAMP '2026-09-20 08:00:00' END,:f,:u)"),{'m':mid,'s':sid,'g':groups[group],'a':active,'f':fee,'u':updated})
+        return mid
+    old,new=datetime(2026,1,1),datetime(2026,6,1)
+    m={}
+    m['maj1']=member('majority',500000,updated=old); m['maj2']=member('majority',500000,updated=new); m['maj3']=member('majority',450000,updated=new)
+    m['maj_null']=member('majority',None); m['maj_old']=member('majority',300000,active=False)               # an inactive fee never votes ...
+    m['maj_inactive_same']=member('majority',500000,active=False)                                           # ... but one equal to the price follows it
+    m['maj_archived']=member('majority',999000,status='archived')                                            # active membership of an archived student: no vote, an exception
+    m['td_a']=member('tie_date',400000,updated=old); m['td_b']=member('tie_date',500000,updated=new)         # a tie: the later one wins
+    m['ts_a']=member('tie_sum',500000,updated=old); m['ts_b']=member('tie_sum',400000,updated=old)           # same date: the smaller sum
+    m['an1']=member('all_null',None); m['an2']=member('all_null',None)
+    m['io1']=member('inactive_only',350000,active=False); m['io2']=member('inactive_only',None,active=False)
+    m['fr1']=member('free',0,updated=new); m['fr2']=member('free',0,updated=old); m['fr3']=member('free',300000,updated=new)
+    # --- upgrade: the backfill
+    command.upgrade(config,'head')
+    assert {'group_prices','membership_price_overrides'} <= set(inspect(engine).get_table_names())
+    def prices():
+        with engine.connect() as c:
+            return {r.name:(r.amount,r.valid_from,r.note,r.created_by) for r in c.execute(text("SELECT g.name,p.amount,p.valid_from,p.note,p.created_by FROM group_prices p JOIN groups g ON g.id=p.group_id WHERE g.org_id=:o"),{'o':org})}
+    def overrides():
+        with engine.connect() as c:
+            return {r.membership_id:(r.amount,r.valid_from,r.reason) for r in c.execute(text("SELECT o.membership_id,o.amount,o.valid_from,o.reason FROM membership_price_overrides o JOIN student_groups sg ON sg.id=o.membership_id JOIN groups g ON g.id=sg.group_id WHERE g.org_id=:o"),{'o':org})}
+    epoch=date(2000,1,1)
+    got=prices()
+    assert {k:v[0] for k,v in got.items()}=={'majority':500000,'tie_date':500000,'tie_sum':400000,'free':0}      # no price for all_null / inactive_only / empty
+    assert all(v[1]==epoch and v[3] is None for v in got.values())
+    ex=overrides()
+    reason='Цена до введения цены группы'
+    assert ex=={m['maj3']:(450000,epoch,reason),m['maj_old']:(300000,epoch,reason),m['maj_archived']:(999000,epoch,reason),
+                m['td_a']:(400000,epoch,reason),m['ts_a']:(500000,epoch,reason),m['io1']:(350000,epoch,reason),m['fr3']:(300000,epoch,reason)}
+    # the effective price of every membership that HAD a fee is what it was; the NULL ones follow the group price (or stay empty)
+    def effective():
+        with engine.connect() as c:
+            return {r.id:r.price for r in c.execute(text("""
+                SELECT sg.id, COALESCE((SELECT o.amount FROM membership_price_overrides o WHERE o.membership_id=sg.id AND o.valid_from<=CURRENT_DATE ORDER BY o.valid_from DESC LIMIT 1),
+                                       (SELECT p.amount FROM group_prices p WHERE p.group_id=sg.group_id AND p.valid_from<=CURRENT_DATE ORDER BY p.valid_from DESC LIMIT 1)) AS price
+                  FROM student_groups sg JOIN groups g ON g.id=sg.group_id WHERE g.org_id=:o"""),{'o':org})}
+    eff=effective()
+    with engine.connect() as c:
+        fees={r.id:r.monthly_fee for r in c.execute(text("SELECT sg.id,sg.monthly_fee FROM student_groups sg JOIN groups g ON g.id=sg.group_id WHERE g.org_id=:o"),{'o':org})}
+    for mid,fee in fees.items():
+        if fee is not None: assert eff[mid]==fee,(mid,fee,eff[mid])
+    assert eff[m['maj_null']]==500000 and eff[m['an1']] is None and eff[m['io2']] is None       # NULL follows the price of the group (the intended change)
+    assert all(fees[x] is not None or x in (m['maj_null'],m['an1'],m['an2'],m['io2']) for x in fees)   # the old column is untouched by the upgrade
+    # --- constraints
+    gid=groups['majority']
+    for sql,params,pattern in (
+        ("INSERT INTO group_prices (id,group_id,amount,valid_from,created_at) VALUES (gen_random_uuid(),:g,-1,'2026-10-01',now())",{'g':gid},'ck_group_prices_amount'),
+        ("INSERT INTO group_prices (id,group_id,amount,valid_from,created_at) VALUES (gen_random_uuid(),:g,1,'2000-01-01',now())",{'g':gid},'uq_group_prices_group_from'),
+        ("INSERT INTO membership_price_overrides (id,membership_id,amount,valid_from,reason,created_at) VALUES (gen_random_uuid(),:m,1,'2026-10-01',NULL,now())",{'m':m['maj1']},'ck_membership_price_overrides_reason'),
+        ("INSERT INTO membership_price_overrides (id,membership_id,amount,valid_from,reason,created_at) VALUES (gen_random_uuid(),:m,1,'2026-10-01','   ',now())",{'m':m['maj1']},'ck_membership_price_overrides_reason'),
+        ("INSERT INTO membership_price_overrides (id,membership_id,amount,valid_from,reason,created_at) VALUES (gen_random_uuid(),:m,-5,'2026-10-01','x',now())",{'m':m['maj1']},'ck_membership_price_overrides_amount'),
+        ("INSERT INTO membership_price_overrides (id,membership_id,amount,valid_from,reason,created_at) VALUES (gen_random_uuid(),:m,1,'2000-01-01','dup',now())",{'m':m['maj3']},'uq_membership_price_overrides_from'),
+    ):
+        with pytest.raises(IntegrityError,match=pattern):
+            with engine.begin() as c: c.execute(text(sql),params)
+    with engine.begin() as c:       # "the group price again" needs no reason; a NULL amount is allowed
+        c.execute(text("INSERT INTO membership_price_overrides (id,membership_id,amount,valid_from,reason,created_at) VALUES (gen_random_uuid(),:m,NULL,'2026-10-01',NULL,now())"),{'m':m['maj3']})
+    # --- post-release changes: a new group price (today), an individual price from today for a follower
+    with engine.begin() as c:
+        c.execute(text("INSERT INTO group_prices (id,group_id,amount,valid_from,note,created_by,created_at) VALUES (gen_random_uuid(),:g,600000,'2026-10-01','повышение',:u,now())"),{'g':gid,'u':owner})
+        c.execute(text("INSERT INTO membership_price_overrides (id,membership_id,amount,valid_from,reason,created_by,created_at) VALUES (gen_random_uuid(),:m,550000,'2026-10-01','скидка',:u,now())"),{'m':m['maj2'],'u':owner})
+        c.execute(text("INSERT INTO group_prices (id,group_id,amount,valid_from,created_at) VALUES (gen_random_uuid(),:g,999,'2999-01-01',now())"),{'g':groups['tie_date']})   # a price of the far future: not today's
+    # --- downgrade: monthly_fee = the effective price TODAY, NULL when there is none; the tables are gone
+    command.downgrade(config,SESSIONS)
+    assert not {'group_prices','membership_price_overrides'} & set(inspect(engine).get_table_names())
+    with engine.connect() as c:
+        back={r.id:r.monthly_fee for r in c.execute(text("SELECT sg.id,sg.monthly_fee FROM student_groups sg JOIN groups g ON g.id=sg.group_id WHERE g.org_id=:o"),{'o':org})}
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==SESSIONS
+    assert back[m['maj1']]==600000 and back[m['maj2']]==550000                         # the new group price / the new individual price
+    assert back[m['maj3']]==600000                                                     # "the group price again" from 2026-10-01 ... (the fixed date is in the past)
+    assert back[m['maj_null']]==600000 and back[m['maj_old']]==300000                  # a follower / an old exception
+    assert back[m['td_a']]==400000 and back[m['td_b']]==500000                         # the far-future price is not today's
+    assert back[m['an1']] is None and back[m['io2']] is None and back[m['io1']]==350000 and back[m['fr1']]==0
+    # --- upgrade again: the same effective prices come back (nothing was lost but the history of changes)
+    command.upgrade(config,'head')
+    again=effective()
+    assert {k:v for k,v in again.items() if back[k] is not None}=={k:v for k,v in back.items() if v is not None}
+    assert prices()['majority'][0]==600000 and overrides()[m['maj2']][0]==550000
+    # --- idempotent: the revision again (stamped back) with the tables in place adds nothing
+    with engine.connect() as c: before=(c.execute(text('SELECT count(*) FROM group_prices')).scalar_one(),c.execute(text('SELECT count(*) FROM membership_price_overrides')).scalar_one())
+    command.stamp(config,SESSIONS)
+    command.upgrade(config,'head')
+    with engine.connect() as c:
+        assert (c.execute(text('SELECT count(*) FROM group_prices')).scalar_one(),c.execute(text('SELECT count(*) FROM membership_price_overrides')).scalar_one())==before
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+    # --- cascades: a group takes its prices along, a membership its exceptions
+    with engine.begin() as c:
+        c.execute(text('DELETE FROM student_groups WHERE id=:m'),{'m':m['maj2']})
+    assert m['maj2'] not in overrides()
+    # --- an empty database upgrades and downgrades (no rows, no failure)
+    command.downgrade(config,SESSIONS); command.upgrade(config,'head')
+
