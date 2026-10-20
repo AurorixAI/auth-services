@@ -158,6 +158,11 @@ class PaymentsSummary(BaseModel):
     tracked_total: int
     period_mode: PeriodMode
     lessons_per_payment: int
+    # DISTINCT students (the counters above count memberships, so a student in two groups counts twice there):
+    # ``students_due`` - at least one membership in the ``due`` bucket (expired or ends today), ``students_expired`` -
+    # at least one expired membership.  Added next to the old fields, which keep their meaning.
+    students_due: int
+    students_expired: int
 
 
 class PaymentStatusPage(BaseModel):

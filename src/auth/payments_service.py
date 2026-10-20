@@ -1058,8 +1058,15 @@ class PaymentService:
         today = ps.business_today()
         entries = self._entries(org_id, settings, today)
         counts = {s: 0 for s in ps.STATUSES}
+        students_due: set = set()
+        students_expired: set = set()
         for e in entries:
             counts[e.result.status] += 1
+            # The same definitions as ``due`` / ``expired`` below, counted per student (the entries are already in memory).
+            if e.result.status in (ps.EXPIRED, ps.ENDS_TODAY):
+                students_due.add(e.student.id)
+            if e.result.status == ps.EXPIRED:
+                students_expired.add(e.student.id)
         return PaymentsSummary(
             as_of=today.isoformat(),
             due=counts[ps.EXPIRED] + counts[ps.ENDS_TODAY],
@@ -1072,6 +1079,8 @@ class PaymentService:
             tracked_total=len(entries),
             period_mode=settings.period_mode,
             lessons_per_payment=settings.lessons_per_payment,
+            students_due=len(students_due),
+            students_expired=len(students_expired),
         )
 
     @staticmethod
