@@ -4,6 +4,9 @@
 very function the pending list uses, cleared by every way back to ``pending`` and exposed in the list / review / reset
 responses and (administrators only) in the journal.
 """
+from datetime import datetime, time, timedelta
+
+import src.auth.attendance_excuses as excuses_module
 from src.auth.attendance_excuses import AttendanceExcuseService
 from src.auth.excuse_deadline import month_end
 from src.models.auth import StudentPayment
@@ -11,7 +14,7 @@ from src.models.auth import StudentPayment
 from tests.pg_world import (  # noqa: F401  (fixtures)
     business_today, excused_lesson, make_client, needs_pg, pg_session, save, world,
 )
-from tests.test_attendance_excuses import excuse_of, journal, key_of
+from tests.test_attendance_excuses import audit_rows, excuse_of, journal, key_of
 from tests.test_excuse_deadline import API, lesson_marks, listing
 from tests.test_payments_service_pg import day, pay, set_settings
 
@@ -208,7 +211,7 @@ def test_a_deadline_that_cannot_be_worked_out_leaves_the_mark_unknown_and_the_de
     excused_lesson(world, offset_days=3)
     item_id = item_of(world)["id"]
 
-    def broken(self, pending, context):
+    def broken(self, pending, context, *args):
         from sqlalchemy import text
 
         self.db.execute(text("SELECT 1 / 0"))        # a real SQL error: the transaction is aborted unless the savepoint holds
@@ -239,7 +242,7 @@ def test_a_decision_keeps_its_row_lock_while_the_deadline_is_worked_out(world, m
     seen = {}
     original = AttendanceExcuseService._pending_deadlines
 
-    def spying(self, pending, context):
+    def spying(self, pending, context, *args):
         engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
         try:
             with sessionmaker(engine)() as other:
@@ -251,9 +254,137 @@ def test_a_decision_keeps_its_row_lock_while_the_deadline_is_worked_out(world, m
                     seen["locked"] = True
         finally:
             engine.dispose()
-        return original(self, pending, context)
+        return original(self, pending, context, *args)
 
     item_id = item_of(world)["id"]                                                    # (the list calls it too: look only at the decision)
     monkeypatch.setattr(AttendanceExcuseService, "_pending_deadlines", spying)
     review(world, item_id)
     assert seen == {"locked": True}
+
+
+# ---- the same decision again only edits the note (the mark says WHEN THE DECISION WAS TAKEN) ----------
+
+
+def test_confirming_again_with_a_note_does_not_re_measure_the_deadline(world):
+    excused_lesson(world, offset_days=3)
+    payment = pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))["payment"]   # the deadline is day(15)
+    item_id = item_of(world)["id"]
+    first = review(world, item_id, "confirmed")
+    assert shown(first) == (False, day(15).isoformat())
+    set_valid_to(world, payment, day(-1))                                             # the deadline passes afterwards ...
+    r = make_client(world, user=world.owner).post(f"{BASE}/{item_id}/review", json={"decision": "confirmed", "note": "  Справка принесена  "})
+    assert r.status_code == 200, r.text
+    again = r.json()
+    assert again["status"] == "confirmed" and again["review_note"] == "Справка принесена"
+    assert shown(again) == (False, day(15).isoformat())                               # ... the decision was still on time
+    assert stored(world) == (False, day(15))
+    # who and when DECIDED stays; the editor of the note is in the journal row
+    assert (again["reviewed_by"], again["reviewed_at"]) == (first["reviewed_by"], first["reviewed_at"])
+    assert again["reviewed_by"]["id"] == str(world.admin.id)
+    rows = audit_rows(world, "excuse_reviewed")
+    assert [r.actor_id for r in rows] == [world.admin.id, world.owner.id]
+    assert rows[1].details == {"excuse_id": item_id, "student_id": str(world.students[0].id), "decision_before": "confirmed",
+                               "decision_after": "confirmed", "note": "Справка принесена"}      # no mark was overwritten
+    # a CHANGED decision is a new decision: measured now
+    assert shown(review(world, item_id, "rejected")) == (True, day(-1).isoformat())
+
+
+def test_the_same_decision_again_keeps_an_unknown_mark_unknown(world):
+    excused_lesson(world, offset_days=3)
+    pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(-1))
+    row = excuse_of(world)
+    row.status, row.reviewed_by = "confirmed", world.owner.id                         # a historical decision: no mark
+    world.db.commit()
+    body = review(world, str(row.id), "confirmed", note="Уточнение")
+    assert body["review_note"] == "Уточнение" and shown(body) == (None, None)
+    assert stored(world) == (None, None)
+
+
+# ---- the journal row keeps the mark that is overwritten or cleared ------------------------------------
+
+
+def test_the_audit_keeps_the_mark_that_a_decision_or_a_reset_overwrites(world):
+    excused_lesson(world, offset_days=3)
+    payment = pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(-1))["payment"]    # the deadline is day(-1)
+    item_id = item_of(world)["id"]
+    review(world, item_id, "confirmed")
+    set_valid_to(world, payment, day(20))                                             # the next decision is on time
+    review(world, item_id, "rejected")
+    reset(world, item_id)
+    first, second = audit_rows(world, "excuse_reviewed")
+    assert "decided_after_deadline_before" not in first.details and "deadline_at_decision_before" not in first.details   # pending: no mark
+    assert (second.details["decided_after_deadline_before"], second.details["deadline_at_decision_before"]) == (True, day(-1).isoformat())
+    (cleared,) = audit_rows(world, "excuse_reset")
+    assert (cleared.details["decided_after_deadline_before"], cleared.details["deadline_at_decision_before"]) == (False, day(15).isoformat())
+    assert cleared.details["decision_before"] == "rejected" and cleared.details["decision_after"] == "pending"
+    # nothing to lose, nothing recorded: a reset of a pending excuse writes no row at all
+    reset(world, item_id)
+    assert len(audit_rows(world, "excuse_reset")) == 1
+
+
+def test_the_audit_of_a_reason_edit_keeps_the_cleared_mark(world):
+    lesson_day, lesson_id = excused_lesson(world, offset_days=3)
+    pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(-1))
+    s0 = world.students[0]
+    review(world, item_of(world)["id"])
+    save(world, lesson_day, lesson_id, [(s0, "excused")], excuseReasons={s0.id: "Другая причина"})
+    (row,) = audit_rows(world, "excuse_reset")
+    assert row.details["reason_changed"] is True
+    assert (row.details["decided_after_deadline_before"], row.details["deadline_at_decision_before"]) == (True, day(-1).isoformat())
+    assert stored(world) == (None, None)
+
+
+def test_the_audit_of_a_decision_without_a_mark_has_no_mark_keys(world):
+    excused_lesson(world, offset_days=3)
+    pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(-1))
+    row = excuse_of(world)
+    row.status, row.reviewed_by = "confirmed", world.owner.id                         # a historical decision
+    world.db.commit()
+    reset(world, str(row.id))
+    (cleared,) = audit_rows(world, "excuse_reset")
+    assert not any(key.endswith("_before") and "deadline" in key for key in cleared.details)
+
+
+# ---- one reading of the clock: the day of the decision is the day of its deadline check -------------------
+
+
+def freeze(monkeypatch, moment):
+    monkeypatch.setattr(excuses_module, "_business_now", lambda: moment)
+
+
+def test_midnight_in_tashkent_on_time_until_the_deadline_day_ends(world, monkeypatch):
+    excused_lesson(world, offset_days=3)
+    pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))              # the deadline is day(15)
+    item_id = item_of(world)["id"]
+    deadline_day = day(15)
+    late_evening = datetime.combine(deadline_day, time(23, 30))
+    freeze(monkeypatch, late_evening)
+    body = review(world, item_id, "confirmed")
+    assert shown(body) == (False, deadline_day.isoformat())                           # 23:30 on the deadline day: on time
+    assert body["reviewed_at"] == late_evening.isoformat()
+    after_midnight = datetime.combine(deadline_day + timedelta(days=1), time(0, 30))
+    freeze(monkeypatch, after_midnight)
+    body = review(world, item_id, "rejected")
+    assert shown(body) == (True, deadline_day.isoformat())                            # 00:30 the day after: late
+    assert body["reviewed_at"] == after_midnight.isoformat()
+    assert stored(world) == (True, deadline_day)
+
+
+def test_the_stored_time_and_the_measured_day_come_from_one_reading_of_the_clock(world, monkeypatch):
+    """A clock that jumps over midnight between two readings: the decision is recorded at the FIRST reading and measured
+    against that same day - not against a second reading taken after midnight."""
+    excused_lesson(world, offset_days=3)
+    pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))
+    excuse_id = excuse_of(world).id
+    before = datetime.combine(day(15), time(23, 59, 59))
+    readings = []
+
+    def clock():
+        readings.append(1)
+        return before if len(readings) == 1 else before + timedelta(seconds=2)       # every later reading is after midnight
+
+    monkeypatch.setattr(excuses_module, "_business_now", clock)
+    AttendanceExcuseService(world.db).review(str(world.org.id), excuse_id, str(world.admin.id), "confirmed", None)
+    row = excuse_of(world)
+    assert row.reviewed_at == before
+    assert (row.decided_after_deadline, row.deadline_at_decision) == (False, day(15))

@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.auth.excuse_deadline import month_end
 from src.models.auth import AttendanceExcuse, AttendanceExcuseFile, GroupAttendance, GroupAttendanceAudit
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
@@ -225,10 +226,13 @@ def test_review_confirm_reject_reset_and_audit(world, lesson):
         GroupAttendanceAudit.action.in_(["excuse_reviewed", "excuse_reset"])).order_by(GroupAttendanceAudit.created_at).all()
     assert all(r.after_status == att.status and r.after_records == att.records for r in rows)
     sid = str(world.students[0].id)
+    # The decision mark (#39) of each decision is kept in the row that overwrites / clears it (no payment: the month end).
+    deadline = month_end(day)
+    mark = {"decided_after_deadline_before": business_today() > deadline, "deadline_at_decision_before": deadline.isoformat()}
     assert [r.details for r in rows] == [
         {"excuse_id": str(excuse.id), "student_id": sid, "decision_before": "pending", "decision_after": "confirmed", "note": "Справка принесена"},
-        {"excuse_id": str(excuse.id), "student_id": sid, "decision_before": "confirmed", "decision_after": "rejected", "note": None},
-        {"excuse_id": str(excuse.id), "student_id": sid, "decision_before": "rejected", "decision_after": "pending", "note": None},
+        {"excuse_id": str(excuse.id), "student_id": sid, "decision_before": "confirmed", "decision_after": "rejected", "note": None, **mark},
+        {"excuse_id": str(excuse.id), "student_id": sid, "decision_before": "rejected", "decision_after": "pending", "note": None, **mark},
     ]
 
 

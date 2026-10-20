@@ -75,6 +75,19 @@ def _iso_day(value: Optional[date]) -> Optional[str]:
     return value.isoformat() if value else None
 
 
+def _mark_before(excuse: "AttendanceExcuse") -> Dict[str, Any]:
+    """Audit details for a decision mark that is about to be overwritten or cleared (ROADMAP #39).
+
+    Empty when the excuse carries no mark (a pending one, a decision made before the mark existed): nothing is lost then.
+    """
+    if excuse.decided_after_deadline is None and excuse.deadline_at_decision is None:
+        return {}
+    return {
+        "decided_after_deadline_before": excuse.decided_after_deadline,
+        "deadline_at_decision_before": _iso_day(excuse.deadline_at_decision),
+    }
+
+
 def lesson_key(att: GroupAttendance) -> str:
     """The instance key used by the attendance journal (``date_lessonId``)."""
     return f"{att.lesson_date}_{att.lesson_id or f'lesson_{att.lesson_date}'}"
@@ -208,6 +221,8 @@ class ExcuseItem(BaseModel):
     # deadline as a business day (YYYY-MM-DD, Tashkent; ``None`` for a lessons-package deadline, which has no day);
     # ``decided_after_deadline`` is ``True`` / ``False`` for a decision made after / on time.  Both are ``None`` for a
     # pending excuse and for a decision whose deadline is unknown (made before the mark existed, or not workable).
+    # The mark belongs to the DECISION: a repeated decision that only edits the note keeps it (and ``reviewed_by`` /
+    # ``reviewed_at``); a changed decision measures again; the journal row keeps the mark it overwrites.
     decided_after_deadline: Optional[bool] = None
     deadline_at_decision: Optional[str] = None
 
@@ -384,6 +399,7 @@ class AttendanceExcuseService:
                             "decision_after": "pending",
                             "note": row.review_note,
                             "reason_changed": True,
+                            **_mark_before(row),
                         },
                     )
                     row.status = "pending"
@@ -828,13 +844,17 @@ class AttendanceExcuseService:
             return str(student_id) in roster
         return True
 
-    def _pending_deadlines(self, pending, context: SimpleNamespace) -> Dict[UUID, Dict[str, Any]]:
+    def _pending_deadlines(
+        self, pending, context: SimpleNamespace, today: Optional[date] = None
+    ) -> Dict[UUID, Dict[str, Any]]:
+        """``today`` - the business day to measure ``overdue`` against (default: now); a decision passes the day of the
+        very instant it is recorded at (see ``_apply_review``)."""
         from . import excuse_deadline as dl
         from .payments_service import PaymentService  # lazy: it imports the models only, but is heavy
 
         org_id = pending[0][0].org_id
         settings = PaymentService(self.db).get_settings(str(org_id))
-        today = _business_today()
+        today = today or _business_today()
 
         membership_of, live, records = context.membership_of, context.live, context.records
 
@@ -933,8 +953,13 @@ class AttendanceExcuseService:
             )
         )
 
-    def _decision_mark(self, excuse: AttendanceExcuse, att: GroupAttendance) -> tuple[Optional[date], Optional[bool]]:
-        """``(deadline_at_decision, decided_after_deadline)`` of a decision taken NOW (ROADMAP #39).
+    def _decision_mark(
+        self, excuse: AttendanceExcuse, att: GroupAttendance, today: date
+    ) -> tuple[Optional[date], Optional[bool]]:
+        """``(deadline_at_decision, decided_after_deadline)`` of a decision taken on the business day ``today`` (ROADMAP #39).
+
+        ``today`` is the day of the very instant the decision is stored at (``reviewed_at``): one reading of the clock
+        for both, so a decision taken around midnight cannot be recorded on one day and measured on the next.
 
         The deadline is the one the pending list shows - the very same ``_pending_deadlines`` /
         ``excuse_deadline.excuse_deadline`` with the same payment settings and the business day of Tashkent - so the
@@ -953,7 +978,7 @@ class AttendanceExcuseService:
                 context = self._payment_context(
                     excuse.org_id, {(excuse.student_id, att.group_id)}, propagate=True
                 )
-                deadline = self._pending_deadlines([tuple(row)], context).get(excuse.id)
+                deadline = self._pending_deadlines([tuple(row)], context, today).get(excuse.id)
         except Exception:
             logger.exception("Could not work out the deadline of excuse %s at its decision", excuse.id)
             return None, None
@@ -968,13 +993,34 @@ class AttendanceExcuseService:
         if (att.records or {}).get(str(excuse.student_id)) != EXCUSED:
             raise ExcuseNotExcused("Ученик уже не отмечен как пропустивший по уважительной причине")
         decision_before = excuse.status
+        note = (note or "").strip() or None
+        if decision == decision_before:
+            # The same decision again (the note is edited): nothing was decided now, so the decision stays as it was - its
+            # author, its time (``reviewed_by`` / ``reviewed_at``, the «кто и когда принял» of the list) and its mark, which
+            # records WHEN THE DECISION WAS TAKEN and must not be re-measured against today's deadline.  Only the note
+            # changes; who edited it and when is in the journal row below (its actor and time).
+            excuse.review_note = note
+            self._audit(
+                att, actor_id, "excuse_reviewed",
+                {
+                    "excuse_id": str(excuse.id),
+                    "student_id": str(excuse.student_id),
+                    "decision_before": decision_before,
+                    "decision_after": decision,
+                    "note": excuse.review_note,
+                },
+            )
+            return
+        # ONE reading of the clock: the stored time of the decision and the day its deadline is measured against.
+        now = _business_now()
         # The mark (#39) is worked out BEFORE the decision is written, from the state the list showed, and under the
-        # row lock the caller already holds; a re-review overwrites the previous mark.
-        deadline_day, after_deadline = self._decision_mark(excuse, att)
+        # row lock the caller already holds; a changed decision overwrites the previous mark (kept in the journal row).
+        mark_before = _mark_before(excuse)
+        deadline_day, after_deadline = self._decision_mark(excuse, att, now.date())
         excuse.status = decision
         excuse.reviewed_by = actor_id
-        excuse.reviewed_at = _business_now()
-        excuse.review_note = (note or "").strip() or None
+        excuse.reviewed_at = now
+        excuse.review_note = note
         excuse.deadline_at_decision = deadline_day
         excuse.decided_after_deadline = after_deadline
         self._audit(
@@ -985,6 +1031,7 @@ class AttendanceExcuseService:
                 "decision_before": decision_before,
                 "decision_after": decision,
                 "note": excuse.review_note,
+                **mark_before,
             },
         )
 
@@ -1030,6 +1077,7 @@ class AttendanceExcuseService:
                 "decision_before": excuse.status,
                 "decision_after": "pending",
                 "note": excuse.review_note,
+                **_mark_before(excuse),
             }
             excuse.status = "pending"
             excuse.reviewed_by = None
