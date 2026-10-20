@@ -6,17 +6,19 @@ responses and (administrators only) in the journal.
 """
 from datetime import datetime, time, timedelta
 
+import pytest
+
 import src.auth.attendance_excuses as excuses_module
 from src.auth.attendance_excuses import AttendanceExcuseService
 from src.auth.excuse_deadline import month_end
-from src.models.auth import StudentPayment
+from src.models.auth import AttendanceExcuse, StudentPayment
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
     business_today, excused_lesson, make_client, needs_pg, pg_session, save, world,
 )
 from tests.test_attendance_excuses import audit_rows, excuse_of, journal, key_of
-from tests.test_excuse_deadline import API, lesson_marks, listing
-from tests.test_payments_service_pg import day, pay, set_settings
+from tests.test_excuse_deadline import API, lesson_marks, listing, same_day_lessons
+from tests.test_payments_service_pg import day, pay, row_of, set_settings
 
 pytestmark = needs_pg
 
@@ -388,3 +390,67 @@ def test_the_stored_time_and_the_measured_day_come_from_one_reading_of_the_clock
     row = excuse_of(world)
     assert row.reviewed_at == before
     assert (row.decided_after_deadline, row.deadline_at_decision) == (False, day(15))
+
+
+# ---- two lessons of one day: a lesson is told by its attendance row, not by its date (ROADMAP #113) -------------------
+
+
+def deadline_if_decided_now(w, student=None):
+    """The lessons-package deadline the decision of the student's excuse would be measured against right now.
+
+    Exactly what ``_decision_mark`` asks: ``_pending_deadlines`` for the excuse as it stands in the table (a confirmed
+    one included), with the payment context of its membership.
+    """
+    student = student or w.students[0]
+    w.db.expire_all()
+    excuse = excuse_of(w, student)
+    service = AttendanceExcuseService(w.db)
+    row = service._base_query(excuse.org_id).filter(AttendanceExcuse.id == excuse.id).first()
+    context = service._payment_context(excuse.org_id, {(excuse.student_id, w.group.id)}, propagate=True)
+    return service._pending_deadlines([tuple(row)], context, business_today())[excuse.id]
+
+
+LAYOUTS = ("same_day_excused_first", "same_day_excused_second", "separate_days")
+
+
+def lessons_on(w, layout):
+    """Three counted lessons: a plain one, the lesson with the excuse, and one more - on its day or on another."""
+    lesson_marks(w, 9)
+    if layout == "separate_days":
+        lesson_marks(w, 7, {w.students[0]: "excused"}, reasons={w.students[0]: "Болел"})
+        lesson_marks(w, 6)
+    else:
+        same_day_lessons(w, 7, excused_in="first" if layout.endswith("first") else "second")
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+@pytest.mark.parametrize("size, left, overdue", [(3, 0, True), (4, 1, False)])
+def test_re_review_of_a_confirmed_excuse_counts_its_lesson_whatever_the_day_holds(world, layout, size, left, overdue):
+    s0 = world.students[0]
+    set_settings(world, period_mode="lessons", lessons_per_payment=size, excuse_deadline_lessons=1)
+    pay(world, s0, paid_on=day(-10), valid_from=day(-10))
+    lessons_on(world, layout)
+    expected = {"kind": "lessons", "lessons_left": left, "urgent": True, "due_now": not overdue, "overdue": overdue}
+    pending = item_of(world)
+    assert pending["status"] == "pending" and pending["deadline"] == expected          # the hint on the pending item
+    assert deadline_if_decided_now(world) == expected
+    assert shown(review(world, pending["id"], "confirmed")) == (overdue, None)          # the first decision
+    # Confirmed: the excused lesson no longer spends the package.  A re-review would charge it again, so it must be
+    # measured exactly like the pending one - on a day shared with another lesson too (the bug: that lesson's date hid it).
+    assert deadline_if_decided_now(world) == expected
+    assert shown(review(world, pending["id"], "rejected")) == (overdue, None)
+    assert stored(world) == (overdue, None)
+    assert deadline_if_decided_now(world) == expected                                   # rejected counts again: nothing moved
+    assert shown(review(world, pending["id"], "confirmed")) == (overdue, None)          # and back to confirmed
+
+
+def test_a_confirmed_excuse_on_a_shared_day_frees_a_place_of_the_package_for_the_others(world):
+    """The counted lessons themselves (what the payment page shows) are untouched by the fix: confirmed = not counted."""
+    s0 = world.students[0]
+    set_settings(world, period_mode="lessons", lessons_per_payment=3, excuse_deadline_lessons=1)
+    pay(world, s0, paid_on=day(-10), valid_from=day(-10))
+    lessons_on(world, "same_day_excused_first")
+    item_id = item_of(world)["id"]
+    before = row_of(world)["lessons_left"]
+    review(world, item_id, "confirmed")
+    assert (before, row_of(world)["lessons_left"]) == (0, 1)

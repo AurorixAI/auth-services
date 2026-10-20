@@ -173,8 +173,10 @@ def test_two_lessons_on_one_day_the_unfinished_one_is_added_on_top():
     assert less(date(2026, 10, 5), [package], counted, lesson_counted=False)["lessons_left"] == 0   # 2 counted + B
     # when the excused lesson itself is the counted one, nothing is added
     assert less(date(2026, 10, 5), [package], counted, lesson_counted=True)["lessons_left"] == 1
-    # the counted flag cannot make a lesson disappear from the pool
-    assert less(date(2026, 10, 5), [package], [date(2026, 10, 2)], lesson_counted=True)["lessons_left"] == 1
+    # the flag is the caller's word about THIS lesson's own entry (decided by its attendance row, never by its date):
+    # a lesson whose excuse is confirmed has no entry, so it is added even though ANOTHER lesson of the day has one
+    assert less(date(2026, 10, 5), [package], counted, lesson_counted=False)["lessons_left"] == 0
+    assert less(date(2026, 10, 5), [package], [date(2026, 10, 2)], lesson_counted=False)["lessons_left"] == 1
 
 
 def test_a_lesson_that_no_package_took_is_treated_like_no_payment():
@@ -278,6 +280,29 @@ def test_two_lessons_on_one_day_count_both_through_the_api(world):
          status="in_progress", excuseReasons={s0.id: "Болел"})
     # 3 lessons in the package: one completed + the excused one = 2 charged, 1 left
     assert deadline_of(world) == state(1, True, False, True)
+
+
+def same_day_lessons(w, offset, excused_in="first", reason="Болел"):
+    """Two completed lessons of the group on ONE day; the first student is excused (pending) in one of them.
+
+    ``excused_in``: ``"first"`` = the regular slot of the weekday, ``"second"`` = LIVE_SLOT (the other lesson of the day).
+    Returns the day.  The attendance rows differ only by their lesson id - which is how the system tells them apart.
+    """
+    from src.auth.schemas import StartAttendanceRequest
+    from tests.pg_world import LIVE_SLOT
+
+    s0, s1, s2 = w.students
+    d, slot = reconcile(w, offset)
+    for lesson_id, excuse in ((slot, excused_in == "first"), (LIVE_SLOT, excused_in == "second")):
+        if lesson_id != slot:
+            w.svc.reconcile_missed_group_attendance(
+                str(w.org.id), str(w.group.id), StartAttendanceRequest(lessonDate=d, lessonId=lesson_id),
+                reconciled_by=str(w.admin.id), is_org_admin=True,
+            )
+        extra = {"excuseReasons": {s0.id: reason}} if excuse else {}
+        save(w, d, lesson_id, [(s0, "excused" if excuse else "present"), (s1, "present"), (s2, "present")],
+             status="completed", **extra)
+    return d
 
 
 @needs_pg

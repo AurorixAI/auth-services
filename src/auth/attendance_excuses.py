@@ -825,25 +825,6 @@ class AttendanceExcuseService:
                 pass
             return {}
 
-    @staticmethod
-    def _lesson_is_counted(att: GroupAttendance, student_id: UUID) -> bool:
-        """Whether this (pending-excuse) lesson is already one of the student's counted lessons.
-
-        Same rule as ``PaymentService._counted_lesson_dates``: completed, and the student is in
-        the roster snapshot (no snapshot: being marked is enough).  A pending excused mark counts.
-        """
-        if att.status != "completed":
-            return False
-        snapshot = att.roster_snapshot
-        if isinstance(snapshot, list):
-            roster = {
-                str(item.get("student_id"))
-                for item in snapshot
-                if isinstance(item, dict) and item.get("student_id")
-            }
-            return str(student_id) in roster
-        return True
-
     def _pending_deadlines(
         self, pending, context: SimpleNamespace, today: Optional[date] = None
     ) -> Dict[UUID, Dict[str, Any]]:
@@ -878,14 +859,22 @@ class AttendanceExcuseService:
                     (SimpleNamespace(id=membership, student_id=excuse.student_id), student, group)
                 )
         # Capacities of the lessons packages are derived live along their carry-over chains.
+        # ``pools`` are the DATES of the counted lessons (what the FIFO hands out); ``counted_rows`` says WHICH lessons
+        # they are - the attendance rows - because a date cannot: a student can have two lessons on one day.
         pools: Dict[UUID, list] = {}
+        counted_rows: Dict[UUID, set] = {}
         if lessons_members:
+            detail: Dict[UUID, list] = {}
             state = PaymentService(self.db)._lessons_state(
                 str(org_id),
                 [(m, g) for m, _, g in lessons_members],
                 {m.id: live.get(m.id, []) for m, _, _ in lessons_members},
+                detail_out=detail,
             )
             pools = state.dates
+            counted_rows = {
+                mid: {attendance_id for _day, _lesson_id, attendance_id in items} for mid, items in detail.items()
+            }
             for m, _, _ in lessons_members:
                 records[m.id] = [state.records.get(r.id, r) for r in records[m.id]]
 
@@ -900,7 +889,10 @@ class AttendanceExcuseService:
                 today=today,
                 payments=records.get(membership, ()),
                 counted_dates=pools.get(membership, ()),
-                lesson_counted=self._lesson_is_counted(att, excuse.student_id),
+                # THIS lesson's own entry in the pool: decided by the very rule that built the pool (rule 4.3 -
+                # completed, in the roster, a counted mark, no CONFIRMED excuse), by the attendance row.  A confirmed
+                # excuse that is being re-reviewed has no entry, even if another lesson of the same day has one.
+                lesson_counted=att.id in counted_rows.get(membership, ()),
                 deadline_days=settings.excuse_deadline_days,
                 deadline_lessons=settings.excuse_deadline_lessons,
             )

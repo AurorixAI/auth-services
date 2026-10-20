@@ -130,9 +130,10 @@ def excuse_deadline(
     """Deadline of an excuse for ``lesson_date``.  ``payments`` = the live payments of the membership.
 
     ``counted_dates`` are the dates of the student's counted lessons; ``lesson_counted`` says
-    whether THIS lesson is one of them (a completed lesson).  It cannot be read off the dates:
-    two lessons on one day are two entries, and an unfinished one must be added on top of the
-    other one, not mistaken for it.
+    whether THIS lesson's own entry is among them.  It cannot be read off the dates: two lessons
+    on one day are two entries, so the caller decides it by the lesson itself (its attendance row)
+    - a lesson that is not counted (unfinished, or its excuse is confirmed) is added on top of the
+    other lessons of its day, not mistaken for one of them.
     """
     calendar_payment = covering_calendar_payment(payments, lesson_date)
     if calendar_payment is not None:
@@ -142,8 +143,8 @@ def excuse_deadline(
 
     if needs_lessons_pool(payments, lesson_date):
         pool = list(counted_dates)
-        if not lesson_counted or lesson_date not in pool:
-            pool.append(lesson_date)  # an unfinished lesson would be charged to the package too
+        if not lesson_counted:
+            pool.append(lesson_date)  # an unfinished lesson (or one just un-confirmed) would be charged to the package too
         # Same-date entries may straddle two packages; the earliest package is the conservative pick.
         for payment, taken in ps.allocate_lessons_detail(payments, pool):
             if lesson_date in taken:
