@@ -26,6 +26,7 @@ from .attendance_excuses import (
     ExcuseItem,
     ExcuseListResponse,
     ExcuseSummaryResponse,
+    ResetRequest,
     ReviewRequest,
 )
 from .dependencies import require_org_admin
@@ -90,7 +91,7 @@ def review_excuses_bulk(
     """Подтвердить/отклонить несколько заявок; недоступные попадают в skipped."""
     try:
         return AttendanceExcuseService(db).review_bulk(
-            user["org_id"], request.ids, user["user_id"], request.decision, request.note
+            user["org_id"], request.ids, user["user_id"], request.decision, request.note, request.expected_status
         )
     except ExcuseError as exc:
         raise _http(exc)
@@ -106,7 +107,7 @@ def review_excuse(
     """Подтвердить или отклонить заявку."""
     try:
         return AttendanceExcuseService(db).review(
-            user["org_id"], excuse_id, user["user_id"], request.decision, request.note
+            user["org_id"], excuse_id, user["user_id"], request.decision, request.note, request.expected_status
         )
     except ExcuseError as exc:
         raise _http(exc)
@@ -115,12 +116,15 @@ def review_excuse(
 @router.post("/org/attendance/excuses/{excuse_id}/reset", response_model=ExcuseItem)
 def reset_excuse(
     excuse_id: UUID,
+    request: Optional[ResetRequest] = None,
     user: dict = Depends(_admin),
     db: Session = Depends(get_db),
 ):
-    """Сбросить решение (заявка снова ожидает)."""
+    """Сбросить решение (заявка снова ожидает).  Тело необязательно: ``expected_status`` — статус, который видел клиент."""
     try:
-        return AttendanceExcuseService(db).reset(user["org_id"], excuse_id, user["user_id"])
+        return AttendanceExcuseService(db).reset(
+            user["org_id"], excuse_id, user["user_id"], request.expected_status if request else None
+        )
     except ExcuseError as exc:
         raise _http(exc)
 

@@ -130,6 +130,29 @@ class ExcuseNotExcused(ExcuseConflict):
     code = "NOT_EXCUSED"
 
 
+CHANGED_MESSAGE = "Решение по этому пропуску уже изменил другой администратор. Список обновлён — проверьте и повторите."
+
+
+class ExcuseChanged(ExcuseConflict):
+    """The excuse is not in the status the client decided on (another administrator got there first).
+
+    Carries the CURRENT item so the client can refresh its list without another request.
+    """
+
+    code = "EXCUSE_CHANGED"
+
+    def __init__(self, item: Optional[Any] = None) -> None:
+        super().__init__(CHANGED_MESSAGE)
+        self.item = item
+
+    @property
+    def detail(self) -> Any:
+        body: Dict[str, Any] = {"code": self.code, "message": self.message}
+        if self.item is not None:
+            body["item"] = self.item.model_dump(mode="json")
+        return body
+
+
 class ExcuseTooLarge(ExcuseError):
     status_code = 413
 
@@ -240,9 +263,20 @@ class ExcuseSummaryResponse(BaseModel):
     open_lessons_total: Optional[int] = None
 
 
+STATUS_PATTERN = "^(pending|confirmed|rejected)$"
+
+
 class ReviewRequest(BaseModel):
     decision: str = Field(..., pattern="^(confirmed|rejected)$")
     note: Optional[str] = Field(None, max_length=NOTE_MAX)
+    # Optimistic concurrency: the status the client SAW when it decided.  If the excuse is in another status by the time
+    # the row is locked (another administrator decided first), nothing is written and the answer is 409 EXCUSE_CHANGED.
+    # Absent = the old behaviour (the decision overwrites).
+    expected_status: Optional[str] = Field(None, pattern=STATUS_PATTERN)
+
+
+class ResetRequest(BaseModel):
+    expected_status: Optional[str] = Field(None, pattern=STATUS_PATTERN)
 
 
 class BulkReviewRequest(ReviewRequest):
@@ -252,6 +286,8 @@ class BulkReviewRequest(ReviewRequest):
 class BulkSkipped(BaseModel):
     id: str
     reason: str
+    # ``EXCUSE_CHANGED`` = the item is not in the ``expected_status`` the client saw; absent for the other reasons.
+    code: Optional[str] = None
 
 
 class BulkReviewResponse(BaseModel):
@@ -1058,19 +1094,34 @@ class AttendanceExcuseService:
             },
         )
 
+    def _check_expected(self, org_id: str, excuse: AttendanceExcuse, expected_status: Optional[str]) -> None:
+        """Under the row lock: the excuse must still be in the status the client decided on (if it said which).
+
+        On a mismatch nothing is written: the transaction is rolled back (the lock is released) and the CURRENT item
+        goes out with the 409.
+        """
+        if expected_status is None or excuse.status == expected_status:
+            return
+        item = self._item(org_id, excuse.id)
+        self.db.rollback()
+        raise ExcuseChanged(item)
+
     def review(
-        self, org_id: str, excuse_id: UUID, actor_id: str, decision: str, note: Optional[str]
+        self, org_id: str, excuse_id: UUID, actor_id: str, decision: str, note: Optional[str],
+        expected_status: Optional[str] = None,
     ) -> ExcuseItem:
         if decision not in DECISIONS:
             raise ExcuseInvalid("Решение: confirmed или rejected")
         excuse = self._lock_excuse(org_id, excuse_id)
+        self._check_expected(org_id, excuse, expected_status)
         self._apply_review(excuse, self._lesson(excuse), actor_id, decision, note)
         self.db.commit()
         logger.info("Attendance excuse %s reviewed by %s: %s", excuse_id, actor_id, decision)
         return self._item(org_id, excuse_id)
 
     def review_bulk(
-        self, org_id: str, ids: List[UUID], actor_id: str, decision: str, note: Optional[str]
+        self, org_id: str, ids: List[UUID], actor_id: str, decision: str, note: Optional[str],
+        expected_status: Optional[str] = None,
     ) -> BulkReviewResponse:
         if decision not in DECISIONS:
             raise ExcuseInvalid("Решение: confirmed или rejected")
@@ -1079,6 +1130,11 @@ class AttendanceExcuseService:
         for excuse_id in dict.fromkeys(ids):
             try:
                 excuse = self._lock_excuse(org_id, excuse_id)
+                if expected_status is not None and excuse.status != expected_status:
+                    # Another administrator changed it since the client's list: reported per item, nothing is written.
+                    self.db.rollback()
+                    skipped.append(BulkSkipped(id=str(excuse_id), reason=CHANGED_MESSAGE, code=ExcuseChanged.code))
+                    continue
                 if excuse.status != "pending":
                     # A stale list must not overwrite another administrator's decision.
                     raise ExcuseConflict("Решение по заявке уже принято")
@@ -1091,8 +1147,11 @@ class AttendanceExcuseService:
         logger.info("Attendance excuses bulk %s by %s: updated=%d skipped=%d", decision, actor_id, updated, len(skipped))
         return BulkReviewResponse(updated=updated, skipped=skipped)
 
-    def reset(self, org_id: str, excuse_id: UUID, actor_id: str) -> ExcuseItem:
+    def reset(
+        self, org_id: str, excuse_id: UUID, actor_id: str, expected_status: Optional[str] = None
+    ) -> ExcuseItem:
         excuse = self._lock_excuse(org_id, excuse_id)
+        self._check_expected(org_id, excuse, expected_status)
         if excuse.status != "pending":
             details = {
                 "excuse_id": str(excuse.id),
