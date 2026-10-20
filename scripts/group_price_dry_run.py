@@ -78,7 +78,9 @@ def report(plans, target: str, applied: bool, verbose: bool) -> str:
     out = [f"Сухой прогон переноса цен (b8c9d0e1f2a) — БД «{target}», только чтение, ничего не записывается."]
     if applied:
         out.append("ВНИМАНИЕ: таблица group_prices уже есть — миграция применена или применялась раньше.")
-    total = Counter()
+    total = Counter(dict.fromkeys(
+        ("groups", "priced", "no_price", "single", "tie", "memberships", "active", "follow_active", "follow_inactive",
+         "overrides", "overrides_active", "null_active", "null_inactive"), 0))  # a database without memberships has no groups
     org = None
     for plan in plans:
         if plan.org_name != org:

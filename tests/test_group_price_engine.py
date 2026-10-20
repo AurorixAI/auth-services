@@ -303,3 +303,16 @@ def test_the_dry_run_report_flags_ties_and_single_votes(migration):
     assert "без цены (меньше 2 совпадений)" in lines["Все разные"] and "НИЧЬЯ — без цены" in lines["Все разные"] and "ОДИН ГОЛОС" in lines["Все разные"]
     assert "без цены (сумм нет)" in lines["Без сумм"] and "ОДИН ГОЛОС" not in lines["Без сумм"]
     assert "без цены 3 (из них с одним голосом: 2)" in text and "ничья по голосам: 2" in text
+
+
+def test_the_dry_run_report_of_a_database_without_memberships_is_not_a_crash(migration):
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "group_price_dry_run.py"
+    spec = importlib.util.spec_from_file_location("dry_run_empty_test", path)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    text = script.report(migration.plan_backfill([]), "empty_db", False, True)
+    assert "групп с членствами 0; получат цену 0" in text and "без цены 0" in text and "активных 0, неактивных 0" in text
+    assert script.as_json(migration.plan_backfill([]), "empty_db", False)["groups"] == []

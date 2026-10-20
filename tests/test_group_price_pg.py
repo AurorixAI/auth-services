@@ -1485,6 +1485,46 @@ def test_cancelling_a_scheduled_individual_price_and_a_scheduled_way_back(world)
     cancel_override(world, row_id_of(get_override(world, s0), day(5)), s0)
 
 
+def test_a_scheduled_price_cannot_be_cancelled_once_the_group_has_a_lesson_from_that_day(world):
+    from src.models.auth import GroupAttendance
+
+    s0 = world.students[0]
+    put_price(world, 500_000, valid_from=day(10))
+    put_override(world, s0, amount=300_000, reason="будущая", valid_from=day(10))
+    a, b = row_id_of(get_prices(world), day(10)), row_id_of(get_override(world, s0), day(10))
+    refusal = "Нельзя отменить: в группе уже есть проведённые уроки с этой даты — задайте новую цену"
+
+    def lesson(on, status, group=None):
+        world.db.add(GroupAttendance(org_id=world.org.id, group_id=(group or world.group).id, lesson_date=on.isoformat(),
+                                     lesson_id=f"x{uuid4().hex[:6]}", status=status))
+        world.db.commit()
+
+    lesson(day(9), "completed")                                                           # before the price: irrelevant
+    lesson(day(12), "cancelled")                                                          # a cancelled lesson is not a lesson
+    other = make_group(world.db, world.org, world.teacher2, "Другая")
+    world.db.commit()
+    lesson(day(12), "completed", other)                                                   # another group
+    lesson(day(20), "completed", other)
+    # a completed lesson dated after today and on / after the price day: both cancels refuse, nothing is deleted
+    lesson(day(12), "completed")
+    assert cancel_group(world, a, expect=409)["detail"] == refusal
+    assert cancel_override(world, b, s0, expect=409)["detail"] == refusal
+    assert len(group_rows(world)) == 1 and world.db.query(MembershipPriceOverride).filter_by(membership_id=mid(world, s0)).count() == 1
+    assert audit_rows(world, pricing.ACTION_GROUP_PRICE_CANCELLED) == [] and audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE_CANCELLED) == []
+    # a lesson that has only started counts as well; the day of the price itself too
+    world.db.query(GroupAttendance).filter_by(group_id=world.group.id, lesson_date=day(12).isoformat()).update({"status": "in_progress"})
+    world.db.commit()
+    assert cancel_group(world, a, expect=409)["detail"] == refusal
+    world.db.query(GroupAttendance).filter_by(group_id=world.group.id, lesson_date=day(12).isoformat()).update({"lesson_date": day(10).isoformat()})
+    world.db.commit()
+    assert cancel_override(world, b, s0, expect=409)["detail"] == refusal
+    # without a lesson from that day on, the cancel goes through
+    world.db.query(GroupAttendance).filter_by(group_id=world.group.id, lesson_date=day(10).isoformat()).update({"status": "cancelled"})
+    world.db.commit()
+    cancel_group(world, a)
+    cancel_override(world, b, s0)
+
+
 def test_an_unknown_row_or_the_row_of_another_group_or_membership_is_a_404(world):
     s0, s1 = world.students[0], world.students[1]
     other = make_group(world.db, world.org, world.teacher2, "Другая")

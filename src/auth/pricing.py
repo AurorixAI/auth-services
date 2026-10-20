@@ -81,7 +81,9 @@ of the membership that day, so ``old_source`` says whether it was the group pric
 
 Cancelling a SCHEDULED price (:meth:`PricingService.cancel_group_price`, :meth:`PricingService.cancel_override`) DELETES
 its row - only a row with ``valid_from`` after the business today, which no payment, status or payroll sheet can depend
-on yet; one that already acts is a 409 (a new price from the right day corrects it, with the trail above).  It takes
+on yet.  The invariant "nothing depends on a cancelled row" is strict: a group that already has a lesson (completed or
+started, ``group_attendance`` not cancelled) dated on or after the row's ``valid_from`` refuses (409, checked under the
+locks, which also keep a lesson from starting meanwhile); one that already acts is a 409 (a new price from the right day corrects it, with the trail above).  It takes
 the same locks as the writes (the group; for an individual price student -> group -> membership) and leaves ONE
 ``group_price_cancelled`` / ``membership_price_cancelled`` row in ``group_audit`` in the same transaction; the
 snapshot is that of the write plus ``row_id``, ``valid_from``, ``amount`` and ``note`` / ``reason`` of the deleted row.
@@ -107,6 +109,7 @@ from sqlalchemy.orm import Session
 
 from src.models.auth import (
     Group,
+    GroupAttendance,
     GroupAudit,
     GroupPrice,
     MembershipPriceOverride,
@@ -131,6 +134,7 @@ ACTION_GROUP_PRICE_CANCELLED = "group_price_cancelled"  # a SCHEDULED group pric
 ACTION_MEMBERSHIP_PRICE_CANCELLED = "membership_price_cancelled"  # ... a scheduled individual price
 CANCELLED_LIMIT = 20  # how many cancellations the GETs list
 CANCEL_IN_FORCE_MESSAGE = "Нельзя отменить цену, которая уже действует — задайте новую с нужной даты"
+CANCEL_LESSONS_MESSAGE = "Нельзя отменить: в группе уже есть проведённые уроки с этой даты — задайте новую цену"
 
 # "Always so": the valid_from of the prices the migration made from the old per-student fees (past months are
 # calculated as they were).  Also the earliest day a price can start.
@@ -914,6 +918,20 @@ class PricingService:
             raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT")
         return student, membership
 
+    def _refuse_if_lessons_held(self, group_id: UUID, valid_from: date) -> None:
+        """409 if the group has a completed / started lesson on or after ``valid_from`` (a lesson could be priced by it)."""
+        held = (
+            self.db.query(GroupAttendance.id)
+            .filter(
+                GroupAttendance.group_id == group_id,
+                GroupAttendance.lesson_date >= valid_from.isoformat(),
+                GroupAttendance.status.in_(("completed", "in_progress")),
+            )
+            .first()
+        )
+        if held is not None:
+            raise PriceConflict(CANCEL_LESSONS_MESSAGE)
+
     @_guard
     def cancel_group_price(self, org_id: str, group_id: UUID, row_id: UUID, actor_id: str) -> Dict[str, Any]:
         """Take back a SCHEDULED group price (``valid_from`` after the business today): the row is deleted and one
@@ -933,6 +951,7 @@ class PricingService:
                 raise PriceNotFound("Цена не найдена")
             if row.valid_from <= today:
                 raise PriceConflict(CANCEL_IN_FORCE_MESSAGE)
+            self._refuse_if_lessons_held(group.id, row.valid_from)
             snapshot = {
                 "actor_id": str(actor),
                 "group_id": str(group.id),
@@ -976,6 +995,7 @@ class PricingService:
                 raise PriceNotFound("Цена не найдена")
             if row.valid_from <= today:
                 raise PriceConflict(CANCEL_IN_FORCE_MESSAGE)
+            self._refuse_if_lessons_held(membership.group_id, row.valid_from)
             group = self._group(org_id, membership.group_id)
             snapshot = {
                 "actor_id": str(actor),
