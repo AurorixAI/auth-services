@@ -487,6 +487,27 @@ def sheet_state(w, m, sheet):
     return got
 
 
+def test_a_mid_month_change_with_the_same_last_price_and_total_is_stale_with_a_diff_that_says_why(world):
+    m = previous_month()
+    give_group_price(world.db, world.group, 500_000, EPOCH)
+    give_group_price(world.db, world.group, 400_000, m.d(11))
+    give_group_price(world.db, world.group, 500_000, m.d(14))
+    month_lessons(world, m, (10, 12, 15, 17))                                       # 500 000, 400 000, 500 000, 500 000
+    paid_month(world, m)
+    saved = save_sheet(world, m)
+    # the dip moves from the 12th to the 10th: same lessons, same total, same last price - only the days differ
+    put_price(world, 500_000, valid_from=m.d(11), note="поправили")
+    put_price(world, 400_000, valid_from=m.d(9))
+    now = sheet_state(world, m, saved)
+    fresh = preview(world, m)
+    assert fresh["total_amount"] == saved["total_amount"] and now["stale"] is True
+    assert line_of(fresh, world.students[0])["monthly_fee"] == line_of(saved, world.students[0])["monthly_fee"] == 500_000
+    diff = money_owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}/diff").json()
+    assert diff["stale"] is True and diff["delta_amount"] == 0 and diff["lines"]       # never an empty diff
+    assert {tuple(x["changes"]) for x in diff["lines"]} == {("цена по дням изменилась",)}
+    assert len(diff["lines"]) == 3
+
+
 def test_a_price_set_backdated_marks_the_saved_sheet_stale_and_the_sheet_itself_does_not_change(world):
     m, saved = saved_flat_month(world)
     assert sheet_state(world, m, saved)["stale"] is False and saved["total_amount"] == 3 * 66_667
@@ -1397,11 +1418,17 @@ def test_the_dry_run_script_prints_the_plan_and_writes_nothing(world):
     first = mine["Группа"]
     assert (first["price"], first["votes"], first["tie"], first["memberships"]) == (500_000, 2, False, 5)
     assert (first["follow_active"], first["overrides"], first["null_fee_start_following_active"]) == (4, 1, 2)
-    assert (mine["Вторая"]["price"], mine["Вторая"]["follow_active"], mine["Вторая"]["overrides"]) == (300_000, 1, 0)
+    second = mine["Вторая"]                                                           # ONE fee in the group: not a price
+    assert (second["price"], second["votes"], second["single_vote"], second["tie"]) == (None, 1, True, False)
+    assert (second["follow_active"], second["overrides"], second["null_fee_start_following_active"]) == (0, 1, 0)
+    assert second["no_price_reason"] == "less_than_min_votes" and first["no_price_reason"] is None and first["min_votes"] == 2
     third = mine["Третья"]
     assert third["price"] is None and third["follow_active"] == 0 and third["overrides"] == 0 and third["null_fee_start_following_active"] == 0
+    assert third["votes"] == 0 and third["single_vote"] is False and third["no_price_reason"] == "no_fees"
     text = run_dry_run("--verbose")
     assert name in text and "500 000" in text and "450 000 × 1" in text and "Итого" in text and "НАЧНУТ БРАТЬ ЦЕНУ" in text
+    assert "без цены (меньше 2 совпадений)" in text and "ОДИН ГОЛОС" in text and "без цены (сумм нет)" in text
+    assert "300 000 × 1" in text                                                      # the lone fee stays an individual price
     assert "Каримова" not in text and "Алия" not in text                              # no student names
     assert counts() == before                                                         # it wrote nothing
     assert "migration_already_applied" in data

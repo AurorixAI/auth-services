@@ -21,12 +21,14 @@ imports the very same function, so what it prints is what this migration does):
 1. Per group: the price is the MOST FREQUENT non-NULL ``monthly_fee`` among its ACTIVE memberships of students that
    are not archived; a tie goes to the amount set LATER (``monthly_fee_updated_at``; NULL is the oldest), then to the
    SMALLER amount. ``valid_from = 2000-01-01`` ("it has always been so": past months are calculated as they are
-   now). No such fee - the group has no price.
+   now). The price needs AT LEAST 2 VOTES (``MIN_VOTES``): one student's fee - possibly a discount - must not become
+   the price of the whole group. A group whose most frequent fee has fewer votes (a single fee, or every fee
+   different), or that has no fee at all, gets NO price; a tie still needs 2+ votes.
 2. EVERY membership (inactive and archived included) whose ``monthly_fee`` is not NULL and differs from the price of
-   its group (or the group has none) gets an exception ``valid_from = 2000-01-01``, reason «Цена до введения цены
+   its group (or the group has none - also a group left without a price by the rule above) keeps its fee as an exception ``valid_from = 2000-01-01``, reason «Цена до введения цены
    группы» - so no student's price changes.
 3. A membership with ``monthly_fee`` NULL in a group that got a price starts to follow the group price - an intended
-   change; run ``scripts/group_price_dry_run.py`` on production before the release to see which groups and how many.
+   change (in a group without a price nothing changes: nobody silently starts paying); run ``scripts/group_price_dry_run.py`` on production before the release to see which groups and how many.
 
 ``student_groups.monthly_fee`` (+ ``_updated_by`` / ``_updated_at``) STAYS (rollback safety): the code no longer
 reads or writes it; a LATER migration drops it. Do not drop it before the image that stopped using it has been live
@@ -70,6 +72,7 @@ OVERRIDES = "membership_price_overrides"
 EPOCH = date(2000, 1, 1)
 OVERRIDE_REASON = "Цена до введения цены группы"
 GROUP_NOTE = "Перенос из «оплаты в месяц» учеников"
+MIN_VOTES = 2  # the most frequent fee needs this many active memberships to become the price of a group
 
 # ``group_audit.action``: the list of the previous revision (student archive) and the list with the price actions.
 GROUP_AUDIT = "group_audit"
@@ -127,12 +130,19 @@ class GroupPlan:
     def override_active(self) -> int:
         return sum(1 for _, _, active in self.overrides if active)
 
+    @property
+    def single_vote(self) -> bool:
+        """Some fee exists but none has ``MIN_VOTES`` votes: the group gets no price, every fee stays an exception."""
+        return self.price is None and self.votes > 0
+
 
 def choose_group_price(fees: Iterable[Tuple[int, Optional[datetime]]]) -> Tuple[Optional[int], int, bool]:
     """``(price, votes, tie)`` from the ``(fee, fee_updated_at)`` of the ACTIVE memberships of one group.
 
     The most frequent fee wins; among equals the one set later (the latest ``fee_updated_at`` of its holders, NULL is
-    the oldest), then the smaller sum.
+    the oldest), then the smaller sum.  It is a price only with ``MIN_VOTES`` votes or more: below that ``price`` is
+    None (``votes`` is still the top count, ``tie`` still says whether several fees shared it), so the dry run can
+    tell "a single fee" from "no fee at all" (``votes == 0``).
     """
     votes: Counter = Counter()
     latest: Dict[int, datetime] = {}
@@ -146,7 +156,7 @@ def choose_group_price(fees: Iterable[Tuple[int, Optional[datetime]]]) -> Tuple[
     top = max(votes.values())
     contenders = [fee for fee, n in votes.items() if n == top]
     best = max(contenders, key=lambda fee: (latest[fee], -fee))
-    return int(best), top, len(contenders) > 1
+    return (int(best) if top >= MIN_VOTES else None), top, len(contenders) > 1
 
 
 def plan_backfill(rows: Iterable[Any]) -> List[GroupPlan]:

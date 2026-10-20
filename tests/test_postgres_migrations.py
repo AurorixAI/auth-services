@@ -871,7 +871,7 @@ def _check_n13_group_price_objects(engine,config,ids):
     with Session(engine) as db:
         db.add(Organization(id=org,name='Price migration org',status='active')); db.flush()
         db.add(User(id=owner,email=f'{owner}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='P',role='owner')); db.commit()
-    groups={n:uuid4() for n in ('majority','tie_date','tie_sum','all_null','inactive_only','free','empty')}
+    groups={n:uuid4() for n in ('majority','tie_date','tie_sum','all_null','inactive_only','free','empty','single','pairs')}
     with Session(engine) as db:
         for name,gid in groups.items():
             db.add(Group(id=gid,org_id=org,name=name,class_level=9))
@@ -904,8 +904,12 @@ def _check_n13_group_price_objects(engine,config,ids):
     m['maj_null']=member('majority',None); m['maj_old']=member('majority',300000,active=False)               # an inactive fee never votes ...
     m['maj_inactive_same']=member('majority',500000,active=False)                                           # ... but one equal to the price follows it
     m['maj_archived']=member('majority',999000,status='archived')                                            # active membership of an archived student: no vote, an exception
-    m['td_a']=member('tie_date',400000,updated=old); m['td_b']=member('tie_date',500000,updated=new)         # a tie: the later one wins
-    m['ts_a']=member('tie_sum',500000,updated=old); m['ts_b']=member('tie_sum',400000,updated=old)           # same date: the smaller sum
+    m['td_a']=member('tie_date',400000,updated=old); m['td_a2']=member('tie_date',400000,updated=old)       # a 2 + 2 tie: the later one wins
+    m['td_b']=member('tie_date',500000,updated=new); m['td_b2']=member('tie_date',500000,updated=new)
+    m['ts_a']=member('tie_sum',500000,updated=old); m['ts_a2']=member('tie_sum',500000,updated=old)         # same date: the smaller sum
+    m['ts_b']=member('tie_sum',400000,updated=old); m['ts_b2']=member('tie_sum',400000,updated=old)
+    m['sg1']=member('single',350000,updated=new); m['sg_null']=member('single',None)                         # ONE fee: no price, the NULL one stays without
+    m['pr_a']=member('pairs',300000,updated=old); m['pr_b']=member('pairs',400000,updated=old); m['pr_c']=member('pairs',500000,updated=new)   # 1 + 1 + 1: no price
     m['an1']=member('all_null',None); m['an2']=member('all_null',None)
     m['io1']=member('inactive_only',350000,active=False); m['io2']=member('inactive_only',None,active=False)
     m['fr1']=member('free',0,updated=new); m['fr2']=member('free',0,updated=old); m['fr3']=member('free',300000,updated=new)
@@ -920,12 +924,14 @@ def _check_n13_group_price_objects(engine,config,ids):
             return {r.membership_id:(r.amount,r.valid_from,r.reason) for r in c.execute(text("SELECT o.membership_id,o.amount,o.valid_from,o.reason FROM membership_price_overrides o JOIN student_groups sg ON sg.id=o.membership_id JOIN groups g ON g.id=sg.group_id WHERE g.org_id=:o"),{'o':org})}
     epoch=date(2000,1,1)
     got=prices()
-    assert {k:v[0] for k,v in got.items()}=={'majority':500000,'tie_date':500000,'tie_sum':400000,'free':0}      # no price for all_null / inactive_only / empty
+    assert {k:v[0] for k,v in got.items()}=={'majority':500000,'tie_date':500000,'tie_sum':400000,'free':0}      # no price for all_null / inactive_only / empty / single / pairs (less than 2 votes)
     assert all(v[1]==epoch and v[3] is None for v in got.values())
     ex=overrides()
     reason='Цена до введения цены группы'
     assert ex=={m['maj3']:(450000,epoch,reason),m['maj_old']:(300000,epoch,reason),m['maj_archived']:(999000,epoch,reason),
-                m['td_a']:(400000,epoch,reason),m['ts_a']:(500000,epoch,reason),m['io1']:(350000,epoch,reason),m['fr3']:(300000,epoch,reason)}
+                m['td_a']:(400000,epoch,reason),m['td_a2']:(400000,epoch,reason),m['ts_a']:(500000,epoch,reason),m['ts_a2']:(500000,epoch,reason),
+                m['io1']:(350000,epoch,reason),m['fr3']:(300000,epoch,reason),
+                m['sg1']:(350000,epoch,reason),m['pr_a']:(300000,epoch,reason),m['pr_b']:(400000,epoch,reason),m['pr_c']:(500000,epoch,reason)}   # a lone fee stays an exception: no amount changes
     # the effective price of every membership that HAD a fee is what it was; the NULL ones follow the group price (or stay empty)
     def effective():
         with engine.connect() as c:
@@ -938,8 +944,9 @@ def _check_n13_group_price_objects(engine,config,ids):
         fees={r.id:r.monthly_fee for r in c.execute(text("SELECT sg.id,sg.monthly_fee FROM student_groups sg JOIN groups g ON g.id=sg.group_id WHERE g.org_id=:o"),{'o':org})}
     for mid,fee in fees.items():
         if fee is not None: assert eff[mid]==fee,(mid,fee,eff[mid])
+    assert eff[m['sg1']]==350000 and eff[m['sg_null']] is None and eff[m['pr_a']]==300000 and eff[m['pr_c']]==500000   # nobody silently starts paying
     assert eff[m['maj_null']]==500000 and eff[m['an1']] is None and eff[m['io2']] is None       # NULL follows the price of the group (the intended change)
-    assert all(fees[x] is not None or x in (m['maj_null'],m['an1'],m['an2'],m['io2']) for x in fees)   # the old column is untouched by the upgrade
+    assert all(fees[x] is not None or x in (m['maj_null'],m['an1'],m['an2'],m['io2'],m['sg_null']) for x in fees)   # the old column is untouched by the upgrade
     # --- constraints
     gid=groups['majority']
     for sql,params,pattern in (

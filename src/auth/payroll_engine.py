@@ -413,7 +413,7 @@ def group_blocks(lines: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
 
 # ------------------------------------------------------------------- diff ----
 
-_COMPARED = ("monthly_fee", "percent", "counted", "unpaid", "pending_excused", "amount")
+_COMPARED = ("monthly_fee", "percent", "counted", "unpaid", "pending_excused", "amount", "price_steps")
 _LABELS = {
     "monthly_fee": "оплата",
     "percent": "процент",
@@ -421,7 +421,14 @@ _LABELS = {
     "unpaid": "не оплачено",
     "pending_excused": "уважительные ожидают",
     "amount": "начислено",
+    "price_steps": "цена по дням изменилась",  # only the per-day prices differ (same last price, same total)
 }
+
+
+def _value(line: Mapping[str, Any], key: str) -> Any:
+    """A compared field; a sheet saved before #105 has no ``price_steps``: that is the same as no change of the price."""
+    value = line.get(key)
+    return (value or []) if key == "price_steps" else value
 
 
 def _marks_key(line: Mapping[str, Any]) -> list:
@@ -446,12 +453,12 @@ def diff_lines(
     out: List[Dict[str, Any]] = []
 
     def brief(line: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
-        return None if line is None else {key: line.get(key) for key in _COMPARED}
+        return None if line is None else {key: _value(line, key) for key in _COMPARED}
 
     for membership_id in sorted(set(old) | set(new), key=lambda k: (_sort_name(old.get(k) or new.get(k)), k)):
         a, b = old.get(membership_id), new.get(membership_id)
         if a is not None and b is not None:
-            changes = [key for key in _COMPARED if a.get(key) != b.get(key)]
+            changes = [key for key in _COMPARED if _value(a, key) != _value(b, key)]
             if not changes and _marks_key(a) != _marks_key(b):
                 changes = ["marks"]
             if not changes:

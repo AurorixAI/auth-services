@@ -93,6 +93,18 @@ def test_a_price_raised_from_the_15th_splits_the_month_by_lesson_date():
     assert got["price_steps"] == [{"date": "2026-09-01", "amount": 400_000}, {"date": "2026-09-15", "amount": 500_000}]
 
 
+def test_the_diff_sees_prices_that_differ_only_by_day_and_an_old_sheet_without_steps_is_not_a_change():
+    a = line([priced(1, 400_000), priced(8, 500_000), priced(15, 500_000), priced(22, 400_000)], source_fee=400_000)
+    b = line([priced(1, 500_000), priced(8, 400_000), priced(15, 500_000), priced(22, 400_000)], source_fee=400_000)
+    assert (a["amount"], a["monthly_fee"], a["counted"]) == (b["amount"], b["monthly_fee"], b["counted"])   # same total, same last price
+    assert a["price_steps"] != b["price_steps"]
+    (row,) = pe.diff_lines([a], [b])
+    assert row["status"] == "changed" and row["changes"] == ["цена по дням изменилась"] and row["delta_amount"] == 0
+    assert pe.diff_lines([a], [dict(a)]) == []
+    old_sheet = {k: v for k, v in line([priced(1, 400_000)], source_fee=400_000).items() if k != "price_steps"}   # saved before #105
+    assert pe.diff_lines([old_sheet], [line([priced(1, 400_000)], source_fee=400_000)]) == []
+
+
 def test_a_price_that_did_not_change_is_no_step():
     got = line([priced(1, 400_000), priced(8, 400_000)], source_fee=400_000)
     assert got["price_changed"] is False and got["price_steps"] == []
@@ -195,13 +207,23 @@ def test_the_group_price_is_the_most_frequent_fee_then_the_later_then_the_smalle
     choose = migration.choose_group_price
     old, new = datetime(2026, 1, 1), datetime(2026, 6, 1)
     assert choose([(400, old), (500, old), (500, old)]) == (500, 2, False)                 # the most frequent
-    assert choose([(400, old), (500, new)]) == (500, 1, True)                              # a tie: the later one
-    assert choose([(400, new), (500, old)]) == (400, 1, True)
-    assert choose([(500, None), (400, old)]) == (400, 1, True)                             # NULL date is the oldest
-    assert choose([(500, old), (400, old)]) == (400, 1, True)                              # same date: the smaller sum
     assert choose([(500, old), (500, new), (400, new)]) == (500, 2, False)
     assert choose([(0, old), (0, old), (300, new)]) == (0, 2, False)                       # free is a price too
+    # a tie of 2 + 2: the later one, NULL date is the oldest, the same date - the smaller sum
+    assert choose([(400, old), (400, old), (500, new), (500, new)]) == (500, 2, True)
+    assert choose([(400, new), (400, new), (500, old), (500, old)]) == (400, 2, True)
+    assert choose([(500, None), (500, None), (400, old), (400, old)]) == (400, 2, True)
+    assert choose([(500, old), (500, old), (400, old), (400, old)]) == (400, 2, True)
     assert choose([]) == (None, 0, False)
+
+
+def test_a_price_needs_two_votes_one_fee_alone_is_not_a_price(migration):
+    choose = migration.choose_group_price
+    old, new = datetime(2026, 1, 1), datetime(2026, 6, 1)
+    assert migration.MIN_VOTES == 2
+    assert choose([(300, old)]) == (None, 1, False)                                        # a single (maybe discounted) fee
+    assert choose([(400, old), (500, new)]) == (None, 1, True)                             # a tie of 1 + 1 is still too few
+    assert choose([(400, old), (500, old), (600, old)]) == (None, 1, True)
 
 
 def row(group, fee, *, active=True, updated=None, member=None, org="ЦО", name="Группа"):
@@ -236,3 +258,48 @@ def test_a_group_without_any_fee_stays_without_a_price(migration):
     g = uuid4()
     (plan,) = migration.plan_backfill([row(g, None), row(g, None)])
     assert plan.price is None and plan.overrides == [] and plan.null_active == 0
+
+
+def test_a_single_fee_gives_no_price_and_stays_an_exception_nobody_starts_following(migration):
+    g = uuid4()
+    rows = [row(g, 300_000), row(g, None), row(g, None, active=False), row(g, 450_000, active=False)]
+    (plan,) = migration.plan_backfill(rows)
+    assert (plan.price, plan.votes, plan.tie, plan.single_vote) == (None, 1, False, True)
+    assert sorted(fee for _, fee, _ in plan.overrides) == [300_000, 450_000] and plan.override_active == 1   # no amount changes
+    assert (plan.follow_active, plan.follow_inactive, plan.null_active, plan.null_inactive) == (0, 0, 0, 0)  # the NULL ones stay without a price
+
+
+def test_two_votes_give_the_price_and_a_2_plus_2_tie_still_does(migration):
+    g, h = uuid4(), uuid4()
+    old, new = datetime(2026, 1, 1), datetime(2026, 6, 1)
+    rows = [row(g, 500_000), row(g, 500_000), row(g, 300_000), row(g, None)]
+    rows += [row(h, 400_000, updated=old), row(h, 400_000, updated=old), row(h, 500_000, updated=new), row(h, 500_000, updated=new)]
+    plans = {p.group_id: p for p in migration.plan_backfill(rows)}
+    assert (plans[g].price, plans[g].votes, plans[g].single_vote) == (500_000, 2, False)
+    assert [fee for _, fee, _ in plans[g].overrides] == [300_000] and plans[g].null_active == 1
+    assert (plans[h].price, plans[h].votes, plans[h].tie) == (500_000, 2, True)             # the later date wins
+    assert plans[h].overrides == [(rows[4]["membership_id"], 400_000, True), (rows[5]["membership_id"], 400_000, True)]
+
+
+def test_the_dry_run_report_flags_ties_and_single_votes(migration):
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "group_price_dry_run.py"
+    spec = importlib.util.spec_from_file_location("dry_run_report_test", path)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    a, b, c, d = uuid4(), uuid4(), uuid4(), uuid4()
+    old, new = datetime(2026, 1, 1), datetime(2026, 6, 1)
+    rows = [row(a, 400_000, updated=old, name="Ничья 2+2"), row(a, 400_000, updated=old, name="Ничья 2+2"),
+            row(a, 500_000, updated=new, name="Ничья 2+2"), row(a, 500_000, updated=new, name="Ничья 2+2"), row(a, None, name="Ничья 2+2")]
+    rows += [row(b, 300_000, name="Один голос"), row(b, None, name="Один голос")]
+    rows += [row(c, 300_000, name="Все разные"), row(c, 400_000, name="Все разные")]
+    rows += [row(d, None, name="Без сумм")]
+    text = script.report(migration.plan_backfill(rows), "db", False, False)
+    lines = {name: next(x for x in text.splitlines() if x.strip().startswith(name)) for name in ("Ничья 2+2", "Один голос", "Все разные", "Без сумм")}
+    assert "500 000" in lines["Ничья 2+2"] and "НИЧЬЯ (выбрана сумма" in lines["Ничья 2+2"] and "1 / 0" in lines["Ничья 2+2"]
+    assert "без цены (меньше 2 совпадений)" in lines["Один голос"] and "ОДИН ГОЛОС" in lines["Один голос"] and "НИЧЬЯ" not in lines["Один голос"]
+    assert "без цены (меньше 2 совпадений)" in lines["Все разные"] and "НИЧЬЯ — без цены" in lines["Все разные"] and "ОДИН ГОЛОС" in lines["Все разные"]
+    assert "без цены (сумм нет)" in lines["Без сумм"] and "ОДИН ГОЛОС" not in lines["Без сумм"]
+    assert "без цены 3 (из них с одним голосом: 2)" in text and "ничья по голосам: 2" in text

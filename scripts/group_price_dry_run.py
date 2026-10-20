@@ -8,9 +8,12 @@ Run it on PRODUCTION BEFORE the release, against the database the migration will
 It reads ``student_groups.monthly_fee`` and applies the very function the migration uses (``plan_backfill`` of
 ``alembic/versions/b8c9d0e1f2a_group_prices.py``), so what it prints is what the migration will do:
 
-* per centre and group: the price the group gets (and whether the choice was a tie), how many memberships follow it,
-  how many get an individual price (exception) and how many memberships WITHOUT a fee start to follow the price
-  (the only intended change of a student's price: it is the line to read before the release);
+* per centre and group: the votes of the most frequent fee, the price the group gets or «без цены (меньше 2
+  совпадений)» (a price needs at least 2 votes: one student's fee must not become the price of a group; then every
+  fee stays an individual price and nobody changes), ties and single-vote groups flagged, how many memberships
+  follow the price, how many get an individual price (exception) and how many memberships WITHOUT a fee start to
+  follow the price, active / inactive (the only intended change of a student's price: the line to read before the
+  release);
 * "активные" = active membership of a student who is not archived; the exceptions also cover inactive memberships.
 
 The connection is opened read-only (``SET TRANSACTION READ ONLY``): the script cannot change the database.
@@ -29,6 +32,9 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import create_engine, text
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.core.db_timezone import utc_connect_args  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "alembic" / "versions" / "b8c9d0e1f2a_group_prices.py"
 
@@ -40,13 +46,16 @@ def load_migration():
     return module
 
 
+MIN_VOTES = load_migration().MIN_VOTES
+
+
 def money(value) -> str:
     return "—" if value is None else f"{value:,}".replace(",", " ")
 
 
 def collect(url: str):
     migration = load_migration()
-    engine = create_engine(url)
+    engine = create_engine(url, connect_args=utc_connect_args(url))
     try:
         with engine.connect() as connection:
             connection.execute(text("SET TRANSACTION READ ONLY"))
@@ -76,13 +85,24 @@ def report(plans, target: str, applied: bool, verbose: bool) -> str:
             org = plan.org_name
             out.append(f"\nЦентр: {org}")
             out.append(
-                f"  {'Группа':<30}{'Цена группы':>14}{'Голосов':>9}{'Следуют':>9}{'Исключения':>12}{'Без цены → цена':>17}"
+                f"  {'Группа':<26}{'Цена группы':>33}{'Голосов':>9}{'Следуют':>9}{'Исключения':>12}{'Без цены → цена':>17}  Пометки"
             )
-        price = money(plan.price) + (" *" if plan.tie else "")
+        if plan.price is not None:
+            price = money(plan.price)
+        elif plan.votes:
+            price = "без цены (меньше 2 совпадений)"
+        else:
+            price = "без цены (сумм нет)"
         exceptions = f"{len(plan.overrides)} ({plan.override_active} акт.)" if plan.overrides else "0"
+        null_fee = f"{plan.null_active} / {plan.null_inactive}"
+        flags = []
+        if plan.tie:
+            flags.append("НИЧЬЯ" + (" (выбрана сумма, заданная позже, затем меньшая)" if plan.price is not None else " — без цены"))
+        if plan.single_vote:
+            flags.append("ОДИН ГОЛОС — суммы остаются индивидуальными")
         out.append(
-            f"  {plan.group_name[:29]:<30}{price:>14}{plan.votes:>9}"
-            f"{plan.follow_active:>9}{exceptions:>12}{plan.null_active:>17}"
+            f"  {plan.group_name[:25]:<26}{price:>33}{plan.votes:>9}"
+            f"{plan.follow_active:>9}{exceptions:>12}{null_fee:>17}  {'; '.join(flags)}"
         )
         if verbose and plan.overrides:
             sums = Counter(fee for _, fee, _ in plan.overrides)
@@ -90,6 +110,7 @@ def report(plans, target: str, applied: bool, verbose: bool) -> str:
         total["groups"] += 1
         total["priced"] += plan.price is not None
         total["no_price"] += plan.price is None
+        total["single"] += plan.single_vote
         total["tie"] += plan.tie
         total["memberships"] += plan.memberships
         total["active"] += plan.active
@@ -99,11 +120,17 @@ def report(plans, target: str, applied: bool, verbose: bool) -> str:
         total["overrides_active"] += plan.override_active
         total["null_active"] += plan.null_active
         total["null_inactive"] += plan.null_inactive
-    out.append("\nГолосов — активных членств с этой суммой; Следуют — активных членств, которые берут цену группы (сумма равна ей или пуста).")
-    out.append("Исключения — членства (любые, и неактивные) с другой суммой: им записывается индивидуальная цена с 01.01.2000.")
-    out.append("* — ничья по голосам: выбрана сумма, заданная позже, затем меньшая.")
     out.append(
-        "\nИтого: групп с членствами {groups}; получат цену {priced} (ничья по голосам: {tie}), без цены {no_price}.\n"
+        "\nГолосов — активных членств с самой частой суммой. Цена группы — только при {min} голосах и больше: иначе группа остаётся без цены,"
+        " а каждая сумма — индивидуальной ценой «Цена до введения цены группы» (ничего не меняется).".format(min=MIN_VOTES)
+    )
+    out.append("Следуют — активных членств, которые берут цену группы (сумма равна ей или пуста).")
+    out.append("Исключения — членства (любые, и неактивные) с другой суммой: им записывается индивидуальная цена с 01.01.2000.")
+    out.append("Без цены → цена — членства без суммы, которые начнут брать цену группы: активных / неактивных.")
+    out.append("НИЧЬЯ — несколько сумм набрали поровну голосов: берётся заданная позже, затем меньшая (если голосов хватает).")
+    out.append(
+        "\nИтого: групп с членствами {groups}; получат цену {priced} (ничья по голосам: {tie}), без цены {no_price} "
+        "(из них с одним голосом: {single}).\n"
         "  членств {memberships} (активных {active}); следуют цене группы: активных {follow_active}, "
         "неактивных {follow_inactive};\n"
         "  индивидуальные цены (исключения): {overrides} (активных {overrides_active});\n"
@@ -123,6 +150,9 @@ def as_json(plans, target: str, applied: bool):
                 "group_id": str(p.group_id),
                 "price": p.price,
                 "votes": p.votes,
+                "min_votes": MIN_VOTES,
+                "no_price_reason": None if p.price is not None else ("less_than_min_votes" if p.votes else "no_fees"),
+                "single_vote": p.single_vote,
                 "tie": p.tie,
                 "memberships": p.memberships,
                 "active": p.active,
