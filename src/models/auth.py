@@ -520,7 +520,7 @@ class GroupAudit(Base):
     __table_args__ = (
         CheckConstraint(
             "action IN ('created', 'updated', 'teacher_changed', 'student_archived', 'student_restored', "
-            "'group_price_set', 'membership_price_set')",
+            "'group_price_set', 'membership_price_set', 'group_price_cancelled', 'membership_price_cancelled')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(

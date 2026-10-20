@@ -79,6 +79,16 @@ of the membership that day, so ``old_source`` says whether it was the group pric
 "group price again" row falls to the group price).  The trail is read through the ``changes`` of the ``history`` items
 (:meth:`PricingService.group_prices`, :meth:`PricingService.override_history`) - money roles only.
 
+Cancelling a SCHEDULED price (:meth:`PricingService.cancel_group_price`, :meth:`PricingService.cancel_override`) DELETES
+its row - only a row with ``valid_from`` after the business today, which no payment, status or payroll sheet can depend
+on yet; one that already acts is a 409 (a new price from the right day corrects it, with the trail above).  It takes
+the same locks as the writes (the group; for an individual price student -> group -> membership) and leaves ONE
+``group_price_cancelled`` / ``membership_price_cancelled`` row in ``group_audit`` in the same transaction; the
+snapshot is that of the write plus ``row_id``, ``valid_from``, ``amount`` and ``note`` / ``reason`` of the deleted row.
+The two GETs list the last ``CANCELLED_LIMIT`` of them, newest first, as ``cancelled`` (the row is gone, so the
+``changes`` of ``history`` cannot show them).  A cancel racing a write of the same row is clean: the row is taken
+under the lock, a second cancel of a row already gone is a 404.
+
 Money never reaches a teacher: the only callers are the endpoints under ``require_payments_access`` and the
 services that build money responses.  Logs carry ids and the actor, never amounts.
 """
@@ -117,6 +127,10 @@ SOURCE_NONE = "none"
 
 ACTION_GROUP_PRICE = "group_price_set"  # group_audit.action of a write of a group price
 ACTION_MEMBERSHIP_PRICE = "membership_price_set"  # ... of an individual price (also "the group price again")
+ACTION_GROUP_PRICE_CANCELLED = "group_price_cancelled"  # a SCHEDULED group price taken back (its row is deleted)
+ACTION_MEMBERSHIP_PRICE_CANCELLED = "membership_price_cancelled"  # ... a scheduled individual price
+CANCELLED_LIMIT = 20  # how many cancellations the GETs list
+CANCEL_IN_FORCE_MESSAGE = "Нельзя отменить цену, которая уже действует — задайте новую с нужной даты"
 
 # "Always so": the valid_from of the prices the migration made from the old per-student fees (past months are
 # calculated as they were).  Also the earliest day a price can start.
@@ -560,14 +574,36 @@ class PricingService:
             by_day.setdefault((row.snapshot or {}).get("valid_from"), []).append(row)
         return by_day, self._names(row.actor_id for row in rows)
 
+    def _cancelled(self, group_id: UUID, action: str, *, membership_id: Optional[UUID] = None) -> List[Dict[str, Any]]:
+        """The last ``CANCELLED_LIMIT`` cancellations of ``action`` of a group (of one membership), newest first."""
+        query = self.db.query(GroupAudit).filter(GroupAudit.group_id == group_id, GroupAudit.action == action)
+        if membership_id is not None:
+            query = query.filter(GroupAudit.snapshot["membership_id"].astext == str(membership_id))
+        rows = query.order_by(GroupAudit.created_at.desc(), GroupAudit.id.desc()).limit(CANCELLED_LIMIT).all()
+        names = self._names(row.actor_id for row in rows)
+        out = []
+        for row in rows:
+            snap = row.snapshot or {}
+            item = {
+                "at": row.created_at.isoformat() if row.created_at else None,
+                "actor_name": names.get(row.actor_id),
+                "amount": snap.get("amount"),
+                "valid_from": snap.get("valid_from"),
+            }
+            key = "reason" if membership_id is not None else "note"
+            item[key] = snap.get(key)
+            out.append(item)
+        return out
+
     def group_prices(self, org_id: str, group_id: UUID) -> Dict[str, Any]:
         """``current`` (on the business today) and the whole ``history`` of a group, newest first.
 
         Every ``history`` item carries ``changes`` - the audit trail of THAT ``valid_from`` (``group_audit``, action
         ``group_price_set``), newest first: ``at`` (naive UTC, ISO), ``actor_name``, ``old_amount`` (in force on that
         day before the write; null - none), ``new_amount`` and ``note``.  The first item is the write that created the
-        row, the next ones are its corrections; a row made by the migration has none.  Money roles only: the
-        endpoint is under ``require_payments_access``."""
+        row, the next ones are its corrections; a row made by the migration has none.  ``cancelled`` (top level) lists the
+        last scheduled prices that were taken back - ``at``, ``actor_name``, ``amount``, ``valid_from``, ``note``.
+        Money roles only: the endpoint is under ``require_payments_access``."""
         group = self._group(org_id, group_id)
         today = ps.business_today()
         rows = (
@@ -588,6 +624,7 @@ class PricingService:
             "as_of": today.isoformat(),
             "period_mode": mode,
             "price_label": label,
+            "cancelled": self._cancelled(group.id, ACTION_GROUP_PRICE_CANCELLED),
             "current": (
                 {
                     "amount": current[1],
@@ -644,7 +681,9 @@ class PricingService:
         Every ``history`` item carries ``changes`` - the audit trail of THAT ``valid_from`` (``group_audit``, action
         ``membership_price_set``), newest first: ``at``, ``actor_name``, ``old_amount`` and ``old_source`` (the
         EFFECTIVE price of the membership that day before the write and where it came from: ``group`` / ``override``
-        / ``none``), ``new_amount`` (null - "the group price again") and ``reason``.  Money roles only."""
+        / ``none``), ``new_amount`` (null - "the group price again") and ``reason``.  ``cancelled`` (top level): the last
+        scheduled individual prices that were taken back (``at``, ``actor_name``, ``amount``, ``valid_from``, ``reason``).
+        Money roles only."""
         membership = self._membership(org_id, membership_id)
         today = ps.business_today()
         rows = (
@@ -666,6 +705,7 @@ class PricingService:
             "as_of": today.isoformat(),
             "period_mode": mode,
             "price_label": label,
+            "cancelled": self._cancelled(membership.group_id, ACTION_MEMBERSHIP_PRICE_CANCELLED, membership_id=membership.id),
             "price": price_dict(books.price(membership.id, membership.group_id, today)),
             "history": [
                 {
@@ -854,6 +894,115 @@ class PricingService:
         out.update({"dry_run": False, "impact": impact})
         return out
 
+    def _lock_membership(self, org_id: str, membership_id: UUID) -> Tuple[Student, StudentGroup]:
+        """The lock order of an individual price (module docstring): student -> group -> membership, every one FOR NO
+        KEY UPDATE.  The ids come from an unlocked read (a membership never changes its student or its group); the
+        student's status is read by the caller AFTER the locks."""
+        known = self._membership(org_id, membership_id)
+        student = (
+            self.db.query(Student)
+            .filter(Student.id == known.student_id, Student.org_id == org_id)
+            .with_for_update(key_share=True)
+            .populate_existing()
+            .first()
+        )
+        if student is None:
+            raise PriceNotFound("Членство не найдено")
+        self._group(org_id, known.group_id, lock=True)
+        membership = self._membership(org_id, membership_id, lock=True)
+        if membership.student_id != student.id or membership.group_id != known.group_id:
+            raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT")
+        return student, membership
+
+    @_guard
+    def cancel_group_price(self, org_id: str, group_id: UUID, row_id: UUID, actor_id: str) -> Dict[str, Any]:
+        """Take back a SCHEDULED group price (``valid_from`` after the business today): the row is deleted and one
+        ``group_price_cancelled`` audit row is written, in one transaction.  A row that already acts: 409; unknown row
+        or another group's: 404.  Same lock as ``set_group_price`` (the group row)."""
+        actor = _uuid(actor_id)
+        today = ps.business_today()
+        try:
+            group = self._group(org_id, group_id, lock=True)
+            row = (
+                self.db.query(GroupPrice)
+                .filter(GroupPrice.id == row_id, GroupPrice.group_id == group.id)
+                .populate_existing()
+                .first()
+            )
+            if row is None:
+                raise PriceNotFound("Цена не найдена")
+            if row.valid_from <= today:
+                raise PriceConflict(CANCEL_IN_FORCE_MESSAGE)
+            snapshot = {
+                "actor_id": str(actor),
+                "group_id": str(group.id),
+                "row_id": str(row.id),
+                "valid_from": row.valid_from.isoformat(),
+                "amount": int(row.amount),
+                "note": row.note,
+            }
+            self.db.delete(row)
+            self.db.flush()
+            _add_audit(
+                self.db, org_id=group.org_id, group_id=group.id, teacher_id=group.teacher_id, actor=actor,
+                action=ACTION_GROUP_PRICE_CANCELLED, snapshot=snapshot, at=_utcnow(),
+            )
+            self.db.commit()
+        except PriceError:
+            self.db.rollback()
+            raise
+        except Exception:  # the delete and its audit row go together
+            self.db.rollback()
+            raise
+        logger.info("group price cancelled group=%s row=%s actor=%s", group_id, row_id, actor_id)
+        return self.group_prices(org_id, group_id)
+
+    @_guard
+    def cancel_override(self, org_id: str, membership_id: UUID, row_id: UUID, actor_id: str) -> Dict[str, Any]:
+        """Take back a SCHEDULED individual price: as :meth:`cancel_group_price`, under the locks of an individual price
+        (student -> group -> membership); ``membership_price_cancelled`` goes to the audit.  An archived student's
+        scheduled price may be taken back too (nothing is written for him, only removed)."""
+        actor = _uuid(actor_id)
+        today = ps.business_today()
+        try:
+            student, membership = self._lock_membership(org_id, membership_id)
+            row = (
+                self.db.query(MembershipPriceOverride)
+                .filter(MembershipPriceOverride.id == row_id, MembershipPriceOverride.membership_id == membership.id)
+                .populate_existing()
+                .first()
+            )
+            if row is None:
+                raise PriceNotFound("Цена не найдена")
+            if row.valid_from <= today:
+                raise PriceConflict(CANCEL_IN_FORCE_MESSAGE)
+            group = self._group(org_id, membership.group_id)
+            snapshot = {
+                "actor_id": str(actor),
+                "group_id": str(group.id),
+                "membership_id": str(membership.id),
+                "student_id": str(student.id),
+                "row_id": str(row.id),
+                "valid_from": row.valid_from.isoformat(),
+                "amount": None if row.amount is None else int(row.amount),
+                "reason": row.reason,
+            }
+            self.db.delete(row)
+            self.db.flush()
+            _add_audit(
+                self.db, org_id=group.org_id, group_id=group.id, teacher_id=group.teacher_id, actor=actor,
+                action=ACTION_MEMBERSHIP_PRICE_CANCELLED, snapshot=snapshot, at=_utcnow(),
+            )
+            self.db.commit()
+        except PriceError:
+            self.db.rollback()
+            raise
+        except Exception:
+            self.db.rollback()
+            raise
+        logger.info("price override cancelled membership=%s row=%s actor=%s", membership_id, row_id, actor_id)
+        return self.override_history(org_id, membership_id)
+
     @_guard
     def set_override(
         self,
@@ -874,22 +1023,7 @@ class PricingService:
         amount, reason = check_override_input(amount, reason)
         valid_from = check_valid_from(valid_from or today, today)
         try:
-            # The lock order is in the module docstring: student -> group -> membership, every one FOR NO KEY UPDATE.
-            # The ids come from an unlocked read (a membership never changes its student or its group).
-            known = self._membership(org_id, membership_id)
-            student = (
-                self.db.query(Student)
-                .filter(Student.id == known.student_id, Student.org_id == org_id)
-                .with_for_update(key_share=True)
-                .populate_existing()
-                .first()
-            )
-            if student is None:
-                raise PriceNotFound("Членство не найдено")
-            self._group(org_id, known.group_id, lock=True)
-            membership = self._membership(org_id, membership_id, lock=True)
-            if membership.student_id != student.id or membership.group_id != known.group_id:
-                raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT")
+            student, membership = self._lock_membership(org_id, membership_id)
             if student.status == "archived":  # read after the locks: an archiving that held the student is seen
                 raise PriceConflict(ARCHIVED_STUDENT_MESSAGE)
             write_override(

@@ -184,6 +184,19 @@ def set_group_price(
         raise _http(exc)
 
 
+@router.delete("/org/groups/{group_id}/prices/{row_id}", response_model=GroupPricesOut)
+def cancel_group_price(
+    group_id: UUID, row_id: UUID, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)
+):
+    """Отменить ЗАПЛАНИРОВАННУЮ цену группы (``valid_from`` позже сегодняшнего дня): строка удаляется, в аудит
+    (``group_audit``, ``group_price_cancelled``) пишется снимок удалённой строки — в той же транзакции. Ответ — как у GET
+    ``/prices`` (отмена видна в ``cancelled``). Цена, которая уже действует: 409; чужая или неизвестная строка: 404."""
+    try:
+        return pricing.PricingService(db).cancel_group_price(user["org_id"], group_id, row_id, user["user_id"])
+    except pricing.PriceError as exc:
+        raise _http(exc)
+
+
 @router.get("/org/memberships/{membership_id}/price-override", response_model=MembershipPriceOut)
 def get_price_override(
     membership_id: UUID, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)
@@ -217,6 +230,21 @@ def set_price_override(
             user["org_id"], membership_id, user["user_id"], amount=request.amount,
             valid_from=request.valid_from, reason=request.reason,
         )
+        out["row"] = PaymentService(db)._row(user["org_id"], membership_id)
+        return out
+    except (PaymentError, pricing.PriceError) as exc:
+        raise _http(exc)
+
+
+@router.delete("/org/memberships/{membership_id}/price-override/{row_id}", response_model=PriceOverrideChanged)
+def cancel_price_override(
+    membership_id: UUID, row_id: UUID, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)
+):
+    """Отменить ЗАПЛАНИРОВАННУЮ индивидуальную цену (``valid_from`` позже сегодняшнего дня): строка удаляется, в аудит
+    (``membership_price_cancelled``) пишется снимок — в той же транзакции. Ответ — как у PUT: история, ``cancelled`` и
+    обновлённая строка членства (``row``). Уже действующая: 409; чужая или неизвестная строка: 404."""
+    try:
+        out = pricing.PricingService(db).cancel_override(user["org_id"], membership_id, row_id, user["user_id"])
         out["row"] = PaymentService(db)._row(user["org_id"], membership_id)
         return out
     except (PaymentError, pricing.PriceError) as exc:

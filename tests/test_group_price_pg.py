@@ -6,7 +6,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -14,8 +14,8 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from src.auth import pricing
 from src.auth.service import AuthService
 from src.models.auth import (
-    GroupAttendance, GroupAudit, GroupPrice, MembershipPriceOverride, Organization, Student, StudentGroup,
-    StudentPayment,
+    GroupAttendance, GroupAudit, GroupPrice, MembershipPriceOverride, Organization, OrganizationMember, Student,
+    StudentGroup, StudentPayment,
 )
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
@@ -1375,6 +1375,248 @@ def test_a_dry_run_and_a_refused_write_leave_no_audit_row(world):
     world.db.commit()
     put_override(world, world.students[0], amount=1, reason="архив", expect=409)
     assert audit_rows(world) == []
+
+
+# ============================================================================================
+# cancelling a SCHEDULED price: the row is deleted, the audit row says who and what
+# ============================================================================================
+
+IN_FORCE = "Нельзя отменить цену, которая уже действует — задайте новую с нужной даты"
+
+
+def row_id_of(got, valid_from):
+    return next(h["id"] for h in got["history"] if h["valid_from"] == valid_from.isoformat())
+
+
+def cancel_group(w, row_id, group=None, client=None, expect=200):
+    r = (client or money_owner(w)).delete(f"{API}/org/groups/{(group or w.group).id}/prices/{row_id}")
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def cancel_override(w, row_id, student=None, group=None, client=None, expect=200):
+    r = (client or money_owner(w)).delete(f"{API}/org/memberships/{mid(w, student, group)}/price-override/{row_id}")
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def price_on(w, d, student=None):
+    membership = mid(w, student)
+    return pricing.load_books(w.db, [w.group.id], [membership]).price(membership, w.group.id, d)
+
+
+def test_cancelling_a_scheduled_group_price_deletes_the_row_and_the_price_returns_to_the_previous_step(world):
+    put_price(world, 400_000, valid_from=day(-30))
+    put_price(world, 500_000, valid_from=day(10), note="с нового сезона")
+    put_price(world, 600_000, valid_from=day(40))
+    before_today = price_on(world, day())
+    assert price_on(world, day(10)).amount == 500_000 and price_on(world, day(45)).amount == 600_000
+    gone_id = row_id_of(get_prices(world), day(10))
+    out = cancel_group(world, gone_id)
+    assert [h["amount"] for h in out["history"]] == [600_000, 400_000]                      # the row is gone
+    assert price_on(world, day()) == before_today and price_on(world, day(10)).amount == 400_000   # today unchanged, that day: the previous step
+    assert price_on(world, day(45)).amount == 600_000
+    assert group_rows(world) == [(day(-30), 400_000, None), (day(40), 600_000, None)]
+    # the same shape as the GET, with the cancellation listed (the row is not in history any more)
+    assert out == get_prices(world)
+    (gone,) = out["cancelled"]
+    assert gone == {"at": gone["at"], "actor_name": "Иван Owner", "amount": 500_000, "valid_from": day(10).isoformat(),
+                    "note": "с нового сезона"}
+    row = audit_rows(world, pricing.ACTION_GROUP_PRICE_CANCELLED)[0]
+    assert (row.action, row.actor_id, row.actor_role, row.org_id, row.assigned_teacher_id) == (
+        "group_price_cancelled", world.owner.id, "owner", world.org.id, world.teacher.id)
+    assert set(row.snapshot) == {"actor_id", "group_id", "row_id", "valid_from", "amount", "note"}
+    assert (row.snapshot["amount"], row.snapshot["valid_from"], row.snapshot["note"], row.snapshot["actor_id"]) == (
+        500_000, day(10).isoformat(), "с нового сезона", str(world.owner.id))
+    assert gone["at"] == row.created_at.isoformat()
+    # a second cancel of the same row: 404, the same day can be priced again afterwards
+    assert cancel_group(world, gone_id, expect=404)["detail"] == "Цена не найдена"
+    put_price(world, 450_000, valid_from=day(10))
+    assert price_on(world, day(10)).amount == 450_000
+    assert len(get_prices(world)["cancelled"]) == 1
+
+
+def test_a_price_that_already_acts_cannot_be_cancelled(world):
+    put_price(world, 400_000, valid_from=day(-30))
+    put_price(world, 500_000, valid_from=day())                                           # today acts
+    put_price(world, 450_000, valid_from=day(-5))
+    got = get_prices(world)
+    for d in (day(-30), day(-5), day()):
+        r = cancel_group(world, row_id_of(got, d), expect=409)
+        assert r["detail"] == IN_FORCE
+    assert len(group_rows(world)) == 3 and audit_rows(world, pricing.ACTION_GROUP_PRICE_CANCELLED) == []
+    s0 = world.students[0]
+    put_override(world, s0, amount=300_000, reason="скидка", valid_from=day(-3))
+    put_override(world, s0, amount=250_000, reason="сегодня", valid_from=day())
+    for h in get_override(world, s0)["history"]:
+        assert cancel_override(world, h["id"], s0, expect=409)["detail"] == IN_FORCE
+    assert world.db.query(MembershipPriceOverride).filter_by(membership_id=mid(world, s0)).count() == 2
+    assert audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE_CANCELLED) == []
+
+
+def test_cancelling_a_scheduled_individual_price_and_a_scheduled_way_back(world):
+    s0 = world.students[0]
+    put_price(world, 500_000, valid_from=day(-30))
+    put_override(world, s0, amount=300_000, reason="скидка", valid_from=day(-3))
+    put_override(world, s0, amount=250_000, reason="с нового сезона", valid_from=day(20))
+    put_override(world, s0, amount=None, reason=None, valid_from=day(60))                    # a scheduled «цена группы снова»
+    assert price_on(world, day(20), s0).amount == 250_000 and price_on(world, day(61), s0).source == "group"
+    got = get_override(world, s0)
+    out = cancel_override(world, row_id_of(got, day(20)), s0)
+    assert price_on(world, day(), s0).amount == 300_000 and price_on(world, day(20), s0).amount == 300_000   # the previous step
+    assert [h["valid_from"] for h in out["history"]] == [day(60).isoformat(), day(-3).isoformat()]
+    assert out["row"]["membership_id"] == str(mid(world, s0)) and out["row"]["price"]["amount"] == 300_000
+    assert {k: v for k, v in out.items() if k != "row"} == get_override(world, s0)
+    assert out["cancelled"][0]["amount"] == 250_000 and out["cancelled"][0]["reason"] == "с нового сезона"
+    assert out["cancelled"][0]["actor_name"] == "Иван Owner" and set(out["cancelled"][0]) == {"at", "actor_name", "amount", "valid_from", "reason"}
+    out = cancel_override(world, row_id_of(get_override(world, s0), day(60)), s0)
+    assert [c["amount"] for c in out["cancelled"]] == [None, 250_000]                          # newest first; the way back had no amount
+    (first, second) = audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE_CANCELLED)
+    assert set(second.snapshot) == {"actor_id", "group_id", "membership_id", "student_id", "row_id", "valid_from", "amount", "reason"}
+    assert (second.snapshot["student_id"], second.snapshot["membership_id"], second.snapshot["amount"]) == (
+        str(s0.id), str(mid(world, s0)), None)
+    assert (first.actor_role, first.assigned_teacher_id, first.group_id) == ("owner", world.teacher.id, world.group.id)
+    # another student's trail is his own
+    assert get_override(world, world.students[1])["cancelled"] == []
+    # an archived student's scheduled price can still be taken back
+    put_override(world, s0, amount=1_000, reason="будущая", valid_from=day(5))
+    world.db.query(Student).filter_by(id=s0.id).update({"status": "archived"})
+    world.db.commit()
+    cancel_override(world, row_id_of(get_override(world, s0), day(5)), s0)
+
+
+def test_an_unknown_row_or_the_row_of_another_group_or_membership_is_a_404(world):
+    s0, s1 = world.students[0], world.students[1]
+    other = make_group(world.db, world.org, world.teacher2, "Другая")
+    world.db.commit()
+    put_price(world, 500_000, valid_from=day(10))
+    put_price(world, 700_000, group=other, valid_from=day(10))
+    put_override(world, s0, amount=300_000, reason="будущая", valid_from=day(10))
+    here, there = row_id_of(get_prices(world), day(10)), row_id_of(get_prices(world, group=other), day(10))
+    mine = row_id_of(get_override(world, s0), day(10))
+    assert cancel_group(world, str(uuid4()), expect=404)["detail"] == "Цена не найдена"
+    assert cancel_group(world, there, expect=404) and cancel_group(world, mine, expect=404)       # not this group's row
+    assert cancel_override(world, str(uuid4()), s0, expect=404) and cancel_override(world, mine, s1, expect=404)
+    assert cancel_override(world, here, s0, expect=404)
+    foreign = make_client(world, user=world.foreign_admin, org="other", org_role="owner", role="owner")
+    world.db.query(OrganizationMember).filter_by(user_id=world.foreign_admin.id).update({"org_role": "owner"})
+    world.db.commit()
+    assert cancel_group(world, here, client=foreign, expect=404) and cancel_override(world, mine, s0, client=foreign, expect=404)
+    assert len(group_rows(world)) == 1 and world.db.query(MembershipPriceOverride).filter_by(membership_id=mid(world, s0)).count() == 1
+    assert audit_rows(world, pricing.ACTION_GROUP_PRICE_CANCELLED) == []
+
+
+def test_only_the_money_roles_can_cancel(world):
+    s0 = world.students[0]
+    put_price(world, 500_000, valid_from=day(10))
+    put_override(world, s0, amount=300_000, reason="будущая", valid_from=day(10))
+    a, b = row_id_of(get_prices(world), day(10)), row_id_of(get_override(world, s0), day(10))
+    for user in (world.teacher, world.admin):                                                 # an admin without the owner's permission too
+        client = make_client(world, user=user)
+        cancel_group(world, a, client=client, expect=403)
+        cancel_override(world, b, s0, client=client, expect=403)
+    assert len(group_rows(world)) == 1 and audit_rows(world, pricing.ACTION_GROUP_PRICE_CANCELLED) == []
+    allow_admin(world)
+    admin = make_client(world, user=world.admin)
+    cancel_group(world, a, client=admin)
+    out = cancel_override(world, b, s0, client=admin)
+    assert out["cancelled"][0]["actor_name"] == "Иван Admin"
+    assert audit_rows(world, pricing.ACTION_GROUP_PRICE_CANCELLED)[0].actor_role == "admin"
+    assert cancel_group(world, a, client=admin, expect=404)                                   # already gone
+
+
+def test_the_deleted_row_and_its_audit_row_commit_or_roll_back_together(world, engine):
+    from sqlalchemy import event
+
+    s0 = world.students[0]
+    put_price(world, 500_000, valid_from=day(10))
+    put_override(world, s0, amount=300_000, reason="будущая", valid_from=day(10))
+    a, b = row_id_of(get_prices(world), day(10)), row_id_of(get_override(world, s0), day(10))
+
+    def boom(mapper, connection, target):
+        raise RuntimeError("the audit row was inserted, then something failed")
+
+    event.listen(GroupAudit, "after_insert", boom)
+    try:
+        for call in (lambda: money_owner(world).delete(f"{API}/org/groups/{world.group.id}/prices/{a}"),
+                     lambda: money_owner(world).delete(f"{API}/org/memberships/{mid(world, s0)}/price-override/{b}")):
+            with pytest.raises(RuntimeError):
+                call()
+    finally:
+        event.remove(GroupAudit, "after_insert", boom)
+    assert committed_state(engine, world) == (1, 1, 2)                                        # both rows are still there, no cancel row
+    assert committed(engine, "SELECT count(*) FROM group_audit WHERE group_id = :g AND action LIKE '%cancelled'", g=world.group.id) == 0
+    cancel_group(world, a)
+    cancel_override(world, b, s0)
+    assert committed_state(engine, world) == (0, 0, 2)                                        # the two writes
+    assert committed(engine, "SELECT count(*) FROM group_audit WHERE group_id = :g AND action LIKE '%cancelled'", g=world.group.id) == 2
+
+
+def test_a_cancel_racing_another_cancel_or_a_write_is_clean_never_a_500(world, engine):
+    s0 = world.students[0]
+    lock = ("SELECT id FROM groups WHERE id = :g FOR NO KEY UPDATE", {"g": world.group.id})
+
+    def schedule():
+        put_price(world, 500_000, valid_from=day(10))
+        put_override(world, s0, amount=300_000, reason="будущая", valid_from=day(10))
+        return UUID(row_id_of(get_prices(world), day(10))), UUID(row_id_of(get_override(world, s0), day(10)))
+
+    def cancel_group_run(row):
+        return lambda session: pricing.PricingService(session).cancel_group_price(
+            str(world.org.id), world.group.id, row, str(world.owner.id))
+
+    def cancel_override_run(row):
+        return lambda session: pricing.PricingService(session).cancel_override(
+            str(world.org.id), mid(world, s0), row, str(world.owner.id))
+
+    # the other cancel got there first (while this one waited for the lock): 404, never a 500
+    a, b = schedule()
+
+    def somebody_cancelled(holder):
+        holder.query(GroupPrice).filter_by(id=a).delete()
+        holder.query(MembershipPriceOverride).filter_by(id=b).delete()
+
+    out = written_while_waiting(world, engine, cancel_group_run(a), lock, somebody_cancelled)
+    assert isinstance(out.get("error"), pricing.PriceNotFound) and out["error"].status_code == 404, out
+    assert world.db.query(GroupAudit).filter_by(group_id=world.group.id, action="group_price_cancelled").count() == 0
+    a, b = schedule()
+    out = written_while_waiting(world, engine, cancel_override_run(b), lock, somebody_cancelled)
+    assert isinstance(out.get("error"), pricing.PriceNotFound) and out["error"].status_code == 404, out
+    # somebody corrected the row while the cancel waited: the cancel takes the row AS IT IS NOW (and the snapshot says so)
+    a, b = schedule()
+
+    def somebody_corrected(holder):
+        holder.query(GroupPrice).filter_by(id=a).update({"amount": 555_000})
+        holder.query(MembershipPriceOverride).filter_by(id=b).update({"amount": 77_000})
+
+    out = written_while_waiting(world, engine, cancel_group_run(a), lock, somebody_corrected)
+    assert "error" not in out, out.get("error")
+    assert audit_rows(world, pricing.ACTION_GROUP_PRICE_CANCELLED)[-1].snapshot["amount"] == 555_000
+    out = written_while_waiting(world, engine, cancel_override_run(b), lock, somebody_corrected)
+    assert "error" not in out, out.get("error")
+    assert audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE_CANCELLED)[-1].snapshot["amount"] == 77_000
+    # a write of the same day arriving after the cancel is a new row, not a conflict
+    assert put_price(world, 510_000, valid_from=day(10))["history"][0]["amount"] == 510_000
+
+
+def test_the_lock_order_of_a_cancel_is_the_one_of_the_writes(world, engine):
+    """A cancel of an individual price waits for the group holding the student only - like ``set_override``."""
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+
+    s0 = world.students[0]
+    put_override(world, s0, amount=300_000, reason="будущая", valid_from=day(10))
+    b = UUID(row_id_of(get_override(world, s0), day(10)))
+    holder = Session(engine)
+    holder.execute(text("SELECT id FROM groups WHERE id = :g FOR UPDATE"), {"g": world.group.id})
+    thread, outcome = run_in_thread(engine, lambda session: pricing.PricingService(session).cancel_override(
+        str(world.org.id), mid(world, s0), b, str(world.owner.id)))
+    wait_until_blocked(engine)
+    assert blocked_probe(engine, "SELECT id FROM students WHERE id = :s FOR NO KEY UPDATE NOWAIT", s=s0.id)
+    assert not blocked_probe(engine, "SELECT id FROM student_groups WHERE id = :m FOR NO KEY UPDATE NOWAIT", m=mid(world, s0))
+    holder.commit()
+    holder.close()
+    assert "error" not in finish(thread, outcome)
 
 
 # ============================================================================================

@@ -886,7 +886,7 @@ def _check_n13_group_price_objects(engine,config,ids):
     def audit_check():
         with engine.connect() as c:
             return c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='ck_group_audit_action' AND conrelid='group_audit'::regclass")).scalar_one()
-    price_actions=('group_price_set','membership_price_set')
+    price_actions=('group_price_set','membership_price_set','group_price_cancelled','membership_price_cancelled')
     command.downgrade(config,SESSIONS)
     assert not {'group_prices','membership_price_overrides'} & set(inspect(engine).get_table_names())
     assert not any(a in audit_check() for a in price_actions) and 'student_restored' in audit_check()

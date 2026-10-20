@@ -35,8 +35,9 @@ reads or writes it; a LATER migration drops it. Do not drop it before the image 
 and the rollback window is over.
 
 Audit trail: ``group_audit.action`` (CHECK ``ck_group_audit_action``) also accepts ``group_price_set`` and
-``membership_price_set`` - every write of a group price and of an individual price leaves one row there, in the same
-transaction (see ``src/auth/pricing.py``).  The rows the backfill below makes are NOT audited (no author, no change).
+``membership_price_set`` (a write of a group price / of an individual price) and ``group_price_cancelled`` /
+``membership_price_cancelled`` (a SCHEDULED price taken back: its row is deleted) - every one leaves a row there, in the
+same transaction (see ``src/auth/pricing.py``).  The rows the backfill below makes are NOT audited (no author, no change).
 
 Idempotent: the tables are created only when missing (a database built from the models by ``create_all`` and stamped
 back is fine); the backfill inserts ``ON CONFLICT DO NOTHING`` on the unique keys, so a re-run changes nothing that
@@ -44,7 +45,7 @@ exists.
 
 Rollback (downgrade): ``monthly_fee`` of EVERY membership is refilled with its effective price TODAY (the business
 day of Tashkent: the last exception with an amount, else the price of the group; NULL when neither exists), then
-both tables are dropped, the ``group_price_set`` / ``membership_price_set`` rows of ``group_audit`` are deleted and the
+both tables are dropped, the four price actions' rows of ``group_audit`` are deleted and the
 action CHECK goes back to the previous list. The prices set after the release are thus kept in the old column; the
 history of price changes (and its audit trail) is lost. An older auth image cannot start on a database at this head (unknown revision): downgrade first,
 roll the image back afterwards.
@@ -76,11 +77,11 @@ MIN_VOTES = 2  # the most frequent fee needs this many active memberships to bec
 
 # ``group_audit.action``: the list of the previous revision (student archive) and the list with the price actions.
 GROUP_AUDIT = "group_audit"
-PRICE_ACTIONS = ("group_price_set", "membership_price_set")
+PRICE_ACTIONS = ("group_price_set", "membership_price_set", "group_price_cancelled", "membership_price_cancelled")
 GROUP_AUDIT_OLD = "action IN ('created', 'updated', 'teacher_changed', 'student_archived', 'student_restored')"
 GROUP_AUDIT_NEW = (
     "action IN ('created', 'updated', 'teacher_changed', 'student_archived', 'student_restored', "
-    "'group_price_set', 'membership_price_set')"
+    "'group_price_set', 'membership_price_set', 'group_price_cancelled', 'membership_price_cancelled')"
 )
 
 # The memberships with a fee, their group and organisation (the names are for the dry-run report only).

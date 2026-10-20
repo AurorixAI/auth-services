@@ -200,6 +200,16 @@ class GroupPriceRow(BaseModel):
     changes: List[GroupPriceChange] = Field(default_factory=list)  # the writes of THIS valid_from, newest first
 
 
+class GroupPriceCancelled(BaseModel):
+    """A scheduled group price that was taken back (``DELETE /org/groups/{id}/prices/{row_id}``): the row is gone."""
+
+    at: Optional[str] = None  # naive UTC, ISO
+    actor_name: Optional[str] = None
+    amount: Optional[int] = None
+    valid_from: Optional[date_type] = None
+    note: Optional[str] = None
+
+
 class GroupPricesOut(BaseModel):
     """``GET /org/groups/{id}/prices``: the price today and the history, newest first."""
 
@@ -210,6 +220,7 @@ class GroupPricesOut(BaseModel):
     price_label: str  # «Оплата в месяц» (calendar) | «Стоимость пакета» (lessons)
     current: Optional[GroupPriceCurrent] = None
     history: List[GroupPriceRow] = Field(default_factory=list)
+    cancelled: List[GroupPriceCancelled] = Field(default_factory=list)  # the last 20 scheduled prices taken back, newest first
 
 
 class PriceImpactSheet(BaseModel):
@@ -246,6 +257,7 @@ class GroupPriceChanged(BaseModel):
     price_label: Optional[str] = None
     current: Optional[GroupPriceCurrent] = None
     history: Optional[List[GroupPriceRow]] = None
+    cancelled: Optional[List[GroupPriceCancelled]] = None
 
 
 class PriceOverrideChange(BaseModel):
@@ -256,6 +268,16 @@ class PriceOverrideChange(BaseModel):
     old_amount: Optional[int] = None  # the EFFECTIVE price that day just before the write; null - none
     old_source: Optional[PriceSource] = None  # where it came from: group / override / none
     new_amount: Optional[int] = None  # null = "from this day the price of the group again"
+    reason: Optional[str] = None
+
+
+class PriceOverrideCancelled(BaseModel):
+    """A scheduled individual price that was taken back (``DELETE /org/memberships/{id}/price-override/{row_id}``)."""
+
+    at: Optional[str] = None
+    actor_name: Optional[str] = None
+    amount: Optional[int] = None  # null: it was a scheduled "the group price again"
+    valid_from: Optional[date_type] = None
     reason: Optional[str] = None
 
 
@@ -282,6 +304,7 @@ class MembershipPriceOut(BaseModel):
     price_label: str
     price: PriceOut
     history: List[PriceOverrideRow] = Field(default_factory=list)
+    cancelled: List[PriceOverrideCancelled] = Field(default_factory=list)  # the last 20, newest first
 
 
 class PriceOverrideUpdate(BaseModel):
