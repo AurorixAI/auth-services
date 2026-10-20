@@ -124,6 +124,7 @@ def excuse_deadline(
     payments: Sequence[ps.PaymentRecord],
     counted_dates: Iterable[date] = (),
     lesson_counted: bool = False,
+    lesson_rank: Optional[int] = None,
     deadline_days: int,
     deadline_lessons: int,
 ) -> Dict[str, Any]:
@@ -134,6 +135,12 @@ def excuse_deadline(
     on one day are two entries, so the caller decides it by the lesson itself (its attendance row)
     - a lesson that is not counted (unfinished, or its excuse is confirmed) is added on top of the
     other lessons of its day, not mistaken for one of them.
+
+    ``lesson_rank`` is the place of THIS lesson among the lessons of its date in hand-out order
+    (0 = the first), counting the counted ones and, when it is not one of them, itself.  The lessons
+    of one day go to the packages in that order, so the rank names the package that covers this very
+    lesson - which matters when two lessons of one day straddle two packages.  ``None`` (not known)
+    = the earliest package that took any lesson of that date.
     """
     calendar_payment = covering_calendar_payment(payments, lesson_date)
     if calendar_payment is not None:
@@ -145,9 +152,13 @@ def excuse_deadline(
         pool = list(counted_dates)
         if not lesson_counted:
             pool.append(lesson_date)  # an unfinished lesson (or one just un-confirmed) would be charged to the package too
-        # Same-date entries may straddle two packages; the earliest package is the conservative pick.
+        # Same-date entries may straddle two packages: the packages take them in hand-out order, so the lesson of
+        # rank r belongs to the package whose share of this date (cumulative over the packages) contains r.
+        before = 0
         for payment, taken in ps.allocate_lessons_detail(payments, pool):
-            if lesson_date in taken:
+            here = taken.count(lesson_date)
+            earlier, before = before, before + here
+            if here and (lesson_rank is None or earlier <= lesson_rank < before):
                 if payment.carried_out_at is not None:
                     # The package moved with the student: the lesson counts against what is left in
                     # the live package at the end of its chain (nothing left if the service knows no chain).

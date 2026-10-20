@@ -179,6 +179,32 @@ def test_two_lessons_on_one_day_the_unfinished_one_is_added_on_top():
     assert less(date(2026, 10, 5), [package], [date(2026, 10, 2)], lesson_counted=False)["lessons_left"] == 1
 
 
+def test_two_lessons_of_one_day_across_two_packages_go_by_the_rank_of_the_lesson():
+    # package 1 (2 lessons) is closed by the FIRST lesson of 05.10, package 2 (3 lessons) is opened by the SECOND
+    first, second = rec(date(2026, 10, 1), lessons=2, n=1), rec(date(2026, 10, 3), lessons=3, n=2)
+    counted = [date(2026, 10, 2), date(2026, 10, 5), date(2026, 10, 5)]
+
+    def at(rank, flag=True, pool=counted):
+        return excuse_deadline(lesson_date=date(2026, 10, 5), today=TODAY, payments=[first, second], counted_dates=pool,
+                               lesson_counted=flag, lesson_rank=rank, deadline_days=5, deadline_lessons=1)
+
+    assert at(0) == state(0, True, False, True)                     # package 1: 2 - 2 = 0 left, overdue (N = 1)
+    assert at(1) == state(2, False, False, False)                   # package 2: 3 - 1 = 2 left
+    assert at(None) == at(0)                                        # rank unknown: the earliest package of the date
+    # a lesson that is not counted yet is added on top: its rank says where in the day it falls
+    assert at(0, False, counted[:2]) == state(0, True, False, True)  # the earlier of the day: it closes package 1
+    assert at(1, False, counted[:2]) == state(2, False, False, False)
+    assert at(2, False, counted)["lessons_left"] == 1               # a third lesson that day: package 2 again (3 - 2)
+    # a rank beyond what the packages took is not covered at all (a month-end date, not a package)
+    small = [rec(date(2026, 10, 1), lessons=1, n=1), rec(date(2026, 10, 3), lessons=1, n=2)]
+    result = excuse_deadline(lesson_date=date(2026, 10, 5), today=TODAY, payments=small, counted_dates=[date(2026, 10, 5)] * 2,
+                             lesson_counted=True, lesson_rank=1, deadline_days=5, deadline_lessons=1)
+    assert result["kind"] == "lessons" and result["lessons_left"] == 0   # rank 1 is in package 2 (its only lesson)
+    third = excuse_deadline(lesson_date=date(2026, 10, 5), today=TODAY, payments=small, counted_dates=[date(2026, 10, 5)] * 2,
+                            lesson_counted=False, lesson_rank=2, deadline_days=5, deadline_lessons=1)
+    assert third["kind"] == "date" and third["date"] == "2026-10-31"     # no package has a place for the 3rd lesson
+
+
 def test_a_lesson_that_no_package_took_is_treated_like_no_payment():
     full = rec(date(2026, 9, 1), lessons=1)
     # the package took 03.09; 20.09 lies beyond the paid lessons: the month end of the lesson, a "date" deadline
@@ -285,7 +311,8 @@ def test_two_lessons_on_one_day_count_both_through_the_api(world):
 def same_day_lessons(w, offset, excused_in="first", reason="Болел"):
     """Two completed lessons of the group on ONE day; the first student is excused (pending) in one of them.
 
-    ``excused_in``: ``"first"`` = the regular slot of the weekday, ``"second"`` = LIVE_SLOT (the other lesson of the day).
+    ``excused_in``: ``"first"`` = the regular slot of the weekday (10:00), ``"second"`` = LIVE_SLOT (00:00, so it is the
+    EARLIER lesson of the day), ``"both"`` = an excuse in each.
     Returns the day.  The attendance rows differ only by their lesson id - which is how the system tells them apart.
     """
     from src.auth.schemas import StartAttendanceRequest
@@ -293,7 +320,7 @@ def same_day_lessons(w, offset, excused_in="first", reason="Болел"):
 
     s0, s1, s2 = w.students
     d, slot = reconcile(w, offset)
-    for lesson_id, excuse in ((slot, excused_in == "first"), (LIVE_SLOT, excused_in == "second")):
+    for lesson_id, excuse in ((slot, excused_in in ("first", "both")), (LIVE_SLOT, excused_in in ("second", "both"))):
         if lesson_id != slot:
             w.svc.reconcile_missed_group_attendance(
                 str(w.org.id), str(w.group.id), StartAttendanceRequest(lessonDate=d, lessonId=lesson_id),

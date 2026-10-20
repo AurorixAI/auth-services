@@ -11,10 +11,10 @@ import pytest
 import src.auth.attendance_excuses as excuses_module
 from src.auth.attendance_excuses import AttendanceExcuseService
 from src.auth.excuse_deadline import month_end
-from src.models.auth import AttendanceExcuse, StudentPayment
+from src.models.auth import AttendanceExcuse, GroupAttendance, StudentPayment
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    business_today, excused_lesson, make_client, needs_pg, pg_session, save, world,
+    LIVE_SLOT, business_today, excused_lesson, make_client, needs_pg, pg_session, save, world,
 )
 from tests.test_attendance_excuses import audit_rows, excuse_of, journal, key_of
 from tests.test_excuse_deadline import API, lesson_marks, listing, same_day_lessons
@@ -395,7 +395,18 @@ def test_the_stored_time_and_the_measured_day_come_from_one_reading_of_the_clock
 # ---- two lessons of one day: a lesson is told by its attendance row, not by its date (ROADMAP #113) -------------------
 
 
-def deadline_if_decided_now(w, student=None):
+def excuse_of_lesson(w, lesson_id, student=None):
+    """The excuse of the student for ONE lesson (the lesson id of the attendance row), as stored."""
+    w.db.expire_all()
+    return (
+        w.db.query(AttendanceExcuse)
+        .join(GroupAttendance, GroupAttendance.id == AttendanceExcuse.attendance_id)
+        .filter(AttendanceExcuse.student_id == (student or w.students[0]).id, GroupAttendance.lesson_id == lesson_id)
+        .one()
+    )
+
+
+def deadline_if_decided_now(w, student=None, lesson_id=None):
     """The lessons-package deadline the decision of the student's excuse would be measured against right now.
 
     Exactly what ``_decision_mark`` asks: ``_pending_deadlines`` for the excuse as it stands in the table (a confirmed
@@ -403,7 +414,7 @@ def deadline_if_decided_now(w, student=None):
     """
     student = student or w.students[0]
     w.db.expire_all()
-    excuse = excuse_of(w, student)
+    excuse = excuse_of_lesson(w, lesson_id, student) if lesson_id else excuse_of(w, student)
     service = AttendanceExcuseService(w.db)
     row = service._base_query(excuse.org_id).filter(AttendanceExcuse.id == excuse.id).first()
     context = service._payment_context(excuse.org_id, {(excuse.student_id, w.group.id)}, propagate=True)
@@ -454,3 +465,31 @@ def test_a_confirmed_excuse_on_a_shared_day_frees_a_place_of_the_package_for_the
     before = row_of(world)["lessons_left"]
     review(world, item_id, "confirmed")
     assert (before, row_of(world)["lessons_left"]) == (0, 1)
+
+
+def test_two_lessons_of_one_day_across_two_packages_each_get_the_package_that_covers_them(world):
+    """Package 1 (2 lessons) is closed by the first lesson of the day, package 2 (3) is opened by the second (ROADMAP #113)."""
+    s0 = world.students[0]
+    set_settings(world, period_mode="lessons", excuse_deadline_lessons=1)
+    pay(world, s0, paid_on=day(-10), valid_from=day(-10), lessons_count=2)
+    pay(world, s0, paid_on=day(-8), valid_from=day(-8), lessons_count=3)
+    lesson_marks(world, 9)                                                    # the plain lesson: package 1, place 1
+    d = same_day_lessons(world, 7, excused_in="both")
+    early, late = LIVE_SLOT, f"s{d.isoweekday()}"                              # 00:00 and 10:00: the hand-out order of the day
+    package_1 = {"kind": "lessons", "lessons_left": 0, "urgent": True, "due_now": False, "overdue": True}   # 2 - 2, N = 1
+    package_2 = {"kind": "lessons", "lessons_left": 2, "urgent": False, "due_now": False, "overdue": False}  # 3 - 1
+
+    def item(lesson_id):
+        (found,) = [i for i in listing(world) if i["lesson_key"] == f"{d.isoformat()}_{lesson_id}"]
+        return found
+
+    assert item(early)["deadline"] == package_1 and item(late)["deadline"] == package_2     # each by its own package
+    assert shown(review(world, item(late)["id"], "confirmed")) == (False, None)              # measured against package 2
+    # the confirmed one is off the packages; a re-review charges it again - at its place in the day, not at the end
+    assert deadline_if_decided_now(world, lesson_id=late) == package_2
+    assert shown(review(world, item(late)["id"], "rejected")) == (False, None)
+    assert shown(review(world, item(early)["id"], "confirmed")) == (True, None)              # measured against package 1
+    assert deadline_if_decided_now(world, lesson_id=early) == package_1                      # the earlier lesson: place 1 of the day
+    assert shown(review(world, item(early)["id"], "rejected")) == (True, None)
+    assert item(early)["deadline"] is None and item(late)["deadline"] is None                # decided: no hint
+

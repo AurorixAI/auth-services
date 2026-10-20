@@ -758,6 +758,26 @@ class PaymentService:
             self._order_by_start(detail_out, group_of)
         return out
 
+    def _starts_of_days(
+        self, wanted: Dict[Tuple[UUID, date], Group]
+    ) -> Dict[Tuple[UUID, date], Dict[str, datetime]]:
+        """``{(group id, day): {lesson_id: scheduled start}}`` of several (group, day) pairs, read together.
+
+        One preload of the schedules (two queries) whatever the number of pairs - never per day.
+        """
+        if not wanted:
+            return {}
+        from .service import AuthService  # lazy: service is heavy
+
+        days = [day for _, day in wanted]
+        preload = AuthService(self.db)._preload_schedule_data(
+            list({gid for gid, _ in wanted}), date_from=min(days), date_to=max(days)
+        )
+        return {
+            (gid, day): self._scheduled_starts(group, day, preloaded=preload)
+            for (gid, day), group in wanted.items()
+        }
+
     def _order_by_start(self, detail_out: Dict[UUID, List[tuple]], group_of: Dict[UUID, Group]) -> None:
         """Put the lessons of one day of a student in hand-out order: scheduled start, then lesson id.
 
@@ -765,7 +785,7 @@ class PaymentService:
         read for all of them together (two queries), never per day.  A lesson whose time cannot be read
         counts as "before", like in ``_scheduled_starts``.
         """
-        several: Dict[Tuple[UUID, date], None] = {}
+        several: Dict[Tuple[UUID, date], Group] = {}
         for mid, items in detail_out.items():
             if mid not in group_of:
                 continue
@@ -774,18 +794,8 @@ class PaymentService:
                 seen[day] = seen.get(day, 0) + 1
             for day, n in seen.items():
                 if n > 1:
-                    several[(group_of[mid].id, day)] = None
-        starts: Dict[Tuple[UUID, date], Dict[str, datetime]] = {}
-        if several:
-            from .service import AuthService  # lazy: service is heavy
-
-            groups = {group_of[mid].id: group_of[mid] for mid in group_of}
-            days = [day for _, day in several]
-            preload = AuthService(self.db)._preload_schedule_data(
-                list({gid for gid, _ in several}), date_from=min(days), date_to=max(days)
-            )
-            for gid, day in several:
-                starts[(gid, day)] = self._scheduled_starts(groups[gid], day, preloaded=preload)
+                    several[(group_of[mid].id, day)] = group_of[mid]
+        starts = self._starts_of_days(several)
         for mid, items in detail_out.items():
             if mid not in group_of:
                 continue

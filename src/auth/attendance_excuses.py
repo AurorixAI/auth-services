@@ -863,8 +863,8 @@ class AttendanceExcuseService:
         # they are - the attendance rows - because a date cannot: a student can have two lessons on one day.
         pools: Dict[UUID, list] = {}
         counted_rows: Dict[UUID, set] = {}
+        detail: Dict[UUID, list] = {}
         if lessons_members:
-            detail: Dict[UUID, list] = {}
             state = PaymentService(self.db)._lessons_state(
                 str(org_id),
                 [(m, g) for m, _, g in lessons_members],
@@ -877,6 +877,36 @@ class AttendanceExcuseService:
             }
             for m, _, _ in lessons_members:
                 records[m.id] = [state.records.get(r.id, r) for r in records[m.id]]
+
+        # The lessons of one day are handed to the packages in hand-out order (scheduled start, then lesson id), so
+        # which package covers THIS lesson depends on its place among the lessons of its day - by the attendance row.
+        ranks: Dict[UUID, int] = {}
+        unplaced: Dict[UUID, tuple] = {}  # not counted yet (unfinished / confirmed): its place needs the schedule
+        for excuse, att, group, student in pending:
+            lesson_date = lesson_dates.get(excuse.id)
+            membership = membership_of.get((excuse.student_id, att.group_id))
+            same_day = [
+                (lesson_id, attendance_id)
+                for day, lesson_id, attendance_id in detail.get(membership, ())
+                if day == lesson_date
+            ]
+            attendance_ids = [attendance_id for _, attendance_id in same_day]
+            if att.id in attendance_ids:
+                ranks[excuse.id] = attendance_ids.index(att.id)
+            elif same_day:
+                unplaced[excuse.id] = (group, lesson_date, att, same_day)
+        if unplaced:
+            starts = PaymentService(self.db)._starts_of_days(
+                {(group.id, day): group for group, day, _, _ in unplaced.values()}
+            )
+            for excuse_id, (group, day, att, same_day) in unplaced.items():
+                day_starts = starts.get((group.id, day), {})  # a lesson whose time is unknown counts as "before"
+
+                def hand_out_key(lesson_id: str):
+                    return day_starts.get(lesson_id, datetime.min), lesson_id
+
+                own = hand_out_key(att.lesson_id or "")
+                ranks[excuse_id] = sum(1 for lesson_id, _ in same_day if hand_out_key(lesson_id) < own)
 
         result: Dict[UUID, Dict[str, Any]] = {}
         for excuse, att, group, student in pending:
@@ -893,6 +923,7 @@ class AttendanceExcuseService:
                 # completed, in the roster, a counted mark, no CONFIRMED excuse), by the attendance row.  A confirmed
                 # excuse that is being re-reviewed has no entry, even if another lesson of the same day has one.
                 lesson_counted=att.id in counted_rows.get(membership, ()),
+                lesson_rank=ranks.get(excuse.id),
                 deadline_days=settings.excuse_deadline_days,
                 deadline_lessons=settings.excuse_deadline_lessons,
             )
