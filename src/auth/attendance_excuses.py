@@ -71,6 +71,10 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() if value else None
 
 
+def _iso_day(value: Optional[date]) -> Optional[str]:
+    return value.isoformat() if value else None
+
+
 def lesson_key(att: GroupAttendance) -> str:
     """The instance key used by the attendance journal (``date_lessonId``)."""
     return f"{att.lesson_date}_{att.lesson_id or f'lesson_{att.lesson_date}'}"
@@ -199,6 +203,13 @@ class ExcuseItem(BaseModel):
     # not the centre setting.  ``package`` - a confirmed excuse gives the lesson back to the package; ``calendar`` -
     # nothing is written off; ``None`` - no live payment, so there is no package line.  Never an amount.
     billing_mode: Optional[Literal["calendar", "package"]] = None
+    # The decision mark (ROADMAP #39).  A decision AFTER the confirmation deadline is allowed but marked: at the moment of
+    # the decision the deadline is worked out exactly as the pending list shows it.  ``deadline_at_decision`` is that
+    # deadline as a business day (YYYY-MM-DD, Tashkent; ``None`` for a lessons-package deadline, which has no day);
+    # ``decided_after_deadline`` is ``True`` / ``False`` for a decision made after / on time.  Both are ``None`` for a
+    # pending excuse and for a decision whose deadline is unknown (made before the mark existed, or not workable).
+    decided_after_deadline: Optional[bool] = None
+    deadline_at_decision: Optional[str] = None
 
 
 class ExcuseListResponse(BaseModel):
@@ -379,6 +390,8 @@ class AttendanceExcuseService:
                     row.reviewed_by = None
                     row.reviewed_at = None
                     row.review_note = None
+                    row.decided_after_deadline = None
+                    row.deadline_at_decision = None
         for sid, reason in plan.create.items():
             self.db.add(
                 AttendanceExcuse(
@@ -404,8 +417,9 @@ class AttendanceExcuseService:
     ) -> tuple[Dict[str, Dict[str, Dict[str, Any]]], Dict[str, Dict[str, Any]]]:
         """``excuses`` and ``corrections`` maps keyed by the journal's lesson key.
 
-        The administrator-only parts: ``review_note`` (``include_review_note``) and ``billing_mode`` (``include_billing_mode``,
-        the mode of the student's latest live payment in the group, see :class:`ExcuseItem`) - a teacher gets neither,
+        The administrator-only parts: ``review_note`` with the decision mark ``decided_after_deadline`` /
+        ``deadline_at_decision`` (``include_review_note``) and ``billing_mode`` (``include_billing_mode``, the mode of
+        the student's latest live payment in the group, see :class:`ExcuseItem`) - a teacher gets none of them,
         and for him no payment is read."""
         excuses: Dict[str, Dict[str, Dict[str, Any]]] = {}
         corrections: Dict[str, Dict[str, Any]] = {}
@@ -469,9 +483,11 @@ class AttendanceExcuseService:
                 "reviewed_at": _iso(row.reviewed_at),
                 "has_files": row.id in with_files,
             }
-            # The administrator's note is not for teachers.
+            # The administrator's note and the decision mark (#39) are not for teachers.
             if include_review_note:
                 entry["review_note"] = row.review_note
+                entry["decided_after_deadline"] = row.decided_after_deadline
+                entry["deadline_at_decision"] = _iso_day(row.deadline_at_decision)
             if include_billing_mode:
                 entry["billing_mode"] = modes.get((row.student_id, group_of.get(row.attendance_id)))
             excuses.setdefault(key, {})[str(row.student_id)] = entry
@@ -678,15 +694,19 @@ class AttendanceExcuseService:
                     files=files.get(excuse.id, []),
                     deadline=deadlines.get(excuse.id),
                     billing_mode=modes.get((excuse.student_id, att.group_id)),
+                    decided_after_deadline=excuse.decided_after_deadline,
+                    deadline_at_decision=_iso_day(excuse.deadline_at_decision),
                 )
             )
         return items
 
-    def _payment_context(self, org_id: UUID, pairs) -> Optional[SimpleNamespace]:
+    def _payment_context(self, org_id: UUID, pairs, *, propagate: bool = False) -> Optional[SimpleNamespace]:
         """Memberships of the ``(student_id, group_id)`` pairs and their live payments, loaded ONCE for the whole page.
 
         Two queries however many pairs there are; shared by the deadlines and by ``billing_mode``.  Columns, not
-        entities: the amount is never loaded here.  ``None`` if it could not be loaded (both then simply go missing).
+        entities: the amount is never loaded here.  ``None`` if it could not be loaded (both then simply go missing);
+        ``propagate`` lets the error through instead, WITHOUT the rollback (a caller holding a row lock rolls back to its own
+        savepoint: see ``_decision_mark``).
         Fields: ``membership_of`` ``{(student, group): membership}``, ``live`` ``{membership: [payment rows]}`` and
         ``records`` ``{membership: [PaymentRecord]}``.
         """
@@ -745,6 +765,8 @@ class AttendanceExcuseService:
             }
             return SimpleNamespace(membership_of=membership_of, live=live, records=records)
         except Exception:
+            if propagate:
+                raise
             logger.exception("Could not load the payments of the excuses")
             try:
                 self.db.rollback()
@@ -911,16 +933,50 @@ class AttendanceExcuseService:
             )
         )
 
+    def _decision_mark(self, excuse: AttendanceExcuse, att: GroupAttendance) -> tuple[Optional[date], Optional[bool]]:
+        """``(deadline_at_decision, decided_after_deadline)`` of a decision taken NOW (ROADMAP #39).
+
+        The deadline is the one the pending list shows - the very same ``_pending_deadlines`` /
+        ``excuse_deadline.excuse_deadline`` with the same payment settings and the business day of Tashkent - so the
+        mark can never disagree with the «просрочено» hint the administrator saw.  A calendar deadline gives its day and
+        ``decided_after_deadline = today > day``; a lessons-package deadline has no day: ``(None, overdue)``.
+
+        ``(None, None)`` = unknown: the deadline could not be worked out.  A decision must not fail because of that (it is
+        logged); the reads run inside a SAVEPOINT, so an error rolls back that alone and the row lock of the caller and its
+        pending writes stay.  Reads only - nothing is committed or locked here.
+        """
+        try:
+            with self.db.begin_nested():
+                row = self._base_query(excuse.org_id).filter(AttendanceExcuse.id == excuse.id).first()
+                if row is None:
+                    return None, None
+                context = self._payment_context(
+                    excuse.org_id, {(excuse.student_id, att.group_id)}, propagate=True
+                )
+                deadline = self._pending_deadlines([tuple(row)], context).get(excuse.id)
+        except Exception:
+            logger.exception("Could not work out the deadline of excuse %s at its decision", excuse.id)
+            return None, None
+        if not deadline:  # no parsable lesson date
+            return None, None
+        day = date.fromisoformat(deadline["date"]) if deadline.get("kind") == "date" else None
+        return day, bool(deadline["overdue"])
+
     def _apply_review(
         self, excuse: AttendanceExcuse, att: GroupAttendance, actor_id: str, decision: str, note: Optional[str]
     ) -> None:
         if (att.records or {}).get(str(excuse.student_id)) != EXCUSED:
             raise ExcuseNotExcused("Ученик уже не отмечен как пропустивший по уважительной причине")
         decision_before = excuse.status
+        # The mark (#39) is worked out BEFORE the decision is written, from the state the list showed, and under the
+        # row lock the caller already holds; a re-review overwrites the previous mark.
+        deadline_day, after_deadline = self._decision_mark(excuse, att)
         excuse.status = decision
         excuse.reviewed_by = actor_id
         excuse.reviewed_at = _business_now()
         excuse.review_note = (note or "").strip() or None
+        excuse.deadline_at_decision = deadline_day
+        excuse.decided_after_deadline = after_deadline
         self._audit(
             att, actor_id, "excuse_reviewed",
             {
@@ -979,6 +1035,8 @@ class AttendanceExcuseService:
             excuse.reviewed_by = None
             excuse.reviewed_at = None
             excuse.review_note = None
+            excuse.decided_after_deadline = None
+            excuse.deadline_at_decision = None
             self._audit(self._lesson(excuse), actor_id, "excuse_reset", details)
             self.db.commit()
             logger.info("Attendance excuse %s reset by %s", excuse_id, actor_id)

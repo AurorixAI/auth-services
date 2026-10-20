@@ -139,7 +139,8 @@ def test_the_journal_carries_it_for_administrators_and_never_for_a_teacher(world
     admin_view = journal(world, world.admin).excuses[key]
     assert {sid: e["billing_mode"] for sid, e in admin_view.items()} == by_student(world, "calendar", "package", None)
     assert set(admin_view[str(s0.id)]) == {"id", "status", "reason", "reason_by_name", "reason_at", "reviewed_by_name",
-                                           "reviewed_at", "review_note", "has_files", "billing_mode"}
+                                           "reviewed_at", "review_note", "has_files", "billing_mode",
+                                           "decided_after_deadline", "deadline_at_decision"}      # the decision mark (#39)
     teacher_view = journal(world, world.teacher, is_admin=False).excuses[key]
     assert all("billing_mode" not in e for e in teacher_view.values()) and len(teacher_view) == 3
     # over HTTP, an administrator of the centre without the right to money sees it (it is not money), a teacher does not

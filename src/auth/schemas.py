@@ -570,7 +570,8 @@ class GroupAttendanceResponse(BaseModel):
     # until the teacher of the current group has opened that report.
     diagnosticReportNotices: List[Dict[str, Any]] = Field(default_factory=list)
     # Excuse reasons and their review state: { lessonKey: { studentId: {...} } }.
-    # ``review_note`` is present for administrators only.
+    # ``review_note`` and the decision mark (``decided_after_deadline``, ``deadline_at_decision``) are present for
+    # administrators only.
     excuses: Dict[str, Dict[str, Dict[str, Any]]] = Field(default_factory=dict)
     # Latest correction of a completed lesson: { lessonKey: {by_name, at, reason} }.
     corrections: Dict[str, Dict[str, Any]] = Field(default_factory=dict)

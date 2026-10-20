@@ -1023,6 +1023,12 @@ class AttendanceExcuse(Base):
     reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     reviewed_at = Column(DateTime, nullable=True)
     review_note = Column(String(500), nullable=True)
+    # The decision mark (ROADMAP #39): a decision AFTER the confirmation deadline is allowed, but marked. Worked out at the
+    # moment of the decision, the same way the pending list shows the deadline; NULL = unknown (a pending excuse, a decision
+    # made before this column existed, a deadline that could not be worked out).  A calendar deadline is stored as its
+    # business day (Tashkent); a lessons-package deadline has no day: only the flag is stored.
+    decided_after_deadline = Column(Boolean, nullable=True)
+    deadline_at_decision = Column(Date, nullable=True)
 
     files = relationship(
         "AttendanceExcuseFile",

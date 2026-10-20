@@ -26,7 +26,9 @@ measured against what is left NOW in the live package at the end of its chain
   lesson lies beyond the paid lessons): the last day of the lesson's month.
 
 Only dates and lesson counts are produced - never an amount.  Confirming after
-the deadline stays possible; ``overdue`` is a hint for the administrator.
+the deadline stays possible; ``overdue`` is a hint for the administrator, and a decision taken after the deadline is
+MARKED at the moment it is taken (``attendance_excuses.decided_after_deadline`` / ``deadline_at_decision``, ROADMAP #39;
+see ``AttendanceExcuseService._decision_mark``, which uses this very function).
 """
 from __future__ import annotations
 

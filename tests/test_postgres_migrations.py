@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
-HEAD='b8c9d0e1f2a'          # group price + individual prices (N13 P4, #105)
+HEAD='c9d0e1f2a3b'          # excuse decision mark (N13 P4, #39)
+PRICES='b8c9d0e1f2a'        # group price + individual prices (N13 P4, #105): the revision before the decision mark
 SESSIONS='a7b8c9d0e1f'      # user sessions (N13 tails, #101): the revision before the group price
 PERIODS='z6a7b8c9d0e'       # membership periods (N13 tails, #59): the revision before the sessions
 INVITES='y5z6a7b8c9d'       # diagnostic invite «cancelled» (N13 tails, #89)
@@ -67,6 +68,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     _check_n13_periods_objects(engine,config,ids)
     _check_n13_sessions_objects(engine,config,ids)
     _check_n13_group_price_objects(engine,config,ids)
+    _check_n13_excuse_mark_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -1009,3 +1011,69 @@ def _check_n13_group_price_objects(engine,config,ids):
     # --- an empty database upgrades and downgrades (no rows, no failure)
     command.downgrade(config,SESSIONS); command.upgrade(config,'head')
 
+
+def _check_n13_excuse_mark_objects(engine,config,ids):
+    """#39: ``attendance_excuses.decided_after_deadline`` / ``deadline_at_decision`` - nullable, the decisions made before them stay
+    NULL ("unknown", never "on time"), an upgrade run again (or stamped back) keeps the values, the downgrade drops the two
+    columns and keeps every decision, the round trip works."""
+    from datetime import date
+    from src.models.auth import User
+    user,att=uuid4(),uuid4()
+    with Session(engine) as db:
+        db.add(User(id=user,email=f'{user}@m.invalid',password_hash='synthetic-only',first_name='M',last_name='M',role='admin')); db.commit()
+    mark={'decided_after_deadline','deadline_at_decision'}
+    def columns():
+        return {c['name']:c for c in inspect(engine).get_columns('attendance_excuses')}
+    def rows():
+        with engine.connect() as c:
+            return {r.status:(r.decided_after_deadline,r.deadline_at_decision) for r in c.execute(text("SELECT status,decided_after_deadline,deadline_at_decision FROM attendance_excuses WHERE attendance_id=:a"),{'a':att})}
+    def decisions():
+        with engine.connect() as c:
+            return sorted(r.status for r in c.execute(text("SELECT status FROM attendance_excuses WHERE attendance_id=:a"),{'a':att}))
+    # --- the revision before the mark: no columns; decisions of every kind exist (the data of the release before)
+    command.downgrade(config,PRICES)
+    assert not mark & set(columns())
+    with engine.begin() as c:
+        c.execute(text("INSERT INTO group_attendance (id,org_id,group_id,lesson_date,lesson_id,status,records) VALUES (:a,:o,:g,'2026-10-05','mark1','completed','{}')"),{'a':att,'o':ids['org'],'g':ids['group']})
+        for status in ('pending','confirmed','rejected'):
+            c.execute(text("INSERT INTO attendance_excuses (id,org_id,attendance_id,student_id,reason,reason_by,reason_at,status,reviewed_by,reviewed_at) VALUES (gen_random_uuid(),:o,:a,gen_random_uuid(),'болел',:u,now(),:s,CASE WHEN :s='pending' THEN NULL ELSE CAST(:u AS uuid) END,CASE WHEN :s='pending' THEN NULL ELSE now() END)"),{'o':ids['org'],'a':att,'u':user,'s':status})
+    with engine.connect() as c:
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==PRICES
+    # --- upgrade: two nullable columns of the right types, every historical row NULL (a decided one is "unknown", not False)
+    command.upgrade(config,'head')
+    got=columns()
+    assert mark <= set(got) and all(got[n]['nullable'] for n in mark)
+    assert str(got['decided_after_deadline']['type']).upper()=='BOOLEAN' and str(got['deadline_at_decision']['type']).upper()=='DATE'
+    assert all(c.get('default') is None for c in (got['decided_after_deadline'],got['deadline_at_decision']))
+    assert rows()=={'pending':(None,None),'confirmed':(None,None),'rejected':(None,None)}
+    with engine.connect() as c:
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+    # --- the marks the code writes after the release
+    with engine.begin() as c:
+        c.execute(text("UPDATE attendance_excuses SET decided_after_deadline=true,deadline_at_decision=:d WHERE attendance_id=:a AND status='confirmed'"),{'d':date(2026,10,1),'a':att})
+        c.execute(text("UPDATE attendance_excuses SET decided_after_deadline=false,deadline_at_decision=NULL WHERE attendance_id=:a AND status='rejected'"),{'a':att})
+    marked={'pending':(None,None),'confirmed':(True,date(2026,10,1)),'rejected':(False,None)}
+    assert rows()==marked
+    # --- idempotent: upgrade again, and the revision again with the columns in place (a database built by create_all and stamped back)
+    command.upgrade(config,'head')
+    assert rows()==marked
+    command.stamp(config,PRICES)
+    command.upgrade(config,'head')
+    assert rows()==marked
+    with engine.connect() as c:
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+    # --- downgrade: the columns go, the decisions (status, reviewer, time) stay
+    command.downgrade(config,PRICES)
+    assert not mark & set(columns())
+    assert decisions()==['confirmed','pending','rejected']
+    with engine.connect() as c:
+        assert c.execute(text("SELECT count(*) FROM attendance_excuses WHERE attendance_id=:a AND (status='pending')=(reviewed_by IS NULL) AND (status='pending')=(reviewed_at IS NULL)"),{'a':att}).scalar_one()==3
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==PRICES
+    command.downgrade(config,PRICES)           # nothing left to drop: repeating is harmless
+    # --- and up again: the marks were not kept, every row is "unknown" once more
+    command.upgrade(config,'head')
+    assert rows()=={'pending':(None,None),'confirmed':(None,None),'rejected':(None,None)}
+    with engine.begin() as c:
+        c.execute(text('DELETE FROM group_attendance WHERE id=:a'),{'a':att})      # CASCADE: leave no excuse behind
+    with engine.connect() as c:
+        assert c.execute(text('SELECT count(*) FROM attendance_excuses WHERE attendance_id=:a'),{'a':att}).scalar_one()==0
