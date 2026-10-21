@@ -318,8 +318,13 @@ class StudentArchiveService:
     # -- archive ------------------------------------------------------------------------------
 
     def archive(
-        self, org_id: str, student_id: str, *, actor_id: str, actor_role: str, reason: Optional[str] = None
+        self, org_id: str, student_id: str, *, actor_id: str, actor_role: str, reason: Optional[str] = None,
+        settle: Optional[Sequence[SettleItem]] = None, money: bool = False,
     ) -> ArchiveStudentResponse:
+        """LOGIC-A (F9): ``settle`` - what to do with the money of each membership the archiving closes (``keep`` / ``writeoff`` / ``refund``),
+        carried out in THIS transaction after the stays are closed; a refused settlement (403 / 422 / 409 ``BALANCE_CHANGED``) archives nobody."""
+        from .leave_service import LeaveService, on_membership_closed
+        from .payments_service import PaymentError
         from .service import AuthService  # lazy: service imports this module
 
         student = self._lock_student(org_id, student_id)
@@ -354,6 +359,15 @@ class StudentArchiveService:
         primary_group_id = student.group_id
         for membership in memberships:
             close_period(membership, now)  # the open period ends with the membership; earlier ones stay
+            on_membership_closed(self.db, membership, now, actor_id)  # LOGIC-A: the individual price ends, pauses are cut
+        settled: List[SettledOut] = []
+        if settle:
+            try:
+                self.db.flush()
+                settled = LeaveService(self.db).settle(org_id, memberships, settle, actor_id, actor_role, money=money)
+            except PaymentError:
+                self.db.rollback()
+                raise
         cancelled_ids, in_progress_ids = self._cancel_open_invites(org_id, student.id, now)
         invites_cancelled, invites_in_progress = len(cancelled_ids), len(in_progress_ids)
         student.status = ARCHIVED
@@ -410,6 +424,7 @@ class StudentArchiveService:
             ],
             diagnostic_invites_cancelled=invites_cancelled,
             diagnostic_invites_in_progress=invites_in_progress,
+            settled=settled,
         )
 
     def _cancel_open_invites(self, org_id: str, student_id: UUID, now: datetime) -> tuple:

@@ -208,7 +208,7 @@ def test_totals_blocks_and_counters_come_from_the_lines():
     assert pe.sheet_total(lines) == sum(x["amount"] for x in lines)
     counters = pe.sheet_counters(lines)
     assert counters == {"total_amount": pe.sheet_total(lines), "counted": 2 + 2 + 1, "unpaid": 1,
-                        "unpaid_students": 1, "pending_excused": 0, "no_fee": 1}
+                        "unpaid_students": 1, "pending_excused": 0, "no_fee": 1, "written_off": 0}
     blocks = pe.group_blocks(lines)
     assert [b["group_id"] for b in blocks] == ["g1", "g2"]
     first = blocks[0]

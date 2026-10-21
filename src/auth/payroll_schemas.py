@@ -178,6 +178,10 @@ class BlockDate(BaseModel):
 
 
 class GroupBlockOut(BaseModel):
+    # LOGIC-A (F14): one block per (group, kind of lessons) - two blocks of one group when it changed its type inside the month.
+    # ``block_key`` = ``"<group_id>"`` (one kind in the month) or ``"<group_id>:<lesson_type>"`` (the group has several blocks); the lines of
+    # a block are the ``LineOut`` with the same ``group_id`` and ``lesson_type`` (their ``line_key`` is ``"<membership_id>[:<type>]"``).
+    block_key: str = ""
     group_id: str
     group_name: str
     lesson_type: str

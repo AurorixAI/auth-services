@@ -43,6 +43,7 @@ os.environ.setdefault("SECRET_KEY", "pay2-report-secret-key-at-least-32-characte
 from src.core.db_timezone import utc_connect_args  # noqa: E402
 
 MIGRATION = ROOT / "alembic" / "versions" / "e1f2a3b4c5d_pay2_balance_ledger.py"
+LOGIC_A_MIGRATION = ROOT / "alembic" / "versions" / "f2a3b4c5d6e_logic_a_money.py"   # the tables the current loader reads (pauses, openings)
 REVISION = "e1f2a3b4c5d"
 
 
@@ -50,8 +51,8 @@ def money(value: Optional[int]) -> str:
     return "—" if value is None else f"{value:,}".replace(",", " ")
 
 
-def load_migration():
-    spec = importlib.util.spec_from_file_location("pay2_migration", MIGRATION)
+def load_migration(path: Path = MIGRATION):
+    spec = importlib.util.spec_from_file_location("pay2_migration_" + path.stem, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)  # type: ignore[union-attr]
     return module
@@ -213,6 +214,8 @@ def build_report(connection, *, today: date, org: Optional[str] = None, apply_mi
         module = load_migration()
         with Operations.context(MigrationContext.configure(connection)):
             module.upgrade()
+            if not connection.execute(text("SELECT to_regclass('membership_pauses')")).scalar():
+                load_migration(LOGIC_A_MIGRATION).upgrade()      # the loader of today reads the LOGIC-A tables too
         migrated_here = True
     session.expire_all()
     with_money = {str(r[0]) for r in connection.execute(text("SELECT DISTINCT org_id FROM student_payments WHERE voided_at IS NULL"))}

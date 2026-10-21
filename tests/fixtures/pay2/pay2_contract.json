@@ -420,6 +420,23 @@
             "title": "Advance",
             "type": "integer"
           },
+          "bucket": {
+            "anyOf": [
+              {
+                "enum": [
+                  "debt",
+                  "expiring",
+                  "active",
+                  "paused"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bucket"
+          },
           "class_level": {
             "anyOf": [
               {
@@ -462,6 +479,22 @@
             "default": 0,
             "title": "Debt",
             "type": "integer"
+          },
+          "debt_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "overdue",
+                  "partial",
+                  "never_paid"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Reason"
           },
           "display_id": {
             "anyOf": [
@@ -622,6 +655,17 @@
             "default": false,
             "title": "Price Missing",
             "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           },
           "refundable": {
             "default": 0,
@@ -2046,6 +2090,7 @@
               "horizon_capped",
               "large_overpay",
               "student_archived",
+              "left_debt_only",
               "price_change_ahead",
               "paid_over_60_days_ago",
               "overlaps_previous",
@@ -2066,6 +2111,33 @@
           "message"
         ],
         "title": "PaymentWarningOut",
+        "type": "object"
+      },
+      "PaymentsBuckets": {
+        "description": "Memberships per tab of the payments page (the same sets ``GET /org/payments/status?bucket=`` lists).",
+        "properties": {
+          "active": {
+            "default": 0,
+            "title": "Active",
+            "type": "integer"
+          },
+          "debt": {
+            "default": 0,
+            "title": "Debt",
+            "type": "integer"
+          },
+          "expiring": {
+            "default": 0,
+            "title": "Expiring",
+            "type": "integer"
+          },
+          "paused": {
+            "default": 0,
+            "title": "Paused",
+            "type": "integer"
+          }
+        },
+        "title": "PaymentsBuckets",
         "type": "object"
       },
       "PaymentsSummary": {
@@ -2095,9 +2167,17 @@
             "title": "As Of",
             "type": "string"
           },
+          "buckets": {
+            "$ref": "#/components/schemas/PaymentsBuckets"
+          },
           "debt_total": {
             "default": 0,
             "title": "Debt Total",
+            "type": "integer"
+          },
+          "debtors": {
+            "default": 0,
+            "title": "Debtors",
             "type": "integer"
           },
           "due": {
@@ -2146,12 +2226,22 @@
             "title": "Period Mode",
             "type": "string"
           },
+          "price_missing": {
+            "default": 0,
+            "title": "Price Missing",
+            "type": "integer"
+          },
           "students_due": {
             "title": "Students Due",
             "type": "integer"
           },
           "students_expired": {
             "title": "Students Expired",
+            "type": "integer"
+          },
+          "students_with_advance": {
+            "default": 0,
+            "title": "Students With Advance",
             "type": "integer"
           },
           "students_with_debt": {
@@ -3871,7 +3961,8 @@
               "full",
               "lessons",
               "days",
-              "zero"
+              "zero",
+              "opening"
             ],
             "title": "Basis",
             "type": "string"
@@ -3930,7 +4021,8 @@
             "default": "period",
             "enum": [
               "period",
-              "package"
+              "package",
+              "opening"
             ],
             "title": "Kind",
             "type": "string"
@@ -4475,7 +4567,10 @@
               "writeoff",
               "refund",
               "transfer_in",
-              "transfer_out"
+              "transfer_out",
+              "opening_debt",
+              "opening_paid_until",
+              "pause"
             ],
             "title": "Type",
             "type": "string"
@@ -6222,7 +6317,7 @@
     },
     "/org/payments/status": {
       "get": {
-        "description": "Членства со статусом оплаты (по вкладкам), с точным total. PAY-2: вкладка ``debt`` — члены с долгом > 0\n(в том числе ушедшие и архивные), ``sort=debt`` — по убыванию долга.",
+        "description": "Членства со статусом оплаты (по вкладкам), с точным total. PAY-2: вкладка ``debt`` — члены с долгом > 0\n(в том числе ушедшие и архивные), ``sort=debt`` — по убыванию долга. LOGIC-A (решение владельца 21.10): вкладки\n``debt`` Должники / ``expiring`` Скоро платить / ``active`` Оплачено / ``paused`` На паузе (``due`` — старое имя ``debt``; ``none`` — старая\nвкладка, один релиз).",
         "parameters": [
           {
             "in": "query",
@@ -6231,12 +6326,13 @@
             "schema": {
               "default": "all",
               "enum": [
-                "due",
+                "debt",
                 "expiring",
-                "none",
                 "active",
+                "paused",
                 "all",
-                "debt"
+                "due",
+                "none"
               ],
               "title": "Bucket",
               "type": "string"

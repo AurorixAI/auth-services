@@ -240,15 +240,19 @@ def test_idempotency_key_and_soft_double_click(world, fixed_today, monkeypatch):
     post_payment(world, m, amount=7_000)
 
 
-def test_archived_student_cannot_pay_but_can_be_refunded_and_written_off(world, fixed_today):
-    m = e1_world(world)
+def test_archived_student_pays_the_debt_only_and_can_be_refunded_and_written_off(world, fixed_today):
+    """S-5 (LOGIC-A): a student who left pays his DEBT (not more); an advance cannot grow; the preview says so."""
+    m = e1_world(world)                                                   # debt 769 000
     world.students[0].status = "archived"
     world.db.commit()
+    r = owner(world).post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 800_000, "paid_on": TODAY.isoformat(), "method": "cash"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PAYMENT_EXCEEDS_DEBT" and r.json()["detail"]["debt"] == 769_000
     r = owner(world).post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 1000, "paid_on": TODAY.isoformat(), "method": "cash"})
-    assert r.status_code == 409 and r.json()["detail"]["code"] == "STUDENT_ARCHIVED"
+    assert r.status_code == 201
     r = owner(world).post(f"{API}/org/memberships/{m.id}/writeoffs", json={"amount": 1000, "reason": "льгота"})
     assert r.status_code == 201
-    assert preview(world, m)["warnings"][0]["code"] == "student_archived"
+    pv = preview(world, m)
+    assert pv["warnings"][0]["code"] == "left_debt_only" and pv["suggested_amount"] == 767_000
 
 
 def test_e8_replace_and_void(world, fixed_today):

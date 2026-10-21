@@ -43,17 +43,18 @@ PaymentMethod = Literal["cash", "card", "bank_transfer", "click", "payme", "othe
 NewPaymentMethod = Literal["cash", "card", "bank_transfer", "click", "payme", "other"]
 PaymentKind = Literal["payment", "legacy_carry"]
 AllocationBucket = Literal["past_debt", "current", "advance"]
-SegmentKind = Literal["period", "package"]
-SegmentBasis = Literal["full", "lessons", "days", "zero"]
+SegmentKind = Literal["period", "package", "opening"]  # "opening": the debt of the opening balance (LOGIC-A)
+SegmentBasis = Literal["full", "lessons", "days", "zero", "opening"]
 # closed: nothing unpaid; future: the period has not begun, something is unpaid; partial: begun, some money, not all;
 # open: begun, no money; unpriced: no price is set for the period (nothing is charged).
 SegmentState = Literal["closed", "partial", "open", "future", "unpriced"]
 SegmentBucket = Literal["past_debt", "current", "future"]
-StatementRowType = Literal["charge", "payment", "writeoff", "refund", "transfer_in", "transfer_out"]
+StatementRowType = Literal["charge", "payment", "writeoff", "refund", "transfer_in", "transfer_out",
+                           "opening_debt", "opening_paid_until", "pause"]  # LOGIC-A: the opening balance and a pause (info row, no money)
 ReceiptColumn = Literal["received", "to_past_debt", "to_current", "to_advance", "written_off", "refunded"]
 ReceiptItemType = Literal["payment", "writeoff", "refund"]
 PayWarningCode = Literal[
-    "price_missing", "horizon_capped", "large_overpay", "student_archived", "price_change_ahead",
+    "price_missing", "horizon_capped", "large_overpay", "student_archived", "left_debt_only", "price_change_ahead",
     "paid_over_60_days_ago",
     # LEGACY (period payments of the old model): no longer emitted after PAY-2 stream B, dropped from this list then.
     "overlaps_previous", "gap_before", "period_over_62_days", "short_period_full_amount",
@@ -306,6 +307,22 @@ class MembershipPaymentRow(BaseModel):
     paused: Optional["PausedRange"] = None
     opening: Optional["OpeningBrief"] = None
     price_ends_on_leave: bool = False
+    # LOGIC-A (owner, 21.10): the tab of the row - ``debt`` Должники (debt > 0, any reason; students who left included), ``expiring`` Скоро
+    # платить (no debt, the next period is due within ``expiring_days``), ``active`` Оплачено (no debt, not due soon; an advance included),
+    # ``paused`` На паузе (today is inside a pause, no debt); null: a free student, one without a price, a membership that is not tracked.
+    # ``debt_reason`` (code) and ``reason`` (the sentence of the debtor line) say why a debtor is one.
+    bucket: Optional[Literal["debt", "expiring", "active", "paused"]] = None
+    debt_reason: Optional[Literal["overdue", "partial", "never_paid"]] = None
+    reason: Optional[str] = None  # the line of a debtor: «Просрочено на 12 дней» | «Не доплачено за октябрь: 150 000» | «Ещё не платил»
+
+
+class PaymentsBuckets(BaseModel):
+    """Memberships per tab of the payments page (the same sets ``GET /org/payments/status?bucket=`` lists)."""
+
+    debt: int = 0
+    expiring: int = 0
+    active: int = 0
+    paused: int = 0
 
 
 class PaymentsSummary(BaseModel):
@@ -332,6 +349,13 @@ class PaymentsSummary(BaseModel):
     students_with_debt: int = 0
     accounting_start_date: Optional[date_type] = None
     paused: int = 0  # LOGIC-A: memberships whose today is inside a pause
+    # LOGIC-A (owner, 21.10): the new tabs.  ``buckets.debt`` == ``memberships_with_debt``; Σ debt of that tab == ``debt_total``;
+    # ``debtors`` == ``students_with_debt`` (distinct students).  ``free`` (existing) and ``price_missing`` are the students outside the
+    # tabs (a warning line); ``students_with_advance`` is the advance card (with ``advance_total``).
+    buckets: "PaymentsBuckets" = Field(default_factory=lambda: PaymentsBuckets())
+    price_missing: int = 0
+    students_with_advance: int = 0
+    debtors: int = 0
 
 
 class PaymentStatusPage(BaseModel):
@@ -526,6 +550,10 @@ class PriceOverrideUpdate(BaseModel):
 
 class PriceOverrideChanged(MembershipPriceOut):
     row: "MembershipPaymentRow"
+    dry_run: bool = False
+    # LOGIC-A: what this price of this membership touches - the same block as the group price: the counters, the stale sheets (the list for
+    # the owner only) and ``money`` (the ledger "what if": debt / advance / «оплачено до» of this membership).  ``null`` on GET / cancel.
+    impact: Optional["PriceImpact"] = None
 
 
 class PaymentCreate(BaseModel):

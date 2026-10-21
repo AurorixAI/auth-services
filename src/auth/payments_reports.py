@@ -99,6 +99,18 @@ class PaymentsReports:
                 title = f"Стоимость {tx.period_text(seg.period_start, seg.period_end)}" if seg.kind == "period" else (
                     f"Стоимость: пакет №{seg.package_no} ({tx.period_text(seg.period_start, seg.period_end)})")
                 rows.append(StatementRow(type="charge", title=title, details=StatementDetails(segment=pv.segment_out(seg)), **common))
+            elif e.kind == "opening_debt":
+                seg = segments[e.ref_id]
+                rows.append(StatementRow(type="opening_debt", title=f"Долг на начало учёта на {seg.period_start.strftime('%d.%m.%Y')}",
+                                         details=StatementDetails(segment=pv.segment_out(seg)), **common))
+            elif e.kind == "opening_paid_until":
+                until = ledger.opening.paid_until if ledger.opening and ledger.opening.paid_until else None
+                rows.append(StatementRow(
+                    type="opening_paid_until", title=f"Остаток на начало: оплачено до {until.strftime('%d.%m')}" if until else "Остаток на начало",
+                    **common))
+            elif e.kind == "pause":
+                first, last = (date.fromisoformat(x) for x in e.ref_id.split(":")[1:3])
+                rows.append(StatementRow(type="pause", title=f"Пауза {tx.period_text(first, last)} — начислений нет", **common))
             elif e.kind == bl.PAYMENT:
                 p = payments[e.ref_id]
                 rows.append(StatementRow(

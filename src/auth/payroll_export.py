@@ -182,28 +182,32 @@ def write_sheet(ws, sheet: Mapping[str, Any]) -> None:
         _put(ws, header_row, right_col + i, text, font=BOLD, fill=HEAD_FILL, border=BORDER, alignment=CENTER)
 
     row = header_row + 1
-    blocks = {block["group_id"]: block for block in sheet["groups"]}
     current_group: Optional[str] = None
-    block_rows: List[int] = []
+    group_name = ""
+    sums = {"counted": 0, "unpaid": 0, "amount": 0}
 
     def subtotal() -> None:
+        """The subtotal of a group is the sum of its LINES (a group that changed its type inside the month has two blocks)."""
         nonlocal row
         if current_group is None:
             return
-        block = blocks[current_group]
-        _put(ws, row, 1, f"Итого: {block['group_name']}", font=BOLD, fill=GROUP_FILL, border=BORDER)
+        _put(ws, row, 1, f"Итого: {group_name}", font=BOLD, fill=GROUP_FILL, border=BORDER)
         for col in range(2, width + 1):
             _put(ws, row, col, None, fill=GROUP_FILL, border=BORDER)
-        _put(ws, row, right_col, block["counted"], font=BOLD, fill=GROUP_FILL, border=BORDER, alignment=CENTER)
-        _put(ws, row, right_col + 1, block["unpaid"], font=BOLD, fill=GROUP_FILL, border=BORDER, alignment=CENTER)
-        _put(ws, row, right_col + 3, block["total_amount"], font=BOLD, fill=GROUP_FILL, border=BORDER,
+        _put(ws, row, right_col, sums["counted"], font=BOLD, fill=GROUP_FILL, border=BORDER, alignment=CENTER)
+        _put(ws, row, right_col + 1, sums["unpaid"], font=BOLD, fill=GROUP_FILL, border=BORDER, alignment=CENTER)
+        _put(ws, row, right_col + 3, sums["amount"], font=BOLD, fill=GROUP_FILL, border=BORDER,
              number_format=MONEY)
         row += 1
 
     for line in sheet["lines"]:
         if line["group_id"] != current_group:
             subtotal()
-            current_group = line["group_id"]
+            current_group, group_name = line["group_id"], line["group_name"]
+            sums = {"counted": 0, "unpaid": 0, "amount": 0}
+        sums["counted"] += int(line["counted"])
+        sums["unpaid"] += int(line["unpaid"])
+        sums["amount"] += int(line["amount"])
         _put(ws, row, 1, line["group_name"], border=BORDER)
         _put(ws, row, 2, engine.LESSON_TYPE_LABELS.get(line["lesson_type"], line["lesson_type"]), border=BORDER)
         _put(ws, row, 3, line.get("lesson_time") or "", border=BORDER)
@@ -245,6 +249,16 @@ def write_sheet(ws, sheet: Mapping[str, Any]) -> None:
     _put(ws, row, right_col + 1, sheet["unpaid_total"], font=BOLD, fill=HEAD_FILL, border=BORDER, alignment=CENTER)
     _put(ws, row, right_col + 3, sheet["total_amount"], font=Font(bold=True, size=12), fill=HEAD_FILL,
          border=BORDER, number_format=MONEY)
+    payout = sheet.get("payout")
+    if payout:  # LOGIC-A (decision 6): «Выплачено / Остаток»; the written-off lessons are told in a line of their own
+        for label, value in (("К выплате", payout["target"]), ("Выплачено", payout["paid"]),
+                             ("Переплачено" if payout["balance"] < 0 else "Остаток к выплате", abs(payout["balance"]))):
+            row += 1
+            _put(ws, row, 1, label, font=BOLD)
+            _put(ws, row, right_col + 3, value, font=BOLD, number_format=MONEY)
+    if sheet.get("written_off_total"):
+        row += 1
+        _put(ws, row, 1, f"из них прощено центром: {sheet['written_off_total']} уроков", font=Font(italic=True, color="555555"))
 
     for col, size in zip(range(1, 7), (22, 14, 14, 26, 15, 7)):
         ws.column_dimensions[get_column_letter(col)].width = size

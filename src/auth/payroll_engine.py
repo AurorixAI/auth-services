@@ -152,7 +152,9 @@ class Mark:
     # ``source_fee`` stands for it.  ``price_source``: group | override | none.
     price: Optional[int] = None
     priced: bool = False
-    price_source: Optional[str] = None
+    price_source: Optional[str] = None  # group | override | none | day ("day": a lesson before the first charged day, the price of that day)
+    # LOGIC-A: how the lesson is covered (``Ledger.lesson_cover``): money | writeoff | before_start | unpaid
+    cover: Optional[str] = None
 
     @property
     def mark(self) -> Optional[int]:
@@ -172,6 +174,8 @@ class Mark:
         if self.priced:
             out["price"] = self.price
             out["price_source"] = self.price_source
+        if self.cover is not None:
+            out["cover"] = self.cover
         return out
 
     @staticmethod
@@ -184,6 +188,7 @@ class Mark:
             price=item.get("price"),
             priced="price" in item,
             price_source=item.get("price_source"),
+            cover=item.get("cover"),
         )
 
     @property
@@ -245,12 +250,15 @@ def compute_line(
     if fee_override is not None:
         fee = fee_override
     elif last is not None and last.priced:
-        fee, price_source = last.price, last.price_source
+        fee = last.price
+        if last.price_source != "day":     # "day" (a lesson before the accounting): the line keeps the source the caller found
+            price_source = last.price_source
     else:
         fee = source_fee
     steps = [] if fee_override is not None else price_steps(marks)
     no_price = sum(1 for m in money if lesson_fee(m) is None)
     unpaid_due = sum(1 for m in unpaid if lesson_fee(m) != 0)  # a free lesson (price 0) is paid by nobody
+    written_off = sum(1 for m in paid if m.cover == "writeoff")
     amount = (
         lessons_amount(percent, [(lesson_fee(m), m.divisor or default_divisor) for m in in_sum])
         if percent is not None
@@ -292,6 +300,7 @@ def compute_line(
             "unpaid": len(unpaid),
             "pending_excused": pending_excused,
             "include_unpaid": bool(include_unpaid),
+            "written_off": written_off,  # LOGIC-A (decision 5): counted lessons that a write-off of the centre covers
             "amount": amount,
             "warnings": warnings,
         }
@@ -326,7 +335,7 @@ def recompute_line(
     identity = {
         key: line.get(key)
         for key in (
-            "membership_id", "student_id", "student_name", "display_id",
+            "line_key", "membership_id", "student_id", "student_name", "display_id",
             "group_id", "group_name", "lesson_type", "lesson_time",
         )
     }
@@ -355,6 +364,7 @@ def sheet_counters(lines: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
     return {
         "total_amount": sheet_total(lines),
         "counted": sum(int(line["counted"]) for line in lines),
+        "written_off": sum(int(line.get("written_off") or 0) for line in lines),
         # lessons nobody paid for - not counting the free lessons (price 0): they owe nothing
         "unpaid": sum(_unpaid_due(line) for line in lines),
         # how many different students have such lessons ("9 учеников не оплатили часть уроков (140 посещений)")
@@ -379,11 +389,12 @@ def _lacks_price(line: Mapping[str, Any]) -> bool:
 
 def group_blocks(lines: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     """Blocks of the sheet - one per group, in the order of the lines: the date columns and the subtotals."""
-    blocks: Dict[str, Dict[str, Any]] = {}
+    blocks: Dict[Any, Dict[str, Any]] = {}
     for line in lines:
-        block = blocks.get(line["group_id"])
+        key_of_block = (line["group_id"], line["lesson_type"])  # a group that changed its type inside the month has two blocks
+        block = blocks.get(key_of_block)
         if block is None:
-            block = blocks[line["group_id"]] = {
+            block = blocks[key_of_block] = {
                 "group_id": line["group_id"],
                 "group_name": line["group_name"],
                 "lesson_type": line["lesson_type"],
@@ -406,6 +417,11 @@ def group_blocks(lines: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
         block["unpaid"] += int(line["unpaid"])
         block["total_amount"] += int(line["amount"])
     result = []
+    groups_kinds: Dict[str, int] = {}
+    for gid, _kind in blocks:
+        groups_kinds[gid] = groups_kinds.get(gid, 0) + 1
+    for (gid, kind), block in blocks.items():
+        block["block_key"] = f"{gid}:{kind}" if groups_kinds[gid] > 1 else gid
     for block in blocks.values():
         block.pop("_seen")
         block["dates"].sort(key=lambda item: (item["date"], item["lesson_id"]))
@@ -450,15 +466,15 @@ def diff_lines(
     ``status``: ``changed`` / ``added`` (only in the fresh calculation) / ``removed`` (only in the sheet).
     Unchanged lines are not listed.
     """
-    old = {line["membership_id"]: line for line in saved}
-    new = {line["membership_id"]: line for line in fresh}
+    old = {_key(line): line for line in saved}
+    new = {_key(line): line for line in fresh}
     out: List[Dict[str, Any]] = []
 
     def brief(line: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
         return None if line is None else {key: _value(line, key) for key in _COMPARED}
 
-    for membership_id in sorted(set(old) | set(new), key=lambda k: (_sort_name(old.get(k) or new.get(k)), k)):
-        a, b = old.get(membership_id), new.get(membership_id)
+    for line_key in sorted(set(old) | set(new), key=lambda k: (_sort_name(old.get(k) or new.get(k)), k)):
+        a, b = old.get(line_key), new.get(line_key)
         if a is not None and b is not None:
             changes = [key for key in _COMPARED if _value(a, key) != _value(b, key)]
             if not changes and _marks_key(a) != _marks_key(b):
@@ -472,7 +488,8 @@ def diff_lines(
         ref = b if b is not None else a
         out.append(
             {
-                "membership_id": membership_id,
+                "line_key": line_key,
+                "membership_id": ref["membership_id"],
                 "student_name": ref.get("student_name"),
                 "group_name": ref.get("group_name"),
                 "status": status,
@@ -483,6 +500,11 @@ def diff_lines(
             }
         )
     return out
+
+
+def _key(line: Mapping[str, Any]) -> str:
+    """The identity of a line: ``<membership>`` or ``<membership>:<type>`` (a sheet saved before LOGIC-A has the membership only)."""
+    return line.get("line_key") or line["membership_id"]
 
 
 def _sort_name(line: Optional[Mapping[str, Any]]) -> str:

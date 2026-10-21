@@ -104,7 +104,7 @@ from .dependencies import (
 
 from sqlalchemy.exc import OperationalError
 
-from .payments_service import CONCURRENT_EDIT_MESSAGE, is_deadlock
+from .payments_service import CONCURRENT_EDIT_MESSAGE, PaymentError, is_deadlock
 from src.core.database import get_db
 from src.api.internal_router import has_valid_internal_token, require_internal_service_token
 
@@ -860,11 +860,14 @@ def archive_student(
             actor_id=user["user_id"],
             actor_role=actor_role_for_audit(user),
             reason=request.reason if request else None,
+            settle=request.settle if request else None, money=has_payments_access(user, db),
         )
     except OperationalError as e:
         raise _concurrent_edit_or_raise(e, db)
     except ArchiveError as e:
         raise HTTPException(e.http_status, str(e))
+    except PaymentError as e:  # LOGIC-A: a settlement refused (BALANCE_CHANGED, 403, 422)
+        raise HTTPException(e.status_code, e.detail)
 
 
 @router.post("/org/students/{student_id}/restore", response_model=RestoreStudentResponse)
@@ -1170,15 +1173,19 @@ def add_student_to_group(
 ):
     """Добавить ученика в группу: перевести (по умолчанию) или добавить ещё одну группу."""
     price_override = request.price_override if request else None
-    _check_fee_right(price_override, user, db)
+    opening_balance = request.opening_balance if request else None
+    _check_fee_right(price_override or opening_balance, user, db)
     try:
         return _svc(db).add_student_to_group(
             user["org_id"], group_id, student_id,
             mode=mode, price_override=price_override, actor_id=user["user_id"],
-            payments_detail=has_payments_access(user, db),
+            payments_detail=has_payments_access(user, db), opening_balance=opening_balance,
         )
     except MembershipConflict as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    except PaymentError as e:  # LOGIC-A: the opening balance refused (OPENING_RANGE, OPENING_NOT_ALLOWED)
+        db.rollback()
+        raise HTTPException(e.status_code, e.detail)
     except OperationalError as e:
         raise _concurrent_edit_or_raise(e, db)
     except ValueError as e:
@@ -1194,12 +1201,16 @@ def remove_student_from_group(
     user: dict = Depends(require_org_admin),
     db: Session = Depends(get_db),
 ):
-    """Убрать ученика из группы"""
+    """Убрать ученика из группы (без расчётов: как ``POST …/leave`` с пустым ``settle``)"""
     try:
-        _svc(db).remove_student_from_group(user["org_id"], group_id, student_id)
+        from .leave_service import LeaveService  # lazy: pulls in the payments modules
+
+        LeaveService(db).leave(user["org_id"], group_id, student_id, user["user_id"], actor_role_for_audit(user), None)
         return MessageResponse(message="Ученик удалён из группы")
     except OperationalError as e:
         raise _concurrent_edit_or_raise(e, db)
+    except PaymentError as e:
+        raise HTTPException(400 if e.status_code == 409 else e.status_code, e.detail)  # the old contract: 400 «не в этой группе»
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -1231,7 +1242,7 @@ async def import_preview(
 ):
     """Разобрать и проверить файл (dry-run) — ничего не записывается."""
     data = await _read_import_upload(file)
-    return import_service.preview(user["org_id"], data, db)
+    return import_service.preview(user["org_id"], data, db, money=has_payments_access(user, db))
 
 
 @router.post("/org/import/commit", response_model=ImportCommitResponse)
@@ -1242,7 +1253,7 @@ async def import_commit(
 ):
     """Записать данные из файла в базу транзакционно (всё или ничего)."""
     data = await _read_import_upload(file)
-    return import_service.commit(user["org_id"], user["user_id"], data, db)
+    return import_service.commit(user["org_id"], user["user_id"], data, db, money=has_payments_access(user, db))
 
 
 async def _read_import_upload(file: UploadFile) -> bytes:

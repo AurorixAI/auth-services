@@ -188,6 +188,9 @@
     "writeoff_allowed": true,
     "paused": null,
     "opening": null,
-    "price_ends_on_leave": false
+    "price_ends_on_leave": false,
+    "bucket": null,
+    "debt_reason": null,
+    "reason": null
   }
 }

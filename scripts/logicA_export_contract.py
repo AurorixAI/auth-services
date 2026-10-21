@@ -47,6 +47,10 @@ OPERATIONS = [
     ("put", "/org/memberships/{membership_id}/price-override"),
     ("delete", "/org/memberships/{membership_id}/price-override/{row_id}"),
     ("post", "/org/groups/{group_id}/students/{student_id}"),
+    ("get", "/org/memberships/{membership_id}/payments/preview"),
+    ("post", "/org/memberships/{membership_id}/payments"),
+    ("post", "/org/payments/{payment_id}/replace"),
+    ("get", "/org/memberships/{membership_id}/statement"),
     # payroll
     ("get", "/org/payroll/settings"),
     ("put", "/org/payroll/settings"),
@@ -75,6 +79,7 @@ def _refs(node, found):
 
 
 def contract() -> dict:
+    from src.auth.logica_errors import ERRORS_BY_OPERATION  # noqa: F401  (used below)
     from src.api.main_v2 import app  # the whole application (importing the routers one by one trips a circular import)
 
     full = app.openapi()
@@ -82,6 +87,9 @@ def contract() -> dict:
     for method, path in OPERATIONS:
         op = full["paths"][PREFIX + path][method]
         op = {k: v for k, v in op.items() if k != "operationId"}
+        errors = ERRORS_BY_OPERATION.get((method, path))
+        if errors:  # the codes of the operation with their texts (the front shows ``detail.message`` as the server wrote it)
+            op["x-errors"] = [{"status": status, **({"code": code} if code else {}), "message": message} for status, code, message in errors]
         paths.setdefault(path, {})[method] = op
     needed: set = set()
     _refs(paths, needed)

@@ -791,31 +791,46 @@ def _window_bounds(starts: List[date]) -> List[Tuple[date, Optional[date]]]:
     return out
 
 
-def run_ledger(inp: LedgerInput) -> Ledger:
-    today = inp.today
-    flags: set = set()
+def _pieces_of(inp: LedgerInput):
+    """``(opening, floor, runs, pause_days, pieces)``: the pieces of the stay that are charged = the runs from the floor on, without the
+    pauses."""
     opening = inp.opening
     if opening is not None and not (opening.paid_until or (opening.debt_amount and opening.debt_on)):
         opening = None
     floor = max(inp.accounting_start, inp.first_billable_floor or date.min,
                 (opening.paid_until + timedelta(days=1)) if opening is not None and opening.paid_until else date.min)
-    credits = sorted(inp.credits, key=_credit_key)
-    net, refunded_from, transferred_from, exceeds = apply_outflows(credits, inp.outflows)
-    if exceeds:
-        flags.add(F_OUTFLOW_EXCEEDS)
-    total_credit = sum(net.values())
-    gen = _Gen(inp, total_credit, flags)
     runs = merge_stays(inp.stays)
-    windows = regime_windows(inp.regimes)
     pause_days = _merge_pauses(inp.pauses)
-
-    # the pieces of the stay that are charged: the runs from the floor on, without the pauses (LOGIC-A)
     pieces: List[Tuple[date, Optional[date]]] = []
     for first, last in runs:
         lo = max(first, floor)
         if last is not None and lo > last:
             continue
         pieces.extend(_subtract_pauses(lo, last, pause_days))
+    return opening, floor, runs, pause_days, pieces
+
+
+def regime_switch_days(inp: LedgerInput, new: Regime) -> List[date]:
+    """F12 «who switches when»: the first day under ``new`` (a version that begins today, ``defer``) of every piece of the stay that is still
+    open - ``max`` / ``min`` of the list are the last / first switch.  Closed stays do not switch."""
+    regimes = list(inp.regimes) + [replace(new, defer=True, effective_from=inp.today)]
+    windows = regime_windows(regimes)
+    _, _, _, _, pieces = _pieces_of(inp)
+    priced = sorted(c.day for c in inp.counted_lessons if inp.price_at(c.day).amount is not None)
+    return [_window_starts(windows, first, priced)[-1] for first, last in pieces if last is None]
+
+
+def run_ledger(inp: LedgerInput) -> Ledger:
+    today = inp.today
+    flags: set = set()
+    opening, floor, runs, pause_days, pieces = _pieces_of(inp)
+    credits = sorted(inp.credits, key=_credit_key)
+    net, refunded_from, transferred_from, exceeds = apply_outflows(credits, inp.outflows)
+    if exceeds:
+        flags.add(F_OUTFLOW_EXCEEDS)
+    total_credit = sum(net.values())
+    gen = _Gen(inp, total_credit, flags)
+    windows = regime_windows(inp.regimes)
     deferred = any(w[0].defer for w in windows[1:])
     priced_days = sorted(c.day for c in inp.counted_lessons if inp.price_at(c.day).amount is not None) if deferred else []
     bounds = [_window_bounds(_window_starts(windows, first, priced_days) if deferred else [w[1] for w in windows])

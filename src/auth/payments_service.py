@@ -77,6 +77,9 @@ from .payments_schemas import (
     CarriedFromOut,
     CarriedOutOut,
     MembershipPaymentRow,
+    OpeningBrief,
+    PaymentsBuckets,
+    PausedRange,
     PaymentCreate,
     PaymentCreated,
     PaymentFileOut,
@@ -96,6 +99,7 @@ from .payments_schemas import (
     RefundCreated,
     RefundOut,
     RefundVoided,
+    RegimeImpact,
     SnapshotPrice,
     WriteoffCreated,
     WriteoffOut,
@@ -261,6 +265,16 @@ class StudentArchived(PaymentConflict):
     code = "STUDENT_ARCHIVED"
 
 
+class PaymentExceedsDebt(PaymentInvalid):
+    """S-5 (LOGIC-A): a student who left (or was archived) can pay his DEBT only - his account must not grow an advance."""
+
+    code = "PAYMENT_EXCEEDS_DEBT"
+
+
+class NothingToPay(PaymentInvalid):
+    code = "NOTHING_TO_PAY"
+
+
 class ConcurrentEdit(PaymentConflict):
     """A deadlock with another edit of the same student; nothing was written, repeat the request."""
 
@@ -374,6 +388,11 @@ class LessonCover:
     # Lessons mode: the size of the package of the regime the lesson belongs to (the divisor of payroll); calendar: None.
     package_size: Optional[int]
     paid: bool = False  # the lesson is paid by the money of the account (or lies before the first charged day)
+    # LOGIC-A (F1, decision 5): the price of the period / package that carries the lesson (what the student is charged), and how the lesson
+    # is covered: money | writeoff | before_start | unpaid | unpriced
+    price: Optional[bl.PriceInfo] = None
+    cover_source: str = "unpaid"
+    segment_id: Optional[str] = None
 
 
 # ============================================================================
@@ -436,7 +455,13 @@ class PaymentService:
         if dry_run:
             if new_start is not None and new_start != before.accounting_start_date:
                 impact = self._accounting_start_impact(org_id, new_start)
-            return PaymentSettingsChanged(**before.model_dump(), dry_run=True, impact=impact or AccountingStartImpact())
+            merged = {k: changes.get(k, getattr(before, k)) for k in PaymentSettings.model_fields if k not in ("accounting_start_date", "updated_by", "updated_at")}
+            regime_impact = None
+            wanted = PaymentSettings(**{**merged})
+            if self._regime_fields(wanted) != self._regime_fields(before):
+                regime_impact = self._regime_impact(org_id, wanted, today)
+            return PaymentSettingsChanged(**before.model_dump(), dry_run=True, impact=impact or AccountingStartImpact(),
+                                          regime_impact=regime_impact)
         block.update(changes)
         if new_start is not None:
             block["accounting_start_date"] = new_start.isoformat()
@@ -448,7 +473,8 @@ class PaymentService:
             history = [dict(h) for h in (block.get("billing_history") or []) if isinstance(h, dict)]
             if not history:
                 history = [{"from": "min", **self._regime_fields(before)}]
-            entry = {"from": today.isoformat(), **self._regime_fields(after)}
+            # LOGIC-A (F12): the new regime acts for every student from the start of HIS next period - a running period is never cut
+            entry = {"from": today.isoformat(), "defer": True, **self._regime_fields(after)}
             if history[-1].get("from") == today.isoformat():
                 history[-1] = entry
             else:
@@ -466,6 +492,20 @@ class PaymentService:
             org_id, actor_id, sorted(list(changes) + (["accounting_start_date"] if new_start is not None else [])),
         )
         return PaymentSettingsChanged(**self.get_settings(org_id).model_dump())
+
+    def _regime_impact(self, org_id: str, wanted: PaymentSettings, today: date) -> RegimeImpact:
+        """Dry run of a change of the billing mode: how many students switch and between which days (they keep the running period)."""
+        loader = self._loader(org_id, today)
+        new = ls.regime_from_block(self._regime_fields(wanted), today)
+        days: List[date] = []
+        students: set = set()
+        for e in loader.load(scope="tracked"):
+            switch = bl.regime_switch_days(e.inp, new)
+            if switch:
+                students.add(e.student.id)
+                days.extend(switch)
+        return RegimeImpact(students_affected=len(students), first_switch=min(days) if days else None,
+                            latest_switch=max(days) if days else None, defer=True)
 
     def _check_accounting_start(self, org_id: str, new_start: date, today: date) -> None:
         """The start is not before 01.01.2020, not later than today + 31 days, and never later than the earliest live money
@@ -639,9 +679,29 @@ class PaymentService:
                     partial_credit=l.partial_credit, price_missing=bl.F_PRICE_MISSING in l.flags,
                     lessons_unpaid=l.lessons.unpaid if l.lessons else 0, refundable=l.refundable,
                     writeoff_allowed=l.debt > 0,
+                    paused=self._paused_range(e), opening=self._opening_brief(e),
+                    bucket=pv.entry_bucket(e), debt_reason=pv.debt_reason(e)[0], reason=pv.debt_reason(e)[1],
                 )
             )
         return rows
+
+    @staticmethod
+    def _paused_range(e: ls.MembershipLedger) -> Optional[PausedRange]:
+        """The pause that holds today (only when the status is ``paused``)."""
+        until = e.ledger.status.paused_until
+        if until is None:
+            return None
+        today = e.inp.today
+        first = next((p.first_day for p in e.pauses if p.first_day <= today <= until), today)
+        return PausedRange(**{"from": min(first, today), "to": until})
+
+    @staticmethod
+    def _opening_brief(e: ls.MembershipLedger) -> Optional[OpeningBrief]:
+        o = e.opening
+        if o is None:
+            return None
+        return OpeningBrief(id=str(o.id), paid_until=o.paid_until, debt_amount=int(o.debt_amount) if o.debt_amount else None,
+                            debt_on=o.debt_on)
 
     def _row(self, org_id: str, membership_id: UUID) -> MembershipPaymentRow:
         found = self._loader(org_id).run([membership_id])
@@ -666,6 +726,9 @@ class PaymentService:
         tracked_total = 0
         debt_total = advance_total = with_debt = with_advance = 0
         students_debt: set = set()
+        students_advance: set = set()
+        buckets = {pv.BUCKET_DEBT: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0}
+        price_missing = 0
         for e in entries:
             l = e.ledger
             debt_total += l.debt
@@ -675,6 +738,12 @@ class PaymentService:
                 students_debt.add(e.student.id)
             if l.advance > 0:
                 with_advance += 1
+                students_advance.add(e.student.id)
+            bucket = pv.entry_bucket(e)
+            if bucket:
+                buckets[bucket] += 1
+            if e.membership.id in tracked and e.price.amount is None and l.status.status != ps.FREE and bucket != pv.BUCKET_DEBT:
+                price_missing += 1
             if e.membership.id not in tracked:
                 continue
             tracked_total += 1
@@ -703,6 +772,9 @@ class PaymentService:
             memberships_with_debt=with_debt,
             students_with_debt=len(students_debt),
             accounting_start_date=loader.settings.accounting_start,
+            paused=counts[ps.PAUSED],
+            buckets=PaymentsBuckets(**buckets), price_missing=price_missing, students_with_advance=len(students_advance),
+            debtors=len(students_debt),
         )
         if SUMMARY_TTL_SECONDS > 0:
             _SUMMARY_CACHE[str(org_id)] = (time.monotonic() + SUMMARY_TTL_SECONDS, result)
@@ -715,6 +787,8 @@ class PaymentService:
 
         if by_debt or bucket == "debt":
             return lambda e: (-e.ledger.debt, *name(e))
+        if bucket == "expiring":
+            return lambda e: (e.ledger.status.days_left if e.ledger.status.days_left is not None else 10**9, *name(e))
         if bucket == ps.BUCKET_DUE:
             # Most overdue first; "ends today" and a spent lessons package have 0 days.
             return lambda e: (-(e.ledger.status.days_overdue or 0), *name(e))
@@ -738,10 +812,12 @@ class PaymentService:
         sort: Optional[str] = None,
     ) -> PaymentStatusPage:
         loader = self._loader(org_id)
+        if bucket == "due":                                  # LEGACY name of the debtors tab
+            bucket = pv.BUCKET_DEBT
         scope = "all" if bucket == "debt" else "tracked"
         entries = loader.load(group_id=group_id, teacher_id=teacher_id, search=search, scope=scope)
-        if bucket == "debt":
-            picked = [e for e in entries if e.ledger.debt > 0]
+        if bucket in (pv.BUCKET_DEBT, pv.BUCKET_EXPIRING, pv.BUCKET_ACTIVE, pv.BUCKET_PAUSED):
+            picked = [e for e in entries if pv.entry_bucket(e) == bucket]
         else:
             picked = [e for e in entries if ps.in_bucket(e.ledger.status.status, bucket)]
         picked.sort(key=self._sort_key(bucket, sort == "debt"))
@@ -842,6 +918,19 @@ class PaymentService:
                 raise VoidBreaksRefund("Сначала отмените возврат: без этой оплаты возвращать нечего")
 
     # ---- validation
+
+    def _is_left(self, membership: StudentGroup) -> bool:
+        """The student left this group or was archived: only a debt can be paid (S-5)."""
+        if not membership.is_active:
+            return True
+        return self.db.query(Student.status).filter(Student.id == membership.student_id).scalar() == "archived"
+
+    @staticmethod
+    def _check_left_ceiling(amount: int, debt: int) -> None:
+        if debt <= 0:
+            raise NothingToPay("Ученик ушёл, долга нет: принимать нечего")
+        if amount > debt:
+            raise PaymentExceedsDebt(f"Ученик ушёл: принять можно не больше долга {_sum(debt)}", debt=debt)
 
     @staticmethod
     def _check_amount(amount: int) -> int:
@@ -988,7 +1077,7 @@ class PaymentService:
                 out.append(PaymentWarningOut(code="price_change_ahead", message=tx.price_change_warning(
                     item.period_from, item.period_to, item.amount, item.current_amount or 0)))
         if archived:
-            out.append(PaymentWarningOut(code="student_archived", message="Ученик в архиве: оплату внести нельзя"))
+            out.append(PaymentWarningOut(code="left_debt_only", message="Ученик ушёл: можно оплатить только долг"))
         if (today - paid_on).days > WARN_PAID_AGO_DAYS:
             out.append(PaymentWarningOut(code="paid_over_60_days_ago", message=ps.WARNING_MESSAGES["paid_over_60_days_ago"]))
         return out
@@ -1028,10 +1117,12 @@ class PaymentService:
             self._check_amount(data.amount)
             self._check_date(data.paid_on, today)
             method = self._method_of(data.method)
-            membership = self._membership(org_id, membership_id, lock=True, writable=True)
+            membership = self._membership(org_id, membership_id, lock=True)
             self._guard_duplicate(org_id, membership, data, idempotency_key)
             before_entry = self._loader(org_id, today).run([membership_id])
             before = before_entry[0].ledger
+            if self._is_left(membership):
+                self._check_left_ceiling(data.amount, before.debt)
             payment = self._insert(membership, org_id, actor_id, data, method, idempotency_key)
             after_entry = self._loader(org_id, today).run([membership_id])[0]
             self._save_snapshot(org_id, payment, before, after_entry.ledger, after_entry.price, today, method)
@@ -1092,12 +1183,14 @@ class PaymentService:
             if probe.kind == "legacy_carry" or probe.carried_from_payment_id is not None:
                 raise PaymentConflict("Перенос оплаты нельзя исправить — это не денежная операция",)
             family = self._lock_family(org_id, probe.student_id)
-            membership = self._membership(org_id, probe.membership_id, writable=True)
+            membership = self._membership(org_id, probe.membership_id)
             old = self._lock_payment(org_id, payment_id)
             loader = self._loader(org_id, today)
             loader.load_facts([membership.id])
             before_inp = loader.build_input(membership.id, exclude_payment=old.id)
             before = bl.run_ledger(before_inp)
+            if self._is_left(membership):
+                self._check_left_ceiling(data.amount, before.debt)
             old.voided_at = _utcnow()
             old.voided_by = UUID(str(actor_id))
             old.void_reason = (reason or "").strip() or DEFAULT_REPLACE_REASON
@@ -1423,7 +1516,7 @@ class PaymentService:
         if amount is not None:
             self._check_amount(amount)
         membership = self._membership(org_id, membership_id)
-        archived = self.db.query(Student.status).filter(Student.id == membership.student_id).scalar() == "archived"
+        archived = self._is_left(membership)
         loader = self._loader(org_id, today)
         loader.load_facts([membership_id])
         exclude = None
@@ -1437,13 +1530,14 @@ class PaymentService:
         price = loader.books.price(membership_id, membership.group_id, today)
         preview = PaymentPreview(
             as_of=today, mode=before.mode, price=PriceOut(**pricing.price_dict(price)), due=pv.due_block(before),
-            suggested_amount=pv.suggested_amount(before, price.amount), amount=amount, result=None, warnings=[],
+            suggested_amount=before.debt if archived else pv.suggested_amount(before, price.amount), amount=amount, result=None,
+            warnings=[],
         )
         warnings: List[PaymentWarningOut] = []
         if bl.F_PRICE_MISSING in before.flags:
             warnings.append(PaymentWarningOut(code="price_missing", message="Цена не задана: оплата пока не распределена по периодам"))
         if archived:
-            warnings.append(PaymentWarningOut(code="student_archived", message="Ученик в архиве: оплату внести нельзя"))
+            warnings.append(PaymentWarningOut(code="left_debt_only", message="Ученик ушёл: можно оплатить только долг"))
         if amount is not None:
             credit = bl.Credit("preview", bl.PAYMENT, paid_on, datetime(9999, 1, 1), amount)
             after = bl.run_ledger(replace(inp, credits=tuple(inp.credits) + (credit,)))
@@ -1559,7 +1653,7 @@ class PaymentService:
         ``{(membership_id, lesson_date, lesson_id): LessonCover}`` for every lesson that spends a payment by rule 4.3
         (``_counted_lesson_dates``).  Paid = ``Ledger.lesson_paid``: a day before the first charged day is "grace", a calendar day
         is paid when it is not after "paid until", a lessons-mode lesson when its place in hand-out order is covered by the
-        money.  Cost: a fixed number of queries, whatever the number of memberships."""
+        money.  LOGIC-A: the answer carries the PRICE of the segment that covers the lesson (``Ledger.lesson_cover``).  Cost: a fixed number of queries, whatever the number of memberships."""
         ids = {i for i in membership_ids if i}
         if not ids:
             return {}
@@ -1573,9 +1667,11 @@ class PaymentService:
         if not rows:
             return {}
         detail: Dict[UUID, List[tuple]] = {}
-        self._counted_lesson_dates(org_id, rows, {}, since=first_day, until=last_day, detail_out=detail)
         loader = self._loader(org_id)
         entries = {e.membership.id: e for e in loader.run([m.id for m, _, _ in rows])}
+        # a lesson held on a day of a live pause is nobody's lesson (S-3): the student was not in its class
+        skip = {mid: {d for p in e.pauses for d in ls._days(p.first_day, p.last_day)} for mid, e in entries.items() if e.pauses}
+        self._counted_lesson_dates(org_id, rows, {}, since=first_day, until=last_day, detail_out=detail, exclude_days=skip)
         regimes = loader.settings.regimes
         out: Dict[Tuple[UUID, date, str], LessonCover] = {}
         for membership, _student, _group in rows:
@@ -1584,9 +1680,12 @@ class PaymentService:
                 if not first_day <= day <= last_day:
                     continue
                 regime = bl.regime_at(regimes, day)
-                paid = entry.ledger.lesson_paid(day, lesson_id or "") if entry else False
+                info = entry.ledger.lesson_cover(day, lesson_id or "") if entry else None
+                paid = info.paid if info is not None else False
                 out[(membership.id, day, lesson_id)] = LessonCover(
-                    None, regime.mode, regime.package_size if regime.mode == ps.LESSONS else None, paid)
+                    None, regime.mode, regime.package_size if regime.mode == ps.LESSONS else None, paid,
+                    info.price if info is not None else None, info.source if info is not None else "unpaid",
+                    info.segment_id if info is not None else None)
         return out
 
     # ------------------------------------------------- counted lessons
@@ -1624,8 +1723,12 @@ class PaymentService:
         since: Optional[date] = None,
         until: Optional[date] = None,
         detail_out: Optional[Dict[UUID, List[tuple]]] = None,
+        exclude_days: Optional[Dict[UUID, set]] = None,
     ) -> Dict[UUID, List[date]]:
         """Dates of the lessons that spend a lessons payment, per membership.
+
+        LOGIC-A (S-3): ``exclude_days[membership]`` = the days of the live pauses of the membership - a lesson held on such a day
+        spends nothing (the student is not in its roster; a lesson whose snapshot was made before the pause is cut here as well).
 
         With ``late_out`` the lessons of the day a payment moved away on are looked at once more:
         ``late_out[membership][instant]`` = how many of them started at or after that instant
@@ -1721,6 +1824,8 @@ class PaymentService:
                         lesson_day = date.fromisoformat(lesson.lesson_date)
                     except ValueError:
                         logger.warning("Skipping lesson %s with malformed date", lesson.id)
+                        continue
+                    if exclude_days and lesson_day in exclude_days.get(membership.id, ()):
                         continue
                     dates.append(lesson_day)
                     detail.append((lesson_day, lesson.lesson_id or "", lesson.id))

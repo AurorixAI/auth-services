@@ -69,6 +69,9 @@
       "debt_amount": 250000,
       "debt_on": "2026-09-30"
     },
-    "price_ends_on_leave": false
+    "price_ends_on_leave": false,
+    "bucket": null,
+    "debt_reason": null,
+    "reason": null
   }
 }

@@ -118,6 +118,8 @@ def summary_text(
     paid_until_after: Optional[date],
     advance_periods: Sequence[tuple[date, date]] = (),
     lessons: Optional[tuple[int, int]] = None,
+    opening: int = 0,
+    opening_before: int = 0,
 ) -> str:
     """The one-line answer to «что закроет» (calendar: ``paid_until_after``; lessons: ``(covered_after, left_after)``).
 
@@ -126,6 +128,9 @@ def summary_text(
     * lessons: ``Закроет долг 600 000 → оплачено уроков 12, осталось 0 · аванс 30 000``
     """
     parts = []
+    if opening:  # LOGIC-A: the debt of the opening balance is paid before any period
+        parts.append(f"Закроет долг на начало {num(opening)}" if opening >= opening_before
+                     else f"Погасит {num(opening)} из долга на начало {num(opening_before)}")
     if past:
         parts.append(
             f"Закроет долг {num(past)}" if past >= past_debt_before else f"Погасит {num(past)} из долга {num(past_debt_before)}"

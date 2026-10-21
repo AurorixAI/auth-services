@@ -233,7 +233,8 @@ def test_calculate_and_save_use_the_stored_rate_of_the_month_and_ignore_the_body
     body = {"percents": [{"teacher_id": str(world.teacher.id), "lesson_type": "group", "percent": "99"}]}   # ignored
     sheet = c.post(f"{API}/org/payroll/months/{m.label}/calculate", json=body).json()["sheets"][0]
     assert sheet["percents"] == {"group": "50"} and line_of(sheet, world.students[0])["amount"] == FEE * 50 * 6 // 1200
-    saved = c.post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), **body}).json()
+    saved = c.post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), **body,
+                                                      "expected_fingerprint": sheet["source_fingerprint"]}).json()
     assert saved["percents"] == {"group": "50"}
     # a rate from the NEXT month does not reach this month
     before = month_before(m)
@@ -462,7 +463,7 @@ def test_rates_belong_to_members_who_may_teach_and_a_deactivated_teacher_is_stil
     assert c.get(f"{API}/org/payroll/rates/{gone.id}/history").status_code == 200
     sheet = c.post(f"{API}/org/payroll/months/{m.label}/calculate", json={"teacher_ids": [str(gone.id)]}).json()["sheets"][0]
     assert sheet["total_amount"] > 0 and sheet["percents"] == {"group": "50"}          # ... and his month is calculated
-    r = c.post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(gone.id)})
+    r = c.post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(gone.id), "expected_fingerprint": sheet["source_fingerprint"]})
     assert r.status_code == 201 and r.json()["total_amount"] == sheet["total_amount"]    # ... and saved
 
 
