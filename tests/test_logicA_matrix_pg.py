@@ -237,6 +237,30 @@ def test_logicA_f13_a_a_transfer_ends_the_exception_of_the_old_group_and_the_new
     assert new["price"]["amount"] == 500_000 and new["price"]["source"] == "group"
 
 
+def test_logicA_f13_c_a_leave_and_a_price_write_on_the_same_day_of_one_membership_serialise_last_wins_or_409(world, fixed_today, monkeypatch):
+    """Spec: leaving and a change of the individual price of one membership are serialised (student -> group -> membership); the LAST write
+    wins, and a write that was made before the marker it meets was written (it waited for the lock) is a 409 PRICE_CONFLICT."""
+    from src.auth import pricing
+
+    m = override_world(world)
+    url = f"{API}/org/memberships/{m.id}/price-override"
+    leave(world, world.group, world.students[0])                                   # the marker «group price again» from 22.10
+    (marker,) = markers(world, m)
+    assert (marker.amount, marker.valid_from, marker.reason) == (None, D(2026, 10, 22), "left_group")
+    # (a) a price write that begins AFTER the leaving is the last one: it replaces the marker of that day
+    real = pricing._utcnow
+    early = iter([real() - timedelta(hours=1)])                                    # (b) first: a write that began before the marker was written
+    monkeypatch.setattr(pricing, "_utcnow", lambda: next(early, None) or real())
+    r = owner(world).put(url, json={"amount": 500_000, "valid_from": "2026-10-22", "reason": "договорились"})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "PRICE_CONFLICT", r.text
+    assert [(x.amount, x.valid_from) for x in markers(world, m)] == [(None, D(2026, 10, 22))]          # nothing was written
+    r = owner(world).put(url, json={"amount": 500_000, "valid_from": "2026-10-22", "reason": "договорились"})   # the retry begins after the marker: last wins
+    assert r.status_code == 200, r.text
+    world.db.expire_all()
+    row = world.db.query(MembershipPriceOverride).filter_by(membership_id=m.id, valid_from=D(2026, 10, 22)).one()
+    assert (row.amount, row.reason) == (500_000, "договорились")
+
+
 # ============================================================ F14 ================================================================
 
 
@@ -396,6 +420,22 @@ def test_logicA_d4_a_a_price_before_the_accounting_that_is_shadowed_blocks_nothi
     give_group_price(world.db, world.group, 500_000, valid_from=D(2026, 9, 1))
     r = owner(world).put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 999_000, "valid_from": "2026-08-01"})
     assert r.status_code == 200 and r.json()["impact"]["money"]["items"] == []
+
+
+def test_logicA_d4_u_a_price_that_has_fired_cannot_be_cancelled_a_new_one_changes_it(world, fixed_today):
+    """Spec: only a SCHEDULED price (valid_from after today) can be taken back; a price in force (or one of today) is changed by a new price."""
+    give_group_price(world.db, world.group, 500_000, valid_from=D(2026, 1, 1))
+    c = owner(world)
+    assert c.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 600_000, "valid_from": "2026-10-21"}).status_code == 200      # today: fired
+    assert c.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 700_000, "valid_from": "2026-11-01"}).status_code == 200      # scheduled
+    history = c.get(f"{API}/org/groups/{world.group.id}/prices").json()["history"]
+    by_day = {h["valid_from"]: h["id"] for h in history}
+    for day in ("2026-10-21", "2026-01-01"):                                              # today's price and an older one are in force
+        r = c.delete(f"{API}/org/groups/{world.group.id}/prices/{by_day[day]}")
+        assert r.status_code == 409 and "уже действует" in r.json()["detail"], (day, r.text)
+    assert c.delete(f"{API}/org/groups/{world.group.id}/prices/{by_day['2026-11-01']}").status_code == 200                                 # the scheduled one goes
+    assert c.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 650_000, "valid_from": "2026-10-21"}).status_code == 200      # a fired price is replaced by a new one
+    assert [h["amount"] for h in c.get(f"{API}/org/groups/{world.group.id}/prices").json()["history"]][:1] == [650_000]
 
 
 # ============================================================ D5 =================================================================

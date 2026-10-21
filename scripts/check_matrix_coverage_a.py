@@ -68,7 +68,6 @@ MAPPED = {
     # F13
     "f13_n": F13_N, "f13_p": F13_N,
     "f13_u": "tests/test_student_archive_pg.py::test_restore_returns_the_student_to_the_chosen_groups",
-    "f13_c": f"{GP}::test_remove_student_and_a_price_write_on_the_same_membership_never_deadlock",
     "f13_b": "tests/test_postgres_migrations.py::test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records",
     # F14
     "f14_n": F14_N, "f14_r": F14_N, "f14_c": F14_N, "f14_b": F14_N, "f14_m": F14_N,
@@ -89,7 +88,6 @@ MAPPED = {
     # D4
     "d4_n": PRICE_FUTURE, "d4_x": PRICE_FUTURE, "d4_p": PRICE_REFUSED, "d4_b": PRICE_REFUSED,
     "d4_r": f"{GP}::test_a_double_click_leaves_one_audit_row_and_changes_nothing",
-    "d4_u": f"{GP}::test_cancelling_a_scheduled_group_price_deletes_the_row_and_the_price_returns_to_the_previous_step",
     "d4_c": f"{CONC}::test_a_backdated_price_and_a_payment_in_parallel_never_rewrite_a_charged_period_with_money",
     # D5
     "d5_n": f"{PAYROLL}::test_decision5_written_off_days_are_paid_for_the_teacher_and_marked",
