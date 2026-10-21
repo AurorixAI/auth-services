@@ -1274,7 +1274,7 @@ class PaymentService:
             else settings.period_mode
         )
         fixed = mode == ps.CALENDAR and self._fixed_day(settings)
-        # What the live payments still cover in this membership (a moved-away original ends the day before).
+        # What the live payments still cover in this membership (a moved-away original ends on the transfer day, see effective_valid_to).
         previous_until = max(
             (r.end for r in map(self._record, live) if r.end is not None and not r.covers_nothing),
             default=None,
