@@ -129,3 +129,24 @@ def test_m3_a_patch_cannot_lengthen_an_old_pause_over_old_days_and_a_money_chang
     assert r.status_code == 200 and r.json()["pause"]["days"] == 3, r.text
     world.db.expire_all()
     assert [a.snapshot["reason"] for a in world.db.query(GroupAudit).filter_by(action="membership_pause_set").order_by(GroupAudit.created_at)][-1] == "вернулся 23-го"
+
+
+# ---- m1: «просрочено на N дней» counts from the first charged unpaid day ----------------------------------------------------------------------
+
+
+def test_m1_overdue_days_do_not_count_the_paused_days(world, fixed_today):
+    fixed_today(D(2026, 11, 16))
+    settings_block(world, accounting_start_date="2026-09-01", billing_anchor="fixed_day", billing_day=1)
+    give_group_price(world.db, world.group, 600_000, valid_from=D(2026, 1, 1))
+    world.group.schedule = []                                    # no schedule: the periods are charged by days
+    world.db.commit()
+    m = membership(world, world.students[0])
+    stay(world, m, D(2026, 10, 1))
+    seed_payment(world, m, 387_000, D(2026, 10, 1))
+    r = owner(world).post(f"{API}/org/memberships/{m.id}/pauses", json={"first_day": "2026-10-20", "last_day": "2026-11-15"})
+    assert r.status_code == 201, r.text
+    rows = owner(world).get(f"{API}/org/payments/status", params={"bucket": "debt"}).json()["items"]
+    row = next(x for x in rows if x["membership_id"] == str(m.id))
+    # paid through 19.10 (informational), paused 20.10-15.11: the first charged unpaid day is 16.11 = today - overdue for one day, not 28
+    assert row["paid_until"] == "2026-10-19" and row["debt"] == 281_000
+    assert row["days_overdue"] == 1 and row["debt_reason"] == "overdue" and row["reason"] == "Просрочено на 1 день", row

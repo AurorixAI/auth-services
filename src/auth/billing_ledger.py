@@ -1140,7 +1140,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     open_debt = next((s for s in segments if s.kind == "opening" and s.unpaid > 0), None)
     if open_debt is not None:
         owed_since = open_debt.period_start
-    status = _status(inp, mode, has_event, open_now, through, lessons_view, price_today, paused_until, owed_since)
+    status = _status(inp, mode, has_event, open_now, through, lessons_view, price_today, paused_until, owed_since, pause_days)
 
     # ---- statement
     events: List[StatementEvent] = []
@@ -1178,9 +1178,17 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     return ledger
 
 
+def overdue_days(through: date, today: date, pauses: Sequence[Tuple[date, date]]) -> int:
+    """m1: the days after ``through`` up to ``today`` without the days of a pause (a pause never makes a student late: the count starts
+    with the first CHARGED unpaid day)."""
+    paused = sum((min(last, today) - max(first, through + timedelta(days=1))).days + 1
+                 for first, last in pauses if last > through and first <= today)
+    return max(1, (today - through).days - paused)
+
+
 def _status(inp: LedgerInput, mode: str, has_event: bool, open_now: bool, through: Optional[date],
             lessons: Optional[LessonsView], price_today: Optional[int], paused_until: Optional[date] = None,
-            owed_since: Optional[date] = None) -> ps.StatusResult:
+            owed_since: Optional[date] = None, pauses: Sequence[Tuple[date, date]] = ()) -> ps.StatusResult:
     today = inp.today
     if price_today == 0 and (not has_event or mode == LESSONS):
         return ps.StatusResult(status=ps.FREE, period_mode=mode)
@@ -1199,7 +1207,8 @@ def _status(inp: LedgerInput, mode: str, has_event: bool, open_now: bool, throug
         return ps.StatusResult(status=ps.NONE, period_mode=mode)
     delta = (through - today).days
     if delta < 0:
-        status, overdue, left = ps.EXPIRED, -delta, None
+        status, left = ps.EXPIRED, None
+        overdue = overdue_days(through, today, pauses)
     elif delta == 0:
         status, overdue, left = ps.ENDS_TODAY, None, 0
     elif delta <= inp.expiring_days:

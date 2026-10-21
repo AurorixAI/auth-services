@@ -115,7 +115,7 @@ def debt_reason(e) -> Tuple[Optional[str], Optional[str]]:
     through = l.covered_through
     if through is None or through < today:
         first = min(((s.days[0] if s.days else s.period_start) for s in unpaid), default=today)
-        days = max(1, (today - (through if through is not None else first)).days)
+        days = bl.overdue_days(through, today, l.pauses) if through is not None else max(1, (today - first).days)   # m1: paused days are not overdue
         return "overdue", f"Просрочено на {days} {tx.days_word(days)}"
     seg = unpaid[0] if unpaid else None
     if seg is None:

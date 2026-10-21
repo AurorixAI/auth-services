@@ -683,7 +683,7 @@ class PaymentService:
                     writeoff_allowed=l.debt > 0,
                     paused=self._paused_range(e), opening=self._opening_brief(e),
                     price_ends_on_leave=bool(e.membership.is_active and e.price.source == pricing.SOURCE_OVERRIDE and e.price.amount is not None),
-                    bucket=pv.entry_bucket(e), debt_reason=pv.debt_reason(e)[0], reason=pv.debt_reason(e)[1],
+                    bucket=pv.entry_bucket(e), debt_reason=(why := pv.debt_reason(e))[0], reason=why[1],
                 )
             )
         return rows
