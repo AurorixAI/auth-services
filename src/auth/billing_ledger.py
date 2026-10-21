@@ -511,24 +511,20 @@ class _Gen:
 
     # ---------------------------------------------------------------- calendar: payment date
 
-    def payment_date_chain(self, lo: date, hi: Optional[date], so_far: int) -> List[Segment]:
+    def payment_date_chain(self, lo: date, hi: Optional[date], so_far: int, pauses: Optional[List[Tuple[date, date]]] = None) -> List[Segment]:
         chain = self.chain
         self.chain += 1
         out: List[Segment] = []
-        anchor = lo.day
-        k = 0
         cum = so_far
         future = 0
-        while True:
-            try:
-                start = lo if k == 0 else _month_start(lo, anchor, k)
-                nxt = _month_start(lo, anchor, k + 1)
-            except (ValueError, OverflowError):
-                break
-            end = nxt - timedelta(days=1)
+        for start, end, length, days in _chain_periods(lo, pauses or []):
             if hi is not None and start > hi:
                 break
-            seg_hi = end if hi is None else min(end, hi)
+            if hi is not None:
+                days = [d for d in days if d <= hi]
+                if not days:
+                    break
+                end = min(end, hi)
             if start > self.today:
                 if hi is None:
                     if cum >= self.total_credit:
@@ -538,9 +534,7 @@ class _Gen:
                             self.flags.add(F_HORIZON)
                         break
                 future += 1
-            seg = self.segment(chain, start, end if seg_hi == end else seg_hi, _day_range(start, seg_hi),
-                               (end - start).days + 1, by_lessons=False, cell=None)
-            k += 1
+            seg = self.segment(chain, start, end, days, length, by_lessons=False, cell=None)
             if seg.unpriced:  # nothing is charged for it, it neither covers nor blocks; the next period is tried
                 self.unpriced_from = self.unpriced_from or start
                 if seg.begun:
@@ -737,6 +731,48 @@ def _subtract_pauses(lo: date, hi: Optional[date], pauses: List[Tuple[date, date
     return out
 
 
+def _is_paused(pauses: List[Tuple[date, date]], day: date) -> bool:
+    i = bisect_right(pauses, (day, date.max)) - 1
+    return i >= 0 and pauses[i][0] <= day <= pauses[i][1]
+
+
+def _first_unpaused(pauses: List[Tuple[date, date]], day: date) -> date:
+    while _is_paused(pauses, day):
+        day += timedelta(days=1)
+    return day
+
+
+def _chain_periods(lo: date, pauses: List[Tuple[date, date]]):
+    """The periods of a payment-date chain that begins on ``lo`` (LOGIC-A, owner decision: a pause never adds a charge).
+
+    ``yield (start, end, length, days)``: period ``k`` has the NOMINAL length of its month (anchor = the day of ``lo``) in study days;
+    the days of a pause are not study days, so a pause EXTENDS the period it falls into by the paused days and every later period
+    begins the day after the previous one ends (the anchors shift, the chain is not restarted).  Without pauses this is the usual
+    calendar chain ``s_k .. s_{k+1}-1``."""
+    anchor = lo.day
+    k = 0
+    start = lo
+    while True:
+        try:
+            cur = lo if k == 0 else _month_start(lo, anchor, k)
+            nxt = _month_start(lo, anchor, k + 1)
+        except (ValueError, OverflowError):
+            return
+        length = (nxt - cur).days
+        days: List[date] = []
+        day = start
+        try:
+            while len(days) < length:
+                if not _is_paused(pauses, day):
+                    days.append(day)
+                day += timedelta(days=1)
+        except OverflowError:
+            return
+        yield start, days[-1], length, days
+        start = days[-1] + timedelta(days=1)
+        k += 1
+
+
 def _lessons_switch(size: int, priced_days: List[date], start: date, c: date) -> date:
     """A package under the old regime that has begun by ``c`` is finished first: the switch is the day after its last lesson
     (``c + 1`` when every package is full, ``c`` when none has begun, never while the package is open)."""
@@ -750,7 +786,7 @@ def _lessons_switch(size: int, priced_days: List[date], start: date, c: date) ->
     return held[end - 1] + timedelta(days=1) if len(held) >= end else date.max
 
 
-def _window_starts(windows, piece_first: date, priced_days: List[date]) -> List[date]:
+def _window_starts(windows, piece_first: date, priced_days: List[date], pauses: Optional[List[Tuple[date, date]]] = None) -> List[date]:
     """The first day of every regime version FOR ONE PIECE of the stay (spec §1.5).
 
     A version without ``defer`` starts on its date.  A deferred one starts at the first day of the NEXT PERIOD of the regime that
@@ -774,11 +810,14 @@ def _window_starts(windows, piece_first: date, priced_days: List[date]) -> List[
         elif prev.anchor == ps.FIXED_DAY:
             day = prev.billing_day
             starts.append(ps.billing_period_end(ps.billing_period_start(c, day), day) + timedelta(days=1))
-        else:
-            i = 1
-            while _month_start(begin, begin.day, i) <= c:
-                i += 1
-            starts.append(_month_start(begin, begin.day, i))
+        else:  # payment_date: the first period of the chain (pauses extend it) that begins after c
+            first_day = _first_unpaused(pauses or [], begin)
+            nxt = None
+            for period_start, _end, _length, _days in _chain_periods(first_day, pauses or []):
+                if period_start > c:
+                    nxt = period_start
+                    break
+            starts.append(nxt if nxt is not None else date.max)
     return starts
 
 
@@ -792,8 +831,8 @@ def _window_bounds(starts: List[date]) -> List[Tuple[date, Optional[date]]]:
 
 
 def _pieces_of(inp: LedgerInput):
-    """``(opening, floor, runs, pause_days, pieces)``: the pieces of the stay that are charged = the runs from the floor on, without the
-    pauses."""
+    """``(opening, floor, runs, pause_days, spans)``: the stay from the floor on (``spans``, the pauses are still inside: a payment-date
+    chain is extended by them); the days that are charged are ``_subtract_pauses`` of a span."""
     opening = inp.opening
     if opening is not None and not (opening.paid_until or (opening.debt_amount and opening.debt_on)):
         opening = None
@@ -801,13 +840,14 @@ def _pieces_of(inp: LedgerInput):
                 (opening.paid_until + timedelta(days=1)) if opening is not None and opening.paid_until else date.min)
     runs = merge_stays(inp.stays)
     pause_days = _merge_pauses(inp.pauses)
-    pieces: List[Tuple[date, Optional[date]]] = []
+    spans: List[Tuple[date, Optional[date]]] = []
     for first, last in runs:
         lo = max(first, floor)
         if last is not None and lo > last:
             continue
-        pieces.extend(_subtract_pauses(lo, last, pause_days))
-    return opening, floor, runs, pause_days, pieces
+        if _subtract_pauses(lo, last, pause_days):      # a span that lies wholly in a pause has no charged day
+            spans.append((lo, last))
+    return opening, floor, runs, pause_days, spans
 
 
 def regime_switch_days(inp: LedgerInput, new: Regime) -> List[date]:
@@ -815,15 +855,15 @@ def regime_switch_days(inp: LedgerInput, new: Regime) -> List[date]:
     open - ``max`` / ``min`` of the list are the last / first switch.  Closed stays do not switch."""
     regimes = list(inp.regimes) + [replace(new, defer=True, effective_from=inp.today)]
     windows = regime_windows(regimes)
-    _, _, _, _, pieces = _pieces_of(inp)
+    _, _, _, pause_days, spans = _pieces_of(inp)
     priced = sorted(c.day for c in inp.counted_lessons if inp.price_at(c.day).amount is not None)
-    return [_window_starts(windows, first, priced)[-1] for first, last in pieces if last is None]
+    return [_window_starts(windows, first, priced, pause_days)[-1] for first, last in spans if last is None]
 
 
 def run_ledger(inp: LedgerInput) -> Ledger:
     today = inp.today
     flags: set = set()
-    opening, floor, runs, pause_days, pieces = _pieces_of(inp)
+    opening, floor, runs, pause_days, spans_of_stay = _pieces_of(inp)
     credits = sorted(inp.credits, key=_credit_key)
     net, refunded_from, transferred_from, exceeds = apply_outflows(credits, inp.outflows)
     if exceeds:
@@ -833,13 +873,13 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     windows = regime_windows(inp.regimes)
     deferred = any(w[0].defer for w in windows[1:])
     priced_days = sorted(c.day for c in inp.counted_lessons if inp.price_at(c.day).amount is not None) if deferred else []
-    bounds = [_window_bounds(_window_starts(windows, first, priced_days) if deferred else [w[1] for w in windows])
-              for first, _ in pieces]
+    bounds = [_window_bounds(_window_starts(windows, first, priced_days, pause_days) if deferred else [w[1] for w in windows])
+              for first, _ in spans_of_stay]
     # the piece that tells which version is in force today (the one that holds today, else the last before it)
-    ref = next((i for i, (f, l) in enumerate(pieces) if f <= today and (l is None or l >= today)), None)
+    ref = next((i for i, (f, l) in enumerate(spans_of_stay) if f <= today and (l is None or l >= today)), None)
     if ref is None:
-        before = [i for i, (f, _) in enumerate(pieces) if f <= today]
-        ref = before[-1] if before else (0 if pieces else None)
+        before = [i for i, (f, _) in enumerate(spans_of_stay) if f <= today]
+        ref = before[-1] if before else (0 if spans_of_stay else None)
     tail = len(windows) - 1
     cur_index = None
     if ref is not None:
@@ -866,9 +906,10 @@ def run_ledger(inp: LedgerInput) -> Ledger:
 
     for index, (regime, wlo, whi) in enumerate(windows):
         last_window = index == tail
-        intervals: List[Tuple[date, Optional[date]]] = []
+        intervals: List[Tuple[date, Optional[date]]] = []      # the charged pieces (the pauses cut out)
+        span_ivs: List[Tuple[date, Optional[date]]] = []       # the same stay with the pauses still inside (payment-date chains)
         spans_here: List[Tuple[date, Optional[date]]] = []
-        for (first, last), bnd in zip(pieces, bounds):
+        for (first, last), bnd in zip(spans_of_stay, bounds):
             wlo_p, whi_p = bnd[index]
             if wlo_p == date.max:
                 continue
@@ -878,8 +919,9 @@ def run_ledger(inp: LedgerInput) -> Ledger:
                 spans_here.append((wlo_p, whi_p))
             if hi is not None and lo > hi:
                 continue
-            intervals.append((lo, hi))
-        if not pieces:
+            span_ivs.append((lo, hi))
+            intervals.extend(_subtract_pauses(lo, hi, pause_days))
+        if not spans_of_stay:
             spans_here = [(wlo, whi)]
         elif deferred or intervals:
             # a day is looked up in the version of ITS piece: the span is clipped to the pieces it holds (pieces are apart in time,
@@ -909,9 +951,9 @@ def run_ledger(inp: LedgerInput) -> Ledger:
         if regime.anchor == ps.FIXED_DAY:
             segments.extend(gen.fixed_day_cells(regime, intervals, so_far))
         else:
-            for lo, hi in intervals:
+            for lo, hi in span_ivs:
                 so_far = sum(s.amount for s in segments)
-                segments.extend(gen.payment_date_chain(lo, hi, so_far))
+                segments.extend(gen.payment_date_chain(_first_unpaused(pause_days, lo), hi, so_far, pause_days))
 
     segments.sort(key=lambda s: (s.kind != "opening", (s.days[0] if s.days else s.period_start), s.period_start, s.id))
 

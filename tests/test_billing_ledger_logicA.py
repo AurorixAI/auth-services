@@ -139,13 +139,29 @@ def test_pause_edges():
     assert [d.day for d in two.segments[0].days] == [21, 22, 23]
 
 
-def test_payment_date_chain_starts_again_after_a_pause():
-    inp = bl.LedgerInput(today=D(2026, 11, 20), accounting_start=D(2026, 9, 1), stays=(bl.Stay(D(2026, 10, 5)),),
-                         regimes=(bl.Regime(),), price_at=flat(300_000), pauses=(bl.Pause(D(2026, 10, 20), D(2026, 10, 29)),))
-    lg = bl.run_ledger(inp)
-    firsts = [(s.days[0], s.days[-1]) for s in lg.segments]
-    assert firsts[0] == (D(2026, 10, 5), D(2026, 10, 19)) and firsts[1][0] == D(2026, 10, 30)    # anchor = the first day after the pause
-    assert firsts[1][1] == D(2026, 11, 29)
+def test_payment_date_a_pause_extends_the_period_and_the_later_anchors_shift():
+    """Owner decision 21.10 (G3): a pause never adds a charge.  The period it falls into is extended by the paused days, the later periods
+    follow the day after (no restart of the chain): the same price for the same number of study days."""
+    base = bl.LedgerInput(today=D(2026, 12, 20), accounting_start=D(2026, 9, 1), stays=(bl.Stay(D(2026, 10, 5)),),
+                          regimes=(bl.Regime(),), price_at=flat(300_000))
+    paused = replace_inp(base, pauses=(bl.Pause(D(2026, 10, 20), D(2026, 10, 29)),))
+    free, lg = bl.run_ledger(base), bl.run_ledger(paused)
+    assert [(s.days[0], s.days[-1], len(s.days)) for s in free.segments[:2]] == [(D(2026, 10, 5), D(2026, 11, 4), 31), (D(2026, 11, 5), D(2026, 12, 4), 30)]
+    # 05.10-19.10 (15 days) + 30.10-14.11 (16 days) = 31 study days; the second period begins on 15.11 and is 30 study days
+    assert [(s.period_start, s.days[-1], len(s.days), s.amount) for s in lg.segments[:2]] == [
+        (D(2026, 10, 5), D(2026, 11, 14), 31, 300_000), (D(2026, 11, 15), D(2026, 12, 14), 30, 300_000)]
+    assert not any(D(2026, 10, 20) <= d <= D(2026, 10, 29) for seg in lg.segments for d in seg.days)
+    assert lg.charged <= free.charged and lg.reconciles
+    # two pauses in one period, one of them across the boundary of the nominal period
+    two = replace_inp(base, pauses=(bl.Pause(D(2026, 10, 10), D(2026, 10, 12)), bl.Pause(D(2026, 11, 2), D(2026, 11, 8))))
+    seg = bl.run_ledger(two).segments[0]
+    assert len(seg.days) == 31 and seg.days[-1] == D(2026, 11, 14)      # 31 study days: 05-09.10, 13.10-01.11, 09-14.11
+
+
+def replace_inp(inp, **kw):
+    from dataclasses import replace
+
+    return replace(inp, **kw)
 
 
 # ---- deferred change of the regime (F12) --------------------------------------------------------------------------------------------------

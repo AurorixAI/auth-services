@@ -84,16 +84,27 @@ def test_g1_g2_g9_every_lesson_has_exactly_one_cover_and_one_price(chunk):
             assert info.paid == lg.lesson_paid(lesson.day, lesson.lesson_id), ctx
 
 
+@pytest.mark.parametrize("anchor", [ps.FIXED_DAY, ps.PAYMENT_DATE])
 @pytest.mark.parametrize("chunk", range(2))
-def test_g3_a_pause_never_adds_a_charge_and_void_restores_the_account(chunk):
+def test_g3_a_pause_never_adds_a_charge_and_void_restores_the_account(chunk, anchor):
+    """Owner decision 21.10: a pause never adds a charge - in BOTH modes (payment date: the pause extends the period it falls into and the
+    later periods follow, the chain is not restarted)."""
     for seed in list(range(RUNS))[chunk::2]:
-        inp, pauses = simple(seed)
+        inp, pauses = simple(seed, anchor=anchor)
         base = bl.run_ledger(inp)
         paused = bl.run_ledger(replace(inp, pauses=pauses))
         ctx = f"seed={seed}"
         assert paused.charged <= base.charged, ctx
         assert not ({d for s in paused.segments for d in s.days} & pause_days(replace(inp, pauses=pauses))), ctx
         assert paused.reconciles, ctx
+        if anchor == ps.PAYMENT_DATE:
+            # the same number of study days is paid for the same price: a period that is not cut by the end of the stay has exactly the
+            # nominal number of study days, and consecutive periods touch (no gap, no overlap)
+            segs = [x for x in paused.segments if x.kind == "period"]
+            for left, right in zip(segs, segs[1:]):
+                assert right.period_start == left.days[-1] + timedelta(days=1), ctx
+            for x in segs[:-1]:
+                assert len(x.days) == x.nominal_days, ctx
         assert bl.run_ledger(replace(paused.__class__ and inp, pauses=())) == base, ctx           # void o create = id
         # money buys days, not dates: the paid-until date does not move earlier when days are taken out (no refund in the account)
         if base.covered_through is not None and paused.covered_through is not None and inp.stays[0].last is None:
