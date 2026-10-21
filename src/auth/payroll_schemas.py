@@ -175,6 +175,7 @@ class SheetWarnings(BaseModel):
     pending_excused: int = 0
     no_fee: int = 0
     unpaid: int = 0
+    unpaid_students: int = 0  # students with at least one unpaid lesson (``unpaid`` counts the lessons)
 
 
 class SheetOut(BaseModel):
@@ -247,6 +248,7 @@ class MonthWarnings(BaseModel):
     pending_excused: int = 0
     no_fee: int = 0
     unpaid: int = 0
+    unpaid_students: int = 0  # students with at least one unpaid lesson (``unpaid`` counts the lessons); fresh data
 
 
 class MonthTeacher(BaseModel):

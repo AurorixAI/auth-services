@@ -718,6 +718,7 @@ class PayrollService:
                 pending_excused=counters["pending_excused"],
                 no_fee=counters["no_fee"],
                 unpaid=counters["unpaid"],
+                unpaid_students=counters["unpaid_students"],
             ),
             source_fingerprint=fingerprint,
             stale=stale,
@@ -838,6 +839,7 @@ class PayrollService:
                         pending_excused=counters["pending_excused"] if counters else 0,
                         no_fee=counters["no_fee"] if counters else 0,
                         unpaid=counters["unpaid"] if counters else 0,
+                        unpaid_students=counters["unpaid_students"] if counters else 0,
                     ),
                 )
             )

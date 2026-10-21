@@ -471,3 +471,48 @@ def test_rate_reason_reads_like_the_interface():
     from src.auth.payroll_rates import rate_reason
     assert rate_reason("group", Decimal("62.50"), Decimal("70")) == "Ставка «Группа»: 62,5% → 70%"
     assert rate_reason("group", Decimal("50"), None) == "Ставка «Группа»: 50% → не задана"
+
+
+def test_unpaid_students_are_counted_fresh_in_the_month_and_from_the_lines_on_a_saved_sheet(world):
+    """«9 учеников не оплатили часть уроков (140 посещений)»: ``unpaid`` counts lessons, ``unpaid_students`` the students."""
+    from src.models.auth import StudentGroup
+
+    m = previous_month()
+    s0, s1, s2 = world.students
+    for n in range(1, 7):
+        lesson(world, m.d(n), {s: "present" for s in world.students})
+    pay_calendar(world, s0, m.first, m.d(4))                     # 2 unpaid lessons each
+    pay_calendar(world, s1, m.first, m.d(4))
+    pay_calendar(world, s2, m.first, m.last)                     # nothing unpaid
+    # s0 also sits in a second group of the same teacher: still ONE student
+    second = make_group(world.db, world.org, world.teacher, "Парные")
+    second.lesson_type = "pair"
+    world.db.add(StudentGroup(student_id=s0.id, group_id=second.id, is_active=True, joined_at=datetime(2020, 1, 1)))
+    world.db.commit()
+    for n in range(1, 4):
+        lesson(world, m.d(n), {s0: "present"}, group=second)
+    pay_calendar(world, s0, m.first, m.d(1), group=second)       # 2 more unpaid lessons of s0
+    put(world, world.teacher, m.label, {"group": "50", "pair": "50"})
+
+    def month_warnings():
+        return teacher_row(overview(world, m), world.teacher)["warnings"]
+
+    w = month_warnings()
+    assert (w["unpaid"], w["unpaid_students"], w["no_fee"]) == (6, 2, 0)
+    sheet = preview(world, m, value="50")
+    assert (sheet["warnings"]["unpaid"], sheet["warnings"]["unpaid_students"]) == (6, 2)
+    saved = save(world, m)
+    assert (saved["warnings"]["unpaid"], saved["warnings"]["unpaid_students"]) == (6, 2)
+    # s1 pays the rest: the month (FRESH data) says 1 student, the saved sheet is a snapshot and still says 2
+    pay_calendar(world, s1, m.d(5), m.last)
+    w = month_warnings()
+    assert (w["unpaid"], w["unpaid_students"]) == (4, 1)
+    got = owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}").json()
+    assert (got["warnings"]["unpaid"], got["warnings"]["unpaid_students"]) == (6, 2) and got["stale"] is True
+    assert preview(world, m, value="50")["warnings"]["unpaid_students"] == 1
+    fresh = patch(world, saved, recalculate=True)
+    assert (fresh["warnings"]["unpaid"], fresh["warnings"]["unpaid_students"]) == (4, 1)
+    # "начислить" does not hide the students: the lessons are still unpaid
+    mid = line_of(fresh, s0)["membership_id"]
+    ticked = patch(world, fresh, line_overrides=[{"membership_id": mid, "include_unpaid": True}])
+    assert ticked["warnings"]["unpaid_students"] == 1

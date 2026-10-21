@@ -357,6 +357,8 @@ def sheet_counters(lines: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
         "counted": sum(int(line["counted"]) for line in lines),
         # lessons nobody paid for - not counting the free lessons (price 0): they owe nothing
         "unpaid": sum(_unpaid_due(line) for line in lines),
+        # how many different students have such lessons ("9 учеников не оплатили часть уроков (140 посещений)")
+        "unpaid_students": len({line["student_id"] for line in lines if _unpaid_due(line) > 0}),
         "pending_excused": sum(int(line["pending_excused"]) for line in lines),
         # lines that have lessons to pay for but no price (a line without lessons costs nothing either way)
         "no_fee": sum(1 for line in lines if _lacks_price(line)),
