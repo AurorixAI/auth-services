@@ -78,9 +78,9 @@ class RatesService:
             .filter(
                 OrganizationMember.org_id == org_id,
                 OrganizationMember.user_id == teacher_id,
-                OrganizationMember.is_active.is_(True),
-                OrganizationMember.org_role.in_(("teacher", "owner", "admin")),  # owners and admins may teach
-                User.is_active.isnot(False),
+                # any role that can teach (owners and admins do); a DEACTIVATED member is accepted on purpose: a teacher
+                # let go in October is still paid for September
+                OrganizationMember.org_role.in_(("teacher", "owner", "admin")),
             )
             .first()
         )

@@ -429,7 +429,7 @@ def test_a_manual_price_of_an_old_sheet_is_not_carried_to_a_recalculation_and_th
     assert owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}").json()["revision"] == 2
 
 
-def test_only_active_members_who_may_teach_have_rates(world):
+def test_rates_belong_to_members_who_may_teach_and_a_deactivated_teacher_is_still_paid(world):
     from src.models.auth import OrganizationMember
 
     body = {"valid_from": "2026-09", "percents": {"group": "50"}}
@@ -438,16 +438,29 @@ def test_only_active_members_who_may_teach_have_rates(world):
     for who in (world.owner, world.admin):
         assert c.put(f"{API}/org/payroll/rates/{who.id}", json=body).status_code == 200
         assert c.get(f"{API}/org/payroll/rates/{who.id}/history").status_code == 200
-    # a deactivated member, a user who is not a member of the centre, and an unknown id: 404 «Преподаватель не найден»
-    gone = make_user(world.db, "teacher", "Уволенный")
-    make_member(world.db, world.org, gone, "teacher")
+    # a user who is not a member of the centre and an unknown id: 404 «Преподаватель не найден»
     outsider = make_user(world.db, "teacher", "Посторонний")
     world.db.commit()
-    world.db.query(OrganizationMember).filter_by(org_id=world.org.id, user_id=gone.id).update({"is_active": False})
-    world.db.commit()
-    for uid in (gone.id, outsider.id, uuid4()):
+    for uid in (outsider.id, uuid4()):
         r = c.put(f"{API}/org/payroll/rates/{uid}", json=body)
         assert r.status_code == 404 and r.json()["detail"] == "Преподаватель не найден", uid
         assert c.get(f"{API}/org/payroll/rates/{uid}/history").status_code == 404
-    assert world.db.query(PayrollRate).filter(PayrollRate.teacher_id.in_([gone.id, outsider.id])).count() == 0
-    assert str(gone.id) not in {i["teacher_id"] for i in rates_of(world, "2026-09")["items"]}
+    assert world.db.query(PayrollRate).filter_by(teacher_id=outsider.id).count() == 0
+    # a teacher let go AFTER the month still has to be paid for it: deactivated, with lessons in the month
+    m = previous_month()
+    gone = make_user(world.db, "teacher", "Уволенный")
+    make_member(world.db, world.org, gone, "teacher")
+    world.db.commit()
+    full_month(world, m, days=range(1, 4), teacher=gone)
+    world.db.query(OrganizationMember).filter_by(org_id=world.org.id, user_id=gone.id).update({"is_active": False})
+    world.db.commit()
+    listed = {i["teacher_id"] for i in rates_of(world, m.label)["items"]}
+    assert str(gone.id) in listed                                     # he held lessons in that month
+    assert str(gone.id) not in {i["teacher_id"] for i in rates_of(world, "2020-01")["items"]}   # not in a month he did not teach
+    assert item_of(rates_of(world, m.label), gone)["lesson_types"] == ["group"]
+    put(world, gone, m.label, {"group": "50"})                         # the rate can be set ...
+    assert c.get(f"{API}/org/payroll/rates/{gone.id}/history").status_code == 200
+    sheet = c.post(f"{API}/org/payroll/months/{m.label}/calculate", json={"teacher_ids": [str(gone.id)]}).json()["sheets"][0]
+    assert sheet["total_amount"] > 0 and sheet["percents"] == {"group": "50"}          # ... and his month is calculated
+    r = c.post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(gone.id)})
+    assert r.status_code == 201 and r.json()["total_amount"] == sheet["total_amount"]    # ... and saved
