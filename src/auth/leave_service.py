@@ -221,7 +221,8 @@ class LeaveService:
                 self.pay._audit(org_id, membership, actor_id, actor_role, AUDIT_WRITEOFF, {
                     "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                     "writeoff_id": str(row.id), "amount": int(row.amount), "reason": reason, "effective_on": today.isoformat(),
-                    "debt_before": ledger.debt, "debt_after": 0, "at_leave": True})
+                    "debt_before": ledger.debt, "debt_after": 0, "at_leave": True,
+                    "expected_debt": item.expected_debt})        # the numbers the client saw (null: it sent none) and the ones used
                 out.append(SettledOut(membership_id=item.membership_id, action="writeoff", amount=int(row.amount), writeoff_id=str(row.id)))
             else:
                 if not item.method:
@@ -237,7 +238,8 @@ class LeaveService:
                 self.pay._audit(org_id, membership, actor_id, actor_role, AUDIT_REFUND, {
                     "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                     "refund_id": str(row.id), "amount": int(refundable), "method": item.method, "effective_on": today.isoformat(),
-                    "advance_before": ledger.advance, "at_leave": True})
+                    "advance_before": ledger.advance, "at_leave": True,
+                    "expected_refundable": item.expected_refundable, "refundable_used": refundable})
                 out.append(SettledOut(membership_id=item.membership_id, action="refund", amount=int(refundable), refund_id=str(row.id)))
         self.pay._family_check(org_id, [m.id for m in memberships])
         return out
