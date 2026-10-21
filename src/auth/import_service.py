@@ -23,6 +23,7 @@ Key data-model facts this module respects (see src/models/auth.py):
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -269,7 +270,7 @@ def _parse_class_level(raw: str) -> Optional[int]:
         return None
     try:
         return int(float(raw))
-    except ValueError:
+    except (ValueError, OverflowError):          # m7: «inf» / «1e999» are not a class
         return None
 
 
@@ -294,10 +295,13 @@ def _parse_money(raw: str) -> Optional[int]:
     text = re.sub(r"[\s\u00a0\u202f]", "", (raw or "")).replace(",", ".")
     if not text:
         return None
-    value = float(text)
-    if value != int(value):
-        raise ValueError(raw)
-    return int(value)
+    try:
+        value = float(text)
+        if not math.isfinite(value) or value != int(value):       # m7: inf / nan / 1e999 are a row error (never an OverflowError -> 500)
+            raise ValueError(raw)
+        return int(value)
+    except (ValueError, OverflowError):
+        raise ValueError(raw) from None
 
 
 def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session, *, money: bool = True) -> ImportPlan:

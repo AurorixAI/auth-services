@@ -221,3 +221,22 @@ def test_m5_the_card_keeps_a_closed_membership_with_only_an_opening_debt(world, 
     assert owner(world).post(f"{API}/org/groups/{world.group.id}/students/{debtor.id}/leave", json={}).status_code == 200
     got = owner(world).get(f"{API}/org/students/{debtor.id}/memberships").json()
     assert [r["membership_id"] for r in got] == [str(m.id)] and got[0]["debt"] >= 250_000      # no payment, no write-off: only the opening debt
+
+
+# ---- m7: money cells of the import - inf / nan / overflow are a row error, never a 500 -----------------------------------------------------------
+
+
+def test_m7_import_money_cells_inf_nan_overflow_are_row_errors(world, fixed_today):
+    from tests.test_logicA_money_pg import import_workbook
+
+    centre(world, 600_000)
+    c = owner(world)
+    for cell in ("inf", "-inf", "nan", "1e999", "1e400", "∞", "12,5", "9" * 400):
+        data = import_workbook([["Один", "Ученик", 7, "", "Импорт-группа", "", None, cell, None]])
+        for route in ("preview", "commit"):
+            r = c.post(f"{API}/org/import/{route}", files={"file": ("x.xlsx", data)})
+            assert r.status_code == 200, (cell, route, r.status_code)
+            body = r.json()
+            assert body["ok"] is False and any(i["level"] == "error" and i["row"] == 2 for i in body["issues"]), (cell, body["issues"])
+    data = import_workbook([["Два", "Ученик", "inf", "", "Импорт-группа", "", None, None, None]])
+    assert c.post(f"{API}/org/import/preview", files={"file": ("x.xlsx", data)}).status_code == 200
