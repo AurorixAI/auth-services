@@ -94,6 +94,12 @@ def allocation_label(*, bucket: str, closes: bool, start: date, end: date, packa
     return f"Аванс на {span}"
 
 
+def opening_label(day: date, closes: bool) -> str:
+    """Where a payment went when it landed on the opening debt."""
+    on = day.strftime("%d.%m.%Y")
+    return f"Закрыла долг на начало учёта на {on}" if closes else f"Частично погасила долг на начало учёта на {on}"
+
+
 def advance_label_lessons() -> str:
     return "Аванс на следующие уроки"
 

@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
-HEAD='e1f2a3b4c5d'          # PAY-2: payment = money
+HEAD='f2a3b4c5d6e'          # LOGIC-A: pauses, opening balances, payouts, divisor / lesson-type history
+PAY2='e1f2a3b4c5d'          # PAY-2: payment = money (the revision before LOGIC-A)
 PAYROLL_RATES='d0e1f2a3b4c' # payroll rates (UX-2): the revision before PAY-2
 EXCUSE='c9d0e1f2a3b'        # excuse decision mark (N13 P4, #39): the revision before the payroll rates
 PRICES='b8c9d0e1f2a'        # group price + individual prices (N13 P4, #105): the revision before the decision mark
@@ -73,6 +74,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     _check_n13_excuse_mark_objects(engine,config,ids)
     _check_ux2_payroll_rates_objects(engine,config,ids)
     _check_pay2_objects(engine,config,ids)
+    _check_logic_a_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -923,7 +925,7 @@ def _check_n13_group_price_objects(engine,config,ids):
             return {r.name:(r.amount,r.valid_from,r.note,r.created_by) for r in c.execute(text("SELECT g.name,p.amount,p.valid_from,p.note,p.created_by FROM group_prices p JOIN groups g ON g.id=p.group_id WHERE g.org_id=:o"),{'o':org})}
     def overrides():
         with engine.connect() as c:
-            return {r.membership_id:(r.amount,r.valid_from,r.reason) for r in c.execute(text("SELECT o.membership_id,o.amount,o.valid_from,o.reason FROM membership_price_overrides o JOIN student_groups sg ON sg.id=o.membership_id JOIN groups g ON g.id=sg.group_id WHERE g.org_id=:o"),{'o':org})}
+            return {r.membership_id:(r.amount,r.valid_from,r.reason) for r in c.execute(text("SELECT o.membership_id,o.amount,o.valid_from,o.reason FROM membership_price_overrides o JOIN student_groups sg ON sg.id=o.membership_id JOIN groups g ON g.id=sg.group_id WHERE g.org_id=:o AND COALESCE(o.reason,'')<>'left_group'"),{'o':org})}
     epoch=date(2000,1,1)
     got=prices()
     assert {k:v[0] for k,v in got.items()}=={'majority':500000,'tie_date':500000,'tie_sum':400000,'free':0}      # no price for all_null / inactive_only / empty / single / pairs (less than 2 votes)
@@ -938,7 +940,7 @@ def _check_n13_group_price_objects(engine,config,ids):
     def effective():
         with engine.connect() as c:
             return {r.id:r.price for r in c.execute(text("""
-                SELECT sg.id, COALESCE((SELECT o.amount FROM membership_price_overrides o WHERE o.membership_id=sg.id AND o.valid_from<=CURRENT_DATE ORDER BY o.valid_from DESC LIMIT 1),
+                SELECT sg.id, COALESCE((SELECT o.amount FROM membership_price_overrides o WHERE o.membership_id=sg.id AND o.valid_from<=CURRENT_DATE AND COALESCE(o.reason,'')<>'left_group' ORDER BY o.valid_from DESC LIMIT 1),
                                        (SELECT p.amount FROM group_prices p WHERE p.group_id=sg.group_id AND p.valid_from<=CURRENT_DATE ORDER BY p.valid_from DESC LIMIT 1)) AS price
                   FROM student_groups sg JOIN groups g ON g.id=sg.group_id WHERE g.org_id=:o"""),{'o':org})}
     eff=effective()
@@ -1318,3 +1320,124 @@ def _check_pay2_objects(engine,config,ids):
         c.execute(text('DELETE FROM student_refunds')); c.execute(text('DELETE FROM student_writeoffs')); c.execute(text('DELETE FROM membership_transfers'))
         c.execute(text('UPDATE student_payments SET carried_from_payment_id=NULL, replaces_payment_id=NULL'))
         c.execute(text('DELETE FROM student_payments'))
+
+
+
+def _check_logic_a_objects(engine,config,ids):
+    """LOGIC-A on a stage-like dataset: the five tables, the seeds (divisor per organisation, lesson type per group), the F13 markers of the
+    closed memberships that had an individual price with a sum, money untouched, the new CHECKs, idempotent, rollback."""
+    from datetime import date,datetime
+    from sqlalchemy.exc import IntegrityError
+    from src.models.auth import User,Organization,Group,Student,StudentGroup
+    command.downgrade(config,PAY2)
+    names={'student_pauses','membership_pauses','membership_opening_balances','group_lesson_type_history','payroll_divisors','payroll_payouts'}
+    assert not (names & set(inspect(engine).get_table_names()))
+    user,org_b,grp_pair,grp_b=uuid4(),uuid4(),uuid4(),uuid4()
+    studs={k:uuid4() for k in ('closed_price','closed_plain','closed_null','active_price','closed_returned','closed_future')}
+    mems={k:uuid4() for k in studs}
+    with Session(engine) as db:
+        db.add(User(id=user,email=f'{user}@m.invalid',password_hash='synthetic-only',first_name='L',last_name='A',role='owner'))
+        db.add(Organization(id=org_b,name='LOGIC-A second centre',status='active',settings={'payroll':{'divisor':13}})); db.flush()
+        db.add(Group(id=grp_pair,org_id=org_b,name='Pair group',class_level=9,lesson_type='pair'))
+        db.add(Group(id=grp_b,org_id=org_b,name='Plain group',class_level=9)); db.flush()
+        for k,sid in studs.items():
+            db.add(Student(id=sid,org_id=org_b,first_name=k,last_name='Logic',class_level=9,status='active')); db.flush()
+            db.add(StudentGroup(id=mems[k],student_id=sid,group_id=grp_pair,is_active=k.startswith('active') or k=='closed_returned',
+                                joined_at=datetime(2026,9,1,5),left_at=None if k.startswith('active') or k=='closed_returned' else datetime(2026,10,10,4,0)))
+        db.commit()
+    with engine.begin() as c:
+        for k,mid in mems.items():
+            c.execute(text("DELETE FROM student_group_periods WHERE membership_id=:m"),{'m':mid})
+            left=None if k.startswith('active') or k=='closed_returned' else datetime(2026,10,10,4,0)
+            c.execute(text("INSERT INTO student_group_periods (id,membership_id,joined_at,left_at) VALUES (gen_random_uuid(),:m,'2026-09-01 05:00',:l)"),{'m':mid,'l':left})
+        ov="INSERT INTO membership_price_overrides (id,membership_id,amount,valid_from,reason,created_at) VALUES (gen_random_uuid(),:m,:a,:d,:r,now())"
+        c.execute(text(ov),{'m':mems['closed_price'],'a':400000,'d':date(2026,9,1),'r':'скидка'})
+        c.execute(text(ov),{'m':mems['active_price'],'a':400000,'d':date(2026,9,1),'r':'скидка'})
+        c.execute(text(ov),{'m':mems['closed_returned'],'a':400000,'d':date(2026,9,1),'r':'скидка'})
+        c.execute(text(ov),{'m':mems['closed_null'],'a':400000,'d':date(2026,9,1),'r':'скидка'})
+        c.execute(text(ov),{'m':mems['closed_null'],'a':None,'d':date(2026,10,1),'r':None})          # the group price again before he left
+        c.execute(text(ov),{'m':mems['closed_future'],'a':400000,'d':date(2026,9,1),'r':'скидка'})
+        c.execute(text(ov),{'m':mems['closed_future'],'a':300000,'d':date(2026,10,11),'r':'новая'})   # a row of the day after he left: not overwritten
+        c.execute(text("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,created_by,method) "
+                       "VALUES (gen_random_uuid(),:o,:m,:s,:g,250000,'2026-10-01',:u,'cash')"),
+                  {'o':org_b,'m':mems['closed_price'],'s':studs['closed_price'],'g':grp_pair,'u':user})
+        before_money=c.execute(text('SELECT count(*),COALESCE(sum(amount),0) FROM student_payments')).fetchone()
+        before_overrides=c.execute(text('SELECT count(*) FROM membership_price_overrides')).scalar_one()
+        before_mine=c.execute(text('SELECT count(*) FROM membership_price_overrides WHERE membership_id = ANY(:ids)'),{'ids':list(mems.values())}).scalar_one()
+    command.upgrade(config,'head')
+    assert names-{'student_pauses'} <= set(inspect(engine).get_table_names())
+    with engine.connect() as c:
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+        assert tuple(c.execute(text('SELECT count(*),COALESCE(sum(amount),0) FROM student_payments')).fetchone())==tuple(before_money)   # money untouched
+        mine=list(mems.values())
+        markers={r[0]:(r[1],r[2]) for r in c.execute(text("SELECT membership_id,valid_from,created_by FROM membership_price_overrides WHERE reason='left_group' AND amount IS NULL AND membership_id = ANY(:ids)"),{'ids':mine}).fetchall()}
+        assert markers=={mems['closed_price']:(date(2026,10,11),None)}      # left 10.10 (09:00 Tashkent): the price ends on 11.10; the others are not touched
+        assert c.execute(text('SELECT count(*) FROM membership_price_overrides WHERE membership_id = ANY(:ids)'),{'ids':mine}).scalar_one()==before_mine+1
+        div={r[0]:(r[1],r[2]) for r in c.execute(text('SELECT org_id,divisor,valid_from FROM payroll_divisors')).fetchall()}
+        assert div[org_b]==(13,date(2020,1,1)) and div[ids['org']][0]==12 and len(div)==c.execute(text('SELECT count(*) FROM organizations')).scalar_one()
+        lt={r[0]:r[1] for r in c.execute(text('SELECT group_id,lesson_type FROM group_lesson_type_history')).fetchall()}
+        assert lt[grp_pair]=='pair' and lt[grp_b]=='group' and len(lt)==c.execute(text('SELECT count(*) FROM groups')).scalar_one()
+    # --- the guards of the new tables
+    new=dict(o=org_b,m=mems['active_price'],s=studs['active_price'],g=grp_pair,u=user)
+    pause="INSERT INTO membership_pauses (id,org_id,membership_id,student_id,group_id,first_day,last_day,created_by) VALUES (gen_random_uuid(),:o,:m,:s,:g,:a,:b,:u)"
+    with engine.begin() as c:
+        c.execute(text(pause),{**new,'a':date(2026,10,11),'b':date(2026,10,20)})
+    for a,b in ((date(2026,10,5),date(2026,10,1)),(date(2026,1,1),date(2027,6,1))):                  # reversed / longer than 366 days
+        with pytest.raises(IntegrityError):
+            with engine.begin() as c:
+                c.execute(text(pause),{**new,'a':a,'b':b})
+    with engine.connect() as c:
+        exclusion=c.execute(text("SELECT count(*) FROM pg_constraint WHERE conname='ex_membership_pauses_no_overlap'")).scalar_one()
+    if exclusion:
+        with pytest.raises(IntegrityError):
+            with engine.begin() as c:
+                c.execute(text(pause),{**new,'a':date(2026,10,20),'b':date(2026,10,25)})              # overlaps a live pause
+    with engine.begin() as c:                                    # a voided pause does not block; void is all-or-none
+        c.execute(text("UPDATE membership_pauses SET voided_at=now(),voided_by=:u,void_reason='x'"),new)
+        c.execute(text(pause),{**new,'a':date(2026,10,15),'b':date(2026,10,18)})
+    with pytest.raises(IntegrityError):
+        with engine.begin() as c:
+            c.execute(text("UPDATE membership_pauses SET voided_at=now() WHERE voided_at IS NULL"))
+    ob="INSERT INTO membership_opening_balances (id,org_id,membership_id,student_id,group_id,paid_until,debt_amount,debt_on,source,created_by) VALUES (gen_random_uuid(),:o,:m,:s,:g,:pu,:da,:do,:src,:u)"
+    with engine.begin() as c:
+        c.execute(text(ob),{**new,'pu':date(2026,10,31),'da':250000,'do':date(2026,9,30),'src':'manual'})
+    for bad in ({'pu':None,'da':None,'do':None,'src':'manual'},{'pu':None,'da':0,'do':date(2026,9,30),'src':'manual'},{'pu':None,'da':5,'do':None,'src':'manual'},
+                {'pu':date(2026,10,1),'da':None,'do':None,'src':'ftp'},{'pu':date(2026,10,1),'da':None,'do':None,'src':'manual'}):   # the last: a second LIVE one
+        with pytest.raises(IntegrityError):
+            with engine.begin() as c:
+                c.execute(text(ob),{**new,**bad})
+    with pytest.raises(IntegrityError):
+        with engine.begin() as c:
+            c.execute(text("INSERT INTO payroll_divisors (id,org_id,valid_from,divisor) VALUES (gen_random_uuid(),:o,'2026-10-15',12)"),new)
+    with pytest.raises(IntegrityError):
+        with engine.begin() as c:
+            c.execute(text("INSERT INTO payroll_divisors (id,org_id,valid_from,divisor) VALUES (gen_random_uuid(),:o,'2026-10-01',32)"),new)
+    with engine.begin() as c:
+        for action in ('membership_pause_set','membership_pause_void','opening_balance_set','opening_balance_void','group_lesson_type_set','student_left_group'):
+            c.execute(text("INSERT INTO group_audit (id,org_id,group_id,actor_id,actor_role,action,snapshot) VALUES (gen_random_uuid(),:o,:g,:u,'owner','"+action+"','{}')"),new)
+    # --- idempotent: the revision again after a stamp changes nothing (no second seed, no second marker)
+    with engine.connect() as c:
+        counts=tuple(c.execute(text('SELECT (SELECT count(*) FROM payroll_divisors),(SELECT count(*) FROM group_lesson_type_history),'
+                                    "(SELECT count(*) FROM membership_price_overrides WHERE reason='left_group')")).fetchone())
+    command.stamp(config,PAY2)
+    command.upgrade(config,'head')
+    with engine.connect() as c:
+        assert tuple(c.execute(text('SELECT (SELECT count(*) FROM payroll_divisors),(SELECT count(*) FROM group_lesson_type_history),'
+                                    "(SELECT count(*) FROM membership_price_overrides WHERE reason='left_group')")).fetchone())==counts
+        assert c.execute(text('SELECT count(*) FROM membership_pauses')).scalar_one()==2           # data kept
+    # --- rollback: tables, markers and the audit rows of the new actions go; the old CHECK is back; PAY-2 data is untouched
+    command.downgrade(config,PAY2)
+    with engine.connect() as c:
+        assert not (names & set(inspect(engine).get_table_names()))
+        assert c.execute(text("SELECT count(*) FROM membership_price_overrides WHERE reason='left_group'")).scalar_one()==0
+        assert c.execute(text("SELECT count(*) FROM group_audit WHERE action IN ('membership_pause_set','student_left_group')")).scalar_one()==0
+        assert tuple(c.execute(text('SELECT count(*),COALESCE(sum(amount),0) FROM student_payments')).fetchone())==tuple(before_money)
+        assert c.execute(text('SELECT count(*) FROM membership_price_overrides')).scalar_one()==before_overrides
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==PAY2
+    with pytest.raises(IntegrityError):
+        with engine.begin() as c:
+            c.execute(text("INSERT INTO group_audit (id,org_id,group_id,actor_id,actor_role,action,snapshot) VALUES (gen_random_uuid(),:o,:g,:u,'owner','student_left_group','{}')"),new)
+    command.upgrade(config,'head')
+    with engine.begin() as c:        # leave nothing behind for the checks that may follow
+        c.execute(text('DELETE FROM student_payments WHERE org_id=:o'),{'o':org_b})
+        c.execute(text('DELETE FROM membership_pauses')); c.execute(text('DELETE FROM membership_opening_balances'))

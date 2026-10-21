@@ -18,7 +18,37 @@ from tests.pay2_ledger_helpers import T0, flat
 RUNS = int(os.environ.get("PAY2_PROP_RUNS", "1200"))
 
 
-def random_input(seed: int) -> bl.LedgerInput:
+def with_logic_a(inp: bl.LedgerInput, seed: int) -> bl.LedgerInput:
+    """LOGIC-A: the same random account plus pauses, an opening balance and deferred versions of the regime (own rng: the base
+    account of a seed is the same with and without)."""
+    rng = random.Random(seed * 7919 + 13)
+    first = min(s.first for s in inp.stays)
+    pauses = []
+    for _ in range(rng.choice([0, 0, 1, 2, 3])):
+        a = first + timedelta(days=rng.randint(0, max(1, (inp.today - first).days + 20)))
+        pauses.append(bl.Pause(a, a + timedelta(days=rng.randint(0, 25))))
+    opening = None
+    r = rng.random()
+    if r < 0.5:
+        paid = first + timedelta(days=rng.randint(-5, 40)) if rng.random() < 0.6 else None
+        debt = rng.choice([1, 150_000, 250_000, 1_000_000]) if (paid is None or rng.random() < 0.5) else 0
+        opening = bl.Opening(paid_until=paid, debt_amount=debt, debt_on=(first - timedelta(days=rng.randint(1, 60))) if debt else None)
+    regimes = list(inp.regimes)
+    if len(regimes) > 1 and rng.random() < 0.6:
+        regimes = regimes[:-1] + [replace(regimes[-1], defer=True)]
+    elif len(regimes) == 1 and rng.random() < 0.3:
+        c = inp.today - timedelta(days=rng.randint(0, 40))
+        regimes.append(bl.Regime(effective_from=c, mode=rng.choice([bl.CALENDAR, bl.LESSONS]), anchor=rng.choice([ps.PAYMENT_DATE, ps.FIXED_DAY]),
+                                 billing_day=rng.choice([1, 10]), package_size=rng.choice([4, 12]), defer=rng.random() < 0.8))
+    return replace(inp, pauses=tuple(pauses), opening=opening, regimes=tuple(regimes))
+
+
+def random_input(seed: int, logic_a: bool = False) -> bl.LedgerInput:
+    inp = _random_input(seed)
+    return with_logic_a(inp, seed) if logic_a else inp
+
+
+def _random_input(seed: int) -> bl.LedgerInput:
     rng = random.Random(seed)
     today = date(2026, 6, 1) + timedelta(days=rng.randint(0, 220))
     start = today - timedelta(days=rng.randint(20, 400))
@@ -102,12 +132,13 @@ def seeds():
     return range(RUNS)
 
 
+@pytest.mark.parametrize("logic_a", [False, True])
 @pytest.mark.parametrize("chunk", range(4))
-def test_invariants_hold_on_random_accounts(chunk):
+def test_invariants_hold_on_random_accounts(chunk, logic_a):
     for seed in list(seeds())[chunk::4]:
-        inp = random_input(seed)
+        inp = random_input(seed, logic_a)
         l = bl.run_ledger(inp)
-        ctx = f"seed={seed}"
+        ctx = f"seed={seed} logic_a={logic_a}"
         by_credit = {}
         for a in l.allocations:
             by_credit.setdefault(a.credit_id, []).append(a)
@@ -152,10 +183,11 @@ def test_invariants_hold_on_random_accounts(chunk):
             assert l.statement[-1].balance_after == l.advance - l.debt, ctx
 
 
+@pytest.mark.parametrize("logic_a", [False, True])
 @pytest.mark.parametrize("chunk", range(2))
-def test_adding_money_never_reduces_the_cover_and_is_associative(chunk):
+def test_adding_money_never_reduces_the_cover_and_is_associative(chunk, logic_a):
     for seed in list(seeds())[chunk::2]:
-        inp = replace(random_input(seed), outflows=())
+        inp = replace(random_input(seed, logic_a), outflows=())
         rng = random.Random(seed + 10_000)
         x, y = rng.randint(1, 800_000), rng.randint(1, 800_000)
         on = inp.today
@@ -181,10 +213,11 @@ def test_adding_money_never_reduces_the_cover_and_is_associative(chunk):
         assert with_xy.status == one.status or with_xy.status.last_payment_id == one.status.last_payment_id, ctx
 
 
+@pytest.mark.parametrize("logic_a", [False, True])
 @pytest.mark.parametrize("chunk", range(2))
-def test_input_order_of_credits_does_not_matter(chunk):
+def test_input_order_of_credits_does_not_matter(chunk, logic_a):
     for seed in list(seeds())[chunk::2]:
-        inp = random_input(seed)
+        inp = random_input(seed, logic_a)
         shuffled = list(inp.credits)
         random.Random(seed).shuffle(shuffled)
         out = list(inp.outflows)
