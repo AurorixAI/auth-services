@@ -208,9 +208,9 @@ def test_pause_patch_shorten_extend_and_the_lock_of_old_days(world, fixed_today)
     m = chain1_world(world)
     c = owner(world)
     p = pause(world, m, "2026-10-20", "2026-10-24")["pause"]
-    r = c.patch(f"{API}/org/pauses/{p['id']}", json={"last_day": "2026-10-20"})            # «Закончить паузу»
+    r = c.patch(f"{API}/org/pauses/{p['id']}", json={"last_day": "2026-10-20", "reason": "вернулся раньше"})            # «Закончить паузу»
     assert r.status_code == 200 and r.json()["pause"]["days"] == 1 and r.json()["impact"]["charged_delta"] == 80_000
-    r = c.patch(f"{API}/org/pauses/{p['id']}", json={"last_day": "2026-10-26"})
+    r = c.patch(f"{API}/org/pauses/{p['id']}", json={"last_day": "2026-10-26", "reason": "остался дольше"})
     assert r.status_code == 200 and r.json()["pause"]["days"] == 7
     r = c.patch(f"{API}/org/pauses/{p['id']}", json={"last_day": "2026-10-10"})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "PAUSE_RANGE"

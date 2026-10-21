@@ -99,3 +99,33 @@ def test_m1_deferred_calendar_to_lessons_the_running_period_keeps_calendar_and_t
     got = _coverage(world, m)
     assert {got[d][:2] for d in days[:3]} == {("calendar", None)}, got                 # 12.10 and 13.10 lie in the period that was running when the regime changed
     assert {got[d][:2] for d in days[3:]} == {("lessons", 4)}, got
+
+
+# ---- M3: pause PATCH - every day that enters the pause is recent, a change of money has a reason -----------------------------------------------
+
+
+from src.models.auth import MembershipPause  # noqa: E402
+from tests.test_logicA_opening_pause_pg import chain1_world, pause  # noqa: E402,F401
+
+
+def test_m3_a_patch_cannot_lengthen_an_old_pause_over_old_days_and_a_money_change_needs_a_reason(world, fixed_today):
+    m = chain1_world(world)
+    c = owner(world)
+    old = MembershipPause(org_id=world.org.id, membership_id=m.id, student_id=m.student_id, group_id=m.group_id,
+                          first_day=D(2026, 8, 1), last_day=D(2026, 8, 10), created_by=world.owner.id)
+    world.db.add(old)
+    world.db.commit()
+    for body in ({"last_day": "2026-08-20", "reason": "продлил"}, {"first_day": "2026-07-20", "reason": "раньше"}):       # the days 11-20.08 / 20-31.07 are older than 30 days
+        r = c.patch(f"{API}/org/pauses/{old.id}", json=body)
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "PAUSE_RANGE", (body, r.text)
+    p = pause(world, m, "2026-10-20", "2026-10-24")["pause"]
+    r = c.patch(f"{API}/org/pauses/{p['id']}", json={"last_day": "2026-10-22"})                                     # 2 days are paid again: money moves
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "REASON_REQUIRED", r.text
+    r = c.patch(f"{API}/org/pauses/{p['id']}", params={"dry_run": True}, json={"last_day": "2026-10-22"})           # the preview needs none
+    assert r.status_code == 200 and r.json()["impact"]["charged_delta"] > 0
+    world.db.expire_all()
+    assert world.db.get(MembershipPause, p["id"]).last_day == D(2026, 10, 24)
+    r = c.patch(f"{API}/org/pauses/{p['id']}", json={"last_day": "2026-10-22", "reason": "вернулся 23-го"})
+    assert r.status_code == 200 and r.json()["pause"]["days"] == 3, r.text
+    world.db.expire_all()
+    assert [a.snapshot["reason"] for a in world.db.query(GroupAudit).filter_by(action="membership_pause_set").order_by(GroupAudit.created_at)][-1] == "вернулся 23-го"

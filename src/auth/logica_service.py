@@ -498,7 +498,9 @@ class PauseService(_Base):
                 raise PauseRange("Пауза: «по» не раньше «с»")
             if (last - first).days + 1 > PAUSE_MAX_DAYS:
                 raise PauseRange(f"Пауза не длиннее {PAUSE_MAX_DAYS} дней")
-            if first < row.first_day and first < today - timedelta(days=PAUSE_BACKDATE_DAYS):
+            # M3: EVERY day that enters the pause (new - old) is as old as a new pause may be - not only a moved start (a pause that lies wholly
+            # in the past cannot be lengthened over older days)
+            if any(d < today - timedelta(days=PAUSE_BACKDATE_DAYS) for d in _days(first, last) - _days(row.first_day, row.last_day)):
                 raise PauseRange(f"Пауза начинается не раньше чем {PAUSE_BACKDATE_DAYS} дней назад")
             self._check_unlocking(_days(row.first_day, row.last_day), _days(first, last), today)
             if any(p.id != row.id and p.first_day <= last and first <= p.last_day for p in self._live(row.membership_id)):
@@ -520,10 +522,13 @@ class PauseService(_Base):
             self.pay._family_check(org_id, [row.membership_id])
             if after.charged > before.charged and bl.F_OUTFLOW_EXCEEDS in after.flags:
                 raise PauseBreaksRefund("Сначала отмените возврат: без паузы вернуть нечего")
+            change_reason = None
+            if after.charged != before.charged and not dry_run:      # M3: a change that moves money says why (the dry run only shows the impact)
+                change_reason = self.pay._check_reason(body.reason)
             if not dry_run:
                 self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAUSE_SET, {
                     "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
-                    "pause_id": str(row.id), "first_day": first.isoformat(), "last_day": last.isoformat(), "reason": row.reason,
+                    "pause_id": str(row.id), "first_day": first.isoformat(), "last_day": last.isoformat(), "reason": change_reason or row.reason,
                     "was": [old[0].isoformat(), old[1].isoformat()], "charged_before": before.charged, "charged_after": after.charged})
             out = self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
                               first=min(first, old[0]), last=max(last, old[1]))
