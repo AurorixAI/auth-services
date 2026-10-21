@@ -220,3 +220,52 @@ def test_lessons_mode_counts_held_lessons(world):
     add_payment(db, world, m, 100_000, today)
     (row,) = ls.LedgerLoader(db, str(world.org.id), today).load(membership_id=m.id)
     assert row.ledger.lessons.covered == 1 and row.ledger.lessons.unpaid == 1 and row.ledger.debt == 100_000
+
+
+def test_a_same_day_round_trip_gives_the_same_money_whichever_membership_is_asked_first(world):
+    """A -> B at 10:00 and B -> A at 15:00 the same day: the amounts depend on the order of the links, never on which
+    membership the loader evaluates first (no cycle guard value is memoised); transfers out == transfers in (I7)."""
+    from src.models.auth import StudentGroupPeriod
+
+    db, student, group_a = world.db, world.students[0], world.group
+    group_b = make_group(db, world.org, world.teacher, "Группа B")
+    group_a.schedule = group_b.schedule = []
+    set_payments_settings(db, world.org, accounting_start_date="2026-09-01", billing_anchor="fixed_day", billing_day=1,
+                          period_mode="calendar")
+    give_group_price(db, group_a, 500_000)
+    give_group_price(db, group_b, 400_000)
+    db.commit()
+    a = membership_of(db, student, group_a)
+    t1, t2 = datetime(2026, 10, 11, 5, 0), datetime(2026, 10, 11, 10, 0)       # 10:00 and 15:00 Tashkent
+    a.joined_at = datetime(2026, 10, 1, 6)
+    (period,) = a.periods
+    period.joined_at, period.left_at = a.joined_at, t1
+    db.add(StudentGroupPeriod(membership_id=a.id, joined_at=t2))
+    b = StudentGroup(student_id=student.id, group_id=group_b.id, is_active=True, joined_at=t1, left_at=None)
+    db.add(b)
+    db.flush()
+    bp = b.periods[0]
+    bp.joined_at, bp.left_at = t1, t2
+    add_payment(db, world, a, 3_000_000, D(2026, 10, 1))
+    db.add(MembershipTransfer(org_id=world.org.id, student_id=student.id, from_membership_id=a.id, to_membership_id=b.id,
+                              at=t1, created_by=world.owner.id))
+    db.add(MembershipTransfer(org_id=world.org.id, student_id=student.id, from_membership_id=b.id, to_membership_id=a.id,
+                              at=t2, created_by=world.owner.id))
+    db.commit()
+
+    def totals(order):
+        db.expire_all()
+        rows = ls.LedgerLoader(db, str(world.org.id), D(2026, 10, 25)).run(order)
+        by = {r.membership.id: r.ledger for r in rows}
+        return {m: (l.transferred_in, l.transferred_out, l.debt, l.advance, l.charged) for m, l in by.items()}, by
+
+    first, by = totals([a.id, b.id])
+    second, _ = totals([b.id, a.id])
+    only_a, _ = totals([a.id])
+    only_b, _ = totals([b.id])
+    assert first == second
+    assert only_a[a.id] == first[a.id] and only_b[b.id] == first[b.id]
+    assert sum(v[0] for v in first.values()) == sum(v[1] for v in first.values())          # I7
+    assert all(l.reconciles for l in by.values())
+    assert by[b.id].transferred_in > 0 and by[b.id].advance == 0 and by[b.id].debt == 0     # nothing is stranded in B
+    assert by[a.id].transferred_in == by[b.id].transferred_out

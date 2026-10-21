@@ -182,6 +182,8 @@ class LedgerLoader:
         self.counted: Dict[UUID, List[bl.CountedLesson]] = {}
         self._x_memo: Dict[UUID, int] = {}
         self._x_active: Set[UUID] = set()
+        self._guard_hits = 0
+        self._indexed: Set[Tuple[UUID, str]] = set()
         self._schedule: Optional[Any] = None
         self._cancelled: Optional[Dict[Any, Set[Tuple[str, str]]]] = None
         self._lesson_days_cache: Dict[Tuple[Any, date, date], List[date]] = {}
@@ -313,15 +315,20 @@ class LedgerLoader:
             StudentRefund.org_id == self.org_id, StudentRefund.membership_id.in_(found), StudentRefund.voided_at.is_(None)
         ):
             self.refunds[refund.membership_id].append(refund)
+        touched: Set[Tuple[str, UUID]] = set()
         for t in self.db.query(MembershipTransfer).filter(
             MembershipTransfer.org_id == self.org_id, MembershipTransfer.voided_at.is_(None),
             or_(MembershipTransfer.from_membership_id.in_(found), MembershipTransfer.to_membership_id.in_(found)),
         ):
             self.transfers[t.id] = t
-        # a transfer is met again from its other end in a later hop: index from scratch, every link exactly once
-        for mid in self._loaded:
-            self.t_in[mid] = sorted((t for t in self.transfers.values() if t.to_membership_id == mid), key=lambda t: (t.at, str(t.id)))
-            self.t_out[mid] = sorted((t for t in self.transfers.values() if t.from_membership_id == mid), key=lambda t: (t.at, str(t.id)))
+            # a link is met again from its other end in a later hop: each side is indexed exactly once
+            for side, mid, table in (("in", t.to_membership_id, self.t_in), ("out", t.from_membership_id, self.t_out)):
+                if mid in self._loaded and (t.id, side) not in self._indexed:
+                    self._indexed.add((t.id, side))
+                    table[mid].append(t)
+                    touched.add((side, mid))
+        for side, mid in touched:
+            (self.t_in if side == "in" else self.t_out)[mid].sort(key=lambda t: (t.at, str(t.id)))
         if self._needs_lessons():
             self._load_counted(found)
 
@@ -399,11 +406,15 @@ class LedgerLoader:
         return stays
 
     def x_of(self, transfer: MembershipTransfer) -> int:
-        """The money a transfer carries: what could leave the old membership on the transfer day (memoised, no cycles)."""
+        """The money a transfer carries: what could leave the old membership on the transfer day.  The old membership is
+        seen as it stood JUST BEFORE this transfer (every link is ordered by ``(at, id)``, so the recursion has no cycle).
+        Memoised, except a value computed while the cycle guard fired (it would be wrong and then stick)."""
         if transfer.id in self._x_memo:
             return self._x_memo[transfer.id]
         if transfer.id in self._x_active:
+            self._guard_hits += 1
             return 0
+        hits = self._guard_hits
         self._x_active.add(transfer.id)
         try:
             as_of = ps.business_date(transfer.at)
@@ -411,7 +422,8 @@ class LedgerLoader:
             value = bl.refundable_at(inp, as_of) if inp is not None else 0
         finally:
             self._x_active.discard(transfer.id)
-        self._x_memo[transfer.id] = value
+        if self._guard_hits == hits:
+            self._x_memo[transfer.id] = value
         return value
 
     def build_input(
@@ -439,6 +451,8 @@ class LedgerLoader:
             outflows.append(bl.Outflow(str(r.id), bl.REFUND, r.effective_on, r.created_at or datetime.min, int(r.amount)))
         key = (before_transfer.at, str(before_transfer.id)) if before_transfer is not None else None
         for t in self.t_in.get(mid, []):
+            if before_transfer is not None and (t.at, str(t.id)) >= key:
+                continue  # a transfer in that came after (or with) the one being measured: not there yet
             if as_of is not None and ps.business_date(t.at) > as_of:
                 continue
             amount = self.x_of(t)
