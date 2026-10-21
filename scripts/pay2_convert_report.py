@@ -129,6 +129,7 @@ def old_picture(conn, session: Session, today: date, org_filter: Optional[str]) 
                 membership_id=p.membership_id, carried_from_id=p.carried_from_payment_id,
             )
             for p in pays[m.id]
+            if p.valid_from is not None  # a payment entered after PAY-2 has no period: it is not part of the OLD picture
         ]
         price = books.price(m.id, m.group_id, today)
         result = ps.compute_status(today=today, monthly_fee=price.amount, payments=records,

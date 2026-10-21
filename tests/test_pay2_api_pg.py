@@ -577,3 +577,24 @@ def test_permissions_unchanged_for_the_new_endpoints(world, fixed_today):
     assert admin.post(f"{API}/org/memberships/{m.id}/writeoffs", json={"amount": 1000, "reason": "льгота"}).status_code == 201
     roles = {a.actor_role for a in world.db.query(GroupAudit).filter(GroupAudit.action == "payment_writeoff", GroupAudit.org_id == world.org.id)}
     assert roles == {"admin"}
+
+
+def test_the_old_quote_endpoint_is_a_shim_for_one_release(world, fixed_today):
+    m = e1_world(world)
+    r = owner(world).get(f"{API}/org/memberships/{m.id}/payments/quote", params={"paid_on": TODAY.isoformat(),
+                                                                                  "valid_from": "", "valid_to": ""})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["suggested_amount"] == 769_000 == preview(world, m)["suggested_amount"]
+    assert body["valid_from"] == "2026-09-15" and body["valid_to"] == "2026-10-14" and body["price"]["amount"] == 500_000
+    assert body["mode"] == "calendar" and body["explanation"] == "К оплате 769 000 сум"
+
+
+def test_a_student_without_any_money_event_stays_none_with_the_debt_visible(world, fixed_today):
+    m = e1_world(world)
+    world.db.query(StudentPayment).filter_by(membership_id=m.id).delete()
+    world.db.commit()
+    row = owner(world).get(f"{API}/org/students/{world.students[0].id}/memberships").json()[0]
+    assert (row["status"], row["paid_until"], row["debt"], row["past_debt"], row["current_due"]) == ("none", None, 1_000_000, 500_000, 500_000)
+    page = owner(world).get(f"{API}/org/payments/status", params={"bucket": "none"}).json()
+    assert str(m.id) in {i["membership_id"] for i in page["items"]}
