@@ -41,13 +41,21 @@ def test_b1_a_group_update_with_a_new_lesson_type_writes_a_history_row_for_today
     assert world.db.get(Group, world.group.id).lesson_type == "pair"
     audit = world.db.query(GroupAudit).filter_by(group_id=world.group.id, action="group_lesson_type_set").one()
     assert audit.snapshot["valid_from"] == t.isoformat() and audit.snapshot["was"] == "group" and audit.snapshot["lesson_type"] == "pair"
+    assert world.db.query(GroupAudit).filter_by(group_id=world.group.id, action="updated").one().snapshot == {"lesson_type": ["group", "pair"]}
     assert owner(world).get(f"{API}/org/groups/{world.group.id}/lesson-types").json()["current"] == "pair"
     assert {l["lesson_type"] for l in preview(world, cm)["lines"]} == {"pair"}               # payroll reads the history
     assert owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}").json()["stale"] is True
     # the same type again writes nothing; a day of the past stays on PUT …/lesson-type
     assert owner(world).put(f"{API}/org/groups/{world.group.id}", json={"lesson_type": "pair", "name": "Новое имя"}).status_code == 200
     world.db.expire_all()
-    assert world.db.query(GroupAudit).filter_by(group_id=world.group.id, action="group_lesson_type_set").count() == 1
+    assert world.db.get(Group, world.group.id).name == "Новое имя"
+    assert world.db.query(GroupAudit).filter_by(group_id=world.group.id, action="group_lesson_type_set").count() == 1          # the same type: no new row
+    r = owner(world).put(f"{API}/org/groups/{world.group.id}", json={"lesson_type": "individual", "name": "Третье имя"})        # type + name in one save
+    assert r.status_code == 200 and world.db.get(Group, world.group.id).name == "Третье имя"
+    world.db.expire_all()
+    assert world.db.query(GroupAudit).filter_by(group_id=world.group.id, action="group_lesson_type_set").count() == 2
+    assert [(x.valid_from, x.lesson_type) for x in world.db.query(GroupLessonTypeHistory).filter_by(group_id=world.group.id).order_by(GroupLessonTypeHistory.valid_from)][-1] == (t, "individual")      # the same day: the row is replaced
+    world.db.expire_all()
 
 
 # ---- M1: the divisor / mode of a lesson come from the ledger segment that covers it --------------------------------------------------------

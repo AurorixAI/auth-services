@@ -2322,10 +2322,6 @@ class AuthService:
                 except ValueError as exc:
                     raise ValueError("Выбранный сотрудник не преподаватель центра") from exc
 
-        if changes.get("lesson_type") is not None:  # LOGIC-A B1: a new type is a history row effective today (+ audit), not a bare write
-            from .lesson_types import LessonTypeService
-            LessonTypeService(self.db).patch_type(org_id, group, changes["lesson_type"], actor_id, actor_role or "admin")
-
         # {field: [old, new]} for the audit trail; unchanged fields are skipped
         # so a no-op save never writes a journal row.
         diff: dict[str, list[Any]] = {}
@@ -2341,6 +2337,10 @@ class AuthService:
                 continue
             diff[key] = [old_value, value]
             setattr(group, key, UUID(value) if key == "teacher_id" else value)
+
+        if "lesson_type" in diff:  # LOGIC-A B1: a new type is a history row effective today (+ audit), not a bare write
+            from .lesson_types import LessonTypeService
+            LessonTypeService(self.db).patch_type(org_id, group, diff["lesson_type"][0], diff["lesson_type"][1], actor_id, actor_role or "admin")
 
         if diff:
             self.db.add(
