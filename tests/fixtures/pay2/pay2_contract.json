@@ -739,8 +739,6 @@
         "description": "PAY-2: amount only.  ``amount`` 1..``MAX_MONEY`` (422 ``AMOUNT_RANGE``), ``paid_on`` not in the future and not older\nthan 3 years (422 ``PAID_ON_RANGE``).  ``method``: absent -> ``other`` (old front, one release); ``unknown`` ->\n422 ``METHOD_REQUIRED``.  ``valid_from`` / ``valid_to`` / ``lessons_count`` are accepted and IGNORED (one release).\nThe header ``Idempotency-Key: <uuid>``: a second POST with the same key creates nothing and answers 409\n``DUPLICATE_PAYMENT`` whose detail carries ``payment_id`` of the payment the first call created.",
         "properties": {
           "amount": {
-            "maximum": 10000000000.0,
-            "minimum": 0.0,
             "title": "Amount",
             "type": "integer"
           },
@@ -1365,8 +1363,6 @@
       "PaymentReplace": {
         "properties": {
           "amount": {
-            "maximum": 10000000000.0,
-            "minimum": 0.0,
             "title": "Amount",
             "type": "integer"
           },
@@ -3670,6 +3666,16 @@
             "title": "Billable Days",
             "type": "integer"
           },
+          "bucket": {
+            "default": "current",
+            "enum": [
+              "past_debt",
+              "current",
+              "future"
+            ],
+            "title": "Bucket",
+            "type": "string"
+          },
           "charge": {
             "title": "Charge",
             "type": "integer"
@@ -3788,7 +3794,8 @@
           "covered_days",
           "covered_through",
           "partial_credit",
-          "state"
+          "state",
+          "bucket"
         ],
         "title": "Segment",
         "type": "object"

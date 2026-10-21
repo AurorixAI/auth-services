@@ -37,7 +37,8 @@
         "covered_days": 13,
         "covered_through": "2026-09-27",
         "partial_credit": 14334,
-        "state": "partial"
+        "state": "partial",
+        "bucket": "past_debt"
       },
       {
         "id": "seg:0:2026-10-15",
@@ -62,7 +63,8 @@
         "covered_days": 0,
         "covered_through": null,
         "partial_credit": 0,
-        "state": "open"
+        "state": "open",
+        "bucket": "current"
       }
     ],
     "paid_until": "2026-09-27",

@@ -63,7 +63,8 @@
           "covered_days": 11,
           "covered_through": "2026-10-11",
           "partial_credit": 0,
-          "state": "closed"
+          "state": "closed",
+          "bucket": "past_debt"
         },
         "payment_id": null,
         "receipt_no": null,

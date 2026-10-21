@@ -40,7 +40,8 @@
         "covered_days": 0,
         "covered_through": null,
         "partial_credit": 0,
-        "state": "open"
+        "state": "open",
+        "bucket": "current"
       }
     ],
     "paid_until": null,

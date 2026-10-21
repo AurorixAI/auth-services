@@ -63,7 +63,8 @@
           "covered_days": 30,
           "covered_through": "2026-10-14",
           "partial_credit": 0,
-          "state": "closed"
+          "state": "closed",
+          "bucket": "past_debt"
         },
         "payment_id": null,
         "receipt_no": null,
@@ -159,7 +160,8 @@
           "covered_days": 31,
           "covered_through": "2026-11-14",
           "partial_credit": 0,
-          "state": "closed"
+          "state": "closed",
+          "bucket": "current"
         },
         "payment_id": null,
         "receipt_no": null,
@@ -266,7 +268,8 @@
       "covered_days": 1,
       "covered_through": "2026-11-15",
       "partial_credit": 4334,
-      "state": "future"
+      "state": "future",
+      "bucket": "future"
     }
   ]
 }

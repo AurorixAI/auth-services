@@ -99,22 +99,24 @@ def parse_regimes(block: Dict[str, Any]) -> Tuple[bl.Regime, ...]:
     return tuple(regimes)
 
 
+def accounting_start_of(block: Dict[str, Any], created: Optional[datetime]) -> date:
+    """The accounting start: the setting, else the day the centre was created (never a retro debt for "all the history")."""
+    if block.get("accounting_start_date"):
+        try:
+            return date.fromisoformat(str(block["accounting_start_date"])[:10])
+        except ValueError:
+            pass
+    return ps.business_date(created) if created else ps.business_today()
+
+
 def load_settings(db: Session, org_id: str) -> LedgerSettings:
     row = db.query(Organization.settings, Organization.created_at).filter(Organization.id == org_id).first()
     raw = row[0] if row else None
     created = row[1] if row else None
     block = raw.get("payments") if isinstance(raw, dict) else None
     block = dict(block) if isinstance(block, dict) else {}
-    start: Optional[date] = None
-    if block.get("accounting_start_date"):
-        try:
-            start = date.fromisoformat(str(block["accounting_start_date"])[:10])
-        except ValueError:
-            start = None
-    if start is None:  # never a retro debt for "the whole history"
-        start = ps.business_date(created) if created else ps.business_today()
     return LedgerSettings(
-        accounting_start=start,
+        accounting_start=accounting_start_of(block, created),
         regimes=parse_regimes(block),
         expiring_days=_int(block.get("expiring_days"), ps.DEFAULT_EXPIRING_DAYS),
         expiring_lessons=_int(block.get("expiring_lessons"), ps.DEFAULT_EXPIRING_LESSONS),
@@ -342,7 +344,7 @@ class LedgerLoader:
         detail: Dict[UUID, List[tuple]] = {}
         PaymentService(self.db)._counted_lesson_dates(self.org_id, members, {}, since=since, detail_out=detail)
         for mid in ids:
-            self.counted[mid] = [bl.CountedLesson(day, str(lesson_id) if lesson_id else None) for day, lesson_id, _ in detail.get(mid, [])]
+            self.counted[mid] = [bl.CountedLesson(day, str(lesson_id or "")) for day, lesson_id, _ in detail.get(mid, [])]
 
     # ---------------------------------------------------------------- the schedule (incomplete periods)
 

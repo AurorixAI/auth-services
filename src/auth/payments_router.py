@@ -85,10 +85,8 @@ def update_payment_settings(
 ):
     """Изменить настройки оплат (поля, которых нет в теле, не меняются). PAY-2: ``accounting_start_date`` — начало
     учёта оплат (только владелец); ``?dry_run=1`` — сколько членств получат новый долг и на какую сумму."""
-    if dry_run:
-        raise HTTPException(501, {"code": "NOT_IMPLEMENTED", "message": "PAY-2: ещё не подключено"})
     try:
-        return PaymentService(db).update_settings(user["org_id"], user["user_id"], request)
+        return PaymentService(db).update_settings(user["org_id"], user["user_id"], request, dry_run=dry_run)
     except PaymentError as exc:
         raise _http(exc)
 
@@ -116,11 +114,9 @@ def payments_status(
 ):
     """Членства со статусом оплаты (по вкладкам), с точным total. PAY-2: вкладка ``debt`` — члены с долгом > 0
     (в том числе ушедшие и архивные), ``sort=debt`` — по убыванию долга."""
-    if bucket == "debt" or sort:
-        raise HTTPException(501, {"code": "NOT_IMPLEMENTED", "message": "PAY-2: ещё не подключено"})
     return PaymentService(db).status_page(
         user["org_id"], bucket=bucket, group_id=group_id, teacher_id=teacher_id,
-        search=search, limit=limit, offset=offset,
+        search=search, limit=limit, offset=offset, sort=sort,
     )
 
 
@@ -327,7 +323,7 @@ def create_payment(
     (``allocation`` в ответе). ``Idempotency-Key`` защищает от двойного клика."""
     try:
         return PaymentService(db).create_payment(
-            user["org_id"], membership_id, user["user_id"], request
+            user["org_id"], membership_id, user["user_id"], request, idempotency_key
         )
     except PaymentError as exc:
         raise _http(exc)
@@ -344,7 +340,7 @@ def replace_payment(
     """Исправить оплату: старая отменяется, новая создаётся — одной транзакцией."""
     try:
         return PaymentService(db).replace_payment(
-            user["org_id"], payment_id, user["user_id"], request, request.reason
+            user["org_id"], payment_id, user["user_id"], request, request.reason, idempotency_key
         )
     except PaymentError as exc:
         raise _http(exc)

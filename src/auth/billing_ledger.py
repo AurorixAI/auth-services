@@ -182,6 +182,11 @@ class Segment:
         return "partial" if self.money + self.forgiven > 0 else "open"
 
     @property
+    def bucket(self) -> str:
+        """Relative to today: the period has ended (past debt), runs (current) or has not begun (future)."""
+        return "past_debt" if self.ended else ("current" if self.begun else "future")
+
+    @property
     def days_text(self) -> Optional[str]:
         return tx.days_text(
             basis=self.basis, billable_days=len(self.days), period_days=self.nominal_days,
@@ -926,9 +931,8 @@ def coverage_records(ledger: Ledger, *, created_at: datetime = datetime.min) -> 
     with ``lessons_count = covered`` (lessons)."""
     records: List[ps.PaymentRecord] = []
     if ledger.mode == LESSONS and ledger.lessons is not None:
-        first = ledger.counted[0].day if ledger.counted else (ledger.first_billable or date.min)
-        if ledger.lessons.covered:
-            records.append(ps.PaymentRecord(paid_on=first, valid_from=first, lessons_count=ledger.lessons.covered,
+        if ledger.lessons.covered:  # valid from "always": the pool of the counted lessons decides which ones it took
+            records.append(ps.PaymentRecord(paid_on=date.min, valid_from=date.min, lessons_count=ledger.lessons.covered,
                                             created_at=created_at))
         return records
     start: Optional[date] = None

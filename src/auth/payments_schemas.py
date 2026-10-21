@@ -48,6 +48,7 @@ SegmentBasis = Literal["full", "lessons", "days", "zero"]
 # closed: nothing unpaid; future: the period has not begun, something is unpaid; partial: begun, some money, not all;
 # open: begun, no money; unpriced: no price is set for the period (nothing is charged).
 SegmentState = Literal["closed", "partial", "open", "future", "unpriced"]
+SegmentBucket = Literal["past_debt", "current", "future"]
 StatementRowType = Literal["charge", "payment", "writeoff", "refund", "transfer_in", "transfer_out"]
 ReceiptColumn = Literal["received", "to_past_debt", "to_current", "to_advance", "written_off", "refunded"]
 ReceiptItemType = Literal["payment", "writeoff", "refund"]
@@ -113,6 +114,8 @@ class Segment(PayModel):
     covered_through: Optional[date_type] = None  # last paid day of the segment (null - none)
     partial_credit: int = 0  # money "inside" the first unpaid day; counts towards the next payment
     state: SegmentState = "open"
+    # relative to ``as_of`` (today): the period has ended / is running / has not begun (same rule as ``Allocation.bucket``)
+    bucket: SegmentBucket = "current"
 
 
 class Allocation(PayModel):
@@ -519,7 +522,7 @@ class PaymentCreate(BaseModel):
     The header ``Idempotency-Key: <uuid>``: a second POST with the same key creates nothing and answers 409
     ``DUPLICATE_PAYMENT`` whose detail carries ``payment_id`` of the payment the first call created."""
 
-    amount: int = Field(..., ge=0, le=MAX_MONEY)
+    amount: int
     paid_on: date
     method: Optional[PaymentMethod] = None
     valid_from: Optional[date] = Field(None, json_schema_extra={"deprecated": True})

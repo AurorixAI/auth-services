@@ -4,7 +4,23 @@ No test may reach a real Redis (a developer machine may run one on localhost:637
 leak from run to run), and no in-process counter may leak from one test into the next. A test that wants
 Redis behaviour installs its own client by monkeypatching ``src.core.redis_client.get_redis``.
 """
+import os
+
 import pytest
+
+os.environ.setdefault("PAYMENTS_SUMMARY_TTL", "0")  # no summary cache in tests (a test that wants it sets it)
+
+
+@pytest.fixture(autouse=True)
+def _no_soft_duplicate_guard(monkeypatch):
+    """Tests enter equal payments back to back; the one-minute double-click guard has its own test."""
+    try:
+        from src.auth import payments_service
+    except Exception:  # pragma: no cover - a unit test without the application stack
+        yield
+        return
+    monkeypatch.setattr(payments_service, "SOFT_DUPLICATE_SECONDS", 0)
+    yield
 
 
 @pytest.fixture(autouse=True)

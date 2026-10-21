@@ -109,14 +109,14 @@ def seg_dict(s: bl.Segment) -> dict:
         "billable_days": len(s.days), "days_text": s.days_text, "charge": s.amount, "basis": s.basis,
         "paid": s.money, "written_off": s.forgiven, "unpaid": s.unpaid, "covered_days": s.covered_days,
         "covered_through": s.covered_through.isoformat() if s.covered_through else None,
-        "partial_credit": s.partial_credit, "state": s.state, "price_amount": s.price.amount,
+        "partial_credit": s.partial_credit, "state": s.state, "bucket": s.bucket, "price_amount": s.price.amount,
     }
 
 
 def fixture_seg(d: dict) -> dict:
     out = {k: d[k] for k in ("id", "kind", "period_from", "period_to", "billable_days", "days_text", "charge", "basis",
                              "paid", "written_off", "unpaid", "covered_days", "covered_through", "partial_credit",
-                             "state")}
+                             "state", "bucket")}
     out["price_amount"] = d["price"]["amount"]
     return out
 

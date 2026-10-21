@@ -203,12 +203,14 @@ def seg_model(s: HSeg, today: date) -> Segment:
     else:
         state = "open"
     through = s.dlist[cd - 1] if cd > 0 else None
+    ended = (s.lessons[0] >= s.lessons[1]) if s.kind == "package" else s.b < today
+    bucket = "past_debt" if ended else ("current" if begun else "future")
     return Segment(
         id=s.id, kind=s.kind, period_from=s.a, period_to=s.b, billable_days=s.n, days_text=s.text,
         price=GROUP_PRICE(s.price, s.since) if s.price is not None else PriceOut(), charge=s.charge, basis=s.basis,
         lessons=SegmentLessons(in_part=s.lessons[0], in_period=s.lessons[1]) if s.lessons else None,
         paid=s.money, written_off=s.wo, unpaid=unpaid, covered_days=cd, covered_through=through,
-        partial_credit=partial, state=state,
+        partial_credit=partial, state=state, bucket=bucket,
     )
 
 

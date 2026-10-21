@@ -753,20 +753,22 @@ class AttendanceExcuseService:
         return items
 
     def _payment_context(self, org_id: UUID, pairs, *, propagate: bool = False) -> Optional[SimpleNamespace]:
-        """Memberships of the ``(student_id, group_id)`` pairs and their live payments, loaded ONCE for the whole page.
+        """Memberships of the ``(student_id, group_id)`` pairs and what their money pays for, loaded ONCE for the whole page.
 
-        Two queries however many pairs there are; shared by the deadlines and by ``billing_mode``.  Columns, not
-        entities: the amount is never loaded here.  ``None`` if it could not be loaded (both then simply go missing);
-        ``propagate`` lets the error through instead, WITHOUT the rollback (a caller holding a row lock rolls back to its own
-        savepoint: see ``_decision_mark``).
-        Fields: ``membership_of`` ``{(student, group): membership}``, ``live`` ``{membership: [payment rows]}`` and
-        ``records`` ``{membership: [PaymentRecord]}``.
+        PAY-2: the account of every membership is run by the ledger (``ledger_service``, a fixed number of queries however
+        many pairs there are); ``billing_mode.coverage_records`` turns it into the synthetic ``PaymentRecord``s the deadline
+        code reads (one per continuous paid range, or one package with the covered lessons).  ``None`` if it could not be
+        loaded (both then simply go missing); ``propagate`` lets the error through instead, WITHOUT the rollback (a caller
+        holding a row lock rolls back to its own savepoint: see ``_decision_mark``).
+        Fields: ``membership_of`` ``{(student, group): membership}``, ``records`` ``{membership: [PaymentRecord]}`` and
+        ``modes`` ``{membership: "calendar" | "package" | None}``.
         """
+        from . import billing_ledger as bl
+        from . import ledger_service as ls
         from . import payment_status as ps
 
         try:
             membership_of: Dict[tuple, UUID] = {}
-            live: Dict[UUID, list] = {}
             if pairs:
                 membership_of = {
                     (row.student_id, row.group_id): row.id
@@ -777,45 +779,16 @@ class AttendanceExcuseService:
                     )
                     .all()
                 }
+            records: Dict[UUID, list] = {}
+            modes: Dict[UUID, Optional[str]] = {}
             if membership_of:
-                for payment in (
-                    self.db.query(
-                        StudentPayment.id,
-                        StudentPayment.membership_id,
-                        StudentPayment.paid_on,
-                        StudentPayment.valid_from,
-                        StudentPayment.valid_to,
-                        StudentPayment.lessons_count,
-                        StudentPayment.created_at,
-                        StudentPayment.carried_out_at,
-                        StudentPayment.carried_from_payment_id,
-                    )
-                    .filter(
-                        StudentPayment.org_id == org_id,
-                        StudentPayment.membership_id.in_(set(membership_of.values())),
-                        StudentPayment.voided_at.is_(None),
-                    )
-                    .all()
-                ):
-                    live.setdefault(payment.membership_id, []).append(payment)
-            records = {
-                membership: [
-                    ps.PaymentRecord(
-                        paid_on=p.paid_on,
-                        valid_from=p.valid_from,
-                        valid_to=p.valid_to,
-                        lessons_count=p.lessons_count,
-                        created_at=p.created_at or datetime.min,
-                        id=p.id,
-                        carried_out_at=p.carried_out_at,
-                        membership_id=p.membership_id,
-                        carried_from_id=p.carried_from_payment_id,
-                    )
-                    for p in payments
-                ]
-                for membership, payments in live.items()
-            }
-            return SimpleNamespace(membership_of=membership_of, live=live, records=records)
+                loader = ls.LedgerLoader(self.db, str(org_id), ps.business_today())
+                for entry in loader.run(list(set(membership_of.values()))):
+                    records[entry.membership.id] = bl.coverage_records(entry.ledger)
+                    has_money = bool(entry.inp.credits)
+                    modes[entry.membership.id] = (
+                        None if not has_money else ("package" if entry.ledger.mode == bl.LESSONS else "calendar"))
+            return SimpleNamespace(membership_of=membership_of, live={}, records=records, modes=modes)
         except Exception:
             if propagate:
                 raise
@@ -828,15 +801,10 @@ class AttendanceExcuseService:
 
     @staticmethod
     def _modes_of(context: Optional[SimpleNamespace], pairs) -> Dict[tuple, Optional[str]]:
-        """``{(student, group): "calendar" | "package" | None}`` - the one definition is ``payment_status.billing_mode``."""
-        from . import payment_status as ps
-
+        """``{(student, group): "calendar" | "package" | None}`` - the mode of the account (``None``: no money yet)."""
         if context is None:
             return {}
-        return {
-            pair: ps.billing_mode(context.records.get(context.membership_of.get(pair), ()))
-            for pair in pairs
-        }
+        return {pair: context.modes.get(context.membership_of.get(pair)) for pair in pairs}
 
     def _billing_modes(self, org_id: UUID, pairs) -> Dict[tuple, Optional[str]]:
         return self._modes_of(self._payment_context(org_id, pairs), pairs)
@@ -873,7 +841,7 @@ class AttendanceExcuseService:
         settings = PaymentService(self.db).get_settings(str(org_id))
         today = today or _business_today()
 
-        membership_of, live, records = context.membership_of, context.live, context.records
+        membership_of, records = context.membership_of, context.records
 
         # The lessons FIFO is needed only for lessons that no calendar payment covers.
         lesson_dates: Dict[UUID, date] = {}
@@ -894,25 +862,20 @@ class AttendanceExcuseService:
                 lessons_members.append(
                     (SimpleNamespace(id=membership, student_id=excuse.student_id), student, group)
                 )
-        # Capacities of the lessons packages are derived live along their carry-over chains.
         # ``pools`` are the DATES of the counted lessons (what the FIFO hands out); ``counted_rows`` says WHICH lessons
         # they are - the attendance rows - because a date cannot: a student can have two lessons on one day.
         pools: Dict[UUID, list] = {}
         counted_rows: Dict[UUID, set] = {}
         detail: Dict[UUID, list] = {}
         if lessons_members:
-            state = PaymentService(self.db)._lessons_state(
-                str(org_id),
-                [(m, g) for m, _, g in lessons_members],
-                {m.id: live.get(m.id, []) for m, _, _ in lessons_members},
-                detail_out=detail,
-            )
-            pools = state.dates
+            from . import ledger_service as ls
+
+            since = ls.load_settings(self.db, str(org_id)).accounting_start
+            pools = PaymentService(self.db)._counted_lesson_dates(
+                str(org_id), lessons_members, {}, since=since, detail_out=detail)
             counted_rows = {
                 mid: {attendance_id for _day, _lesson_id, attendance_id in items} for mid, items in detail.items()
             }
-            for m, _, _ in lessons_members:
-                records[m.id] = [state.records.get(r.id, r) for r in records[m.id]]
 
         # The lessons of one day are handed to the packages in hand-out order (scheduled start, then lesson id), so
         # which package covers THIS lesson depends on its place among the lessons of its day - by the attendance row.

@@ -5,10 +5,10 @@ Mounted by ``payments_router`` (so under ``/api/v1/auth``).  The routes and thei
 PAY-2 (``tests/fixtures/pay2``, ``artifacts/partner_doc_check/pay2_contract.json``): a change needs a change of the
 design and of the schemas first.  Same guard as every money endpoint: ``require_payments_access``.
 
-Until the ledger service is wired (stream B) a handler answers 501.
 """
 from datetime import date
 from typing import Literal, Optional
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 from src.core.database import get_db
 
 from .dependencies import require_payments_access
+from .payments_reports import PaymentsReports
+from .payments_service import PaymentError, PaymentService
 from .payments_schemas import (
     BalancesPage,
     MembershipPaymentRow,
@@ -40,8 +42,12 @@ router = APIRouter(tags=["Payments"])  # the prefix /auth comes from payments_ro
 _ERRORS = {403: {"model": PayError}, 404: {"model": PayError}, 409: {"model": PayError}, 422: {"model": PayError}}
 
 
-def _not_ready():
-    raise HTTPException(501, {"code": "NOT_IMPLEMENTED", "message": "PAY-2: ещё не подключено"})
+def _http(exc: PaymentError) -> HTTPException:
+    return HTTPException(exc.status_code, exc.detail)
+
+
+def _role(user: dict) -> str:
+    return user.get("org_role") or "admin"
 
 
 @router.get(
@@ -56,7 +62,11 @@ def payment_preview(
     db: Session = Depends(get_db),
 ):
     """«Что закроет»: долг и текущий период сегодня + куда пойдёт введённая сумма. Ничего не записывает."""
-    _not_ready()
+    try:
+        return PaymentService(db).preview(
+            user["org_id"], membership_id, amount=amount, paid_on=paid_on, replace_payment_id=replace_payment_id)
+    except PaymentError as exc:
+        raise _http(exc)
 
 
 @router.post(
@@ -70,7 +80,12 @@ def create_writeoff(
     db: Session = Depends(get_db),
 ):
     """Списать долг (льгота, болезнь, договорённость): ``amount`` ≤ текущего долга или ``all: true``; причина 3..500."""
-    _not_ready()
+    try:
+        return PaymentService(db).create_writeoff(
+            user["org_id"], membership_id, user["user_id"], amount=request.amount, whole=request.all_debt,
+            reason=request.reason, effective_on=request.effective_on, actor_role=_role(user))
+    except PaymentError as exc:
+        raise _http(exc)
 
 
 @router.post("/org/writeoffs/{writeoff_id}/void", response_model=WriteoffVoided, responses=_ERRORS)
@@ -81,7 +96,11 @@ def void_writeoff(
     db: Session = Depends(get_db),
 ):
     """Отменить списание (долг возвращается); причина 3..500."""
-    _not_ready()
+    try:
+        return PaymentService(db).void_writeoff(user["org_id"], writeoff_id, user["user_id"], request.reason,
+                                                actor_role=_role(user))
+    except PaymentError as exc:
+        raise _http(exc)
 
 
 @router.post(
@@ -94,7 +113,12 @@ def create_refund(
     db: Session = Depends(get_db),
 ):
     """Вернуть аванс: ``amount`` ≤ возвратимого, способ обязателен. Это запись возврата, оплата не удаляется."""
-    _not_ready()
+    try:
+        return PaymentService(db).create_refund(
+            user["org_id"], membership_id, user["user_id"], amount=request.amount, method=request.method,
+            reason=request.reason, note=request.note, effective_on=request.effective_on, actor_role=_role(user))
+    except PaymentError as exc:
+        raise _http(exc)
 
 
 @router.post("/org/refunds/{refund_id}/void", response_model=RefundVoided, responses=_ERRORS)
@@ -105,7 +129,11 @@ def void_refund(
     db: Session = Depends(get_db),
 ):
     """Отменить возврат (аванс возвращается); причина 3..500."""
-    _not_ready()
+    try:
+        return PaymentService(db).void_refund(user["org_id"], refund_id, user["user_id"], request.reason,
+                                              actor_role=_role(user))
+    except PaymentError as exc:
+        raise _http(exc)
 
 
 @router.get("/org/memberships/{membership_id}/statement", response_model=StatementOut, responses=_ERRORS)
@@ -118,7 +146,11 @@ def membership_statement(
     db: Session = Depends(get_db),
 ):
     """Выписка ученика в группе: начисления, оплаты (и куда пошли), списания, возвраты, переносы; бегущий итог."""
-    _not_ready()
+    try:
+        return PaymentsReports(db).statement(
+            user["org_id"], membership_id, date_from=from_, date_to=to, include_voided=include_voided)
+    except PaymentError as exc:
+        raise _http(exc)
 
 
 @router.get(
@@ -144,7 +176,14 @@ def membership_statement_export(
     db: Session = Depends(get_db),
 ) -> Response:
     """Выписка файлом (xlsx / csv)."""
-    _not_ready()
+    try:
+        data, content_type, filename = PaymentsReports(db).statement_file(
+            user["org_id"], membership_id, fmt=format, date_from=from_, date_to=to, include_voided=include_voided)
+    except PaymentError as exc:
+        raise _http(exc)
+    return Response(
+        content=data, media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"; filename*=UTF-8\'\'{quote(filename)}'})
 
 
 @router.get("/org/payments/receipts", response_model=ReceiptsReport, responses=_ERRORS)
@@ -160,7 +199,11 @@ def receipts_report(
 ):
     """«Поступления центра»: сколько пришло, куда ушло, списано, возвращено; по способам / группам / преподавателям;
     позиция «долг / аванс» на сегодня; сверка. Диапазон ≤ 366 дней, ``group_by=day`` — ≤ 92."""
-    _not_ready()
+    try:
+        return PaymentsReports(db).receipts_report(
+            user["org_id"], from_, to, group_by=group_by, method=method, group_id=group_id, teacher_id=teacher_id)
+    except PaymentError as exc:
+        raise _http(exc)
 
 
 @router.get("/org/payments/receipts/items", response_model=ReceiptItems, responses=_ERRORS)
@@ -178,7 +221,12 @@ def receipts_items(
     db: Session = Depends(get_db),
 ):
     """Раскрытие цифры отчёта до конкретных оплат / списаний / возвратов."""
-    _not_ready()
+    try:
+        return PaymentsReports(db).receipts_items(
+            user["org_id"], from_, to, column=column, bucket=bucket, method=method, group_id=group_id,
+            teacher_id=teacher_id, limit=limit, offset=offset)
+    except PaymentError as exc:
+        raise _http(exc)
 
 
 @router.get("/org/payments/balances", response_model=BalancesPage, responses=_ERRORS)
@@ -193,4 +241,8 @@ def payments_balances(
     db: Session = Depends(get_db),
 ):
     """Раскрытие «позиции»: членства с долгом / авансом (в том числе ушедших и архивных)."""
-    _not_ready()
+    try:
+        return PaymentsReports(db).balances(
+            user["org_id"], kind=kind, group_id=group_id, teacher_id=teacher_id, search=search, limit=limit, offset=offset)
+    except PaymentError as exc:
+        raise _http(exc)
