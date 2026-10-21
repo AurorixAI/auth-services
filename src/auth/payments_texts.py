@@ -30,8 +30,8 @@ def ddmm(day: date) -> str:
 
 
 def period_text(start: date, end: date) -> str:
-    """``15.09–14.10`` (an en dash)."""
-    return f"{ddmm(start)}–{ddmm(end)}"
+    """``15.09–14.10`` (an en dash); a period of one day is just ``30.09`` («за 30.09», m6)."""
+    return ddmm(start) if start == end else f"{ddmm(start)}–{ddmm(end)}"
 
 
 def plural(count: int, one: str, few: str, many: str) -> str:
