@@ -556,6 +556,14 @@ class _Gen:
         chain = self.chain
         self.chain += 1
         pkg_price = NO_PRICE
+        # a lesson held while no price was in force is skipped: neither charged nor paid (price_missing stays); the packages
+        # go on from the first priced lesson
+        priced = [self.inp.price_at(c.day).amount is not None for c in lessons]
+        for c, ok in zip(lessons, priced):
+            if not ok:
+                self.unpriced_from = self.unpriced_from or c.day
+                self.flags.add(F_PRICE_MISSING)
+        lessons_all, lessons = lessons, [c for c, ok in zip(lessons, priced) if ok]
         for k, start in enumerate(range(0, len(lessons), size), 1):
             chunk = lessons[start : start + size]
             first_day = chunk[0].day
@@ -566,11 +574,6 @@ class _Gen:
                           days=tuple(days), price=pkg_price, nominal_days=size, lessons_in_part=len(chunk),
                           lessons_in_period=size, begun=True, ended=complete,
                           package_no=k, complete_package=complete)
-            if pkg_price.amount is None:
-                self.unpriced_from = self.unpriced_from or first_day
-                self.flags.add(F_PRICE_MISSING)
-                segs.append(Segment(amount=0, basis="zero", unpriced=True, **common))
-                return segs, costs  # nothing is charged from here on
             p = pkg_price.amount
             part = [p * i // size - p * (i - 1) // size for i in range(1, len(chunk) + 1)]
             costs.extend(part)
@@ -590,7 +593,7 @@ class _Gen:
                 i += 1
                 if i > size:
                     i, price = 1, p_now
-        return segs, costs
+        return segs, costs, priced
 
 
 # ================================================================================================================
@@ -645,6 +648,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     lesson_costs_all: List[int] = []
     package_regime: Optional[Regime] = None
     held_all: List[CountedLesson] = []
+    lesson_priced: List[bool] = []     # per held lesson: a price was in force that day
     first_billable: Optional[date] = None
 
     for index, (regime, wlo, whi) in enumerate(windows):
@@ -664,7 +668,8 @@ def run_ledger(inp: LedgerInput) -> Ledger:
             if intervals:
                 first_billable = min(first_billable or date.max, intervals[0][0])
             so_far = sum(s.amount for s in segments)
-            segs, costs = gen.packages(regime, window_lessons, last_window, so_far)
+            segs, costs, priced_flags = gen.packages(regime, window_lessons, last_window, so_far)
+            lesson_priced.extend(priced_flags)
             segments.extend(segs)
             held_all.extend(window_lessons)
             lesson_costs_all.extend(costs)
@@ -833,10 +838,14 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     if mode == LESSONS or les_windows:
         available = total_credit - base_offset
         covered_lessons = bisect_right(prefix_all, available) if available >= 0 else 0
-        used = len(held_lessons)
+        used = sum(lesson_priced)          # lessons held under a price (the others are neither charged nor paid)
         if mode == LESSONS:
             partial_credit = max(0, available - (prefix_all[covered_lessons - 1] if covered_lessons else 0))
-        flags_paid = tuple(i < covered_lessons for i in range(used))
+        flags_paid, seen = [], 0
+        for ok in lesson_priced:
+            flags_paid.append(ok and seen < covered_lessons)
+            seen += ok
+        flags_paid = tuple(flags_paid)
         lessons_view = LessonsView(
             package_size=(package_regime.package_size if package_regime else current_regime.package_size),
             covered=covered_lessons, used=used, left=max(0, covered_lessons - used),

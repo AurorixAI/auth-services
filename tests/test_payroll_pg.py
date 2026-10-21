@@ -1633,3 +1633,24 @@ def test_covered_lessons_equal_what_the_status_page_covers_on_random_data(world,
         if line:
             assert all(x["divisor"] for x in line["marks"] if x["state"] in ("counted", "excused_pending", "unpaid"))
 
+
+
+def test_lessons_before_the_first_price_do_not_stop_the_packages_of_the_account(world):
+    """Lessons mode, a price only from the 15th: the lessons of the 10th and 12th are skipped (no price, nothing owed and
+    nothing paid), the package starts with the lesson of the 15th and the paid money counts it and the next one."""
+    from tests.pg_world import ensure_billing, payments_block
+
+    m = previous_month()
+    s0 = world.students[0]
+    for n in (10, 12, 15, 17):
+        lesson(world, m.d(n), {s0: "present"})
+    ensure_billing(world, price=None)
+    give_group_price(world.db, world.group, 400_000, m.d(15))
+    payments_block(world.db, world.org, period_mode="lessons", lessons_per_payment=2, accounting_start_date=m.first.isoformat())
+    pay_money(world, s0, 400_000, m.d(15))
+    line = line_of(preview(world, m), s0)
+    assert [x["state"] for x in line["marks"]] == ["unpaid", "unpaid", "counted", "counted"]
+    assert [x["price"] for x in line["marks"]] == [None, None, 400_000, 400_000] and line["no_price_lessons"] == 2
+    assert line["amount"] == 2 * 400_000 * 50 // 200
+    page = {r["student_id"]: r for r in owner(world).get(f"{API}/org/payments/status", params={"limit": 50}).json()["items"]}
+    assert page[str(s0.id)]["lessons_used"] == 2 and page[str(s0.id)]["price_missing"] is True
