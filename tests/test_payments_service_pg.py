@@ -254,15 +254,18 @@ def test_duplicate_payment_is_409_in_service_and_unique_index(world):
                           json={"amount": 450000, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat(),
                                 "valid_from": day(-3).isoformat()})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "DUPLICATE_PAYMENT"
-    # the database refuses it too (a concurrent double click that passed the check)
+    # PAY-2: the database refuses a second payment with the same Idempotency-Key (the old identical-payment index is gone)
     twin = world.db.get(StudentPayment, first["id"])
+    key = uuid4()
+    twin.idempotency_key = key
+    world.db.commit()
     clone = StudentPayment(
         org_id=twin.org_id, membership_id=twin.membership_id, student_id=twin.student_id, group_id=twin.group_id,
         amount=twin.amount, paid_on=twin.paid_on, valid_from=twin.valid_from, valid_to=twin.valid_to,
-        created_by=world.owner.id,
+        created_by=world.owner.id, idempotency_key=key,
     )
     world.db.add(clone)
-    with pytest.raises(IntegrityError, match="uq_student_payments_active_dup"):
+    with pytest.raises(IntegrityError, match="uq_student_payments_idempotency"):
         world.db.flush()
     world.db.rollback()
     # a different amount is a different payment; a voided twin does not block

@@ -520,7 +520,8 @@ class GroupAudit(Base):
     __table_args__ = (
         CheckConstraint(
             "action IN ('created', 'updated', 'teacher_changed', 'student_archived', 'student_restored', "
-            "'group_price_set', 'membership_price_set', 'group_price_cancelled', 'membership_price_cancelled')",
+            "'group_price_set', 'membership_price_set', 'group_price_cancelled', 'membership_price_cancelled', "
+            "'payment_writeoff', 'payment_writeoff_void', 'payment_refund', 'payment_refund_void')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(
@@ -1178,11 +1179,14 @@ class GroupScheduleAudit(Base):
 
 
 class StudentPayment(Base):
-    """Одна оплата за период по одному членству ученика в группе.
+    """Оплата - деньги, внесённые за ученика в группе (PAY-2: сумма без периода).
 
     Записи не удаляются: ``voided_*`` отменяет оплату, ``replaces_payment_id``
-    связывает исправление со старой записью.  Ровно одно из ``valid_to`` /
-    ``lessons_count`` заполнено - это режим периода, действовавший при внесении.
+    связывает исправление со старой записью.  Начисления, распределение денег, «оплачено до», долг и аванс
+    выводятся из денег функцией ``billing_ledger.run_ledger``.  ``valid_from`` / ``valid_to`` / ``lessons_count`` /
+    ``partial_period`` / ``carried_*`` - LEGACY (до PAY-2): только читаются как «период до перехода», ядро их не
+    использует; у новых оплат ``valid_from`` пуст.  ``kind = legacy_carry`` - старая копия-перенос (amount 0), ядро её
+    игнорирует.
     """
 
     __tablename__ = "student_payments"
@@ -1208,10 +1212,15 @@ class StudentPayment(Base):
     amount = Column(BigInteger, nullable=False)
     currency = Column(String(3), nullable=False, default="UZS", server_default="UZS")
     paid_on = Column(Date, nullable=False)
-    valid_from = Column(Date, nullable=False)
-    valid_to = Column(Date, nullable=True)
-    lessons_count = Column(SmallInteger, nullable=True)
+    valid_from = Column(Date, nullable=True)  # LEGACY (NULL on a payment entered after PAY-2)
+    valid_to = Column(Date, nullable=True)  # LEGACY
+    lessons_count = Column(SmallInteger, nullable=True)  # LEGACY
     note = Column(String(500), nullable=True)
+    # PAY-2: how the money came (cash / card / ...); old rows are ``unknown``.  ``kind``: payment | legacy_carry.
+    method = Column(String(16), nullable=False, default="unknown", server_default="unknown")
+    kind = Column(String(16), nullable=False, default="payment", server_default="payment")
+    # PAY-2: the Idempotency-Key header of the POST that created it (a double click creates nothing).
+    idempotency_key = Column(UUID(as_uuid=True), nullable=True)
     replaces_payment_id = Column(UUID(as_uuid=True), ForeignKey("student_payments.id"), nullable=True)
     # N13 P2.1: a carry-over made by a transfer points at the payment it was made from
     # (amount 0, the original keeps the money).  NULL = an ordinary payment.
@@ -1237,12 +1246,15 @@ class StudentPayment(Base):
     __table_args__ = (
         CheckConstraint("amount >= 0", name="ck_student_payments_amount"),
         CheckConstraint("lessons_count > 0", name="ck_student_payments_lessons_positive"),
-        CheckConstraint(
-            "(valid_to IS NULL) <> (lessons_count IS NULL)", name="ck_student_payments_period_kind"
-        ),
+        CheckConstraint("valid_to IS NULL OR lessons_count IS NULL", name="ck_student_payments_period_kind"),
         CheckConstraint(
             "valid_to IS NULL OR valid_to >= valid_from", name="ck_student_payments_period_order"
         ),
+        CheckConstraint(
+            "method IN ('cash', 'card', 'bank_transfer', 'click', 'payme', 'other', 'unknown')",
+            name="ck_student_payments_method",
+        ),
+        CheckConstraint("kind IN ('payment', 'legacy_carry')", name="ck_student_payments_kind"),
         CheckConstraint(
             "(voided_at IS NULL AND voided_by IS NULL AND void_reason IS NULL) OR "
             "(voided_at IS NOT NULL AND voided_by IS NOT NULL AND void_reason IS NOT NULL)",
@@ -1254,11 +1266,16 @@ class StudentPayment(Base):
             "membership_id",
             text("valid_to DESC"),
         ),
+        # PAY-2: the receipts report (by payment date) and the batch load of the live payments of memberships.
+        Index("ix_sp_org_paid_on", "org_id", "paid_on", postgresql_where=text("voided_at IS NULL")),
+        Index("ix_sp_membership_live", "org_id", "membership_id", postgresql_where=text("voided_at IS NULL")),
+        # PAY-2: one POST per Idempotency-Key.
         Index(
-            "idx_student_payments_org_valid_to",
+            "uq_student_payments_idempotency",
             "org_id",
-            "valid_to",
-            postgresql_where=text("voided_at IS NULL"),
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
         # Cascades (void / replace of the original) find the carry-overs through this column.
         Index(
@@ -1273,21 +1290,6 @@ class StudentPayment(Base):
             "receipt_no",
             unique=True,
             postgresql_where=text("receipt_no IS NOT NULL"),
-        ),
-        # Double-click guard: an identical live payment cannot be inserted twice.  Carry-overs
-        # made from different payments are different payments (A -> B -> A -> B in one day).
-        Index(
-            "uq_student_payments_active_dup",
-            "org_id",
-            "membership_id",
-            "paid_on",
-            "valid_from",
-            text("COALESCE(valid_to, DATE '1900-01-01')"),
-            text("COALESCE(lessons_count, 0)"),
-            "amount",
-            text("COALESCE(carried_from_payment_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
-            unique=True,
-            postgresql_where=text("voided_at IS NULL"),
         ),
     )
 
@@ -1318,6 +1320,119 @@ class StudentPaymentFile(Base):
         ),
         Index("idx_student_payment_files_payment", "payment_id"),
     )
+
+
+class StudentWriteoff(Base):
+    """PAY-2: a write-off of a student's debt in a group (a concession, an illness, an agreement).
+
+    Reduces the debt like money does but is never refundable.  Cancelled by ``voided_*``, never deleted.
+    """
+
+    __tablename__ = "student_writeoffs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    membership_id = Column(UUID(as_uuid=True), ForeignKey("student_groups.id", ondelete="RESTRICT"), nullable=False)
+    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="RESTRICT"), nullable=False)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="RESTRICT"), nullable=False)
+    amount = Column(BigInteger, nullable=False)
+    reason = Column(String(500), nullable=False)
+    effective_on = Column(Date, nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    voided_at = Column(DateTime, nullable=True)
+    voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    void_reason = Column(String(500), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_student_writeoffs_amount"),
+        CheckConstraint("char_length(btrim(reason)) >= 3", name="ck_student_writeoffs_reason"),
+        CheckConstraint(
+            "(voided_at IS NULL AND voided_by IS NULL AND void_reason IS NULL) OR "
+            "(voided_at IS NOT NULL AND voided_by IS NOT NULL AND void_reason IS NOT NULL)",
+            name="ck_student_writeoffs_void_all_or_none",
+        ),
+        Index("ix_sw_membership_live", "org_id", "membership_id", postgresql_where=text("voided_at IS NULL")),
+        Index("ix_sw_org_effective_on", "org_id", "effective_on", postgresql_where=text("voided_at IS NULL")),
+    )
+
+
+class StudentRefund(Base):
+    """PAY-2: the advance returned to the student (a record of the refund; the payment itself is not touched)."""
+
+    __tablename__ = "student_refunds"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    membership_id = Column(UUID(as_uuid=True), ForeignKey("student_groups.id", ondelete="RESTRICT"), nullable=False)
+    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="RESTRICT"), nullable=False)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="RESTRICT"), nullable=False)
+    amount = Column(BigInteger, nullable=False)
+    method = Column(String(16), nullable=False)
+    reason = Column(String(500), nullable=True)
+    note = Column(String(500), nullable=True)
+    effective_on = Column(Date, nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    voided_at = Column(DateTime, nullable=True)
+    voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    void_reason = Column(String(500), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_student_refunds_amount"),
+        CheckConstraint(
+            "method IN ('cash', 'card', 'bank_transfer', 'click', 'payme', 'other')", name="ck_student_refunds_method"
+        ),
+        CheckConstraint(
+            "(voided_at IS NULL AND voided_by IS NULL AND void_reason IS NULL) OR "
+            "(voided_at IS NOT NULL AND voided_by IS NOT NULL AND void_reason IS NOT NULL)",
+            name="ck_student_refunds_void_all_or_none",
+        ),
+        Index("ix_sr_membership_live", "org_id", "membership_id", postgresql_where=text("voided_at IS NULL")),
+        Index("ix_sr_org_effective_on", "org_id", "effective_on", postgresql_where=text("voided_at IS NULL")),
+    )
+
+
+class MembershipTransfer(Base):
+    """PAY-2: a transfer of a student from one group to another - a LINK, not a sum.
+
+    The money that travels is derived (``billing_ledger.refundable_at`` of the old membership at ``at``), so correcting
+    or voiding a payment in the old group changes what arrived in the new one.  ``created_by`` is NULL on a row made by
+    the PAY-2 migration from the old carry-over copies.
+    """
+
+    __tablename__ = "membership_transfers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="RESTRICT"), nullable=False)
+    from_membership_id = Column(UUID(as_uuid=True), ForeignKey("student_groups.id", ondelete="RESTRICT"), nullable=False)
+    to_membership_id = Column(UUID(as_uuid=True), ForeignKey("student_groups.id", ondelete="RESTRICT"), nullable=False)
+    at = Column(DateTime, nullable=False)  # naive UTC, the instant of left_at / joined_at
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    voided_at = Column(DateTime, nullable=True)
+    voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    void_reason = Column(String(500), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("from_membership_id", "to_membership_id", "at", name="uq_membership_transfers_link"),
+        CheckConstraint("from_membership_id <> to_membership_id", name="ck_membership_transfers_distinct"),
+        Index("ix_mt_from", "from_membership_id", postgresql_where=text("voided_at IS NULL")),
+        Index("ix_mt_to", "to_membership_id", postgresql_where=text("voided_at IS NULL")),
+        Index("ix_mt_org_student", "org_id", "student_id"),
+    )
+
+
+class PaymentReceiptSnapshot(Base):
+    """PAY-2: where the money went AT THE MOMENT of a payment (the printed receipt shows it; the statement shows the fact)."""
+
+    __tablename__ = "payment_receipt_snapshots"
+
+    payment_id = Column(UUID(as_uuid=True), ForeignKey("student_payments.id", ondelete="CASCADE"), primary_key=True)
+    org_id = Column(UUID(as_uuid=True), nullable=False)
+    snapshot = Column(JSONB, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
 
 
 # ============================================================================

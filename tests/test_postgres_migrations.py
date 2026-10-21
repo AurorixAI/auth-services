@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
-HEAD='d0e1f2a3b4c'          # payroll rates (UX-2)
+HEAD='e1f2a3b4c5d'          # PAY-2: payment = money
+PAYROLL_RATES='d0e1f2a3b4c' # payroll rates (UX-2): the revision before PAY-2
 EXCUSE='c9d0e1f2a3b'        # excuse decision mark (N13 P4, #39): the revision before the payroll rates
 PRICES='b8c9d0e1f2a'        # group price + individual prices (N13 P4, #105): the revision before the decision mark
 SESSIONS='a7b8c9d0e1f'      # user sessions (N13 tails, #101): the revision before the group price
@@ -71,6 +72,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     _check_n13_group_price_objects(engine,config,ids)
     _check_n13_excuse_mark_objects(engine,config,ids)
     _check_ux2_payroll_rates_objects(engine,config,ids)
+    _check_pay2_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -155,12 +157,10 @@ def _check_n13_p2_objects(engine,config,ids):
     bad={
         'negative amount':row(pid='gen_random_uuid()',amount='-1',valid_to="'2026-12-04'"),
         'zero lessons':row(pid='gen_random_uuid()',valid_to='NULL',lessons='0',amount='1'),
-        'neither period':row(pid='gen_random_uuid()',valid_to='NULL',lessons='NULL',amount='2'),
+        # PAY-2: 'neither period' and 'an identical live payment' are legal now (a payment is a sum, no period)
         'both periods':row(pid='gen_random_uuid()',lessons='12',amount='3'),
         'valid_to before valid_from':row(pid='gen_random_uuid()',valid_to="'2026-10-04'",amount='4'),
         'partial void':row(pid='gen_random_uuid()',amount='5',valid_to="'2026-12-05'",extra=',voided_at',extra_v=',now()'),
-        'duplicate live payment':row(pid='gen_random_uuid()'),
-        'duplicate live lessons payment':row(pid='gen_random_uuid()',valid_to='NULL',lessons='12'),
     }
     for name,sql in bad.items():
         with pytest.raises(IntegrityError,match='.'):
@@ -211,7 +211,7 @@ def _check_n13_p21_objects(engine,config,ids):
     def cols(): return {c['name'] for c in inspect(engine).get_columns('student_payments')}
     def index_names(): return {ix['name'] for ix in inspect(engine).get_indexes('student_payments')}
     assert {'carried_from_payment_id','carried_out_at'} <= cols()
-    assert {'idx_student_payments_carried_from','uq_student_payments_active_dup'} <= index_names()
+    assert 'idx_student_payments_carried_from' in index_names() and 'uq_student_payments_active_dup' not in index_names()   # PAY-2 dropped the old guard
     with engine.begin() as c:
         c.execute(text(row(':p','450000','NULL')),params)
         c.execute(text(row(':p2','450001','NULL',vf='2026-10-06')),params)
@@ -222,8 +222,6 @@ def _check_n13_p21_objects(engine,config,ids):
         c.execute(text("UPDATE student_payments SET carried_out_at='2026-10-20 10:00:00' WHERE id=:p"),params)
     bad={
         'unknown source payment':row('gen_random_uuid()','0','gen_random_uuid()',vf='2026-10-21'),
-        'duplicate carry-over of the same source':row('gen_random_uuid()','0',':p',vf='2026-10-20'),
-        'duplicate ordinary payment':row('gen_random_uuid()','450000','NULL'),
     }
     for name,sql in bad.items():
         with pytest.raises(IntegrityError,match='.'):
@@ -1179,3 +1177,122 @@ def _check_ux2_payroll_rates_objects(engine,config,ids):
     with engine.begin() as c:        # leave nothing behind for the checks that may follow
         c.execute(text('DELETE FROM payroll_rates'))
         c.execute(text('DELETE FROM payroll_sheets'))
+
+
+def _check_pay2_objects(engine,config,ids):
+    """PAY-2: payments become money.  Old-model data (a payment with a period, a carry-over copy made by a transfer, a voided
+    payment, a lessons package) is converted: nothing is lost, the carry-over copy becomes ``legacy_carry`` and a
+    ``membership_transfers`` link, the accounting start is set; the new guards work; the downgrade gives every payment a period."""
+    import json
+    from datetime import date,datetime
+    from sqlalchemy.exc import IntegrityError
+    from src.models.auth import User,Organization,Group,StudentGroup
+    user,org2,group_b,member_b=uuid4(),uuid4(),uuid4(),uuid4()
+    with Session(engine) as db:
+        db.add(User(id=user,email=f'{user}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='A',role='owner'))
+        db.add(Organization(id=org2,name='PAY-2 second centre',status='active',settings={'payments':{'period_mode':'lessons','lessons_per_payment':8}})); db.flush()
+        db.add(Group(id=group_b,org_id=ids['org'],name='PAY-2 group B',class_level=9)); db.flush()
+        db.add(StudentGroup(id=member_b,student_id=ids['student'],group_id=group_b)); db.commit()
+    with engine.begin() as c:        # the earlier checks leave payments behind: start from none
+        c.execute(text('DELETE FROM student_payment_files'))
+        c.execute(text('UPDATE student_payments SET carried_from_payment_id=NULL, replaces_payment_id=NULL'))
+        c.execute(text('DELETE FROM student_payments'))
+    command.downgrade(config,PAYROLL_RATES)
+    cols={c['name'] for c in inspect(engine).get_columns('student_payments')}
+    assert not ({'method','kind','idempotency_key'} & cols) and not ({'student_writeoffs','student_refunds','membership_transfers','payment_receipt_snapshots'} & set(inspect(engine).get_table_names()))
+    orig,carry,voided,pkg,cal2=uuid4(),uuid4(),uuid4(),uuid4(),uuid4()
+    moved=datetime(2026,10,11,5,0,0)
+    ins=("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,valid_from,valid_to,lessons_count,"
+         "carried_from_payment_id,carried_out_at,created_by,voided_at,voided_by,void_reason,receipt_no) "
+         "VALUES (:id,:o,:m,:s,:g,:amount,:paid,:vf,:vt,:lc,:cf,:co,:u,:va,:vb,:vr,:rn)")
+    def pay(**kw):
+        base={'o':ids['org'],'m':ids['membership'],'s':ids['student'],'g':ids['group'],'amount':0,'paid':date(2026,9,20),'vf':date(2026,9,15),
+              'vt':date(2026,10,14),'lc':None,'cf':None,'co':None,'u':user,'va':None,'vb':None,'vr':None,'rn':None}
+        base.update(kw)
+        with engine.begin() as c:
+            c.execute(text(ins),base)
+    pay(id=orig,amount=500000,co=moved,rn=1)                                                    # moved with the student on 11.10
+    pay(id=carry,m=member_b,g=group_b,amount=0,paid=date(2026,10,11),vf=date(2026,10,12),vt=date(2026,11,14),cf=orig)   # its copy in B
+    pay(id=voided,amount=100000,paid=date(2026,9,1),vf=date(2026,9,1),vt=date(2026,9,30),va=datetime(2026,9,2),vb=user,vr='ошибка',rn=2)
+    pay(id=pkg,amount=600000,paid=date(2026,9,25),vf=date(2026,9,25),vt=None,lc=12,rn=3)
+    pay(id=cal2,amount=250000,paid=date(2026,10,5),vf=date(2026,10,5),vt=date(2026,11,4),rn=4)  # the same membership, a second period
+    with engine.begin() as c:        # the first upgrade of this chain stored the date of that day: forget it
+        c.execute(text("UPDATE organizations SET settings = settings #- '{payments,accounting_start_date}'"))
+    with engine.connect() as c:
+        money_before=c.execute(text('SELECT coalesce(sum(amount),0) FROM student_payments WHERE voided_at IS NULL AND org_id=:o'),{'o':ids['org']}).scalar_one()
+    assert money_before==1350000
+    command.upgrade(config,'head')
+    with engine.connect() as c:
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+        assert c.execute(text('SELECT coalesce(sum(amount),0) FROM student_payments WHERE voided_at IS NULL AND org_id=:o'),{'o':ids['org']}).scalar_one()==money_before
+        kinds=dict(c.execute(text('SELECT id,kind FROM student_payments')).fetchall())
+        assert kinds[carry]=='legacy_carry' and {kinds[orig],kinds[voided],kinds[pkg],kinds[cal2]}=={'payment'}
+        assert {r[0] for r in c.execute(text('SELECT DISTINCT method FROM student_payments')).fetchall()}=={'unknown'}
+        links=c.execute(text('SELECT from_membership_id,to_membership_id,at,student_id,created_by FROM membership_transfers')).fetchall()
+        assert [(l[0],l[1],l[2],l[3],l[4]) for l in links]==[(ids['membership'],member_b,moved,ids['student'],None)]
+        settings={r[0]:r[1] for r in c.execute(text('SELECT id,settings FROM organizations')).fetchall()}
+        assert settings[ids['org']]['payments']['accounting_start_date']=='2026-09-15'        # the earliest live payment day (the voided 01.09 is ignored)
+        assert settings[org2]['payments']['accounting_start_date']==str(c.execute(text("SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date")).scalar_one())
+        assert settings[org2]['payments']['period_mode']=='lessons'                              # the rest of the settings is kept
+    cols={c['name']:c for c in inspect(engine).get_columns('student_payments')}
+    assert cols['valid_from']['nullable'] and not cols['method']['nullable'] and not cols['kind']['nullable']
+    idx={i['name'] for i in inspect(engine).get_indexes('student_payments')}
+    assert {'ix_sp_org_paid_on','ix_sp_membership_live','uq_student_payments_idempotency'}<=idx
+    assert not ({'uq_student_payments_active_dup','idx_student_payments_org_valid_to'}&idx)
+    assert {'student_writeoffs','student_refunds','membership_transfers','payment_receipt_snapshots'}<=set(inspect(engine).get_table_names())
+    # --- the new rules: a payment without a period; two equal payments on one day are legal; the idempotency key is unique
+    new=dict(o=ids['org'],m=ids['membership'],s=ids['student'],g=ids['group'],u=user,paid=date(2026,10,21))
+    sql=("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,created_by,method,idempotency_key) "
+         "VALUES (:i,:o,:m,:s,:g,:a,:paid,:u,:method,:key)")
+    key=uuid4()
+    with engine.begin() as c:
+        c.execute(text(sql),{**new,'i':uuid4(),'a':300000,'method':'cash','key':key})
+        c.execute(text(sql),{**new,'i':uuid4(),'a':300000,'method':'cash','key':None})
+        c.execute(text(sql),{**new,'i':uuid4(),'a':300000,'method':'cash','key':None})
+    for bad in ({'method':'bitcoin','key':None},{'method':'cash','key':key}):
+        with pytest.raises(IntegrityError):
+            with engine.begin() as c:
+                c.execute(text(sql),{**new,'i':uuid4(),'a':1,**bad})
+    # --- write-offs / refunds / transfers: the guards
+    wo=("INSERT INTO student_writeoffs (id,org_id,membership_id,student_id,group_id,amount,reason,effective_on,created_by) "
+        "VALUES (gen_random_uuid(),:o,:m,:s,:g,:a,:r,'2026-10-21',:u)")
+    rf=("INSERT INTO student_refunds (id,org_id,membership_id,student_id,group_id,amount,method,effective_on,created_by) "
+        "VALUES (gen_random_uuid(),:o,:m,:s,:g,:a,:method,'2026-10-21',:u)")
+    with engine.begin() as c:
+        c.execute(text(wo),{**new,'a':40000,'r':'болезнь'})
+        c.execute(text(rf),{**new,'a':10000,'method':'cash'})
+    for stmt,extra in ((wo,{'a':0,'r':'болезнь'}),(wo,{'a':1,'r':' ab '}),(rf,{'a':1,'method':'unknown'}),(rf,{'a':-5,'method':'cash'})):
+        with pytest.raises(IntegrityError):
+            with engine.begin() as c:
+                c.execute(text(stmt),{**new,**extra})
+    with pytest.raises(IntegrityError):
+        with engine.begin() as c:
+            c.execute(text("INSERT INTO membership_transfers (id,org_id,student_id,from_membership_id,to_membership_id,at) VALUES (gen_random_uuid(),:o,:s,:m,:m,now())"),new)
+    with engine.begin() as c:
+        for action in ('payment_writeoff','payment_writeoff_void','payment_refund','payment_refund_void'):
+            c.execute(text("INSERT INTO group_audit (id,org_id,group_id,actor_id,actor_role,action,snapshot) VALUES (gen_random_uuid(),:o,:g,:u,'owner','"+action+"','{}')"),new)
+    # --- idempotent: again, and the revision again after a stamp
+    command.upgrade(config,'head')
+    command.stamp(config,PAYROLL_RATES)
+    command.upgrade(config,'head')
+    with engine.connect() as c:
+        assert c.execute(text('SELECT count(*) FROM membership_transfers')).scalar_one()==1
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+    # --- downgrade: every payment has a period again, equal payments of one day are voided but one, the new tables go
+    command.downgrade(config,PAYROLL_RATES)
+    with engine.connect() as c:
+        assert not ({'student_writeoffs','student_refunds','membership_transfers','payment_receipt_snapshots'}&set(inspect(engine).get_table_names()))
+        assert c.execute(text('SELECT count(*) FROM student_payments WHERE valid_from IS NULL')).scalar_one()==0
+        live=c.execute(text("SELECT amount,paid_on,valid_from,valid_to,lessons_count FROM student_payments WHERE paid_on='2026-10-21' AND voided_at IS NULL")).fetchall()
+        assert live==[(300000,date(2026,10,21),date(2026,10,21),date(2026,11,20),None)]
+        assert c.execute(text("SELECT count(*) FROM student_payments WHERE void_reason LIKE 'downgrade PAY-2%'")).scalar_one()==2
+        assert c.execute(text("SELECT count(*) FROM group_audit WHERE action LIKE 'payment_%'")).scalar_one()==0
+    with pytest.raises(IntegrityError):
+        with engine.begin() as c:
+            c.execute(text("INSERT INTO group_audit (id,org_id,group_id,actor_id,actor_role,action,snapshot) VALUES (gen_random_uuid(),:o,:g,:u,'owner','payment_refund','{}')"),new)
+    command.upgrade(config,'head')
+    with engine.begin() as c:        # leave nothing behind for the checks that may follow
+        c.execute(text('DELETE FROM payment_receipt_snapshots'))
+        c.execute(text('DELETE FROM student_refunds')); c.execute(text('DELETE FROM student_writeoffs')); c.execute(text('DELETE FROM membership_transfers'))
+        c.execute(text('UPDATE student_payments SET carried_from_payment_id=NULL, replaces_payment_id=NULL'))
+        c.execute(text('DELETE FROM student_payments'))
