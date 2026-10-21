@@ -8,6 +8,7 @@
     "refunded": 324000,
     "net_received": 1216000,
     "refunded_from_received": 324000,
+    "transferred_from_received": 0,
     "to_past_debt": 269000,
     "to_current": 926000,
     "to_advance": 21000,

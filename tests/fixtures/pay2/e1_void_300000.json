@@ -82,6 +82,7 @@
           }
         ],
         "refunded": 0,
+        "transferred": 0,
         "net": 231000
       },
       "note": null,

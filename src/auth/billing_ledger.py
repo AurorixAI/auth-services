@@ -241,7 +241,8 @@ class Ledger:
     segments: Tuple[Segment, ...]
     allocations: Tuple[Allocation, ...]
     net_money: Dict[str, int]  # credit id -> amount after refunds / transfers out
-    refunded_from: Dict[str, int]  # credit id -> amount taken off it by outflows
+    refunded_from: Dict[str, int]  # credit id -> amount taken off it by REFUNDS
+    transferred_from: Dict[str, int]  # credit id -> amount taken off it by transfers out
     charged: int
     paid: int  # payments, gross
     transferred_in: int
@@ -359,14 +360,16 @@ def apply_outflows(credits: Sequence[Credit], outflows: Sequence[Outflow]):
     """Every outflow takes money off the NEWEST money credits dated on or before it (LIFO); write-offs never come back."""
     net = {c.id: c.amount for c in credits}
     refunded_from: Dict[str, int] = {c.id: 0 for c in credits}
+    transferred_from: Dict[str, int] = {c.id: 0 for c in credits}
     money = sorted((c for c in credits if c.kind != WRITEOFF), key=_credit_key)
     exceeds = False
     for out in sorted(outflows, key=_credit_key):
         need = out.amount
+        cut = refunded_from if out.kind == REFUND else transferred_from
         for c in reversed([c for c in money if c.on <= out.on]):
             take = min(need, net[c.id])
             net[c.id] -= take
-            refunded_from[c.id] += take
+            cut[c.id] += take
             need -= take
             if need == 0:
                 break
@@ -374,12 +377,12 @@ def apply_outflows(credits: Sequence[Credit], outflows: Sequence[Outflow]):
             for c in reversed(money):
                 take = min(need, net[c.id])
                 net[c.id] -= take
-                refunded_from[c.id] += take
+                cut[c.id] += take
                 need -= take
                 if need == 0:
                     break
             exceeds = True
-    return net, refunded_from, exceeds
+    return net, refunded_from, transferred_from, exceeds
 
 
 # ================================================================================================================
@@ -580,7 +583,7 @@ class _Gen:
             price = pkg_price.amount if pos else p_now
             budget = self.total_credit - so_far - sum(costs)
             spent, i = 0, pos + 1
-            while price is not None and len(costs) - held < MAX_VIRTUAL_LESSONS and spent <= budget:
+            while price and len(costs) - held < MAX_VIRTUAL_LESSONS and spent <= budget:   # a free group has no virtual lessons
                 cost = price * i // size - price * (i - 1) // size
                 costs.append(cost)
                 spent += cost
@@ -627,7 +630,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     flags: set = set()
     floor = max(inp.accounting_start, inp.first_billable_floor or date.min)
     credits = sorted(inp.credits, key=_credit_key)
-    net, refunded_from, exceeds = apply_outflows(credits, inp.outflows)
+    net, refunded_from, transferred_from, exceeds = apply_outflows(credits, inp.outflows)
     if exceeds:
         flags.add(F_OUTFLOW_EXCEEDS)
     total_credit = sum(net.values())
@@ -865,7 +868,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
 
     ledger = Ledger(
         mode=mode, segments=tuple(segments), allocations=tuple(allocations), net_money=net,
-        refunded_from=refunded_from, charged=charged, paid=paid, transferred_in=transferred_in, written_off=written_off,
+        refunded_from=refunded_from, transferred_from=transferred_from, charged=charged, paid=paid, transferred_in=transferred_in, written_off=written_off,
         refunded=refunded, transferred_out=transferred_out, debt=debt, past_debt=past_debt, current_due=current_due,
         advance=advance, refundable=refundable, partial_credit=partial_credit, covered_through=through,
         covered_days_total=covered_prefix, first_billable=first_billable, unpriced_from=gen.unpriced_from,
@@ -877,7 +880,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
 def _status(inp: LedgerInput, mode: str, has_event: bool, open_now: bool, through: Optional[date],
             lessons: Optional[LessonsView], price_today: Optional[int]) -> ps.StatusResult:
     today = inp.today
-    if price_today == 0 and not has_event:
+    if price_today == 0 and (not has_event or mode == LESSONS):
         return ps.StatusResult(status=ps.FREE, period_mode=mode)
     if not has_event or not open_now:
         return ps.StatusResult(status=ps.NONE, period_mode=mode)

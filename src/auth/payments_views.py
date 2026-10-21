@@ -56,8 +56,9 @@ def allocations_of(ledger: bl.Ledger, credit_id: str) -> List[Allocation]:
 def payment_allocation(ledger: bl.Ledger, payment_id: str) -> PaymentAllocationOut:
     items = allocations_of(ledger, payment_id)
     refunded = ledger.refunded_from.get(payment_id, 0)
+    moved = ledger.transferred_from.get(payment_id, 0)
     net = ledger.net_money.get(payment_id, 0)
-    return PaymentAllocationOut(items=items, refunded=refunded, net=net)
+    return PaymentAllocationOut(items=items, refunded=refunded, transferred=moved, net=net)
 
 
 def allocation_summary(before: bl.Ledger, after: bl.Ledger, credit_id: str) -> AllocationSummary:

@@ -37,6 +37,7 @@
         }
       ],
       "refunded": 0,
+      "transferred": 0,
       "net": 300000
     },
     "note": "за октябрь",
@@ -152,6 +153,7 @@
           }
         ],
         "refunded": 0,
+        "transferred": 0,
         "net": 300000
       },
       "note": "за октябрь",

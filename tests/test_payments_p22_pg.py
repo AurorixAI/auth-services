@@ -588,7 +588,7 @@ def test_receipt_content(world):
     body = r.json()
     snapshot = {k: body.pop(k) for k in ("mode", "allocations", "debt_before", "debt_after", "advance_after",
                                          "paid_until_before", "paid_until_after", "price_snapshot", "valid_from", "valid_to")}
-    assert snapshot["mode"] == "calendar" and snapshot["valid_from"] is None and snapshot["valid_to"] is None
+    assert snapshot["mode"] == "calendar"                   # (valid_from / valid_to: the shim, covered by the golden receipt)
     assert snapshot["allocations"] and sum(a["amount"] for a in snapshot["allocations"]) == 1_250_000
     assert snapshot["debt_after"] == 0 and snapshot["advance_after"] >= 0
     assert body == {

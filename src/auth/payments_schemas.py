@@ -141,8 +141,9 @@ class PaymentAllocationOut(PayModel):
     """The CURRENT (factual) distribution of a payment, ``PaymentOut.allocation``."""
 
     items: List[Allocation] = Field(default_factory=list)
-    refunded: int = 0  # how much of the payment went back to the student / to another group (LIFO)
-    net: int = 0  # amount - refunded
+    refunded: int = 0  # how much of the payment went back to the student (refunds, LIFO)
+    transferred: int = 0  # how much of it travelled to another group of the student (transfers out, LIFO)
+    net: int = 0  # amount - refunded - transferred
 
 
 class AllocationSummary(PayModel):
@@ -625,7 +626,8 @@ class ReceiptOut(BaseModel):
     amount_words: str
     currency: str
     paid_on: date
-    # LEGACY (receipts of payments entered before PAY-2); null on a new one.
+    # LEGACY (receipts of payments entered before PAY-2); on a new one the SHIM of ``PaymentOut`` for one release (first
+    # period reached / paid until) - the new front reads ``allocations`` instead.
     valid_from: Optional[date] = None
     valid_to: Optional[date] = None
     lessons_count: Optional[int] = None
@@ -894,7 +896,8 @@ class ReceiptsTotals(PayModel):
     received: int = 0  # money payments entered in the range (transfers are not receipts)
     refunded: int = 0  # refunds dated in the range
     net_received: int = 0  # received - refunded
-    refunded_from_received: int = 0  # the part of ALL refunds that was taken off the payments of the range (LIFO)
+    refunded_from_received: int = 0  # the part of the REFUNDS that was taken off the payments of the range (LIFO)
+    transferred_from_received: int = 0  # the part of the TRANSFERS OUT (money that moved to another group) taken off them
     to_past_debt: int = 0  # net distribution of the range's payments by bucket (relative to each payment's date)
     to_current: int = 0
     to_advance: int = 0

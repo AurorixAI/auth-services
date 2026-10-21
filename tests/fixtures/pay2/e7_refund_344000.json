@@ -83,6 +83,7 @@
           }
         ],
         "refunded": 344000,
+        "transferred": 0,
         "net": 446000
       },
       "note": "аванс",

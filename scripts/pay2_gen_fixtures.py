@@ -428,8 +428,8 @@ def e1_create_replace_void(store):
     write("e1_receipt_300000.json", ReceiptOut(
         receipt_no=18, org_name="ALGO Math Center", org_city="Ташкент", org_phone="+998901234567",
         student_name="Хасанов Азиз", display_id="N13-004", group_name="Математика 7А", amount=300_000,
-        amount_words="Триста тысяч сум", currency="UZS", paid_on=TODAY, valid_from=None, valid_to=None,
-        lessons_count=None, partial_period=False, method="cash", mode="calendar", allocations=allocs,
+        amount_words="Триста тысяч сум", currency="UZS", paid_on=TODAY, valid_from=D(2026, 9, 15),
+        valid_to=t["through"], lessons_count=None, partial_period=False, method="cash", mode="calendar", allocations=allocs,
         debt_before=769_000, debt_after=469_000, advance_after=0, paid_until_before=t0["through"],
         paid_until_after=t["through"], price_snapshot=SnapshotPrice(amount=500_000, source="group"),
         note="за октябрь", accepted_by_name="Рустам Каримов", created_at="2026-10-21T09:12:00", voided_at=None,
@@ -890,7 +890,7 @@ def report(store):
     assert round_1000(500_000 * 14, 31) == 226_000
     assert 550_000 - 226_000 == 324_000
     totals_ = dict(received=1_540_000, refunded=324_000, net_received=1_216_000, refunded_from_received=324_000,
-                   to_past_debt=269_000, to_current=926_000, to_advance=21_000, written_off=30_000, payments_count=3)
+                   transferred_from_received=0, to_past_debt=269_000, to_current=926_000, to_advance=21_000, written_off=30_000, payments_count=3)
     assert totals_["to_past_debt"] + totals_["to_current"] + totals_["to_advance"] + totals_["refunded_from_received"] \
         == totals_["received"]
     charged = 1_000_000 + 600_000 + 226_000

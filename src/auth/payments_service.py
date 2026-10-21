@@ -1507,10 +1507,14 @@ class PaymentService:
         )
         users = self._users([payment.created_by])
         snap = self.db.query(PaymentReceiptSnapshot.snapshot).filter(PaymentReceiptSnapshot.payment_id == payment.id).scalar()
-        extra: Dict[str, Any] = {}
+        extra: Dict[str, Any] = {"valid_from": payment.valid_from, "valid_to": payment.valid_to}   # legacy receipts
         if isinstance(snap, dict):
             parsed = ReceiptSnapshot.model_validate(snap)
-            extra = dict(
+            moved = [x for x in parsed.allocations if x.segment_id != bl.ADVANCE_SEGMENT]
+            extra.update(
+                # the shim for the old front (one release): the first period the money reached and "paid until"
+                valid_from=payment.valid_from or (min(x.period_from for x in moved) if moved else None),
+                valid_to=payment.valid_to or parsed.paid_until_after,
                 mode=parsed.mode, allocations=parsed.allocations, debt_before=parsed.debt_before,
                 debt_after=parsed.debt_after, advance_after=parsed.advance_after,
                 paid_until_before=parsed.paid_until_before, paid_until_after=parsed.paid_until_after,
@@ -1527,8 +1531,6 @@ class PaymentService:
             amount_words=amount_words(int(payment.amount)),
             currency=payment.currency,
             paid_on=payment.paid_on,
-            valid_from=payment.valid_from,
-            valid_to=payment.valid_to,
             lessons_count=payment.lessons_count,
             partial_period=bool(payment.partial_period),
             method=payment.method or "unknown",

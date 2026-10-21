@@ -654,3 +654,28 @@ def test_the_dry_run_impact_reports_the_advance_too(world, fixed_today):
     impact = r.json()["impact"]
     assert impact["advance_delta"] < 0 and impact["refundable_delta"] < 0 and impact["memberships_with_changed_advance"] == 1
     assert impact["debt_delta"] >= 0
+
+
+def test_receipts_report_position_follows_the_filters_and_transfers_are_split_from_refunds(world, fixed_today):
+    m1, m2, m3 = report_world(world)
+    c = owner(world)
+    whole = c.get(f"{API}/org/payments/receipts", params={"from": "2026-10-01", "to": "2026-10-31"}).json()
+    only_g2 = c.get(f"{API}/org/payments/receipts", params={"from": "2026-10-01", "to": "2026-10-31", "group_id": str(m2.group_id)}).json()
+    assert only_g2["position"]["debt_total"] == 70_000 and only_g2["position"]["advance_total"] == 0
+    assert whole["position"]["advance_total"] == 21_000 and only_g2["totals"]["received"] == 200_000
+    assert whole["totals"]["refunded_from_received"] == 324_000 and whole["totals"]["transferred_from_received"] == 0
+    assert whole["reconciliation"]["ok"] and only_g2["reconciliation"]["ok"]
+
+
+def test_the_statement_export_never_makes_a_formula(world, fixed_today):
+    import io
+    from openpyxl import load_workbook
+
+    m = e1_world(world)
+    post_payment(world, m, amount=1000, note="=HYPERLINK(\"http://evil\")")
+    r = owner(world).get(f"{API}/org/memberships/{m.id}/statement/export", params={"format": "xlsx"})
+    ws = load_workbook(io.BytesIO(r.content)).active
+    cells = [c for row in ws.iter_rows() for c in row if isinstance(c.value, str) and c.value.startswith("=")]
+    assert all(c.data_type == "s" for c in cells)
+    r = owner(world).get(f"{API}/org/memberships/{m.id}/statement/export", params={"format": "csv"})
+    assert not any(part.strip().startswith("=") for line in r.text.splitlines() for part in line.split(";"))

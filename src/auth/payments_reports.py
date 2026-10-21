@@ -217,12 +217,17 @@ class PaymentsReports:
         if fmt == "csv":
             buf = io.StringIO()
             writer = csv.writer(buf, delimiter=";")
+
+            def safe(row):
+                # a spreadsheet would run a cell that starts with = + - @ : prefix it with an apostrophe
+                return [("'" + v) if isinstance(v, str) and v[:1] in ("=", "+", "-", "@") else v for v in row]
+
             for line in top:
-                writer.writerow(line)
+                writer.writerow(safe(line))
             writer.writerow([])
             writer.writerow(header)
             for line in body:
-                writer.writerow(line)
+                writer.writerow(safe(line))
             return ("﻿" + buf.getvalue()).encode("utf-8"), "text/csv; charset=utf-8", base + ".csv"
         from openpyxl import Workbook
         from openpyxl.styles import Font
@@ -230,14 +235,20 @@ class PaymentsReports:
         wb = Workbook()
         ws = wb.active
         ws.title = "Выписка"
-        for line in top:
+        def put(line):
             ws.append(line)
+            for cell in ws[ws.max_row]:
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"          # text stays text: a student's note starting with "=" is never a formula
+
+        for line in top:
+            put(line)
         ws.append([])
-        ws.append(header)
+        put(header)
         for cell in ws[ws.max_row]:
             cell.font = Font(bold=True)
         for line in body:
-            ws.append(line)
+            put(line)
         for col, width in zip("ABCDEFGH", (6, 12, 34, 14, 18, 22, 14, 70)):
             ws.column_dimensions[col].width = width
         out = io.BytesIO()
@@ -329,11 +340,12 @@ class PaymentsReports:
                 for k, v in fields.items():
                     target[k] += v
 
-        allocated = refunded_from = 0
+        allocated = refunded_from = transferred_from = 0
         for p, group in payments:
             entry = entries.get(p.membership_id)
             split = self._split(entry.ledger, str(p.id)) if entry else {bl.PAST_DEBT: 0, bl.CURRENT: 0, bl.ADVANCE: 0}
             cut = entry.ledger.refunded_from.get(str(p.id), 0) if entry else 0
+            moved = entry.ledger.transferred_from.get(str(p.id), 0) if entry else 0
             amount = int(p.amount)
             totals["received"] += amount
             totals["payments_count"] += 1
@@ -341,6 +353,7 @@ class PaymentsReports:
                 totals[column] += split[bucket]
             allocated += sum(split.values())
             refunded_from += cut
+            transferred_from += moved
             by_method[p.method or "unknown"][0] += amount
             by_method[p.method or "unknown"][1] += 1
             add(group, p.paid_on, received=amount, count=1, to_past_debt=split[bl.PAST_DEBT], to_current=split[bl.CURRENT],
@@ -353,23 +366,28 @@ class PaymentsReports:
             totals["refunded"] += int(r.amount)
             add(group, r.effective_on, refunded=int(r.amount))
         totals["refunded_from_received"] = refunded_from
+        totals["transferred_from_received"] = transferred_from
         totals["net_received"] = totals["received"] - totals["refunded"]
 
-        ledgers = [e.ledger for e in entries.values()]
+        ledgers = [e.ledger for e in entries.values()]          # the books of the whole centre (integrity checks below)
+        # the position follows the filters of the report: the group / the teacher of the membership
+        shown = [e for e in entries.values()
+                 if (not group_id or e.group.id == group_id) and (not teacher_id or e.group.teacher_id == teacher_id)]
         position = ReceiptsPosition(
-            debt_total=sum(l.debt for l in ledgers), past_debt_total=sum(l.past_debt for l in ledgers),
-            advance_total=sum(l.advance for l in ledgers), memberships_with_debt=sum(1 for l in ledgers if l.debt > 0),
-            students_with_debt=len({e.student.id for e in entries.values() if e.ledger.debt > 0}),
-            memberships_with_advance=sum(1 for l in ledgers if l.advance > 0))
+            debt_total=sum(e.ledger.debt for e in shown), past_debt_total=sum(e.ledger.past_debt for e in shown),
+            advance_total=sum(e.ledger.advance for e in shown), memberships_with_debt=sum(1 for e in shown if e.ledger.debt > 0),
+            students_with_debt=len({e.student.id for e in shown if e.ledger.debt > 0}),
+            memberships_with_advance=sum(1 for e in shown if e.ledger.advance > 0))
         checks = [
             ReconciliationCheck(code="received_eq_allocated_plus_refunded", left=totals["received"],
-                                right=allocated + refunded_from, diff=totals["received"] - allocated - refunded_from),
+                                right=allocated + refunded_from + transferred_from,
+                                diff=totals["received"] - allocated - refunded_from - transferred_from),
             ReconciliationCheck(
                 code="charged_minus_paid_eq_debt_minus_advance",
                 left=sum(l.charged - l.paid - l.transferred_in - l.written_off + l.refunded + l.transferred_out for l in ledgers),
-                right=position.debt_total - position.advance_total,
+                right=sum(l.debt - l.advance for l in ledgers),
                 diff=sum(l.charged - l.paid - l.transferred_in - l.written_off + l.refunded + l.transferred_out for l in ledgers)
-                - (position.debt_total - position.advance_total)),
+                - sum(l.debt - l.advance for l in ledgers)),
             ReconciliationCheck(code="transfers_net_zero", left=sum(l.transferred_out for l in ledgers),
                                 right=sum(l.transferred_in for l in ledgers),
                                 diff=sum(l.transferred_out for l in ledgers) - sum(l.transferred_in for l in ledgers)),

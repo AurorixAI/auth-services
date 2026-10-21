@@ -2,21 +2,40 @@
   "components": {
     "schemas": {
       "AccountingStartImpact": {
+        "description": "What moving the start of the accounting does (all centre-wide, today): new debts AND changes of the advance / of what\ncan be refunded (an earlier start charges more, so advances shrink).",
         "properties": {
+          "advance_delta": {
+            "default": 0,
+            "title": "Advance Delta",
+            "type": "integer"
+          },
           "debt_delta": {
             "default": 0,
             "title": "Debt Delta",
+            "type": "integer"
+          },
+          "memberships_with_changed_advance": {
+            "default": 0,
+            "title": "Memberships With Changed Advance",
             "type": "integer"
           },
           "memberships_with_new_debt": {
             "default": 0,
             "title": "Memberships With New Debt",
             "type": "integer"
+          },
+          "refundable_delta": {
+            "default": 0,
+            "title": "Refundable Delta",
+            "type": "integer"
           }
         },
         "required": [
           "memberships_with_new_debt",
-          "debt_delta"
+          "debt_delta",
+          "memberships_with_changed_advance",
+          "advance_delta",
+          "refundable_delta"
         ],
         "title": "AccountingStartImpact",
         "type": "object"
@@ -725,11 +744,17 @@
             "default": 0,
             "title": "Refunded",
             "type": "integer"
+          },
+          "transferred": {
+            "default": 0,
+            "title": "Transferred",
+            "type": "integer"
           }
         },
         "required": [
           "items",
           "refunded",
+          "transferred",
           "net"
         ],
         "title": "PaymentAllocationOut",
@@ -3294,6 +3319,11 @@
             "title": "To Past Debt",
             "type": "integer"
           },
+          "transferred_from_received": {
+            "default": 0,
+            "title": "Transferred From Received",
+            "type": "integer"
+          },
           "written_off": {
             "default": 0,
             "title": "Written Off",
@@ -3305,6 +3335,7 @@
           "refunded",
           "net_received",
           "refunded_from_received",
+          "transferred_from_received",
           "to_past_debt",
           "to_current",
           "to_advance",

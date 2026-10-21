@@ -114,7 +114,7 @@ def test_invariants_hold_on_random_accounts(chunk):
         # I1 - per credit: the pieces are the net, the net + what went out is the amount
         for c in inp.credits:
             assert sum(a.amount for a in by_credit.get(c.id, [])) == l.net_money[c.id], ctx
-            assert l.net_money[c.id] + l.refunded_from[c.id] == c.amount, ctx
+            assert l.net_money[c.id] + l.refunded_from[c.id] + l.transferred_from[c.id] == c.amount, ctx
             assert all(a.bucket in (bl.PAST_DEBT, bl.CURRENT, bl.ADVANCE) and a.amount > 0 for a in by_credit.get(c.id, [])), ctx
         # I2
         assert l.reconciles, ctx
@@ -241,6 +241,6 @@ def test_i3_and_i7_over_a_centre_of_transfers_and_payments():
         allocated = sum(al.amount for al in la.allocations if al.credit_id == "pa")
         total_received += pay
         total_distributed += allocated
-        total_refunded_from += la.refunded_from["pa"]
+        total_refunded_from += la.refunded_from["pa"] + la.transferred_from["pa"]
     assert out_sum == in_sum
     assert total_received == total_distributed + total_refunded_from

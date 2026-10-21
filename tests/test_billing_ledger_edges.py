@@ -396,3 +396,21 @@ def test_coverage_records_for_the_excuse_deadline():
     (rec,) = bl.coverage_records(l)
     assert rec.lessons_count == 12 and rec.valid_to is None
     assert bl.coverage_records(bl.run_ledger(replace(e1(), credits=()))) == []
+
+
+def test_a_free_group_in_lessons_mode_is_free_and_builds_no_virtual_lessons():
+    counted = [bl.CountedLesson(D(2026, 10, 1) + timedelta(days=i), f"l{i}") for i in range(3)]
+    inp = make(today=D(2026, 10, 20), stays=[bl.Stay(D(2026, 9, 1))], price_at=flat(0), counted=counted,
+               regimes=[bl.Regime(mode=bl.LESSONS, package_size=12)])
+    l = bl.run_ledger(inp)
+    assert l.status.status == ps.FREE and l.debt == 0 and l.charged == 0
+    assert l.lessons is not None and l.lessons.covered == 3 and all(l.lessons.paid_flags)   # nothing but the held lessons
+    l = bl.run_ledger(replace(inp, credits=(credit("p", D(2026, 10, 2), 100_000),)))
+    assert l.status.status == ps.FREE and l.lessons.covered == 3
+
+
+def test_refunds_and_transfers_out_are_cut_separately():
+    l = bl.run_ledger(make(today=D(2026, 10, 25), stays=[bl.Stay(D(2026, 9, 1), D(2026, 9, 30))], price_at=flat(100_000),
+                           credits=[credit("a", D(2026, 9, 1), 300_000)],
+                           outflows=[outflow("r", D(2026, 10, 1), 50_000), outflow("t", D(2026, 10, 2), 30_000, bl.TRANSFER_OUT, minutes=1)]))
+    assert (l.refunded_from["a"], l.transferred_from["a"], l.net_money["a"]) == (50_000, 30_000, 220_000)

@@ -184,7 +184,7 @@ def centre_check(session: Session, org_id: str, today: date) -> Dict[str, Any]:
         ids = {str(p.id) for p in e.payments if p.amount and p.amount > 0}
         paid += sum(int(p.amount) for p in e.payments if p.amount and p.amount > 0)
         net = sum(v for k, v in l.net_money.items() if k in ids)
-        cut = sum(v for k, v in l.refunded_from.items() if k in ids)
+        cut = sum(v for k, v in l.refunded_from.items() if k in ids) + sum(v for k, v in l.transferred_from.items() if k in ids)
         distributed_plus_cut += net + cut
         out += l.transferred_out
         back += l.transferred_in

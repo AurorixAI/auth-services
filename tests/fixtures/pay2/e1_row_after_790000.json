@@ -75,6 +75,7 @@
         }
       ],
       "refunded": 0,
+      "transferred": 0,
       "net": 790000
     },
     "note": "аванс",
