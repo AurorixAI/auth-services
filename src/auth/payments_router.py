@@ -23,12 +23,13 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from src.core.database import get_db
 
-from . import pricing
+from . import payments_group_prices, pricing
 from .dependencies import require_payments_access, require_payments_settings
 from .payments_files import MAX_BODY_BYTES, MAX_FILE_BYTES, file_headers
 from .payments_schemas import (
     MAX_MONEY,
     GroupPriceChanged,
+    GroupPriceList,
     GroupPricesOut,
     GroupPriceUpdate,
     MembershipPaymentRow,
@@ -140,6 +141,15 @@ def set_membership_fee_gone(membership_id: UUID, user: dict = Depends(require_pa
 
 
 # ---- group price and individual price (ROADMAP #105) ------------------------------------------------
+
+
+@router.get("/org/group-prices", response_model=GroupPriceList)
+def group_price_list(user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
+    """Страница «Оплаты → Цены групп»: все НЕ архивные группы центра (архивные не показываются) — название, учитель,
+    вид занятий (``kind``), цена на сегодня (``current``, null — не задана), ближайшая запланированная
+    (``scheduled`` с ``row_id`` для отмены; ``scheduled_count`` — сколько их всего) и сколько активных учеников с
+    индивидуальной ценой на сегодня. Четыре запроса на любое число групп. Только денежные роли."""
+    return payments_group_prices.list_group_prices(db, user["org_id"])
 
 
 @router.get("/org/groups/{group_id}/prices", response_model=GroupPricesOut)

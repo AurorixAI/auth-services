@@ -229,6 +229,38 @@ class GroupPricesOut(BaseModel):
     cancelled: List[GroupPriceCancelled] = Field(default_factory=list)  # the last 20 scheduled prices taken back, newest first
 
 
+class GroupPriceCurrentLite(BaseModel):
+    amount: int
+    valid_from: date_type
+
+
+class GroupPriceListScheduled(BaseModel):
+    row_id: str  # for DELETE /org/groups/{group_id}/prices/{row_id}
+    amount: int
+    valid_from: date_type
+
+
+class GroupPriceListItem(BaseModel):
+    group_id: str
+    name: str
+    teacher_id: Optional[str] = None
+    teacher_name: Optional[str] = None
+    kind: str  # Group.lesson_type: group | mini_group | pair | individual
+    current: Optional[GroupPriceCurrentLite] = None  # null - the price is not set
+    scheduled: Optional[GroupPriceListScheduled] = None  # the NEXT scheduled price (valid_from after today)
+    scheduled_count: int = 0  # how many scheduled prices the group has (the next one is shown)
+    students_with_override: int = 0  # active students with an individual price in force today
+
+
+class GroupPriceList(BaseModel):
+    """``GET /org/group-prices``: the prices of every non-archived group of the centre."""
+
+    as_of: str  # the business today (Tashkent)
+    period_mode: PeriodMode
+    price_label: str  # «Оплата в месяц» (calendar) | «Стоимость пакета» (lessons)
+    items: List[GroupPriceListItem] = Field(default_factory=list)  # by name
+
+
 class PriceImpactSheet(BaseModel):
     sheet_id: str
     month: str
