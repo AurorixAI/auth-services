@@ -830,6 +830,11 @@ class PricingService:
             )
         return [r[0] for r in query.all()]
 
+    def _lock_memberships(self, ids: Sequence[UUID]) -> None:
+        """a row lock (``key_share``, as ``_lock_family``) on the memberships, ascending id (the order of ``PaymentService._lock_family``)."""
+        if ids:
+            self.db.query(StudentGroup.id).filter(StudentGroup.id.in_(list(ids))).order_by(StudentGroup.id).with_for_update(key_share=True).all()
+
     def money_impact(
         self, org_id: str, ids: Sequence[UUID], *, what_if, valid_from: date, today: date,
     ) -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
@@ -929,8 +934,11 @@ class PricingService:
             group = self._group(org_id, group_id, lock=not dry_run)
             impact = self.impact(org_id, group, amount, valid_from, today, owner_view=owner_view)
             book = load_books(self.db, [group.id], []).group_book(group.id).with_step(valid_from, amount)
+            money_ids = self._money_ids(org_id, group_id=group.id)
+            if not dry_run:       # m4: the family locks (the memberships of the group, ascending id - the order every money write takes) BEFORE the what-if
+                self._lock_memberships(money_ids)
             money, blocked = self.money_impact(
-                org_id, self._money_ids(org_id, group_id=group.id), valid_from=valid_from, today=today,
+                org_id, money_ids, valid_from=valid_from, today=today,
                 what_if=lambda books: books.with_group_books({group.id: book}))
             impact["money"] = money
             self._refuse_backdate(blocked)          # LOGIC-A: a backdated price that rewrites charged periods with money in them

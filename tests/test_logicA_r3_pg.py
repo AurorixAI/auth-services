@@ -176,3 +176,31 @@ def test_m3_leave_answers_409_when_postgresql_finds_a_deadlock(world, monkeypatc
     world.db.expire_all()
     assert world.db.query(StudentGroup).filter_by(student_id=s0.id, group_id=world.group.id, is_active=True).count() == 1       # nothing was written
     assert owner(world).post(f"{API}/org/groups/{world.group.id}/students/{s0.id}/leave", json={}).status_code == 200            # the retry works
+
+
+# ---- m4: a group price takes the family locks (memberships of the group, ascending id) before the money what-if -----------------------------
+
+
+def test_m4_group_price_locks_the_memberships_in_id_order_before_the_what_if(world, fixed_today):
+    from sqlalchemy import event
+
+    give_group_price(world.db, world.group, 500_000, valid_from=D(2026, 1, 1))
+    for s in world.students[:2]:
+        m = membership(world, s)
+        stay(world, m, D(2026, 10, 1))
+        seed_payment(world, m, 100_000, D(2026, 10, 1))
+    statements = []
+    engine = world.db.get_bind()
+
+    def spy(conn, cursor, statement, params, context, executemany):
+        statements.append(" ".join(statement.split()))
+
+    event.listen(engine, "before_cursor_execute", spy)
+    try:
+        r = owner(world).put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 600_000, "valid_from": "2026-10-21"})
+    finally:
+        event.remove(engine, "before_cursor_execute", spy)
+    assert r.status_code == 200, r.text
+    lock = next(i for i, q in enumerate(statements) if "FROM student_groups" in q and "ORDER BY student_groups.id FOR NO KEY UPDATE" in q)
+    ledger = next(i for i, q in enumerate(statements) if q.startswith("SELECT student_payments."))
+    assert lock < ledger, "the locks come before the ledger is read for the what-if"
