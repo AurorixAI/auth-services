@@ -105,6 +105,40 @@ class LessonTypeService:
         if valid_from > today or valid_from < lowest:
             raise LessonTypeRange("Тип занятий можно менять с начала прошлого месяца по сегодня")
 
+    def _write(self, org_id, group: Group, rows, valid_from: date, lesson_type: str, was: str, actor_id: str, actor_role: str, today: date) -> None:
+        """One history row (valid_from, type), the mirror ``groups.lesson_type`` and the audit row - in the caller's transaction (no commit)."""
+        existing = next((r for r in rows if r.valid_from == valid_from), None)
+        if existing is not None:
+            existing.lesson_type, existing.created_by = lesson_type, UUID(str(actor_id))
+        else:
+            self.db.add(GroupLessonTypeHistory(group_id=group.id, valid_from=valid_from, lesson_type=lesson_type, created_by=UUID(str(actor_id))))
+        self.db.flush()
+        group.lesson_type = type_today(self.db, group, today)       # the mirror
+        self.db.add(GroupAudit(
+            org_id=UUID(str(org_id)), group_id=group.id, actor_id=UUID(str(actor_id)),
+            actor_role=actor_role if actor_role in ("owner", "admin", "teacher", "superadmin") else "admin",
+            action=AUDIT_LESSON_TYPE_SET, snapshot={
+                "actor_id": str(actor_id), "group_id": str(group.id), "lesson_type": lesson_type,
+                "valid_from": valid_from.isoformat(), "was": was}))
+
+    def patch_type(self, org_id: str, group: Group, lesson_type: str, actor_id: str, actor_role: str = "admin") -> bool:
+        """``PATCH /org/groups/{id}`` with a new ``lesson_type`` (B1): the change is a history row effective the business TODAY (other dates:
+        only ``PUT …/lesson-type``), written in the caller's transaction (no commit) together with the audit row.  The type of the
+        history is the one that counts - a bare ``groups.lesson_type`` write would be ignored by payroll.  Returns whether a row was written."""
+        today = ps.business_today()
+        self.db.refresh(group, with_for_update=True)                  # the same lock as ``put``
+        rows = history_of(self.db, group.id)
+        if not rows:  # a group made after the migration: its history starts with its own (old) type
+            self.db.add(GroupLessonTypeHistory(group_id=group.id, valid_from=SEED_DAY, lesson_type=group.lesson_type or "group"))
+            self.db.flush()
+            rows = history_of(self.db, group.id)
+        effective = next((r for r in reversed(rows) if r.valid_from <= today), rows[0])
+        if effective.lesson_type == lesson_type:
+            group.lesson_type = lesson_type
+            return False
+        self._write(org_id, group, rows, today, lesson_type, effective.lesson_type, actor_id, actor_role, today)
+        return True
+
     def put(
         self, org_id: str, group_id: UUID, actor_id: str, body: LessonTypePut, *, dry_run: bool = False, owner: bool = False,
         actor_role: str = "admin",
@@ -132,20 +166,7 @@ class LessonTypeService:
                 changed = PayrollService(self.db).sheets_changed_by_lesson_type(org_id, group, after_rows, valid_from)
                 impact = LessonTypeImpact(stale_payroll_sheets=len(changed), stale_sheets=[
                     LessonTypeSheet(sheet_id=c["sheet_id"], month=c["month"], teacher_name=c["teacher_name"]) for c in changed])
-            existing = next((r for r in rows if r.valid_from == valid_from), None)
-            if existing is not None:
-                existing.lesson_type, existing.created_by = body.lesson_type, UUID(str(actor_id))
-            else:
-                self.db.add(GroupLessonTypeHistory(group_id=group.id, valid_from=valid_from, lesson_type=body.lesson_type,
-                                                   created_by=UUID(str(actor_id))))
-            self.db.flush()
-            group.lesson_type = type_today(self.db, group, today)       # the mirror
-            self.db.add(GroupAudit(
-                org_id=UUID(str(org_id)), group_id=group.id, actor_id=UUID(str(actor_id)),
-                actor_role=actor_role if actor_role in ("owner", "admin", "teacher", "superadmin") else "admin",
-                action=AUDIT_LESSON_TYPE_SET, snapshot={
-                    "actor_id": str(actor_id), "group_id": str(group.id), "lesson_type": body.lesson_type,
-                    "valid_from": valid_from.isoformat(), "was": effective.lesson_type}))
+            self._write(org_id, group, rows, valid_from, body.lesson_type, effective.lesson_type, actor_id, actor_role, today)
             out = self._out(group, today, impact=impact, dry_run=dry_run)
             if dry_run:
                 self.db.rollback()
