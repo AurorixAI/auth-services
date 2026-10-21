@@ -30,7 +30,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, or_
+from sqlalchemy import event, func, or_
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, defer
 from sqlalchemy.orm.attributes import flag_modified
@@ -40,11 +40,14 @@ from src.models.auth import (
     Group,
     GroupAttendance,
     GroupAudit,
+    GroupPrice,
+    MembershipPriceOverride,
     MembershipTransfer,
     Organization,
     PaymentReceiptSnapshot,
     Student,
     StudentGroup,
+    StudentGroupPeriod,
     StudentPayment,
     StudentPaymentFile,
     StudentRefund,
@@ -135,6 +138,42 @@ def invalidate_summary(org_id: Any = None) -> None:
         _SUMMARY_CACHE.clear()
     else:
         _SUMMARY_CACHE.pop(str(org_id), None)
+
+
+# Every write that can change a ledger drops the cached summary - ONE hook on the session instead of a call in every write
+# path: a flush (or a bulk update / delete) that touches prices, memberships and their stays, money records, transfers, the
+# journal (lessons), excuses, the students / groups or the organisation (settings) marks the session; the commit that follows
+# forgets the cache of all centres (cheap; the summary is rebuilt on the next ask).
+_LEDGER_MODELS = (
+    GroupPrice, MembershipPriceOverride, StudentGroup, StudentGroupPeriod, StudentPayment, StudentWriteoff, StudentRefund,
+    MembershipTransfer, GroupAttendance, AttendanceExcuse, Student, Group, Organization,
+)
+_DIRTY_FLAG = "payments_summary_dirty"
+
+
+@event.listens_for(Session, "after_flush")
+def _mark_ledger_writes(session, flush_context):
+    if any(isinstance(o, _LEDGER_MODELS) for group in (session.new, session.dirty, session.deleted) for o in group):
+        session.info[_DIRTY_FLAG] = True
+
+
+@event.listens_for(Session, "after_bulk_update")
+@event.listens_for(Session, "after_bulk_delete")
+def _mark_ledger_bulk_writes(context):
+    mapper = getattr(context, "mapper", None)
+    if mapper is not None and issubclass(mapper.class_, _LEDGER_MODELS):
+        context.session.info[_DIRTY_FLAG] = True
+
+
+@event.listens_for(Session, "after_commit")
+def _forget_summary_after_commit(session):
+    if session.info.pop(_DIRTY_FLAG, False):
+        _SUMMARY_CACHE.clear()
+
+
+@event.listens_for(Session, "after_rollback")
+def _forget_mark_after_rollback(session):
+    session.info.pop(_DIRTY_FLAG, None)
 
 
 # ============================================================================
@@ -588,7 +627,7 @@ class PaymentService:
     def summary(self, org_id: str) -> PaymentsSummary:
         if SUMMARY_TTL_SECONDS > 0:
             hit = _SUMMARY_CACHE.get(str(org_id))
-            if hit and hit[0] > time.monotonic():
+            if hit and hit[0] > time.monotonic() and hit[1].as_of == ps.business_today().isoformat():
                 return hit[1]
         loader = self._loader(org_id)
         tracked = set(loader.select(scope="tracked"))

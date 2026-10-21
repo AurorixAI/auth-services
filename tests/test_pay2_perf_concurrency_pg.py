@@ -233,3 +233,54 @@ def test_timing_at_1500_memberships(world, monkeypatch):
             assert c.get(API + url, params=params).status_code == 200
             samples.append(time.perf_counter() - started)
         print(f"TIMING {name}: min {min(samples):.2f}s max {max(samples):.2f}s")
+
+
+def test_the_cached_summary_is_dropped_by_every_write_that_can_change_a_ledger(world, monkeypatch):
+    """A price (group / individual), a membership change, a stay, the settings, a journal row - each shows in the summary at once."""
+    import src.auth.payments_service as svc
+    from src.models.auth import GroupAttendance, MembershipPriceOverride
+
+    monkeypatch.setattr(svc, "SUMMARY_TTL_SECONDS", 300.0)
+    svc.invalidate_summary()
+    monkeypatch.setattr(ps, "business_today", lambda tz=None: D(2026, 10, 21))
+    settings_block(world, accounting_start_date="2026-09-01")
+    give_group_price(world.db, world.group, 500_000, valid_from=D(2026, 1, 1))
+    for s in world.students:
+        stay(world, membership(world, s), D(2026, 9, 15))
+    c = owner(world)
+
+    def debt():
+        return c.get(f"{API}/org/payments/summary").json()["debt_total"]
+
+    base = debt()
+    assert base == 3 * 1_000_000 and debt() == base                          # cached now
+    # a group price change through the API
+    assert c.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 600_000, "valid_from": "2026-01-02"}).status_code == 200
+    assert debt() == 3 * 1_200_000
+    # an individual price through the API
+    m0 = membership(world, world.students[0])
+    assert c.put(f"{API}/org/memberships/{m0.id}/price-override", json={"amount": 100_000, "reason": "льгота", "valid_from": "2026-01-01"}).status_code == 200
+    assert debt() == 2 * 1_200_000 + 200_000
+    # a membership added (a new student in the group)
+    extra = make_student(world.db, world.org, world.group, "Новый", "Ученик", "P2-NEW")
+    world.db.commit()
+    stay(world, membership(world, extra), D(2026, 9, 15))
+    assert debt() == 2 * 1_200_000 + 200_000 + 1_200_000
+    after_add = debt()
+    # the student leaves (a bulk UPDATE of his stay, no flush of objects)
+    from src.models.auth import StudentGroupPeriod
+
+    world.db.query(StudentGroupPeriod).filter_by(membership_id=membership(world, extra).id).update(
+        {"left_at": datetime(2026, 9, 20, 6)})
+    world.db.commit()
+    assert debt() < after_add
+    # the settings
+    before = debt()
+    assert c.put(f"{API}/org/settings/payments", json={"accounting_start_date": "2026-10-01"}).status_code == 200
+    assert debt() < before
+    # a rolled-back write changes nothing in the cache
+    cached = debt()
+    world.db.query(MembershipPriceOverride).delete()
+    world.db.rollback()
+    assert debt() == cached
+    svc.invalidate_summary()
