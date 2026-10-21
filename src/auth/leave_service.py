@@ -54,6 +54,7 @@ from .payments_service import (
     ReasonRequired,
     _num,
     _utcnow,
+    deadlock_guard,
     invalidate_summary,
 )
 
@@ -257,6 +258,7 @@ class LeaveService:
 
     # ---- the leaving itself
 
+    @deadlock_guard          # m3: a PostgreSQL deadlock is a 409 «повторите», never a 500
     def leave(
         self, org_id: str, group_id: str, student_id: str, actor_id: str, actor_role: str, body: Optional[LeaveRequest] = None,
         *, money: bool = False,

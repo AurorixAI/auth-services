@@ -150,3 +150,29 @@ def test_m1_overdue_days_do_not_count_the_paused_days(world, fixed_today):
     # paid through 19.10 (informational), paused 20.10-15.11: the first charged unpaid day is 16.11 = today - overdue for one day, not 28
     assert row["paid_until"] == "2026-10-19" and row["debt"] == 281_000
     assert row["days_overdue"] == 1 and row["debt_reason"] == "overdue" and row["reason"] == "Просрочено на 1 день", row
+
+
+# ---- m3: a deadlock on «убрать из группы» is a 409 «повторите», not a 500 --------------------------------------------------------------------
+
+
+def test_m3_leave_answers_409_when_postgresql_finds_a_deadlock(world, monkeypatch):
+    from types import SimpleNamespace
+
+    from sqlalchemy.exc import OperationalError
+
+    from src.models.auth import StudentGroup
+
+    s0 = world.students[0]
+    original = world.db.commit
+
+    def dead():
+        world.db.rollback()
+        raise OperationalError("UPDATE", {}, SimpleNamespace(pgcode="40P01"))
+
+    monkeypatch.setattr(world.db, "commit", dead)
+    r = owner(world).post(f"{API}/org/groups/{world.group.id}/students/{s0.id}/leave", json={})
+    assert r.status_code == 409 and "Повторите" in str(r.json()["detail"]), r.text
+    monkeypatch.setattr(world.db, "commit", original)
+    world.db.expire_all()
+    assert world.db.query(StudentGroup).filter_by(student_id=s0.id, group_id=world.group.id, is_active=True).count() == 1       # nothing was written
+    assert owner(world).post(f"{API}/org/groups/{world.group.id}/students/{s0.id}/leave", json={}).status_code == 200            # the retry works
