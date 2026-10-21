@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
-HEAD='c9d0e1f2a3b'          # excuse decision mark (N13 P4, #39)
+HEAD='d0e1f2a3b4c'          # payroll rates (UX-2)
+EXCUSE='c9d0e1f2a3b'        # excuse decision mark (N13 P4, #39): the revision before the payroll rates
 PRICES='b8c9d0e1f2a'        # group price + individual prices (N13 P4, #105): the revision before the decision mark
 SESSIONS='a7b8c9d0e1f'      # user sessions (N13 tails, #101): the revision before the group price
 PERIODS='z6a7b8c9d0e'       # membership periods (N13 tails, #59): the revision before the sessions
@@ -69,6 +70,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     _check_n13_sessions_objects(engine,config,ids)
     _check_n13_group_price_objects(engine,config,ids)
     _check_n13_excuse_mark_objects(engine,config,ids)
+    _check_ux2_payroll_rates_objects(engine,config,ids)
     # Existing application loggers must survive the in-process Alembic setup.
     import logging
     assert not logging.getLogger('src.api.main_v2').disabled
@@ -1077,3 +1079,100 @@ def _check_n13_excuse_mark_objects(engine,config,ids):
         c.execute(text('DELETE FROM group_attendance WHERE id=:a'),{'a':att})      # CASCADE: leave no excuse behind
     with engine.connect() as c:
         assert c.execute(text('SELECT count(*) FROM attendance_excuses WHERE attendance_id=:a'),{'a':att}).scalar_one()==0
+
+
+def _check_ux2_payroll_rates_objects(engine,config,ids):
+    """UX-2: ``payroll_rates`` - created empty on a database without sheets; the percents of the saved sheets are moved (one row
+    per teacher and kind, and one more for every month in which the percent CHANGED, so every saved month keeps its rate); a
+    value that is not a percent is skipped; another centre's rows stay its own; idempotent (also stamped back); the downgrade
+    drops the table and leaves the sheets."""
+    import json
+    from datetime import date
+    from decimal import Decimal
+    from src.models.auth import User,Organization
+    org2=uuid4()
+    teachers={n:uuid4() for n in 'ABCD'}
+    with Session(engine) as db:
+        db.add(Organization(id=org2,name='Migration second',status='active')); db.flush()
+        for name,uid in teachers.items():
+            db.add(User(id=uid,email=f'{uid}@m.invalid',password_hash='synthetic-only',first_name=name,last_name='T',role='teacher'))
+        db.commit()
+    def tables():
+        return set(inspect(engine).get_table_names())
+    def rates():
+        with engine.connect() as c:
+            return sorted((r.teacher_id,r.lesson_type,r.valid_from,r.percent,r.note,r.created_by,r.org_id) for r in c.execute(text('SELECT org_id,teacher_id,lesson_type,valid_from,percent,note,created_by FROM payroll_rates')))
+    def sheet(org,teacher,month,inputs):
+        with engine.begin() as c:
+            c.execute(text("INSERT INTO payroll_sheets (id,org_id,teacher_id,period_month,percent_inputs,source_fingerprint,created_by,updated_by) "
+                           "VALUES (:i,:o,:t,:m,CAST(:p AS jsonb),'fp',:t,:t)"),{'i':uuid4(),'o':org,'t':teacher,'m':month,'p':json.dumps(inputs)})
+    # --- a database without sheets: the table is created, empty
+    command.downgrade(config,EXCUSE)
+    assert 'payroll_rates' not in tables()
+    with engine.begin() as c:
+        c.execute(text('DELETE FROM payroll_sheets'))
+    command.upgrade(config,'head')
+    assert 'payroll_rates' in tables() and rates()==[]
+    with engine.connect() as c:
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+    cols={c['name']:c for c in inspect(engine).get_columns('payroll_rates')}
+    assert set(cols)=={'id','org_id','teacher_id','lesson_type','percent','valid_from','note','created_by','created_at'}
+    assert not cols['org_id']['nullable'] and not cols['percent']['nullable'] and cols['created_by']['nullable'] and cols['note']['nullable']
+    assert str(cols['percent']['type']).upper().startswith('NUMERIC(5, 2)')
+    assert any(i['column_names']==['org_id','teacher_id','lesson_type','valid_from'] for i in inspect(engine).get_indexes('payroll_rates'))
+    from sqlalchemy.exc import IntegrityError
+    for bad in ("'pair',101,'2026-09-01'","'pair',50,'2026-09-15'","'weird',50,'2026-09-01'"):     # the CHECKs: percent, the 1st of a month, the kind
+        with pytest.raises(IntegrityError):
+            with engine.begin() as c:
+                c.execute(text(f"INSERT INTO payroll_rates (id,org_id,teacher_id,lesson_type,percent,valid_from) VALUES (gen_random_uuid(),:o,:t,{bad})"),{'o':ids['org'],'t':teachers['A']})
+    assert rates()==[]
+    # --- the revision before: sheets with one and with changing percents
+    command.downgrade(config,EXCUSE)
+    a,b,c_,d=teachers['A'],teachers['B'],teachers['C'],teachers['D']
+    sheet(ids['org'],a,date(2026,8,1),{'group':'50'})
+    sheet(ids['org'],a,date(2026,9,1),{'group':'50','individual':'40'})       # group unchanged: no new row
+    sheet(ids['org'],a,date(2026,10,1),{'group':'45','individual':'40'})      # group changed in October
+    sheet(ids['org'],a,date(2026,12,1),{'group':'50'})                         # changed back: a row again (a skipped month keeps 45)
+    sheet(ids['org'],b,date(2026,9,1),{'group':'62.5'})                         # one sheet, one percent
+    sheet(ids['org'],c_,date(2026,9,1),{'group':'abc','pair':'101','weird':'50','individual':'30'})   # only the valid one
+    sheet(org2,d,date(2026,9,1),{'group':'30'})
+    command.upgrade(config,'head')
+    note='перенесено из ведомостей'
+    expected=sorted([
+        (a,'group',date(2026,8,1),Decimal('50'),note,None,ids['org']),
+        (a,'group',date(2026,10,1),Decimal('45'),note,None,ids['org']),
+        (a,'group',date(2026,12,1),Decimal('50'),note,None,ids['org']),
+        (a,'individual',date(2026,9,1),Decimal('40'),note,None,ids['org']),
+        (b,'group',date(2026,9,1),Decimal('62.5'),note,None,ids['org']),
+        (c_,'individual',date(2026,9,1),Decimal('30'),note,None,ids['org']),
+        (d,'group',date(2026,9,1),Decimal('30'),note,None,org2),
+    ])
+    assert rates()==expected
+    # every saved month keeps its own rate: the lookup of the code (the last row not after the month) gives the percent of each sheet
+    def rate_of(teacher,kind,month):
+        with engine.connect() as c:
+            return c.execute(text("SELECT percent FROM payroll_rates WHERE teacher_id=:t AND lesson_type=:k AND valid_from<=:m ORDER BY valid_from DESC,created_at DESC LIMIT 1"),{'t':teacher,'k':kind,'m':month}).scalar()
+    assert [rate_of(a,'group',date(2026,m,1)) for m in (8,9,10,11,12)]==[Decimal('50'),Decimal('50'),Decimal('45'),Decimal('45'),Decimal('50')]
+    assert rate_of(a,'group',date(2026,7,1)) is None and rate_of(b,'group',date(2026,9,1))==Decimal('62.5')
+    # --- idempotent: upgrade again, and the revision again with the table in place (a database built by create_all and stamped back)
+    with engine.begin() as c:
+        c.execute(text("INSERT INTO payroll_rates (id,org_id,teacher_id,lesson_type,percent,valid_from,created_by) VALUES (gen_random_uuid(),:o,:t,'group',55,'2027-01-01',:t)"),{'o':ids['org'],'t':a})
+    command.upgrade(config,'head')
+    assert len(rates())==len(expected)+1
+    command.stamp(config,EXCUSE)
+    command.upgrade(config,'head')
+    assert len(rates())==len(expected)+1
+    with engine.connect() as c:
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
+    # --- downgrade: the table goes, the sheets stay; repeated is harmless; up again moves the sheets once more
+    command.downgrade(config,EXCUSE)
+    assert 'payroll_rates' not in tables()
+    command.downgrade(config,EXCUSE)
+    with engine.connect() as c:
+        assert c.execute(text('SELECT count(*) FROM payroll_sheets WHERE teacher_id=:t'),{'t':a}).scalar_one()==4
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==EXCUSE
+    command.upgrade(config,'head')
+    assert rates()==expected
+    with engine.begin() as c:        # leave nothing behind for the checks that may follow
+        c.execute(text('DELETE FROM payroll_rates'))
+        c.execute(text('DELETE FROM payroll_sheets'))

@@ -1398,3 +1398,35 @@ class PayrollSheetRevision(Base):
         UniqueConstraint("sheet_id", "revision", name="uq_payroll_sheet_revision"),
         CheckConstraint("revision >= 1", name="ck_payroll_sheet_revisions_revision"),
     )
+
+
+class PayrollRate(Base):
+    """Ставка преподавателя (UX-2): процент по виду занятий и месяц, с которого он действует.
+
+    Ставка на месяц *M* - строка с наибольшим ``valid_from <= 1-е число M`` (при равных ``valid_from`` - более
+    поздняя ``created_at``); строки нет - «ставка не задана».  ``valid_from`` - всегда 1-е число месяца.
+    Только добавление: строки не правятся и не удаляются, история ставок - это сами строки.  ``created_by`` пуст
+    у строк, которые создала миграция (перенос процентов из сохранённых ведомостей, ``note`` говорит об этом).
+    Ведомость месяца читает ставку отсюда; сохранённая ведомость - снимок и не меняется сама.
+    """
+
+    __tablename__ = "payroll_rates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    teacher_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    lesson_type = Column(String(16), nullable=False)
+    percent = Column(Numeric(5, 2), nullable=False)
+    valid_from = Column(Date, nullable=False)
+    note = Column(String(300), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+    __table_args__ = (
+        CheckConstraint(
+            "lesson_type IN ('group', 'mini_group', 'pair', 'individual')", name="ck_payroll_rates_lesson_type"
+        ),
+        CheckConstraint("percent >= 0 AND percent <= 100", name="ck_payroll_rates_percent"),
+        CheckConstraint("EXTRACT(DAY FROM valid_from) = 1", name="ck_payroll_rates_first_day"),
+        Index("idx_payroll_rates_lookup", "org_id", "teacher_id", "lesson_type", "valid_from"),
+    )
