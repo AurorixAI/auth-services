@@ -23,13 +23,18 @@ from .payroll_schemas import (
     MonthOverview,
     PayrollSettings,
     PayrollSettingsUpdate,
+    RateHistoryRow,
+    RatePut,
+    RatesResponse,
     RevisionOut,
     SheetBrief,
     SheetCreate,
     SheetDiff,
     SheetOut,
     SheetPatch,
+    TeacherRates,
 )
+from .payroll_rates_service import RatesService
 from .payroll_service import PayrollError, PayrollService
 
 router = APIRouter(prefix="/auth", tags=["Payroll"])
@@ -71,6 +76,45 @@ def update_payroll_settings(
 ):
     try:
         return PayrollService(db).update_settings(user["org_id"], user["user_id"], request.divisor)
+    except PayrollError as exc:
+        raise _http(exc)
+
+
+# ---- rates (UX-2) -----------------------------------------------------------------
+
+
+@router.get("/org/payroll/rates", response_model=RatesResponse)
+def list_rates(
+    month: Optional[str] = Query(None, max_length=7),
+    user: dict = Depends(require_payroll_owner),
+    db: Session = Depends(get_db),
+):
+    """Ставки преподавателей на месяц (по умолчанию текущий): по каждому виду занятий — действующая и ближайшая будущая."""
+    try:
+        return RatesService(db).list_rates(user["org_id"], month)
+    except PayrollError as exc:
+        raise _http(exc)
+
+
+@router.put("/org/payroll/rates/{teacher_id}", response_model=TeacherRates)
+def put_rates(
+    teacher_id: UUID,
+    request: RatePut,
+    user: dict = Depends(require_payroll_owner),
+    db: Session = Depends(get_db),
+):
+    """Задать ставки преподавателя с месяца ``valid_from`` (ГГГГ-ММ); возвращает его строку списка на текущий месяц."""
+    try:
+        return RatesService(db).put_rates(user["org_id"], user["user_id"], teacher_id, request)
+    except PayrollError as exc:
+        raise _http(exc)
+
+
+@router.get("/org/payroll/rates/{teacher_id}/history", response_model=list[RateHistoryRow])
+def rates_history(teacher_id: UUID, user: dict = Depends(require_payroll_owner), db: Session = Depends(get_db)):
+    """Все строки ставок преподавателя, новые выше."""
+    try:
+        return RatesService(db).history(user["org_id"], teacher_id)
     except PayrollError as exc:
         raise _http(exc)
 

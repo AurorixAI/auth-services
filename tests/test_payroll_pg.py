@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import event
 
 from src.models.auth import (
-    AttendanceExcuse, Group, GroupAttendance, GroupAudit, Organization, PayrollSheet, PayrollSheetRevision,
+    AttendanceExcuse, Group, GroupAttendance, GroupAudit, Organization, PayrollRate, PayrollSheet, PayrollSheetRevision,
     Student, StudentGroup, StudentPayment,
 )
 
@@ -116,8 +116,33 @@ def pct(w, value="50", lesson_type="group", teacher=None):
     return {"teacher_id": str((teacher or w.teacher).id), "lesson_type": lesson_type, "percent": value}
 
 
+EPOCH_MONTH = date(2020, 1, 1)
+
+
+def set_rate(w, teacher, lesson_type="group", percent="50", valid_from=EPOCH_MONTH, by=None):
+    """A row of ``payroll_rates`` (UX-2): the percent of the teacher from a month (default: always)."""
+    w.db.add(PayrollRate(
+        org_id=w.org.id, teacher_id=teacher.id, lesson_type=lesson_type, percent=Decimal(str(percent)),
+        valid_from=valid_from, created_by=(by or w.owner).id,
+    ))
+    w.db.commit()
+
+
+def seed_rates(w, percents):
+    """The tests of the release before sent ``percents`` with every request; now they are rates: set the ones that
+    are not in force yet (from always)."""
+    for item in percents or ():
+        teacher = w.teacher if item.get("teacher_id") == str(w.teacher.id) else w.teacher2
+        w.db.expire_all()
+        now = w.db.query(PayrollRate).filter_by(org_id=w.org.id, teacher_id=teacher.id, lesson_type=item["lesson_type"],
+                                                valid_from=EPOCH_MONTH).order_by(PayrollRate.created_at.desc()).first()
+        if now is None or now.percent != Decimal(str(item["percent"])):
+            set_rate(w, teacher, item["lesson_type"], item["percent"])
+
+
 def calc(w, m, percents=None, teacher_ids=None, expect=200, client=None):
-    body = {"percents": percents if percents is not None else [pct(w)]}
+    seed_rates(w, percents if percents is not None else [pct(w)])
+    body = {}
     if teacher_ids is not None:
         body["teacher_ids"] = teacher_ids
     r = (client or owner(w)).post(f"{API}/org/payroll/months/{m.label}/calculate", json=body)
@@ -135,7 +160,8 @@ def preview(w, m, teacher=None, value="50"):
 
 def save(w, m, teacher=None, percents=None, expect=201, **extra):
     teacher = teacher or w.teacher
-    body = {"month": m.label, "teacher_id": str(teacher.id), "percents": percents or [pct(w, teacher=teacher)], **extra}
+    seed_rates(w, percents or [pct(w, teacher=teacher)])
+    body = {"month": m.label, "teacher_id": str(teacher.id), **extra}
     r = owner(w).post(f"{API}/org/payroll/sheets", json=body)
     assert r.status_code == expect, r.text
     return r.json()
@@ -352,7 +378,8 @@ def test_lines_per_group_and_the_kind_of_lessons_set_the_percent(world):
     pay_calendar(world, s0, m.first, m.last)
     pay_calendar(world, s0, m.first, m.last, group=second, fee=600_000)
     # both kinds need a percent: one missing is refused and says which
-    r = owner(world).post(f"{API}/org/payroll/months/{m.label}/calculate", json={"percents": [pct(world)]})
+    set_rate(world, world.teacher, "group", "50")
+    r = owner(world).post(f"{API}/org/payroll/months/{m.label}/calculate", json={})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "PERCENT_REQUIRED"
     (missing,) = r.json()["detail"]["missing"]
     assert missing["lesson_type"] == "pair" and missing["teacher_id"] == str(world.teacher.id) and missing["lesson_type_label"] == "Парный"
@@ -537,10 +564,12 @@ def test_no_fee_gives_zero_and_a_warning(world):
     zero = line_of(sheet, s0)
     assert zero["monthly_fee"] is None and zero["amount"] == 0 and [w["code"] for w in zero["warnings"]] == ["NO_FEE"]
     assert sheet["warnings"]["no_fee"] == 1 and teacher_row(overview(world, m), world.teacher)["warnings"]["no_fee"] == 1
-    saved = save(world, m, line_overrides=[{"membership_id": zero["membership_id"], "monthly_fee": 300_000}])
+    # the price is set where prices live (the card of the student), never on the sheet (UX-2)
+    set_fee(world, s0, 300_000)
+    saved = save(world, m)
     fixed = line_of(saved, s0)
-    assert fixed["monthly_fee"] == 300_000 and fixed["source_fee"] is None and fixed["fee_overridden"] is True
-    assert fixed["amount"] == 300_000 * 50 * 3 // 1200 and fixed["warnings"] == []
+    assert fixed["monthly_fee"] == 300_000 and fixed["source_fee"] == 300_000 and fixed["fee_overridden"] is False
+    assert fixed["price_source"] == "override" and fixed["amount"] == 300_000 * 50 * 3 // 1200 and fixed["warnings"] == []
 
 
 # ============================================================================================
@@ -696,24 +725,21 @@ def test_percent_is_required_before_anything_is_calculated_or_saved(world):
     m = previous_month()
     full_month(world, m, days=range(1, 4))
     c = owner(world)
-    r = c.post(f"{API}/org/payroll/months/{m.label}/calculate", json={"percents": []})
+    r = c.post(f"{API}/org/payroll/months/{m.label}/calculate", json={})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "PERCENT_REQUIRED"
-    r = c.post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), "percents": []})
+    assert r.json()["detail"]["message"] == "Не задана ставка преподавателя: укажите её в «Сотрудниках»"
+    r = c.post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id)})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "PERCENT_REQUIRED"
+    assert r.json()["detail"]["message"] == "Не задана ставка преподавателя: укажите её в «Сотрудниках»"
     assert world.db.query(PayrollSheet).filter_by(org_id=world.org.id).count() == 0
-    for bad in ("101", "-1", "12.345", "abc", None, True):
-        r = c.post(f"{API}/org/payroll/months/{m.label}/calculate", json={"percents": [pct(world, bad)]})
-        assert r.status_code == 422, bad
-    # a number or a decimal string, either form of the list
-    for value in (50, 50.5, "50.5", "50,5"):
-        assert calc(world, m, [pct(world, value)])["sheets"][0]["percents"]["group"] in ("50", "50.5")
-    both = c.post(f"{API}/org/payroll/months/{m.label}/calculate", json={"percents": [pct(world), pct(world, "60")]})
-    assert both.status_code == 422                                           # the same pair twice
+    # the percents of the request (the front of the release before) are ignored - they do not make a rate
+    r = c.post(f"{API}/org/payroll/months/{m.label}/calculate", json={"percents": [pct(world)]})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PERCENT_REQUIRED"
     # a teacher without lessons needs no percent and gets an empty sheet
     empty = calc(world, m, [], teacher_ids=[str(world.teacher2.id)])
     assert empty["sheets"][0]["lines"] == [] and empty["sheets"][0]["total_amount"] == 0
     assert c.post(f"{API}/org/payroll/months/{m.label}/calculate",
-                  json={"percents": [], "teacher_ids": [str(uuid4())]}).status_code == 404
+                  json={"teacher_ids": [str(uuid4())]}).status_code == 404
 
 
 def test_calculate_writes_nothing(world):
@@ -734,22 +760,23 @@ def test_save_edit_history_and_conflicts(world):
     assert first["revision"] == 1 and first["saved"] and first["note"] == "Первый расчёт"
     sid = first["id"]
     # a second POST without the revision is a conflict (and so is a stale one) - nothing is overwritten
-    r = owner(world).post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), "percents": [pct(world)]})
+    r = owner(world).post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id)})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_REVISION_CONFLICT" and r.json()["detail"]["current_revision"] == 1
-    r = owner(world).post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), "percents": [pct(world)], "revision": 7})
+    r = owner(world).post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), "revision": 7})
     assert r.status_code == 409
-    # a fee, a percent: new revisions computed from the saved lines
+    # a note, a new rate, a tick: new revisions (the rate is read again only by "recalculate")
     line = line_of(first, s0)
-    second = patch(world, first, line_overrides=[{"membership_id": line["membership_id"], "monthly_fee": 300_000}], note="Скидка")
-    assert second["revision"] == 2 and line_of(second, s0)["amount"] == 300_000 * 50 * 6 // 1200 and line_of(second, s0)["fee_overridden"]
-    assert second["total_amount"] == sum(x["amount"] for x in second["lines"])
-    third = patch(world, second, percents=[pct(world, "60")])
-    assert third["revision"] == 3 and third["percents"] == {"group": "60"}
-    assert line_of(third, s0)["amount"] == 300_000 * 60 * 6 // 1200 and line_of(third, s0)["monthly_fee"] == 300_000   # the override stays
-    back = patch(world, third, line_overrides=[{"membership_id": line["membership_id"], "monthly_fee": None}])
-    assert line_of(back, s0)["monthly_fee"] == FEE and line_of(back, s0)["fee_overridden"] is False and back["revision"] == 4
+    second = patch(world, first, note="Скидка")
+    assert second["revision"] == 2 and line_of(second, s0)["amount"] == FEE * 50 * 6 // 1200 and second["total_amount"] == first["total_amount"]
+    set_rate(world, world.teacher, "group", "60", valid_from=m.first)
+    assert owner(world).get(f"{API}/org/payroll/sheets/{sid}").json()["stale"] is True            # the rate of the month moved
+    third = patch(world, second, recalculate=True)
+    assert third["revision"] == 3 and third["percents"] == {"group": "60"} and third["stale"] is False
+    assert line_of(third, s0)["amount"] == FEE * 60 * 6 // 1200
+    back = patch(world, third, line_overrides=[{"membership_id": line["membership_id"], "include_unpaid": True}])
+    assert back["revision"] == 4 and back["percents"] == {"group": "60"} and line_of(back, s0)["include_unpaid"] is True
     # the revision protects against somebody else's change: a stale revision is a 409 and changes nothing
-    r = owner(world).patch(f"{API}/org/payroll/sheets/{sid}", json={"revision": 2, "percents": [pct(world, "10")]})
+    r = owner(world).patch(f"{API}/org/payroll/sheets/{sid}", json={"revision": 2, "note": "x"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_REVISION_CONFLICT" and r.json()["detail"]["current_revision"] == 4
     assert owner(world).get(f"{API}/org/payroll/sheets/{sid}").json()["percents"] == {"group": "60"}
     # history: newest first, with the author, the note and the total of each revision
@@ -760,14 +787,16 @@ def test_save_edit_history_and_conflicts(world):
     assert [h["line_count"] for h in history] == [3, 3, 3, 3]
     assert history[0]["changed_by"] == str(world.owner.id) and history[0]["changed_by_name"] == "Иван Owner" and history[0]["changed_at"]
     assert world.db.query(PayrollSheetRevision).filter_by(sheet_id=sid).count() == 4
-    # nothing to change is not a revision
+    # nothing to change is not a revision (the percents of the body are ignored, so they are nothing either)
     r = owner(world).patch(f"{API}/org/payroll/sheets/{sid}", json={"revision": 4})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "NOTHING_TO_CHANGE"
-    # unknown line / kind of lessons
-    r = owner(world).patch(f"{API}/org/payroll/sheets/{sid}", json={"revision": 4, "line_overrides": [{"membership_id": str(uuid4()), "monthly_fee": 1}]})
+    r = owner(world).patch(f"{API}/org/payroll/sheets/{sid}", json={"revision": 4, "percents": [pct(world, "10")]})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "NOTHING_TO_CHANGE"
+    # unknown line; the price is not edited on a sheet
+    r = owner(world).patch(f"{API}/org/payroll/sheets/{sid}", json={"revision": 4, "line_overrides": [{"membership_id": str(uuid4()), "include_unpaid": True}]})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "LINE_NOT_FOUND"
-    r = owner(world).patch(f"{API}/org/payroll/sheets/{sid}", json={"revision": 4, "percents": [pct(world, "10", "pair")]})
-    assert r.status_code == 422 and r.json()["detail"]["code"] == "LESSON_TYPE_NOT_IN_SHEET"
+    r = owner(world).patch(f"{API}/org/payroll/sheets/{sid}", json={"revision": 4, "line_overrides": [{"membership_id": line["membership_id"], "monthly_fee": 1}]})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PRICE_NOT_EDITABLE"
     assert owner(world).get(f"{API}/org/payroll/sheets/{sid}").json()["revision"] == 4
     # the list and the single sheet
     listed = owner(world).get(f"{API}/org/payroll/sheets", params={"month": m.label}).json()
@@ -787,9 +816,10 @@ def test_a_failed_first_save_leaves_nothing_behind_and_a_lost_race_is_a_409(worl
     def boom(self, *a, **k):
         raise IntegrityError("insert", {}, Exception("duplicate key value violates unique constraint"))
 
+    set_rate(world, world.teacher)
     with monkeypatch.context() as patched:
         patched.setattr(PayrollService, "_add_revision", boom)
-        r = owner(world).post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), "percents": [pct(world)]})
+        r = owner(world).post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id)})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_REVISION_CONFLICT"
     world.db.expire_all()
     assert world.db.query(PayrollSheet).filter_by(org_id=world.org.id).count() == 0
@@ -844,14 +874,14 @@ def test_a_saved_sheet_never_changes_by_itself_and_the_diff_says_what_would(worl
     assert a["delta_amount"] == FEE * 50 // 1200 and "засчитано" in a["changes"]
     assert b["fresh"]["counted"] == 5 and b["delta_amount"] == -(FEE * 50 // 1200)
     assert diff["delta_amount"] == 0 and diff["fresh_total"] == diff["saved_total"]
-    # the sheet is a snapshot: recalculating is an explicit new revision that keeps the owner's decisions
+    # the sheet is a snapshot: recalculating is an explicit new revision that keeps the owner's ticks
     line = line_of(saved, s2)
-    keep = patch(world, saved, line_overrides=[{"membership_id": line["membership_id"], "monthly_fee": 100_000}])
-    assert keep["stale"] is True and keep["source_fingerprint"] == fp                          # a fee change reads no data
+    keep = patch(world, saved, line_overrides=[{"membership_id": line["membership_id"], "include_unpaid": True}])
+    assert keep["stale"] is True and keep["source_fingerprint"] == fp                          # a tick reads no data
     fresh = patch(world, keep, recalculate=True, note="Пересчёт")
     assert fresh["revision"] == 3 and fresh["stale"] is False and fresh["source_fingerprint"] != fp
     assert line_of(fresh, s0)["counted"] == 7 and line_of(fresh, s1)["counted"] == 5
-    assert line_of(fresh, s2)["monthly_fee"] == 100_000 and line_of(fresh, s2)["fee_overridden"]      # the override survived
+    assert line_of(fresh, s2)["include_unpaid"] is True                                          # the tick survived
     assert owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}/diff").json()["lines"] == []
 
 
@@ -897,17 +927,19 @@ def test_edge_cases_of_percents_overrides_and_missing_data(world, monkeypatch):
     s0, s1, _ = world.students
     full_month(world, m, days=range(1, 4))
     c = owner(world)
-    # a percent that belongs to another teacher is refused, in a save and in an edit
+    # the percents of a request are ignored whatever they hold - another teacher's, an invalid one - and make no rate
     r = c.post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id),
                                                   "percents": [pct(world, teacher=world.teacher2)]})
-    assert r.status_code == 422
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PERCENT_REQUIRED"
     saved = save(world, m)
-    r = c.patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 1, "percents": [pct(world, "9", teacher=world.teacher2)]})
-    assert r.status_code == 422
+    r = c.patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 1, "percents": [pct(world, "9", teacher=world.teacher2)], "note": "n"})
+    assert r.status_code == 200 and r.json()["percents"] == {"group": "50"}
+    saved = r.json()
+    r = c.post(f"{API}/org/payroll/months/{m.label}/calculate", json={"percents": "junk"})
+    assert r.status_code == 200
     # a save for a revision that does not exist yet
     other = previous_month()
-    r = c.post(f"{API}/org/payroll/sheets", json={"month": other.label, "teacher_id": str(world.teacher2.id),
-                                                  "percents": [], "revision": 3})
+    r = c.post(f"{API}/org/payroll/sheets", json={"month": other.label, "teacher_id": str(world.teacher2.id), "revision": 3})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_REVISION_CONFLICT"
     # a recalculation that finds a new kind of lessons needs its percent
     second = make_group(world.db, world.org, world.teacher, "Индивидуальная")
@@ -915,14 +947,15 @@ def test_edge_cases_of_percents_overrides_and_missing_data(world, monkeypatch):
     world.db.add(StudentGroup(student_id=s0.id, group_id=second.id, is_active=True, joined_at=datetime(2020, 1, 1)))
     world.db.commit()
     lesson(world, m.d(5), {s0: "present"}, group=second)
-    r = c.patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 1, "recalculate": True})
+    r = c.patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 2, "recalculate": True})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "PERCENT_REQUIRED"
     assert r.json()["detail"]["missing"][0]["lesson_type"] == "individual"
-    grown = patch(world, saved, recalculate=True, percents=[pct(world, "70", "individual")])
+    set_rate(world, world.teacher, "individual", "70")
+    grown = patch(world, saved, recalculate=True)
     assert grown["percents"] == {"group": "50", "individual": "70"} and len(grown["groups"]) == 2
     # ... and an override for a line the fresh data does not have
     r = c.patch(f"{API}/org/payroll/sheets/{saved['id']}", json={
-        "revision": 2, "recalculate": True, "line_overrides": [{"membership_id": str(uuid4()), "include_unpaid": True}]})
+        "revision": 3, "recalculate": True, "line_overrides": [{"membership_id": str(uuid4()), "include_unpaid": True}]})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "LINE_NOT_FOUND"
     # a student that no longer exists has nobody to take a fee from: the lesson stays, the line is not made
     lesson(world, m.d(6), {s1: "present"})
@@ -969,6 +1002,9 @@ def endpoints(w, sheet_id):
         ("get", f"{API}/org/payroll/sheets/{sheet_id}/revisions", None),
         ("get", f"{API}/org/payroll/sheets/{sheet_id}/diff", None),
         ("get", f"{API}/org/payroll/sheets/{sheet_id}/export.xlsx", None),
+        ("get", f"{API}/org/payroll/rates", None),
+        ("put", f"{API}/org/payroll/rates/{w.teacher.id}", {"valid_from": m.label, "percents": {"group": "50"}}),
+        ("get", f"{API}/org/payroll/rates/{w.teacher.id}/history", None),
     ]
 
 
@@ -1241,6 +1277,8 @@ def build_centre(w, teachers, students_per, lessons=8):
                 w.db.add(StudentPayment(org_id=w.org.id, membership_id=membership.id, student_id=s.id, group_id=group.id,
                                         amount=1, paid_on=m.first, valid_from=m.first, lessons_count=6, created_by=w.owner.id))
         percents.append({"teacher_id": str(teacher.id), "lesson_type": group.lesson_type, "percent": "40"})
+        w.db.add(PayrollRate(org_id=w.org.id, teacher_id=teacher.id, lesson_type=group.lesson_type, percent=Decimal("40"),
+                             valid_from=EPOCH_MONTH, created_by=w.owner.id))
     w.db.commit()
     return m, percents
 
@@ -1249,7 +1287,7 @@ def test_a_month_of_ten_teachers_and_two_hundred_students_costs_a_fixed_number_o
     small_m, small_percents = build_centre(world, 2, 3)
     small_client = owner(world)
     q_small, small = count_queries(world, lambda: small_client.post(
-        f"{API}/org/payroll/months/{small_m.label}/calculate", json={"percents": small_percents}))
+        f"{API}/org/payroll/months/{small_m.label}/calculate", json={}))
     assert small.status_code == 200 and len(small.json()["sheets"]) == 2
     q_overview_small, _ = count_queries(world, lambda: small_client.get(f"{API}/org/payroll/months/{small_m.label}"))
 
@@ -1263,7 +1301,7 @@ def test_a_month_of_ten_teachers_and_two_hundred_students_costs_a_fixed_number_o
     wb = SimpleNamespace(**{**vars(world), "org": org, "owner": owner2})
     m, percents = build_centre(wb, 10, 20)
     client = make_client(wb, user=owner2)
-    q_big, resp = count_queries(world, lambda: client.post(f"{API}/org/payroll/months/{m.label}/calculate", json={"percents": percents}))
+    q_big, resp = count_queries(world, lambda: client.post(f"{API}/org/payroll/months/{m.label}/calculate", json={}))
     assert resp.status_code == 200, resp.text
     sheets = resp.json()["sheets"]
     assert len(sheets) == 10 and sum(len(s["lines"]) for s in sheets) == 200
@@ -1276,7 +1314,7 @@ def test_a_month_of_ten_teachers_and_two_hundred_students_costs_a_fixed_number_o
     # saving one sheet and opening it is bounded as well
     teacher_id = sheets[0]["teacher_id"]
     q_save, saved = count_queries(world, lambda: client.post(f"{API}/org/payroll/sheets", json={
-        "month": m.label, "teacher_id": teacher_id, "percents": [p for p in percents if p["teacher_id"] == teacher_id]}))
+        "month": m.label, "teacher_id": teacher_id}))
     assert saved.status_code == 201 and q_save <= 60, q_save
 
 
@@ -1322,7 +1360,7 @@ def test_simultaneous_edits_with_the_same_revision_have_exactly_one_winner(world
     url = f"{API}/org/payroll/sheets/{saved['id']}"
 
     def edit(n):
-        return new_client().patch(url, json={"revision": 1, "note": f"правка {n}", "percents": [pct(world, str(40 + n))]})
+        return new_client().patch(url, json={"revision": 1, "note": f"правка {n}"})
 
     with ThreadPoolExecutor(6) as pool:
         results = list(pool.map(edit, range(6)))
@@ -1342,8 +1380,9 @@ def test_simultaneous_first_saves_make_one_sheet(world):
 
     m = previous_month()
     full_month(world, m, days=range(1, 4))
+    set_rate(world, world.teacher)
     new_client = threaded_client(world)
-    body = {"month": m.label, "teacher_id": str(world.teacher.id), "percents": [pct(world)]}
+    body = {"month": m.label, "teacher_id": str(world.teacher.id)}
 
     def create(_):
         return new_client().post(f"{API}/org/payroll/sheets", json=body)
@@ -1400,7 +1439,7 @@ def test_save_what_the_owner_saw(world):
     fp = seen["source_fingerprint"]
     lesson(world, m.d(20), {s0: "present"})                                      # the data moves after the preview
     r = owner(world).post(f"{API}/org/payroll/sheets", json={
-        "month": m.label, "teacher_id": str(world.teacher.id), "percents": [pct(world)], "expected_fingerprint": fp})
+        "month": m.label, "teacher_id": str(world.teacher.id), "expected_fingerprint": fp})
     assert r.status_code == 409
     detail = r.json()["detail"]
     assert detail["code"] == "SHEET_DATA_CHANGED" and detail["message"] == "Данные изменились после расчёта — пересчитайте и проверьте суммы"
@@ -1496,24 +1535,21 @@ def test_a_new_revision_by_post_keeps_the_decisions_of_the_last_one(world):
     pay_calendar(world, s1, m.first, m.d(4))
     base = preview(world, m)
     mid0, mid1 = line_of(base, s0)["membership_id"], line_of(base, s1)["membership_id"]
-    first = save(world, m, line_overrides=[{"membership_id": mid0, "monthly_fee": 300_000, "include_unpaid": True},
+    first = save(world, m, line_overrides=[{"membership_id": mid0, "include_unpaid": True},
                                            {"membership_id": mid1, "include_unpaid": True}])
-    assert line_of(first, s0)["fee_overridden"] and line_of(first, s0)["include_unpaid"] and line_of(first, s1)["include_unpaid"]
-    # a plain re-save (the percent changed): the fee overrides and the ticks stay
+    assert line_of(first, s0)["include_unpaid"] and line_of(first, s1)["include_unpaid"]
+    # a plain re-save (the rate of the month changed): the ticks stay
     second = save(world, m, revision=1, percents=[pct(world, "60")])
     a, b = line_of(second, s0), line_of(second, s1)
-    assert (a["monthly_fee"], a["fee_overridden"], a["include_unpaid"]) == (300_000, True, True)
+    assert (a["monthly_fee"], a["fee_overridden"], a["include_unpaid"]) == (FEE, False, True)
     assert (b["monthly_fee"], b["include_unpaid"]) == (FEE, True)
-    assert a["amount"] == 300_000 * 60 * 6 // 1200 and b["amount"] == FEE * 60 * 6 // 1200
+    assert a["amount"] == FEE * 60 * 6 // 1200 and b["amount"] == FEE * 60 * 6 // 1200
     # what the request says wins; a field it leaves out stays
-    third = save(world, m, revision=2, percents=[pct(world, "60")], line_overrides=[
-        {"membership_id": mid0, "monthly_fee": None},                              # null resets the fee ...
-        {"membership_id": mid1, "include_unpaid": False, "monthly_fee": 200_000}])
+    third = save(world, m, revision=2, line_overrides=[{"membership_id": mid1, "include_unpaid": False}])
     a, b = line_of(third, s0), line_of(third, s1)
-    assert (a["monthly_fee"], a["fee_overridden"], a["include_unpaid"]) == (FEE, False, True)            # ... the tick stays
-    assert (b["monthly_fee"], b["fee_overridden"], b["include_unpaid"]) == (200_000, True, False)
-    fourth = save(world, m, revision=3, percents=[pct(world, "60")], line_overrides=[{"membership_id": mid1, "include_unpaid": True}])
-    assert line_of(fourth, s1)["monthly_fee"] == 200_000 and line_of(fourth, s1)["include_unpaid"] is True   # the fee stays
+    assert (a["monthly_fee"], a["include_unpaid"]) == (FEE, True) and (b["monthly_fee"], b["include_unpaid"]) == (FEE, False)
+    fourth = save(world, m, revision=3, line_overrides=[{"membership_id": mid1, "include_unpaid": True}])
+    assert line_of(fourth, s0)["include_unpaid"] is True and line_of(fourth, s1)["include_unpaid"] is True
 
 
 def test_revisions_and_the_month_export_use_a_fixed_number_of_queries(world):

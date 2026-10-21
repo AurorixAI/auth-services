@@ -27,7 +27,7 @@ from tests.test_payments_p22_pg import D, quote, setup_mwf  # noqa: F401
 from tests.test_payments_service_pg import API, day, mid, owner as money_owner, pay, row_of, set_settings
 from tests.test_payroll_pg import (
     count_queries, current_month, lesson, line_of, overview, pay_calendar, preview, previous_month,
-    save as save_sheet, teacher_row, workbook,
+    save as save_sheet, set_rate, teacher_row, workbook,
 )
 
 pytestmark = needs_pg
@@ -405,20 +405,24 @@ def test_lessons_before_the_first_price_have_none_and_the_sheet_says_so(world):
     assert sheet["warnings"]["no_fee"] == 3 and overview(world, m)["teachers"][0]["warnings"]["no_fee"] == 3
 
 
-def test_the_owner_overwrite_on_the_sheet_replaces_the_price_of_every_lesson_and_the_reset_brings_the_history_back(world):
+def test_the_price_of_a_sheet_is_the_price_of_each_lesson_and_cannot_be_overwritten_on_the_sheet(world):
+    """UX-2 (owner decision): the price lives in «Цены групп» and in the card of the student; the sheet has no price of its own."""
     m, (s0, s1, s2) = previous_month(), world.students
     give_group_price(world.db, world.group, 400_000, EPOCH)
     give_group_price(world.db, world.group, 500_000, m.d(15))
     month_lessons(world, m, (10, 12, 15, 17))
     paid_month(world, m)
-    saved = save_sheet(world, m, line_overrides=[{"membership_id": line_of(preview(world, m), s0)["membership_id"], "monthly_fee": 300_000}])
+    mid = line_of(preview(world, m), s0)["membership_id"]
+    r = money_owner(world).post(f"{API}/org/payroll/sheets", json={
+        "month": m.label, "teacher_id": str(world.teacher.id), "line_overrides": [{"membership_id": mid, "monthly_fee": 300_000}]})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PRICE_NOT_EDITABLE"
+    saved = save_sheet(world, m)
     line = line_of(saved, s0)
-    assert line["fee_overridden"] is True and line["monthly_fee"] == 300_000 and line["price_changed"] is False
-    assert line["amount"] == 4 * 300_000 * 50 // 1200
+    assert line["fee_overridden"] is False and line["monthly_fee"] == 500_000 and line["price_changed"] is True
+    assert line["amount"] == 75_000                                                   # 2 lessons at 400 000 + 2 at 500 000
     r = money_owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json={
-        "revision": 1, "line_overrides": [{"membership_id": line["membership_id"], "monthly_fee": None}]})
-    back = line_of(r.json(), s0)
-    assert back["fee_overridden"] is False and back["amount"] == 75_000 and back["price_changed"] is True
+        "revision": 1, "line_overrides": [{"membership_id": mid, "monthly_fee": 300_000}]})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PRICE_NOT_EDITABLE"
 
 
 def test_a_free_period_of_the_price_is_not_unpaid_news(world):
@@ -628,7 +632,7 @@ def build_priced_centre(w, students_per):
             w.db.add(MembershipPriceOverride(membership_id=membership.id, amount=None, valid_from=m.d(12), created_at=datetime.utcnow()))
         w.db.add(StudentPayment(org_id=w.org.id, membership_id=membership.id, student_id=s.id, group_id=group.id, amount=1,
                                 paid_on=m.first, valid_from=m.first, valid_to=m.last, created_by=w.owner.id))
-    w.db.commit()
+    set_rate(w, teacher, "group", "40", by=w.owner)                                  # the percent is a rate (UX-2)
     return m, [{"teacher_id": str(teacher.id), "lesson_type": "group", "percent": "40"}], teacher
 
 

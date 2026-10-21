@@ -1,11 +1,10 @@
 """ALGO - request/response schemas of the payroll API (N13 P3).  snake_case.  Owner only."""
 from __future__ import annotations
 
-from decimal import Decimal
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, BeforeValidator, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from . import payroll_engine as engine
 
@@ -31,50 +30,22 @@ class PayrollSettingsUpdate(BaseModel):
 # ---- requests ---------------------------------------------------------------------
 
 
-class PercentInput(BaseModel):
-    """The percent of a teacher for a kind of lessons.  ``percent`` is a number or a decimal string."""
-
-    teacher_id: Optional[UUID] = None
-    lesson_type: LessonType
-    percent: Decimal
-
-    @field_validator("percent", mode="before")
-    @classmethod
-    def _percent(cls, value: Any) -> Decimal:
-        try:
-            return engine.parse_percent(value)
-        except engine.PercentError as exc:
-            raise ValueError(str(exc)) from exc
-
-
-def _percent_list(value: Any) -> Any:
-    """``{"group": "50"}`` (the form of ``percent_inputs``) is accepted as ``[{lesson_type, percent}]``."""
-    if isinstance(value, dict):
-        return [{"lesson_type": key, "percent": percent} for key, percent in value.items()]
-    return value
-
-
-Percents = Annotated[List[PercentInput], BeforeValidator(_percent_list), Field(max_length=400)]
-
-
-def _no_duplicates(percents: Optional[List[PercentInput]]) -> None:
-    seen = set()
-    for item in percents or ():
-        key = (item.teacher_id, item.lesson_type)
-        if key in seen:
-            raise ValueError("Процент для преподавателя и типа занятий указан дважды")
-        seen.add(key)
+# UX-2: the percent of a teacher is a RATE (``payroll_rates``, set in the card of the teacher).  The old ``percents``
+# field of the requests is still accepted - the front of the release before sends it - but it is IGNORED: whatever it
+# holds (even an invalid value) is not validated and changes nothing.
+Ignored = Optional[Any]
 
 
 class LineOverride(BaseModel):
     """A change of one line (membership) of a sheet.
 
-    ``monthly_fee``: a number sets the fee on the sheet, ``null`` returns to the fee of the membership,
-    absent leaves it as it is.  ``include_unpaid``: absent leaves it as it is.
+    ``include_unpaid``: absent leaves it as it is.  ``monthly_fee``: the price is NOT edited on a sheet any more (UX-2,
+    owner decision) - a number is refused with 422 ``PRICE_NOT_EDITABLE`` (the price comes from «Цены групп» or from
+    the card of the student); ``null`` is accepted and means "no manual price" (drops a manual price of an old sheet).
     """
 
     membership_id: UUID
-    monthly_fee: Optional[int] = Field(None, ge=0, le=MAX_MONEY)
+    monthly_fee: Optional[Any] = None
     include_unpaid: Optional[bool] = None
 
 
@@ -85,15 +56,8 @@ def _unique_memberships(items: Optional[List[LineOverride]]) -> None:
 
 
 class CalculateRequest(BaseModel):
-    percents: Percents = Field(default_factory=list)
+    percents: Ignored = None  # deprecated, ignored: the rates of the month come from ``payroll_rates``
     teacher_ids: Optional[List[UUID]] = Field(None, max_length=500)
-
-    @model_validator(mode="after")
-    def _check(self):
-        _no_duplicates(self.percents)
-        if any(item.teacher_id is None for item in self.percents):
-            raise ValueError("В процентах укажите teacher_id")
-        return self
 
 
 class SheetCreate(BaseModel):
@@ -101,7 +65,7 @@ class SheetCreate(BaseModel):
 
     month: str = Field(..., pattern=r"^\d{4}-\d{2}$")
     teacher_id: UUID
-    percents: Percents = Field(default_factory=list)
+    percents: Ignored = None  # deprecated, ignored: the rates of the month come from ``payroll_rates``
     line_overrides: List[LineOverride] = Field(default_factory=list, max_length=5000)
     note: Optional[str] = Field(None, max_length=MAX_NOTE)
     # The revision the caller saw; required (and must be current) when the sheet already exists.
@@ -111,14 +75,13 @@ class SheetCreate(BaseModel):
 
     @model_validator(mode="after")
     def _check(self):
-        _no_duplicates(self.percents)
         _unique_memberships(self.line_overrides)
         return self
 
 
 class SheetPatch(BaseModel):
     revision: int = Field(..., ge=1)
-    percents: Optional[Percents] = None
+    percents: Ignored = None  # deprecated, ignored: the rates of the month come from ``payroll_rates``
     line_overrides: Optional[List[LineOverride]] = Field(None, max_length=5000)
     recalculate: bool = False
     # With ``recalculate``: the ``source_fingerprint`` of the preview the caller looked at (409 if it moved).
@@ -127,7 +90,6 @@ class SheetPatch(BaseModel):
 
     @model_validator(mode="after")
     def _check(self):
-        _no_duplicates(self.percents)
         _unique_memberships(self.line_overrides)
         return self
 
@@ -292,6 +254,10 @@ class MonthTeacher(BaseModel):
     teacher_name: Optional[str] = None
     lessons_count: int = 0  # completed lessons the teacher held in the month
     lesson_types: List[LessonTypeSuggestion] = Field(default_factory=list)
+    # UX-2: the rate in force for the month per kind of lessons the teacher held in it (``{"group": "50"}``; a kind
+    # without a rate is absent) and the kinds without a rate - the sheet cannot be calculated until they are set.
+    rates: Dict[str, str] = Field(default_factory=dict)
+    missing_rates: List[str] = Field(default_factory=list)
     sheet: Optional[MonthSheetRef] = None
     warnings: MonthWarnings = Field(default_factory=MonthWarnings)
 
@@ -340,6 +306,13 @@ class DiffLine(BaseModel):
     delta_amount: int = 0
 
 
+class RateChangeOut(BaseModel):
+    lesson_type: str
+    saved_percent: str
+    fresh_percent: Optional[str] = None
+    message: str
+
+
 class SheetDiff(BaseModel):
     sheet_id: str
     revision: int
@@ -350,4 +323,55 @@ class SheetDiff(BaseModel):
     saved_total: int
     fresh_total: int
     delta_amount: int
+    # UX-2: why the sheet is different besides the lines: the rate of the sheet's month changed
+    # («Ставка «Группа»: 50% → 45%»); ``rate_changes`` is the same in numbers (``fresh_percent`` null - no rate).
+    reasons: List[str] = Field(default_factory=list)
+    rate_changes: List["RateChangeOut"] = Field(default_factory=list)
     lines: List[DiffLine]
+
+
+# ---- rates (UX-2) -----------------------------------------------------------------
+
+
+class RateOut(BaseModel):
+    """The rate in force for the month asked: ``valid_from`` is the first day of the month it began."""
+
+    percent: str
+    valid_from: str
+    set_by_name: Optional[str] = None  # null for a rate transferred by the migration
+    set_at: Optional[str] = None
+
+
+class RateNextOut(BaseModel):
+    percent: str
+    valid_from: str
+
+
+class TeacherRates(BaseModel):
+    teacher_id: str
+    teacher_name: Optional[str] = None
+    lesson_types: List[str] = Field(default_factory=list)
+    rates: Dict[str, Optional[RateOut]] = Field(default_factory=dict)  # a kind without a rate: null
+    next: Dict[str, RateNextOut] = Field(default_factory=dict)  # only kinds that have a future change
+
+
+class RatesResponse(BaseModel):
+    month: str
+    items: List[TeacherRates]
+
+
+class RatePut(BaseModel):
+    """Set the rates of a teacher from a month.  Everything is validated by the service (Russian messages)."""
+
+    valid_from: Any = None  # "YYYY-MM"
+    percents: Any = None  # {"group": "50", ...}
+    note: Any = None
+
+
+class RateHistoryRow(BaseModel):
+    lesson_type: str
+    percent: str
+    valid_from: str
+    set_by_name: Optional[str] = None
+    set_at: Optional[str] = None
+    note: Optional[str] = None

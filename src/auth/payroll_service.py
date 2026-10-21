@@ -57,6 +57,7 @@ from src.models.auth import (
 
 from . import payment_status as ps
 from . import payroll_engine as engine
+from . import payroll_rates
 from . import pricing
 from .payments_files import person_name, staff_name
 from .payments_service import PaymentService
@@ -64,6 +65,7 @@ from .payroll_schemas import (
     CalculateRequest,
     CalculateResponse,
     DiffLine,
+    RateChangeOut,
     GroupBlockOut,
     LessonTypeSuggestion,
     LineOut,
@@ -87,6 +89,8 @@ MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
 FIRST_YEAR = 2020
 FINGERPRINT_VERSION = 1
 MAX_LISTED_SHEETS = 300
+RATE_REQUIRED = "Не задана ставка преподавателя: укажите её в «Сотрудниках»"
+PRICE_NOT_EDITABLE = "Цена меняется в «Оплаты → Цены групп» или в карточке ученика"
 
 
 # ============================================================================
@@ -126,6 +130,10 @@ class MonthInvalid(PayrollInvalid):
 
 class PercentRequired(PayrollInvalid):
     code = "PERCENT_REQUIRED"
+
+
+class PriceNotEditable(PayrollInvalid):
+    code = "PRICE_NOT_EDITABLE"
 
 
 class RevisionConflict(PayrollError):
@@ -621,17 +629,16 @@ class PayrollService:
     # ------------------------------------------------------------- building
 
     @staticmethod
-    def _percent_map(items: Iterable[Any], teacher_id: Optional[UUID] = None) -> Dict[str, Decimal]:
-        out: Dict[str, Decimal] = {}
-        for item in items or ():
-            if teacher_id is not None and item.teacher_id is not None and item.teacher_id != teacher_id:
-                raise PayrollInvalid("Процент указан для другого преподавателя")
-            out[item.lesson_type] = item.percent
-        return out
-
-    @staticmethod
     def _missing_percents(teacher: TeacherSeed, percents: Dict[str, Decimal]) -> List[str]:
         return [t for t in engine.LESSON_TYPES if t in teacher.groups_by_type and t not in percents]
+
+    @staticmethod
+    def _rate_required(missing: List[Dict[str, Any]]) -> PercentRequired:
+        return PercentRequired(RATE_REQUIRED, missing=missing)
+
+    def _stale_by_rates(self, saved: Dict[str, str], book: payroll_rates.RateBook, teacher_id: UUID, first: date) -> bool:
+        """The rate in force for the sheet's month is not the percent the sheet was calculated with."""
+        return bool(saved) and bool(payroll_rates.rate_changes(saved, book.percents_at(teacher_id, first)))
 
     def _render(
         self,
@@ -774,6 +781,7 @@ class PayrollService:
         teacher_ids = set(seed.teachers) | set(sheets)
         names = self._names(teacher_ids)
         suggestions = self._suggested(org_id, teacher_ids)
+        book = payroll_rates.load_book(self.db, org_id, teacher_ids)
         out: List[MonthTeacher] = []
         for tid in teacher_ids:
             teacher = seed.teachers.get(tid)
@@ -788,6 +796,7 @@ class PayrollService:
                 else {t: 0 for t in ((sheet.percent_inputs or {}) if sheet else {})}
             )
             fresh = teacher.fingerprint if teacher and teacher.fingerprint else fingerprint_of(first, tid, [])
+            in_force = book.percents_at(tid, first)
             out.append(
                 MonthTeacher(
                     teacher_id=str(tid),
@@ -802,12 +811,15 @@ class PayrollService:
                         for t in engine.LESSON_TYPES
                         if t in types
                     ],
+                    rates={t: engine.format_percent(in_force[t]) for t in engine.LESSON_TYPES if t in types and t in in_force},
+                    missing_rates=[t for t in engine.LESSON_TYPES if t in types and t not in in_force],
                     sheet=(
                         MonthSheetRef(
                             id=str(sheet.id),
                             revision=sheet.revision,
                             total_amount=sheet.total_amount,
-                            stale=sheet.source_fingerprint != fresh,
+                            stale=sheet.source_fingerprint != fresh
+                            or self._stale_by_rates(dict(sheet.percent_inputs or {}), book, tid, first),
                             updated_at=_iso(sheet.updated_at),
                         )
                         if sheet
@@ -852,9 +864,13 @@ class PayrollService:
         names = self._names(
             [t.teacher_id for t in targets] + list(wanted or ())
         )
-        by_teacher: Dict[UUID, Dict[str, Decimal]] = {}
-        for item in request.percents:
-            by_teacher.setdefault(item.teacher_id, {})[item.lesson_type] = item.percent
+        # the percents of the request (an old front still sends them) are ignored: the rate of the MONTH decides
+        book = payroll_rates.load_book(self.db, org_id, [t.teacher_id for t in targets] + list(wanted or ()))
+        by_teacher: Dict[UUID, Dict[str, Decimal]] = {
+            t.teacher_id: book.percents_at(t.teacher_id, first) for t in targets
+        }
+        for tid in wanted or ():
+            by_teacher.setdefault(tid, book.percents_at(tid, first))
         missing = []
         for teacher in targets:
             for lesson_type in self._missing_percents(teacher, by_teacher.get(teacher.teacher_id, {})):
@@ -867,10 +883,7 @@ class PayrollService:
                     }
                 )
         if missing:
-            raise PercentRequired(
-                "Укажите процент преподавателя для каждого типа занятий — расчёт без него не запускается",
-                missing=missing,
-            )
+            raise self._rate_required(missing)
         sheets = []
         order = sorted(
             (t.teacher_id for t in targets) if not wanted else (t for t in wanted),
@@ -916,8 +929,12 @@ class PayrollService:
 
     @staticmethod
     def _changes_from_body(overrides, known: Optional[Set[str]]) -> Dict[str, Any]:
-        """``{membership_id: LineOverride}``; with ``known`` a line that is not on the sheet is a 422."""
+        """``{membership_id: LineOverride}``; with ``known`` a line that is not on the sheet is a 422.
+
+        A price on a sheet is not edited any more (UX-2): ``monthly_fee`` with a value is a 422."""
         for item in overrides or ():
+            if item.monthly_fee is not None:
+                raise PriceNotEditable(PRICE_NOT_EDITABLE)
             if known is not None and str(item.membership_id) not in known:
                 raise PayrollInvalid("Такой строки нет в ведомости", code="LINE_NOT_FOUND")
         return {str(item.membership_id): item for item in overrides or ()}
@@ -937,15 +954,14 @@ class PayrollService:
             body.teacher_id, fingerprint=fingerprint_of(first, body.teacher_id, [])
         )
         self._check_expected(body.expected_fingerprint, teacher.fingerprint)
-        percents = self._percent_map(body.percents, body.teacher_id)
+        percents = payroll_rates.load_book(self.db, org_id, [body.teacher_id]).percents_at(body.teacher_id, first)
         missing = self._missing_percents(teacher, percents)
         if missing:
-            raise PercentRequired(
-                "Укажите процент преподавателя для каждого типа занятий — расчёт без него не запускается",
-                missing=[
+            raise self._rate_required(
+                [
                     {"teacher_id": str(body.teacher_id), "lesson_type": t, "lesson_type_label": engine.LESSON_TYPE_LABELS[t]}
                     for t in missing
-                ],
+                ]
             )
         given = self._changes_from_body(body.line_overrides, {s.identity["membership_id"] for s in teacher.lines})
         now = _utcnow()
@@ -1031,12 +1047,11 @@ class PayrollService:
 
     @staticmethod
     def _carried_changes(sheet: Optional[PayrollSheet]) -> Dict[str, _Change]:
-        """The owner's decisions on the lines of a saved sheet: fee overrides and ticks, by membership."""
+        """The owner's decisions on the lines of a saved sheet that are carried to the next revision: the ticks
+        "include unpaid", by membership.  A manual price of a line (an old sheet) is NOT carried (UX-2): the price
+        of a new revision is the price from «Цены групп» / the card of the student."""
         return {
-            line["membership_id"]: _Change(
-                fee=line.get("monthly_fee") if line.get("fee_overridden") else None,
-                include_unpaid=bool(line.get("include_unpaid")),
-            )
+            line["membership_id"]: _Change(include_unpaid=bool(line.get("include_unpaid")))
             for line in (sheet.lines or [] if sheet is not None else [])
         }
 
@@ -1045,8 +1060,6 @@ class PayrollService:
         """What a request says about a line wins over what the sheet had; a field it leaves out stays."""
         for mid, item in given.items():
             change = changes.setdefault(mid, _Change())
-            if "monthly_fee" in item.model_fields_set:
-                change.fee = item.monthly_fee
             if item.include_unpaid is not None:
                 change.include_unpaid = item.include_unpaid
 
@@ -1071,9 +1084,10 @@ class PayrollService:
 
         Without ``recalculate`` the new revision is computed from the SAVED lines (fee, percent,
         "include unpaid"): attendance and payments are not read again, the data fingerprint stays.
-        With it the month is read again; the owner's fee overrides and ticks are kept.
+        With it the month is read again with the rate of the sheet's month; the owner's ticks are kept, a manual
+        price of an old sheet is not (the price comes from «Цены групп» / the card of the student).
         """
-        if not (body.percents or body.line_overrides or body.recalculate or (body.note or "").strip()):
+        if not (body.line_overrides or body.recalculate or (body.note or "").strip()):
             raise PayrollInvalid("Нечего менять", code="NOTHING_TO_CHANGE")
         sheet = self._lock_sheet(org_id, sheet_id, lock=True)
         try:
@@ -1081,11 +1095,9 @@ class PayrollService:
                 raise self._conflict(sheet.revision)
             first = sheet.period_month
             saved_lines: List[Dict[str, Any]] = list(sheet.lines or [])
+            # the percents of the body (an old front sends them) are ignored.  A recalculation takes the rate of the
+            # sheet's month; a change without it (a tick) is computed from the saved lines with the saved percents
             percents = {t: engine.parse_percent(v) for t, v in (sheet.percent_inputs or {}).items()}
-            for item in body.percents or ():
-                if item.teacher_id is not None and item.teacher_id != sheet.teacher_id:
-                    raise PayrollInvalid("Процент указан для другого преподавателя")
-                percents[item.lesson_type] = item.percent
 
             if body.recalculate:
                 given = self._changes_from_body(body.line_overrides, None)
@@ -1094,15 +1106,17 @@ class PayrollService:
                 teacher = seed.teachers.get(sheet.teacher_id) or TeacherSeed(
                     sheet.teacher_id, fingerprint=fingerprint_of(first, sheet.teacher_id, [])
                 )
+                percents = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id]).percents_at(
+                    sheet.teacher_id, first
+                )
                 missing = self._missing_percents(teacher, percents)
                 if missing:
-                    raise PercentRequired(
-                        "Укажите процент преподавателя для каждого типа занятий — расчёт без него не запускается",
-                        missing=[
+                    raise self._rate_required(
+                        [
                             {"teacher_id": str(sheet.teacher_id), "lesson_type": t,
                              "lesson_type_label": engine.LESSON_TYPE_LABELS[t]}
                             for t in missing
-                        ],
+                        ]
                     )
                 self._check_expected(body.expected_fingerprint, teacher.fingerprint)
                 changes = self._carried_changes(sheet)
@@ -1115,22 +1129,16 @@ class PayrollService:
                 fingerprint, divisor_default = teacher.fingerprint, seed.divisor
             else:
                 given = self._changes_from_body(body.line_overrides, {line["membership_id"] for line in saved_lines})
-                types = {line["lesson_type"] for line in saved_lines}
-                for item in body.percents or ():
-                    if item.lesson_type not in types:
-                        raise PayrollInvalid(
-                            "В этой ведомости нет занятий такого типа", code="LESSON_TYPE_NOT_IN_SHEET"
-                        )
                 lines = []
                 for line in saved_lines:
                     item = given.get(line["membership_id"])
-                    fee_set = item is not None and "monthly_fee" in item.model_fields_set
+                    fee_reset = item is not None and "monthly_fee" in item.model_fields_set  # null: no manual price
                     lines.append(
                         engine.recompute_line(
                             line,
                             percent=percents.get(line["lesson_type"]),
-                            fee_override=item.monthly_fee if fee_set else None,
-                            reset_fee=bool(fee_set and item.monthly_fee is None),
+                            fee_override=None,
+                            reset_fee=bool(fee_reset),
                             include_unpaid=item.include_unpaid if item is not None else None,
                             default_divisor=sheet.divisor_default,
                         )
@@ -1168,7 +1176,10 @@ class PayrollService:
         seed = self._collect(org_id, first, last, teacher_ids={sheet.teacher_id})
         teacher = seed.teachers.get(sheet.teacher_id)
         fresh = teacher.fingerprint if teacher else fingerprint_of(first, sheet.teacher_id, [])
-        return fresh != sheet.source_fingerprint
+        if fresh != sheet.source_fingerprint:
+            return True
+        book = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])
+        return self._stale_by_rates(dict(sheet.percent_inputs or {}), book, sheet.teacher_id, first)
 
     def get_sheet(self, org_id: str, sheet_id: UUID) -> SheetOut:
         sheet = self._lock_sheet(org_id, sheet_id, lock=False)
@@ -1182,10 +1193,12 @@ class PayrollService:
             PayrollSheet.revision,
             PayrollSheet.total_amount,
             PayrollSheet.source_fingerprint,
+            PayrollSheet.percent_inputs,
             PayrollSheet.updated_by,
             PayrollSheet.updated_at,
         ).filter(PayrollSheet.org_id == org_id)
         fresh: Dict[UUID, str] = {}
+        book = None
         first = None
         if month:
             first, last = parse_month(month)
@@ -1196,6 +1209,7 @@ class PayrollService:
         if first is not None and rows:
             seed = self._collect(org_id, first, last, teacher_ids={r.teacher_id for r in rows})
             fresh = {tid: t.fingerprint for tid, t in seed.teachers.items()}
+            book = payroll_rates.load_book(self.db, org_id, {r.teacher_id for r in rows})
         names = self._names([r.teacher_id for r in rows] + [r.updated_by for r in rows])
         return [
             SheetBrief(
@@ -1207,6 +1221,7 @@ class PayrollService:
                 total_amount=r.total_amount,
                 stale=(
                     fresh.get(r.teacher_id, fingerprint_of(first, r.teacher_id, [])) != r.source_fingerprint
+                    or self._stale_by_rates(dict(r.percent_inputs or {}), book, r.teacher_id, first)
                     if first is not None
                     else None
                 ),
@@ -1249,8 +1264,9 @@ class PayrollService:
         ]
 
     def diff(self, org_id: str, sheet_id: UUID) -> SheetDiff:
-        """What a recalculation would change: the saved lines against the current data, with the SAVED
-        percents, fee overrides and ticks."""
+        """What a recalculation would change: the saved lines against the current data - with the rate in force
+        for the sheet's month (UX-2), the prices of «Цены групп» / of the students (a manual price of an old sheet is
+        dropped, the line says so) and the ticks "include unpaid" of the sheet."""
         sheet = self._lock_sheet(org_id, sheet_id, lock=False)
         first = sheet.period_month
         last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
@@ -1259,27 +1275,54 @@ class PayrollService:
             sheet.teacher_id, fingerprint=fingerprint_of(first, sheet.teacher_id, [])
         )
         saved = list(sheet.lines or [])
-        percents = {t: engine.parse_percent(v) for t, v in (sheet.percent_inputs or {}).items()}
-        changes = {
-            line["membership_id"]: _Change(
-                fee=line.get("monthly_fee") if line.get("fee_overridden") else None,
-                include_unpaid=bool(line.get("include_unpaid")),
-            )
-            for line in saved
-        }
+        percents = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id]).percents_at(sheet.teacher_id, first)
+        changes = self._carried_changes(sheet)
         fresh = self._render(teacher, percents, changes, seed.divisor)
         rows = engine.diff_lines(saved, fresh)
+        dropped = self._note_dropped_fees(rows, saved, fresh)
+        rate_rows = payroll_rates.rate_changes(dict(sheet.percent_inputs or {}), percents)
         saved_total, fresh_total = engine.sheet_total(saved), engine.sheet_total(fresh)
         return SheetDiff(
             sheet_id=str(sheet.id),
             revision=sheet.revision,
-            stale=teacher.fingerprint != sheet.source_fingerprint,
+            stale=teacher.fingerprint != sheet.source_fingerprint or bool(rate_rows) or dropped,
             source_fingerprint=teacher.fingerprint,
             saved_total=saved_total,
             fresh_total=fresh_total,
             delta_amount=fresh_total - saved_total,
+            reasons=[payroll_rates.rate_reason(t, before, now) for t, before, now in rate_rows],
+            rate_changes=[
+                RateChangeOut(
+                    lesson_type=t,
+                    saved_percent=engine.format_percent(before),
+                    fresh_percent=engine.format_percent(now) if now is not None else None,
+                    message=payroll_rates.rate_reason(t, before, now),
+                )
+                for t, before, now in rate_rows
+            ],
             lines=[DiffLine(**row) for row in rows],
         )
+
+    @staticmethod
+    def _note_dropped_fees(rows: List[Dict[str, Any]], saved: List[Dict[str, Any]], fresh: List[Dict[str, Any]]) -> bool:
+        """A manual price of a saved line is not carried to a recalculation: a changed line says where the price
+        comes from now («цена из «Цен групп» вместо ручной 450 000 сум»).  True when there is such a line."""
+        manual = {line["membership_id"]: line for line in saved if line.get("fee_overridden")}
+        source = {line["membership_id"]: line for line in fresh}
+        found = False
+        for row in rows:
+            old = manual.get(row["membership_id"])
+            new = source.get(row["membership_id"])
+            if old is None or new is None or "оплата" not in row["changes"]:
+                continue
+            was = f"{int(old['monthly_fee'] or 0):,}".replace(",", " ")
+            origin = {
+                "group": "цена из «Цен групп»",
+                "override": "индивидуальная цена из карточки ученика",
+            }.get(new.get("price_source"), "цена не задана")
+            row["changes"].append(f"{origin} вместо ручной {was} сум")
+            found = True
+        return found
 
     # ---------------------------------------------------- price changes (#105)
 
