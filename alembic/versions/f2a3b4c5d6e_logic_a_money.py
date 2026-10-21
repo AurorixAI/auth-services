@@ -13,7 +13,7 @@ New tables (every one guarded by the inspector - the revision is idempotent):
 * ``group_lesson_type_history`` - the type of lessons of a group by day (seed: one row per group, ``valid_from = 2020-01-01``);
 * ``payroll_divisors`` - the payroll divisor by month (seed: one row per organisation from ``settings.payroll.divisor``, else 12);
 * ``payroll_payouts`` - payouts of salary against a saved sheet (append-only, cancelled by ``voided_*``).
-``group_audit.ck_group_audit_action`` accepts ``membership_pause_set`` / ``membership_pause_void`` / ``opening_balance_set`` /
+``group_audit.ck_group_audit_action`` (extended from its LIVE definition, so the values added by another revision stay) accepts ``membership_pause_set`` / ``membership_pause_void`` / ``opening_balance_set`` /
 ``opening_balance_void`` / ``group_lesson_type_set`` / ``student_left_group``.
 
 Excuses (pause): ``attendance_excuses.status`` accepts ``not_required`` («Не требуется: ученик на паузе», set when a pause is created over the
@@ -25,12 +25,13 @@ marker is written to ``membership_price_overrides``: ``amount NULL`` from the da
 that a return is priced by the group; memberships that returned since are not touched (money of the past is not changed); (2) the seeds above.
 Nothing else is converted: the stage / production money stays as it is (the ledger of PAY-2 is untouched).
 
-Rollback (downgrade): drops the five tables, the ``left_group`` markers and the audit rows of the new actions, and restores the old CHECK of
-``group_audit``.  LOST: pauses, opening balances, payouts, the history of divisors and of lesson types (an older image reads the current
+Rollback (downgrade): drops the five tables, the ``left_group`` markers and the audit rows of the new actions, and takes only ITS OWN values out of the CHECKs
+(``group_audit``, ``group_attendance_audit``, ``attendance_excuses``; the values of other revisions stay).  LOST: pauses, opening balances, payouts, the history of divisors and of lesson types (an older image reads the current
 values from ``settings.payroll.divisor`` / ``groups.lesson_type``, which the services mirror) - export them first.
 """
 from __future__ import annotations
 
+import re
 from uuid import uuid4
 
 from alembic import op
@@ -43,28 +44,34 @@ branch_labels = None
 depends_on = None
 
 GROUP_AUDIT = "group_audit"
-AUDIT_OLD = (
-    "action IN ('created', 'updated', 'teacher_changed', 'student_archived', 'student_restored', "
-    "'group_price_set', 'membership_price_set', 'group_price_cancelled', 'membership_price_cancelled', "
-    "'payment_writeoff', 'payment_writeoff_void', 'payment_refund', 'payment_refund_void')"
+# the CHECKs below are EXTENDED from their live definition (pg_get_constraintdef): a parallel revision that added its own values keeps them.
+# The static lists are only the fallback when the constraint does not exist (and the order of the first values).
+AUDIT_FALLBACK = (
+    "created", "updated", "teacher_changed", "student_archived", "student_restored", "group_price_set", "membership_price_set",
+    "group_price_cancelled", "membership_price_cancelled", "payment_writeoff", "payment_writeoff_void", "payment_refund", "payment_refund_void",
 )
 NEW_ACTIONS = (
     "membership_pause_set", "membership_pause_void", "opening_balance_set", "opening_balance_void", "group_lesson_type_set",
     "student_left_group",
 )
-AUDIT_NEW = AUDIT_OLD[:-1] + ", " + ", ".join(f"'{a}'" for a in NEW_ACTIONS) + ")"
+ATT_AUDIT_FALLBACK = (
+    "started", "reconciliation_started", "created", "updated", "corrected", "cancelled", "reconciliation_cancelled",
+    "excuse_reviewed", "excuse_reset", "excuse_removed", "excuse_file_added", "excuse_file_removed",
+)
+NEW_ATT_ACTIONS = ("excuse_closed_pause",)
+EXCUSE_FALLBACK = ("pending", "confirmed", "rejected")
+NEW_EXCUSE_STATUSES = ("not_required",)
+# (table, constraint, column, fallback, own values)
+CHECKS = (
+    (GROUP_AUDIT, "ck_group_audit_action", "action", AUDIT_FALLBACK, NEW_ACTIONS),
+    ("group_attendance_audit", "ck_group_attendance_audit_action", "action", ATT_AUDIT_FALLBACK, NEW_ATT_ACTIONS),
+    ("attendance_excuses", "ck_attendance_excuse_status", "status", EXCUSE_FALLBACK, NEW_EXCUSE_STATUSES),
+)
 VOID_ALL_OR_NONE = (
     "(voided_at IS NULL AND voided_by IS NULL AND void_reason IS NULL) OR "
     "(voided_at IS NOT NULL AND voided_by IS NOT NULL AND void_reason IS NOT NULL)"
 )
 LESSON_TYPES = "'group', 'mini_group', 'pair', 'individual'"
-EXCUSE_STATUS_OLD = "status IN ('pending', 'confirmed', 'rejected')"
-EXCUSE_STATUS_NEW = "status IN ('pending', 'confirmed', 'rejected', 'not_required')"
-ATT_AUDIT_OLD = (
-    "action IN ('started', 'reconciliation_started', 'created', 'updated', 'corrected', 'cancelled', 'reconciliation_cancelled', "
-    "'excuse_reviewed', 'excuse_reset', 'excuse_removed', 'excuse_file_added', 'excuse_file_removed')"
-)
-ATT_AUDIT_NEW = ATT_AUDIT_OLD[:-1] + ", 'excuse_closed_pause')"
 TABLES = ("payroll_payouts", "payroll_divisors", "group_lesson_type_history", "membership_opening_balances", "membership_pauses")
 
 
@@ -77,14 +84,37 @@ def _now():
     return sa.text("timezone('utc', now())")
 
 
-def _replace_check(expression: str) -> None:
-    op.execute(f"ALTER TABLE {GROUP_AUDIT} DROP CONSTRAINT IF EXISTS ck_group_audit_action")
-    op.execute(f"ALTER TABLE {GROUP_AUDIT} ADD CONSTRAINT ck_group_audit_action CHECK ({expression})")
+def _live_values(bind, table: str, name: str) -> list:
+    """The quoted values of the live CHECK ``name`` on ``table`` (empty when it does not exist)."""
+    definition = bind.execute(
+        sa.text("SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid WHERE t.relname = :t AND c.conname = :n"),
+        {"t": table, "n": name},
+    ).scalar()
+    return re.findall(r"'([a-z_]+)'", definition or "")
 
 
-def _replace_named_check(table: str, name: str, expression: str) -> None:
+def _set_check(table: str, name: str, column: str, values) -> None:
     op.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {name}")
-    op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK ({expression})")
+    listed = ", ".join(f"'{v}'" for v in values)
+    op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK ({column} IN ({listed}))")
+
+
+def _extend_checks(bind) -> None:
+    for table, name, column, fallback, own in CHECKS:
+        live = _live_values(bind, table, name) or list(fallback)
+        if not set(own) <= set(live):
+            _set_check(table, name, column, live + [v for v in own if v not in live])
+
+
+def _shrink_checks(bind) -> None:
+    """Removes only the values of THIS revision (rows that carry them are deleted / turned into the nearest old value first)."""
+    op.execute("UPDATE attendance_excuses SET status = 'confirmed' WHERE status = 'not_required'")     # a confirmed excuse is not counted either
+    op.execute("DELETE FROM group_attendance_audit WHERE action = 'excuse_closed_pause'")
+    op.execute(f"DELETE FROM {GROUP_AUDIT} WHERE action IN ({', '.join(repr(a) for a in NEW_ACTIONS)})")
+    for table, name, column, fallback, own in CHECKS:
+        live = _live_values(bind, table, name)
+        if set(own) & set(live):
+            _set_check(table, name, column, [v for v in live if v not in own])
 
 
 def upgrade() -> None:
@@ -212,9 +242,7 @@ def upgrade() -> None:
                         postgresql_where=sa.text("voided_at IS NULL"))
         op.create_index("ix_pp_sheet_live", "payroll_payouts", ["sheet_id"], postgresql_where=sa.text("voided_at IS NULL"))
 
-    _replace_check(AUDIT_NEW)
-    _replace_named_check("attendance_excuses", "ck_attendance_excuse_status", EXCUSE_STATUS_NEW)
-    _replace_named_check("group_attendance_audit", "ck_group_attendance_audit_action", ATT_AUDIT_NEW)
+    _extend_checks(bind)
 
     # ---- data: seeds
     if seed_types:
@@ -270,9 +298,4 @@ def downgrade() -> None:
         if table in tables:
             op.drop_table(table)
     op.execute("DELETE FROM membership_price_overrides WHERE reason = 'left_group' AND amount IS NULL")
-    op.execute(f"DELETE FROM {GROUP_AUDIT} WHERE action IN ({', '.join(repr(a) for a in NEW_ACTIONS)})")
-    _replace_check(AUDIT_OLD)
-    op.execute("UPDATE attendance_excuses SET status = 'confirmed' WHERE status = 'not_required'")
-    op.execute("DELETE FROM group_attendance_audit WHERE action = 'excuse_closed_pause'")
-    _replace_named_check("attendance_excuses", "ck_attendance_excuse_status", EXCUSE_STATUS_OLD)
-    _replace_named_check("group_attendance_audit", "ck_group_attendance_audit_action", ATT_AUDIT_OLD)
+    _shrink_checks(bind)

@@ -1332,6 +1332,13 @@ def _check_logic_a_objects(engine,config,ids):
     command.downgrade(config,PAY2)
     names={'student_pauses','membership_pauses','membership_opening_balances','group_lesson_type_history','payroll_divisors','payroll_payouts'}
     assert not (names & set(inspect(engine).get_table_names()))
+    # M2: a value another revision put into a CHECK (pack B's group_archived) must survive the upgrade and the downgrade of this one
+    def check_def(table,name):
+        with engine.connect() as c:
+            return c.execute(text("SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid WHERE t.relname=:t AND c.conname=:n"),{'t':table,'n':name}).scalar_one()
+    with engine.begin() as c:
+        c.execute(text("ALTER TABLE group_audit DROP CONSTRAINT ck_group_audit_action"))
+        c.execute(text("ALTER TABLE group_audit ADD CONSTRAINT ck_group_audit_action CHECK (action IN ('created','updated','teacher_changed','student_archived','student_restored','group_price_set','membership_price_set','group_price_cancelled','membership_price_cancelled','payment_writeoff','payment_writeoff_void','payment_refund','payment_refund_void','group_archived'))"))
     user,org_b,grp_pair,grp_b=uuid4(),uuid4(),uuid4(),uuid4()
     studs={k:uuid4() for k in ('closed_price','closed_plain','closed_null','active_price','closed_returned','closed_future')}
     mems={k:uuid4() for k in studs}
@@ -1366,6 +1373,10 @@ def _check_logic_a_objects(engine,config,ids):
         before_mine=c.execute(text('SELECT count(*) FROM membership_price_overrides WHERE membership_id = ANY(:ids)'),{'ids':list(mems.values())}).scalar_one()
     command.upgrade(config,'head')
     assert names-{'student_pauses'} <= set(inspect(engine).get_table_names())
+    for table,name,mine in (('group_audit','ck_group_audit_action',('student_left_group','group_lesson_type_set')),
+                            ('group_attendance_audit','ck_group_attendance_audit_action',('excuse_closed_pause',)),('attendance_excuses','ck_attendance_excuse_status',('not_required',))):
+        assert all(f"'{v}'" in check_def(table,name) for v in mine),(table,check_def(table,name))
+    assert "'group_archived'" in check_def('group_audit','ck_group_audit_action') and "'excuse_file_removed'" in check_def('group_attendance_audit','ck_group_attendance_audit_action')
     with engine.connect() as c:
         assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
         assert tuple(c.execute(text('SELECT count(*),COALESCE(sum(amount),0) FROM student_payments')).fetchone())==tuple(before_money)   # money untouched
@@ -1434,6 +1445,9 @@ def _check_logic_a_objects(engine,config,ids):
         assert tuple(c.execute(text('SELECT count(*),COALESCE(sum(amount),0) FROM student_payments')).fetchone())==tuple(before_money)
         assert c.execute(text('SELECT count(*) FROM membership_price_overrides')).scalar_one()==before_overrides
         assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==PAY2
+    assert "'group_archived'" in check_def('group_audit','ck_group_audit_action') and "'student_left_group'" not in check_def('group_audit','ck_group_audit_action')   # only its own values go
+    assert "'not_required'" not in check_def('attendance_excuses','ck_attendance_excuse_status') and "'excuse_closed_pause'" not in check_def('group_attendance_audit','ck_group_attendance_audit_action')
+    assert "'excuse_file_removed'" in check_def('group_attendance_audit','ck_group_attendance_audit_action')
     with pytest.raises(IntegrityError):
         with engine.begin() as c:
             c.execute(text("INSERT INTO group_audit (id,org_id,group_id,actor_id,actor_role,action,snapshot) VALUES (gen_random_uuid(),:o,:g,:u,'owner','student_left_group','{}')"),new)
