@@ -8,6 +8,7 @@ from src.auth.excuse_deadline import effective_threshold, excuse_deadline, month
 from tests.pg_world import (  # noqa: F401  (fixtures)
     business_today, excused_lesson, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save, world,
 )
+from tests.pg_world import set_paid_through
 from tests.test_payments_service_pg import day, mid, owner, pay, set_settings
 
 API = "/api/v1/auth"
@@ -267,24 +268,18 @@ def test_overdue_and_last_day_through_the_api(world):
     excused_lesson(world, offset_days=3)
     payment = pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(-1))["payment"]
     assert deadline_of(world) == {"kind": "date", "date": day(-1).isoformat(), "overdue": True, "days_left": -1}
-    world.db.query(__import__("src.models.auth", fromlist=["StudentPayment"]).StudentPayment).filter_by(
-        id=payment["id"]).update({"valid_to": day(0)})
-    world.db.commit()
+    set_paid_through(world, payment, day(0))
     assert deadline_of(world) == {"kind": "date", "date": day(0).isoformat(), "overdue": False, "days_left": 0}
 
 
 @needs_pg
 def test_cutoff_day_day_before_and_valid_to_through_the_api(world):
-    from src.models.auth import StudentPayment
-
     excused_lesson(world, offset_days=1)   # the lesson is on day(-1)
     payment = pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(4))["payment"]   # cutoff = day(-1)
     assert deadline_of(world) == {"kind": "date", "date": day(4).isoformat(), "overdue": False, "days_left": 4}   # on the cutoff day
-    world.db.query(StudentPayment).filter_by(id=payment["id"]).update({"valid_to": day(5)})                       # cutoff day(0): the lesson is the day before
-    world.db.commit()
+    set_paid_through(world, payment, day(5))                       # cutoff day(0): the lesson is the day before
     assert deadline_of(world) == {"kind": "date", "date": day(1).isoformat(), "overdue": False, "days_left": 1}   # cutoff day(0) < lesson + 2 days
-    world.db.query(StudentPayment).filter_by(id=payment["id"]).update({"valid_to": day(-1)})                      # the lesson is on valid_to
-    world.db.commit()
+    set_paid_through(world, payment, day(-1))                      # the lesson is on valid_to
     assert deadline_of(world) == {"kind": "date", "date": day(-1).isoformat(), "overdue": True, "days_left": -1}
 
 
@@ -408,12 +403,12 @@ def test_unfinished_excused_lesson_counts_against_the_package(world):
 
 
 @needs_pg
-def test_lessons_fifo_picks_the_package_that_took_the_lesson(world):
+def test_lessons_left_is_what_the_money_covers_minus_the_lessons_held(world):
     s0 = world.students[0]
     set_settings(world, period_mode="lessons")
-    pay(world, s0, paid_on=day(-20), valid_from=day(-20), lessons_count=1)
-    pay(world, s0, paid_on=day(-6), valid_from=day(-6), lessons_count=4)
-    lesson_marks(world, 10)                                   # fills the first package
+    pay(world, s0, paid_on=day(-20), lessons_count=1)
+    pay(world, s0, paid_on=day(-6), lessons_count=5)          # PAY-2: one account - 1 + 4 more lessons are paid in all
+    lesson_marks(world, 10)                                   # the first lesson
     lesson_marks(world, 3, {s0: "excused"}, reasons={s0: "Болел"})
     assert deadline_of(world) == state(3, False, False, False)
 

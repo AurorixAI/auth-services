@@ -1,5 +1,6 @@
-"""ROADMAP #103: ``billing_mode`` of an excuse - how the student is REALLY billed in that group (the mode of his latest
-live payment), not the centre setting.  Excuse list / review responses and the journal (administrators only)."""
+"""ROADMAP #103 / PAY-2: ``billing_mode`` of an excuse - how the student is billed in that group: the billing mode of the
+centre while he has money on the account (calendar or package), ``None`` while he has none.  Excuse list / review responses
+and the journal (administrators only)."""
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import event
@@ -60,63 +61,21 @@ def by_student(w, a=None, b=None, c=None):
     return {str(s0.id): a, str(s1.id): b, str(s2.id): c}
 
 
-@needs_pg
-def test_calendar_package_and_no_payment_memberships_and_the_centre_setting_does_not_matter(world):
-    s0, s1, s2 = world.students
-    pay(world, s0, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))                  # calendar, entered in calendar mode
-    set_settings(world, period_mode="lessons")
-    pay(world, s1, paid_on=day(-30), valid_from=day(-30), lessons_count=12)                  # a package
-    excuse_all(world)
-    # the centre is in package mode now, yet s0 was billed by the calendar: the dialog must say "calendar"
-    assert modes(world) == by_student(world, "calendar", "package", None)
-    set_settings(world, period_mode="calendar")
-    assert modes(world) == by_student(world, "calendar", "package", None)                      # flipping the setting changes nothing
-    # a student with no live payment has no package line, in either mode
-    set_settings(world, period_mode="lessons")
-    assert modes(world)[str(s2.id)] is None
-
-
-@needs_pg
-def test_the_latest_payment_decides_and_a_voided_one_does_not_count(world):
-    s0, s1, s2 = world.students
-    set_settings(world, period_mode="lessons")
-    pay(world, s0, paid_on=day(-40), valid_from=day(-40), lessons_count=12)
-    set_settings(world, period_mode="calendar")
-    newest = pay(world, s0, paid_on=day(-2), valid_from=day(-2), valid_to=day(27))["payment"]  # calendar after a package
-    excuse_all(world)
-    assert modes(world)[str(s0.id)] == "calendar"
-    r = owner(world).post(f"{API}/org/payments/{newest['id']}/void", json={"reason": "Внесено по ошибке"})
-    assert r.status_code == 200, r.text
-    assert modes(world)[str(s0.id)] == "package"                                              # the voided one is not live
-    set_settings(world, period_mode="lessons")
-    pay(world, s0, paid_on=day(-1), valid_from=day(-1), lessons_count=8)
-    assert modes(world)[str(s0.id)] == "package"
-    # the payment of ANOTHER group of the same student says nothing about this one
-    from tests.pg_world import make_group
-    from src.models.auth import StudentGroup
-
-    other = make_group(world.db, world.org, world.teacher, "Вторая")
-    world.db.commit()
-    world.db.add(StudentGroup(student_id=s2.id, group_id=other.id, is_active=True, joined_at=datetime.now() - timedelta(days=60)))
-    world.db.commit()
-    pay(world, s2, group=other, paid_on=day(-3), valid_from=day(-3), lessons_count=5)
-    assert modes(world)[str(s2.id)] is None
-
 
 @needs_pg
 def test_decided_excuses_the_review_and_reset_responses_carry_it_too(world):
     s0, s1, _ = world.students
-    pay(world, s0, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))
-    set_settings(world, period_mode="lessons")
-    pay(world, s1, paid_on=day(-30), valid_from=day(-30), lessons_count=12)
+    set_settings(world, period_mode="lessons", lessons_per_payment=12)
+    pay(world, s0, paid_on=day(-30), lessons_count=12)
+    pay(world, s1, paid_on=day(-30), lessons_count=12)
     excuse_all(world)
     items = {i["student"]["id"]: i for i in listing(world)}
     client = make_client(world)
     r = client.post(f"{API}/org/attendance/excuses/{items[str(s1.id)]['id']}/review", json={"decision": "confirmed"})
     assert r.status_code == 200 and r.json()["status"] == "confirmed" and r.json()["billing_mode"] == "package"
     r = client.post(f"{API}/org/attendance/excuses/{items[str(s0.id)]['id']}/review", json={"decision": "rejected"})
-    assert r.status_code == 200 and r.json()["billing_mode"] == "calendar"
-    assert modes(world) == by_student(world, "calendar", "package", None)                      # decided ones are in the list as well
+    assert r.status_code == 200 and r.json()["billing_mode"] == "package"
+    assert modes(world) == by_student(world, "package", "package", None)                      # decided ones are in the list as well
     r = client.post(f"{API}/org/attendance/excuses/{items[str(s1.id)]['id']}/reset")
     assert r.status_code == 200 and r.json()["status"] == "pending" and r.json()["billing_mode"] == "package"
     # the bulk answer only counts
@@ -128,16 +87,16 @@ def test_decided_excuses_the_review_and_reset_responses_carry_it_too(world):
 @needs_pg
 def test_the_journal_carries_it_for_administrators_and_never_for_a_teacher(world):
     s0, s1, s2 = world.students
-    pay(world, s0, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))
-    set_settings(world, period_mode="lessons")
-    pay(world, s1, paid_on=day(-30), valid_from=day(-30), lessons_count=12)
+    set_settings(world, period_mode="lessons", lessons_per_payment=12)
+    pay(world, s0, paid_on=day(-30), lessons_count=12)
+    pay(world, s1, paid_on=day(-30), lessons_count=12)
     lesson_day = excuse_all(world)
     from tests.pg_world import past_lesson
 
     _, lesson_id = past_lesson(1)
     key = key_of(lesson_day, lesson_id)
     admin_view = journal(world, world.admin).excuses[key]
-    assert {sid: e["billing_mode"] for sid, e in admin_view.items()} == by_student(world, "calendar", "package", None)
+    assert {sid: e["billing_mode"] for sid, e in admin_view.items()} == by_student(world, "package", "package", None)
     assert set(admin_view[str(s0.id)]) == {"id", "status", "reason", "reason_by_name", "reason_at", "reviewed_by_name",
                                            "reviewed_at", "review_note", "has_files", "billing_mode",
                                            "decided_after_deadline", "deadline_at_decision"}      # the decision mark (#39)
@@ -157,9 +116,9 @@ def test_the_journal_carries_it_for_administrators_and_never_for_a_teacher(world
 @needs_pg
 def test_it_is_loaded_in_a_batch_the_same_queries_for_30_excuses_as_for_6(world):
     s0, s1, s2 = world.students
-    pay(world, s0, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))
-    set_settings(world, period_mode="lessons")
-    pay(world, s1, paid_on=day(-30), valid_from=day(-30), lessons_count=40)
+    set_settings(world, period_mode="lessons", lessons_per_payment=40)
+    pay(world, s0, paid_on=day(-30), lessons_count=40)
+    pay(world, s1, paid_on=day(-30), lessons_count=40)
 
     def statements(fn):
         world.db.expire_all()
@@ -184,12 +143,11 @@ def test_it_is_loaded_in_a_batch_the_same_queries_for_30_excuses_as_for_6(world)
     big_items, big = statements(lambda: listing(world))
     assert len(small_items) == 6 and len(big_items) == 30
     assert len(big) == len(small), (len(small), len(big))
-    assert [i["billing_mode"] for i in big_items if i["student"]["id"] == str(s0.id)] == ["calendar"] * 10
+    assert [i["billing_mode"] for i in big_items if i["student"]["id"] == str(s0.id)] == ["package"] * 10
     assert [i["billing_mode"] for i in big_items if i["student"]["id"] == str(s1.id)] == ["package"] * 10
     assert all(i["billing_mode"] is None for i in big_items if i["student"]["id"] == str(s2.id))
     # the payments are read ONCE for the whole page (shared with the deadlines), never per excuse
     assert len([q for q in big if "FROM student_payments" in q]) == 1
-    assert not any("amount" in q.split("FROM")[0] for q in big if "FROM student_payments" in q)    # never the amount
     # the journal: one read of the payments for all 30 excuses, none at all for a teacher
     today = business_today()
     params = (str(world.org.id), str(world.group.id))
@@ -204,3 +162,35 @@ def test_it_is_loaded_in_a_batch_the_same_queries_for_30_excuses_as_for_6(world)
     assert len([q for q in admin_sql if "FROM student_payments" in q]) == 1
     _, teacher_sql = statements(read_journal(world.teacher, False))
     assert not [q for q in teacher_sql if "student_payments" in q]
+
+
+@needs_pg
+def test_the_mode_is_the_centre_regime_while_there_is_money_and_none_without(world):
+    s0, s1, s2 = world.students
+    pay(world, s0, paid_on=day(-30), valid_to=day(20))
+    excuse_all(world)
+    assert modes(world) == by_student(world, "calendar", None, None)             # nobody else has money: no package line
+    set_settings(world, period_mode="lessons")
+    assert modes(world) == by_student(world, "package", None, None)              # the centre bills by packages now
+    set_settings(world, period_mode="calendar")
+    assert modes(world) == by_student(world, "calendar", None, None)
+
+
+@needs_pg
+def test_a_voided_payment_does_not_count_and_another_group_says_nothing(world):
+    s0, s1, s2 = world.students
+    newest = pay(world, s0, paid_on=day(-2), valid_to=day(27))["payment"]
+    excuse_all(world)
+    assert modes(world)[str(s0.id)] == "calendar"
+    r = owner(world).post(f"{API}/org/payments/{newest['id']}/void", json={"reason": "Внесено по ошибке"})
+    assert r.status_code == 200, r.text
+    assert modes(world)[str(s0.id)] is None                                       # the voided one is not live
+    from tests.pg_world import make_group
+    from src.models.auth import StudentGroup
+
+    other = make_group(world.db, world.org, world.teacher, "Вторая")
+    world.db.commit()
+    world.db.add(StudentGroup(student_id=s2.id, group_id=other.id, is_active=True, joined_at=datetime.now() - timedelta(days=60)))
+    world.db.commit()
+    pay(world, s2, group=other, paid_on=day(-3), valid_to=day(20))
+    assert modes(world)[str(s2.id)] is None                                       # money in ANOTHER group says nothing about this one

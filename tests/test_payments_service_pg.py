@@ -40,18 +40,40 @@ def owner(w):
 
 
 def set_settings(w, **body):
-    r = owner(w).put(f"{API}/org/settings/payments", json=body)
-    assert r.status_code == 200, r.text
-    return r.json()
+    """The settings of the payments, written directly (the API's history of changes has its own tests)."""
+    from tests.pg_world import payments_block
+
+    payments_block(w.db, w.org, **body)
+    return body
 
 
 def pay(w, student=None, group=None, client=None, expect=201, **body):
-    body.setdefault("amount", 450000)
-    body.setdefault("paid_on", day().isoformat())
-    for key in ("paid_on", "valid_from", "valid_to"):
-        if hasattr(body.get(key), "isoformat"):
-            body[key] = body[key].isoformat()
-    r = (client or owner(w)).post(f"{API}/org/memberships/{mid(w, student, group)}/payments", json=body)
+    """PAY-2: a payment is a SUM.  The old tests said «valid_to»: here that means «enough money to be paid through that day»
+    (``lessons_count``: enough for that many lessons); an explicit ``amount`` is posted as it is.  ``valid_from`` is ignored."""
+    from src.auth import ledger_service as ls
+    from tests.pg_world import ensure_billing, money_for
+
+    through, lessons = body.pop("valid_to", None), body.pop("lessons_count", None)
+    body.pop("valid_from", None)
+    if isinstance(through, str):
+        through = date.fromisoformat(through)
+    paid_on = body.get("paid_on") or day()
+    if isinstance(paid_on, str):
+        paid_on = date.fromisoformat(paid_on)
+    membership_id = mid(w, student, group)
+    if "amount" not in body:
+        if expect == 201:
+            ensure_billing(w, group)
+            current = ls.load_settings(w.db, str(w.org.id)).current
+            if current.mode == ps.LESSONS:
+                body["amount"] = money_for(w, membership_id, lessons=lessons or current.package_size, on=paid_on)
+            else:
+                body["amount"] = money_for(w, membership_id, through=through or ps.add_month_minus_day(paid_on), on=paid_on)
+        else:
+            body["amount"] = 450000
+    body["paid_on"] = paid_on.isoformat()
+    body.setdefault("method", "cash")
+    r = (client or owner(w)).post(f"{API}/org/memberships/{membership_id}/payments", json=body)
     assert r.status_code == expect, r.text
     return r.json()
 
@@ -83,31 +105,6 @@ def backdate(w, payment_id, **fields):
 # ---- defaults ---------------------------------------------------------------------
 
 
-def test_calendar_defaults_period_is_one_month_minus_a_day(world):
-    body = pay(world, paid_on=day(-5))
-    p = body["payment"]
-    assert p["paid_on"] == day(-5).isoformat() and p["valid_from"] == day(-5).isoformat()
-    assert p["valid_to"] == ps.add_month_minus_day(day(-5)).isoformat() and p["lessons_count"] is None
-    assert p["currency"] == "UZS" and p["created_by"] == str(world.owner.id) and p["voided_at"] is None
-    assert p["created_by_name"] == "Иван Owner" and p["amount"] == 450000     # staff: «Имя Фамилия», like teachers on groups
-    assert body["warnings"] == []
-    assert body["row"]["status"] in ("active", "expiring") and body["row"]["period_mode"] == "calendar"
-    assert body["row"]["paid_until"] == p["valid_to"] and body["row"]["last_payment"]["id"] == p["id"]
-
-
-def test_next_payment_starts_the_day_after_the_previous_paid_until(world):
-    first = pay(world, paid_on=day(-20))["payment"]
-    nxt = pay(world, paid_on=day(-1))["payment"]  # the old period still runs
-    following = (ps.add_month_minus_day(day(-20)) + timedelta(days=1))
-    assert nxt["valid_from"] == following.isoformat() and first["valid_to"] < nxt["valid_from"]
-    # a payment made after the old period ended closes the debt first: it starts the day after the old
-    # "paid until", not on its own date (owner decision 21.10)
-    backdate(world, first["id"], valid_from=day(-70), valid_to=day(-40), paid_on=day(-70))
-    backdate(world, nxt["id"], valid_from=day(-39), valid_to=day(-10), paid_on=day(-39))
-    late = pay(world, paid_on=day(-2))["payment"]
-    assert late["valid_from"] == day(-9).isoformat()
-    assert late["valid_to"] == ps.add_month_minus_day(day(-9)).isoformat()
-
 
 # ---- debt: an overdue student closes the debt first (owner decision 21.10) -------------
 
@@ -117,122 +114,6 @@ def only_payment_ends(w, payment_id, valid_to):
     start = valid_to - timedelta(days=29)
     backdate(w, payment_id, valid_from=start, valid_to=valid_to, paid_on=start)
 
-
-def test_overdue_by_days_starts_the_day_after_the_old_paid_until(world):
-    first = pay(world, paid_on=day(-1))["payment"]
-    only_payment_ends(world, first["id"], day(-13))                  # overdue by 13 days
-    assert row_of(world)["status"] == "expired" and row_of(world)["days_overdue"] == 13
-    body = pay(world, paid_on=day(0))                                # pays today, no dates sent
-    p = body["payment"]
-    assert p["valid_from"] == day(-12).isoformat()                    # NOT the payment date
-    assert p["valid_to"] == ps.add_month_minus_day(day(-12)).isoformat()
-    assert body["row"]["status"] in ("active", "expiring") and body["row"]["paid_until"] == p["valid_to"]
-
-
-def test_overdue_by_two_months_stays_overdue_after_paying_one_period(world):
-    first = pay(world, paid_on=day(-1))["payment"]
-    only_payment_ends(world, first["id"], day(-60))
-    body = pay(world, paid_on=day(0))
-    p = body["payment"]
-    assert p["valid_from"] == day(-59).isoformat()
-    assert p["valid_to"] == ps.add_month_minus_day(day(-59)).isoformat() and p["valid_to"] < day(0).isoformat()
-    assert body["row"]["status"] == "expired" and body["row"]["days_overdue"] > 0     # the debt is not hidden
-    again = pay(world, paid_on=day(0), amount=1)["payment"]                           # the next payment continues
-    assert again["valid_from"] == (ps.add_month_minus_day(day(-59)) + timedelta(days=1)).isoformat()
-
-
-def test_a_student_who_left_and_came_back_starts_on_the_return_day(world):
-    first = pay(world, paid_on=day(-1))["payment"]
-    only_payment_ends(world, first["id"], day(-90))
-    membership = world.db.get(StudentGroup, mid(world))
-    membership.joined_at = datetime.combine(day(-5), datetime.min.time()).replace(hour=6)
-    for stay in membership.periods:
-        stay.joined_at = membership.joined_at
-    world.db.commit()
-    p = pay(world, paid_on=day(0))["payment"]
-    assert p["valid_from"] == day(-5).isoformat()                      # days outside the group are never charged
-
-
-def test_first_payment_does_not_reach_back_to_the_joining_date(world):
-    membership = world.db.get(StudentGroup, mid(world))
-    membership.joined_at = datetime.combine(day(-300), datetime.min.time()).replace(hour=6)
-    world.db.commit()
-    p = pay(world, paid_on=day(-1))["payment"]
-    assert p["valid_from"] == day(-1).isoformat()
-
-
-def test_paying_ahead_continues_without_a_gap(world):
-    first = pay(world, paid_on=day(-1))["payment"]
-    nxt = pay(world, paid_on=day(0), amount=1)["payment"]
-    assert nxt["valid_from"] == (date.fromisoformat(first["valid_to"]) + timedelta(days=1)).isoformat()
-
-
-def test_a_client_sent_start_is_used_as_it_is_even_when_overdue(world):
-    first = pay(world, paid_on=day(-1))["payment"]
-    only_payment_ends(world, first["id"], day(-13))
-    p = pay(world, paid_on=day(0), valid_from=day(-3))["payment"]
-    assert p["valid_from"] == day(-3).isoformat()
-
-
-def test_lessons_package_is_not_moved_by_the_previous_payment(world):
-    set_settings(world, period_mode="lessons", lessons_per_payment=8)
-    pay(world, paid_on=day(-50))
-    p = pay(world, paid_on=day(-1), amount=1)["payment"]
-    assert p["valid_from"] == day(-1).isoformat() and p["lessons_count"] == 8
-
-
-def test_lessons_defaults_use_the_centre_setting(world):
-    set_settings(world, period_mode="lessons", lessons_per_payment=8)
-    body = pay(world, paid_on=day(-1))
-    p = body["payment"]
-    assert (p["lessons_count"], p["valid_to"], p["valid_from"]) == (8, None, day(-1).isoformat())
-    row = body["row"]
-    assert (row["period_mode"], row["status"], row["lessons_total"], row["lessons_used"], row["lessons_left"]) == (
-        "lessons", "active", 8, 0, 8)
-    assert row["paid_until"] is None and row["days_left"] is None
-
-
-def test_explicit_period_overrides_the_mode_and_validates(world):
-    p = pay(world, paid_on=day(-1), valid_to=day(40))["payment"]
-    assert p["valid_to"] == day(40).isoformat()
-    set_settings(world, period_mode="lessons")
-    p = pay(world, paid_on=day(-1), valid_to=day(60), amount=1)["payment"]       # explicit calendar in lessons centre
-    assert p["lessons_count"] is None
-    p = pay(world, paid_on=day(-1), lessons_count=5, amount=2)["payment"]
-    assert p["lessons_count"] == 5 and p["valid_to"] is None
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        {"paid_on": 1},                                        # in the future (business date)
-        {"paid_on": -(3 * 365 + 5)},                            # older than three years
-        {"valid_to": 450},                                      # longer than 400 days
-        {"valid_to": -3, "valid_from": 0},                      # to before from
-        {"valid_to": 30, "lessons_count": 12},                  # both period kinds
-        {"amount": -1},
-        {"amount": 10_000_000_001},
-        {"lessons_count": 0},
-        {"lessons_count": 121},
-        {"note": "x" * 501},
-    ],
-)
-def test_invalid_payments_are_422_and_write_nothing(world, body):
-    for key in ("paid_on", "valid_from", "valid_to"):
-        if isinstance(body.get(key), int):
-            body[key] = day(body[key])
-    pay(world, expect=422, **body)
-    assert world.db.query(StudentPayment).filter_by(org_id=world.org.id).count() == 0
-
-
-def test_warnings_do_not_block(world):
-    old = pay(world, paid_on=day(-100), valid_to=day(-75))
-    assert [w["code"] for w in old["warnings"]] == ["paid_over_60_days_ago"]
-    body = pay(world, paid_on=day(-1), valid_from=day(-80), valid_to=day(-60), amount=2)
-    assert [w["code"] for w in body["warnings"]] == ["overlaps_previous"]
-    body = pay(world, paid_on=day(0), valid_from=day(30), valid_to=day(100), amount=3)
-    assert [w["code"] for w in body["warnings"]] == ["gap_before", "period_over_62_days"]
-    assert all(w["message"] for w in body["warnings"])
 
 
 def test_business_date_is_tashkent_not_utc(world, monkeypatch):
@@ -247,50 +128,6 @@ def test_business_date_is_tashkent_not_utc(world, monkeypatch):
 
 # ---- duplicates, replace, void ----------------------------------------------------
 
-
-def test_duplicate_payment_is_409_in_service_and_unique_index(world):
-    first = pay(world, paid_on=day(-3), valid_to=day(20))["payment"]
-    r = owner(world).post(f"{API}/org/memberships/{mid(world)}/payments",
-                          json={"amount": 450000, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat(),
-                                "valid_from": day(-3).isoformat()})
-    assert r.status_code == 409 and r.json()["detail"]["code"] == "DUPLICATE_PAYMENT"
-    # PAY-2: the database refuses a second payment with the same Idempotency-Key (the old identical-payment index is gone)
-    twin = world.db.get(StudentPayment, first["id"])
-    key = uuid4()
-    twin.idempotency_key = key
-    world.db.commit()
-    clone = StudentPayment(
-        org_id=twin.org_id, membership_id=twin.membership_id, student_id=twin.student_id, group_id=twin.group_id,
-        amount=twin.amount, paid_on=twin.paid_on, valid_from=twin.valid_from, valid_to=twin.valid_to,
-        created_by=world.owner.id, idempotency_key=key,
-    )
-    world.db.add(clone)
-    with pytest.raises(IntegrityError, match="uq_student_payments_idempotency"):
-        world.db.flush()
-    world.db.rollback()
-    # a different amount is a different payment; a voided twin does not block
-    pay(world, paid_on=day(-3), valid_to=day(20), valid_from=day(-3), amount=1)
-    assert owner(world).post(f"{API}/org/payments/{first['id']}/void", json={"reason": "ошибка"}).status_code == 200
-    pay(world, paid_on=day(-3), valid_to=day(20), valid_from=day(-3))
-
-
-def test_replace_voids_the_old_payment_and_links_the_new_one(world):
-    old = pay(world, paid_on=day(-3), valid_to=day(20))["payment"]
-    r = owner(world).post(f"{API}/org/payments/{old['id']}/replace",
-                          json={"amount": 500000, "paid_on": day(-3).isoformat(), "valid_to": day(27).isoformat(),
-                                "reason": "Неверная сумма"})
-    assert r.status_code == 201, r.text
-    body = r.json()
-    new = body["payment"]
-    assert new["replaces_payment_id"] == old["id"] and new["amount"] == 500000 and new["valid_to"] == day(27).isoformat()
-    world.db.expire_all()
-    stored = world.db.get(StudentPayment, old["id"])
-    assert stored.voided_at is not None and stored.void_reason == "Неверная сумма" and stored.voided_by == world.owner.id
-    assert body["row"]["paid_until"] == day(27).isoformat() and body["row"]["last_payment"]["id"] == new["id"]
-    # the old one is still there for the history, the live set has one payment
-    listing = owner(world).get(f"{API}/org/memberships/{mid(world)}/payments").json()
-    assert [p["id"] for p in listing] == [new["id"], old["id"]] or {p["id"] for p in listing} == {new["id"], old["id"]}
-    assert world.db.query(StudentPayment).filter_by(org_id=world.org.id, voided_at=None).count() == 1
 
 
 def test_replace_default_reason_and_restating_the_same_figures(world):
@@ -344,14 +181,6 @@ def test_history_listing_and_include_voided(world):
 # ---- status -----------------------------------------------------------------------
 
 
-def test_latest_paid_until_wins_and_voided_payments_are_ignored(world):
-    long = pay(world, paid_on=day(-30), valid_to=day(40))["payment"]
-    pay(world, paid_on=day(-1), valid_from=day(-1), valid_to=day(2), amount=2)  # entered later, ends earlier
-    assert row_of(world)["paid_until"] == day(40).isoformat()
-    owner(world).post(f"{API}/org/payments/{long['id']}/void", json={"reason": "ошибка"})
-    row = row_of(world)
-    assert (row["paid_until"], row["status"], row["days_left"]) == (day(2).isoformat(), "expiring", 2)
-
 
 @pytest.mark.parametrize("offset,status", [(-1, "expired"), (0, "ends_today"), (1, "expiring"), (3, "expiring"), (4, "active")])
 def test_status_boundaries_through_the_api(world, offset, status):
@@ -373,15 +202,6 @@ def test_free_and_none_statuses(world):
     assert status_page(world, bucket="active")["items"][0]["status"] == "free"
 
 
-def test_mode_switch_is_decided_by_the_latest_payment(world):
-    pay(world, paid_on=day(-40), valid_to=day(-10))
-    assert row_of(world)["status"] == "expired"
-    set_settings(world, period_mode="lessons", lessons_per_payment=10)
-    pay(world, paid_on=day(-1), amount=2)
-    row = row_of(world)
-    assert (row["period_mode"], row["status"], row["lessons_total"]) == ("lessons", "active", 10)
-    assert row["paid_until"] is None
-
 
 def lesson_marks(w, offset, marks, reasons=None):
     """A completed lesson of the first group; ``marks`` = {student: mark}."""
@@ -392,45 +212,6 @@ def lesson_marks(w, offset, marks, reasons=None):
     save(w, day_, lesson_id, list(full.items()), status="completed", **extra)
     return day_, lesson_id
 
-
-def test_lessons_mode_counts_only_what_rule_43_counts(world):
-    s0, s1, _ = world.students
-    set_settings(world, period_mode="lessons", lessons_per_payment=3, expiring_lessons=1)
-    # lesson 3 days ago: s0 excused (confirmed below), s1 late
-    lesson_marks(world, 3, {s0: "excused", s1: "late"}, reasons={s0: "Справка"})
-    world.db.query(AttendanceExcuse).filter_by(org_id=world.org.id).update({"status": "confirmed"})
-    world.db.commit()
-    lesson_marks(world, 2, {s0: "absent", s1: "present"})
-    pay(world, s0, paid_on=day(-10), valid_from=day(-10))
-    pay(world, s1, paid_on=day(-10), valid_from=day(-10))
-    r0, r1 = row_of(world, s0), row_of(world, s1)
-    assert (r0["lessons_used"], r0["lessons_left"], r0["status"]) == (1, 2, "active")   # confirmed excuse is free
-    assert (r1["lessons_used"], r1["lessons_left"], r1["status"]) == (2, 1, "expiring")
-    lesson_marks(world, 1, {s0: "present", s1: "present"})
-    assert (row_of(world, s1)["status"], row_of(world, s1)["lessons_left"]) == ("expired", 0)
-    assert status_page(world, bucket="due")["total"] == 1
-
-
-def test_lessons_before_valid_from_and_cancelled_or_open_lessons_do_not_count(world):
-    from src.auth.schemas import StartAttendanceRequest
-    from tests.pg_world import LIVE_SLOT
-
-    s0 = world.students[0]
-    set_settings(world, period_mode="lessons", lessons_per_payment=2)
-    lesson_marks(world, 5, {s0: "present"})                 # held before the payment starts
-    pay(world, s0, paid_on=day(-2), valid_from=day(-2))
-    d, lid = reconcile(world, 1)
-    save(world, d, lid, [], status="cancelled", cancellationReason="Праздник")
-    assert row_of(world, s0)["lessons_used"] == 0
-    # an in-progress lesson does not count either
-    world.svc.start_group_attendance(
-        str(world.org.id), str(world.group.id),
-        StartAttendanceRequest(lessonDate=business_today(), lessonId=LIVE_SLOT),
-        started_by=str(world.admin.id), is_org_admin=True,
-    )
-    save(world, business_today(), LIVE_SLOT, [(s0, "present")])
-    row = row_of(world, s0)
-    assert (row["lessons_used"], row["lessons_left"], row["status"]) == (0, 2, "expiring")
 
 
 def test_student_not_in_the_roster_snapshot_is_not_charged(world):
@@ -504,16 +285,6 @@ def test_memberships_endpoint_hides_closed_memberships_without_payments(world):
     assert all(r["is_active"] is False for r in rows)
     assert owner(world).get(f"{API}/org/students/{uuid4()}/memberships").status_code == 404
 
-
-def test_closed_membership_keeps_payments_when_the_student_returns(world):
-    pay(world, paid_on=day(-2))
-    second = make_group(world.db, world.org, world.teacher2, "Вторая")
-    world.db.commit()
-    s = world.students[0]
-    world.svc.add_student_to_group(str(world.org.id), str(second.id), str(s.id))  # transfer
-    world.svc.add_student_to_group(str(world.org.id), str(world.group.id), str(s.id), mode="add")
-    row = row_of(world)
-    assert row["is_active"] and row["last_payment"] is not None and row["status"] in ("active", "expiring")
 
 
 # ---- summary == list, ordering, paging --------------------------------------------
@@ -632,31 +403,6 @@ def test_the_old_fee_endpoint_is_gone_and_says_where_to_go(world):
     assert m.monthly_fee is None and m.monthly_fee_updated_at is None   # nothing was written
 
 
-def test_settings_defaults_patch_semantics_and_audit_stamp(world):
-    client = owner(world)
-    r = client.get(f"{API}/org/settings/payments")
-    assert r.json() == {"period_mode": "calendar", "billing_anchor": "payment_date", "billing_day": 1,
-                        "lessons_per_payment": 12, "expiring_days": 3,
-                        "expiring_lessons": 3, "excuse_deadline_days": 5, "excuse_deadline_lessons": 2,
-                        "admin_can_manage": False, "accounting_start_date": None, "updated_by": None, "updated_at": None}
-    world.db.query(Organization).filter_by(id=world.org.id).update({"settings": {"theme": "keep-me"}})
-    world.db.commit()
-    r = client.put(f"{API}/org/settings/payments", json={"period_mode": "lessons", "expiring_lessons": 5})
-    body = r.json()
-    assert (body["period_mode"], body["lessons_per_payment"], body["expiring_lessons"]) == ("lessons", 12, 5)
-    assert body["updated_by"] == str(world.owner.id) and body["updated_at"]
-    r = client.put(f"{API}/org/settings/payments", json={"admin_can_manage": True})
-    assert r.json()["period_mode"] == "lessons" and r.json()["admin_can_manage"] is True   # untouched fields stay
-    world.db.expire_all()
-    stored = world.db.get(Organization, world.org.id).settings
-    assert stored["theme"] == "keep-me" and stored["payments"]["admin_can_manage"] is True
-    for bad in ({"lessons_per_payment": 0}, {"lessons_per_payment": 61}, {"expiring_days": 15}, {"expiring_lessons": 11},
-                {"excuse_deadline_days": -1}, {"excuse_deadline_days": 31}, {"excuse_deadline_lessons": -1},
-                {"excuse_deadline_lessons": 13},
-                {"period_mode": "weekly"}, {"admin_can_manage": "maybe"},
-                {"billing_anchor": "monthly"}, {"billing_day": 0}, {"billing_day": 29}):
-        assert client.put(f"{API}/org/settings/payments", json=bad).status_code == 422, bad
-
 
 def test_expiring_thresholds_come_from_the_settings(world):
     pay(world, paid_on=day(-20), valid_from=day(-20), valid_to=day(5))
@@ -696,66 +442,8 @@ def test_other_organisation_gets_404_everywhere_and_sees_nothing(world):
 # ---- review follow-ups: default end of period, valid_from bounds, extreme dates ------
 
 
-@pytest.mark.parametrize(
-    "paid_on,expected",
-    [
-        ("2026-01-31", "2026-02-28"), ("2026-10-01", "2026-10-31"), ("2028-02-29", "2028-03-28"),
-        ("2026-11-30", "2026-12-29"), ("2026-03-31", "2026-04-30"), ("2026-10-05", "2026-11-04"),
-    ],
-)
-def test_default_end_of_period_over_the_api(world, paid_on, expected, monkeypatch):
-    from datetime import datetime, timezone
-    import src.auth.payments_service as svc
-    monkeypatch.setattr(svc.ps, "business_today", lambda tz=None: date.fromisoformat(paid_on))
-    assert pay(world, paid_on=paid_on)["payment"]["valid_to"] == expected
 
 
-def test_valid_from_must_be_within_three_years_back_and_400_days_forward(world):
-    paid = day(-1)
-    far_back = (paid.replace(year=paid.year - 3) - timedelta(days=1)).isoformat()
-    pay(world, paid_on=paid, valid_from=far_back, expect=422)
-    pay(world, paid_on=paid, valid_from=(paid + timedelta(days=401)).isoformat(), expect=422)
-    pay(world, paid_on=paid, valid_from=(paid + timedelta(days=401)).isoformat(), lessons_count=5, expect=422)
-    pay(world, paid_on=paid, valid_from=(paid + timedelta(days=400)).isoformat(), valid_to=(paid + timedelta(days=430)).isoformat(), amount=2)
-    start = paid.replace(year=paid.year - 3)
-    ok = pay(world, paid_on=paid, valid_from=start.isoformat(), valid_to=(start + timedelta(days=30)).isoformat(), amount=3)
-    assert ok["payment"]["valid_from"] == start.isoformat()
-
-
-EXTREMES = ["9999-12-31", "9999-12-30", "0001-01-01", "0001-01-02", "2999-01-01"]
-
-
-@pytest.mark.parametrize("extreme", EXTREMES)
-@pytest.mark.parametrize("mode", ["calendar", "lessons"])
-def test_extreme_dates_are_422_never_500(world, extreme, mode):
-    set_settings(world, period_mode=mode)
-    base = {"amount": 1}
-    client = owner(world)
-    url = f"{API}/org/memberships/{mid(world)}/payments"
-    today = day().isoformat()
-    for body in (
-        {**base, "paid_on": extreme},
-        {**base, "paid_on": today, "valid_from": extreme},
-        {**base, "paid_on": today, "valid_to": extreme},
-        {**base, "paid_on": today, "valid_from": extreme, "valid_to": extreme},
-        {**base, "paid_on": today, "valid_from": extreme, "lessons_count": 3},
-        {**base, "paid_on": extreme, "valid_from": extreme},
-    ):
-        r = client.post(url, json=body)
-        assert r.status_code == 422, (body, r.status_code, r.text[:200])
-    p = pay(world)["payment"]
-    for path, body in (
-        (f"{API}/org/payments/{p['id']}/replace", {**base, "paid_on": extreme}),
-        (f"{API}/org/payments/{p['id']}/replace", {**base, "paid_on": today, "valid_from": extreme}),
-    ):
-        assert client.post(path, json=body).status_code == 422
-    assert world.db.query(StudentPayment).filter_by(org_id=world.org.id, voided_at=None).count() == 1
-
-
-def test_a_previous_payment_ending_at_the_edge_does_not_break_the_next_default(world):
-    first = pay(world, paid_on=day(-1), valid_from=day(-1), valid_to=day(399))["payment"]
-    nxt = pay(world, paid_on=day(0), amount=2)["payment"]       # default start = day after 399
-    assert nxt["valid_from"] == day(400).isoformat() and nxt["valid_to"]
 
 
 def test_summary_carries_lessons_per_payment(world):
@@ -763,3 +451,141 @@ def test_summary_carries_lessons_per_payment(world):
     set_settings(world, period_mode="lessons", lessons_per_payment=8)
     s = summary(world)
     assert (s["lessons_per_payment"], s["period_mode"]) == (8, "lessons")
+
+
+# ---- PAY-2: the rules of a payment that is money -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body,code",
+    [
+        ({"paid_on": 1}, "PAID_ON_RANGE"),                       # in the future (business date)
+        ({"paid_on": -(3 * 365 + 5)}, "PAID_ON_RANGE"),          # older than three years
+        ({"amount": -1}, "AMOUNT_RANGE"),
+        ({"amount": 0}, "AMOUNT_RANGE"),
+        ({"amount": 10_000_000_001}, "AMOUNT_RANGE"),
+        ({"method": "unknown"}, "METHOD_REQUIRED"),
+        ({"note": "x" * 501}, None),                             # pydantic: a plain 422
+    ],
+)
+def test_invalid_payments_are_422_and_write_nothing(world, body, code):
+    body = dict(body)
+    if isinstance(body.get("paid_on"), int):
+        body["paid_on"] = day(body["paid_on"])
+    body.setdefault("amount", 450000)
+    r = pay(world, expect=422, **body)
+    assert world.db.query(StudentPayment).filter_by(org_id=world.org.id).count() == 0
+
+
+def test_replace_voids_the_old_payment_and_links_the_new_one(world):
+    old = pay(world, paid_on=day(-3), valid_to=day(20))["payment"]
+    r = owner(world).post(f"{API}/org/payments/{old['id']}/replace",
+                          json={"amount": 500000, "paid_on": day(-3).isoformat(), "method": "card",
+                                "reason": "Неверная сумма"})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    new = body["payment"]
+    assert new["replaces_payment_id"] == old["id"] and new["amount"] == 500000 and new["method"] == "card"
+    world.db.expire_all()
+    stored = world.db.get(StudentPayment, old["id"])
+    assert stored.voided_at is not None and stored.void_reason == "Неверная сумма" and stored.voided_by == world.owner.id
+    assert body["row"]["last_payment"]["id"] == new["id"]
+    listing = owner(world).get(f"{API}/org/memberships/{mid(world)}/payments").json()
+    assert {p["id"] for p in listing} == {new["id"], old["id"]}
+    assert world.db.query(StudentPayment).filter_by(org_id=world.org.id, voided_at=None).count() == 1
+
+
+def test_voided_payments_are_ignored_by_the_account(world):
+    long = pay(world, paid_on=day(-30), valid_to=day(40))["payment"]
+    short = pay(world, paid_on=day(-1), amount=100_000)["payment"]
+    assert row_of(world)["paid_until"] >= day(40).isoformat()
+    owner(world).post(f"{API}/org/payments/{long['id']}/void", json={"reason": "ошибка"})
+    row = row_of(world)
+    assert row["paid_until"] < day(40).isoformat() and row["last_payment"]["id"] == short["id"]
+
+
+def test_lessons_mode_counts_only_what_rule_43_counts(world):
+    s0, s1, _ = world.students
+    set_settings(world, period_mode="lessons", lessons_per_payment=3, expiring_lessons=1)
+    ensure_lessons_price(world)
+    # lesson 3 days ago: s0 excused (confirmed below), s1 late
+    lesson_marks(world, 3, {s0: "excused", s1: "late"}, reasons={s0: "Справка"})
+    world.db.query(AttendanceExcuse).filter_by(org_id=world.org.id).update({"status": "confirmed"})
+    world.db.commit()
+    lesson_marks(world, 2, {s0: "absent", s1: "present"})
+    pay(world, s0, paid_on=day(-1), lessons_count=3)
+    pay(world, s1, paid_on=day(-1), lessons_count=3)
+    r0, r1 = row_of(world, s0), row_of(world, s1)
+    assert (r0["lessons_used"], r0["lessons_left"], r0["status"]) == (1, 2, "active")   # confirmed excuse is free
+    assert (r1["lessons_used"], r1["lessons_left"], r1["status"]) == (2, 1, "expiring")
+    lesson_marks(world, 1, {s0: "present", s1: "present"})
+    assert (row_of(world, s1)["status"], row_of(world, s1)["lessons_left"]) == ("expired", 0)
+    assert status_page(world, bucket="due")["total"] == 1
+
+
+def test_cancelled_and_open_lessons_do_not_count(world):
+    from src.auth.schemas import StartAttendanceRequest
+    from tests.pg_world import LIVE_SLOT
+
+    s0 = world.students[0]
+    set_settings(world, period_mode="lessons", lessons_per_payment=2)
+    ensure_lessons_price(world)
+    pay(world, s0, paid_on=day(-2), lessons_count=2)
+    d, lid = reconcile(world, 1)
+    save(world, d, lid, [], status="cancelled", cancellationReason="Праздник")
+    assert row_of(world, s0)["lessons_used"] == 0
+    # an in-progress lesson does not count either
+    world.svc.start_group_attendance(
+        str(world.org.id), str(world.group.id),
+        StartAttendanceRequest(lessonDate=business_today(), lessonId=LIVE_SLOT),
+        started_by=str(world.admin.id), is_org_admin=True,
+    )
+    save(world, business_today(), LIVE_SLOT, [(s0, "present")])
+    row = row_of(world, s0)
+    assert (row["lessons_used"], row["lessons_left"], row["status"]) == (0, 2, "expiring")
+
+
+def ensure_lessons_price(w, price=400_000):
+    from tests.pg_world import ensure_billing
+
+    ensure_billing(w, price=price)
+
+
+def test_closed_membership_keeps_its_money_when_the_student_returns(world):
+    pay(world, paid_on=day(-2))
+    second = make_group(world.db, world.org, world.teacher2, "Вторая")
+    world.db.commit()
+    s = world.students[0]
+    world.svc.add_student_to_group(str(world.org.id), str(second.id), str(s.id))  # transfer
+    world.svc.add_student_to_group(str(world.org.id), str(world.group.id), str(s.id), mode="add")
+    row = row_of(world)
+    assert row["is_active"] and row["last_payment"] is not None
+
+
+def test_settings_defaults_patch_semantics_and_audit_stamp(world):
+    client = owner(world)
+    r = client.get(f"{API}/org/settings/payments")
+    got = r.json()
+    assert got.pop("accounting_start_date")                       # the effective date: the day the centre was created
+    assert got == {"period_mode": "calendar", "billing_anchor": "payment_date", "billing_day": 1,
+                   "lessons_per_payment": 12, "expiring_days": 3,
+                   "expiring_lessons": 3, "excuse_deadline_days": 5, "excuse_deadline_lessons": 2,
+                   "admin_can_manage": False, "updated_by": None, "updated_at": None}
+    world.db.query(Organization).filter_by(id=world.org.id).update({"settings": {"theme": "keep-me"}})
+    world.db.commit()
+    r = client.put(f"{API}/org/settings/payments", json={"period_mode": "lessons", "expiring_lessons": 5})
+    body = r.json()
+    assert (body["period_mode"], body["lessons_per_payment"], body["expiring_lessons"]) == ("lessons", 12, 5)
+    assert body["updated_by"] == str(world.owner.id) and body["updated_at"]
+    r = client.put(f"{API}/org/settings/payments", json={"admin_can_manage": True})
+    assert r.json()["period_mode"] == "lessons" and r.json()["admin_can_manage"] is True   # untouched fields stay
+    world.db.expire_all()
+    stored = world.db.get(Organization, world.org.id).settings
+    assert stored["theme"] == "keep-me" and stored["payments"]["admin_can_manage"] is True
+    for bad in ({"lessons_per_payment": 0}, {"lessons_per_payment": 61}, {"expiring_days": 15}, {"expiring_lessons": 11},
+                {"excuse_deadline_days": -1}, {"excuse_deadline_days": 31}, {"excuse_deadline_lessons": -1},
+                {"excuse_deadline_lessons": 13},
+                {"period_mode": "weekly"}, {"admin_can_manage": "maybe"},
+                {"billing_anchor": "monthly"}, {"billing_day": 0}, {"billing_day": 29}):
+        assert client.put(f"{API}/org/settings/payments", json=bad).status_code == 422, bad
+

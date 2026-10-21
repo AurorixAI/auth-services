@@ -318,10 +318,10 @@ class LedgerLoader:
             or_(MembershipTransfer.from_membership_id.in_(found), MembershipTransfer.to_membership_id.in_(found)),
         ):
             self.transfers[t.id] = t
-            if t.to_membership_id in self.t_in:
-                self.t_in[t.to_membership_id].append(t)
-            if t.from_membership_id in self.t_out:
-                self.t_out[t.from_membership_id].append(t)
+        # a transfer is met again from its other end in a later hop: index from scratch, every link exactly once
+        for mid in self._loaded:
+            self.t_in[mid] = sorted((t for t in self.transfers.values() if t.to_membership_id == mid), key=lambda t: (t.at, str(t.id)))
+            self.t_out[mid] = sorted((t for t in self.transfers.values() if t.from_membership_id == mid), key=lambda t: (t.at, str(t.id)))
         if self._needs_lessons():
             self._load_counted(found)
 

@@ -96,9 +96,9 @@ def cancel_lesson(w, lesson_date, lesson_id):
 
 
 def test_billing_settings_are_stored_and_patched(world):
-    body = set_settings(world, billing_anchor="fixed_day", billing_day=10)
+    body = owner(world).put(f"{API}/org/settings/payments", json={"billing_anchor": "fixed_day", "billing_day": 10}).json()
     assert (body["billing_anchor"], body["billing_day"], body["period_mode"]) == ("fixed_day", 10, "calendar")
-    body = set_settings(world, expiring_days=4)                       # untouched fields stay
+    body = owner(world).put(f"{API}/org/settings/payments", json={"expiring_days": 4}).json()    # untouched fields stay
     assert (body["billing_anchor"], body["billing_day"]) == ("fixed_day", 10)
     for bad in ({"billing_day": 0}, {"billing_day": 29}, {"billing_anchor": "weekly"}):
         assert owner(world).put(f"{API}/org/settings/payments", json=bad).status_code == 422
@@ -111,378 +111,6 @@ def test_billing_settings_are_stored_and_patched(world):
 
 # ---- quote: dates are the dates payment creation uses -------------------------------
 
-
-def test_quote_first_payment_of_a_student_who_came_mid_month(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    q = quote(world, paid_on=D(2026, 3, 17))
-    assert (q["mode"], q["billing_anchor"], q["billing_day"]) == ("calendar", "fixed_day", 1)
-    assert (q["valid_from"], q["valid_to"], q["lessons_count"], q["partial"]) == ("2026-03-15", "2026-03-31", None, True)
-    # 16 18 20 23 25 27 30 = 7 of 13  ->  450 000 * 7 / 13 = 242 307 -> 242 000
-    assert q["basis"] == "lessons" and q["monthly_fee"] == 450_000 and q["suggested_amount"] == 242_000
-    (part,) = q["parts"]
-    assert part == {"from": "2026-03-15", "to": "2026-03-31", "period_from": "2026-03-01", "period_to": "2026-03-31",
-                    "lessons": 7, "period_lessons": 13, "amount": 242_000}
-    assert q["explanation"] == "Неполный месяц: 7 уроков из 13 по расписанию — 242 000 сум из 450 000"
-    # the very same dates are what creating the payment without dates saves
-    created = pay(world, paid_on=D(2026, 3, 17), amount=q["suggested_amount"])["payment"]
-    assert (created["valid_from"], created["valid_to"], created["partial_period"]) == ("2026-03-15", "2026-03-31", True)
-
-
-def test_quote_uses_the_business_date_of_joining_not_the_utc_date(world):
-    # 14.03 20:30 UTC is 15.03 01:30 in Tashkent
-    setup_mwf(world, joined=datetime(2026, 3, 14, 20, 30))
-    assert quote(world, paid_on=D(2026, 3, 17))["valid_from"] == "2026-03-15"
-    # 14.03 18:30 UTC is still 14.03 in Tashkent... 23:30
-    world.db.get(StudentGroup, mid(world)).joined_at = datetime(2026, 3, 14, 18, 30)
-    world.db.commit()
-    assert quote(world, paid_on=D(2026, 3, 17))["valid_from"] == "2026-03-14"
-
-
-def test_quote_a_student_who_came_before_the_period_pays_the_whole_period(world):
-    setup_mwf(world, joined=datetime(2026, 2, 25, 6, 0))
-    q = quote(world, paid_on=D(2026, 3, 3))
-    assert (q["valid_from"], q["valid_to"], q["partial"], q["basis"]) == ("2026-03-01", "2026-03-31", False, "full")
-    assert (q["suggested_amount"], q["explanation"]) == (450_000, "Полный месяц — 450 000 сум")
-    assert q["parts"] == [{"from": "2026-03-01", "to": "2026-03-31", "period_from": "2026-03-01",
-                           "period_to": "2026-03-31", "lessons": None, "period_lessons": None, "amount": 450_000}]
-
-
-def test_quote_without_a_joining_date_starts_on_the_payment_date(world):
-    setup_mwf(world)
-    world.db.get(StudentGroup, mid(world)).joined_at = None
-    world.db.commit()
-    q = quote(world, paid_on=D(2026, 3, 17))
-    assert (q["valid_from"], q["valid_to"], q["partial"]) == ("2026-03-17", "2026-03-31", True)
-
-
-def test_a_student_who_rejoins_reuses_the_row_and_starts_on_the_return_day(world, monkeypatch):
-    """Remove + add again reactivates the SAME membership and resets joined_at; old payments must not
-    stretch the new period back to the start of the month."""
-    from tests.test_payment_carry_over_pg import GROUPS, clock
-
-    setup_mwf(world, joined=datetime(2026, 1, 5, 6, 0))
-    student = world.students[0]
-    old_id = mid(world)
-    pay(world, paid_on=D(2026, 2, 1), valid_from=D(2026, 2, 1), valid_to=D(2026, 2, 28))   # paid until 28.02
-    with clock(monkeypatch, D(2026, 3, 1), 11):      # he leaves before he returns (a stay never starts before the last one ended)
-        assert owner(world).delete(f"{GROUPS}/{world.group.id}/students/{student.id}").status_code == 200
-    with clock(monkeypatch, D(2026, 3, 15), 11):
-        r = owner(world).post(f"{GROUPS}/{world.group.id}/students/{student.id}")
-        assert r.status_code == 200, r.text
-    membership = world.db.query(StudentGroup).filter_by(student_id=student.id, group_id=world.group.id).one()
-    assert membership.id == old_id and membership.is_active is True                          # the same row
-    assert membership.joined_at == datetime(2026, 3, 15, 6, 0)                              # reset to the return moment
-    q = quote(world, paid_on=D(2026, 3, 17))
-    assert (q["valid_from"], q["valid_to"], q["partial"]) == ("2026-03-15", "2026-03-31", True)
-    assert q["basis"] == "lessons" and q["parts"][0]["lessons"] == 7                          # 16 18 20 23 25 27 30
-    created = pay(world, paid_on=D(2026, 3, 17), amount=q["suggested_amount"])["payment"]
-    assert (created["valid_from"], created["valid_to"], created["partial_period"]) == ("2026-03-15", "2026-03-31", True)
-    # next month the (continuing) student gets the whole period again
-    assert quote(world, paid_on=D(2026, 4, 2))["valid_from"] == "2026-04-01"
-
-
-def test_quote_late_payment_is_still_the_next_period_and_prepayment_continues(world):
-    setup_mwf(world, joined=datetime(2026, 1, 5, 6, 0))
-    pay(world, paid_on=D(2026, 2, 1), valid_from=D(2026, 2, 1), valid_to=D(2026, 2, 28))
-    late = quote(world, paid_on=D(2026, 3, 3))                      # two days late
-    assert (late["valid_from"], late["valid_to"], late["suggested_amount"]) == ("2026-03-01", "2026-03-31", 450_000)
-    pay(world, paid_on=D(2026, 3, 3), valid_from=D(2026, 3, 1), valid_to=D(2026, 3, 31), amount=1)
-    ahead = quote(world, paid_on=D(2026, 3, 25))                    # paid ahead
-    assert (ahead["valid_from"], ahead["valid_to"], ahead["partial"]) == ("2026-04-01", "2026-04-30", False)
-    # a month was skipped: the debt is closed first - April, not the period of the payment date
-    gap = quote(world, paid_on=D(2026, 6, 2))
-    assert (gap["valid_from"], gap["valid_to"]) == ("2026-04-01", "2026-04-30")
-
-
-def test_fixed_day_one_overdue_student_closes_the_debt_period_by_period(world):
-    setup_mwf(world, joined=datetime(2026, 1, 5, 6, 0))
-    pay(world, paid_on=D(2026, 2, 1), valid_from=D(2026, 2, 1), valid_to=D(2026, 2, 28))
-    q = quote(world, paid_on=D(2026, 4, 20))                         # March and April are unpaid
-    assert (q["valid_from"], q["valid_to"], q["partial"], q["suggested_amount"]) == (
-        "2026-03-01", "2026-03-31", False, 450_000)
-    body = pay(world, paid_on=D(2026, 4, 20), amount=q["suggested_amount"])         # quote == create
-    p = body["payment"]
-    assert (p["valid_from"], p["valid_to"], p["partial_period"]) == ("2026-03-01", "2026-03-31", False)
-    assert body["row"]["status"] == "expired"                                        # April is still owed
-    assert quote(world, paid_on=D(2026, 4, 20))["valid_from"] == "2026-04-01"
-
-
-def test_fixed_day_one_debt_inside_an_older_partial_period_is_priced_by_lessons(world):
-    setup_mwf(world, joined=datetime(2026, 1, 5, 6, 0))
-    pay(world, paid_on=D(2026, 3, 1), valid_from=D(2026, 3, 1), valid_to=D(2026, 3, 12))   # paid until 12.03
-    q = quote(world, paid_on=D(2026, 4, 20))
-    assert (q["valid_from"], q["valid_to"], q["partial"]) == ("2026-03-13", "2026-03-31", True)
-    (part,) = q["parts"]
-    assert (part["period_from"], part["period_to"]) == ("2026-03-01", "2026-03-31")
-    assert (part["lessons"], part["period_lessons"]) == (8, 13)       # 13 16 18 20 23 25 27 30
-    created = pay(world, paid_on=D(2026, 4, 20), amount=q["suggested_amount"])["payment"]
-    assert (created["valid_from"], created["valid_to"], created["partial_period"]) == (
-        "2026-03-13", "2026-03-31", True)
-
-
-def test_fixed_day_ten_debt_spanning_an_older_period_without_the_anchor_clamp(world):
-    setup_mwf(world, billing_day=10, joined=datetime(2026, 1, 5, 6, 0))
-    pay(world, paid_on=D(2026, 2, 10), valid_from=D(2026, 2, 10), valid_to=D(2026, 3, 20))  # paid until 20.03
-    q = quote(world, paid_on=D(2026, 4, 20))                         # the anchor would be 10.04: it must not be used
-    assert (q["valid_from"], q["valid_to"], q["partial"]) == ("2026-03-21", "2026-04-09", True)
-    (part,) = q["parts"]
-    assert (part["period_from"], part["period_to"]) == ("2026-03-10", "2026-04-09")
-    assert (part["lessons"], part["period_lessons"], q["suggested_amount"]) == (8, 13, 277_000)
-    created = pay(world, paid_on=D(2026, 4, 20), amount=q["suggested_amount"])["payment"]
-    assert (created["valid_from"], created["valid_to"], created["partial_period"]) == (
-        "2026-03-21", "2026-04-09", True)
-    # the following payment is a whole period again
-    nxt = quote(world, paid_on=D(2026, 4, 20))
-    assert (nxt["valid_from"], nxt["valid_to"], nxt["partial"]) == ("2026-04-10", "2026-05-09", False)
-
-
-def test_fixed_day_first_payment_and_paying_ahead_are_unchanged(world):
-    setup_mwf(world, billing_day=10, joined=datetime(2026, 3, 15, 6, 0))
-    q = quote(world, paid_on=D(2026, 3, 16))                          # first payment: no reach back, joining date floor
-    assert (q["valid_from"], q["valid_to"]) == ("2026-03-15", "2026-04-09")
-    pay(world, paid_on=D(2026, 3, 16), valid_from=D(2026, 3, 15), valid_to=D(2026, 4, 9))
-    ahead = quote(world, paid_on=D(2026, 3, 25))
-    assert (ahead["valid_from"], ahead["valid_to"], ahead["partial"]) == ("2026-04-10", "2026-05-09", False)
-
-
-def test_quote_billing_day_ten_crosses_the_month_and_the_year(world):
-    setup_mwf(world, billing_day=10, joined=datetime(2025, 12, 1, 6, 0))
-    q = quote(world, paid_on=D(2025, 12, 12))
-    assert (q["valid_from"], q["valid_to"], q["partial"]) == ("2025-12-10", "2026-01-09", False)
-    q = quote(world, paid_on=D(2026, 1, 5), valid_from=D(2025, 12, 10))                 # a client-chosen start
-    assert (q["valid_from"], q["valid_to"]) == ("2025-12-10", "2026-01-09")
-    # joined 15.03: partial 15.03 - 09.04 of the period 10.03 - 09.04 (13 lessons, 11 from the 15th)
-    world.db.get(StudentGroup, mid(world)).joined_at = datetime(2026, 3, 15, 6, 0)
-    world.db.commit()
-    q = quote(world, paid_on=D(2026, 3, 16))
-    assert (q["valid_from"], q["valid_to"]) == ("2026-03-15", "2026-04-09")
-    assert q["parts"][0]["period_from"] == "2026-03-10" and q["parts"][0]["period_to"] == "2026-04-09"
-    assert (q["parts"][0]["lessons"], q["parts"][0]["period_lessons"], q["suggested_amount"]) == (11, 13, 381_000)
-
-
-def test_quote_billing_day_twenty_eight_and_a_period_that_ends_mid_period(world):
-    setup_mwf(world, billing_day=28, joined=datetime(2026, 2, 1, 6, 0))
-    q = quote(world, paid_on=D(2026, 3, 30))
-    assert (q["valid_from"], q["valid_to"], q["partial"]) == ("2026-03-28", "2026-04-27", False)
-    assert q["suggested_amount"] == 450_000
-    # leaves on the 10th of the next period: the incomplete tail is prorated by lessons too
-    q = quote(world, paid_on=D(2026, 3, 30), valid_to=D(2026, 4, 10))
-    assert q["partial"] is True and q["basis"] == "lessons"
-    (part,) = q["parts"]
-    assert (part["from"], part["to"], part["period_from"], part["period_to"]) == (
-        "2026-03-28", "2026-04-10", "2026-03-28", "2026-04-27")
-    assert part["lessons"] < part["period_lessons"] and q["suggested_amount"] == part["amount"]
-    # 31.01 (the 28th rule, a short February): the next period starts on 28.02
-    q = quote(world, paid_on=D(2026, 2, 5), valid_from=D(2026, 1, 31))
-    assert (q["valid_from"], q["valid_to"]) == ("2026-01-31", "2026-02-27")
-
-
-def test_quote_client_dates_are_used_as_they_are(world):
-    setup_mwf(world, joined=datetime(2026, 1, 5, 6, 0))
-    q = quote(world, paid_on=D(2026, 3, 17), valid_from=D(2026, 3, 10))                  # no valid_to -> end of the period
-    assert (q["valid_from"], q["valid_to"], q["partial"]) == ("2026-03-10", "2026-03-31", True)
-    q = quote(world, paid_on=D(2026, 3, 17), valid_to=D(2026, 3, 20))                    # no valid_from -> the default one
-    assert (q["valid_from"], q["valid_to"]) == ("2026-03-01", "2026-03-20")
-    q = quote(world, paid_on=D(2026, 3, 17), valid_from=D(2026, 3, 1), valid_to=D(2026, 4, 30))
-    assert (q["partial"], q["basis"], q["suggested_amount"], len(q["parts"])) == (False, "full", 900_000, 2)
-    assert q["explanation"] == "Полных месяцев: 2 — 900 000 сум"
-
-
-def test_quote_treats_empty_optional_parameters_as_not_given(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    r = owner(world).get(f"{API}/org/memberships/{mid(world)}/payments/quote",
-                         params={"paid_on": "2026-03-17", "valid_from": "", "valid_to": "", "lessons_count": ""})
-    assert r.status_code == 200, r.text
-    assert (r.json()["valid_from"], r.json()["valid_to"]) == ("2026-03-15", "2026-03-31")
-    r = owner(world).get(f"{API}/org/memberships/{mid(world)}/payments/quote",
-                         params={"paid_on": "2026-03-17", "valid_from": "not-a-date"})
-    assert r.status_code == 422
-
-
-def test_quote_range_over_two_periods_prices_each_one(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    q = quote(world, paid_on=D(2026, 3, 17), valid_to=D(2026, 4, 30))
-    assert q["valid_from"] == "2026-03-15" and q["partial"] is True and q["basis"] == "lessons"
-    assert [p["amount"] for p in q["parts"]] == [242_000, 450_000]
-    assert q["suggested_amount"] == 692_000
-    assert q["explanation"] == f"{short(D(2026, 3, 15))}–{short(D(2026, 3, 31))}: 7 уроков из 13 — 242 000 сум; " \
-                               f"{short(D(2026, 4, 1))}–{short(D(2026, 4, 30))}: полный месяц — 450 000 сум. " \
-                               "Итого 692 000 сум"
-
-
-def test_quote_cancelled_lessons_do_not_count(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    cancel_lesson(world, "2026-03-18", "wed")      # in the covered part
-    cancel_lesson(world, "2026-03-04", "wed")      # before it, but in the period
-    cancel_lesson(world, "2026-03-20", "other")    # a lesson id that is not on the schedule: nothing to remove
-    q = quote(world, paid_on=D(2026, 3, 17))
-    part = q["parts"][0]
-    assert (part["lessons"], part["period_lessons"]) == (6, 11) and q["suggested_amount"] == 245_000   # 450000*6/11
-    assert q["explanation"].startswith("Неполный месяц: 6 уроков из 11 по расписанию")
-
-
-def test_quote_counts_one_off_lessons_and_ignores_other_groups_cancellations(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    world.db.add(GroupScheduleOneOffLesson(
-        id=f"oneoff-{uuid4()}", org_id=world.org.id, group_id=world.group.id, lesson_date="2026-03-28",
-        payload={"dayOfWeek": 6, "startTime": "12:00", "endTime": "13:00"}, created_by=world.owner.id))
-    other = make_group(world.db, world.org, world.teacher2, "Другая")
-    world.db.add(GroupAttendance(
-        org_id=world.org.id, group_id=other.id, lesson_date="2026-03-18", lesson_id="wed",
-        status="cancelled", records={}, roster_snapshot=[]))
-    world.db.commit()
-    q = quote(world, paid_on=D(2026, 3, 17))
-    part = q["parts"][0]
-    assert (part["lessons"], part["period_lessons"]) == (8, 14) and q["suggested_amount"] == 257_000   # 450000*8/14
-
-
-def test_quote_a_group_without_a_schedule_is_counted_by_days(world):
-    setup_mwf(world, fee=310_000, joined=datetime(2026, 3, 15, 6, 0))
-    world.group.schedule = []
-    world.db.commit()
-    q = quote(world, paid_on=D(2026, 3, 17))
-    assert q["basis"] == "days" and q["suggested_amount"] == 170_000                        # 310000 * 17 / 31
-    assert q["parts"][0]["lessons"] is None and q["parts"][0]["period_lessons"] is None
-    assert q["explanation"] == ("Неполный месяц: 17 дней из 31 (уроков по расписанию нет, считаем по дням) "
-                                "— 170 000 сум из 310 000")
-
-
-def test_quote_without_a_monthly_fee_suggests_no_amount(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    give_price(world.db, world.db.get(StudentGroup, mid(world)), None)
-    q = quote(world, paid_on=D(2026, 3, 17))
-    assert (q["suggested_amount"], q["basis"], q["monthly_fee"], q["parts"]) == (None, "none", None, [])
-    assert q["explanation"] == "Оплата в месяц не задана" and q["valid_from"] == "2026-03-15"   # the dates still come
-
-
-def test_quote_from_the_payment_date_standard_and_custom_periods(world):
-    setup_mwf(world, anchor="payment_date")
-    q = quote(world, paid_on=D(2026, 3, 5))
-    assert (q["valid_from"], q["valid_to"], q["partial"], q["basis"], q["suggested_amount"]) == (
-        "2026-03-05", "2026-04-04", False, "full", 450_000)
-    assert q["explanation"] == "Полный месяц — 450 000 сум" and q["parts"] == []
-    q = quote(world, paid_on=D(2026, 3, 5), valid_to=D(2026, 3, 20))
-    assert (q["basis"], q["suggested_amount"]) == ("custom", None)
-    assert q["explanation"] == "Нестандартный период — укажите сумму"
-    q = quote(world, paid_on=D(2026, 3, 31))                        # 31.03 -> 30.04
-    assert (q["valid_to"], q["suggested_amount"]) == ("2026-04-30", 450_000)
-    give_price(world.db, world.db.get(StudentGroup, mid(world)), None)
-    assert quote(world, paid_on=D(2026, 3, 5))["basis"] == "none"
-
-
-def test_quote_lessons_package_full_and_non_standard_size(world):
-    setup_mwf(world, fee=600_000)
-    set_settings(world, period_mode="lessons", lessons_per_payment=12)
-    q = quote(world, paid_on=D(2026, 3, 5))
-    assert (q["mode"], q["valid_to"], q["lessons_count"], q["partial"], q["basis"], q["suggested_amount"]) == (
-        "lessons", None, 12, False, "package", 600_000)
-    assert q["explanation"] == "Пакет из 12 уроков — 600 000 сум"
-    q = quote(world, paid_on=D(2026, 3, 5), lessons_count=5)
-    assert (q["lessons_count"], q["suggested_amount"]) == (5, 250_000)
-    assert q["explanation"] == "Пакет из 5 уроков вместо 12: 250 000 сум из 600 000"
-    q = quote(world, paid_on=D(2026, 3, 5), lessons_count=7)                 # 350 000 exactly
-    assert q["suggested_amount"] == 350_000
-    set_settings(world, lessons_per_payment=7)
-    q = quote(world, paid_on=D(2026, 3, 5), lessons_count=3)                 # 600000 * 3 / 7 = 257 142 -> 257 000
-    assert q["suggested_amount"] == 257_000
-    # an explicit lessons count while the centre is on calendar periods is still a package
-    set_settings(world, period_mode="calendar")
-    assert quote(world, paid_on=D(2026, 3, 5), lessons_count=7)["basis"] == "package"
-
-
-def test_quote_given_fee_replaces_the_saved_fee_for_the_calculation_only(world):
-    setup_mwf(world, fee=450_000, joined=datetime(2026, 3, 15, 6, 0))
-    saved = quote(world, paid_on=D(2026, 3, 17))
-    assert (saved["monthly_fee"], saved["suggested_amount"]) == (450_000, 242_000)
-    q = quote(world, paid_on=D(2026, 3, 17), monthly_fee=600_000)
-    assert q["monthly_fee"] == 600_000                                     # the fee that was used
-    assert q["suggested_amount"] == 323_000 and q["parts"][0]["amount"] == 323_000      # 600000 * 7 / 13 = 323 076
-    assert q["explanation"] == "Неполный месяц: 7 уроков из 13 по расписанию — 323 000 сум из 600 000"
-    assert [x.amount for x in world.db.query(MembershipPriceOverride).filter_by(membership_id=mid(world))] == [450_000]   # nothing was written
-    assert quote(world, paid_on=D(2026, 3, 17))["monthly_fee"] == 450_000
-    assert quote(world, paid_on=D(2026, 3, 17), monthly_fee="")["monthly_fee"] == 450_000   # blank = not given
-    # a given fee of 0 is a fee (free), not "not given"
-    q = quote(world, paid_on=D(2026, 3, 17), monthly_fee=0)
-    assert (q["monthly_fee"], q["suggested_amount"]) == (0, 0)
-    assert q["explanation"] == "Оплата в месяц равна 0 — занятия бесплатные"
-    # a whole period and the other modes use it too
-    assert quote(world, paid_on=D(2026, 4, 2), monthly_fee=500_000)["suggested_amount"] == 500_000
-    set_settings(world, billing_anchor="payment_date")
-    assert quote(world, paid_on=D(2026, 3, 5), monthly_fee=520_000)["suggested_amount"] == 520_000
-    set_settings(world, period_mode="lessons", lessons_per_payment=12)
-    q = quote(world, paid_on=D(2026, 3, 5), lessons_count=6, monthly_fee=600_000)
-    assert (q["monthly_fee"], q["suggested_amount"], q["basis"]) == (600_000, 300_000, "package")
-
-
-def test_quote_given_fee_when_nothing_is_saved(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    give_price(world.db, world.db.get(StudentGroup, mid(world)), None)
-    none = quote(world, paid_on=D(2026, 3, 17))
-    assert (none["monthly_fee"], none["suggested_amount"], none["basis"]) == (None, None, "none")
-    q = quote(world, paid_on=D(2026, 3, 17), monthly_fee=450_000)
-    assert (q["monthly_fee"], q["suggested_amount"], q["basis"]) == (450_000, 242_000, "lessons")
-    assert world.db.query(MembershipPriceOverride).filter_by(membership_id=mid(world)).count() == 0            # still not saved
-
-
-def test_quote_given_fee_is_validated(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    for bad in (-1, 10_000_000_001, "abc", "1.5"):
-        r = owner(world).get(f"{API}/org/memberships/{mid(world)}/payments/quote",
-                             params={"paid_on": "2026-03-17", "monthly_fee": bad})
-        assert r.status_code == 422, (bad, r.text)
-    q = quote(world, paid_on=D(2026, 3, 17), monthly_fee=10_000_000_000)
-    assert q["monthly_fee"] == 10_000_000_000
-    # a huge fee over many periods is refused as a suggestion, not crashed on
-    q = quote(world, paid_on=D(2026, 3, 17), valid_from=D(2026, 3, 1), valid_to=D(2027, 3, 31), monthly_fee=10_000_000_000)
-    assert (q["suggested_amount"], q["basis"]) == (None, "custom")
-    # permissions are the same as without it
-    url = f"{API}/org/memberships/{mid(world)}/payments/quote"
-    assert teacher_client(world).get(url, params={"paid_on": "2026-03-17", "monthly_fee": 1}).status_code == 403
-
-
-def test_explanations_name_the_package_in_lessons_mode(world):
-    setup_mwf(world, fee=600_000)
-    set_settings(world, period_mode="lessons", lessons_per_payment=12)
-    give_price(world.db, world.db.get(StudentGroup, mid(world)), None)
-    q = quote(world, paid_on=D(2026, 3, 5))
-    assert (q["basis"], q["explanation"]) == ("none", "Стоимость пакета не задана")
-    q = quote(world, paid_on=D(2026, 3, 5), monthly_fee=0)
-    assert q["explanation"] == "Стоимость пакета равна 0 — занятия бесплатные"
-    for given in (None, 600_000):
-        for count in (None, 5, 12):
-            q = quote(world, paid_on=D(2026, 3, 5), lessons_count=count, monthly_fee=given)
-            assert "месяц" not in q["explanation"].lower() and "оплата в месяц" not in q["explanation"].lower(), q
-    # the calendar wording stays
-    set_settings(world, period_mode="calendar", billing_anchor="payment_date")
-    assert quote(world, paid_on=D(2026, 3, 5))["explanation"] == "Оплата в месяц не задана"
-
-
-def test_quote_zero_fee_is_free(world):
-    setup_mwf(world, fee=0, joined=datetime(2026, 3, 15, 6, 0))
-    q = quote(world, paid_on=D(2026, 3, 17))
-    assert q["suggested_amount"] == 0 and q["explanation"] == "Оплата в месяц равна 0 — занятия бесплатные"
-
-
-def test_quote_failures_are_the_same_422_as_creating_the_payment(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    cases = [
-        {"paid_on": day(5).isoformat()},
-        {"paid_on": "2020-01-01"},
-        {"paid_on": "2026-03-17", "valid_from": "2026-03-20", "valid_to": "2026-03-10"},
-        {"paid_on": "2026-03-17", "valid_to": "2026-03-31", "lessons_count": 3},
-        {"paid_on": "2026-03-17", "valid_from": "2026-03-01", "valid_to": "2027-12-31"},
-        {"paid_on": "2026-03-17", "valid_from": "2030-01-01"},
-    ]
-    for body in cases:
-        r_quote = owner(world).get(f"{API}/org/memberships/{mid(world)}/payments/quote", params=body)
-        r_create = owner(world).post(f"{API}/org/memberships/{mid(world)}/payments", json={"amount": 1, **body})
-        assert r_quote.status_code == r_create.status_code == 422, (body, r_quote.text, r_create.text)
-        assert r_quote.json()["detail"] == r_create.json()["detail"], body
-    assert owner(world).get(f"{API}/org/memberships/{mid(world)}/payments/quote").status_code == 422   # paid_on required
-    assert owner(world).get(f"{API}/org/memberships/{uuid4()}/payments/quote",
-                            params={"paid_on": "2026-03-17"}).status_code == 404
-    assert owner(world).get(f"{API}/org/memberships/{mid(world)}/payments/quote",
-                            params={"paid_on": "2026-03-17", "lessons_count": 0}).status_code == 422
 
 
 def test_quote_writes_nothing(world):
@@ -538,91 +166,6 @@ def test_quote_permissions(world):
 
 # ---- payments: partial_period, warnings -----------------------------------------------
 
-
-def test_partial_period_is_stored_with_the_payment_and_survives_a_settings_change(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    partial = pay(world, paid_on=D(2026, 3, 17), amount=242_000)["payment"]
-    whole = pay(world, paid_on=D(2026, 4, 2), amount=450_000)["payment"]
-    assert (partial["partial_period"], whole["partial_period"]) == (True, False)
-    assert (whole["valid_from"], whole["valid_to"]) == ("2026-04-01", "2026-04-30")
-    set_settings(world, billing_anchor="payment_date")
-    again = {p["id"]: p for p in owner(world).get(f"{API}/org/memberships/{mid(world)}/payments").json()}
-    assert (again[partial["id"]]["partial_period"], again[whole["id"]]["partial_period"]) == (True, False)
-    # entered under "from the payment date": never flagged, however odd the dates
-    odd = pay(world, paid_on=D(2026, 5, 12), valid_from=D(2026, 5, 12), valid_to=D(2026, 5, 20), amount=1)["payment"]
-    assert odd["partial_period"] is False
-    assert stored_payment(world, odd["id"]).partial_period is False
-
-
-def test_partial_period_on_replace_follows_the_dates_of_the_replacement(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    first = pay(world, paid_on=D(2026, 3, 17), amount=242_000)["payment"]
-    assert first["partial_period"] is True
-    r = owner(world).post(f"{API}/org/payments/{first['id']}/replace", json={
-        "amount": 450_000, "paid_on": "2026-03-17", "valid_from": "2026-03-01", "valid_to": "2026-03-31"})
-    assert r.status_code == 201, r.text
-    assert r.json()["payment"]["partial_period"] is False
-    assert stored_payment(world, first["id"]).partial_period is True      # the voided original keeps its history
-
-
-def test_lessons_package_and_non_fixed_day_payments_are_never_partial(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    package = pay(world, paid_on=D(2026, 3, 17), lessons_count=8, amount=100)["payment"]
-    assert (package["partial_period"], package["valid_to"]) == (False, None)
-
-
-def test_short_period_at_the_full_fee_gets_a_soft_warning(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    ours = lambda body: [w for w in body["warnings"] if w["code"] == "short_period_full_amount"]  # noqa: E731
-    body = pay(world, paid_on=day(), valid_from=D(2026, 3, 15), valid_to=D(2026, 3, 20), amount=450_000)
-    assert [w["message"] for w in ours(body)] == ["Короткий период при полной сумме — проверьте даты"]
-    assert body["payment"]["amount"] == 450_000                              # saved anyway
-    body = pay(world, paid_on=day(), valid_from=D(2026, 3, 21), valid_to=D(2026, 3, 25), amount=100_000)
-    assert ours(body) == []                                                  # a prorated amount
-    body = pay(world, paid_on=day(), valid_from=D(2026, 3, 26), valid_to=D(2026, 4, 1), amount=450_000)
-    assert ours(body) == []                                                  # exactly 7 days
-    body = pay(world, paid_on=day(), valid_from=D(2026, 5, 1), valid_to=D(2026, 5, 3), amount=449_999)
-    assert ours(body) == []                                                  # below the fee
-
-
-def test_carry_over_copies_partial_period_and_gets_no_receipt(two):
-    two.student = two.students[0]
-    first, last = ps.billing_period_start(day(), 1), ps.billing_period_end(day(), 1)
-    set_settings(two, billing_anchor="fixed_day", billing_day=1)
-    partial = pay(two, paid_on=day(), valid_from=day(-1), valid_to=day(9), amount=100_000)["payment"]
-    assert partial["partial_period"] is True and partial["receipt_no"] == 1
-    transfer(two, two.second)
-    carried = [p for p in owner(two).get(f"{API}/org/memberships/{mid(two, two.student, two.second)}/payments").json()]
-    assert len(carried) == 1
-    assert carried[0]["amount"] == 0 and carried[0]["receipt_no"] is None
-    assert carried[0]["partial_period"] is True and carried[0]["carried_from"]["payment_id"] == partial["id"]
-    receipt = owner(two).get(f"{API}/org/payments/{carried[0]['id']}/receipt")
-    assert receipt.status_code == 409 and receipt.json()["detail"] == "Перенос оплаты — не денежная операция, квитанции нет"
-    # a whole-period payment carried over stays not partial; the number keeps counting from the money only
-    two.student = two.students[1]
-    whole = pay(two, two.student, paid_on=day(), valid_from=first, valid_to=last, amount=5)["payment"]
-    assert whole["partial_period"] is False and whole["receipt_no"] == 2
-    transfer(two, two.second, student=two.student)
-    (carry2,) = owner(two).get(f"{API}/org/memberships/{mid(two, two.student, two.second)}/payments").json()
-    assert carry2["partial_period"] is False and carry2["receipt_no"] is None
-    new = pay(two, two.students[2], paid_on=day(), amount=1)["payment"]
-    assert new["receipt_no"] == 3
-
-
-def test_replacing_the_original_rebuilds_the_carry_over_with_the_new_partial_flag(two):
-    two.student = two.students[0]
-    set_settings(two, billing_anchor="fixed_day", billing_day=1)
-    original = pay(two, paid_on=day(), valid_from=day(-1), valid_to=day(9), amount=100_000)["payment"]
-    transfer(two, two.second)
-    first, last = ps.billing_period_start(day(), 1), ps.billing_period_end(day(), 1)
-    r = owner(two).post(f"{API}/org/payments/{original['id']}/replace", json={
-        "amount": 200_000, "paid_on": day().isoformat(), "valid_from": first.isoformat(), "valid_to": last.isoformat()})
-    assert r.status_code == 201, r.text
-    live = [p for p in owner(two).get(
-        f"{API}/org/memberships/{mid(two, two.student, two.second)}/payments",
-        params={"include_voided": "false"}).json()]
-    assert len(live) == 1 and live[0]["partial_period"] is False and live[0]["receipt_no"] is None
-    assert r.json()["payment"]["receipt_no"] == 2                         # the replacement is a new receipt
 
 
 # ---- receipt numbers ----------------------------------------------------------------------
@@ -759,49 +302,6 @@ def test_concurrent_payments_of_one_centre_get_distinct_numbers(world, engine, m
 
 # ---- receipt ---------------------------------------------------------------------------------
 
-
-def test_receipt_content(world):
-    world.org.name = "ALGO Math Center"
-    world.org.city = "Ташкент"
-    world.org.phone = "+998901234567"
-    world.db.commit()
-    p = pay(world, paid_on=day(-3), valid_from=day(-3), valid_to=day(20), amount=1_250_000, note="Наличные")["payment"]
-    r = owner(world).get(f"{API}/org/payments/{p['id']}/receipt")
-    assert r.status_code == 200, r.text
-    body = r.json()
-    # PAY-2 snapshot fields: null / "unknown" on a receipt of a payment entered by the old model.
-    pay2 = {k: body.pop(k) for k in ("method", "mode", "allocations", "debt_before", "debt_after", "advance_after",
-                                     "paid_until_before", "paid_until_after", "price_snapshot")}
-    assert pay2["method"] == "unknown" and not any(v for k, v in pay2.items() if k != "method")
-    assert body == {
-        "receipt_no": 1, "org_name": "ALGO Math Center", "org_city": "Ташкент", "org_phone": "+998901234567",
-        "student_name": "Каримова Алия", "display_id": "N13-001", "group_name": "Группа",
-        "amount": 1_250_000, "amount_words": "Один миллион двести пятьдесят тысяч сум", "currency": "UZS",
-        "paid_on": day(-3).isoformat(), "valid_from": day(-3).isoformat(), "valid_to": day(20).isoformat(),
-        "lessons_count": None, "partial_period": False, "note": "Наличные",
-        "accepted_by_name": "Иван Owner", "created_at": p["created_at"], "voided_at": None,
-        "void_reason": None, "replaced_by_receipt_no": None, "replaces_receipt_no": None,
-    }
-
-
-def test_receipt_of_a_lessons_package_and_missing_organisation_details(world):
-    set_settings(world, period_mode="lessons", lessons_per_payment=8)
-    p = pay(world, paid_on=day(-1), amount=500_000)["payment"]
-    body = owner(world).get(f"{API}/org/payments/{p['id']}/receipt").json()
-    assert (body["lessons_count"], body["valid_to"], body["org_city"], body["org_phone"], body["note"]) == (
-        8, None, None, None, None)
-    assert body["amount_words"] == "Пятьсот тысяч сум"
-    world.org.city, world.org.phone = "  ", ""
-    world.db.commit()
-    body = owner(world).get(f"{API}/org/payments/{p['id']}/receipt").json()
-    assert body["org_city"] is None and body["org_phone"] is None
-
-
-def test_receipt_of_a_free_payment_and_a_partial_one(world):
-    setup_mwf(world, joined=datetime(2026, 3, 15, 6, 0))
-    free = pay(world, paid_on=D(2026, 3, 17), amount=0)["payment"]
-    body = owner(world).get(f"{API}/org/payments/{free['id']}/receipt").json()
-    assert (body["amount"], body["amount_words"], body["partial_period"]) == (0, "Ноль сум", True)
 
 
 def test_receipt_follows_the_correction_chain_and_shows_the_void(world):
@@ -969,22 +469,6 @@ def test_concurrent_uploads_cannot_exceed_the_limit(world, engine):
     assert nfiles(world) == 3
 
 
-def test_no_cheque_on_a_voided_payment_or_a_carry_over(two):
-    two.student = two.students[0]
-    p = pay(two, paid_on=day(-3), valid_from=day(-3), valid_to=day(20))["payment"]
-    kept = upload(two, p["id"])
-    transfer(two, two.second)
-    (carry,) = owner(two).get(f"{API}/org/memberships/{mid(two, two.student, two.second)}/payments").json()
-    r = owner(two).post(f"{API}/org/payments/{carry['id']}/files", files={"file": ("x.png", PNG, "image/png")})
-    assert r.status_code == 409 and "перенос" in r.json()["detail"].lower()
-    assert owner(two).post(f"{API}/org/payments/{p['id']}/void", json={"reason": "ошибка"}).status_code == 200
-    r = owner(two).post(f"{API}/org/payments/{p['id']}/files", files={"file": ("x.png", PNG, "image/png")})
-    assert r.status_code == 409 and r.json()["detail"] == "Оплата аннулирована — чек прикрепить нельзя"
-    # the cheque of a voided payment stays readable (and removable)
-    assert owner(two).get(f"{API}/org/payments/{p['id']}/files/{kept['id']}").content == PNG
-    listing = owner(two).get(f"{API}/org/memberships/{mid(two, two.student, two.group)}/payments").json()
-    assert [f["id"] for f in listing[0]["files"]] == [kept["id"]]
-
 
 def test_download_headers_cannot_be_injected_through_the_filename(world):
     p = pay(world, paid_on=day(-3), valid_to=day(20))["payment"]
@@ -1088,3 +572,77 @@ def test_status_page_lists_files_without_extra_queries_per_row(world):
     assert r.status_code == 200
     assert all(len(item["last_payment"]["files"]) == 1 for item in r.json()["items"])
     assert len([s for s in statements if "student_payment_files" in s]) == 1
+
+
+# ---- PAY-2: receipts (a snapshot of the moment) and cheques ----------------------------------------------------------
+
+
+def test_receipt_content(world):
+    world.org.name = "ALGO Math Center"
+    world.org.city = "Ташкент"
+    world.org.phone = "+998901234567"
+    world.db.commit()
+    p = pay(world, paid_on=day(-3), amount=1_250_000, note="Наличные", method="cash")["payment"]
+    r = owner(world).get(f"{API}/org/payments/{p['id']}/receipt")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    snapshot = {k: body.pop(k) for k in ("mode", "allocations", "debt_before", "debt_after", "advance_after",
+                                         "paid_until_before", "paid_until_after", "price_snapshot", "valid_from", "valid_to")}
+    assert snapshot["mode"] == "calendar" and snapshot["valid_from"] is None and snapshot["valid_to"] is None
+    assert snapshot["allocations"] and sum(a["amount"] for a in snapshot["allocations"]) == 1_250_000
+    assert snapshot["debt_after"] == 0 and snapshot["advance_after"] >= 0
+    assert body == {
+        "receipt_no": 1, "org_name": "ALGO Math Center", "org_city": "Ташкент", "org_phone": "+998901234567",
+        "student_name": "Каримова Алия", "display_id": "N13-001", "group_name": "Группа",
+        "amount": 1_250_000, "amount_words": "Один миллион двести пятьдесят тысяч сум", "currency": "UZS",
+        "paid_on": day(-3).isoformat(), "lessons_count": None, "partial_period": False, "method": "cash",
+        "note": "Наличные", "accepted_by_name": "Иван Owner", "created_at": p["created_at"], "voided_at": None,
+        "void_reason": None, "replaced_by_receipt_no": None, "replaces_receipt_no": None,
+    }
+
+
+def test_receipt_missing_organisation_details(world):
+    p = pay(world, paid_on=day(-1), amount=500_000)["payment"]
+    body = owner(world).get(f"{API}/org/payments/{p['id']}/receipt").json()
+    assert (body["org_city"], body["org_phone"], body["note"]) == (None, None, None)
+    assert body["amount_words"] == "Пятьсот тысяч сум"
+    world.org.city, world.org.phone = "  ", ""
+    world.db.commit()
+    body = owner(world).get(f"{API}/org/payments/{p['id']}/receipt").json()
+    assert body["org_city"] is None and body["org_phone"] is None
+
+
+def test_receipt_of_a_legacy_payment_has_its_period_and_no_snapshot(world):
+    """A payment entered before PAY-2: the receipt keeps the old period, the snapshot fields are empty."""
+    m = world.db.query(StudentGroup).filter_by(student_id=world.students[0].id).one()
+    row = StudentPayment(org_id=world.org.id, membership_id=m.id, student_id=m.student_id, group_id=m.group_id, amount=450_000,
+                         paid_on=day(-3), valid_from=day(-3), valid_to=day(26), created_by=world.owner.id, receipt_no=1)
+    world.db.add(row)
+    world.db.commit()
+    body = owner(world).get(f"{API}/org/payments/{row.id}/receipt").json()
+    assert (body["valid_from"], body["valid_to"], body["method"]) == (day(-3).isoformat(), day(26).isoformat(), "unknown")
+    assert body["allocations"] is None and body["debt_after"] is None
+    listed = owner(world).get(f"{API}/org/memberships/{m.id}/payments").json()[0]
+    assert listed["legacy_period"] is True and listed["valid_to"] == day(26).isoformat()
+
+
+def test_no_cheque_on_a_voided_payment_or_a_legacy_carry_over(world):
+    p = pay(world, paid_on=day(-3), valid_to=day(20))["payment"]
+    kept = upload(world, p["id"])
+    m = world.db.query(StudentGroup).filter_by(student_id=world.students[0].id).one()
+    carry = StudentPayment(org_id=world.org.id, membership_id=m.id, student_id=m.student_id, group_id=m.group_id, amount=0,
+                           paid_on=day(-3), valid_from=day(-3), valid_to=day(20), carried_from_payment_id=p["id"],
+                           kind="legacy_carry", created_by=world.owner.id)
+    world.db.add(carry)
+    world.db.commit()
+    r = owner(world).post(f"{API}/org/payments/{carry.id}/files", files={"file": ("x.png", PNG, "image/png")})
+    assert r.status_code == 409 and "перенос" in r.json()["detail"].lower()
+    assert owner(world).get(f"{API}/org/payments/{carry.id}/receipt").status_code == 409
+    assert owner(world).post(f"{API}/org/payments/{p['id']}/void", json={"reason": "ошибка"}).status_code == 200
+    r = owner(world).post(f"{API}/org/payments/{p['id']}/files", files={"file": ("x.png", PNG, "image/png")})
+    assert r.status_code == 409 and r.json()["detail"] == "Оплата аннулирована — чек прикрепить нельзя"
+    # the cheque of a voided payment stays readable (and removable)
+    assert owner(world).get(f"{API}/org/payments/{p['id']}/files/{kept['id']}").content == PNG
+    listing = owner(world).get(f"{API}/org/memberships/{mid(world)}/payments").json()
+    assert [f["id"] for item in listing if item["id"] == p["id"] for f in item["files"]] == [kept["id"]]
+

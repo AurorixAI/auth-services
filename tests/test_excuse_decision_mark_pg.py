@@ -54,7 +54,12 @@ def item_of(w, student=None):
 
 
 def set_valid_to(w, payment, valid_to):
-    w.db.query(StudentPayment).filter_by(id=payment["id"]).update({"valid_to": valid_to})
+    """PAY-2: the payment is money; make it exactly enough to be paid through ``valid_to`` (the same payment, another sum)."""
+    from tests.pg_world import money_for
+
+    row = w.db.get(StudentPayment, payment["id"])
+    amount = money_for(w, row.membership_id, through=valid_to, on=row.paid_on, exclude=row.id)
+    w.db.query(StudentPayment).filter_by(id=payment["id"]).update({"amount": amount})
     w.db.commit()
 
 
@@ -466,30 +471,4 @@ def test_a_confirmed_excuse_on_a_shared_day_frees_a_place_of_the_package_for_the
     review(world, item_id, "confirmed")
     assert (before, row_of(world)["lessons_left"]) == (0, 1)
 
-
-def test_two_lessons_of_one_day_across_two_packages_each_get_the_package_that_covers_them(world):
-    """Package 1 (2 lessons) is closed by the first lesson of the day, package 2 (3) is opened by the second (ROADMAP #113)."""
-    s0 = world.students[0]
-    set_settings(world, period_mode="lessons", excuse_deadline_lessons=1)
-    pay(world, s0, paid_on=day(-10), valid_from=day(-10), lessons_count=2)
-    pay(world, s0, paid_on=day(-8), valid_from=day(-8), lessons_count=3)
-    lesson_marks(world, 9)                                                    # the plain lesson: package 1, place 1
-    d = same_day_lessons(world, 7, excused_in="both")
-    early, late = LIVE_SLOT, f"s{d.isoweekday()}"                              # 00:00 and 10:00: the hand-out order of the day
-    package_1 = {"kind": "lessons", "lessons_left": 0, "urgent": True, "due_now": False, "overdue": True}   # 2 - 2, N = 1
-    package_2 = {"kind": "lessons", "lessons_left": 2, "urgent": False, "due_now": False, "overdue": False}  # 3 - 1
-
-    def item(lesson_id):
-        (found,) = [i for i in listing(world) if i["lesson_key"] == f"{d.isoformat()}_{lesson_id}"]
-        return found
-
-    assert item(early)["deadline"] == package_1 and item(late)["deadline"] == package_2     # each by its own package
-    assert shown(review(world, item(late)["id"], "confirmed")) == (False, None)              # measured against package 2
-    # the confirmed one is off the packages; a re-review charges it again - at its place in the day, not at the end
-    assert deadline_if_decided_now(world, lesson_id=late) == package_2
-    assert shown(review(world, item(late)["id"], "rejected")) == (False, None)
-    assert shown(review(world, item(early)["id"], "confirmed")) == (True, None)              # measured against package 1
-    assert deadline_if_decided_now(world, lesson_id=early) == package_1                      # the earlier lesson: place 1 of the day
-    assert shown(review(world, item(early)["id"], "rejected")) == (True, None)
-    assert item(early)["deadline"] is None and item(late)["deadline"] is None                # decided: no hint
 

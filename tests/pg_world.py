@@ -273,3 +273,73 @@ def session_clock(monkeypatch):
             state["offset"] += _td(seconds=seconds)
 
     return Clock
+
+
+# ---- PAY-2: money that makes a student paid "through" a day (the old tests said «valid_to») ------------------------
+
+
+def payments_block(db, org, **block):
+    """Write the payments settings of the organisation directly (no billing history: «always so»)."""
+    from src.models.auth import Organization
+
+    org = db.get(Organization, org.id)
+    settings = dict(org.settings or {})
+    settings["payments"] = {**settings.get("payments", {}), **block}
+    org.settings = settings
+    db.commit()
+
+
+def ensure_billing(w, group=None, price=450_000, accounting_days_ago=75):
+    """Make a group billable for a test: the accounting starts before the students joined, the group has a price
+    (``price=None``: leave the prices alone)."""
+    from src.auth import pricing
+
+    db = w.db
+    org = db.get(type(w.org), w.org.id)
+    block = (org.settings or {}).get("payments", {}) if isinstance(org.settings, dict) else {}
+    if not block.get("accounting_start_date"):
+        payments_block(db, org, accounting_start_date=(business_today() - timedelta(days=accounting_days_ago)).isoformat())
+    group = group or w.group
+    if price is not None and not pricing.load_books(db, [group.id], []).group_price(group.id, business_today()):
+        give_group_price(db, group, price)
+
+
+def money_for(w, membership_id, *, through=None, lessons=None, on=None, exclude=None):
+    """The smallest sum that, paid on ``on`` (default today), makes the account paid through ``through`` (calendar) or
+    covers ``lessons`` lessons (lessons mode)."""
+    from dataclasses import replace
+
+    from src.auth import billing_ledger as bl
+    from src.auth import ledger_service as ls
+
+    on = on or business_today()
+    loader = ls.LedgerLoader(w.db, str(w.org.id), business_today())
+    loader.load_facts([membership_id])
+    inp = loader.build_input(membership_id, exclude_payment=exclude)
+
+    def enough(amount):
+        credit = bl.Credit("probe", bl.PAYMENT, on, datetime(9999, 1, 1), amount)
+        ledger = bl.run_ledger(replace(inp, credits=tuple(inp.credits) + (credit,)))
+        if lessons is not None:
+            return ledger.lessons is not None and ledger.lessons.covered >= lessons
+        return ledger.covered_through is not None and ledger.covered_through >= through
+
+    low, high = 1, 5_000_000_000
+    assert enough(high), "the account cannot be paid that far (no price? the horizon?)"
+    while low < high:
+        mid = (low + high) // 2
+        if enough(mid):
+            high = mid
+        else:
+            low = mid + 1
+    return low
+
+
+def set_paid_through(w, payment, through):
+    """PAY-2: make the (one) payment exactly enough to be paid through ``through`` - the same payment with another sum."""
+    from src.models.auth import StudentPayment
+
+    row = w.db.get(StudentPayment, payment["id"])
+    amount = money_for(w, row.membership_id, through=through, on=row.paid_on, exclude=row.id)
+    w.db.query(StudentPayment).filter_by(id=payment["id"]).update({"amount": amount})
+    w.db.commit()

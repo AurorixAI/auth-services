@@ -525,7 +525,7 @@ class PayrollService:
                     lesson_divisor = cover.package_size if cover.package_size else divisor
                     if excuse == "pending":
                         pending += 1
-                    if cover.payment_id is None:
+                    if not cover.paid:
                         state = engine.UNPAID
                     elif excuse == "pending":
                         state = engine.EXCUSED_PENDING

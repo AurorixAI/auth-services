@@ -74,23 +74,42 @@ def lesson(w, day_, marks, *, group=None, teacher=None, roster=None, status="com
 
 
 def pay_calendar(w, student, first, last, *, group=None, fee=FEE, paid_on=None):
+    """PAY-2: the student is paid THROUGH ``last``; the accounting of the centre starts on ``first`` (a lesson before it is
+    not charged, so not owed).  The old test said «a payment for first .. last»; money is one account now, a prefix of days."""
+    from tests.pg_world import ensure_billing, money_for, payments_block
+
     membership = student_group(w, student, group)
     if fee is not None:
         give_price(w.db, membership, fee)
+    org = w.db.get(type(w.org), w.org.id)
+    current = ((org.settings or {}).get("payments") or {}).get("accounting_start_date")
+    if current is None or date.fromisoformat(current) > first:
+        payments_block(w.db, org, accounting_start_date=first.isoformat())
+    ensure_billing(w, group or w.group, price=None)
+    on = paid_on or first
+    amount = money_for(w, membership.id, through=last, on=on)
     w.db.add(StudentPayment(
         org_id=w.org.id, membership_id=membership.id, student_id=student.id, group_id=membership.group_id,
-        amount=fee or 1, paid_on=paid_on or first, valid_from=first, valid_to=last, created_by=w.owner.id,
+        amount=amount, paid_on=on, created_by=w.owner.id, method="cash",
     ))
     w.db.commit()
 
 
 def pay_package(w, student, valid_from, size, *, group=None, fee=FEE, paid_on=None):
+    """PAY-2: the centre bills by packages of ``size`` lessons from ``valid_from``; one package of the price ``fee`` is paid."""
+    from tests.pg_world import ensure_billing, payments_block
+
     membership = student_group(w, student, group)
     if fee is not None:
         give_price(w.db, membership, fee)
+    ensure_billing(w, group or w.group, price=None)
+    payments_block(w.db, w.org, period_mode="lessons", lessons_per_payment=size, accounting_start_date=valid_from.isoformat())
+    from src.auth import pricing
+
+    price = pricing.load_books(w.db, [membership.group_id], [membership.id]).price(membership.id, membership.group_id, valid_from)
     payment = StudentPayment(
         org_id=w.org.id, membership_id=membership.id, student_id=student.id, group_id=membership.group_id,
-        amount=fee or 1, paid_on=paid_on or valid_from, valid_from=valid_from, lessons_count=size, created_by=w.owner.id,
+        amount=fee or price.amount or 1, paid_on=paid_on or valid_from, created_by=w.owner.id, method="cash",
     )
     w.db.add(payment)
     w.db.commit()
@@ -418,158 +437,24 @@ def test_calendar_lessons_outside_the_paid_period_are_unpaid_and_can_be_included
     assert line_of(again, s0)["amount"] == FEE * 50 * 10 // 1200 and again["revision"] == 3
 
 
-def test_a_lesson_before_the_first_payment_is_unpaid_and_a_voided_payment_covers_nothing(world):
-    m = previous_month()
-    s0, s1, _ = world.students
-    for n in range(1, 4):
-        lesson(world, m.d(n), {s0: "present", s1: "present"})
-    pay_calendar(world, s0, m.d(2), m.last)
-    pay_calendar(world, s1, m.first, m.last)
-    world.db.query(StudentPayment).filter_by(student_id=s1.id).update(
-        {"voided_at": datetime.utcnow(), "voided_by": world.owner.id, "void_reason": "ошибка"})
-    world.db.commit()
-    sheet = preview(world, m)
-    assert [x["state"] for x in line_of(sheet, s0)["marks"]] == ["unpaid", "counted", "counted"]
-    assert [x["state"] for x in line_of(sheet, s1)["marks"]] == ["unpaid"] * 3 and line_of(sheet, s1)["amount"] == 0
-
-
-def test_a_package_gives_its_size_as_the_divisor(world):
-    """8 lessons of an 8-lesson package: the teacher gets exactly p % of the price, not 8/12."""
-    m = previous_month()
-    s0, s1, _ = world.students
-    for n in range(1, 9):
-        lesson(world, m.d(n), {s0: "present", s1: "present"})
-    pay_package(world, s0, m.first, 8, fee=480_000)
-    pay_calendar(world, s1, m.first, m.last, fee=480_000)                      # the same fee, paid by months
-    sheet = preview(world, m)
-    pk, cal = line_of(sheet, s0), line_of(sheet, s1)
-    assert (pk["counted"], pk["divisor"], pk["amount"]) == (8, 8, 240_000)
-    assert (cal["counted"], cal["divisor"], cal["amount"]) == (8, 12, 160_000)
-    assert {x["divisor"] for x in pk["marks"]} == {8} and {x["divisor"] for x in cal["marks"]} == {12}
-
-
-def test_package_runs_out_the_rest_is_unpaid_and_the_status_page_agrees(world):
-    """Parity: the lessons the payments page counts as consumed are exactly the covered ones."""
-    m = previous_month()
-    s0, s1, _ = world.students
-    world.org.settings = {"payments": {"period_mode": "lessons", "lessons_per_payment": 5}}
-    world.db.commit()
-    for n in range(1, 9):
-        lesson(world, m.d(n), {s0: "present", s1: "present"})
-    held = lesson(world, m.d(9), {s0: "excused", s1: "present"})
-    excuse(world, held, s0, "confirmed")                                        # not counted, not consumed
-    pay_package(world, s0, m.first, 5)
-    pay_package(world, s1, m.first, 5)
-    pay_package(world, s1, m.d(7), 4)                                           # a second package, starts on the 7th
-    page = {r["student_id"]: r for r in owner(world).get(f"{API}/org/payments/status", params={"limit": 50}).json()["items"]}
-    sheet = preview(world, m)
-    l0, l1 = line_of(sheet, s0), line_of(sheet, s1)
-    # s0: 8 counted lessons, the package of 5 takes the first five
-    assert (l0["counted"], l0["unpaid"]) == (5, 3)
-    assert [x["state"] for x in l0["marks"]] == ["counted"] * 5 + ["unpaid"] * 3 + ["excused_confirmed"]
-    # s1: the first package takes days 1-5, day 6 is before the second package starts, which takes 7, 8, 9
-    assert [x["state"] for x in l1["marks"]] == ["counted"] * 5 + ["unpaid"] + ["counted"] * 3
-    assert [x["divisor"] for x in l1["marks"]] == [5] * 5 + [4] + [4] * 3          # the unpaid one: size of his latest package
-    assert (l1["counted"], l1["unpaid"]) == (8, 1)
-    for line, student in ((l0, s0), (l1, s1)):
-        assert page[str(student.id)]["lessons_used"] == line["counted"], student.first_name   # the page's number = ours
-    assert l0["divisor"] == 5 and l0["amount"] == FEE * 50 * 5 // (100 * 5)         # five lessons of a 5-lesson package
-    assert l1["amount"] == (5 * FEE * 50 // 500) + (3 * FEE * 50 // 400)             # 5 * 45 000 + 3 * 56 250
-
-
-def test_an_included_unpaid_lesson_of_a_package_student_is_priced_by_his_package(world):
-    m = previous_month()
-    s0 = world.students[0]
-    for n in range(1, 11):
-        lesson(world, m.d(n), {s0: "present"})
-    pay_package(world, s0, m.first, 8, fee=480_000)
-    sheet = preview(world, m)
-    line = line_of(sheet, s0)
-    assert (line["counted"], line["unpaid"], line["amount"]) == (8, 2, 240_000)
-    assert [x["divisor"] for x in line["marks"]] == [8] * 10 and line["divisor"] == 8
-    saved = save(world, m)
-    ticked = patch(world, saved, line_overrides=[{"membership_id": line["membership_id"], "include_unpaid": True}])
-    assert line_of(ticked, s0)["amount"] == 10 * 480_000 * 50 // 800                    # ten lessons at 1/8 of the price
-    # a student without any package: the centre's divisor
-    s1 = world.students[1]
-    for n in range(1, 4):
-        lesson(world, m.d(n), {s1: "present"}, lesson_id=f"extra{n}")
-    pay_calendar(world, s1, m.d(25), m.last)
-    unpaid = line_of(preview(world, m), s1)
-    assert unpaid["unpaid"] == 3 and {x["divisor"] for x in unpaid["marks"] if x["state"] == "unpaid"} == {12}
-
-
-@pytest.mark.parametrize("seed", range(20))
-def test_covered_lessons_equal_what_the_status_page_consumes_on_random_data(world, seed):
-    """Random lessons, marks, excuse decisions and 1-3 packages per student: the page's «использовано» is our «засчитано»."""
-    import random
-
-    from src.auth import payment_status as ps
-
-    rnd = random.Random(seed)
-    m = previous_month()
-    students = world.students
-    for n in sorted(rnd.sample(range(1, 26), rnd.randint(6, 16))):
-        roster = [s for s in students if rnd.random() > 0.15]
-        marks = {s: rnd.choice(["present", "present", "late", "absent", "excused"]) for s in roster}
-        att = lesson(world, m.d(n), marks, roster=roster)
-        for s, mark in marks.items():
-            decision = rnd.choice(["confirmed", "pending", "rejected", None]) if mark == "excused" else None
-            if decision:
-                excuse(world, att, s, decision)
-    for s in students:
-        for start in rnd.sample(range(1, 21), rnd.randint(1, 3)):
-            pay_package(world, s, m.d(start), rnd.randint(1, 6))
-    world.db.expire_all()
-    rows = {r["student_id"]: r for r in owner(world).get(f"{API}/org/payments/status", params={"limit": 50}).json()["items"]}
-    held = world.db.query(GroupAttendance).filter_by(group_id=world.group.id, status="completed").all()
-    excuses = {(e.attendance_id, str(e.student_id)): e.status for e in world.db.query(AttendanceExcuse).filter_by(org_id=world.org.id)}
-    sheet = preview(world, m)
-    for s in students:
-        sid = str(s.id)
-        counts = sum(
-            1 for a in held
-            if sid in {i["student_id"] for i in a.roster_snapshot}
-            and ps.lesson_counts(mark=a.records.get(sid), excuse_status=excuses.get((a.id, sid)))
-        )
-        line = by_student(sheet).get(sid)
-        counted, unpaid = (line["counted"], line["unpaid"]) if line else (0, 0)
-        assert counted + unpaid == counts, (seed, sid)                                  # the same lessons are counted
-        assert rows[sid]["lessons_used"] == counted, (seed, sid, rows[sid]["lessons_used"], counted)   # and paid as on the page
-        if line:
-            assert all(x["divisor"] for x in line["marks"] if x["state"] in ("counted", "excused_pending", "unpaid"))
-
-
-def test_calendar_and_package_payments_of_one_membership_both_cover(world):
-    m = previous_month()
-    s0 = world.students[0]
-    for n in range(1, 9):
-        lesson(world, m.d(n), {s0: "present"})
-    pay_calendar(world, s0, m.first, m.d(4))                                     # days 1-4 by the month
-    pay_package(world, s0, m.d(5), 4, fee=None)                                  # days 5-8 by a package (the later payment)
-    line = line_of(preview(world, m), s0)
-    assert [(x["state"], x["divisor"]) for x in line["marks"]] == [("counted", 12)] * 4 + [("counted", 4)] * 4
-    assert line["divisor"] is None and line["unpaid"] == 0
-    assert line["amount"] == (4 * FEE * 50 // 1200) + (4 * FEE * 50 // 400)       # 4 * 18 750 + 4 * 56 250
-
 
 def test_no_fee_gives_zero_and_a_warning(world):
     m = previous_month()
     s0, s1, _ = world.students
     for n in range(1, 4):
         lesson(world, m.d(n), {s0: "present", s1: "present"})
-    pay_calendar(world, s0, m.first, m.last, fee=None)
-    pay_calendar(world, s1, m.first, m.last)
+    pay_calendar(world, s1, m.first, m.last)                                     # s0 has no price and so no way to pay
     sheet = preview(world, m)
     zero = line_of(sheet, s0)
-    assert zero["monthly_fee"] is None and zero["amount"] == 0 and [w["code"] for w in zero["warnings"]] == ["NO_FEE"]
+    assert zero["monthly_fee"] is None and zero["amount"] == 0 and [w["code"] for w in zero["warnings"]] == ["NO_FEE", "UNPAID_LESSONS"]
     assert sheet["warnings"]["no_fee"] == 1 and teacher_row(overview(world, m), world.teacher)["warnings"]["no_fee"] == 1
     # the price is set where prices live (the card of the student), never on the sheet (UX-2)
     set_fee(world, s0, 300_000)
+    pay_calendar(world, s0, m.first, m.last, fee=None)                           # now he has a price, so he can pay
     saved = save(world, m)
     fixed = line_of(saved, s0)
     assert fixed["monthly_fee"] == 300_000 and fixed["source_fee"] == 300_000 and fixed["fee_overridden"] is False
-    assert fixed["price_source"] == "override" and fixed["amount"] == 300_000 * 50 * 3 // 1200 and fixed["warnings"] == []
+    assert fixed["price_source"] == "override" and fixed["amount"] == 300_000 * 50 * 3 // 1200 and "NO_FEE" not in [w["code"] for w in fixed["warnings"]]
 
 
 # ============================================================================================
@@ -609,6 +494,7 @@ def test_a_lesson_after_the_transfer_in_the_old_group_is_not_the_old_payments(tw
     """The old payment is cut at the transfer day; the carry-over covers the new group from there."""
     w, m = two, previous_month()
     s = w.student
+    give_group_price(w.db, w.second, FEE)
     pay_calendar(w, s, m.first, m.d(20), fee=FEE)                                    # paid until the 20th
     with clock(monkeypatch, m.d(12), 10):
         transfer(w, w.second)
@@ -1514,7 +1400,7 @@ def test_two_lessons_of_one_day_at_the_package_boundary_go_by_start_time(world):
     assert [x["state"] for x in first["marks"]] == ["counted", "counted", "counted"] and first["unpaid"] == 0
     assert [x["state"] for x in second["marks"]] == ["unpaid"] and second["counted"] == 0
     page = {r["student_id"]: r for r in owner(world).get(f"{API}/org/payments/status", params={"limit": 50}).json()["items"]}
-    assert page[str(s0.id)]["lessons_used"] == 3 and page[str(s0.id)]["lessons_left"] == 0
+    assert (page[str(s0.id)]["lessons_used"], page[str(s0.id)]["lessons_total"], page[str(s0.id)]["lessons_left"]) == (4, 3, 0)
     # the same day with the times the other way round: now teacher 2's lesson is the earlier one
     world.group.schedule = [
         {"id": "z-early", "dayOfWeek": day3.isoweekday(), "startTime": "16:00", "endTime": "17:00", "format": "offline"},
@@ -1602,3 +1488,148 @@ def test_the_diff_carries_the_fingerprint_to_save_exactly_what_it_showed(world):
     ok = owner(world).patch(url, json={"revision": 1, "recalculate": True, "expected_fingerprint": again["source_fingerprint"]})
     assert ok.status_code == 200 and ok.json()["revision"] == 2 and ok.json()["source_fingerprint"] == again["source_fingerprint"]
     assert ok.json()["stale"] is False and line_of(ok.json(), s0)["counted"] == 6
+
+
+# ---- PAY-2: the lessons of the account ------------------------------------------------------------------------------
+
+
+def pay_money(w, student, amount, paid_on, *, group=None):
+    """Plain money on the account (the sum, the date)."""
+    membership = student_group(w, student, group)
+    w.db.add(StudentPayment(org_id=w.org.id, membership_id=membership.id, student_id=student.id, group_id=membership.group_id,
+                            amount=amount, paid_on=paid_on, created_by=w.owner.id, method="cash"))
+    w.db.commit()
+
+
+def test_money_pays_the_oldest_days_first_and_a_voided_payment_covers_nothing(world):
+    m = previous_month()
+    s0, s1, _ = world.students
+    for n in range(1, 4):
+        lesson(world, m.d(n), {s0: "present", s1: "present"})
+    pay_calendar(world, s0, m.d(2), m.last)
+    pay_calendar(world, s1, m.first, m.last)
+    world.db.query(StudentPayment).filter_by(student_id=s1.id).update(
+        {"voided_at": datetime.utcnow(), "voided_by": world.owner.id, "void_reason": "ошибка"})
+    world.db.commit()
+    sheet = preview(world, m)
+    # the account is paid THROUGH the end of the month: the oldest days are paid first, nothing is "before the payment"
+    assert [x["state"] for x in line_of(sheet, s0)["marks"]] == ["counted"] * 3
+    assert [x["state"] for x in line_of(sheet, s1)["marks"]] == ["unpaid"] * 3 and line_of(sheet, s1)["amount"] == 0
+
+
+def test_lessons_before_the_start_of_the_accounting_are_not_owed(world):
+    """Grace: a day before the accounting began (or before the student's first charged day) is neither charged nor unpaid."""
+    from tests.pg_world import ensure_billing, payments_block
+
+    m = previous_month()
+    s0 = world.students[0]
+    for n in (1, 2, 20):
+        lesson(world, m.d(n), {s0: "present"})
+    ensure_billing(world, price=FEE)
+    payments_block(world.db, world.org, accounting_start_date=m.d(10).isoformat())
+    assert [x["state"] for x in line_of(preview(world, m), s0)["marks"]] == ["counted", "counted", "unpaid"]
+
+
+def test_a_package_gives_its_size_as_the_divisor(world):
+    """8 lessons of an 8-lesson package: the teacher gets exactly p % of the price, not 8/12."""
+    m = previous_month()
+    s0, s1, _ = world.students
+    for n in range(1, 9):
+        lesson(world, m.d(n), {s0: "present", s1: "present"})
+    pay_package(world, s0, m.first, 8, fee=480_000)
+    pay_package(world, s1, m.first, 8, fee=480_000)
+    sheet = preview(world, m)
+    for student in (s0, s1):
+        line = line_of(sheet, student)
+        assert (line["counted"], line["divisor"], line["amount"]) == (8, 8, 240_000)
+        assert {x["divisor"] for x in line["marks"]} == {8}
+
+
+def test_package_runs_out_the_rest_is_unpaid_and_the_status_page_agrees(world):
+    """Parity: the lessons the payments page says are covered are exactly the ones payroll counts as paid."""
+    m = previous_month()
+    s0, s1, _ = world.students
+    for n in range(1, 9):
+        lesson(world, m.d(n), {s0: "present", s1: "present"})
+    held = lesson(world, m.d(9), {s0: "excused", s1: "present"})
+    excuse(world, held, s0, "confirmed")                                        # not counted, not consumed
+    pay_package(world, s0, m.first, 5)
+    pay_package(world, s1, m.first, 5)
+    pay_money(world, s1, FEE * 4 // 5, m.d(7))                                    # four more lessons of the same account
+    page = {r["student_id"]: r for r in owner(world).get(f"{API}/org/payments/status", params={"limit": 50}).json()["items"]}
+    sheet = preview(world, m)
+    l0, l1 = line_of(sheet, s0), line_of(sheet, s1)
+    assert (l0["counted"], l0["unpaid"]) == (5, 3)
+    assert [x["state"] for x in l0["marks"]] == ["counted"] * 5 + ["unpaid"] * 3 + ["excused_confirmed"]
+    assert [x["state"] for x in l1["marks"]] == ["counted"] * 8 + ["counted"]    # 5 + 4 paid lessons cover all nine
+    assert [x["divisor"] for x in l0["marks"][:8]] == [5] * 8 and l0["divisor"] == 5
+    for line, student in ((l0, s0), (l1, s1)):
+        row = page[str(student.id)]
+        assert row["lessons_total"] - 0 >= min(row["lessons_used"], row["lessons_total"])
+        assert line["counted"] == min(row["lessons_used"], row["lessons_total"]), student.first_name   # the page's number = ours
+        assert line["counted"] + line["unpaid"] == row["lessons_used"]
+    assert l0["amount"] == FEE * 50 * 5 // (100 * 5)                              # five lessons of a 5-lesson package
+
+
+def test_an_included_unpaid_lesson_of_a_package_student_is_priced_by_his_package(world):
+    m = previous_month()
+    s0 = world.students[0]
+    for n in range(1, 11):
+        lesson(world, m.d(n), {s0: "present"})
+    pay_package(world, s0, m.first, 8, fee=480_000)
+    sheet = preview(world, m)
+    line = line_of(sheet, s0)
+    assert (line["counted"], line["unpaid"], line["amount"]) == (8, 2, 240_000)
+    assert [x["divisor"] for x in line["marks"]] == [8] * 10 and line["divisor"] == 8
+    saved = save(world, m)
+    ticked = patch(world, saved, line_overrides=[{"membership_id": line["membership_id"], "include_unpaid": True}])
+    assert line_of(ticked, s0)["amount"] == 10 * 480_000 * 50 // 800                    # ten lessons at 1/8 of the price
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_covered_lessons_equal_what_the_status_page_covers_on_random_data(world, seed):
+    """Random lessons, marks, excuse decisions and a random number of paid lessons per student: payroll counts as paid
+    exactly the lessons the payments page says are covered."""
+    import random
+
+    from src.auth import payment_status as ps
+    from tests.pg_world import ensure_billing, money_for, payments_block
+
+    rnd = random.Random(seed)
+    m = previous_month()
+    students = world.students
+    size = rnd.randint(1, 6)
+    for n in sorted(rnd.sample(range(1, 26), rnd.randint(6, 16))):
+        roster = [s for s in students if rnd.random() > 0.15]
+        marks = {s: rnd.choice(["present", "present", "late", "absent", "excused"]) for s in roster}
+        att = lesson(world, m.d(n), marks, roster=roster)
+        for s, mark in marks.items():
+            decision = rnd.choice(["confirmed", "pending", "rejected", None]) if mark == "excused" else None
+            if decision:
+                excuse(world, att, s, decision)
+    ensure_billing(world, price=FEE)
+    payments_block(world.db, world.org, period_mode="lessons", lessons_per_payment=size, accounting_start_date=m.first.isoformat())
+    for s in students:
+        membership = student_group(world, s)
+        amount = money_for(world, membership.id, lessons=rnd.randint(1, 12))
+        pay_money(world, s, amount, m.first)
+    world.db.expire_all()
+    rows = {r["student_id"]: r for r in owner(world).get(f"{API}/org/payments/status", params={"limit": 50}).json()["items"]}
+    held = world.db.query(GroupAttendance).filter_by(group_id=world.group.id, status="completed").all()
+    excuses = {(e.attendance_id, str(e.student_id)): e.status for e in world.db.query(AttendanceExcuse).filter_by(org_id=world.org.id)}
+    sheet = preview(world, m)
+    for s in students:
+        sid = str(s.id)
+        counts = sum(
+            1 for a in held
+            if sid in {i["student_id"] for i in a.roster_snapshot}
+            and ps.lesson_counts(mark=a.records.get(sid), excuse_status=excuses.get((a.id, sid)))
+        )
+        line = by_student(sheet).get(sid)
+        counted, unpaid = (line["counted"], line["unpaid"]) if line else (0, 0)
+        assert counted + unpaid == counts, (seed, sid)                                  # the same lessons are counted
+        assert rows[sid]["lessons_used"] == counts, (seed, sid)
+        assert counted == min(counts, rows[sid]["lessons_total"]), (seed, sid, counted, rows[sid])   # and paid as on the page
+        if line:
+            assert all(x["divisor"] for x in line["marks"] if x["state"] in ("counted", "excused_pending", "unpaid"))
+

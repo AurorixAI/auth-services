@@ -909,11 +909,11 @@ def test_create_replace_and_fee_are_refused_for_an_archived_student_but_void_and
     fee_before = price_rows(two, s, two.group)
 
     r = owner(two).post(f"{API}/org/memberships/{mid(two, s, two.group)}/payments",
-                        json={"amount": 5, "paid_on": business_today().isoformat()})
-    assert r.status_code == 409 and r.json()["detail"] == ARCHIVED_MESSAGE
+                        json={"amount": 5, "paid_on": business_today().isoformat(), "method": "cash"})
+    assert r.status_code == 409 and r.json()["detail"] == {"code": "STUDENT_ARCHIVED", "message": ARCHIVED_MESSAGE}
     r = owner(two).post(f"{API}/org/payments/{first['id']}/replace",
-                        json={"amount": 7, "paid_on": business_today().isoformat(), "reason": "исправление"})
-    assert r.status_code == 409 and r.json()["detail"] == ARCHIVED_MESSAGE
+                        json={"amount": 7, "paid_on": business_today().isoformat(), "method": "cash", "reason": "исправление"})
+    assert r.status_code == 409 and r.json()["detail"] == {"code": "STUDENT_ARCHIVED", "message": ARCHIVED_MESSAGE}
     r = owner(two).put(f"{API}/org/memberships/{mid(two, s, two.second)}/price-override", json={"amount": 1, "reason": "тест"})
     assert r.status_code == 409 and r.json()["detail"] == ARCHIVED_MESSAGE
     assert put_fee(two, s, two.group, 1, expect=409).json()["detail"] == ARCHIVED_MESSAGE
