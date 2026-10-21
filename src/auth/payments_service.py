@@ -879,18 +879,25 @@ class PaymentService:
                 logger.info("receipt number taken by a concurrent payment (attempt %s)", attempt)
         raise PaymentConflict("Не удалось присвоить номер квитанции. Повторите.")
 
+    def _guard_key(self, org_id: str, key: Optional[UUID]) -> None:
+        """A POST with an Idempotency-Key that already made a payment: 409 DUPLICATE_PAYMENT with that payment's id."""
+        if key is None:
+            return
+        existing = (
+            self.db.query(StudentPayment.id)
+            .filter(StudentPayment.org_id == org_id, StudentPayment.idempotency_key == key)
+            .first()
+        )
+        if existing:
+            raise DuplicatePayment("Эта оплата уже внесена", payment_id=str(existing[0]))
+
     def _guard_duplicate(
         self, org_id: str, membership: StudentGroup, data: PaymentCreate, key: Optional[UUID], *, soft: bool = True
     ) -> None:
-        if key is not None:
-            existing = (
-                self.db.query(StudentPayment.id)
-                .filter(StudentPayment.org_id == org_id, StudentPayment.idempotency_key == key)
-                .first()
-            )
-            if existing:
-                raise DuplicatePayment("Эта оплата уже внесена", payment_id=str(existing[0]))
-        if soft and SOFT_DUPLICATE_SECONDS > 0:  # the same student + date + sum a moment ago: a double click without a key
+        self._guard_key(org_id, key)
+        # the same student + date + sum a moment ago is a double click - only for a request WITHOUT a key (a key says it is
+        # deliberate: two equal payments with different keys both go in)
+        if key is None and soft and SOFT_DUPLICATE_SECONDS > 0:
             recent = (
                 self.db.query(StudentPayment.id)
                 .filter(
@@ -1053,14 +1060,13 @@ class PaymentService:
             self._check_amount(data.amount)
             self._check_date(data.paid_on, today)
             method = self._method_of(data.method)
+            self._guard_key(org_id, idempotency_key)   # a replay of this replace: the stored result, not ALREADY_VOIDED
             probe = self._probe_payment(org_id, payment_id)
             if probe.kind == "legacy_carry" or probe.carried_from_payment_id is not None:
                 raise PaymentConflict("Перенос оплаты нельзя исправить — это не денежная операция",)
             family = self._lock_family(org_id, probe.student_id)
             membership = self._membership(org_id, probe.membership_id, writable=True)
             old = self._lock_payment(org_id, payment_id)
-            if idempotency_key is not None:
-                self._guard_duplicate(org_id, membership, data, idempotency_key, soft=False)
             loader = self._loader(org_id, today)
             loader.load_facts([membership.id])
             before_inp = loader.build_input(membership.id, exclude_payment=old.id)

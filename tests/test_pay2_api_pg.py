@@ -598,3 +598,30 @@ def test_a_student_without_any_money_event_stays_none_with_the_debt_visible(worl
     assert (row["status"], row["paid_until"], row["debt"], row["past_debt"], row["current_due"]) == ("none", None, 1_000_000, 500_000, 500_000)
     page = owner(world).get(f"{API}/org/payments/status", params={"bucket": "none"}).json()
     assert str(m.id) in {i["membership_id"] for i in page["items"]}
+
+
+def test_the_soft_double_click_guard_does_not_apply_to_requests_with_a_key(world, fixed_today, monkeypatch):
+    import src.auth.payments_service as svc
+
+    monkeypatch.setattr(svc, "SOFT_DUPLICATE_SECONDS", 60)
+    m = e1_world(world)
+    a = post_payment(world, m, amount=250_000, headers={"Idempotency-Key": str(uuid4())})
+    b = post_payment(world, m, amount=250_000, headers={"Idempotency-Key": str(uuid4())})
+    assert a["payment"]["id"] != b["payment"]["id"]
+    # without a key the same request within the minute is a double click
+    c = post_payment(world, m, amount=111_000)
+    r = owner(world).post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 111_000, "paid_on": TODAY.isoformat(), "method": "cash"})
+    assert r.status_code == 409 and r.json()["detail"]["payment_id"] == c["payment"]["id"]
+
+
+def test_replaying_a_replace_with_the_same_key_is_the_duplicate_answer_not_already_voided(world, fixed_today):
+    m = e1_world(world)
+    old = post_payment(world, m, amount=300_000)["payment"]
+    key = str(uuid4())
+    body = {"amount": 250_000, "paid_on": TODAY.isoformat(), "method": "cash", "reason": "исправление"}
+    first = owner(world).post(f"{API}/org/payments/{old['id']}/replace", json=body, headers={"Idempotency-Key": key})
+    assert first.status_code == 201
+    again = owner(world).post(f"{API}/org/payments/{old['id']}/replace", json=body, headers={"Idempotency-Key": key})
+    assert again.status_code == 409 and again.json()["detail"]["code"] == "DUPLICATE_PAYMENT"
+    assert again.json()["detail"]["payment_id"] == first.json()["payment"]["id"]
+    assert world.db.query(StudentPayment).filter_by(membership_id=m.id, voided_at=None).count() == 2   # seeded + the replacement
