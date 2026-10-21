@@ -18,5 +18,6 @@
     "memberships_with_changed_advance": 3,
     "advance_delta": -1200000,
     "refundable_delta": -900000
-  }
+  },
+  "regime_impact": null
 }

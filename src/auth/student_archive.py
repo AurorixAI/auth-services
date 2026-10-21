@@ -51,6 +51,7 @@ from sqlalchemy.orm import Session
 
 from .membership_periods import close_period
 from .models import DiagnosticInvite, Group, GroupAudit, Student, StudentDiagnosticResult, StudentGroup
+from .payments_schemas import SettledOut, SettleItem
 from .payments_service import CONCURRENT_EDIT_MESSAGE, is_deadlock
 from .schemas import ArchivedGroupOut, StudentResponse
 
@@ -102,6 +103,8 @@ class ArchiveStatusViolation(ArchiveError):
 
 class ArchiveStudentRequest(BaseModel):
     reason: Optional[str] = Field(None, max_length=REASON_MAX)
+    # LOGIC-A (F9): what to do with the money of every membership the archiving closes (absent = ``keep`` everywhere)
+    settle: List[SettleItem] = Field(default_factory=list, max_length=200)
 
     @field_validator("reason")
     @classmethod
@@ -136,6 +139,7 @@ class ArchiveStudentResponse(StudentResponse):
     # (``in_progress``: the student may finish, the result stays on his card).
     diagnostic_invites_cancelled: int = 0
     diagnostic_invites_in_progress: int = 0
+    settled: List[SettledOut] = []  # LOGIC-A (F9): the refunds / write-offs of ``settle``
 
 
 class RestoreStudentResponse(StudentResponse):

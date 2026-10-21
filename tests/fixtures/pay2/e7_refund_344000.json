@@ -109,6 +109,9 @@
     "price_missing": false,
     "lessons_unpaid": 0,
     "refundable": 0,
-    "writeoff_allowed": false
+    "writeoff_allowed": false,
+    "paused": null,
+    "opening": null,
+    "price_ends_on_leave": false
   }
 }

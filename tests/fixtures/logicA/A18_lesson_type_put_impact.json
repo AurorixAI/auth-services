@@ -1,0 +1,26 @@
+{
+  "current": "pair",
+  "history": [
+    {
+      "valid_from": "2020-01-01",
+      "lesson_type": "group",
+      "created_by_name": null
+    },
+    {
+      "valid_from": "2026-10-15",
+      "lesson_type": "pair",
+      "created_by_name": "Арслан"
+    }
+  ],
+  "dry_run": false,
+  "impact": {
+    "stale_payroll_sheets": 1,
+    "stale_sheets": [
+      {
+        "sheet_id": "00000000-0000-4000-8000-000000000500",
+        "month": "2026-10",
+        "teacher_name": "Каримова"
+      }
+    ]
+  }
+}

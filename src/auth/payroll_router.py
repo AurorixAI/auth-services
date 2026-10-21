@@ -9,7 +9,7 @@ from typing import Optional
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,12 @@ from .payroll_schemas import (
     CalculateRequest,
     CalculateResponse,
     MonthOverview,
+    PayoutCreate,
+    PayoutCreated,
+    PayoutError,
+    PayoutOut,
+    PayoutVoidRequest,
+    PayoutVoided,
     PayrollSettings,
     PayrollSettingsUpdate,
     RateHistoryRow,
@@ -228,3 +234,39 @@ def export_sheet(sheet_id: UUID, user: dict = Depends(require_payroll_owner), db
         raise _http(exc)
     sheet = sheets[0]
     return _xlsx(build_workbook([sheet.model_dump()]), export_filename(label, sheet.teacher_name))
+
+
+# ---- payouts (LOGIC-A, decision 6) ---------------------------------------------------------------------
+
+_PAYOUT_ERRORS = {403: {"model": PayoutError}, 404: {"model": PayoutError}, 409: {"model": PayoutError}, 422: {"model": PayoutError}}
+
+
+@router.get("/org/payroll/payouts", response_model=list[PayoutOut], responses=_PAYOUT_ERRORS)
+def list_payouts(
+    month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$"),
+    teacher_id: Optional[UUID] = None,
+    user: dict = Depends(require_payroll_owner),
+    db: Session = Depends(get_db),
+):
+    raise HTTPException(501, {"code": "NOT_IMPLEMENTED", "message": "LOGIC-A: not implemented yet"})
+
+
+@router.post("/org/payroll/sheets/{sheet_id}/payouts", response_model=PayoutCreated, status_code=201, responses=_PAYOUT_ERRORS)
+def create_payout(
+    sheet_id: UUID,
+    request: PayoutCreate,
+    idempotency_key: Optional[UUID] = Header(None, alias="Idempotency-Key"),
+    user: dict = Depends(require_payroll_owner),
+    db: Session = Depends(get_db),
+):
+    raise HTTPException(501, {"code": "NOT_IMPLEMENTED", "message": "LOGIC-A: not implemented yet"})
+
+
+@router.post("/org/payroll/payouts/{payout_id}/void", response_model=PayoutVoided, responses=_PAYOUT_ERRORS)
+def void_payout(
+    payout_id: UUID,
+    request: PayoutVoidRequest,
+    user: dict = Depends(require_payroll_owner),
+    db: Session = Depends(get_db),
+):
+    raise HTTPException(501, {"code": "NOT_IMPLEMENTED", "message": "LOGIC-A: not implemented yet"})

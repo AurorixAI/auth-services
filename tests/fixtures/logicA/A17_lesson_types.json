@@ -1,0 +1,15 @@
+{
+  "current": "pair",
+  "history": [
+    {
+      "valid_from": "2020-01-01",
+      "lesson_type": "group",
+      "created_by_name": null
+    },
+    {
+      "valid_from": "2026-10-15",
+      "lesson_type": "pair",
+      "created_by_name": "Арслан"
+    }
+  ]
+}

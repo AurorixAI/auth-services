@@ -245,7 +245,8 @@
               "expired",
               "ends_today",
               "expiring",
-              "active"
+              "active",
+              "paused"
             ],
             "title": "Status",
             "type": "string"
@@ -540,6 +541,16 @@
             ],
             "title": "Monthly Fee"
           },
+          "opening": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "paid_until": {
             "anyOf": [
               {
@@ -562,6 +573,16 @@
             "title": "Past Debt",
             "type": "integer"
           },
+          "paused": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PausedRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "period_mode": {
             "anyOf": [
               {
@@ -580,6 +601,11 @@
           "price": {
             "$ref": "#/components/schemas/PriceOut"
           },
+          "price_ends_on_leave": {
+            "default": false,
+            "title": "Price Ends On Leave",
+            "type": "boolean"
+          },
           "price_missing": {
             "default": false,
             "title": "Price Missing",
@@ -597,7 +623,8 @@
               "expired",
               "ends_today",
               "expiring",
-              "active"
+              "active",
+              "paused"
             ],
             "title": "Status",
             "type": "string"
@@ -649,6 +676,77 @@
           "status"
         ],
         "title": "MembershipPaymentRow",
+        "type": "object"
+      },
+      "OpeningBrief": {
+        "properties": {
+          "debt_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Amount"
+          },
+          "debt_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt On"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "paid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until"
+          }
+        },
+        "required": [
+          "id",
+          "paid_until",
+          "debt_amount",
+          "debt_on"
+        ],
+        "title": "OpeningBrief",
+        "type": "object"
+      },
+      "PausedRange": {
+        "properties": {
+          "from": {
+            "format": "date",
+            "title": "From",
+            "type": "string"
+          },
+          "to": {
+            "format": "date",
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "title": "PausedRange",
         "type": "object"
       },
       "PayError": {
@@ -1688,6 +1786,16 @@
             "title": "Period Mode",
             "type": "string"
           },
+          "regime_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegimeImpact"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "updated_at": {
             "anyOf": [
               {
@@ -2013,6 +2121,11 @@
             "title": "None",
             "type": "integer"
           },
+          "paused": {
+            "default": 0,
+            "title": "Paused",
+            "type": "integer"
+          },
           "period_mode": {
             "enum": [
               "calendar",
@@ -2250,7 +2363,8 @@
               "expired",
               "ends_today",
               "expiring",
-              "active"
+              "active",
+              "paused"
             ],
             "title": "Status After",
             "type": "string"
@@ -3679,6 +3793,52 @@
         "title": "RefundVoided",
         "type": "object"
       },
+      "RegimeImpact": {
+        "properties": {
+          "defer": {
+            "default": true,
+            "title": "Defer",
+            "type": "boolean"
+          },
+          "first_switch": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Switch"
+          },
+          "latest_switch": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Switch"
+          },
+          "students_affected": {
+            "default": 0,
+            "title": "Students Affected",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "students_affected",
+          "first_switch",
+          "latest_switch",
+          "defer"
+        ],
+        "title": "RegimeImpact",
+        "type": "object"
+      },
       "Segment": {
         "description": "One charge: a period of the student in the group (or a lessons package).",
         "properties": {
@@ -4360,7 +4520,8 @@
               "expired",
               "ends_today",
               "expiring",
-              "active"
+              "active",
+              "paused"
             ],
             "title": "Status",
             "type": "string"

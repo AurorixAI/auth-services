@@ -154,3 +154,19 @@ def price_change_warning(start: date, end: date, amount: int, current: int) -> s
         f"Цена периода {period_text(start, end)} — {money(amount)} (сейчас {money(current)}): "
         f"аванс на него купит {more} дней"
     )
+
+
+# ---- LOGIC-A: payroll payouts (decision 6) ------------------------------------------------------------------
+
+
+def payout_text(*, state: str, saved_total: int, fresh_total: Optional[int], target: int, paid: int, balance: int) -> str:
+    """The sentence of ``PayoutState.text`` (spec §5.8).  A sheet is "stale" when the fresh total differs from the saved one."""
+    if state == "unpaid":
+        return "Не выплачено"
+    if state == "settled":
+        return "Выплачено полностью"
+    if state == "overpaid":
+        return f"Переплачено {num(-balance)}"
+    if fresh_total is not None and fresh_total != saved_total:
+        return f"Выплачено {num(paid)} · после изменений данных доплатить {num(balance)}"
+    return f"Выплачено {num(paid)} из {num(target)} · осталось {num(balance)}"

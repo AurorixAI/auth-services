@@ -26,6 +26,7 @@ from src.core.database import get_db
 from . import payments_group_prices, pricing
 from .dependencies import require_payments_access, require_payments_settings
 from .payments_files import MAX_BODY_BYTES, MAX_FILE_BYTES, file_headers
+from .logica_router import router as logica_router
 from .payments_pay2_router import router as pay2_router
 from .payments_schemas import (
     MAX_MONEY,
@@ -56,6 +57,7 @@ from .payments_service import PaymentError, PaymentService
 
 router = APIRouter(prefix="/auth", tags=["Payments"])
 router.include_router(pay2_router)  # PAY-2: preview, write-off, refund, statement, receipts report, balances
+router.include_router(logica_router)  # LOGIC-A: opening balance, pause, leave with money, lesson type
 
 
 def _http(exc: PaymentError | pricing.PriceError) -> HTTPException:

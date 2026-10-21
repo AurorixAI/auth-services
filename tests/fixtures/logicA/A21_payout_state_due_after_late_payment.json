@@ -1,0 +1,28 @@
+{
+  "saved_total": 475000,
+  "fresh_total": 600000,
+  "target": 600000,
+  "paid": 475000,
+  "balance": 125000,
+  "state": "due",
+  "basis": "fresh",
+  "text": "Выплачено 475 000 · после изменений данных доплатить 125 000",
+  "items": [
+    {
+      "id": "00000000-0000-4000-8000-000000000601",
+      "sheet_id": "00000000-0000-4000-8000-000000000500",
+      "teacher_id": "00000000-0000-4000-8000-000000000400",
+      "month": "2026-10",
+      "amount": 475000,
+      "paid_on": "2026-11-05",
+      "method": "cash",
+      "note": null,
+      "sheet_revision": 1,
+      "sheet_total": 475000,
+      "created_by_name": "Арслан",
+      "created_at": "2026-11-05T10:00:00",
+      "voided_at": null,
+      "void_reason": null
+    }
+  ]
+}
