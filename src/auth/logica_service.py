@@ -223,7 +223,8 @@ class OpeningService(_Base):
             return existing, False
         if existing is None and empty:
             return None, False
-        if require_reason_when_money and self._has_money_records(membership.id):
+        # m13: replacing a live opening of a membership that has money always needs a reason (a return through «Добавить в группу» included)
+        if (require_reason_when_money or existing is not None) and self._has_money_records(membership.id):
             reason = (reason or "").strip()
             if not 3 <= len(reason) <= 500:
                 raise ReasonRequired("У ученика уже есть оплаты: укажите причину изменения остатка (от 3 до 500 символов)")

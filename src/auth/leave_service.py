@@ -316,4 +316,4 @@ def apply_add_opening(db: Session, org_id: str, membership: StudentGroup, actor_
     if opening.paid_until is None and opening.debt_amount is None and opening.debt_on is None:
         return
     OpeningService(db).apply(org_id, membership, actor_id, "admin", opening, source="add", today=ps.business_today(),
-                             require_reason_when_money=False)
+                             reason=getattr(opening, "reason", None), require_reason_when_money=False)

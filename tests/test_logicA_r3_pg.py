@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from src.models.auth import Group, GroupAudit, GroupLessonTypeHistory
+from src.models.auth import Group, GroupAudit, GroupLessonTypeHistory, MembershipOpeningBalance
 
 from tests.pg_world import give_group_price, make_client, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_payroll_pg import (  # noqa: F401
@@ -331,3 +331,30 @@ def test_m12_include_unpaid_is_set_per_line_when_the_type_changed_in_the_month(w
     bad = owner(world).patch(f"{API}/org/payroll/sheets/{both['id']}", json={
         "revision": both["revision"], "line_overrides": [{"membership_id": mid, "line_key": f"{mid}:individual", "include_unpaid": True}]})
     assert bad.status_code == 422 and bad.json()["detail"]["code"] == "LINE_NOT_FOUND", bad.text
+
+
+# ---- m13: replacing an opening on a membership with money needs a reason - also with «Добавить в группу» (a return) ---------------------------------
+
+
+def test_m13_a_return_that_replaces_an_opening_of_a_membership_with_money_needs_a_reason(world, fixed_today):
+    centre(world)
+    s0 = world.students[0]
+    enrolled(world, D(2026, 10, 1), s0)
+    m = membership(world, s0)
+    put_opening(world, m, {"paid_until": "2026-10-10"})
+    seed_payment(world, m, 100_000, D(2026, 10, 11))
+    assert owner(world).post(f"{API}/org/groups/{world.group.id}/students/{s0.id}/leave", json={}).status_code == 200
+    url = f"{API}/org/groups/{world.group.id}/students/{s0.id}"
+    body = {"opening_balance": {"debt_amount": 100_000, "debt_on": "2026-09-30"}}
+    r = owner(world).post(url, params={"mode": "add"}, json=body)
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "REASON_REQUIRED", r.text
+    world.db.expire_all()
+    live = world.db.query(MembershipOpeningBalance).filter_by(membership_id=m.id, voided_at=None).all()
+    assert [(o.paid_until, o.debt_amount) for o in live] == [(D(2026, 10, 10), None)]            # nothing was replaced (and the return was rolled back)
+    assert world.db.get(type(m), m.id).is_active is False
+    body["opening_balance"]["reason"] = "ошибка в таблице Excel"
+    r = owner(world).post(url, params={"mode": "add"}, json=body)
+    assert r.status_code == 200, r.text
+    world.db.expire_all()
+    rows = world.db.query(MembershipOpeningBalance).filter_by(membership_id=m.id).order_by(MembershipOpeningBalance.created_at).all()
+    assert [(o.debt_amount, o.voided_at is None) for o in rows] == [(None, False), (100_000, True)] and rows[0].void_reason == "ошибка в таблице Excel"

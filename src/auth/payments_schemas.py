@@ -1208,6 +1208,7 @@ class OpeningIn(BaseModel):
     paid_until: Optional[date_type] = None
     debt_amount: Optional[int] = None  # 1..10^10
     debt_on: Optional[date_type] = None  # not after the first day of the stay; default in an import: the day before
+    reason: Optional[str] = Field(None, max_length=500)  # m13: required (3..500) when the opening it replaces sits on a membership that has money
 
 
 class OpeningPut(OpeningIn):
@@ -1215,7 +1216,6 @@ class OpeningPut(OpeningIn):
     (3..500) when the membership already has money, write-offs or refunds."""
 
     note: Optional[str] = Field(None, max_length=300)
-    reason: Optional[str] = Field(None, max_length=500)
 
 
 class OpeningOut(PayModel):

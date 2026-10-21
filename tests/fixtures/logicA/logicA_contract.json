@@ -2791,6 +2791,18 @@
               }
             ],
             "title": "Paid Until"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "title": "OpeningIn",
