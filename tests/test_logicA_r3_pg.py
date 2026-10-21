@@ -248,3 +248,51 @@ def test_m7_import_money_cells_inf_nan_overflow_are_row_errors(world, fixed_toda
             assert body["ok"] is False and any(i["level"] == "error" and i["row"] == 2 for i in body["issues"]), (cell, body["issues"])
     data = import_workbook([["Два", "Ученик", "inf", "", "Импорт-группа", "", None, None, None]])
     assert c.post(f"{API}/org/import/preview", files={"file": ("x.xlsx", data)}).status_code == 200
+
+
+# ---- m8: query counts of the payroll reads -----------------------------------------------------------------------------------------------------
+
+
+def test_m8_payroll_reads_collect_the_month_once_and_the_overview_does_not_get_every_sheet(world, monkeypatch):
+    from sqlalchemy import event
+
+    from src.auth.payroll_service import PayrollService
+
+    m = previous_month()
+    teachers = [world.teacher]
+    s0 = world.students[0]
+    give_group_price(world.db, world.group, 600_000, valid_from=date(2026, 1, 1))
+    for n in (3, 6, 10):
+        lesson(world, m.d(n), {s0: "present"})
+    pay_calendar(world, s0, m.first, m.last, fee=None)
+    saved = save_sheet(world, m)
+    calls = []
+    original = PayrollService._collect
+
+    def counted(self, *args, **kwargs):
+        calls.append(kwargs.get("teacher_ids"))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(PayrollService, "_collect", counted)
+    c = owner(world)
+    assert c.get(f"{API}/org/payroll/sheets/{saved['id']}").status_code == 200
+    assert len(calls) == 1, calls                                                   # the stale flag and the payout state share one collection
+    calls.clear()
+    assert c.get(f"{API}/org/payroll/sheets/{saved['id']}/export.xlsx").status_code == 200
+    assert len(calls) == 1, calls
+    calls.clear()
+    assert c.get(f"{API}/org/payroll/months/{m.label}/export.xlsx").status_code == 200
+    assert len(calls) == 1, calls                                                   # one collection for the month, whatever the number of sheets
+    calls.clear()
+    statements = []
+    engine = world.db.get_bind()
+
+    def spy(conn, cursor, statement, params, context, executemany):
+        statements.append(" ".join(statement.split()))
+
+    event.listen(engine, "before_cursor_execute", spy)
+    try:
+        assert c.get(f"{API}/org/payroll/months/{m.label}").status_code == 200
+    finally:
+        event.remove(engine, "before_cursor_execute", spy)
+    assert not [q for q in statements if "FROM payroll_sheets WHERE payroll_sheets.id =" in q], "no db.get per sheet"

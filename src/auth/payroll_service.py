@@ -906,10 +906,10 @@ class PayrollService:
             return None
         return engine.sheet_total(self._render(teacher, percents, self._carried_changes(sheet), seed.divisor))
 
-    def payout_state(self, org_id: str, sheet: PayrollSheet) -> PayoutState:
+    def payout_state(self, org_id: str, sheet: PayrollSheet, seed: Optional[MonthSeed] = None, book=None) -> PayoutState:
         from .payroll_payouts import PayrollPayoutService
 
-        return PayrollPayoutService(self.db).state_for(org_id, sheet, self._fresh_total(org_id, sheet))
+        return PayrollPayoutService(self.db).state_for(org_id, sheet, self._fresh_total(org_id, sheet, seed, book))
 
     # ---------------------------------------------------------------- month
 
@@ -926,6 +926,7 @@ class PayrollService:
                 PayrollSheet.source_fingerprint,
                 PayrollSheet.percent_inputs,
                 PayrollSheet.updated_at,
+                PayrollSheet.lines,                      # m8: the carried ticks come from this row, no ``db.get`` per sheet
                 PayrollSheet.lines.contains([{"fee_overridden": True}]).label("manual_fee"),
             ).filter(PayrollSheet.org_id == org_id, PayrollSheet.period_month == first)
         }
@@ -957,8 +958,7 @@ class PayrollService:
                 if not sheet.manual_fee:
                     t_seed = teacher or TeacherSeed(tid, fingerprint=fresh)
                     if not self._missing_percents(t_seed, in_force):
-                        sheet_row = self.db.get(PayrollSheet, sheet.id)
-                        fresh_total = engine.sheet_total(self._render(t_seed, in_force, self._carried_changes(sheet_row), seed.divisor))
+                        fresh_total = engine.sheet_total(self._render(t_seed, in_force, self._carried_changes(sheet), seed.divisor))
                 payout = state_of(saved_total=int(sheet.total_amount), fresh_total=fresh_total, items=payouts.get((tid, first), []))
             out.append(
                 MonthTeacher(
@@ -1343,20 +1343,23 @@ class PayrollService:
 
     # ----------------------------------------------------------------- read
 
-    def _is_stale(self, org_id: str, sheet: PayrollSheet) -> bool:
+    def _is_stale(self, org_id: str, sheet: PayrollSheet, seed: Optional[MonthSeed] = None, book=None) -> bool:
         first = sheet.period_month
         last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
-        seed = self._collect(org_id, first, last, teacher_ids={sheet.teacher_id})
+        seed = seed or self._collect(org_id, first, last, teacher_ids={sheet.teacher_id})
         teacher = seed.teachers.get(sheet.teacher_id)
         fresh = teacher.fingerprint if teacher else fingerprint_of(first, sheet.teacher_id, [])
         if fresh != sheet.source_fingerprint or self._has_manual_fee(sheet.lines):
             return True
-        book = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])
+        book = book or payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])
         return self._stale_by_rates(dict(sheet.percent_inputs or {}), book, sheet.teacher_id, first)
 
     def get_sheet(self, org_id: str, sheet_id: UUID) -> SheetOut:
         sheet = self._lock_sheet(org_id, sheet_id, lock=False)
-        return self._saved_out(sheet, stale=self._is_stale(org_id, sheet), payout=self.payout_state(org_id, sheet))
+        first = sheet.period_month
+        seed = self._collect(org_id, first, date(first.year, first.month, calendar.monthrange(first.year, first.month)[1]), teacher_ids={sheet.teacher_id})
+        book = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])     # m8: ONE collection of the month serves the stale flag and the payout state
+        return self._saved_out(sheet, stale=self._is_stale(org_id, sheet, seed, book), payout=self.payout_state(org_id, sheet, seed, book))
 
     def list_sheets(self, org_id: str, month: Optional[str]) -> List[SheetBrief]:
         query = self.db.query(
@@ -1635,6 +1638,10 @@ class PayrollService:
             [r.teacher_id for r in rows] + [r.created_by for r in rows] + [r.updated_by for r in rows]
         )
         notes = self._notes(rows)
-        outs = [self._saved_out(r, stale=None, names=names, notes=notes, payout=self.payout_state(org_id, r)) for r in rows]
+        # m8: ONE collection of the month (all the teachers) and one book of rates serve every sheet
+        seed = self._collect(org_id, first, date(first.year, first.month, calendar.monthrange(first.year, first.month)[1]),
+                             teacher_ids={r.teacher_id for r in rows})
+        book = payroll_rates.load_book(self.db, org_id, {r.teacher_id for r in rows})
+        outs = [self._saved_out(r, stale=None, names=names, notes=notes, payout=self.payout_state(org_id, r, seed, book)) for r in rows]
         outs.sort(key=lambda o: ((o.teacher_name or "").casefold(), o.teacher_id))
         return outs, month_label(first)
