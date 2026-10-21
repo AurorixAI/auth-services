@@ -243,11 +243,36 @@ def test_add_month_minus_day_never_raises_anything_but_overflow():
 
 def test_default_valid_from():
     paid = date(2026, 10, 5)
-    assert ps.default_valid_from("calendar", paid, None) == paid
-    assert ps.default_valid_from("calendar", paid, date(2026, 10, 10)) == date(2026, 10, 11)
-    assert ps.default_valid_from("calendar", paid, date(2026, 10, 4)) == paid  # day after == paid_on
-    assert ps.default_valid_from("calendar", paid, date(2026, 9, 1)) == paid
+    assert ps.default_valid_from("calendar", paid, None) == paid                                   # first payment
+    assert ps.default_valid_from("calendar", paid, date(2026, 10, 10)) == date(2026, 10, 11)       # paid ahead
+    assert ps.default_valid_from("calendar", paid, date(2026, 10, 4)) == paid                      # day after == paid_on
+    # overdue: the debt is closed first, the period starts the day after the previous "paid until"
+    assert ps.default_valid_from("calendar", paid, date(2026, 9, 1)) == date(2026, 9, 2)
+    assert ps.default_valid_from("calendar", date(2026, 10, 21), date(2026, 10, 8)) == date(2026, 10, 9)
+    assert ps.default_valid_from("calendar", date(2026, 10, 21), date(2026, 8, 20)) == date(2026, 8, 21)
+    # lessons are counted, not days: nothing depends on the previous payment
     assert ps.default_valid_from("lessons", paid, date(2026, 10, 10)) == paid
+    assert ps.default_valid_from("lessons", paid, date(2026, 9, 1)) == paid
+
+
+def test_default_valid_from_never_reaches_before_the_membership_start():
+    paid, back = date(2026, 10, 21), date(2026, 10, 15)       # left in the summer, came back on the 15th
+    assert ps.default_valid_from("calendar", paid, date(2026, 8, 31), back) == back
+    assert ps.default_valid_from("calendar", paid, date(2026, 10, 9), back) == back
+    assert ps.default_valid_from("calendar", paid, date(2026, 10, 20), back) == date(2026, 10, 21)  # ahead: dominates
+    assert ps.default_valid_from("calendar", paid, date(2026, 10, 8), date(2020, 1, 1)) == date(2026, 10, 9)
+    # the first payment does not reach back to the joining date
+    assert ps.default_valid_from("calendar", paid, None, date(2020, 1, 1)) == paid
+
+
+def test_default_valid_from_degrades_when_the_previous_payment_is_older_than_the_bound():
+    paid = date(2026, 10, 21)
+    too_old = date(2023, 10, 19)                                # +1 day is before paid_on minus 3 years
+    assert ps.valid_from_error(paid, too_old + timedelta(days=1)) is not None
+    assert ps.default_valid_from("calendar", paid, too_old) == paid
+    assert ps.valid_from_error(paid, ps.default_valid_from("calendar", paid, too_old)) is None
+    edge = date(2023, 10, 20)                                   # +1 day is exactly the bound: still allowed
+    assert ps.default_valid_from("calendar", paid, edge) == date(2023, 10, 21)
 
 
 def test_validation_errors():

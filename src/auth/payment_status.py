@@ -445,12 +445,48 @@ def in_bucket(status: str, bucket: str) -> bool:
 # ------------------------------------------------- entering a payment -----
 
 
-def default_valid_from(mode: str, paid_on: date, previous_paid_until: Optional[date]) -> date:
-    """Calendar: the day after the previous "paid until" if not before ``paid_on``."""
-    if mode == CALENDAR and previous_paid_until is not None:
-        following = previous_paid_until + timedelta(days=1)
-        if following >= paid_on:
-            return following
+def _debt_start(
+    paid_on: date, previous_paid_until: Optional[date], membership_start: Optional[date]
+) -> Optional[date]:
+    """The day a payment starts when it first closes the debt: the day after the previous "paid until".
+
+    Never earlier than ``membership_start`` (days outside the group are not charged: a student who left
+    and came back starts on the day he returned).  ``None`` when there is no previous payment (the
+    first payment is not reached back to ``joined_at``: imported students joined long before the centre
+    started using ALGO) or when that day is so far in the past that ``valid_from_error`` would refuse it -
+    a suggestion must degrade to the old behaviour, never raise.
+    """
+    if previous_paid_until is None:
+        return None
+    start = previous_paid_until + timedelta(days=1)
+    if membership_start is not None:
+        start = max(start, membership_start)
+    if start < _years_ago(paid_on, MAX_PAID_AGO_YEARS):
+        return None
+    return start
+
+
+def default_valid_from(
+    mode: str,
+    paid_on: date,
+    previous_paid_until: Optional[date],
+    membership_start: Optional[date] = None,
+) -> date:
+    """Suggested start of a payment (calendar month counted from it).
+
+    Calendar: a student who is overdue first closes the debt, so with a previous payment the period starts
+    the day after its "paid until" - NOT on the payment date: paid until 08.10, pays on 21.10 -> 09.10 (to
+    08.11), and if the debt was longer than one period he is still overdue afterwards, which is correct.
+    Paying ahead continues without a gap in the same way.  ``membership_start`` (the business date the
+    student joined / came back to the group) is a floor.  The first payment starts on ``paid_on``.
+
+    Lessons: ``paid_on`` as before - a package is counted in lessons, not days, so there is no debt
+    period to close and no date of the package depends on the previous one.
+    """
+    if mode == CALENDAR:
+        start = _debt_start(paid_on, previous_paid_until, membership_start)
+        if start is not None:
+            return start
     return paid_on
 
 
@@ -535,20 +571,25 @@ def default_fixed_day_period(
 ) -> tuple[date, date]:
     """Suggested ``(valid_from, valid_to)`` of a payment when the centre has one payment day.
 
-    ``valid_from`` is the latest of:
+    With a previous payment a student who is overdue first closes the debt: ``valid_from`` is
+    ``previous_paid_until + 1`` (paying two days late, or months late, continues without a gap; paying
+    ahead as well), but not before ``membership_start`` - the business date the student joined the group
+    (one who left and came back on the 15th starts on the 15th even though old payments exist).  There is
+    NO clamp to the start of the centre's period of the payment date any more: the debt may begin in an
+    older period, and the payment then covers the rest of that period (a partial period, priced by
+    ``price_fixed_day``).  A previous payment that is too old for ``valid_from_error`` falls back to the
+    first-payment rule.
+
+    First payment (no previous one): the latest of
     * ``anchor`` - the start of the centre's period of the payment date;
-    * ``previous_paid_until + 1`` (when there is a previous payment) - paying two days late still gives
-      the whole period, paying ahead continues without a gap;
-    * ``membership_start`` - the business date the student joined the group (a student who came on the
-      15th pays 15.10-31.10; one who came in September and pays on 03.10 gets the whole of October; one
-      who left and came back on the 15th starts on the 15th even though old payments exist).  For a
-      continuing student it is long ago and changes nothing.  Unknown: the payment date, but only for
-      a first payment.
+    * ``membership_start`` (a student who came on the 15th pays 15.10-31.10; one who came in September
+      and pays on 03.10 gets the whole of October); unknown: the payment date.
     ``valid_to`` is the end of the centre's period of ``valid_from``.
     """
+    debt = _debt_start(paid_on, previous_paid_until, membership_start)
+    if debt is not None:
+        return debt, billing_period_end(debt, billing_day)
     start = billing_period_start(paid_on, billing_day)
-    if previous_paid_until is not None:
-        start = max(start, previous_paid_until + timedelta(days=1))
     if membership_start is not None:
         start = max(start, membership_start)
     elif previous_paid_until is None:

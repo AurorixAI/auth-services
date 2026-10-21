@@ -1263,6 +1263,8 @@ class PaymentService:
         come here, so a suggestion can never differ from what is saved.  With one payment day for the
         centre (``fixed_day``) a calendar payment starts at ``default_fixed_day_period`` and ends with the
         centre's period of its start; whatever the client sent is used as it is, with the same checks.
+        Without a ``valid_from`` from the client a student who is overdue first closes the debt: the period
+        starts the day after the previous "paid until" (see ``default_valid_from``), not on the payment date.
         """
         if valid_to is not None and lessons_count is not None:
             raise PaymentInvalid("Укажите что-то одно: «оплачено до» или число уроков")
@@ -1292,7 +1294,7 @@ class PaymentService:
                     paid_on, previous_until, membership_start, settings.billing_day
                 )
             else:
-                start = ps.default_valid_from(mode, paid_on, previous_until)
+                start = ps.default_valid_from(mode, paid_on, previous_until, membership_start)
         except OverflowError:
             raise PaymentInvalid("Начало периода слишком далеко в будущем")
         problem = ps.valid_from_error(paid_on, start)
@@ -1614,7 +1616,8 @@ class PaymentService:
         * no fee -> no amount (``basis`` ``none``);
         * a lessons package: the fee for the centre's package size, else ``fee * lessons / package size``
           rounded to 1 000 (``package``);
-        * calendar, from the payment date: the standard period ``add_month_minus_day`` -> the fee (``full``),
+        * calendar, by the payment date (starts on it, or the day after the previous "paid until"): the standard
+          period ``add_month_minus_day`` -> the fee (``full``),
           any other -> no amount (``custom``);
         * calendar, one payment day: period by period of the centre, a complete one costs the fee, an incomplete
           one ``fee * lessons in the part / lessons in the period`` by the group's schedule (``lessons``), or by

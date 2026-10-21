@@ -114,13 +114,28 @@ def period(paid_on, previous_until, joined, billing_day):
     return ps.default_fixed_day_period(paid_on, previous_until, joined, billing_day)
 
 
-def test_default_period_late_payment_is_still_the_whole_period():
-    # paid 02.11, the old period ended 30.10: the new one is November, not 31.10-29.11
+def test_default_period_late_payment_closes_the_debt_first():
+    # paid 02.11, the old period ended 31.10: the new one is November (nothing to skip)
     assert period(D(2026, 11, 2), D(2026, 10, 31), None, 1) == (D(2026, 11, 1), D(2026, 11, 30))
-    assert period(D(2026, 11, 2), D(2026, 10, 30), None, 1) == (D(2026, 11, 1), D(2026, 11, 30))
-    # a long gap: the period of the payment date, the missed months are not invented
-    assert period(D(2026, 11, 2), D(2026, 7, 31), None, 1) == (D(2026, 11, 1), D(2026, 11, 30))
-    assert period(D(2026, 11, 12), D(2026, 10, 9), None, 10) == (D(2026, 11, 10), D(2026, 12, 9))
+    # the old period ended 30.10: the debt starts on 31.10, the payment covers the rest of that period
+    assert period(D(2026, 11, 2), D(2026, 10, 30), None, 1) == (D(2026, 10, 31), D(2026, 10, 31))
+    # a long gap: no clamp to the period of the payment date any more, the debt is closed period by period
+    assert period(D(2026, 11, 2), D(2026, 7, 31), None, 1) == (D(2026, 8, 1), D(2026, 8, 31))
+    assert period(D(2026, 11, 12), D(2026, 10, 9), None, 10) == (D(2026, 10, 10), D(2026, 11, 9))
+    # day 10, paid until 08.10, pays on 21.10: 09.10 is the last day of the old period 10.09-09.10
+    assert period(D(2026, 10, 21), D(2026, 10, 8), None, 10) == (D(2026, 10, 9), D(2026, 10, 9))
+    # day 10, paid until 20.08, pays on 21.10: debt starts inside the period 10.08-09.09
+    assert period(D(2026, 10, 21), D(2026, 8, 20), None, 10) == (D(2026, 8, 21), D(2026, 9, 9))
+    # day 1, paid until 12.10 (a partial period), pays on 21.10: the rest of October
+    assert period(D(2026, 10, 21), D(2026, 10, 12), None, 1) == (D(2026, 10, 13), D(2026, 10, 31))
+
+
+def test_default_period_too_old_previous_payment_degrades_to_the_first_payment_rule():
+    # previous + 1 would be before paid_on minus 3 years: valid_from_error would refuse it, the suggestion must not
+    assert period(D(2026, 10, 21), D(2023, 10, 19), None, 1) == (D(2026, 10, 1), D(2026, 10, 31))
+    assert period(D(2026, 10, 21), D(2023, 10, 19), D(2020, 1, 1), 10) == (D(2026, 10, 10), D(2026, 11, 9))
+    # exactly on the bound it is still used
+    assert period(D(2026, 10, 21), D(2023, 10, 20), None, 1) == (D(2023, 10, 21), D(2023, 10, 31))
 
 
 def test_default_period_prepayment_continues_without_a_gap():
@@ -154,11 +169,11 @@ def test_default_period_respects_the_joining_date_also_when_old_payments_exist()
     assert period(D(2026, 10, 15), D(2026, 7, 31), D(2026, 10, 15), 10) == (D(2026, 10, 15), D(2026, 11, 9))
     # returned in the next period after the old payment ended
     assert period(D(2026, 11, 20), D(2026, 10, 31), D(2026, 11, 20), 1) == (D(2026, 11, 20), D(2026, 11, 30))
-    # a continuing student (joined long ago) is not affected: late payment, prepayment, a gap
+    # a continuing student (joined long ago) is not affected by the joining date: late payment, prepayment, a gap
     long_ago = D(2020, 1, 1)
     assert period(D(2026, 11, 2), D(2026, 10, 31), long_ago, 1) == (D(2026, 11, 1), D(2026, 11, 30))
     assert period(D(2026, 10, 25), D(2026, 10, 31), long_ago, 1) == (D(2026, 11, 1), D(2026, 11, 30))
-    assert period(D(2026, 11, 2), D(2026, 7, 31), long_ago, 1) == (D(2026, 11, 1), D(2026, 11, 30))
+    assert period(D(2026, 11, 2), D(2026, 7, 31), long_ago, 1) == (D(2026, 8, 1), D(2026, 8, 31))
     # joined before the previous period ended (a transfer membership): the carry-over's end dominates
     assert period(D(2026, 10, 25), D(2026, 11, 9), D(2026, 10, 12), 10) == (D(2026, 11, 10), D(2026, 12, 9))
 

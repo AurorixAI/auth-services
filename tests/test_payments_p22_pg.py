@@ -189,9 +189,60 @@ def test_quote_late_payment_is_still_the_next_period_and_prepayment_continues(wo
     pay(world, paid_on=D(2026, 3, 3), valid_from=D(2026, 3, 1), valid_to=D(2026, 3, 31), amount=1)
     ahead = quote(world, paid_on=D(2026, 3, 25))                    # paid ahead
     assert (ahead["valid_from"], ahead["valid_to"], ahead["partial"]) == ("2026-04-01", "2026-04-30", False)
-    # a month was skipped: the period of the payment date, nothing invented
+    # a month was skipped: the debt is closed first - April, not the period of the payment date
     gap = quote(world, paid_on=D(2026, 6, 2))
-    assert (gap["valid_from"], gap["valid_to"]) == ("2026-06-01", "2026-06-30")
+    assert (gap["valid_from"], gap["valid_to"]) == ("2026-04-01", "2026-04-30")
+
+
+def test_fixed_day_one_overdue_student_closes_the_debt_period_by_period(world):
+    setup_mwf(world, joined=datetime(2026, 1, 5, 6, 0))
+    pay(world, paid_on=D(2026, 2, 1), valid_from=D(2026, 2, 1), valid_to=D(2026, 2, 28))
+    q = quote(world, paid_on=D(2026, 4, 20))                         # March and April are unpaid
+    assert (q["valid_from"], q["valid_to"], q["partial"], q["suggested_amount"]) == (
+        "2026-03-01", "2026-03-31", False, 450_000)
+    body = pay(world, paid_on=D(2026, 4, 20), amount=q["suggested_amount"])         # quote == create
+    p = body["payment"]
+    assert (p["valid_from"], p["valid_to"], p["partial_period"]) == ("2026-03-01", "2026-03-31", False)
+    assert body["row"]["status"] == "expired"                                        # April is still owed
+    assert quote(world, paid_on=D(2026, 4, 20))["valid_from"] == "2026-04-01"
+
+
+def test_fixed_day_one_debt_inside_an_older_partial_period_is_priced_by_lessons(world):
+    setup_mwf(world, joined=datetime(2026, 1, 5, 6, 0))
+    pay(world, paid_on=D(2026, 3, 1), valid_from=D(2026, 3, 1), valid_to=D(2026, 3, 12))   # paid until 12.03
+    q = quote(world, paid_on=D(2026, 4, 20))
+    assert (q["valid_from"], q["valid_to"], q["partial"]) == ("2026-03-13", "2026-03-31", True)
+    (part,) = q["parts"]
+    assert (part["period_from"], part["period_to"]) == ("2026-03-01", "2026-03-31")
+    assert (part["lessons"], part["period_lessons"]) == (8, 13)       # 13 16 18 20 23 25 27 30
+    created = pay(world, paid_on=D(2026, 4, 20), amount=q["suggested_amount"])["payment"]
+    assert (created["valid_from"], created["valid_to"], created["partial_period"]) == (
+        "2026-03-13", "2026-03-31", True)
+
+
+def test_fixed_day_ten_debt_spanning_an_older_period_without_the_anchor_clamp(world):
+    setup_mwf(world, billing_day=10, joined=datetime(2026, 1, 5, 6, 0))
+    pay(world, paid_on=D(2026, 2, 10), valid_from=D(2026, 2, 10), valid_to=D(2026, 3, 20))  # paid until 20.03
+    q = quote(world, paid_on=D(2026, 4, 20))                         # the anchor would be 10.04: it must not be used
+    assert (q["valid_from"], q["valid_to"], q["partial"]) == ("2026-03-21", "2026-04-09", True)
+    (part,) = q["parts"]
+    assert (part["period_from"], part["period_to"]) == ("2026-03-10", "2026-04-09")
+    assert (part["lessons"], part["period_lessons"], q["suggested_amount"]) == (8, 13, 277_000)
+    created = pay(world, paid_on=D(2026, 4, 20), amount=q["suggested_amount"])["payment"]
+    assert (created["valid_from"], created["valid_to"], created["partial_period"]) == (
+        "2026-03-21", "2026-04-09", True)
+    # the following payment is a whole period again
+    nxt = quote(world, paid_on=D(2026, 4, 20))
+    assert (nxt["valid_from"], nxt["valid_to"], nxt["partial"]) == ("2026-04-10", "2026-05-09", False)
+
+
+def test_fixed_day_first_payment_and_paying_ahead_are_unchanged(world):
+    setup_mwf(world, billing_day=10, joined=datetime(2026, 3, 15, 6, 0))
+    q = quote(world, paid_on=D(2026, 3, 16))                          # first payment: no reach back, joining date floor
+    assert (q["valid_from"], q["valid_to"]) == ("2026-03-15", "2026-04-09")
+    pay(world, paid_on=D(2026, 3, 16), valid_from=D(2026, 3, 15), valid_to=D(2026, 4, 9))
+    ahead = quote(world, paid_on=D(2026, 3, 25))
+    assert (ahead["valid_from"], ahead["valid_to"], ahead["partial"]) == ("2026-04-10", "2026-05-09", False)
 
 
 def test_quote_billing_day_ten_crosses_the_month_and_the_year(world):

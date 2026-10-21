@@ -34,7 +34,8 @@ class PriceOut(BaseModel):
 
 class PaymentSettings(BaseModel):
     period_mode: PeriodMode = "calendar"
-    # N13 P2.2.  ``payment_date``: a calendar period starts on the payment date (05.10 -> 04.11).
+    # N13 P2.2.  ``payment_date``: a calendar period starts on the payment date (05.10 -> 04.11), or the day after the
+    # previous "paid until" when there is one (an overdue student closes the debt first).
     # ``fixed_day``: the centre has one payment day, ``billing_day`` (1..28): day 1 -> 01.10-31.10,
     # day 10 -> 10.10-09.11; a student who comes mid-period pays for the incomplete one.
     billing_anchor: BillingAnchor = "payment_date"

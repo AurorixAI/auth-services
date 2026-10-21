@@ -100,11 +100,85 @@ def test_next_payment_starts_the_day_after_the_previous_paid_until(world):
     nxt = pay(world, paid_on=day(-1))["payment"]  # the old period still runs
     following = (ps.add_month_minus_day(day(-20)) + timedelta(days=1))
     assert nxt["valid_from"] == following.isoformat() and first["valid_to"] < nxt["valid_from"]
-    # a payment made after the old period ended starts on its own date
+    # a payment made after the old period ended closes the debt first: it starts the day after the old
+    # "paid until", not on its own date (owner decision 21.10)
     backdate(world, first["id"], valid_from=day(-70), valid_to=day(-40), paid_on=day(-70))
     backdate(world, nxt["id"], valid_from=day(-39), valid_to=day(-10), paid_on=day(-39))
     late = pay(world, paid_on=day(-2))["payment"]
-    assert late["valid_from"] == day(-2).isoformat()
+    assert late["valid_from"] == day(-9).isoformat()
+    assert late["valid_to"] == ps.add_month_minus_day(day(-9)).isoformat()
+
+
+# ---- debt: an overdue student closes the debt first (owner decision 21.10) -------------
+
+
+def only_payment_ends(w, payment_id, valid_to):
+    """Make the stored payment a month-long one that ended on ``valid_to`` (the API cannot enter a past status)."""
+    start = valid_to - timedelta(days=29)
+    backdate(w, payment_id, valid_from=start, valid_to=valid_to, paid_on=start)
+
+
+def test_overdue_by_days_starts_the_day_after_the_old_paid_until(world):
+    first = pay(world, paid_on=day(-1))["payment"]
+    only_payment_ends(world, first["id"], day(-13))                  # overdue by 13 days
+    assert row_of(world)["status"] == "expired" and row_of(world)["days_overdue"] == 13
+    body = pay(world, paid_on=day(0))                                # pays today, no dates sent
+    p = body["payment"]
+    assert p["valid_from"] == day(-12).isoformat()                    # NOT the payment date
+    assert p["valid_to"] == ps.add_month_minus_day(day(-12)).isoformat()
+    assert body["row"]["status"] in ("active", "expiring") and body["row"]["paid_until"] == p["valid_to"]
+
+
+def test_overdue_by_two_months_stays_overdue_after_paying_one_period(world):
+    first = pay(world, paid_on=day(-1))["payment"]
+    only_payment_ends(world, first["id"], day(-60))
+    body = pay(world, paid_on=day(0))
+    p = body["payment"]
+    assert p["valid_from"] == day(-59).isoformat()
+    assert p["valid_to"] == ps.add_month_minus_day(day(-59)).isoformat() and p["valid_to"] < day(0).isoformat()
+    assert body["row"]["status"] == "expired" and body["row"]["days_overdue"] > 0     # the debt is not hidden
+    again = pay(world, paid_on=day(0), amount=1)["payment"]                           # the next payment continues
+    assert again["valid_from"] == (ps.add_month_minus_day(day(-59)) + timedelta(days=1)).isoformat()
+
+
+def test_a_student_who_left_and_came_back_starts_on_the_return_day(world):
+    first = pay(world, paid_on=day(-1))["payment"]
+    only_payment_ends(world, first["id"], day(-90))
+    membership = world.db.get(StudentGroup, mid(world))
+    membership.joined_at = datetime.combine(day(-5), datetime.min.time()).replace(hour=6)
+    for stay in membership.periods:
+        stay.joined_at = membership.joined_at
+    world.db.commit()
+    p = pay(world, paid_on=day(0))["payment"]
+    assert p["valid_from"] == day(-5).isoformat()                      # days outside the group are never charged
+
+
+def test_first_payment_does_not_reach_back_to_the_joining_date(world):
+    membership = world.db.get(StudentGroup, mid(world))
+    membership.joined_at = datetime.combine(day(-300), datetime.min.time()).replace(hour=6)
+    world.db.commit()
+    p = pay(world, paid_on=day(-1))["payment"]
+    assert p["valid_from"] == day(-1).isoformat()
+
+
+def test_paying_ahead_continues_without_a_gap(world):
+    first = pay(world, paid_on=day(-1))["payment"]
+    nxt = pay(world, paid_on=day(0), amount=1)["payment"]
+    assert nxt["valid_from"] == (date.fromisoformat(first["valid_to"]) + timedelta(days=1)).isoformat()
+
+
+def test_a_client_sent_start_is_used_as_it_is_even_when_overdue(world):
+    first = pay(world, paid_on=day(-1))["payment"]
+    only_payment_ends(world, first["id"], day(-13))
+    p = pay(world, paid_on=day(0), valid_from=day(-3))["payment"]
+    assert p["valid_from"] == day(-3).isoformat()
+
+
+def test_lessons_package_is_not_moved_by_the_previous_payment(world):
+    set_settings(world, period_mode="lessons", lessons_per_payment=8)
+    pay(world, paid_on=day(-50))
+    p = pay(world, paid_on=day(-1), amount=1)["payment"]
+    assert p["valid_from"] == day(-1).isoformat() and p["lessons_count"] == 8
 
 
 def test_lessons_defaults_use_the_centre_setting(world):
