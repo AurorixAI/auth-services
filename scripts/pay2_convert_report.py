@@ -175,9 +175,11 @@ def build_report(connection, *, today: date, org: Optional[str] = None, apply_mi
 
     session = Session(bind=connection)
     before = old_picture(connection, session, today, org)
-    version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
+    has_kind = connection.execute(text(
+        "SELECT 1 FROM information_schema.columns WHERE table_name = 'student_payments' AND column_name = 'kind'")).scalar()
+    version = REVISION if has_kind else connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
     migrated_here = False
-    if apply_migration and version != REVISION:
+    if apply_migration and not has_kind:
         module = load_migration()
         with Operations.context(MigrationContext.configure(connection)):
             module.upgrade()
