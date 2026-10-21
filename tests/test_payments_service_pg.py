@@ -635,7 +635,7 @@ def test_settings_defaults_patch_semantics_and_audit_stamp(world):
     assert r.json() == {"period_mode": "calendar", "billing_anchor": "payment_date", "billing_day": 1,
                         "lessons_per_payment": 12, "expiring_days": 3,
                         "expiring_lessons": 3, "excuse_deadline_days": 5, "excuse_deadline_lessons": 2,
-                        "admin_can_manage": False, "updated_by": None, "updated_at": None}
+                        "admin_can_manage": False, "accounting_start_date": None, "updated_by": None, "updated_at": None}
     world.db.query(Organization).filter_by(id=world.org.id).update({"settings": {"theme": "keep-me"}})
     world.db.commit()
     r = client.put(f"{API}/org/settings/payments", json={"period_mode": "lessons", "expiring_lessons": 5})

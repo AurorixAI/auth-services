@@ -1,0 +1,62 @@
+{
+  "WRITEOFF_EXCEEDS_DEBT": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "WRITEOFF_EXCEEDS_DEBT",
+        "message": "Списать можно не больше долга: 60 000 сум",
+        "debt": 60000,
+        "refundable": null,
+        "payment_id": null
+      }
+    }
+  },
+  "REFUND_EXCEEDS_ADVANCE": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "REFUND_EXCEEDS_ADVANCE",
+        "message": "Вернуть можно не больше 344 000 сум",
+        "debt": null,
+        "refundable": 344000,
+        "payment_id": null
+      }
+    }
+  },
+  "DUPLICATE_PAYMENT": {
+    "status": 409,
+    "body": {
+      "detail": {
+        "code": "DUPLICATE_PAYMENT",
+        "message": "Оплата уже внесена",
+        "debt": null,
+        "refundable": null,
+        "payment_id": "00000000-0000-4000-8000-000000000018"
+      }
+    }
+  },
+  "VOID_BREAKS_REFUND": {
+    "status": 409,
+    "body": {
+      "detail": {
+        "code": "VOID_BREAKS_REFUND",
+        "message": "Сначала отмените возврат: без этой оплаты вернуть нечего",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null
+      }
+    }
+  },
+  "AMOUNT_RANGE": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "AMOUNT_RANGE",
+        "message": "Сумма оплаты: от 1 до 10 000 000 000",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null
+      }
+    }
+  }
+}

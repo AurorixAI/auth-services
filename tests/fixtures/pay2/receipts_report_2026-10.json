@@ -1,0 +1,175 @@
+{
+  "as_of": "2026-10-21",
+  "from": "2026-10-01",
+  "to": "2026-10-31",
+  "group_by": "day",
+  "totals": {
+    "received": 1540000,
+    "refunded": 324000,
+    "net_received": 1216000,
+    "refunded_from_received": 324000,
+    "to_past_debt": 269000,
+    "to_current": 926000,
+    "to_advance": 21000,
+    "written_off": 30000,
+    "payments_count": 3
+  },
+  "by_method": [
+    {
+      "method": "cash",
+      "amount": 1340000,
+      "count": 2
+    },
+    {
+      "method": "card",
+      "amount": 200000,
+      "count": 1
+    }
+  ],
+  "by_group": [
+    {
+      "group_id": "00000000-0000-4000-8000-000000000011",
+      "group_name": "Математика 7А",
+      "teacher_id": "00000000-0000-4000-8000-000000000021",
+      "teacher_name": "Иванова Мария",
+      "received": 1340000,
+      "to_past_debt": 269000,
+      "to_current": 726000,
+      "to_advance": 21000,
+      "written_off": 0,
+      "refunded": 324000,
+      "count": 2
+    },
+    {
+      "group_id": "00000000-0000-4000-8000-000000000013",
+      "group_name": "Алгебра 9Б",
+      "teacher_id": "00000000-0000-4000-8000-000000000022",
+      "teacher_name": "Петров Олег",
+      "received": 200000,
+      "to_past_debt": 0,
+      "to_current": 200000,
+      "to_advance": 0,
+      "written_off": 30000,
+      "refunded": 0,
+      "count": 1
+    }
+  ],
+  "by_teacher": [
+    {
+      "teacher_id": "00000000-0000-4000-8000-000000000021",
+      "teacher_name": "Иванова Мария",
+      "received": 1340000,
+      "to_past_debt": 269000,
+      "to_current": 726000,
+      "to_advance": 21000,
+      "written_off": 0,
+      "refunded": 324000,
+      "count": 2
+    },
+    {
+      "teacher_id": "00000000-0000-4000-8000-000000000022",
+      "teacher_name": "Петров Олег",
+      "received": 200000,
+      "to_past_debt": 0,
+      "to_current": 200000,
+      "to_advance": 0,
+      "written_off": 30000,
+      "refunded": 0,
+      "count": 1
+    }
+  ],
+  "series": [
+    {
+      "bucket": "2026-10-01",
+      "received": 550000,
+      "by_method": {
+        "cash": 550000
+      },
+      "to_past_debt": 0,
+      "to_current": 226000,
+      "to_advance": 0,
+      "written_off": 0,
+      "refunded": 0,
+      "count": 1
+    },
+    {
+      "bucket": "2026-10-12",
+      "received": 200000,
+      "by_method": {
+        "card": 200000
+      },
+      "to_past_debt": 0,
+      "to_current": 200000,
+      "to_advance": 0,
+      "written_off": 0,
+      "refunded": 0,
+      "count": 1
+    },
+    {
+      "bucket": "2026-10-15",
+      "received": 0,
+      "by_method": {},
+      "to_past_debt": 0,
+      "to_current": 0,
+      "to_advance": 0,
+      "written_off": 0,
+      "refunded": 324000,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-20",
+      "received": 0,
+      "by_method": {},
+      "to_past_debt": 0,
+      "to_current": 0,
+      "to_advance": 0,
+      "written_off": 30000,
+      "refunded": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-21",
+      "received": 790000,
+      "by_method": {
+        "cash": 790000
+      },
+      "to_past_debt": 269000,
+      "to_current": 500000,
+      "to_advance": 21000,
+      "written_off": 0,
+      "refunded": 0,
+      "count": 1
+    }
+  ],
+  "position": {
+    "debt_total": 70000,
+    "past_debt_total": 0,
+    "advance_total": 21000,
+    "memberships_with_debt": 1,
+    "students_with_debt": 1,
+    "memberships_with_advance": 1
+  },
+  "reconciliation": {
+    "ok": true,
+    "checks": [
+      {
+        "code": "received_eq_allocated_plus_refunded",
+        "left": 1540000,
+        "right": 1540000,
+        "diff": 0
+      },
+      {
+        "code": "charged_minus_paid_eq_debt_minus_advance",
+        "left": 49000,
+        "right": 49000,
+        "diff": 0
+      },
+      {
+        "code": "transfers_net_zero",
+        "left": 0,
+        "right": 0,
+        "diff": 0
+      }
+    ]
+  }
+}

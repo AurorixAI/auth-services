@@ -769,6 +769,10 @@ def test_receipt_content(world):
     r = owner(world).get(f"{API}/org/payments/{p['id']}/receipt")
     assert r.status_code == 200, r.text
     body = r.json()
+    # PAY-2 snapshot fields: null / "unknown" on a receipt of a payment entered by the old model.
+    pay2 = {k: body.pop(k) for k in ("method", "mode", "allocations", "debt_before", "debt_after", "advance_after",
+                                     "paid_until_before", "paid_until_after", "price_snapshot")}
+    assert pay2["method"] == "unknown" and not any(v for k, v in pay2.items() if k != "method")
     assert body == {
         "receipt_no": 1, "org_name": "ALGO Math Center", "org_city": "Ташкент", "org_phone": "+998901234567",
         "student_name": "Каримова Алия", "display_id": "N13-001", "group_name": "Группа",

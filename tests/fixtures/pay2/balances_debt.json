@@ -1,0 +1,26 @@
+{
+  "items": [
+    {
+      "membership_id": "00000000-0000-4000-8000-000000000005",
+      "student_id": "00000000-0000-4000-8000-000000000105",
+      "student_name": "Каримова Алия",
+      "display_id": "N13-007",
+      "group_id": "00000000-0000-4000-8000-000000000013",
+      "group_name": "Алгебра 9Б",
+      "teacher_id": "00000000-0000-4000-8000-000000000022",
+      "teacher_name": "Петров Олег",
+      "is_active": true,
+      "student_archived": false,
+      "status": "active",
+      "paid_until": "2026-11-01",
+      "debt": 70000,
+      "past_debt": 0,
+      "current_due": 70000,
+      "advance": 0,
+      "refundable": 0
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}

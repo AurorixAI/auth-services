@@ -1,0 +1,123 @@
+{
+  "as_of": "2026-10-27",
+  "mode": "lessons",
+  "price": {
+    "amount": 600000,
+    "source": "group",
+    "valid_from": "2026-01-01",
+    "group_amount": 600000,
+    "reason": null
+  },
+  "due": {
+    "debt": 700000,
+    "past_debt": 600000,
+    "current_due": 100000,
+    "advance": 0,
+    "segments": [
+      {
+        "id": "seg:0:pkg1",
+        "kind": "package",
+        "period_from": "2026-09-25",
+        "period_to": "2026-10-21",
+        "billable_days": 12,
+        "days_text": null,
+        "price": {
+          "amount": 600000,
+          "source": "group",
+          "valid_from": "2026-01-01",
+          "group_amount": 600000,
+          "reason": null
+        },
+        "charge": 600000,
+        "basis": "lessons",
+        "lessons": {
+          "in_part": 12,
+          "in_period": 12
+        },
+        "paid": 0,
+        "written_off": 0,
+        "unpaid": 600000,
+        "covered_days": 0,
+        "covered_through": null,
+        "partial_credit": 0,
+        "state": "open"
+      },
+      {
+        "id": "seg:0:pkg2",
+        "kind": "package",
+        "period_from": "2026-10-23",
+        "period_to": "2026-10-26",
+        "billable_days": 2,
+        "days_text": null,
+        "price": {
+          "amount": 600000,
+          "source": "group",
+          "valid_from": "2026-01-01",
+          "group_amount": 600000,
+          "reason": null
+        },
+        "charge": 100000,
+        "basis": "lessons",
+        "lessons": {
+          "in_part": 2,
+          "in_period": 12
+        },
+        "paid": 0,
+        "written_off": 0,
+        "unpaid": 100000,
+        "covered_days": 0,
+        "covered_through": null,
+        "partial_credit": 0,
+        "state": "open"
+      }
+    ],
+    "paid_until": null,
+    "days_overdue": null
+  },
+  "suggested_amount": 700000,
+  "amount": 650000,
+  "result": {
+    "allocations": [
+      {
+        "segment_id": "seg:0:pkg1",
+        "period_from": "2026-09-25",
+        "period_to": "2026-10-21",
+        "amount": 600000,
+        "days": 12,
+        "bucket": "past_debt",
+        "closes": true,
+        "label": "Закрыла долг: пакет №1 (25.09–21.10)",
+        "price": 600000
+      },
+      {
+        "segment_id": "seg:0:pkg2",
+        "period_from": "2026-10-23",
+        "period_to": "2026-10-26",
+        "amount": 50000,
+        "days": 1,
+        "bucket": "current",
+        "closes": false,
+        "label": "На текущий пакет №2 (23.10–26.10)",
+        "price": 600000
+      }
+    ],
+    "debt_after": 50000,
+    "past_debt_after": 0,
+    "current_due_after": 50000,
+    "advance_after": 0,
+    "paid_until_before": null,
+    "paid_until_after": null,
+    "status_after": "expired",
+    "days_overdue_after": null,
+    "partial_credit_after": 0,
+    "lessons": {
+      "covered_before": 0,
+      "covered_after": 13,
+      "left_after": 0,
+      "unpaid_after": 1
+    },
+    "summary_text": "Закроет долг 600 000 · на текущий период 50 000 → оплачено уроков 13, осталось 0 · останется 50 000",
+    "price_ahead": []
+  },
+  "warnings": []
+}

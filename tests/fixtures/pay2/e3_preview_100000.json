@@ -1,0 +1,76 @@
+{
+  "as_of": "2026-10-25",
+  "mode": "calendar",
+  "price": {
+    "amount": 300000,
+    "source": "group",
+    "valid_from": "2026-01-01",
+    "group_amount": 300000,
+    "reason": null
+  },
+  "due": {
+    "debt": 213000,
+    "past_debt": 0,
+    "current_due": 213000,
+    "advance": 0,
+    "segments": [
+      {
+        "id": "seg:0:2026-10-01",
+        "kind": "period",
+        "period_from": "2026-10-01",
+        "period_to": "2026-10-31",
+        "billable_days": 22,
+        "days_text": "22 дня из 31",
+        "price": {
+          "amount": 300000,
+          "source": "group",
+          "valid_from": "2026-01-01",
+          "group_amount": 300000,
+          "reason": null
+        },
+        "charge": 213000,
+        "basis": "days",
+        "lessons": null,
+        "paid": 0,
+        "written_off": 0,
+        "unpaid": 213000,
+        "covered_days": 0,
+        "covered_through": null,
+        "partial_credit": 0,
+        "state": "open"
+      }
+    ],
+    "paid_until": null,
+    "days_overdue": null
+  },
+  "suggested_amount": 213000,
+  "amount": 100000,
+  "result": {
+    "allocations": [
+      {
+        "segment_id": "seg:0:2026-10-01",
+        "period_from": "2026-10-01",
+        "period_to": "2026-10-31",
+        "amount": 100000,
+        "days": 10,
+        "bucket": "current",
+        "closes": false,
+        "label": "На текущий период 01.10–31.10",
+        "price": 300000
+      }
+    ],
+    "debt_after": 113000,
+    "past_debt_after": 0,
+    "current_due_after": 113000,
+    "advance_after": 0,
+    "paid_until_before": null,
+    "paid_until_after": "2026-10-10",
+    "status_after": "expired",
+    "days_overdue_after": 15,
+    "partial_credit_after": 3182,
+    "lessons": null,
+    "summary_text": "На текущий период 100 000 → оплачено до 10.10 · останется 113 000",
+    "price_ahead": []
+  },
+  "warnings": []
+}

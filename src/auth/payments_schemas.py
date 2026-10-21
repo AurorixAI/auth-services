@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from datetime import date
 from datetime import date as date_type
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 MAX_MONEY = 10_000_000_000
 
@@ -32,6 +32,127 @@ class PriceOut(BaseModel):
     reason: Optional[str] = None
 
 
+# ---- PAY-2: money as money (design ``artifacts/partner_doc_check/pay2_tech_design.md`` §4) ---------------------------
+#
+# A payment is a sum.  Charges, the distribution of the money over periods, "paid until", debt and advance are DERIVED
+# by ``billing_ledger.run_ledger`` from the facts (payments, write-offs, refunds, transfers, stays, prices, settings).
+# The models below are the FROZEN contract of that API: every response field is always present (``null`` when empty).
+
+PaymentMethod = Literal["cash", "card", "bank_transfer", "click", "payme", "other", "unknown"]
+# ``unknown`` is what the migration gives to old rows; a new payment / refund must name a real method.
+NewPaymentMethod = Literal["cash", "card", "bank_transfer", "click", "payme", "other"]
+PaymentKind = Literal["payment", "legacy_carry"]
+AllocationBucket = Literal["past_debt", "current", "advance"]
+SegmentKind = Literal["period", "package"]
+SegmentBasis = Literal["full", "lessons", "days", "zero"]
+# closed: nothing unpaid; future: the period has not begun, something is unpaid; partial: begun, some money, not all;
+# open: begun, no money; unpriced: no price is set for the period (nothing is charged).
+SegmentState = Literal["closed", "partial", "open", "future", "unpriced"]
+StatementRowType = Literal["charge", "payment", "writeoff", "refund", "transfer_in", "transfer_out"]
+ReceiptColumn = Literal["received", "to_past_debt", "to_current", "to_advance", "written_off", "refunded"]
+ReceiptItemType = Literal["payment", "writeoff", "refund"]
+PayWarningCode = Literal[
+    "price_missing", "horizon_capped", "large_overpay", "student_archived", "price_change_ahead",
+    "paid_over_60_days_ago",
+    # LEGACY (period payments of the old model): no longer emitted after PAY-2 stream B, dropped from this list then.
+    "overlaps_previous", "gap_before", "period_over_62_days", "short_period_full_amount",
+]
+
+
+class PayModel(BaseModel):
+    """Base of the PAY-2 response models: a field with a default is still ALWAYS in the JSON, so it is ``required``
+    in the OpenAPI schema (the generated front types are exact)."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+
+class PayErrorDetail(PayModel):
+    """``{"detail": {...}}`` of an error (``PriceError`` / ``PaymentError`` with a code).
+
+    Codes: ``DUPLICATE_PAYMENT`` (409), ``STUDENT_ARCHIVED`` (409), ``ALREADY_VOIDED`` (409), ``VOID_BREAKS_REFUND``
+    (409), ``CONCURRENT_EDIT`` (409), ``AMOUNT_RANGE`` (422), ``PAID_ON_RANGE`` (422), ``METHOD_REQUIRED`` (422),
+    ``REASON_REQUIRED`` (422), ``WRITEOFF_EXCEEDS_DEBT`` (422, ``debt``), ``REFUND_EXCEEDS_ADVANCE`` (422,
+    ``refundable``), ``ACCOUNTING_START_RANGE`` (422), ``RANGE_TOO_LONG`` (422).  403 / 404 carry a plain message.
+    """
+
+    code: Optional[str] = None
+    message: str
+    debt: Optional[int] = None  # WRITEOFF_EXCEEDS_DEBT: the debt that can be written off
+    refundable: Optional[int] = None  # REFUND_EXCEEDS_ADVANCE: the most that can be returned
+    payment_id: Optional[str] = None  # DUPLICATE_PAYMENT: the payment the same Idempotency-Key created first
+
+
+class PayError(PayModel):
+    detail: PayErrorDetail
+
+
+class SegmentLessons(PayModel):
+    """A period prorated by the lessons of the group: lessons in the charged part / in the whole period."""
+
+    in_part: int
+    in_period: int
+
+
+class Segment(PayModel):
+    """One charge: a period of the student in the group (or a lessons package)."""
+
+    id: str  # "seg:{run}:{period_start}" - deterministic
+    kind: SegmentKind = "period"
+    period_from: date_type  # the whole period of the centre/student (before cutting)
+    period_to: date_type
+    billable_days: int  # days of the period that are charged (the student was in the group, after the accounting start)
+    days_text: Optional[str] = None  # «с 16.10 (7 уроков из 13)» for an incomplete period, else null
+    price: PriceOut = Field(default_factory=PriceOut)  # the price at the START of the period
+    charge: int  # charged for the segment
+    basis: SegmentBasis = "full"
+    lessons: Optional[SegmentLessons] = None
+    paid: int = 0  # money that lies on the segment (payments and transfers in; write-offs not included)
+    written_off: int = 0
+    unpaid: int = 0  # charge - paid - written_off
+    covered_days: int = 0  # floor(money * billable_days / charge); a day is paid only when paid in full
+    covered_through: Optional[date_type] = None  # last paid day of the segment (null - none)
+    partial_credit: int = 0  # money "inside" the first unpaid day; counts towards the next payment
+    state: SegmentState = "open"
+
+
+class Allocation(PayModel):
+    """A piece of one payment in one segment ("where the money went")."""
+
+    segment_id: str
+    period_from: date_type
+    period_to: date_type
+    amount: int
+    days: int  # days this piece adds to the segment's paid days (the pieces of all payments sum to covered_days)
+    bucket: AllocationBucket  # relative to the DATE OF THE PAYMENT: ended before it / running / starts after it
+    closes: bool  # after this piece the segment is paid in full
+    label: str  # «Закрыла долг 15.09–14.10» | «На текущий период 15.10–14.11» | «Аванс на 15.11–14.12»
+    price: Optional[int] = None  # the price of that period (differs from today's price when a price change is announced)
+
+
+class SnapshotPrice(PayModel):
+    amount: Optional[int] = None
+    source: PriceSource = "none"
+
+
+class PaymentAllocationOut(PayModel):
+    """The CURRENT (factual) distribution of a payment, ``PaymentOut.allocation``."""
+
+    items: List[Allocation] = Field(default_factory=list)
+    refunded: int = 0  # how much of the payment went back to the student / to another group (LIFO)
+    net: int = 0  # amount - refunded
+
+
+class AllocationSummary(PayModel):
+    """What a just entered payment did (``PaymentCreated.allocation``)."""
+
+    items: List[Allocation] = Field(default_factory=list)
+    debt_before: int = 0
+    debt_after: int = 0
+    advance_after: int = 0
+    paid_until_before: Optional[date_type] = None
+    paid_until_after: Optional[date_type] = None
+
+
 class PaymentSettings(BaseModel):
     period_mode: PeriodMode = "calendar"
     # N13 P2.2.  ``payment_date``: a calendar period starts on the payment date (05.10 -> 04.11), or the day after the
@@ -48,6 +169,10 @@ class PaymentSettings(BaseModel):
     excuse_deadline_days: int = Field(5, ge=0, le=30)
     excuse_deadline_lessons: int = Field(2, ge=0, le=12)
     admin_can_manage: bool = False
+    # PAY-2.  "Начало учёта оплат": days before it are never charged (a student entered with a past join date gets no
+    # debt for the months before ALGO).  GET always returns the EFFECTIVE date: the stored setting, else the centre's
+    # earliest live payment date / the migration day (stored by the migration), else the day the centre was created.
+    accounting_start_date: Optional[date_type] = None
     updated_by: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -64,6 +189,8 @@ class PaymentSettingsUpdate(BaseModel):
     excuse_deadline_days: Optional[int] = Field(None, ge=0, le=30)
     excuse_deadline_lessons: Optional[int] = Field(None, ge=0, le=12)
     admin_can_manage: Optional[bool] = None
+    # PAY-2, the owner only; not later than today + 31 days (422 ``ACCOUNTING_START_RANGE``).
+    accounting_start_date: Optional[date_type] = None
 
 
 class CarriedFromOut(BaseModel):
@@ -97,9 +224,17 @@ class PaymentOut(BaseModel):
     amount: int
     currency: str
     paid_on: date
-    valid_from: date
+    # PAY-2: a payment is a sum, it has no period.  ``valid_from`` / ``valid_to`` / ``lessons_count`` are LEGACY: set on
+    # rows entered before PAY-2 (``legacy_period`` true) and, for ONE release, filled on new payments for the old front
+    # (first period of the distribution / "paid until") - the new front must not read them.
+    valid_from: Optional[date] = None
     valid_to: Optional[date] = None
     lessons_count: Optional[int] = None
+    legacy_period: bool = False
+    method: PaymentMethod = "unknown"
+    kind: PaymentKind = "payment"  # ``legacy_carry``: an old carry-over copy (amount 0), hidden by the UI
+    # The CURRENT distribution of the payment over the periods (null on a voided payment and on a legacy carry).
+    allocation: Optional[PaymentAllocationOut] = None
     note: Optional[str] = None
     replaces_payment_id: Optional[str] = None
     # N13 P2.2: the receipt number (None on a carry-over: it is not money); the payment did not cover
@@ -145,6 +280,19 @@ class MembershipPaymentRow(BaseModel):
     lessons_used: Optional[int] = None
     lessons_left: Optional[int] = None
     last_payment: Optional[PaymentOut] = None
+    # PAY-2 (always present).  ``paid_until`` may be inside a period (money buys days).  ``debt`` = what the periods
+    # that have begun cost minus the money; ``advance`` = money beyond that; never both > 0.  ``partial_credit`` - money
+    # inside the first unpaid day.  ``lessons_unpaid`` - held lessons not covered by the money (lessons mode).
+    # ``refundable`` - how much of the advance can be returned; ``writeoff_allowed`` - debt > 0 and the caller may.
+    debt: int = 0
+    past_debt: int = 0
+    current_due: int = 0
+    advance: int = 0
+    partial_credit: int = 0
+    price_missing: bool = False
+    lessons_unpaid: int = 0
+    refundable: int = 0
+    writeoff_allowed: bool = False
 
 
 class PaymentsSummary(BaseModel):
@@ -164,6 +312,12 @@ class PaymentsSummary(BaseModel):
     # at least one expired membership.  Added next to the old fields, which keep their meaning.
     students_due: int
     students_expired: int
+    # PAY-2: the debt and the advance of the whole centre today (memberships of students who left / archived included).
+    debt_total: int = 0
+    advance_total: int = 0
+    memberships_with_debt: int = 0
+    students_with_debt: int = 0
+    accounting_start_date: Optional[date_type] = None
 
 
 class PaymentStatusPage(BaseModel):
@@ -359,11 +513,18 @@ class PriceOverrideChanged(MembershipPriceOut):
 
 
 class PaymentCreate(BaseModel):
+    """PAY-2: amount only.  ``amount`` 1..``MAX_MONEY`` (422 ``AMOUNT_RANGE``), ``paid_on`` not in the future and not older
+    than 3 years (422 ``PAID_ON_RANGE``).  ``method``: absent -> ``other`` (old front, one release); ``unknown`` ->
+    422 ``METHOD_REQUIRED``.  ``valid_from`` / ``valid_to`` / ``lessons_count`` are accepted and IGNORED (one release).
+    The header ``Idempotency-Key: <uuid>``: a second POST with the same key creates nothing and answers 409
+    ``DUPLICATE_PAYMENT`` whose detail carries ``payment_id`` of the payment the first call created."""
+
     amount: int = Field(..., ge=0, le=MAX_MONEY)
     paid_on: date
-    valid_from: Optional[date] = None
-    valid_to: Optional[date] = None
-    lessons_count: Optional[int] = Field(None, ge=1, le=120)
+    method: Optional[PaymentMethod] = None
+    valid_from: Optional[date] = Field(None, json_schema_extra={"deprecated": True})
+    valid_to: Optional[date] = Field(None, json_schema_extra={"deprecated": True})
+    lessons_count: Optional[int] = Field(None, ge=1, le=120, json_schema_extra={"deprecated": True})
     note: Optional[str] = Field(None, max_length=500)
 
     @field_validator("note")
@@ -390,15 +551,15 @@ class PaymentVoid(BaseModel):
 
 
 class PaymentWarningOut(BaseModel):
-    code: Literal[
-        "overlaps_previous", "gap_before", "period_over_62_days", "paid_over_60_days_ago",
-        "short_period_full_amount",
-    ]
+    code: PayWarningCode
     message: str
 
 
 class PaymentCreated(BaseModel):
+    """PAY-2: ``allocation`` (where the money went) is always filled by the server."""
+
     payment: PaymentOut
+    allocation: Optional[AllocationSummary] = None
     warnings: List[PaymentWarningOut]
     row: MembershipPaymentRow
 
@@ -461,10 +622,21 @@ class ReceiptOut(BaseModel):
     amount_words: str
     currency: str
     paid_on: date
-    valid_from: date
+    # LEGACY (receipts of payments entered before PAY-2); null on a new one.
+    valid_from: Optional[date] = None
     valid_to: Optional[date] = None
     lessons_count: Optional[int] = None
     partial_period: bool = False
+    # PAY-2: the snapshot "where the money went at the moment of the payment" (null on a legacy receipt).
+    method: PaymentMethod = "unknown"
+    mode: Optional[PeriodMode] = None
+    allocations: Optional[List[Allocation]] = None
+    debt_before: Optional[int] = None
+    debt_after: Optional[int] = None
+    advance_after: Optional[int] = None
+    paid_until_before: Optional[date] = None
+    paid_until_after: Optional[date] = None
+    price_snapshot: Optional[SnapshotPrice] = None
     note: Optional[str] = None
     accepted_by_name: Optional[str] = None
     created_at: Optional[str] = None
@@ -472,3 +644,431 @@ class ReceiptOut(BaseModel):
     void_reason: Optional[str] = None
     replaced_by_receipt_no: Optional[int] = None
     replaces_receipt_no: Optional[int] = None
+
+
+# ============================================================================================================
+# PAY-2 contract: preview, write-off, refund, statement, receipts report (design §4.1-§4.8)
+# ============================================================================================================
+
+
+class PreviewDue(PayModel):
+    """What the student owes today (before the typed amount)."""
+
+    debt: int = 0
+    past_debt: int = 0  # unpaid part of the periods that have ended
+    current_due: int = 0  # unpaid part of the periods that have begun and still run
+    advance: int = 0
+    segments: List[Segment] = Field(default_factory=list)  # begun segments with ``unpaid`` > 0, oldest first
+    paid_until: Optional[date_type] = None
+    days_overdue: Optional[int] = None
+
+
+class PreviewLessons(PayModel):
+    """Lessons mode: what the money buys in lessons."""
+
+    covered_before: int = 0
+    covered_after: int = 0
+    left_after: int = 0
+    unpaid_after: int = 0
+
+
+class PriceAhead(PayModel):
+    """A period the advance reaches whose price differs from today's price (D8: a scheduled price change makes the
+    same money buy fewer / more days)."""
+
+    period_from: date_type
+    period_to: date_type
+    amount: int
+    current_amount: Optional[int] = None
+
+
+class PreviewResult(PayModel):
+    allocations: List[Allocation] = Field(default_factory=list)
+    debt_after: int = 0
+    past_debt_after: int = 0
+    current_due_after: int = 0
+    advance_after: int = 0
+    paid_until_before: Optional[date_type] = None
+    paid_until_after: Optional[date_type] = None
+    status_after: MembershipStatus = "none"
+    days_overdue_after: Optional[int] = None
+    partial_credit_after: int = 0
+    lessons: Optional[PreviewLessons] = None
+    summary_text: str = ""
+    price_ahead: List[PriceAhead] = Field(default_factory=list)
+
+
+class PaymentPreview(PayModel):
+    """``GET /org/memberships/{id}/payments/preview``: «что закроет» - nothing is written."""
+
+    as_of: date_type
+    mode: PeriodMode = "calendar"
+    price: PriceOut = Field(default_factory=PriceOut)
+    due: PreviewDue = Field(default_factory=PreviewDue)
+    suggested_amount: int = 0  # the whole debt (calendar) / to the end of the package (lessons); 0 - nothing is due
+    amount: Optional[int] = None  # the typed amount (echo); null - not typed
+    result: Optional[PreviewResult] = None  # null when ``amount`` was not given
+    warnings: List[PaymentWarningOut] = Field(default_factory=list)
+
+
+class WriteoffCreate(BaseModel):
+    """``amount`` OR ``all: true`` (the whole debt).  ``reason`` 3..500 characters is mandatory."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    amount: Optional[int] = None
+    all_debt: bool = Field(False, alias="all")
+    reason: str = Field(..., max_length=500)
+    effective_on: Optional[date_type] = None  # default: the business today
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, value: str) -> str:
+        return (value or "").strip()
+
+
+class RecordVoid(BaseModel):
+    """Cancel a write-off / a refund: the reason 3..500 characters."""
+
+    reason: str = Field(..., max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_length(cls, value: str) -> str:
+        value = (value or "").strip()
+        if len(value) < 3:
+            raise ValueError("Причина отмены: от 3 до 500 символов")
+        return value
+
+
+class WriteoffOut(PayModel):
+    id: str
+    membership_id: str
+    amount: int
+    reason: str
+    effective_on: date_type
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: Optional[str] = None
+    voided_at: Optional[str] = None
+    voided_by: Optional[str] = None
+    voided_by_name: Optional[str] = None
+    void_reason: Optional[str] = None
+
+
+class WriteoffCreated(PayModel):
+    writeoff: WriteoffOut
+    debt_before: int = 0
+    debt_after: int = 0
+    row: MembershipPaymentRow
+
+
+class WriteoffVoided(PayModel):
+    writeoff: WriteoffOut
+    row: MembershipPaymentRow
+
+
+class RefundCreate(BaseModel):
+    amount: int
+    method: Optional[NewPaymentMethod] = None  # mandatory: a missing one is 422 METHOD_REQUIRED
+    reason: Optional[str] = Field(None, max_length=500)
+    note: Optional[str] = Field(None, max_length=500)
+    effective_on: Optional[date_type] = None  # default: the business today
+
+
+class RefundOut(PayModel):
+    id: str
+    membership_id: str
+    amount: int
+    method: PaymentMethod = "other"
+    reason: Optional[str] = None
+    note: Optional[str] = None
+    effective_on: date_type
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: Optional[str] = None
+    voided_at: Optional[str] = None
+    voided_by: Optional[str] = None
+    voided_by_name: Optional[str] = None
+    void_reason: Optional[str] = None
+
+
+class RefundCreated(PayModel):
+    refund: RefundOut
+    advance_before: int = 0
+    advance_after: int = 0
+    row: MembershipPaymentRow
+
+
+class RefundVoided(PayModel):
+    refund: RefundOut
+    row: MembershipPaymentRow
+
+
+# ---- statement ("выписка") ---------------------------------------------------------------------------------
+
+
+class StatementMembership(PayModel):
+    membership_id: str
+    student_id: str
+    student_name: str
+    display_id: Optional[str] = None
+    group_id: str
+    group_name: str
+    teacher_name: Optional[str] = None
+    is_active: bool = True
+
+
+class StatementSummary(PayModel):
+    """Always for the whole accounting period up to today, whatever ``from`` / ``to`` the rows were cut by."""
+
+    charged: int = 0
+    paid: int = 0  # payments (gross, refunds not taken off)
+    transferred_in: int = 0
+    written_off: int = 0
+    refunded: int = 0
+    transferred_out: int = 0
+    debt: int = 0
+    advance: int = 0
+    paid_until: Optional[date_type] = None
+    status: MembershipStatus = "none"
+    reconciles: bool = True  # charged - paid - transferred_in - written_off + refunded + transferred_out == debt - advance
+
+
+class StatementDetails(PayModel):
+    """The part of a row that depends on its ``type`` (the other fields are null)."""
+
+    segment: Optional[Segment] = None  # charge
+    payment_id: Optional[str] = None  # payment
+    receipt_no: Optional[int] = None
+    method: Optional[PaymentMethod] = None  # payment, refund
+    created_by_name: Optional[str] = None  # payment, writeoff, refund
+    note: Optional[str] = None
+    allocations: List[Allocation] = Field(default_factory=list)  # payment, transfer_in: where the money went
+    writeoff_id: Optional[str] = None  # writeoff
+    refund_id: Optional[str] = None  # refund
+    reason: Optional[str] = None  # writeoff, refund
+    from_group_name: Optional[str] = None  # transfer_in
+    from_membership_id: Optional[str] = None
+    to_group_name: Optional[str] = None  # transfer_out
+    to_membership_id: Optional[str] = None
+
+
+class StatementRow(PayModel):
+    seq: int
+    date: date_type
+    type: StatementRowType
+    title: str
+    debit: int = 0  # charged
+    credit: int = 0  # money in (payment, transfer in, write-off)
+    outflow: int = 0  # money out (refund, transfer out)
+    balance_after: Optional[int] = None  # negative = debt, positive = advance; null on a voided row
+    balance_text: Optional[str] = None  # «Долг 500 000» | «Аванс 21 000» | «Нет долга»
+    voided_at: Optional[str] = None
+    void_reason: Optional[str] = None
+    voided_by_name: Optional[str] = None
+    details: StatementDetails = Field(default_factory=StatementDetails)
+
+
+class StatementOut(PayModel):
+    """``GET /org/memberships/{id}/statement``.  The last row's ``balance_after`` equals ``summary.advance - summary.debt``
+    (rows cut by ``from`` / ``to`` keep the running total of the whole history)."""
+
+    membership: StatementMembership
+    as_of: date_type
+    mode: PeriodMode = "calendar"
+    accounting_start: date_type
+    summary: StatementSummary
+    rows: List[StatementRow] = Field(default_factory=list)
+    voided: List[StatementRow] = Field(default_factory=list)  # only with ``include_voided=true``
+    upcoming: List[Segment] = Field(default_factory=list)  # future periods that already hold money
+
+
+# ---- receipts of the centre ("Поступления") ---------------------------------------------------------------
+
+
+class ReceiptsTotals(PayModel):
+    received: int = 0  # money payments entered in the range (transfers are not receipts)
+    refunded: int = 0  # refunds dated in the range
+    net_received: int = 0  # received - refunded
+    refunded_from_received: int = 0  # the part of ALL refunds that was taken off the payments of the range (LIFO)
+    to_past_debt: int = 0  # net distribution of the range's payments by bucket (relative to each payment's date)
+    to_current: int = 0
+    to_advance: int = 0
+    written_off: int = 0
+    payments_count: int = 0
+
+
+class ReceiptsByMethod(PayModel):
+    method: PaymentMethod
+    amount: int = 0
+    count: int = 0
+
+
+class ReceiptsGroupRow(PayModel):
+    group_id: str
+    group_name: str
+    teacher_id: Optional[str] = None
+    teacher_name: Optional[str] = None
+    received: int = 0
+    to_past_debt: int = 0
+    to_current: int = 0
+    to_advance: int = 0
+    written_off: int = 0
+    refunded: int = 0
+    count: int = 0
+
+
+class ReceiptsTeacherRow(PayModel):
+    teacher_id: Optional[str] = None
+    teacher_name: Optional[str] = None
+    received: int = 0
+    to_past_debt: int = 0
+    to_current: int = 0
+    to_advance: int = 0
+    written_off: int = 0
+    refunded: int = 0
+    count: int = 0
+
+
+class ReceiptsSeriesPoint(PayModel):
+    bucket: str  # "2026-10-21" (day) | "2026-10" (month)
+    received: int = 0
+    by_method: Dict[str, int] = Field(default_factory=dict)
+    to_past_debt: int = 0
+    to_current: int = 0
+    to_advance: int = 0
+    written_off: int = 0
+    refunded: int = 0
+    count: int = 0
+
+
+class ReceiptsPosition(PayModel):
+    """Where the whole centre stands TODAY (not limited to the range; includes students who left and archived ones)."""
+
+    debt_total: int = 0
+    past_debt_total: int = 0
+    advance_total: int = 0
+    memberships_with_debt: int = 0
+    students_with_debt: int = 0
+    memberships_with_advance: int = 0
+
+
+class ReconciliationCheck(PayModel):
+    code: Literal[
+        "received_eq_allocated_plus_refunded", "charged_minus_paid_eq_debt_minus_advance", "transfers_net_zero"
+    ]
+    left: int
+    right: int
+    diff: int
+
+
+class Reconciliation(PayModel):
+    ok: bool = True
+    checks: List[ReconciliationCheck] = Field(default_factory=list)
+
+
+class ReceiptsReport(PayModel):
+    """``GET /org/payments/receipts``.  Range <= 366 days; ``group_by=day`` <= 92 days (422 ``RANGE_TOO_LONG``)."""
+
+    as_of: date_type
+    from_: date_type = Field(..., alias="from")
+    to: date_type
+    group_by: Literal["day", "month"] = "day"
+    totals: ReceiptsTotals
+    by_method: List[ReceiptsByMethod] = Field(default_factory=list)
+    by_group: List[ReceiptsGroupRow] = Field(default_factory=list)
+    by_teacher: List[ReceiptsTeacherRow] = Field(default_factory=list)
+    series: List[ReceiptsSeriesPoint] = Field(default_factory=list)
+    position: ReceiptsPosition
+    reconciliation: Reconciliation
+
+    model_config = ConfigDict(populate_by_name=True, json_schema_serialization_defaults_required=True)
+
+
+class ReceiptItem(PayModel):
+    """One record behind a number of the report (drill-down)."""
+
+    type: ReceiptItemType
+    id: str
+    date: date_type
+    amount: int  # the whole record
+    column_amount: int  # the part of it that is in the clicked column
+    student_id: str
+    student_name: str
+    membership_id: str
+    group_name: str
+    teacher_name: Optional[str] = None
+    method: Optional[PaymentMethod] = None
+    receipt_no: Optional[int] = None
+    allocations: List[Allocation] = Field(default_factory=list)
+
+
+class ReceiptItems(PayModel):
+    items: List[ReceiptItem] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+
+
+class BalanceRow(PayModel):
+    """A short membership row of «Долги / Авансы» (also memberships of students who left / archived)."""
+
+    membership_id: str
+    student_id: str
+    student_name: str
+    display_id: Optional[str] = None
+    group_id: str
+    group_name: str
+    teacher_id: Optional[str] = None
+    teacher_name: Optional[str] = None
+    is_active: bool = True
+    student_archived: bool = False
+    status: MembershipStatus = "none"
+    paid_until: Optional[date_type] = None
+    debt: int = 0
+    past_debt: int = 0
+    current_due: int = 0
+    advance: int = 0
+    refundable: int = 0
+
+
+class BalancesPage(PayModel):
+    items: List[BalanceRow] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+
+
+# ---- receipt snapshot (``payment_receipt_snapshots.snapshot``) -----------------------------------------------
+
+
+class ReceiptSnapshot(PayModel):
+    """Where the money went AT THE MOMENT of the payment.  The printed receipt shows it; the statement shows the fact."""
+
+    version: int = 1
+    computed_at: str
+    business_date: date_type
+    amount: int
+    method: PaymentMethod = "other"
+    allocations: List[Allocation] = Field(default_factory=list)
+    debt_before: int = 0
+    debt_after: int = 0
+    advance_after: int = 0
+    paid_until_before: Optional[date_type] = None
+    paid_until_after: Optional[date_type] = None
+    price: SnapshotPrice = Field(default_factory=SnapshotPrice)
+    mode: PeriodMode = "calendar"
+
+
+class AccountingStartImpact(PayModel):
+    memberships_with_new_debt: int = 0
+    debt_delta: int = 0
+
+
+class PaymentSettingsChanged(PaymentSettings):
+    """``PUT /org/settings/payments``.  ``?dry_run=true`` writes nothing: the CURRENT settings + the impact of the
+    requested ``accounting_start_date`` (``impact``); a real write returns the new settings and ``impact`` null."""
+
+    dry_run: bool = False
+    impact: Optional[AccountingStartImpact] = None

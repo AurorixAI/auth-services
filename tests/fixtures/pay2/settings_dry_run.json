@@ -1,0 +1,19 @@
+{
+  "period_mode": "calendar",
+  "billing_anchor": "payment_date",
+  "billing_day": 1,
+  "lessons_per_payment": 12,
+  "expiring_days": 3,
+  "expiring_lessons": 3,
+  "excuse_deadline_days": 5,
+  "excuse_deadline_lessons": 2,
+  "admin_can_manage": true,
+  "accounting_start_date": "2026-09-01",
+  "updated_by": "00000000-0000-4000-8000-000000000901",
+  "updated_at": "2026-10-01T08:00:00",
+  "dry_run": true,
+  "impact": {
+    "memberships_with_new_debt": 12,
+    "debt_delta": 5400000
+  }
+}

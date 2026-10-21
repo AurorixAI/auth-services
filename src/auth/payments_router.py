@@ -14,7 +14,7 @@ from datetime import date
 from typing import Annotated, Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from pydantic import BeforeValidator, Field
@@ -26,6 +26,7 @@ from src.core.database import get_db
 from . import payments_group_prices, pricing
 from .dependencies import require_payments_access, require_payments_settings
 from .payments_files import MAX_BODY_BYTES, MAX_FILE_BYTES, file_headers
+from .payments_pay2_router import router as pay2_router
 from .payments_schemas import (
     MAX_MONEY,
     GroupPriceChanged,
@@ -41,6 +42,7 @@ from .payments_schemas import (
     PaymentQuote,
     PaymentReplace,
     PaymentSettings,
+    PaymentSettingsChanged,
     PaymentSettingsUpdate,
     PaymentsSummary,
     PaymentStatusPage,
@@ -53,6 +55,7 @@ from .payments_schemas import (
 from .payments_service import PaymentError, PaymentService
 
 router = APIRouter(prefix="/auth", tags=["Payments"])
+router.include_router(pay2_router)  # PAY-2: preview, write-off, refund, statement, receipts report, balances
 
 
 def _http(exc: PaymentError | pricing.PriceError) -> HTTPException:
@@ -73,13 +76,17 @@ def get_payment_settings(user: dict = Depends(require_payments_settings), db: Se
     return PaymentService(db).get_settings(user["org_id"])
 
 
-@router.put("/org/settings/payments", response_model=PaymentSettings)
+@router.put("/org/settings/payments", response_model=PaymentSettingsChanged)
 def update_payment_settings(
     request: PaymentSettingsUpdate,
+    dry_run: bool = Query(False, description="1 — ничего не записывать, вернуть последствия (impact) новой даты начала учёта"),
     user: dict = Depends(require_payments_settings),
     db: Session = Depends(get_db),
 ):
-    """Изменить настройки оплат (поля, которых нет в теле, не меняются)."""
+    """Изменить настройки оплат (поля, которых нет в теле, не меняются). PAY-2: ``accounting_start_date`` — начало
+    учёта оплат (только владелец); ``?dry_run=1`` — сколько членств получат новый долг и на какую сумму."""
+    if dry_run:
+        raise HTTPException(501, {"code": "NOT_IMPLEMENTED", "message": "PAY-2: ещё не подключено"})
     try:
         return PaymentService(db).update_settings(user["org_id"], user["user_id"], request)
     except PaymentError as exc:
@@ -97,16 +104,20 @@ def payments_summary(user: dict = Depends(require_payments_access), db: Session 
 
 @router.get("/org/payments/status", response_model=PaymentStatusPage)
 def payments_status(
-    bucket: Literal["due", "expiring", "none", "active", "all"] = "all",
+    bucket: Literal["due", "expiring", "none", "active", "all", "debt"] = "all",
     group_id: Optional[UUID] = None,
     teacher_id: Optional[UUID] = None,
     search: Optional[str] = Query(None, max_length=100),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    sort: Optional[Literal["debt"]] = Query(None, description="debt — по убыванию долга (PAY-2)"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Членства со статусом оплаты (по вкладкам), с точным total."""
+    """Членства со статусом оплаты (по вкладкам), с точным total. PAY-2: вкладка ``debt`` — члены с долгом > 0
+    (в том числе ушедшие и архивные), ``sort=debt`` — по убыванию долга."""
+    if bucket == "debt" or sort:
+        raise HTTPException(501, {"code": "NOT_IMPLEMENTED", "message": "PAY-2: ещё не подключено"})
     return PaymentService(db).status_page(
         user["org_id"], bucket=bucket, group_id=group_id, teacher_id=teacher_id,
         search=search, limit=limit, offset=offset,
@@ -308,10 +319,12 @@ def payment_quote(
 def create_payment(
     membership_id: UUID,
     request: PaymentCreate,
+    idempotency_key: Optional[UUID] = Header(None, alias="Idempotency-Key"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Внести оплату; значения по умолчанию — по настройкам центра."""
+    """Внести оплату. PAY-2: только сумма, дата, способ, примечание — период и распределение считает система
+    (``allocation`` в ответе). ``Idempotency-Key`` защищает от двойного клика."""
     try:
         return PaymentService(db).create_payment(
             user["org_id"], membership_id, user["user_id"], request
@@ -324,6 +337,7 @@ def create_payment(
 def replace_payment(
     payment_id: UUID,
     request: PaymentReplace,
+    idempotency_key: Optional[UUID] = Header(None, alias="Idempotency-Key"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):

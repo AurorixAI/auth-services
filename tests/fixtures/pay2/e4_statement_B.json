@@ -1,0 +1,165 @@
+{
+  "membership": {
+    "membership_id": "00000000-0000-4000-8000-000000000002",
+    "student_id": "00000000-0000-4000-8000-000000000101",
+    "student_name": "Хасанов Азиз",
+    "display_id": "N13-004",
+    "group_id": "00000000-0000-4000-8000-000000000012",
+    "group_name": "Алгебра 7Б",
+    "teacher_name": "Петров Олег",
+    "is_active": true
+  },
+  "as_of": "2026-10-25",
+  "mode": "calendar",
+  "accounting_start": "2026-09-01",
+  "summary": {
+    "charged": 258000,
+    "paid": 0,
+    "transferred_in": 323000,
+    "written_off": 0,
+    "refunded": 0,
+    "transferred_out": 0,
+    "debt": 0,
+    "advance": 65000,
+    "paid_until": "2026-11-04",
+    "status": "active",
+    "reconciles": true
+  },
+  "rows": [
+    {
+      "seq": 1,
+      "date": "2026-10-11",
+      "type": "transfer_in",
+      "title": "Перенос из «Математика 7А»",
+      "debit": 0,
+      "credit": 323000,
+      "outflow": 0,
+      "balance_after": 323000,
+      "balance_text": "Аванс 323 000",
+      "voided_at": null,
+      "void_reason": null,
+      "voided_by_name": null,
+      "details": {
+        "segment": null,
+        "payment_id": null,
+        "receipt_no": null,
+        "method": null,
+        "created_by_name": null,
+        "note": null,
+        "allocations": [
+          {
+            "segment_id": "seg:0:2026-10-01",
+            "period_from": "2026-10-01",
+            "period_to": "2026-10-31",
+            "amount": 258000,
+            "days": 20,
+            "bucket": "current",
+            "closes": true,
+            "label": "На текущий период 01.10–31.10",
+            "price": 400000
+          },
+          {
+            "segment_id": "seg:0:2026-11-01",
+            "period_from": "2026-11-01",
+            "period_to": "2026-11-30",
+            "amount": 65000,
+            "days": 4,
+            "bucket": "advance",
+            "closes": false,
+            "label": "Аванс на 01.11–30.11",
+            "price": 400000
+          }
+        ],
+        "writeoff_id": null,
+        "refund_id": null,
+        "reason": null,
+        "from_group_name": "Математика 7А",
+        "from_membership_id": "00000000-0000-4000-8000-000000000001",
+        "to_group_name": null,
+        "to_membership_id": null
+      }
+    },
+    {
+      "seq": 2,
+      "date": "2026-10-12",
+      "type": "charge",
+      "title": "Начисление 01.10–31.10",
+      "debit": 258000,
+      "credit": 0,
+      "outflow": 0,
+      "balance_after": 65000,
+      "balance_text": "Аванс 65 000",
+      "voided_at": null,
+      "void_reason": null,
+      "voided_by_name": null,
+      "details": {
+        "segment": {
+          "id": "seg:0:2026-10-01",
+          "kind": "period",
+          "period_from": "2026-10-01",
+          "period_to": "2026-10-31",
+          "billable_days": 20,
+          "days_text": "20 дней из 31",
+          "price": {
+            "amount": 400000,
+            "source": "group",
+            "valid_from": "2026-01-01",
+            "group_amount": 400000,
+            "reason": null
+          },
+          "charge": 258000,
+          "basis": "days",
+          "lessons": null,
+          "paid": 258000,
+          "written_off": 0,
+          "unpaid": 0,
+          "covered_days": 20,
+          "covered_through": "2026-10-31",
+          "partial_credit": 0,
+          "state": "closed"
+        },
+        "payment_id": null,
+        "receipt_no": null,
+        "method": null,
+        "created_by_name": null,
+        "note": null,
+        "allocations": [],
+        "writeoff_id": null,
+        "refund_id": null,
+        "reason": null,
+        "from_group_name": null,
+        "from_membership_id": null,
+        "to_group_name": null,
+        "to_membership_id": null
+      }
+    }
+  ],
+  "voided": [],
+  "upcoming": [
+    {
+      "id": "seg:0:2026-11-01",
+      "kind": "period",
+      "period_from": "2026-11-01",
+      "period_to": "2026-11-30",
+      "billable_days": 30,
+      "days_text": null,
+      "price": {
+        "amount": 400000,
+        "source": "group",
+        "valid_from": "2026-01-01",
+        "group_amount": 400000,
+        "reason": null
+      },
+      "charge": 400000,
+      "basis": "full",
+      "lessons": null,
+      "paid": 65000,
+      "written_off": 0,
+      "unpaid": 335000,
+      "covered_days": 4,
+      "covered_through": "2026-11-04",
+      "partial_credit": 11667,
+      "state": "future"
+    }
+  ]
+}

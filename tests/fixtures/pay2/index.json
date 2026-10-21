@@ -1,0 +1,21 @@
+{
+  "e1_preview_*": "PaymentPreview",
+  "e9_preview_*": "PaymentPreview",
+  "e2_preview_*": "PaymentPreview",
+  "e3_preview_*": "PaymentPreview",
+  "e5_preview_*": "PaymentPreview",
+  "e1_create_300000": "PaymentCreated",
+  "e8_replace_*": "PaymentCreated",
+  "e1_void_300000": "PaymentVoided",
+  "e1_receipt_snapshot": "ReceiptSnapshot",
+  "e1_receipt_300000": "ReceiptOut",
+  "e1_statement_790000": "StatementOut",
+  "e4_statement_*": "StatementOut",
+  "e1_row_after_790000": "MembershipPaymentRow",
+  "e6_writeoff_40000": "WriteoffCreated",
+  "e7_refund_344000": "RefundCreated",
+  "receipts_report_2026-10": "ReceiptsReport",
+  "receipts_items_to_past_debt": "ReceiptItems",
+  "balances_debt": "BalancesPage",
+  "settings_dry_run": "PaymentSettingsChanged"
+}

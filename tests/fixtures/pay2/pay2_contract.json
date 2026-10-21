@@ -1,0 +1,6635 @@
+{
+  "components": {
+    "schemas": {
+      "AccountingStartImpact": {
+        "properties": {
+          "debt_delta": {
+            "default": 0,
+            "title": "Debt Delta",
+            "type": "integer"
+          },
+          "memberships_with_new_debt": {
+            "default": 0,
+            "title": "Memberships With New Debt",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "memberships_with_new_debt",
+          "debt_delta"
+        ],
+        "title": "AccountingStartImpact",
+        "type": "object"
+      },
+      "Allocation": {
+        "description": "A piece of one payment in one segment (\"where the money went\").",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "bucket": {
+            "enum": [
+              "past_debt",
+              "current",
+              "advance"
+            ],
+            "title": "Bucket",
+            "type": "string"
+          },
+          "closes": {
+            "title": "Closes",
+            "type": "boolean"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "period_from": {
+            "format": "date",
+            "title": "Period From",
+            "type": "string"
+          },
+          "period_to": {
+            "format": "date",
+            "title": "Period To",
+            "type": "string"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "segment_id": {
+            "title": "Segment Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "segment_id",
+          "period_from",
+          "period_to",
+          "amount",
+          "days",
+          "bucket",
+          "closes",
+          "label",
+          "price"
+        ],
+        "title": "Allocation",
+        "type": "object"
+      },
+      "AllocationSummary": {
+        "description": "What a just entered payment did (``PaymentCreated.allocation``).",
+        "properties": {
+          "advance_after": {
+            "default": 0,
+            "title": "Advance After",
+            "type": "integer"
+          },
+          "debt_after": {
+            "default": 0,
+            "title": "Debt After",
+            "type": "integer"
+          },
+          "debt_before": {
+            "default": 0,
+            "title": "Debt Before",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Allocation"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "paid_until_after": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until After"
+          },
+          "paid_until_before": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until Before"
+          }
+        },
+        "required": [
+          "items",
+          "debt_before",
+          "debt_after",
+          "advance_after",
+          "paid_until_before",
+          "paid_until_after"
+        ],
+        "title": "AllocationSummary",
+        "type": "object"
+      },
+      "BalanceRow": {
+        "description": "A short membership row of «Долги / Авансы» (also memberships of students who left / archived).",
+        "properties": {
+          "advance": {
+            "default": 0,
+            "title": "Advance",
+            "type": "integer"
+          },
+          "current_due": {
+            "default": 0,
+            "title": "Current Due",
+            "type": "integer"
+          },
+          "debt": {
+            "default": 0,
+            "title": "Debt",
+            "type": "integer"
+          },
+          "display_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Id"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "group_name": {
+            "title": "Group Name",
+            "type": "string"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "paid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until"
+          },
+          "past_debt": {
+            "default": 0,
+            "title": "Past Debt",
+            "type": "integer"
+          },
+          "refundable": {
+            "default": 0,
+            "title": "Refundable",
+            "type": "integer"
+          },
+          "status": {
+            "default": "none",
+            "enum": [
+              "none",
+              "free",
+              "expired",
+              "ends_today",
+              "expiring",
+              "active"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_archived": {
+            "default": false,
+            "title": "Student Archived",
+            "type": "boolean"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          }
+        },
+        "required": [
+          "membership_id",
+          "student_id",
+          "student_name",
+          "display_id",
+          "group_id",
+          "group_name",
+          "teacher_id",
+          "teacher_name",
+          "is_active",
+          "student_archived",
+          "status",
+          "paid_until",
+          "debt",
+          "past_debt",
+          "current_due",
+          "advance",
+          "refundable"
+        ],
+        "title": "BalanceRow",
+        "type": "object"
+      },
+      "BalancesPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BalanceRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "default": 50,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "BalancesPage",
+        "type": "object"
+      },
+      "CarriedFromOut": {
+        "description": "The payment a carry-over (N13 P2.1) was made from, and the group it belonged to.",
+        "properties": {
+          "group_name": {
+            "title": "Group Name",
+            "type": "string"
+          },
+          "payment_id": {
+            "title": "Payment Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "payment_id",
+          "group_name"
+        ],
+        "title": "CarriedFromOut",
+        "type": "object"
+      },
+      "CarriedOutOut": {
+        "description": "The payment moved to another group with the student on ``date`` (business date, N13 P2.1).",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Name"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "title": "CarriedOutOut",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "MembershipPaymentRow": {
+        "properties": {
+          "advance": {
+            "default": 0,
+            "title": "Advance",
+            "type": "integer"
+          },
+          "class_level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Level"
+          },
+          "current_due": {
+            "default": 0,
+            "title": "Current Due",
+            "type": "integer"
+          },
+          "days_left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Left"
+          },
+          "days_overdue": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Overdue"
+          },
+          "debt": {
+            "default": 0,
+            "title": "Debt",
+            "type": "integer"
+          },
+          "display_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Id"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "group_name": {
+            "title": "Group Name",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "is_primary": {
+            "title": "Is Primary",
+            "type": "boolean"
+          },
+          "last_payment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaymentOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lessons_left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Left"
+          },
+          "lessons_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Total"
+          },
+          "lessons_unpaid": {
+            "default": 0,
+            "title": "Lessons Unpaid",
+            "type": "integer"
+          },
+          "lessons_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Used"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "monthly_fee": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Fee"
+          },
+          "paid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until"
+          },
+          "partial_credit": {
+            "default": 0,
+            "title": "Partial Credit",
+            "type": "integer"
+          },
+          "past_debt": {
+            "default": 0,
+            "title": "Past Debt",
+            "type": "integer"
+          },
+          "period_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "calendar",
+                  "lessons"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Mode"
+          },
+          "price": {
+            "$ref": "#/components/schemas/PriceOut"
+          },
+          "price_missing": {
+            "default": false,
+            "title": "Price Missing",
+            "type": "boolean"
+          },
+          "refundable": {
+            "default": 0,
+            "title": "Refundable",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "none",
+              "free",
+              "expired",
+              "ends_today",
+              "expiring",
+              "active"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          },
+          "writeoff_allowed": {
+            "default": false,
+            "title": "Writeoff Allowed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "membership_id",
+          "student_id",
+          "student_name",
+          "group_id",
+          "group_name",
+          "is_primary",
+          "is_active",
+          "status"
+        ],
+        "title": "MembershipPaymentRow",
+        "type": "object"
+      },
+      "PayError": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/PayErrorDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "PayError",
+        "type": "object"
+      },
+      "PayErrorDetail": {
+        "description": "``{\"detail\": {...}}`` of an error (``PriceError`` / ``PaymentError`` with a code).\n\nCodes: ``DUPLICATE_PAYMENT`` (409), ``STUDENT_ARCHIVED`` (409), ``ALREADY_VOIDED`` (409), ``VOID_BREAKS_REFUND``\n(409), ``CONCURRENT_EDIT`` (409), ``AMOUNT_RANGE`` (422), ``PAID_ON_RANGE`` (422), ``METHOD_REQUIRED`` (422),\n``REASON_REQUIRED`` (422), ``WRITEOFF_EXCEEDS_DEBT`` (422, ``debt``), ``REFUND_EXCEEDS_ADVANCE`` (422,\n``refundable``), ``ACCOUNTING_START_RANGE`` (422), ``RANGE_TOO_LONG`` (422).  403 / 404 carry a plain message.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "debt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Id"
+          },
+          "refundable": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refundable"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "debt",
+          "refundable",
+          "payment_id"
+        ],
+        "title": "PayErrorDetail",
+        "type": "object"
+      },
+      "PaymentAllocationOut": {
+        "description": "The CURRENT (factual) distribution of a payment, ``PaymentOut.allocation``.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Allocation"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "net": {
+            "default": 0,
+            "title": "Net",
+            "type": "integer"
+          },
+          "refunded": {
+            "default": 0,
+            "title": "Refunded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "refunded",
+          "net"
+        ],
+        "title": "PaymentAllocationOut",
+        "type": "object"
+      },
+      "PaymentCreate": {
+        "description": "PAY-2: amount only.  ``amount`` 1..``MAX_MONEY`` (422 ``AMOUNT_RANGE``), ``paid_on`` not in the future and not older\nthan 3 years (422 ``PAID_ON_RANGE``).  ``method``: absent -> ``other`` (old front, one release); ``unknown`` ->\n422 ``METHOD_REQUIRED``.  ``valid_from`` / ``valid_to`` / ``lessons_count`` are accepted and IGNORED (one release).\nThe header ``Idempotency-Key: <uuid>``: a second POST with the same key creates nothing and answers 409\n``DUPLICATE_PAYMENT`` whose detail carries ``payment_id`` of the payment the first call created.",
+        "properties": {
+          "amount": {
+            "maximum": 10000000000.0,
+            "minimum": 0.0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "lessons_count": {
+            "anyOf": [
+              {
+                "maximum": 120.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "title": "Lessons Count"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cash",
+                  "card",
+                  "bank_transfer",
+                  "click",
+                  "payme",
+                  "other",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "paid_on": {
+            "format": "date",
+            "title": "Paid On",
+            "type": "string"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "title": "Valid To"
+          }
+        },
+        "required": [
+          "amount",
+          "paid_on"
+        ],
+        "title": "PaymentCreate",
+        "type": "object"
+      },
+      "PaymentCreated": {
+        "description": "PAY-2: ``allocation`` (where the money went) is always filled by the server.",
+        "properties": {
+          "allocation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AllocationSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payment": {
+            "$ref": "#/components/schemas/PaymentOut"
+          },
+          "row": {
+            "$ref": "#/components/schemas/MembershipPaymentRow"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/PaymentWarningOut"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "payment",
+          "warnings",
+          "row"
+        ],
+        "title": "PaymentCreated",
+        "type": "object"
+      },
+      "PaymentFileOut": {
+        "description": "A photo / scan of the cheque attached to a payment (the bytes are served by their own endpoint).",
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "uploaded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uploaded At"
+          },
+          "uploaded_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uploaded By Name"
+          }
+        },
+        "required": [
+          "id",
+          "content_type",
+          "size_bytes"
+        ],
+        "title": "PaymentFileOut",
+        "type": "object"
+      },
+      "PaymentOut": {
+        "properties": {
+          "allocation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaymentAllocationOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "carried_from": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CarriedFromOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "carried_out": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CarriedOutOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/PaymentFileOut"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "payment",
+            "enum": [
+              "payment",
+              "legacy_carry"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "legacy_period": {
+            "default": false,
+            "title": "Legacy Period",
+            "type": "boolean"
+          },
+          "lessons_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Count"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "method": {
+            "default": "unknown",
+            "enum": [
+              "cash",
+              "card",
+              "bank_transfer",
+              "click",
+              "payme",
+              "other",
+              "unknown"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "paid_on": {
+            "format": "date",
+            "title": "Paid On",
+            "type": "string"
+          },
+          "partial_period": {
+            "default": false,
+            "title": "Partial Period",
+            "type": "boolean"
+          },
+          "receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt No"
+          },
+          "replaces_payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Payment Id"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          },
+          "void_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Void Reason"
+          },
+          "voided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided At"
+          },
+          "voided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided By"
+          },
+          "voided_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided By Name"
+          }
+        },
+        "required": [
+          "id",
+          "membership_id",
+          "amount",
+          "currency",
+          "paid_on"
+        ],
+        "title": "PaymentOut",
+        "type": "object"
+      },
+      "PaymentPreview": {
+        "description": "``GET /org/memberships/{id}/payments/preview``: «что закроет» - nothing is written.",
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "due": {
+            "$ref": "#/components/schemas/PreviewDue"
+          },
+          "mode": {
+            "default": "calendar",
+            "enum": [
+              "calendar",
+              "lessons"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "price": {
+            "$ref": "#/components/schemas/PriceOut"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PreviewResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suggested_amount": {
+            "default": 0,
+            "title": "Suggested Amount",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/PaymentWarningOut"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "mode",
+          "price",
+          "due",
+          "suggested_amount",
+          "amount",
+          "result",
+          "warnings"
+        ],
+        "title": "PaymentPreview",
+        "type": "object"
+      },
+      "PaymentQuote": {
+        "description": "Suggested dates and amount of a payment; nothing is written.",
+        "properties": {
+          "basis": {
+            "enum": [
+              "full",
+              "lessons",
+              "days",
+              "package",
+              "custom",
+              "none"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "billing_anchor": {
+            "enum": [
+              "payment_date",
+              "fixed_day"
+            ],
+            "title": "Billing Anchor",
+            "type": "string"
+          },
+          "billing_day": {
+            "title": "Billing Day",
+            "type": "integer"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "lessons_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Count"
+          },
+          "mode": {
+            "enum": [
+              "calendar",
+              "lessons"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "monthly_fee": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Fee"
+          },
+          "paid_on": {
+            "format": "date",
+            "title": "Paid On",
+            "type": "string"
+          },
+          "partial": {
+            "title": "Partial",
+            "type": "boolean"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/QuotePartOut"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "price": {
+            "$ref": "#/components/schemas/PriceOut"
+          },
+          "suggested_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggested Amount"
+          },
+          "valid_from": {
+            "format": "date",
+            "title": "Valid From",
+            "type": "string"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          }
+        },
+        "required": [
+          "mode",
+          "billing_anchor",
+          "billing_day",
+          "paid_on",
+          "valid_from",
+          "partial",
+          "basis",
+          "explanation"
+        ],
+        "title": "PaymentQuote",
+        "type": "object"
+      },
+      "PaymentReplace": {
+        "properties": {
+          "amount": {
+            "maximum": 10000000000.0,
+            "minimum": 0.0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "lessons_count": {
+            "anyOf": [
+              {
+                "maximum": 120.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "title": "Lessons Count"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cash",
+                  "card",
+                  "bank_transfer",
+                  "click",
+                  "payme",
+                  "other",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "paid_on": {
+            "format": "date",
+            "title": "Paid On",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "title": "Valid To"
+          }
+        },
+        "required": [
+          "amount",
+          "paid_on"
+        ],
+        "title": "PaymentReplace",
+        "type": "object"
+      },
+      "PaymentSettings": {
+        "properties": {
+          "accounting_start_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accounting Start Date"
+          },
+          "admin_can_manage": {
+            "default": false,
+            "title": "Admin Can Manage",
+            "type": "boolean"
+          },
+          "billing_anchor": {
+            "default": "payment_date",
+            "enum": [
+              "payment_date",
+              "fixed_day"
+            ],
+            "title": "Billing Anchor",
+            "type": "string"
+          },
+          "billing_day": {
+            "default": 1,
+            "maximum": 28.0,
+            "minimum": 1.0,
+            "title": "Billing Day",
+            "type": "integer"
+          },
+          "excuse_deadline_days": {
+            "default": 5,
+            "maximum": 30.0,
+            "minimum": 0.0,
+            "title": "Excuse Deadline Days",
+            "type": "integer"
+          },
+          "excuse_deadline_lessons": {
+            "default": 2,
+            "maximum": 12.0,
+            "minimum": 0.0,
+            "title": "Excuse Deadline Lessons",
+            "type": "integer"
+          },
+          "expiring_days": {
+            "default": 3,
+            "maximum": 14.0,
+            "minimum": 0.0,
+            "title": "Expiring Days",
+            "type": "integer"
+          },
+          "expiring_lessons": {
+            "default": 3,
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Expiring Lessons",
+            "type": "integer"
+          },
+          "lessons_per_payment": {
+            "default": 12,
+            "maximum": 60.0,
+            "minimum": 1.0,
+            "title": "Lessons Per Payment",
+            "type": "integer"
+          },
+          "period_mode": {
+            "default": "calendar",
+            "enum": [
+              "calendar",
+              "lessons"
+            ],
+            "title": "Period Mode",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          }
+        },
+        "title": "PaymentSettings",
+        "type": "object"
+      },
+      "PaymentSettingsChanged": {
+        "description": "``PUT /org/settings/payments``.  ``?dry_run=true`` writes nothing: the CURRENT settings + the impact of the\nrequested ``accounting_start_date`` (``impact``); a real write returns the new settings and ``impact`` null.",
+        "properties": {
+          "accounting_start_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accounting Start Date"
+          },
+          "admin_can_manage": {
+            "default": false,
+            "title": "Admin Can Manage",
+            "type": "boolean"
+          },
+          "billing_anchor": {
+            "default": "payment_date",
+            "enum": [
+              "payment_date",
+              "fixed_day"
+            ],
+            "title": "Billing Anchor",
+            "type": "string"
+          },
+          "billing_day": {
+            "default": 1,
+            "maximum": 28.0,
+            "minimum": 1.0,
+            "title": "Billing Day",
+            "type": "integer"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "excuse_deadline_days": {
+            "default": 5,
+            "maximum": 30.0,
+            "minimum": 0.0,
+            "title": "Excuse Deadline Days",
+            "type": "integer"
+          },
+          "excuse_deadline_lessons": {
+            "default": 2,
+            "maximum": 12.0,
+            "minimum": 0.0,
+            "title": "Excuse Deadline Lessons",
+            "type": "integer"
+          },
+          "expiring_days": {
+            "default": 3,
+            "maximum": 14.0,
+            "minimum": 0.0,
+            "title": "Expiring Days",
+            "type": "integer"
+          },
+          "expiring_lessons": {
+            "default": 3,
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Expiring Lessons",
+            "type": "integer"
+          },
+          "impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountingStartImpact"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lessons_per_payment": {
+            "default": 12,
+            "maximum": 60.0,
+            "minimum": 1.0,
+            "title": "Lessons Per Payment",
+            "type": "integer"
+          },
+          "period_mode": {
+            "default": "calendar",
+            "enum": [
+              "calendar",
+              "lessons"
+            ],
+            "title": "Period Mode",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          }
+        },
+        "title": "PaymentSettingsChanged",
+        "type": "object"
+      },
+      "PaymentSettingsUpdate": {
+        "description": "PATCH semantics: a field that is absent (or null) stays as it was.",
+        "properties": {
+          "accounting_start_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accounting Start Date"
+          },
+          "admin_can_manage": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Can Manage"
+          },
+          "billing_anchor": {
+            "anyOf": [
+              {
+                "enum": [
+                  "payment_date",
+                  "fixed_day"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Anchor"
+          },
+          "billing_day": {
+            "anyOf": [
+              {
+                "maximum": 28.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Day"
+          },
+          "excuse_deadline_days": {
+            "anyOf": [
+              {
+                "maximum": 30.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excuse Deadline Days"
+          },
+          "excuse_deadline_lessons": {
+            "anyOf": [
+              {
+                "maximum": 12.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excuse Deadline Lessons"
+          },
+          "expiring_days": {
+            "anyOf": [
+              {
+                "maximum": 14.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiring Days"
+          },
+          "expiring_lessons": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiring Lessons"
+          },
+          "lessons_per_payment": {
+            "anyOf": [
+              {
+                "maximum": 60.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Per Payment"
+          },
+          "period_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "calendar",
+                  "lessons"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Mode"
+          }
+        },
+        "title": "PaymentSettingsUpdate",
+        "type": "object"
+      },
+      "PaymentStatusPage": {
+        "properties": {
+          "as_of": {
+            "title": "As Of",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MembershipPaymentRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset",
+          "as_of"
+        ],
+        "title": "PaymentStatusPage",
+        "type": "object"
+      },
+      "PaymentVoid": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "PaymentVoid",
+        "type": "object"
+      },
+      "PaymentVoided": {
+        "properties": {
+          "payment": {
+            "$ref": "#/components/schemas/PaymentOut"
+          },
+          "row": {
+            "$ref": "#/components/schemas/MembershipPaymentRow"
+          }
+        },
+        "required": [
+          "payment",
+          "row"
+        ],
+        "title": "PaymentVoided",
+        "type": "object"
+      },
+      "PaymentWarningOut": {
+        "properties": {
+          "code": {
+            "enum": [
+              "price_missing",
+              "horizon_capped",
+              "large_overpay",
+              "student_archived",
+              "price_change_ahead",
+              "paid_over_60_days_ago",
+              "overlaps_previous",
+              "gap_before",
+              "period_over_62_days",
+              "short_period_full_amount"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "PaymentWarningOut",
+        "type": "object"
+      },
+      "PaymentsSummary": {
+        "properties": {
+          "accounting_start_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accounting Start Date"
+          },
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "advance_total": {
+            "default": 0,
+            "title": "Advance Total",
+            "type": "integer"
+          },
+          "as_of": {
+            "title": "As Of",
+            "type": "string"
+          },
+          "debt_total": {
+            "default": 0,
+            "title": "Debt Total",
+            "type": "integer"
+          },
+          "due": {
+            "title": "Due",
+            "type": "integer"
+          },
+          "ends_today": {
+            "title": "Ends Today",
+            "type": "integer"
+          },
+          "expired": {
+            "title": "Expired",
+            "type": "integer"
+          },
+          "expiring": {
+            "title": "Expiring",
+            "type": "integer"
+          },
+          "free": {
+            "title": "Free",
+            "type": "integer"
+          },
+          "lessons_per_payment": {
+            "title": "Lessons Per Payment",
+            "type": "integer"
+          },
+          "memberships_with_debt": {
+            "default": 0,
+            "title": "Memberships With Debt",
+            "type": "integer"
+          },
+          "none": {
+            "title": "None",
+            "type": "integer"
+          },
+          "period_mode": {
+            "enum": [
+              "calendar",
+              "lessons"
+            ],
+            "title": "Period Mode",
+            "type": "string"
+          },
+          "students_due": {
+            "title": "Students Due",
+            "type": "integer"
+          },
+          "students_expired": {
+            "title": "Students Expired",
+            "type": "integer"
+          },
+          "students_with_debt": {
+            "default": 0,
+            "title": "Students With Debt",
+            "type": "integer"
+          },
+          "tracked_total": {
+            "title": "Tracked Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "as_of",
+          "due",
+          "ends_today",
+          "expired",
+          "expiring",
+          "none",
+          "active",
+          "free",
+          "tracked_total",
+          "period_mode",
+          "lessons_per_payment",
+          "students_due",
+          "students_expired"
+        ],
+        "title": "PaymentsSummary",
+        "type": "object"
+      },
+      "PreviewDue": {
+        "description": "What the student owes today (before the typed amount).",
+        "properties": {
+          "advance": {
+            "default": 0,
+            "title": "Advance",
+            "type": "integer"
+          },
+          "current_due": {
+            "default": 0,
+            "title": "Current Due",
+            "type": "integer"
+          },
+          "days_overdue": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Overdue"
+          },
+          "debt": {
+            "default": 0,
+            "title": "Debt",
+            "type": "integer"
+          },
+          "paid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until"
+          },
+          "past_debt": {
+            "default": 0,
+            "title": "Past Debt",
+            "type": "integer"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/Segment"
+            },
+            "title": "Segments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "debt",
+          "past_debt",
+          "current_due",
+          "advance",
+          "segments",
+          "paid_until",
+          "days_overdue"
+        ],
+        "title": "PreviewDue",
+        "type": "object"
+      },
+      "PreviewLessons": {
+        "description": "Lessons mode: what the money buys in lessons.",
+        "properties": {
+          "covered_after": {
+            "default": 0,
+            "title": "Covered After",
+            "type": "integer"
+          },
+          "covered_before": {
+            "default": 0,
+            "title": "Covered Before",
+            "type": "integer"
+          },
+          "left_after": {
+            "default": 0,
+            "title": "Left After",
+            "type": "integer"
+          },
+          "unpaid_after": {
+            "default": 0,
+            "title": "Unpaid After",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "covered_before",
+          "covered_after",
+          "left_after",
+          "unpaid_after"
+        ],
+        "title": "PreviewLessons",
+        "type": "object"
+      },
+      "PreviewResult": {
+        "properties": {
+          "advance_after": {
+            "default": 0,
+            "title": "Advance After",
+            "type": "integer"
+          },
+          "allocations": {
+            "items": {
+              "$ref": "#/components/schemas/Allocation"
+            },
+            "title": "Allocations",
+            "type": "array"
+          },
+          "current_due_after": {
+            "default": 0,
+            "title": "Current Due After",
+            "type": "integer"
+          },
+          "days_overdue_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Overdue After"
+          },
+          "debt_after": {
+            "default": 0,
+            "title": "Debt After",
+            "type": "integer"
+          },
+          "lessons": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PreviewLessons"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paid_until_after": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until After"
+          },
+          "paid_until_before": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until Before"
+          },
+          "partial_credit_after": {
+            "default": 0,
+            "title": "Partial Credit After",
+            "type": "integer"
+          },
+          "past_debt_after": {
+            "default": 0,
+            "title": "Past Debt After",
+            "type": "integer"
+          },
+          "price_ahead": {
+            "items": {
+              "$ref": "#/components/schemas/PriceAhead"
+            },
+            "title": "Price Ahead",
+            "type": "array"
+          },
+          "status_after": {
+            "default": "none",
+            "enum": [
+              "none",
+              "free",
+              "expired",
+              "ends_today",
+              "expiring",
+              "active"
+            ],
+            "title": "Status After",
+            "type": "string"
+          },
+          "summary_text": {
+            "default": "",
+            "title": "Summary Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "allocations",
+          "debt_after",
+          "past_debt_after",
+          "current_due_after",
+          "advance_after",
+          "paid_until_before",
+          "paid_until_after",
+          "status_after",
+          "days_overdue_after",
+          "partial_credit_after",
+          "lessons",
+          "summary_text",
+          "price_ahead"
+        ],
+        "title": "PreviewResult",
+        "type": "object"
+      },
+      "PriceAhead": {
+        "description": "A period the advance reaches whose price differs from today's price (D8: a scheduled price change makes the\nsame money buy fewer / more days).",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "current_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Amount"
+          },
+          "period_from": {
+            "format": "date",
+            "title": "Period From",
+            "type": "string"
+          },
+          "period_to": {
+            "format": "date",
+            "title": "Period To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period_from",
+          "period_to",
+          "amount",
+          "current_amount"
+        ],
+        "title": "PriceAhead",
+        "type": "object"
+      },
+      "PriceOut": {
+        "description": "The effective price of a membership on a day (ROADMAP #105, ``src/auth/pricing.py``).\n\n``source``: ``group`` - the price of the group; ``override`` - the individual price of the student (then\n``reason`` says why and ``group_amount`` is what the group price would be); ``none`` - not set anywhere.\n``valid_from`` - the day the row that gave the price started.  The sum means \"Оплата в месяц\" (calendar\nperiods) or \"Стоимость пакета\" (lesson packages) as the centre's billing mode says.",
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "group_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Amount"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "source": {
+            "default": "none",
+            "enum": [
+              "group",
+              "override",
+              "none"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          }
+        },
+        "title": "PriceOut",
+        "type": "object"
+      },
+      "QuotePartOut": {
+        "description": "One period of the centre inside the quoted payment.\n\n``lessons`` / ``period_lessons`` are filled for a period prorated by lessons (the group's lessons in\nthe covered part / in the whole period); ``None`` for a complete period and for one counted by days.",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "from": {
+            "format": "date",
+            "title": "From",
+            "type": "string"
+          },
+          "lessons": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons"
+          },
+          "period_from": {
+            "format": "date",
+            "title": "Period From",
+            "type": "string"
+          },
+          "period_lessons": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Lessons"
+          },
+          "period_to": {
+            "format": "date",
+            "title": "Period To",
+            "type": "string"
+          },
+          "to": {
+            "format": "date",
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "period_from",
+          "period_to",
+          "amount"
+        ],
+        "title": "QuotePartOut",
+        "type": "object"
+      },
+      "ReceiptItem": {
+        "description": "One record behind a number of the report (drill-down).",
+        "properties": {
+          "allocations": {
+            "items": {
+              "$ref": "#/components/schemas/Allocation"
+            },
+            "title": "Allocations",
+            "type": "array"
+          },
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "column_amount": {
+            "title": "Column Amount",
+            "type": "integer"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "group_name": {
+            "title": "Group Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cash",
+                  "card",
+                  "bank_transfer",
+                  "click",
+                  "payme",
+                  "other",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt No"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          },
+          "type": {
+            "enum": [
+              "payment",
+              "writeoff",
+              "refund"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "date",
+          "amount",
+          "column_amount",
+          "student_id",
+          "student_name",
+          "membership_id",
+          "group_name",
+          "teacher_name",
+          "method",
+          "receipt_no",
+          "allocations"
+        ],
+        "title": "ReceiptItem",
+        "type": "object"
+      },
+      "ReceiptItems": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReceiptItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "default": 50,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ReceiptItems",
+        "type": "object"
+      },
+      "ReceiptOut": {
+        "description": "Everything the printed receipt shows (no other payment data).",
+        "properties": {
+          "accepted_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted By Name"
+          },
+          "advance_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Advance After"
+          },
+          "allocations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Allocation"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allocations"
+          },
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "amount_words": {
+            "title": "Amount Words",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "debt_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt After"
+          },
+          "debt_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Before"
+          },
+          "display_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Id"
+          },
+          "group_name": {
+            "title": "Group Name",
+            "type": "string"
+          },
+          "lessons_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Count"
+          },
+          "method": {
+            "default": "unknown",
+            "enum": [
+              "cash",
+              "card",
+              "bank_transfer",
+              "click",
+              "payme",
+              "other",
+              "unknown"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "calendar",
+                  "lessons"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "org_city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Org City"
+          },
+          "org_name": {
+            "title": "Org Name",
+            "type": "string"
+          },
+          "org_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Org Phone"
+          },
+          "paid_on": {
+            "format": "date",
+            "title": "Paid On",
+            "type": "string"
+          },
+          "paid_until_after": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until After"
+          },
+          "paid_until_before": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until Before"
+          },
+          "partial_period": {
+            "default": false,
+            "title": "Partial Period",
+            "type": "boolean"
+          },
+          "price_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotPrice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "receipt_no": {
+            "title": "Receipt No",
+            "type": "integer"
+          },
+          "replaced_by_receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced By Receipt No"
+          },
+          "replaces_receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Receipt No"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          },
+          "void_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Void Reason"
+          },
+          "voided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided At"
+          }
+        },
+        "required": [
+          "receipt_no",
+          "org_name",
+          "student_name",
+          "group_name",
+          "amount",
+          "amount_words",
+          "currency",
+          "paid_on"
+        ],
+        "title": "ReceiptOut",
+        "type": "object"
+      },
+      "ReceiptsByMethod": {
+        "properties": {
+          "amount": {
+            "default": 0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "method": {
+            "enum": [
+              "cash",
+              "card",
+              "bank_transfer",
+              "click",
+              "payme",
+              "other",
+              "unknown"
+            ],
+            "title": "Method",
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "amount",
+          "count"
+        ],
+        "title": "ReceiptsByMethod",
+        "type": "object"
+      },
+      "ReceiptsGroupRow": {
+        "properties": {
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "group_name": {
+            "title": "Group Name",
+            "type": "string"
+          },
+          "received": {
+            "default": 0,
+            "title": "Received",
+            "type": "integer"
+          },
+          "refunded": {
+            "default": 0,
+            "title": "Refunded",
+            "type": "integer"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          },
+          "to_advance": {
+            "default": 0,
+            "title": "To Advance",
+            "type": "integer"
+          },
+          "to_current": {
+            "default": 0,
+            "title": "To Current",
+            "type": "integer"
+          },
+          "to_past_debt": {
+            "default": 0,
+            "title": "To Past Debt",
+            "type": "integer"
+          },
+          "written_off": {
+            "default": 0,
+            "title": "Written Off",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id",
+          "group_name",
+          "teacher_id",
+          "teacher_name",
+          "received",
+          "to_past_debt",
+          "to_current",
+          "to_advance",
+          "written_off",
+          "refunded",
+          "count"
+        ],
+        "title": "ReceiptsGroupRow",
+        "type": "object"
+      },
+      "ReceiptsPosition": {
+        "description": "Where the whole centre stands TODAY (not limited to the range; includes students who left and archived ones).",
+        "properties": {
+          "advance_total": {
+            "default": 0,
+            "title": "Advance Total",
+            "type": "integer"
+          },
+          "debt_total": {
+            "default": 0,
+            "title": "Debt Total",
+            "type": "integer"
+          },
+          "memberships_with_advance": {
+            "default": 0,
+            "title": "Memberships With Advance",
+            "type": "integer"
+          },
+          "memberships_with_debt": {
+            "default": 0,
+            "title": "Memberships With Debt",
+            "type": "integer"
+          },
+          "past_debt_total": {
+            "default": 0,
+            "title": "Past Debt Total",
+            "type": "integer"
+          },
+          "students_with_debt": {
+            "default": 0,
+            "title": "Students With Debt",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "debt_total",
+          "past_debt_total",
+          "advance_total",
+          "memberships_with_debt",
+          "students_with_debt",
+          "memberships_with_advance"
+        ],
+        "title": "ReceiptsPosition",
+        "type": "object"
+      },
+      "ReceiptsReport": {
+        "description": "``GET /org/payments/receipts``.  Range <= 366 days; ``group_by=day`` <= 92 days (422 ``RANGE_TOO_LONG``).",
+        "properties": {
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "by_group": {
+            "items": {
+              "$ref": "#/components/schemas/ReceiptsGroupRow"
+            },
+            "title": "By Group",
+            "type": "array"
+          },
+          "by_method": {
+            "items": {
+              "$ref": "#/components/schemas/ReceiptsByMethod"
+            },
+            "title": "By Method",
+            "type": "array"
+          },
+          "by_teacher": {
+            "items": {
+              "$ref": "#/components/schemas/ReceiptsTeacherRow"
+            },
+            "title": "By Teacher",
+            "type": "array"
+          },
+          "from": {
+            "format": "date",
+            "title": "From",
+            "type": "string"
+          },
+          "group_by": {
+            "default": "day",
+            "enum": [
+              "day",
+              "month"
+            ],
+            "title": "Group By",
+            "type": "string"
+          },
+          "position": {
+            "$ref": "#/components/schemas/ReceiptsPosition"
+          },
+          "reconciliation": {
+            "$ref": "#/components/schemas/Reconciliation"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/ReceiptsSeriesPoint"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "to": {
+            "format": "date",
+            "title": "To",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/ReceiptsTotals"
+          }
+        },
+        "required": [
+          "as_of",
+          "from",
+          "to",
+          "group_by",
+          "totals",
+          "by_method",
+          "by_group",
+          "by_teacher",
+          "series",
+          "position",
+          "reconciliation"
+        ],
+        "title": "ReceiptsReport",
+        "type": "object"
+      },
+      "ReceiptsSeriesPoint": {
+        "properties": {
+          "bucket": {
+            "title": "Bucket",
+            "type": "string"
+          },
+          "by_method": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Method",
+            "type": "object"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "received": {
+            "default": 0,
+            "title": "Received",
+            "type": "integer"
+          },
+          "refunded": {
+            "default": 0,
+            "title": "Refunded",
+            "type": "integer"
+          },
+          "to_advance": {
+            "default": 0,
+            "title": "To Advance",
+            "type": "integer"
+          },
+          "to_current": {
+            "default": 0,
+            "title": "To Current",
+            "type": "integer"
+          },
+          "to_past_debt": {
+            "default": 0,
+            "title": "To Past Debt",
+            "type": "integer"
+          },
+          "written_off": {
+            "default": 0,
+            "title": "Written Off",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bucket",
+          "received",
+          "by_method",
+          "to_past_debt",
+          "to_current",
+          "to_advance",
+          "written_off",
+          "refunded",
+          "count"
+        ],
+        "title": "ReceiptsSeriesPoint",
+        "type": "object"
+      },
+      "ReceiptsTeacherRow": {
+        "properties": {
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "received": {
+            "default": 0,
+            "title": "Received",
+            "type": "integer"
+          },
+          "refunded": {
+            "default": 0,
+            "title": "Refunded",
+            "type": "integer"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          },
+          "to_advance": {
+            "default": 0,
+            "title": "To Advance",
+            "type": "integer"
+          },
+          "to_current": {
+            "default": 0,
+            "title": "To Current",
+            "type": "integer"
+          },
+          "to_past_debt": {
+            "default": 0,
+            "title": "To Past Debt",
+            "type": "integer"
+          },
+          "written_off": {
+            "default": 0,
+            "title": "Written Off",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "teacher_id",
+          "teacher_name",
+          "received",
+          "to_past_debt",
+          "to_current",
+          "to_advance",
+          "written_off",
+          "refunded",
+          "count"
+        ],
+        "title": "ReceiptsTeacherRow",
+        "type": "object"
+      },
+      "ReceiptsTotals": {
+        "properties": {
+          "net_received": {
+            "default": 0,
+            "title": "Net Received",
+            "type": "integer"
+          },
+          "payments_count": {
+            "default": 0,
+            "title": "Payments Count",
+            "type": "integer"
+          },
+          "received": {
+            "default": 0,
+            "title": "Received",
+            "type": "integer"
+          },
+          "refunded": {
+            "default": 0,
+            "title": "Refunded",
+            "type": "integer"
+          },
+          "refunded_from_received": {
+            "default": 0,
+            "title": "Refunded From Received",
+            "type": "integer"
+          },
+          "to_advance": {
+            "default": 0,
+            "title": "To Advance",
+            "type": "integer"
+          },
+          "to_current": {
+            "default": 0,
+            "title": "To Current",
+            "type": "integer"
+          },
+          "to_past_debt": {
+            "default": 0,
+            "title": "To Past Debt",
+            "type": "integer"
+          },
+          "written_off": {
+            "default": 0,
+            "title": "Written Off",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "received",
+          "refunded",
+          "net_received",
+          "refunded_from_received",
+          "to_past_debt",
+          "to_current",
+          "to_advance",
+          "written_off",
+          "payments_count"
+        ],
+        "title": "ReceiptsTotals",
+        "type": "object"
+      },
+      "Reconciliation": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/ReconciliationCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "checks"
+        ],
+        "title": "Reconciliation",
+        "type": "object"
+      },
+      "ReconciliationCheck": {
+        "properties": {
+          "code": {
+            "enum": [
+              "received_eq_allocated_plus_refunded",
+              "charged_minus_paid_eq_debt_minus_advance",
+              "transfers_net_zero"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "diff": {
+            "title": "Diff",
+            "type": "integer"
+          },
+          "left": {
+            "title": "Left",
+            "type": "integer"
+          },
+          "right": {
+            "title": "Right",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "left",
+          "right",
+          "diff"
+        ],
+        "title": "ReconciliationCheck",
+        "type": "object"
+      },
+      "RecordVoid": {
+        "description": "Cancel a write-off / a refund: the reason 3..500 characters.",
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RecordVoid",
+        "type": "object"
+      },
+      "RefundCreate": {
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "effective_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective On"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cash",
+                  "card",
+                  "bank_transfer",
+                  "click",
+                  "payme",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "amount"
+        ],
+        "title": "RefundCreate",
+        "type": "object"
+      },
+      "RefundCreated": {
+        "properties": {
+          "advance_after": {
+            "default": 0,
+            "title": "Advance After",
+            "type": "integer"
+          },
+          "advance_before": {
+            "default": 0,
+            "title": "Advance Before",
+            "type": "integer"
+          },
+          "refund": {
+            "$ref": "#/components/schemas/RefundOut"
+          },
+          "row": {
+            "$ref": "#/components/schemas/MembershipPaymentRow"
+          }
+        },
+        "required": [
+          "refund",
+          "advance_before",
+          "advance_after",
+          "row"
+        ],
+        "title": "RefundCreated",
+        "type": "object"
+      },
+      "RefundOut": {
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
+          },
+          "effective_on": {
+            "format": "date",
+            "title": "Effective On",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "method": {
+            "default": "other",
+            "enum": [
+              "cash",
+              "card",
+              "bank_transfer",
+              "click",
+              "payme",
+              "other",
+              "unknown"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "void_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Void Reason"
+          },
+          "voided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided At"
+          },
+          "voided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided By"
+          },
+          "voided_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided By Name"
+          }
+        },
+        "required": [
+          "id",
+          "membership_id",
+          "amount",
+          "method",
+          "reason",
+          "note",
+          "effective_on",
+          "created_by",
+          "created_by_name",
+          "created_at",
+          "voided_at",
+          "voided_by",
+          "voided_by_name",
+          "void_reason"
+        ],
+        "title": "RefundOut",
+        "type": "object"
+      },
+      "RefundVoided": {
+        "properties": {
+          "refund": {
+            "$ref": "#/components/schemas/RefundOut"
+          },
+          "row": {
+            "$ref": "#/components/schemas/MembershipPaymentRow"
+          }
+        },
+        "required": [
+          "refund",
+          "row"
+        ],
+        "title": "RefundVoided",
+        "type": "object"
+      },
+      "Segment": {
+        "description": "One charge: a period of the student in the group (or a lessons package).",
+        "properties": {
+          "basis": {
+            "default": "full",
+            "enum": [
+              "full",
+              "lessons",
+              "days",
+              "zero"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "billable_days": {
+            "title": "Billable Days",
+            "type": "integer"
+          },
+          "charge": {
+            "title": "Charge",
+            "type": "integer"
+          },
+          "covered_days": {
+            "default": 0,
+            "title": "Covered Days",
+            "type": "integer"
+          },
+          "covered_through": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covered Through"
+          },
+          "days_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Text"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "period",
+            "enum": [
+              "period",
+              "package"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lessons": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SegmentLessons"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paid": {
+            "default": 0,
+            "title": "Paid",
+            "type": "integer"
+          },
+          "partial_credit": {
+            "default": 0,
+            "title": "Partial Credit",
+            "type": "integer"
+          },
+          "period_from": {
+            "format": "date",
+            "title": "Period From",
+            "type": "string"
+          },
+          "period_to": {
+            "format": "date",
+            "title": "Period To",
+            "type": "string"
+          },
+          "price": {
+            "$ref": "#/components/schemas/PriceOut"
+          },
+          "state": {
+            "default": "open",
+            "enum": [
+              "closed",
+              "partial",
+              "open",
+              "future",
+              "unpriced"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "unpaid": {
+            "default": 0,
+            "title": "Unpaid",
+            "type": "integer"
+          },
+          "written_off": {
+            "default": 0,
+            "title": "Written Off",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "period_from",
+          "period_to",
+          "billable_days",
+          "days_text",
+          "price",
+          "charge",
+          "basis",
+          "lessons",
+          "paid",
+          "written_off",
+          "unpaid",
+          "covered_days",
+          "covered_through",
+          "partial_credit",
+          "state"
+        ],
+        "title": "Segment",
+        "type": "object"
+      },
+      "SegmentLessons": {
+        "description": "A period prorated by the lessons of the group: lessons in the charged part / in the whole period.",
+        "properties": {
+          "in_part": {
+            "title": "In Part",
+            "type": "integer"
+          },
+          "in_period": {
+            "title": "In Period",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "in_part",
+          "in_period"
+        ],
+        "title": "SegmentLessons",
+        "type": "object"
+      },
+      "SnapshotPrice": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "source": {
+            "default": "none",
+            "enum": [
+              "group",
+              "override",
+              "none"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "amount",
+          "source"
+        ],
+        "title": "SnapshotPrice",
+        "type": "object"
+      },
+      "StatementDetails": {
+        "description": "The part of a row that depends on its ``type`` (the other fields are null).",
+        "properties": {
+          "allocations": {
+            "items": {
+              "$ref": "#/components/schemas/Allocation"
+            },
+            "title": "Allocations",
+            "type": "array"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
+          },
+          "from_group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Group Name"
+          },
+          "from_membership_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Membership Id"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cash",
+                  "card",
+                  "bank_transfer",
+                  "click",
+                  "payme",
+                  "other",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt No"
+          },
+          "refund_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refund Id"
+          },
+          "segment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Segment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to_group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Group Name"
+          },
+          "to_membership_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Membership Id"
+          },
+          "writeoff_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Writeoff Id"
+          }
+        },
+        "required": [
+          "segment",
+          "payment_id",
+          "receipt_no",
+          "method",
+          "created_by_name",
+          "note",
+          "allocations",
+          "writeoff_id",
+          "refund_id",
+          "reason",
+          "from_group_name",
+          "from_membership_id",
+          "to_group_name",
+          "to_membership_id"
+        ],
+        "title": "StatementDetails",
+        "type": "object"
+      },
+      "StatementMembership": {
+        "properties": {
+          "display_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Id"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "group_name": {
+            "title": "Group Name",
+            "type": "string"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          }
+        },
+        "required": [
+          "membership_id",
+          "student_id",
+          "student_name",
+          "display_id",
+          "group_id",
+          "group_name",
+          "teacher_name",
+          "is_active"
+        ],
+        "title": "StatementMembership",
+        "type": "object"
+      },
+      "StatementOut": {
+        "description": "``GET /org/memberships/{id}/statement``.  The last row's ``balance_after`` equals ``summary.advance - summary.debt``\n(rows cut by ``from`` / ``to`` keep the running total of the whole history).",
+        "properties": {
+          "accounting_start": {
+            "format": "date",
+            "title": "Accounting Start",
+            "type": "string"
+          },
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/StatementMembership"
+          },
+          "mode": {
+            "default": "calendar",
+            "enum": [
+              "calendar",
+              "lessons"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/StatementRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/StatementSummary"
+          },
+          "upcoming": {
+            "items": {
+              "$ref": "#/components/schemas/Segment"
+            },
+            "title": "Upcoming",
+            "type": "array"
+          },
+          "voided": {
+            "items": {
+              "$ref": "#/components/schemas/StatementRow"
+            },
+            "title": "Voided",
+            "type": "array"
+          }
+        },
+        "required": [
+          "membership",
+          "as_of",
+          "mode",
+          "accounting_start",
+          "summary",
+          "rows",
+          "voided",
+          "upcoming"
+        ],
+        "title": "StatementOut",
+        "type": "object"
+      },
+      "StatementRow": {
+        "properties": {
+          "balance_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Balance After"
+          },
+          "balance_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Balance Text"
+          },
+          "credit": {
+            "default": 0,
+            "title": "Credit",
+            "type": "integer"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "debit": {
+            "default": 0,
+            "title": "Debit",
+            "type": "integer"
+          },
+          "details": {
+            "$ref": "#/components/schemas/StatementDetails"
+          },
+          "outflow": {
+            "default": 0,
+            "title": "Outflow",
+            "type": "integer"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "charge",
+              "payment",
+              "writeoff",
+              "refund",
+              "transfer_in",
+              "transfer_out"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "void_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Void Reason"
+          },
+          "voided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided At"
+          },
+          "voided_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided By Name"
+          }
+        },
+        "required": [
+          "seq",
+          "date",
+          "type",
+          "title",
+          "debit",
+          "credit",
+          "outflow",
+          "balance_after",
+          "balance_text",
+          "voided_at",
+          "void_reason",
+          "voided_by_name",
+          "details"
+        ],
+        "title": "StatementRow",
+        "type": "object"
+      },
+      "StatementSummary": {
+        "description": "Always for the whole accounting period up to today, whatever ``from`` / ``to`` the rows were cut by.",
+        "properties": {
+          "advance": {
+            "default": 0,
+            "title": "Advance",
+            "type": "integer"
+          },
+          "charged": {
+            "default": 0,
+            "title": "Charged",
+            "type": "integer"
+          },
+          "debt": {
+            "default": 0,
+            "title": "Debt",
+            "type": "integer"
+          },
+          "paid": {
+            "default": 0,
+            "title": "Paid",
+            "type": "integer"
+          },
+          "paid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until"
+          },
+          "reconciles": {
+            "default": true,
+            "title": "Reconciles",
+            "type": "boolean"
+          },
+          "refunded": {
+            "default": 0,
+            "title": "Refunded",
+            "type": "integer"
+          },
+          "status": {
+            "default": "none",
+            "enum": [
+              "none",
+              "free",
+              "expired",
+              "ends_today",
+              "expiring",
+              "active"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "transferred_in": {
+            "default": 0,
+            "title": "Transferred In",
+            "type": "integer"
+          },
+          "transferred_out": {
+            "default": 0,
+            "title": "Transferred Out",
+            "type": "integer"
+          },
+          "written_off": {
+            "default": 0,
+            "title": "Written Off",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "charged",
+          "paid",
+          "transferred_in",
+          "written_off",
+          "refunded",
+          "transferred_out",
+          "debt",
+          "advance",
+          "paid_until",
+          "status",
+          "reconciles"
+        ],
+        "title": "StatementSummary",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WriteoffCreate": {
+        "description": "``amount`` OR ``all: true`` (the whole debt).  ``reason`` 3..500 characters is mandatory.",
+        "properties": {
+          "all": {
+            "default": false,
+            "title": "All",
+            "type": "boolean"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "effective_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective On"
+          },
+          "reason": {
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "WriteoffCreate",
+        "type": "object"
+      },
+      "WriteoffCreated": {
+        "properties": {
+          "debt_after": {
+            "default": 0,
+            "title": "Debt After",
+            "type": "integer"
+          },
+          "debt_before": {
+            "default": 0,
+            "title": "Debt Before",
+            "type": "integer"
+          },
+          "row": {
+            "$ref": "#/components/schemas/MembershipPaymentRow"
+          },
+          "writeoff": {
+            "$ref": "#/components/schemas/WriteoffOut"
+          }
+        },
+        "required": [
+          "writeoff",
+          "debt_before",
+          "debt_after",
+          "row"
+        ],
+        "title": "WriteoffCreated",
+        "type": "object"
+      },
+      "WriteoffOut": {
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
+          },
+          "effective_on": {
+            "format": "date",
+            "title": "Effective On",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "void_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Void Reason"
+          },
+          "voided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided At"
+          },
+          "voided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided By"
+          },
+          "voided_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided By Name"
+          }
+        },
+        "required": [
+          "id",
+          "membership_id",
+          "amount",
+          "reason",
+          "effective_on",
+          "created_by",
+          "created_by_name",
+          "created_at",
+          "voided_at",
+          "voided_by",
+          "voided_by_name",
+          "void_reason"
+        ],
+        "title": "WriteoffOut",
+        "type": "object"
+      },
+      "WriteoffVoided": {
+        "properties": {
+          "row": {
+            "$ref": "#/components/schemas/MembershipPaymentRow"
+          },
+          "writeoff": {
+            "$ref": "#/components/schemas/WriteoffOut"
+          }
+        },
+        "required": [
+          "writeoff",
+          "row"
+        ],
+        "title": "WriteoffVoided",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "ALGO auth - PAY-2 payments contract",
+    "version": "pay2-1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/org/memberships/{membership_id}/payments": {
+      "get": {
+        "description": "История оплат членства, новые сверху.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_voided",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include Voided",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PaymentOut"
+                  },
+                  "title": "Response List Payments Api V1 Auth Org Memberships  Membership Id  Payments Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Payments",
+        "tags": [
+          "Payments"
+        ]
+      },
+      "post": {
+        "description": "Внести оплату. PAY-2: только сумма, дата, способ, примечание — период и распределение считает система\n(``allocation`` в ответе). ``Idempotency-Key`` защищает от двойного клика.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Payment",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/org/memberships/{membership_id}/payments/preview": {
+      "get": {
+        "description": "«Что закроет»: долг и текущий период сегодня + куда пойдёт введённая сумма. Ничего не записывает.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Сумма оплаты; без неё — только блок due",
+            "in": "query",
+            "name": "amount",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Сумма оплаты; без неё — только блок due",
+              "title": "Amount"
+            }
+          },
+          {
+            "description": "Дата оплаты; по умолчанию сегодня (бизнес-дата)",
+            "in": "query",
+            "name": "paid_on",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Дата оплаты; по умолчанию сегодня (бизнес-дата)",
+              "title": "Paid On"
+            }
+          },
+          {
+            "description": "Исправляемая оплата: исключается из расчёта",
+            "in": "query",
+            "name": "replace_payment_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Исправляемая оплата: исключается из расчёта",
+              "title": "Replace Payment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Payment Preview",
+        "tags": [
+          "Payments",
+          "Payments"
+        ]
+      }
+    },
+    "/org/memberships/{membership_id}/payments/quote": {
+      "get": {
+        "description": "Подсказка периода и суммы для формы оплаты; ничего не записывает.\n\nДаты по умолчанию считаются тем же кодом, что при внесении оплаты; ошибки — те же 422.\nБаза — действующая цена ученика (цена группы или индивидуальная) на первый день оплачиваемого периода\n(``price`` в ответе). ``monthly_fee`` (необязательно) заменяет её только для этого расчёта, ничего не сохраняя;\nв ответе ``monthly_fee`` — та сумма, по которой считали.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "paid_on",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Paid On",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "valid_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Valid From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "valid_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Valid To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lessons_count",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 120,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lessons Count"
+            }
+          },
+          {
+            "in": "query",
+            "name": "monthly_fee",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 10000000000,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Monthly Fee"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentQuote"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Payment Quote",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/org/memberships/{membership_id}/refunds": {
+      "post": {
+        "description": "Вернуть аванс: ``amount`` ≤ возвратимого, способ обязателен. Это запись возврата, оплата не удаляется.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefundCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefundCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Refund",
+        "tags": [
+          "Payments",
+          "Payments"
+        ]
+      }
+    },
+    "/org/memberships/{membership_id}/statement": {
+      "get": {
+        "description": "Выписка ученика в группе: начисления, оплаты (и куда пошли), списания, возвраты, переносы; бегущий итог.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_voided",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Voided",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatementOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Membership Statement",
+        "tags": [
+          "Payments",
+          "Payments"
+        ]
+      }
+    },
+    "/org/memberships/{membership_id}/statement/export": {
+      "get": {
+        "description": "Выписка файлом (xlsx / csv).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "xlsx",
+              "enum": [
+                "xlsx",
+                "csv"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_voided",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Voided",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {},
+              "text/csv": {}
+            },
+            "description": "Файл выписки"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Membership Statement Export",
+        "tags": [
+          "Payments",
+          "Payments"
+        ]
+      }
+    },
+    "/org/memberships/{membership_id}/writeoffs": {
+      "post": {
+        "description": "Списать долг (льгота, болезнь, договорённость): ``amount`` ≤ текущего долга или ``all: true``; причина 3..500.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Membership Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WriteoffCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteoffCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Writeoff",
+        "tags": [
+          "Payments",
+          "Payments"
+        ]
+      }
+    },
+    "/org/payments/balances": {
+      "get": {
+        "description": "Раскрытие «позиции»: членства с долгом / авансом (в том числе ушедших и архивных).",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "debt",
+              "enum": [
+                "debt",
+                "advance"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "teacher_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Teacher Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BalancesPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Payments Balances",
+        "tags": [
+          "Payments",
+          "Payments"
+        ]
+      }
+    },
+    "/org/payments/receipts": {
+      "get": {
+        "description": "«Поступления центра»: сколько пришло, куда ушло, списано, возвращено; по способам / группам / преподавателям;\nпозиция «долг / аванс» на сегодня; сверка. Диапазон ≤ 366 дней, ``group_by=day`` — ≤ 92.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_by",
+            "required": false,
+            "schema": {
+              "default": "day",
+              "enum": [
+                "day",
+                "month"
+              ],
+              "title": "Group By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "method",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Method"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "teacher_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Teacher Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReceiptsReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Receipts Report",
+        "tags": [
+          "Payments",
+          "Payments"
+        ]
+      }
+    },
+    "/org/payments/receipts/items": {
+      "get": {
+        "description": "Раскрытие цифры отчёта до конкретных оплат / списаний / возвратов.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "column",
+            "required": false,
+            "schema": {
+              "default": "received",
+              "enum": [
+                "received",
+                "to_past_debt",
+                "to_current",
+                "to_advance",
+                "written_off",
+                "refunded"
+              ],
+              "title": "Column",
+              "type": "string"
+            }
+          },
+          {
+            "description": "День YYYY-MM-DD или месяц YYYY-MM из series",
+            "in": "query",
+            "name": "bucket",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "День YYYY-MM-DD или месяц YYYY-MM из series",
+              "title": "Bucket"
+            }
+          },
+          {
+            "in": "query",
+            "name": "method",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Method"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "teacher_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Teacher Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReceiptItems"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Receipts Items",
+        "tags": [
+          "Payments",
+          "Payments"
+        ]
+      }
+    },
+    "/org/payments/status": {
+      "get": {
+        "description": "Членства со статусом оплаты (по вкладкам), с точным total. PAY-2: вкладка ``debt`` — члены с долгом > 0\n(в том числе ушедшие и архивные), ``sort=debt`` — по убыванию долга.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "bucket",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "due",
+                "expiring",
+                "none",
+                "active",
+                "all",
+                "debt"
+              ],
+              "title": "Bucket",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "teacher_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Teacher Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "debt — по убыванию долга (PAY-2)",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "debt",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "debt — по убыванию долга (PAY-2)",
+              "title": "Sort"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentStatusPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Payments Status",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/org/payments/summary": {
+      "get": {
+        "description": "Счётчики для меню и баннера.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentsSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Payments Summary",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/org/payments/{payment_id}/receipt": {
+      "get": {
+        "description": "Данные квитанции (у переноса оплаты квитанции нет — 409).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "payment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Payment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReceiptOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Payment Receipt",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/org/payments/{payment_id}/replace": {
+      "post": {
+        "description": "Исправить оплату: старая отменяется, новая создаётся — одной транзакцией.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "payment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Payment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentReplace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Replace Payment",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/org/payments/{payment_id}/void": {
+      "post": {
+        "description": "Отменить оплату (удаления нет); причина 3..500 символов.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "payment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Payment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentVoid"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentVoided"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Void Payment",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/org/refunds/{refund_id}/void": {
+      "post": {
+        "description": "Отменить возврат (аванс возвращается); причина 3..500.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "refund_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Refund Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordVoid"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefundVoided"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Void Refund",
+        "tags": [
+          "Payments",
+          "Payments"
+        ]
+      }
+    },
+    "/org/settings/payments": {
+      "get": {
+        "description": "Режим периода оплаты, пороги «скоро», право администратора.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentSettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Payment Settings",
+        "tags": [
+          "Payments"
+        ]
+      },
+      "put": {
+        "description": "Изменить настройки оплат (поля, которых нет в теле, не меняются). PAY-2: ``accounting_start_date`` — начало\nучёта оплат (только владелец); ``?dry_run=1`` — сколько членств получат новый долг и на какую сумму.",
+        "parameters": [
+          {
+            "description": "1 — ничего не записывать, вернуть последствия (impact) новой даты начала учёта",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "1 — ничего не записывать, вернуть последствия (impact) новой даты начала учёта",
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentSettingsChanged"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Payment Settings",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/org/students/{student_id}/memberships": {
+      "get": {
+        "description": "Группы ученика с ценой (``price``) и статусом оплаты.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MembershipPaymentRow"
+                  },
+                  "title": "Response Student Memberships Api V1 Auth Org Students  Student Id  Memberships Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Student Memberships",
+        "tags": [
+          "Payments"
+        ]
+      }
+    },
+    "/org/writeoffs/{writeoff_id}/void": {
+      "post": {
+        "description": "Отменить списание (долг возвращается); причина 3..500.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "writeoff_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Writeoff Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordVoid"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteoffVoided"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Void Writeoff",
+        "tags": [
+          "Payments",
+          "Payments"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1/auth"
+    }
+  ]
+}
