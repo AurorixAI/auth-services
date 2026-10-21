@@ -296,3 +296,38 @@ def test_m8_payroll_reads_collect_the_month_once_and_the_overview_does_not_get_e
     finally:
         event.remove(engine, "before_cursor_execute", spy)
     assert not [q for q in statements if "FROM payroll_sheets WHERE payroll_sheets.id =" in q], "no db.get per sheet"
+
+
+# ---- m12: «include unpaid» is keyed by the line of the sheet (membership:type) -------------------------------------------------------------------
+
+
+def test_m12_include_unpaid_is_set_per_line_when_the_type_changed_in_the_month(world):
+    from tests.test_logicA_payroll_pg import fixed_day_centre, month_lessons
+    from tests.test_payroll_pg import patch as patch_sheet
+
+    m = previous_month()
+    s0 = world.students[0]
+    fixed_day_centre(world, m)
+    give_group_price(world.db, world.group, 600_000, valid_from=date(2026, 1, 1))
+    month_lessons(world, m, [s0])
+    pay_calendar(world, s0, m.first, m.d(8), fee=None)                           # lessons of the 1st-8th are paid, the rest are not
+    set_rate(world, world.teacher, "group", "50")
+    set_rate(world, world.teacher, "pair", "60")
+    owner(world).put(f"{API}/org/groups/{world.group.id}/lesson-type", json={"lesson_type": "pair", "valid_from": m.d(15).isoformat()})
+    mid = str(student_group(world, s0).id)
+    saved = save_sheet(world, m)
+    by_key = {l["line_key"]: l for l in saved["lines"]}
+    assert set(by_key) == {f"{mid}:group", f"{mid}:pair"} and not any(l["include_unpaid"] for l in saved["lines"])
+    out = patch_sheet(world, saved, line_overrides=[{"membership_id": mid, "line_key": f"{mid}:pair", "include_unpaid": True}])
+    got = {l["line_key"]: l for l in out["lines"]}
+    assert got[f"{mid}:pair"]["include_unpaid"] is True and got[f"{mid}:group"]["include_unpaid"] is False
+    assert got[f"{mid}:pair"]["amount"] > by_key[f"{mid}:pair"]["amount"] and got[f"{mid}:group"]["amount"] == by_key[f"{mid}:group"]["amount"]
+    # the tick survives a recalculation (carried by the line key), and the other line stays off
+    again = patch_sheet(world, out, recalculate=True)
+    assert {l["line_key"]: l["include_unpaid"] for l in again["lines"]} == {f"{mid}:group": False, f"{mid}:pair": True}
+    # an override without a line key is for every line of the membership (an older front)
+    both = patch_sheet(world, again, line_overrides=[{"membership_id": mid, "include_unpaid": True}])
+    assert {l["line_key"]: l["include_unpaid"] for l in both["lines"]} == {f"{mid}:group": True, f"{mid}:pair": True}
+    bad = owner(world).patch(f"{API}/org/payroll/sheets/{both['id']}", json={
+        "revision": both["revision"], "line_overrides": [{"membership_id": mid, "line_key": f"{mid}:individual", "include_unpaid": True}]})
+    assert bad.status_code == 422 and bad.json()["detail"]["code"] == "LINE_NOT_FOUND", bad.text

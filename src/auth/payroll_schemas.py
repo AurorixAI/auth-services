@@ -59,12 +59,15 @@ class LineOverride(BaseModel):
     """
 
     membership_id: UUID
+    # m12: the line of a membership that changed its lesson type inside the month is ``"<membership_id>:<lesson_type>"`` (``LineOut.line_key``);
+    # absent = every line of the membership (what an older front sends)
+    line_key: Optional[str] = Field(None, max_length=80)
     monthly_fee: Optional[Any] = None
     include_unpaid: Optional[bool] = None
 
 
 def _unique_memberships(items: Optional[List[LineOverride]]) -> None:
-    ids = [item.membership_id for item in items or ()]
+    ids = [(item.membership_id, item.line_key) for item in items or ()]
     if len(ids) != len(set(ids)):
         raise ValueError("Строка ведомости указана дважды")
 

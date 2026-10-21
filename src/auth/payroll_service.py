@@ -773,7 +773,7 @@ class PayrollService:
     ) -> List[Dict[str, Any]]:
         lines = []
         for seed in teacher.lines:
-            change = changes.get(seed.identity["membership_id"], _Change())
+            change = changes.get(seed.identity["line_key"]) or changes.get(seed.identity["membership_id"]) or _Change()      # m12: the line first, then the membership
             lines.append(
                 engine.compute_line(
                     seed.identity,
@@ -1094,16 +1094,18 @@ class PayrollService:
         )
 
     @staticmethod
-    def _changes_from_body(overrides, known: Optional[Set[str]]) -> Dict[str, Any]:
-        """``{membership_id: LineOverride}``; with ``known`` a line that is not on the sheet is a 422.
+    def _changes_from_body(overrides, known: Optional[Dict[str, List[str]]]) -> Dict[str, Any]:
+        """``{line key or membership_id: LineOverride}``; with ``known`` (``_line_keys``) a line that is not on the sheet is a 422.
 
         A price on a sheet is not edited any more (UX-2): ``monthly_fee`` with a value is a 422."""
         for item in overrides or ():
             if item.monthly_fee is not None:
                 raise PriceNotEditable(PRICE_NOT_EDITABLE)
-            if known is not None and str(item.membership_id) not in known:
+            if known is not None and (
+                str(item.membership_id) not in known or (item.line_key is not None and item.line_key not in known[str(item.membership_id)])
+            ):
                 raise PayrollInvalid("Такой строки нет в ведомости", code="LINE_NOT_FOUND")
-        return {str(item.membership_id): item for item in overrides or ()}
+        return {(item.line_key or str(item.membership_id)): item for item in overrides or ()}
 
     def save_sheet(self, org_id: str, actor_id: str, body: SheetCreate) -> SheetOut:
         """Save the calculation of a teacher's month; if a sheet exists this is its next revision.
@@ -1128,7 +1130,8 @@ class PayrollService:
                     for t in missing
                 ]
             )
-        given = self._changes_from_body(body.line_overrides, {s.identity["membership_id"] for s in teacher.lines})
+        keys = self._line_keys(s.identity for s in teacher.lines)
+        given = self._changes_from_body(body.line_overrides, keys)
         self._check_expected(body.expected_fingerprint, teacher.fingerprint)
         now = _utcnow()
         actor = UUID(str(actor_id))
@@ -1150,7 +1153,7 @@ class PayrollService:
             if sheet is None and body.revision is not None:
                 raise self._conflict(0)
             changes = self._carried_changes(sheet)
-            self._apply_overrides(changes, given)
+            self._apply_overrides(changes, given, keys)
             lines = self._render(teacher, percents, changes, seed.divisor)
             inputs = self._percent_inputs(lines, percents)
             total = engine.sheet_total(lines)
@@ -1221,17 +1224,30 @@ class PayrollService:
         "include unpaid", by membership.  A manual price of a line (an old sheet) is NOT carried (UX-2): the price
         of a new revision is the price from «Цены групп» / the card of the student."""
         return {
-            line["membership_id"]: _Change(include_unpaid=bool(line.get("include_unpaid")))
+            (line.get("line_key") or line["membership_id"]): _Change(include_unpaid=bool(line.get("include_unpaid")))
             for line in (sheet.lines or [] if sheet is not None else [])
         }
 
     @staticmethod
-    def _apply_overrides(changes: Dict[str, _Change], given: Dict[str, Any]) -> None:
-        """What a request says about a line wins over what the sheet had; a field it leaves out stays."""
-        for mid, item in given.items():
-            change = changes.setdefault(mid, _Change())
-            if item.include_unpaid is not None:
-                change.include_unpaid = item.include_unpaid
+    def _line_keys(lines) -> Dict[str, List[str]]:
+        """``{membership_id: [line keys]}`` of the lines of a sheet (``lines``: dicts or seeds' identities)."""
+        out: Dict[str, List[str]] = {}
+        for line in lines:
+            out.setdefault(line["membership_id"], []).append(line.get("line_key") or line["membership_id"])
+        return out
+
+    @staticmethod
+    def _apply_overrides(changes: Dict[str, _Change], given: Dict[str, Any], keys: Optional[Dict[str, List[str]]] = None) -> None:
+        """What a request says about a line wins over what the sheet had; a field it leaves out stays.
+
+        m12: an override with a ``line_key`` is for that line only; one without it is for every line of the membership (``keys`` =
+        ``_line_keys``: ``{membership_id: [line keys]}``), and the more specific one is applied last."""
+        keys = keys or {}
+        for key, item in sorted(given.items(), key=lambda kv: kv[1].line_key is not None):
+            for target in ([item.line_key] if item.line_key else keys.get(key) or [key]):
+                change = changes.setdefault(target, _Change())
+                if item.include_unpaid is not None:
+                    change.include_unpaid = item.include_unpaid
 
     def _add_revision(self, sheet: PayrollSheet, actor: UUID, now: datetime, note: Optional[str]) -> None:
         self.db.add(
@@ -1291,19 +1307,17 @@ class PayrollService:
                         ]
                     )
                 changes = self._carried_changes(sheet)
-                fresh_ids = {s.identity["membership_id"] for s in teacher.lines}
-                for mid in given:
-                    if mid not in fresh_ids:
-                        raise PayrollInvalid("Такой строки нет в ведомости", code="LINE_NOT_FOUND")
+                keys = self._line_keys(s.identity for s in teacher.lines)
+                self._changes_from_body(body.line_overrides, keys)           # LINE_NOT_FOUND for a line (or line key) that is not on the fresh sheet
                 self._check_expected(body.expected_fingerprint, teacher.fingerprint)
-                self._apply_overrides(changes, given)
+                self._apply_overrides(changes, given, keys)
                 lines = self._render(teacher, percents, changes, seed.divisor)
                 fingerprint, divisor_default = teacher.fingerprint, seed.divisor
             else:
-                given = self._changes_from_body(body.line_overrides, {line["membership_id"] for line in saved_lines})
+                given = self._changes_from_body(body.line_overrides, self._line_keys(saved_lines))
                 lines = []
                 for line in saved_lines:
-                    item = given.get(line["membership_id"])
+                    item = given.get(line.get("line_key") or line["membership_id"]) or given.get(line["membership_id"])      # m12: the line first
                     fee_reset = item is not None and "monthly_fee" in item.model_fields_set  # null: no manual price
                     lines.append(
                         engine.recompute_line(

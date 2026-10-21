@@ -1962,6 +1962,18 @@
             ],
             "title": "Include Unpaid"
           },
+          "line_key": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Key"
+          },
           "membership_id": {
             "format": "uuid",
             "title": "Membership Id",
@@ -9159,6 +9171,11 @@
             "code": "MEMBERSHIP_CLOSED",
             "message": "Ученик уже не в этой группе: паузу поставить нельзя",
             "status": 409
+          },
+          {
+            "code": "REASON_REQUIRED",
+            "message": "Причина: от 3 до 500 символов (обязательна, когда изменение трогает деньги)",
+            "status": 422
           }
         ]
       }
@@ -9259,6 +9276,11 @@
             "code": "PAUSE_BREAKS_REFUND",
             "message": "Сначала отмените возврат: без паузы вернуть нечего",
             "status": 409
+          },
+          {
+            "code": "REASON_REQUIRED",
+            "message": "Причина: от 3 до 500 символов",
+            "status": 422
           }
         ]
       }
