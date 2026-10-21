@@ -100,5 +100,9 @@ def rate_changes(
 
 def rate_reason(lesson_type: str, before: Decimal, now: Optional[Decimal]) -> str:
     """«Ставка «Группа»: 50% → 45%» - the line the owner reads in the diff."""
-    after = f"{engine.format_percent(now)}%" if now is not None else "не задана"
-    return f"Ставка «{engine.LESSON_TYPE_LABELS[lesson_type]}»: {engine.format_percent(before)}% → {after}"
+    # Words for a person: a decimal comma («62,5%»), as everywhere in the interface; the numbers stay in ``rate_changes``.
+    def shown(value: Decimal) -> str:
+        return engine.format_percent(value).replace(".", ",")
+
+    after = f"{shown(now)}%" if now is not None else "не задана"
+    return f"Ставка «{engine.LESSON_TYPE_LABELS[lesson_type]}»: {shown(before)}% → {after}"

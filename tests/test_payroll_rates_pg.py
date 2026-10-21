@@ -464,3 +464,10 @@ def test_rates_belong_to_members_who_may_teach_and_a_deactivated_teacher_is_stil
     assert sheet["total_amount"] > 0 and sheet["percents"] == {"group": "50"}          # ... and his month is calculated
     r = c.post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(gone.id)})
     assert r.status_code == 201 and r.json()["total_amount"] == sheet["total_amount"]    # ... and saved
+
+
+def test_rate_reason_reads_like_the_interface():
+    from decimal import Decimal
+    from src.auth.payroll_rates import rate_reason
+    assert rate_reason("group", Decimal("62.50"), Decimal("70")) == "Ставка «Группа»: 62,5% → 70%"
+    assert rate_reason("group", Decimal("50"), None) == "Ставка «Группа»: 50% → не задана"
