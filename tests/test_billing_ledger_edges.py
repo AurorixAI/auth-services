@@ -7,6 +7,7 @@ import pytest
 from src.auth import billing_ledger as bl
 from src.auth import payment_status as ps
 
+from src.auth.billing_ledger import round_1000
 from tests.pay2_ledger_helpers import D, T0, credit, e1, flat, make, outflow, weekly
 
 FIXED1 = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
@@ -45,19 +46,54 @@ def test_price_zero_is_free_and_never_a_debt():
     assert l.lesson_paid(D(2026, 10, 1))
 
 
-def test_missing_price_charges_nothing_and_stops_generation():
+def test_missing_price_charges_nothing_and_the_money_waits_as_advance():
     l = led(today=D(2026, 10, 21), stays=[bl.Stay(D(2026, 9, 15))], price_at=flat(None),
             credits=[credit("p", D(2026, 10, 1), 300_000)])
     assert l.flags == (bl.F_PRICE_MISSING,) and l.unpriced_from == D(2026, 9, 15)
     assert (l.debt, l.charged, l.advance) == (0, 0, 300_000)
-    assert [s.state for s in l.segments] == ["unpriced"] and l.segments[0].amount == 0
-    assert l.reconciles and not l.lesson_paid(D(2026, 10, 2))
+    assert [s.state for s in l.segments] == ["unpriced", "unpriced"] and all(s.amount == 0 for s in l.segments)
+    assert l.reconciles and not l.lesson_paid(D(2026, 10, 2)) and l.covered_through is None
 
 
-def test_price_that_starts_in_the_middle_stops_at_the_first_unpriced_period():
-    # no price before 01.10: the first period (15.09) is unpriced, so nothing after is generated
+def test_a_price_that_starts_later_skips_the_unpriced_periods_and_charges_from_the_first_priced_one():
+    # no price before 01.10: the period of 15.09 is unpriced (skipped), the one of 15.10 is charged
     l = led(today=D(2026, 10, 21), stays=[bl.Stay(D(2026, 9, 15))], price_at=flat(500_000, since=D(2026, 10, 1)))
-    assert l.unpriced_from == D(2026, 9, 15) and l.debt == 0
+    assert l.unpriced_from == D(2026, 9, 15) and l.debt == 500_000 and bl.F_PRICE_MISSING in l.flags
+    assert [s.state for s in l.segments if s.begun] == ["unpriced", "open"]
+
+
+def test_an_unpriced_closed_run_does_not_break_the_cover_of_the_priced_run_after_it():
+    """Stay 05.09-20.09 before the price (valid from 01.10), back on 10.10, 500 000 paid on 10.10: paid, not NONE."""
+    l = led(today=D(2026, 10, 21), stays=[bl.Stay(D(2026, 9, 5), D(2026, 9, 20)), bl.Stay(D(2026, 10, 10))],
+            price_at=flat(500_000, since=D(2026, 10, 1)), credits=[credit("p", D(2026, 10, 10), 500_000)])
+    assert l.covered_through == D(2026, 11, 9) and l.status.status == ps.ACTIVE and l.debt == 0
+    assert l.lesson_paid(D(2026, 10, 12)) and bl.F_PRICE_MISSING in l.flags
+    (rec,) = bl.coverage_records(l)
+    assert rec.valid_to == D(2026, 11, 9)
+
+
+def test_the_price_of_a_partial_first_period_is_the_price_of_its_first_billable_day():
+    """Fixed day 1, price valid from 15.10, joined 15.10: October is charged pro rata by the lessons of the group."""
+    l = led(today=D(2026, 10, 21), stays=[bl.Stay(D(2026, 10, 15))], price_at=flat(600_000, since=D(2026, 10, 15)),
+            regimes=[FIXED1], lesson_days=weekly({0, 2, 4}))
+    first = l.segments[0]
+    assert (first.period_start, first.days[0]) == (D(2026, 10, 1), D(2026, 10, 15)) and first.state != "unpriced"
+    # Oct 2026 Mon/Wed/Fri: 13 lessons; from the 15th: 16, 19, 21, 23, 26, 28, 30 = 7
+    assert (first.basis, first.lessons_in_part, first.lessons_in_period) == ("lessons", 7, 13)
+    assert first.amount == round_1000(600_000 * 7, 13) == 323_000 and first.price.amount == 600_000 and l.debt == 323_000
+    # the same in payment-date mode: the period starts on the first billable day anyway
+    l = led(today=D(2026, 10, 21), stays=[bl.Stay(D(2026, 10, 15))], price_at=flat(600_000, since=D(2026, 10, 15)))
+    assert l.debt == 600_000
+
+
+def test_a_segment_of_a_membership_made_by_a_transfer_is_begun_only_from_its_first_billable_day():
+    """Fixed day: the cell starts 01.10 but the student is charged from 12.10; a later 'today' is not a debt before it."""
+    l = led(today=D(2026, 10, 5), stays=[bl.Stay(D(2026, 10, 11))], price_at=flat(400_000), regimes=[FIXED1],
+            floor=D(2026, 10, 12))
+    assert l.charged == 0 and l.debt == 0 and not l.segments[0].begun
+    l = led(today=D(2026, 10, 12), stays=[bl.Stay(D(2026, 10, 11))], price_at=flat(400_000), regimes=[FIXED1],
+            floor=D(2026, 10, 12))
+    assert l.charged == 258_000
 
 
 def test_price_is_taken_at_the_start_of_each_period():

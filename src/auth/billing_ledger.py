@@ -409,8 +409,11 @@ class _Gen:
         self, chain: int, start: date, end: date, days: List[date], nominal: int, *, by_lessons: bool, cell: Optional[tuple]
     ) -> Segment:
         """The charge of one period; ``nominal`` = days of the whole period, ``by_lessons`` = fixed billing day."""
-        price = self.inp.price_at(start)
-        begun = start <= self.today
+        # The price of a period is the price on its FIRST BILLABLE day (a full period: its start; a partial first period: the day
+        # the student joined / came back / the accounting began) - a price that starts mid-period still prices the part.
+        first = days[0] if days else start
+        price = self.inp.price_at(first)
+        begun = first <= self.today
         seg_id = f"seg:{chain}:{start.isoformat()}"
         n = len(days)
         common = dict(id=seg_id, kind="period", period_start=start, period_end=end, days=tuple(days),
@@ -463,15 +466,15 @@ class _Gen:
                 future += 1
             seg = self.segment(chain, start, end if seg_hi == end else seg_hi, _day_range(start, seg_hi),
                                (end - start).days + 1, by_lessons=False, cell=None)
-            if seg.unpriced:
+            k += 1
+            if seg.unpriced:  # nothing is charged for it, it neither covers nor blocks; the next period is tried
                 self.unpriced_from = self.unpriced_from or start
-                if start <= self.today:
+                if seg.begun:
                     self.flags.add(F_PRICE_MISSING)
                     out.append(seg)
-                break
+                continue
             out.append(seg)
             cum += seg.amount
-            k += 1
         return out
 
     # ---------------------------------------------------------------- calendar: fixed billing day
@@ -496,17 +499,17 @@ class _Gen:
         cum = so_far
 
         def emit(cell_start: date, days_in: List[date]) -> bool:
-            """Append the segment; False = generation must stop here (no price)."""
+            """Append the segment (an unpriced one is recorded and skipped: it neither covers nor blocks)."""
             nonlocal cum
             end = ps.billing_period_end(cell_start, day)
             seg = self.segment(chain, cell_start, end, sorted(set(days_in)), (end - cell_start).days + 1,
                                by_lessons=True, cell=(cell_start, end))
             if seg.unpriced:
                 self.unpriced_from = self.unpriced_from or cell_start
-                if cell_start <= self.today:
+                if seg.begun:
                     self.flags.add(F_PRICE_MISSING)
                     out.append(seg)
-                return False
+                return True
             out.append(seg)
             cum += seg.amount
             return True
@@ -792,7 +795,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     through: Optional[date] = None
     for s in segments:
         if s.unpriced:
-            break
+            continue
         if s.covered_days >= len(s.days):
             if s.days:
                 through = s.days[-1]
@@ -804,7 +807,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     covered_prefix = 0
     for s in segments:
         if s.unpriced:
-            break
+            continue
         covered_prefix += s.covered_days
         if s.covered_days < len(s.days):
             break
@@ -814,7 +817,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     if not prefix_all:
         for s in segments:
             if s.unpriced:
-                break
+                continue
             if s.covered_days < len(s.days):
                 partial_credit = s.partial_credit
                 break
@@ -938,9 +941,9 @@ def coverage_records(ledger: Ledger, *, created_at: datetime = datetime.min) -> 
     start: Optional[date] = None
     last: Optional[date] = None
     for s in ledger.segments:
-        if s.unpriced or not s.days:
-            break
-        if s.covered_days <= 0:
+        if s.unpriced:
+            continue
+        if not s.days or s.covered_days <= 0:
             break
         first_day = s.days[0]
         end_day = s.days[min(s.covered_days, len(s.days)) - 1]
