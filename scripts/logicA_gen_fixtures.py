@@ -539,7 +539,7 @@ def errors(store):
         "PRICE_BACKDATE_WITH_PAYMENTS": (409, err(
             "PRICE_BACKDATE_WITH_PAYMENTS",
             "Нельзя изменить цену задним числом: у 1 ученика уже есть оплаты за период, который это затронет. "
-            "Разницу за прошлое закройте списанием долга или возвратом.",
+            "Разницу за прошлое закройте прощением долга или возвратом.",
             students=[PriceBlockedStudent(membership_id=uid(101), student_name="Каримов А.")])),
         "PAUSE_OVERLAPS_ATTENDED": (409, err("PAUSE_OVERLAPS_ATTENDED", "Ученик был отмечен на уроках 12.10, 14.10 — на эти даты паузу поставить нельзя",
                                              dates=[D(2026, 10, 12), D(2026, 10, 14)])),

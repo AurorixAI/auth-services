@@ -597,7 +597,7 @@ def test_receipt_content(world):
         "amount": 1_250_000, "amount_words": "Один миллион двести пятьдесят тысяч сум", "currency": "UZS",
         "paid_on": day(-3).isoformat(), "lessons_count": None, "partial_period": False, "method": "cash",
         "note": "Наличные", "accepted_by_name": "Иван Owner", "created_at": p["created_at"], "voided_at": None,
-        "void_reason": None, "replaced_by_receipt_no": None, "replaces_receipt_no": None,
+        "void_reason": None, "replaced_by_receipt_no": None, "replaces_receipt_no": None, "replaces_amount": None,
     }
 
 

@@ -30,7 +30,7 @@
       "seq": 1,
       "date": "2026-10-01",
       "type": "charge",
-      "title": "Начисление 01.10–11.10",
+      "title": "Стоимость 01.10–11.10",
       "debit": 177000,
       "credit": 0,
       "outflow": 0,
@@ -60,6 +60,7 @@
           "paid": 177000,
           "written_off": 0,
           "unpaid": 0,
+          "remaining": 0,
           "covered_days": 11,
           "covered_through": "2026-10-11",
           "partial_credit": 0,
@@ -78,7 +79,10 @@
         "from_group_name": null,
         "from_membership_id": null,
         "to_group_name": null,
-        "to_membership_id": null
+        "to_membership_id": null,
+        "replaces_receipt_no": null,
+        "replaces_amount": null,
+        "replaced_by_receipt_no": null
       }
     },
     {
@@ -111,7 +115,8 @@
             "bucket": "current",
             "closes": true,
             "label": "На текущий период 01.10–11.10",
-            "price": 500000
+            "price": 500000,
+            "segment_remaining_after": 0
           }
         ],
         "writeoff_id": null,
@@ -120,7 +125,10 @@
         "from_group_name": null,
         "from_membership_id": null,
         "to_group_name": null,
-        "to_membership_id": null
+        "to_membership_id": null,
+        "replaces_receipt_no": null,
+        "replaces_amount": null,
+        "replaced_by_receipt_no": null
       }
     },
     {
@@ -132,7 +140,7 @@
       "credit": 0,
       "outflow": 323000,
       "balance_after": 0,
-      "balance_text": "Нет долга",
+      "balance_text": "0",
       "voided_at": null,
       "void_reason": null,
       "voided_by_name": null,
@@ -150,7 +158,10 @@
         "from_group_name": null,
         "from_membership_id": null,
         "to_group_name": "Алгебра 7Б",
-        "to_membership_id": "00000000-0000-4000-8000-000000000002"
+        "to_membership_id": "00000000-0000-4000-8000-000000000002",
+        "replaces_receipt_no": null,
+        "replaces_amount": null,
+        "replaced_by_receipt_no": null
       }
     }
   ],

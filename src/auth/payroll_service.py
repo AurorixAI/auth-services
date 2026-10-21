@@ -128,6 +128,10 @@ class MonthInvalid(PayrollInvalid):
     code = "MONTH_INVALID"
 
 
+class DivisorRange(PayrollInvalid):
+    code = "DIVISOR_RANGE"
+
+
 class PercentRequired(PayrollInvalid):
     code = "PERCENT_REQUIRED"
 
@@ -304,6 +308,8 @@ class PayrollService:
         return self.get_settings(org_id).divisor
 
     def update_settings(self, org_id: str, actor_id: str, divisor: int) -> PayrollSettings:
+        if not isinstance(divisor, int) or not engine.MIN_DIVISOR <= divisor <= engine.MAX_DIVISOR:
+            raise DivisorRange(f"Делитель: от {engine.MIN_DIVISOR} до {engine.MAX_DIVISOR}")
         org = self.db.query(Organization).filter(Organization.id == org_id).with_for_update().first()
         if not org:
             raise PayrollNotFound("Организация не найдена")

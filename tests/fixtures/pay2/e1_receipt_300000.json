@@ -26,7 +26,8 @@
       "bucket": "past_debt",
       "closes": true,
       "label": "Закрыла долг 15.09–14.10",
-      "price": 500000
+      "price": 500000,
+      "segment_remaining_after": 0
     },
     {
       "segment_id": "seg:0:2026-10-15",
@@ -37,7 +38,8 @@
       "bucket": "current",
       "closes": false,
       "label": "На текущий период 15.10–14.11",
-      "price": 500000
+      "price": 500000,
+      "segment_remaining_after": 469000
     }
   ],
   "debt_before": 769000,
@@ -55,5 +57,6 @@
   "voided_at": null,
   "void_reason": null,
   "replaced_by_receipt_no": 19,
-  "replaces_receipt_no": null
+  "replaces_receipt_no": null,
+  "replaces_amount": null
 }

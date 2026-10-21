@@ -56,7 +56,8 @@
             "bucket": "current",
             "closes": true,
             "label": "На текущий период 01.10–31.10",
-            "price": 400000
+            "price": 400000,
+            "segment_remaining_after": 0
           },
           {
             "segment_id": "seg:0:2026-11-01",
@@ -67,7 +68,8 @@
             "bucket": "advance",
             "closes": false,
             "label": "Аванс на 01.11–30.11",
-            "price": 400000
+            "price": 400000,
+            "segment_remaining_after": 335000
           }
         ],
         "writeoff_id": null,
@@ -76,14 +78,17 @@
         "from_group_name": "Математика 7А",
         "from_membership_id": "00000000-0000-4000-8000-000000000001",
         "to_group_name": null,
-        "to_membership_id": null
+        "to_membership_id": null,
+        "replaces_receipt_no": null,
+        "replaces_amount": null,
+        "replaced_by_receipt_no": null
       }
     },
     {
       "seq": 2,
       "date": "2026-10-12",
       "type": "charge",
-      "title": "Начисление 01.10–31.10",
+      "title": "Стоимость 01.10–31.10",
       "debit": 258000,
       "credit": 0,
       "outflow": 0,
@@ -113,6 +118,7 @@
           "paid": 258000,
           "written_off": 0,
           "unpaid": 0,
+          "remaining": 0,
           "covered_days": 20,
           "covered_through": "2026-10-31",
           "partial_credit": 0,
@@ -131,7 +137,10 @@
         "from_group_name": null,
         "from_membership_id": null,
         "to_group_name": null,
-        "to_membership_id": null
+        "to_membership_id": null,
+        "replaces_receipt_no": null,
+        "replaces_amount": null,
+        "replaced_by_receipt_no": null
       }
     }
   ],
@@ -157,6 +166,7 @@
       "paid": 65000,
       "written_off": 0,
       "unpaid": 335000,
+      "remaining": 335000,
       "covered_days": 4,
       "covered_through": "2026-11-04",
       "partial_credit": 11667,

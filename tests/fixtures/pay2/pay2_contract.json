@@ -92,6 +92,17 @@
           "segment_id": {
             "title": "Segment Id",
             "type": "string"
+          },
+          "segment_remaining_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Remaining After"
           }
         },
         "required": [
@@ -103,7 +114,8 @@
           "bucket",
           "closes",
           "label",
-          "price"
+          "price",
+          "segment_remaining_after"
         ],
         "title": "Allocation",
         "type": "object"
@@ -2935,6 +2947,17 @@
             ],
             "title": "Replaced By Receipt No"
           },
+          "replaces_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Amount"
+          },
           "replaces_receipt_no": {
             "anyOf": [
               {
@@ -3945,6 +3968,11 @@
           "price": {
             "$ref": "#/components/schemas/PriceOut"
           },
+          "remaining": {
+            "default": 0,
+            "title": "Remaining",
+            "type": "integer"
+          },
           "state": {
             "default": "open",
             "enum": [
@@ -3982,6 +4010,7 @@
           "paid",
           "written_off",
           "unpaid",
+          "remaining",
           "covered_days",
           "covered_through",
           "partial_credit",
@@ -4159,6 +4188,39 @@
             ],
             "title": "Refund Id"
           },
+          "replaced_by_receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced By Receipt No"
+          },
+          "replaces_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Amount"
+          },
+          "replaces_receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Receipt No"
+          },
           "segment": {
             "anyOf": [
               {
@@ -4217,7 +4279,10 @@
           "from_group_name",
           "from_membership_id",
           "to_group_name",
-          "to_membership_id"
+          "to_membership_id",
+          "replaces_receipt_no",
+          "replaces_amount",
+          "replaced_by_receipt_no"
         ],
         "title": "StatementDetails",
         "type": "object"
@@ -5300,7 +5365,7 @@
     },
     "/org/memberships/{membership_id}/statement": {
       "get": {
-        "description": "Выписка ученика в группе: начисления, оплаты (и куда пошли), списания, возвраты, переносы; бегущий итог.",
+        "description": "Выписка ученика в группе: стоимость периодов, оплаты (и куда пошли), прощённые долги, возвраты, переносы; бегущий итог.",
         "parameters": [
           {
             "in": "path",
@@ -5560,7 +5625,7 @@
     },
     "/org/memberships/{membership_id}/writeoffs": {
       "post": {
-        "description": "Списать долг (льгота, болезнь, договорённость): ``amount`` ≤ текущего долга или ``all: true``; причина 3..500.",
+        "description": "Простить долг (льгота, болезнь, договорённость): ``amount`` ≤ текущего долга или ``all: true``; причина 3..500.",
         "parameters": [
           {
             "in": "path",
@@ -5806,7 +5871,7 @@
     },
     "/org/payments/receipts": {
       "get": {
-        "description": "«Поступления центра»: сколько пришло, куда ушло, списано, возвращено; по способам / группам / преподавателям;\nпозиция «долг / аванс» на сегодня; сверка. Диапазон ≤ 366 дней, ``group_by=day`` — ≤ 92.",
+        "description": "«Поступления центра»: сколько пришло, куда ушло, прощено, возвращено; по способам / группам / преподавателям;\nпозиция «долг / аванс» на сегодня; сверка. Диапазон ≤ 366 дней, ``group_by=day`` — ≤ 92.",
         "parameters": [
           {
             "in": "query",
@@ -5959,7 +6024,7 @@
     },
     "/org/payments/receipts/items": {
       "get": {
-        "description": "Раскрытие цифры отчёта до конкретных оплат / списаний / возвратов.",
+        "description": "Раскрытие цифры отчёта до конкретных оплат / прощённых долгов / возвратов.",
         "parameters": [
           {
             "in": "query",
@@ -6738,7 +6803,7 @@
     },
     "/org/writeoffs/{writeoff_id}/void": {
       "post": {
-        "description": "Отменить списание (долг возвращается); причина 3..500.",
+        "description": "Отменить прощение долга (долг возвращается); причина 3..500.",
         "parameters": [
           {
             "in": "path",

@@ -1191,19 +1191,19 @@ class PaymentService:
         try:
             reason = self._check_reason(reason)
             effective_on = effective_on or today
-            self._check_date(effective_on, today, "Дата списания")
+            self._check_date(effective_on, today, "Дата прощения долга")
             membership = self._membership(org_id, membership_id)
             family = self._lock_family(org_id, membership.student_id)
             before = self._entry_of(org_id, membership_id, today).ledger
             if whole:
                 amount = before.debt
                 if amount < 1:
-                    raise WriteoffExceedsDebt("Долга нет — списывать нечего", debt=0)
+                    raise WriteoffExceedsDebt("Долга нет — прощать нечего", debt=0)
             if amount is None or amount < 1 or amount > MAX_MONEY:
                 raise AmountRange(f"Сумма: от 1 до {_num(MAX_MONEY)}")
             if amount > before.debt:
                 raise WriteoffExceedsDebt(
-                    f"Списать можно не больше долга: {_sum(before.debt)}" if before.debt else "Долга нет — списывать нечего",
+                    f"Простить можно не больше долга: {_sum(before.debt)}" if before.debt else "Долга нет — прощать нечего",
                     debt=before.debt)
             row = StudentWriteoff(
                 org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,
@@ -1239,14 +1239,14 @@ class PaymentService:
                 .filter(StudentWriteoff.id == writeoff_id, StudentWriteoff.org_id == org_id).first()
             )
             if probe is None:
-                raise PaymentNotFound("Списание не найдено")
+                raise PaymentNotFound("Прощение долга не найдено")
             family = self._lock_family(org_id, probe.student_id)
             row = (
                 self.db.query(StudentWriteoff).filter(StudentWriteoff.id == writeoff_id)
                 .populate_existing().with_for_update().first()
             )
             if row.voided_at is not None:
-                raise AlreadyVoided("Списание уже отменено")
+                raise AlreadyVoided("Прощение долга уже отменено")
             membership = self._membership(org_id, row.membership_id)
             today = ps.business_today()
             before = self._entry_of(org_id, row.membership_id, today).ledger
@@ -1499,7 +1499,7 @@ class PaymentService:
             .first()
         )
         replaces = (
-            self.db.query(StudentPayment.receipt_no)
+            self.db.query(StudentPayment.receipt_no, StudentPayment.amount)
             .filter(StudentPayment.org_id == org_id, StudentPayment.id == payment.replaces_payment_id)
             .first()
             if payment.replaces_payment_id
@@ -1541,6 +1541,7 @@ class PaymentService:
             void_reason=payment.void_reason,
             replaced_by_receipt_no=replaced_by[0] if replaced_by else None,
             replaces_receipt_no=replaces[0] if replaces else None,
+            replaces_amount=int(replaces[1]) if replaces else None,
             **extra,
         )
 

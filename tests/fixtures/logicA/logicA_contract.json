@@ -130,6 +130,17 @@
           "segment_id": {
             "title": "Segment Id",
             "type": "string"
+          },
+          "segment_remaining_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Remaining After"
           }
         },
         "required": [
@@ -141,7 +152,8 @@
           "bucket",
           "closes",
           "label",
-          "price"
+          "price",
+          "segment_remaining_after"
         ],
         "title": "Allocation",
         "type": "object"

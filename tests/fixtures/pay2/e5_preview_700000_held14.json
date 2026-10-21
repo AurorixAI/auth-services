@@ -37,6 +37,7 @@
         "paid": 0,
         "written_off": 0,
         "unpaid": 600000,
+        "remaining": 600000,
         "covered_days": 0,
         "covered_through": null,
         "partial_credit": 0,
@@ -66,6 +67,7 @@
         "paid": 0,
         "written_off": 0,
         "unpaid": 100000,
+        "remaining": 100000,
         "covered_days": 0,
         "covered_through": null,
         "partial_credit": 0,
@@ -89,7 +91,8 @@
         "bucket": "past_debt",
         "closes": true,
         "label": "Закрыла долг: пакет №1 (25.09–21.10)",
-        "price": 600000
+        "price": 600000,
+        "segment_remaining_after": 0
       },
       {
         "segment_id": "seg:0:pkg2",
@@ -100,7 +103,8 @@
         "bucket": "current",
         "closes": true,
         "label": "На текущий пакет №2 (23.10–26.10)",
-        "price": 600000
+        "price": 600000,
+        "segment_remaining_after": 0
       }
     ],
     "debt_after": 0,

@@ -79,7 +79,7 @@ def create_writeoff(
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Списать долг (льгота, болезнь, договорённость): ``amount`` ≤ текущего долга или ``all: true``; причина 3..500."""
+    """Простить долг (льгота, болезнь, договорённость): ``amount`` ≤ текущего долга или ``all: true``; причина 3..500."""
     try:
         return PaymentService(db).create_writeoff(
             user["org_id"], membership_id, user["user_id"], amount=request.amount, whole=request.all_debt,
@@ -95,7 +95,7 @@ def void_writeoff(
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Отменить списание (долг возвращается); причина 3..500."""
+    """Отменить прощение долга (долг возвращается); причина 3..500."""
     try:
         return PaymentService(db).void_writeoff(user["org_id"], writeoff_id, user["user_id"], request.reason,
                                                 actor_role=_role(user))
@@ -145,7 +145,7 @@ def membership_statement(
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Выписка ученика в группе: начисления, оплаты (и куда пошли), списания, возвраты, переносы; бегущий итог."""
+    """Выписка ученика в группе: стоимость периодов, оплаты (и куда пошли), прощённые долги, возвраты, переносы; бегущий итог."""
     try:
         return PaymentsReports(db).statement(
             user["org_id"], membership_id, date_from=from_, date_to=to, include_voided=include_voided)
@@ -197,7 +197,7 @@ def receipts_report(
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """«Поступления центра»: сколько пришло, куда ушло, списано, возвращено; по способам / группам / преподавателям;
+    """«Поступления центра»: сколько пришло, куда ушло, прощено, возвращено; по способам / группам / преподавателям;
     позиция «долг / аванс» на сегодня; сверка. Диапазон ≤ 366 дней, ``group_by=day`` — ≤ 92."""
     try:
         return PaymentsReports(db).receipts_report(
@@ -220,7 +220,7 @@ def receipts_items(
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Раскрытие цифры отчёта до конкретных оплат / списаний / возвратов."""
+    """Раскрытие цифры отчёта до конкретных оплат / прощённых долгов / возвратов."""
     try:
         return PaymentsReports(db).receipts_items(
             user["org_id"], from_, to, column=column, bucket=bucket, method=method, group_id=group_id,

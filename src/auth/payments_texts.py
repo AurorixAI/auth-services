@@ -52,12 +52,18 @@ def lessons_word(count: int) -> str:
 
 
 def balance_text(balance: int) -> str:
-    """Running total of a statement: negative = debt, positive = advance."""
+    """«Баланс» of a statement (the personal account): negative = ``Долг N``, positive = ``Аванс N``, zero = ``0``."""
     if balance < 0:
         return f"Долг {num(-balance)}"
     if balance > 0:
         return f"Аванс {num(balance)}"
-    return "Нет долга"
+    return "0"
+
+
+def forgiven_title(reason: Optional[str]) -> str:
+    """Title of a write-off row of the statement: ``Долг прощён — причина …`` (the owner's vocabulary: «Простить долг»)."""
+    reason = (reason or "").strip()
+    return f"Долг прощён — причина {reason}" if reason else "Долг прощён"
 
 
 def days_text(*, basis: str, billable_days: int, period_days: int, first_day: Optional[date] = None,

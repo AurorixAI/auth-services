@@ -37,7 +37,7 @@ def segment_out(seg: bl.Segment) -> Segment:
         days_text=seg.days_text, price=price_out(seg.price), charge=seg.amount, basis=seg.basis,
         lessons=SegmentLessons(in_part=seg.lessons_in_part, in_period=seg.lessons_in_period)
         if seg.kind == "package" or seg.basis == "lessons" else None,
-        paid=seg.money, written_off=seg.forgiven, unpaid=seg.unpaid, covered_days=seg.covered_days,
+        paid=seg.money, written_off=seg.forgiven, unpaid=seg.unpaid, remaining=seg.unpaid, covered_days=seg.covered_days,
         covered_through=seg.covered_through, partial_credit=seg.partial_credit, state=seg.state, bucket=seg.bucket,
     )
 
@@ -46,6 +46,7 @@ def allocation_out(a: bl.Allocation) -> Allocation:
     return Allocation(
         segment_id=a.segment_id, period_from=a.period_start, period_to=a.period_end, amount=a.amount, days=a.days,
         bucket=a.bucket, closes=a.closes, label=a.label, price=a.price,
+        segment_remaining_after=a.remaining_after,
     )
 
 

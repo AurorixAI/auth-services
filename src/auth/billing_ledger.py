@@ -209,6 +209,7 @@ class Allocation:
     label: str
     period_start: date
     period_end: date
+    remaining_after: Optional[int] = None  # what is still unpaid of the segment right after this piece (null: advance)
 
 
 @dataclass(frozen=True)
@@ -768,7 +769,8 @@ def run_ledger(inp: LedgerInput) -> Ledger:
                 price=s.price.amount,
                 label=tx.allocation_label(bucket=bucket, closes=closes, start=s.period_start, end=s.period_end,
                                           package_no=s.package_no),
-                period_start=s.period_start, period_end=s.period_end))
+                period_start=s.period_start, period_end=s.period_end,
+                remaining_after=max(0, s.amount - running[s.id])))
             placed += part
         left = net[c.id] - placed
         if left > 0:

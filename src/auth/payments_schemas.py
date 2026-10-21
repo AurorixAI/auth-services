@@ -110,6 +110,7 @@ class Segment(PayModel):
     paid: int = 0  # money that lies on the segment (payments and transfers in; write-offs not included)
     written_off: int = 0
     unpaid: int = 0  # charge - paid - written_off
+    remaining: int = 0  # LOGIC-A: the same as ``unpaid`` under the name the month header uses (charge - paid - written_off)
     covered_days: int = 0  # floor(money * billable_days / charge); a day is paid only when paid in full
     covered_through: Optional[date_type] = None  # last paid day of the segment (null - none)
     partial_credit: int = 0  # money "inside" the first unpaid day; counts towards the next payment
@@ -130,6 +131,9 @@ class Allocation(PayModel):
     closes: bool  # after this piece the segment is paid in full
     label: str  # «Закрыла долг 15.09–14.10» | «На текущий период 15.10–14.11» | «Аванс на 15.11–14.12»
     price: Optional[int] = None  # the price of that period (differs from today's price when a price change is announced)
+    # LOGIC-A: what is still unpaid of THAT period right after this piece (after the earlier payments / write-offs / refunds in
+    # the order of the money line); null on the "advance" line and on a snapshot of a receipt made before LOGIC-A.
+    segment_remaining_after: Optional[int] = None
 
 
 class SnapshotPrice(PayModel):
@@ -657,6 +661,7 @@ class ReceiptOut(BaseModel):
     void_reason: Optional[str] = None
     replaced_by_receipt_no: Optional[int] = None
     replaces_receipt_no: Optional[int] = None
+    replaces_amount: Optional[int] = None  # LOGIC-A: the sum of the payment this one corrects («исправлена: было 450 000»)
 
 
 # ============================================================================================================
@@ -865,6 +870,11 @@ class StatementDetails(PayModel):
     from_membership_id: Optional[str] = None
     to_group_name: Optional[str] = None  # transfer_out
     to_membership_id: Optional[str] = None
+    # LOGIC-A: the correction chain of a payment row.  A correction shows «исправлена: было 450 000»; the voided original
+    # (``include_voided``) links to the receipt that replaced it.
+    replaces_receipt_no: Optional[int] = None
+    replaces_amount: Optional[int] = None
+    replaced_by_receipt_no: Optional[int] = None
 
 
 class StatementRow(PayModel):
@@ -876,7 +886,7 @@ class StatementRow(PayModel):
     credit: int = 0  # money in (payment, transfer in, write-off)
     outflow: int = 0  # money out (refund, transfer out)
     balance_after: Optional[int] = None  # negative = debt, positive = advance; null on a voided row
-    balance_text: Optional[str] = None  # «Долг 500 000» | «Аванс 21 000» | «Нет долга»
+    balance_text: Optional[str] = None  # «Долг 500 000» | «Аванс 21 000» | «0» (the «Баланс» column)
     voided_at: Optional[str] = None
     void_reason: Optional[str] = None
     voided_by_name: Optional[str] = None

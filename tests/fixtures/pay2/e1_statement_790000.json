@@ -30,7 +30,7 @@
       "seq": 1,
       "date": "2026-09-15",
       "type": "charge",
-      "title": "Начисление 15.09–14.10",
+      "title": "Стоимость 15.09–14.10",
       "debit": 500000,
       "credit": 0,
       "outflow": 0,
@@ -60,6 +60,7 @@
           "paid": 500000,
           "written_off": 0,
           "unpaid": 0,
+          "remaining": 0,
           "covered_days": 30,
           "covered_through": "2026-10-14",
           "partial_credit": 0,
@@ -78,7 +79,10 @@
         "from_group_name": null,
         "from_membership_id": null,
         "to_group_name": null,
-        "to_membership_id": null
+        "to_membership_id": null,
+        "replaces_receipt_no": null,
+        "replaces_amount": null,
+        "replaced_by_receipt_no": null
       }
     },
     {
@@ -111,7 +115,8 @@
             "bucket": "current",
             "closes": false,
             "label": "На текущий период 15.09–14.10",
-            "price": 500000
+            "price": 500000,
+            "segment_remaining_after": 269000
           }
         ],
         "writeoff_id": null,
@@ -120,14 +125,17 @@
         "from_group_name": null,
         "from_membership_id": null,
         "to_group_name": null,
-        "to_membership_id": null
+        "to_membership_id": null,
+        "replaces_receipt_no": null,
+        "replaces_amount": null,
+        "replaced_by_receipt_no": null
       }
     },
     {
       "seq": 3,
       "date": "2026-10-15",
       "type": "charge",
-      "title": "Начисление 15.10–14.11",
+      "title": "Стоимость 15.10–14.11",
       "debit": 500000,
       "credit": 0,
       "outflow": 0,
@@ -157,6 +165,7 @@
           "paid": 500000,
           "written_off": 0,
           "unpaid": 0,
+          "remaining": 0,
           "covered_days": 31,
           "covered_through": "2026-11-14",
           "partial_credit": 0,
@@ -175,7 +184,10 @@
         "from_group_name": null,
         "from_membership_id": null,
         "to_group_name": null,
-        "to_membership_id": null
+        "to_membership_id": null,
+        "replaces_receipt_no": null,
+        "replaces_amount": null,
+        "replaced_by_receipt_no": null
       }
     },
     {
@@ -208,7 +220,8 @@
             "bucket": "past_debt",
             "closes": true,
             "label": "Закрыла долг 15.09–14.10",
-            "price": 500000
+            "price": 500000,
+            "segment_remaining_after": 0
           },
           {
             "segment_id": "seg:0:2026-10-15",
@@ -219,7 +232,8 @@
             "bucket": "current",
             "closes": true,
             "label": "На текущий период 15.10–14.11",
-            "price": 500000
+            "price": 500000,
+            "segment_remaining_after": 0
           },
           {
             "segment_id": "seg:0:2026-11-15",
@@ -230,7 +244,8 @@
             "bucket": "advance",
             "closes": false,
             "label": "Аванс на 15.11–14.12",
-            "price": 500000
+            "price": 500000,
+            "segment_remaining_after": 479000
           }
         ],
         "writeoff_id": null,
@@ -239,7 +254,10 @@
         "from_group_name": null,
         "from_membership_id": null,
         "to_group_name": null,
-        "to_membership_id": null
+        "to_membership_id": null,
+        "replaces_receipt_no": null,
+        "replaces_amount": null,
+        "replaced_by_receipt_no": null
       }
     }
   ],
@@ -265,6 +283,7 @@
       "paid": 21000,
       "written_off": 0,
       "unpaid": 479000,
+      "remaining": 479000,
       "covered_days": 1,
       "covered_through": "2026-11-15",
       "partial_credit": 4334,

@@ -78,7 +78,8 @@
             "bucket": "current",
             "closes": false,
             "label": "На текущий период 15.09–14.10",
-            "price": 500000
+            "price": 500000,
+            "segment_remaining_after": 269000
           }
         ],
         "refunded": 0,
