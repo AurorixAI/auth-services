@@ -232,8 +232,8 @@ def test_a_returning_membership_keeps_its_own_history_of_prices(two):
     two.db.commit()
     give_price(two.db, membership(two, two.second, s0), 777000, reason="прежняя договорённость")
     give_group_price(two.db, two.second, 500000)
-    transfer(two, two.second, s0)                                     # the reactivated membership keeps its exception ...
-    assert price_of(two, two.second, s0) == (777000, "override")
+    transfer(two, two.second, s0)                                     # LOGIC-A (F13): a return is priced by the group, the exception ended ...
+    assert price_of(two, two.second, s0) == (500000, "group")
     set_fee(two, two.group, 0, s1)                                    # ... a free student of the old group is not free in the new one
     transfer(two, two.second, s1)
     assert price_of(two, two.second, s1) == (500000, "group")
@@ -465,19 +465,19 @@ def test_every_membership_lock_is_for_no_key_update(two):
 def test_removing_a_student_maps_a_deadlock_to_409(two, monkeypatch):
     from sqlalchemy.exc import OperationalError
 
-    from src.auth.service import AuthService
+    from src.auth.leave_service import LeaveService            # LOGIC-A: «Убрать из группы» goes through the leave service
 
     def boom(*args, **kwargs):
         raise deadlock()
 
-    monkeypatch.setattr(AuthService, "remove_student_from_group", boom)
+    monkeypatch.setattr(LeaveService, "leave", boom)
     r = owner(two).delete(f"{GROUPS}/{two.group.id}/students/{two.student.id}")
     assert r.status_code == 409 and r.json()["detail"] == "Операция совпала с другой правкой. Повторите.", r.text
 
     def broken(*args, **kwargs):
         raise OperationalError("SELECT 1", {}, Exception("connection lost"))
 
-    monkeypatch.setattr(AuthService, "remove_student_from_group", broken)
+    monkeypatch.setattr(LeaveService, "leave", broken)
     with pytest.raises(OperationalError):
         owner(two).delete(f"{GROUPS}/{two.group.id}/students/{two.student.id}")
 

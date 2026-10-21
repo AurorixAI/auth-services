@@ -41,6 +41,8 @@ from src.models.auth import (
     GroupAttendance,
     GroupAudit,
     GroupPrice,
+    MembershipOpeningBalance,
+    MembershipPause,
     MembershipPriceOverride,
     MembershipTransfer,
     Organization,
@@ -150,7 +152,7 @@ def invalidate_summary(org_id: Any = None) -> None:
 # journal (lessons), excuses, the students / groups or the organisation (settings) marks the session; the commit that follows
 # forgets the cache of all centres (cheap; the summary is rebuilt on the next ask).
 _LEDGER_MODELS = (
-    GroupPrice, MembershipPriceOverride, StudentGroup, StudentGroupPeriod, StudentPayment, StudentWriteoff, StudentRefund,
+    GroupPrice, MembershipPriceOverride, MembershipOpeningBalance, MembershipPause, StudentGroup, StudentGroupPeriod, StudentPayment, StudentWriteoff, StudentRefund,
     MembershipTransfer, GroupAttendance, AttendanceExcuse, Student, Group, Organization,
 )
 _DIRTY_FLAG = "payments_summary_dirty"
@@ -680,6 +682,7 @@ class PaymentService:
                     lessons_unpaid=l.lessons.unpaid if l.lessons else 0, refundable=l.refundable,
                     writeoff_allowed=l.debt > 0,
                     paused=self._paused_range(e), opening=self._opening_brief(e),
+                    price_ends_on_leave=bool(e.membership.is_active and e.price.source == pricing.SOURCE_OVERRIDE and e.price.amount is not None),
                     bucket=pv.entry_bucket(e), debt_reason=pv.debt_reason(e)[0], reason=pv.debt_reason(e)[1],
                 )
             )

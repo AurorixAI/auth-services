@@ -28,6 +28,16 @@ os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://x:x@localhost/x")  
 from src.auth import payments_texts as tx  # noqa: E402
 from src.auth.payments_schemas import (  # noqa: E402
     FreshBalance,
+    MembershipPriceOut,
+    PaymentsBuckets,
+    PaymentsSummary,
+    PriceOverrideChanged,
+    Segment,
+    StatementDetails,
+    StatementMembership,
+    StatementOut,
+    StatementRow,
+    StatementSummary,
     GroupLessonTypeChanged,
     GroupLessonTypes,
     GroupPriceChanged,
@@ -61,7 +71,9 @@ from src.auth.payments_schemas import (  # noqa: E402
     RegimeImpact,
     SettledOut,
 )
+from src.auth import payroll_engine as _engine  # noqa: E402
 from src.auth.payroll_schemas import (  # noqa: E402
+    GroupBlockOut,
     DivisorRow,
     LineOut,
     MarkOut,
@@ -520,11 +532,61 @@ def sheets(store):
         write(name, SheetOut(
             id=uid(500), saved=True, month="2026-10", period_start="2026-10-01", period_end="2026-10-31", month_open=False,
             teacher_id=uid(400), teacher_name="Каримова", revision=1, percents={"group": "50", "pair": "60"} if kind == "f14" else {"group": "50"},
-            divisor_default=12, lines=ls, groups=[], total_amount=total, counted_total=sum(l.counted for l in ls),
+            divisor_default=12, lines=ls, groups=[GroupBlockOut(**b) for b in _engine.group_blocks([l.model_dump() for l in ls])], total_amount=total, counted_total=sum(l.counted for l in ls),
             source_fingerprint="0" * 64, stale=False,
             payout=state(total, total, 0, [])), store)
     # unpaid state: nothing paid yet
     write("A28_payout_state_unpaid.json", state(475_000, 475_000, 0, []), store)
+
+
+def tabs_and_statement(store):
+    """The payment tabs (a debtor with the reason, the summary) and the statement rows of an opening balance and a pause."""
+    res = Hand(today=TODAY, accounting_start=AS, stays=[(TODAY, None)], price=price_flat(600_000), debt=250_000, debt_on=D(2026, 9, 30)).run()
+    debtor = row(1, "Каримов Алишер", "A-1", group_price(600_000), "expired", res=res, today=TODAY, overdue=21,
+                 opening=OpeningBrief(id=uid(2), debt_amount=250_000, debt_on=D(2026, 9, 30)))
+    debtor = debtor.model_copy(update={"bucket": "debt", "debt_reason": "never_paid", "reason": "Ещё не платил"})
+    write("A29_status_row_debtor.json", debtor, store)
+    write("A30_payments_summary_tabs.json", PaymentsSummary(
+        as_of="2026-10-21", due=2, ends_today=0, expired=2, expiring=1, none=0, active=5, free=1, tracked_total=9, period_mode="calendar",
+        lessons_per_payment=12, students_due=2, students_expired=2, debt_total=1_063_000, advance_total=200_000, memberships_with_debt=3,
+        students_with_debt=3, accounting_start_date=AS, paused=1, buckets=PaymentsBuckets(debt=3, expiring=1, active=4, paused=1),
+        price_missing=1, students_with_advance=1, debtors=3), store)
+    seg_open = Segment(id="seg:opening", kind="opening", period_from=D(2026, 9, 30), period_to=D(2026, 9, 30), billable_days=0, days_text=None,
+                       price=PriceOut(amount=None, source="none"), charge=250_000, basis="opening", paid=0, written_off=0, unpaid=250_000,
+                       remaining=250_000, covered_days=0, covered_through=None, partial_credit=0, state="open", bucket="past_debt")
+    seg_oct = Segment(id="seg:0:2026-10-01", kind="period", period_from=D(2026, 10, 1), period_to=D(2026, 10, 31), billable_days=11,
+                      days_text="11 дней из 31", price=group_price(600_000), charge=213_000, basis="days", paid=0, written_off=0, unpaid=213_000,
+                      remaining=213_000, covered_days=0, covered_through=None, partial_credit=0, state="open", bucket="current")
+    summary = StatementSummary(charged=463_000, paid=0, debt=463_000, advance=0, paid_until=None, status="expired", reconciles=True)
+    member = StatementMembership(membership_id=uid(101), student_id=uid(201), student_name="Каримов Алишер", display_id="S-1001",
+                                 group_id=uid(301), group_name="A-1", teacher_name="Каримова", is_active=True)
+    rows = [
+        StatementRow(seq=1, date=D(2026, 9, 30), type="opening_debt", title="Долг на начало учёта на 30.09.2026", debit=250_000,
+                     balance_after=-250_000, balance_text="Долг 250 000", details=StatementDetails(segment=seg_open)),
+        StatementRow(seq=2, date=D(2026, 10, 21), type="charge", title="Стоимость 01.10–31.10", debit=213_000, balance_after=-463_000,
+                     balance_text="Долг 463 000", details=StatementDetails(segment=seg_oct)),
+    ]
+    write("A31_statement_opening_debt.json", StatementOut(membership=member, as_of=TODAY, mode="calendar", accounting_start=AS, summary=summary,
+                                                          rows=rows), store)
+    info = [
+        StatementRow(seq=1, date=D(2026, 10, 11), type="opening_paid_until", title="Остаток на начало: оплачено до 15.11", balance_after=0,
+                     balance_text="0"),
+        StatementRow(seq=2, date=D(2026, 11, 5), type="pause", title="Пауза 05.11–20.11 — начислений нет", balance_after=0, balance_text="0"),
+    ]
+    write("A32_statement_info_rows.json", StatementOut(
+        membership=member, as_of=TODAY, mode="calendar", accounting_start=AS,
+        summary=StatementSummary(charged=0, paid=0, debt=0, advance=0, paid_until=D(2026, 11, 15), status="active", reconciles=True), rows=info), store)
+    base = Hand(today=D(2026, 10, 21), accounting_start=AS, stays=[(D(2026, 10, 1), None)], price=price_flat(500_000),
+                payments=[(D(2026, 10, 20), 700_000)]).run()
+    row_ = row(2, "Ахмедов Б.", "A-1", group_price(500_000), "active", res=base, today=D(2026, 10, 21))
+    write("A33_price_override_dry_run.json", PriceOverrideChanged(
+        membership_id=uid(102), group_id=uid(301), as_of="2026-10-21", period_mode="calendar", price_label="Оплата в месяц",
+        price=group_price(500_000), history=[], cancelled=[], row=row_, dry_run=True,
+        impact=PriceImpact(students_following=0, students_with_override=1, stale_payroll_sheets=0, stale_sheets=[],
+                           money=PriceImpactMoney(memberships_with_new_debt=0, debt_delta=0, memberships_with_less_advance=1, advance_delta=0,
+                                                  days_lost_total=2, backdated=False, items=[PriceImpactItem(
+                               membership_id=uid(102), student_name="Ахмедов Б.", debt_before=0, debt_after=0, advance_before=200_000,
+                               advance_after=200_000, paid_until_before=D(2026, 11, 12), paid_until_after=D(2026, 11, 10), has_money=True)]))), store)
 
 
 def errors(store):
@@ -569,7 +631,8 @@ MODELS = {
     "A12_*": "LeavePreview", "A14_*": "GroupPriceChanged", "A15_*": "GroupPriceChanged", "A16_*": "PaymentSettingsChanged",
     "A17_*": "GroupLessonTypes", "A18_*": "GroupLessonTypeChanged", "A19_*": "PayrollSettings", "A20_*": "PayoutCreated",
     "A21_*": "PayoutState", "A22_*": "PayoutState", "A23_*": "PayoutCreated", "A24_*": "PayoutState", "A25_*": "PayoutVoided",
-    "A26_*": "SheetOut", "A27_*": "SheetOut", "A28_*": "PayoutState",
+    "A26_*": "SheetOut", "A27_*": "SheetOut", "A28_*": "PayoutState", "A29_*": "MembershipPaymentRow", "A30_*": "PaymentsSummary",
+    "A31_*": "StatementOut", "A32_*": "StatementOut", "A33_*": "PriceOverrideChanged",
 }
 # the models live in two modules
 PAYROLL_MODELS = {"PayrollSettings", "PayoutCreated", "PayoutState", "PayoutVoided", "SheetOut"}
@@ -584,6 +647,7 @@ def build() -> Dict[str, str]:
     settings_chain(store)
     payroll_chain(store)
     sheets(store)
+    tabs_and_statement(store)
     errors(store)
     store["index.json"] = json.dumps({"models": MODELS, "payroll_models": sorted(PAYROLL_MODELS)}, ensure_ascii=False, indent=2) + "\n"
     return store

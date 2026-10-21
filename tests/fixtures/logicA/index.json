@@ -25,7 +25,12 @@
     "A25_*": "PayoutVoided",
     "A26_*": "SheetOut",
     "A27_*": "SheetOut",
-    "A28_*": "PayoutState"
+    "A28_*": "PayoutState",
+    "A29_*": "MembershipPaymentRow",
+    "A30_*": "PaymentsSummary",
+    "A31_*": "StatementOut",
+    "A32_*": "StatementOut",
+    "A33_*": "PriceOverrideChanged"
   },
   "payroll_models": [
     "PayoutCreated",

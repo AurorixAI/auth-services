@@ -158,7 +158,7 @@ def test_f13_the_individual_price_ends_when_the_student_leaves_and_a_return_is_p
     settings_block(world, accounting_start_date="2026-09-01")
     give_price(world.db, m, 400_000, reason="скидка", valid_from=D(2026, 9, 1))
     r = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]
-    assert r["price"]["amount"] == 400_000 and r["price_ends_on_leave"] is False
+    assert r["price"]["amount"] == 400_000 and r["price_ends_on_leave"] is True
     leave(world, world.group, world.students[0])                    # leaves today (21.10)
     world.db.expire_all()
     marker = world.db.query(MembershipPriceOverride).filter_by(membership_id=m.id, reason="left_group").one()
@@ -382,3 +382,32 @@ def test_the_tabs_debt_due_soon_paid_and_the_summary_invariants(world, fixed_tod
     assert sum(i["debt"] for i in pages["debt"]["items"]) == summary["debt_total"]
     assert summary["students_with_advance"] == 1 and summary["advance_total"] == sum(i["advance"] for i in c.get(f"{API}/org/payments/status", params={"limit": 100}).json()["items"])
     assert {"free", "price_missing"} <= set(summary)
+
+
+# ---- pauses at leaving, the row flag, the cached summary ---------------------------------------------------------------------------------------------
+
+
+def test_leaving_cuts_the_pause_that_holds_the_day_and_cancels_the_later_ones(world, fixed_today):
+    m = money_world(world, paid=0)
+    c = owner(world)
+    for first, last in (("2026-10-19", "2026-10-25"), ("2026-10-27", "2026-10-30")):
+        assert c.post(f"{API}/org/memberships/{m.id}/pauses", json={"first_day": first, "last_day": last}).status_code == 201
+    leave(world, world.group, world.students[0])                               # today 21.10
+    world.db.expire_all()
+    rows = {(p.first_day, p.voided_at is not None): p for p in world.db.query(MembershipPause).filter_by(membership_id=m.id)}
+    assert rows[(D(2026, 10, 19), False)].last_day == D(2026, 10, 21)             # cut to the day of leaving
+    assert (D(2026, 10, 27), True) in rows and rows[(D(2026, 10, 27), True)].void_reason == "ученик ушёл из группы"
+
+
+def test_the_row_says_that_an_individual_price_ends_on_leaving_and_the_summary_cache_sees_pauses_and_openings(world, fixed_today, monkeypatch):
+    from src.auth import payments_service as svc
+
+    m = money_world(world, paid=0)
+    give_price(world.db, m, 400_000, reason="скидка", valid_from=D(2026, 9, 1))
+    assert owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]["price_ends_on_leave"] is True
+    monkeypatch.setattr(svc, "SUMMARY_TTL_SECONDS", 60)
+    svc.invalidate_summary()
+    first = owner(world).get(f"{API}/org/payments/summary").json()
+    assert first["paused"] == 0
+    assert owner(world).post(f"{API}/org/memberships/{m.id}/pauses", json={"first_day": "2026-10-21", "last_day": "2026-10-25"}).status_code == 201
+    assert owner(world).get(f"{API}/org/payments/summary").json()["paused"] == 1               # the write dropped the cache

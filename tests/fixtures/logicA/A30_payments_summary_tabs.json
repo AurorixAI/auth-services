@@ -1,0 +1,30 @@
+{
+  "as_of": "2026-10-21",
+  "due": 2,
+  "ends_today": 0,
+  "expired": 2,
+  "expiring": 1,
+  "none": 0,
+  "active": 5,
+  "free": 1,
+  "tracked_total": 9,
+  "period_mode": "calendar",
+  "lessons_per_payment": 12,
+  "students_due": 2,
+  "students_expired": 2,
+  "debt_total": 1063000,
+  "advance_total": 200000,
+  "memberships_with_debt": 3,
+  "students_with_debt": 3,
+  "accounting_start_date": "2026-10-01",
+  "paused": 1,
+  "buckets": {
+    "debt": 3,
+    "expiring": 1,
+    "active": 4,
+    "paused": 1
+  },
+  "price_missing": 1,
+  "students_with_advance": 1,
+  "debtors": 3
+}

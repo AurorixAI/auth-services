@@ -199,7 +199,9 @@ def test_free_and_none_statuses(world):
     assert fee.json()["row"]["price"]["amount"] == 0 and fee.json()["row"]["price"]["source"] == "override"
     s = summary(world)
     assert (s["free"], s["active"], s["none"]) == (1, 1, 2)
-    assert status_page(world, bucket="active")["items"][0]["status"] == "free"
+    assert status_page(world, bucket="active")["items"] == []                         # LOGIC-A: a free student is on no tab ...
+    free = [r for r in status_page(world)["items"] if r["status"] == "free"]
+    assert len(free) == 1 and free[0]["bucket"] is None and s["price_missing"] >= 0   # ... and is counted apart (``free``)
 
 
 
@@ -310,16 +312,20 @@ def test_summary_equals_the_lists_and_sorting(world):
     assert (s["due"], s["ends_today"], s["expired"], s["expiring"], s["none"], s["active"], s["free"]) == (3, 1, 2, 2, 3, 2, 1)
     assert s["due"] == s["ends_today"] + s["expired"]
     assert s["tracked_total"] == s["due"] + s["expiring"] + s["none"] + s["active"]
-    for bucket in ("due", "expiring", "none", "active", "all"):
+    # LOGIC-A (owner, 21.10): the tabs are debt / expiring / active / paused; the legacy counters above keep their meaning for one release
+    for bucket in ("debt", "expiring", "active", "paused", "all"):
         page = status_page(world, bucket=bucket)
-        assert page["total"] == (s["tracked_total"] if bucket == "all" else s[bucket]), bucket
+        assert page["total"] == (s["tracked_total"] if bucket == "all" else s["buckets"][bucket]), bucket
         assert len(page["items"]) == page["total"] and page["as_of"] == s["as_of"]
-    due = [(r["student_name"].split()[1], r["status"]) for r in status_page(world, bucket="due")["items"]]
-    assert due == [("Бета", "expired"), ("Альфа", "expired"), ("Гамма", "ends_today")]  # most overdue first
-    expiring = [r["student_name"].split()[1] for r in status_page(world, bucket="expiring")["items"]]
-    assert expiring == ["Дельта", "Эпсилон"]                                        # fewest days left first
-    names = [r["student_name"] for r in status_page(world, bucket="none")["items"]]
+    debtors = status_page(world, bucket="debt")["items"]
+    assert [r["debt"] for r in debtors] == sorted((r["debt"] for r in debtors), reverse=True)                 # biggest debt first
+    assert s["buckets"]["debt"] == s["memberships_with_debt"] and sum(r["debt"] for r in debtors) == s["debt_total"]
+    assert all(r["bucket"] == "debt" and r["reason"] for r in debtors)
+    left = [r["days_left"] for r in status_page(world, bucket="expiring")["items"]]
+    assert left == sorted(left, key=lambda d: (d is None, d))                                                  # fewest days left first
+    names = [r["student_name"] for r in status_page(world, bucket="active")["items"]]
     assert names == sorted(names, key=str.lower)
+    assert status_page(world, bucket="due")["total"] == s["buckets"]["debt"]                                  # the legacy name of the debtors
 
 
 def test_filters_search_and_paging_have_exact_totals(world):
