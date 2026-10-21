@@ -204,3 +204,20 @@ def test_m4_group_price_locks_the_memberships_in_id_order_before_the_what_if(wor
     lock = next(i for i, q in enumerate(statements) if "FROM student_groups" in q and "ORDER BY student_groups.id FOR NO KEY UPDATE" in q)
     ledger = next(i for i, q in enumerate(statements) if q.startswith("SELECT student_payments."))
     assert lock < ledger, "the locks come before the ledger is read for the what-if"
+
+
+# ---- m5: the card of a student shows a closed membership that still owes (an opening debt alone) ------------------------------------------------
+
+
+from tests.test_logicA_opening_pause_pg import centre, enrolled, put as put_opening  # noqa: E402,F401
+
+
+def test_m5_the_card_keeps_a_closed_membership_with_only_an_opening_debt(world, fixed_today):
+    centre(world)
+    debtor = world.students[0]
+    enrolled(world, D(2026, 10, 1), debtor)
+    m = membership(world, debtor)
+    put_opening(world, m, {"debt_amount": 250_000, "debt_on": "2026-09-30"})
+    assert owner(world).post(f"{API}/org/groups/{world.group.id}/students/{debtor.id}/leave", json={}).status_code == 200
+    got = owner(world).get(f"{API}/org/students/{debtor.id}/memberships").json()
+    assert [r["membership_id"] for r in got] == [str(m.id)] and got[0]["debt"] >= 250_000      # no payment, no write-off: only the opening debt

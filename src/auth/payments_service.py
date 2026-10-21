@@ -837,7 +837,7 @@ class PaymentService:
         entries = loader.load(student_id=student_id, scope="all")
         # Active memberships, and closed ones only if they carry money (the ``all`` scope keeps those).
         kept = [e for e in entries if e.membership.is_active or e.payments or e.writeoffs or e.refunds or
-                e.transfers_in or e.transfers_out]
+                e.transfers_in or e.transfers_out or e.ledger.debt > 0]      # m5: a closed membership that still owes (an opening debt alone) stays on the card
         kept.sort(
             key=lambda e: (
                 not (str(e.student.group_id or "") == str(e.group.id)),
