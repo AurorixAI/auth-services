@@ -990,7 +990,7 @@ class GroupAttendanceAudit(Base):
     __table_args__ = (
         CheckConstraint(
             "action IN ('started', 'reconciliation_started', 'created', 'updated', 'corrected', 'cancelled', 'reconciliation_cancelled', "
-            "'excuse_reviewed', 'excuse_reset', 'excuse_removed', 'excuse_file_added', 'excuse_file_removed')",
+            "'excuse_reviewed', 'excuse_reset', 'excuse_removed', 'excuse_file_added', 'excuse_file_removed', 'excuse_closed_pause')",
             name="ck_group_attendance_audit_action",
         ),
         Index("idx_group_attendance_audit_attendance", "attendance_id"),
@@ -1043,7 +1043,7 @@ class AttendanceExcuse(Base):
     __table_args__ = (
         UniqueConstraint("attendance_id", "student_id", name="uq_attendance_excuse_student"),
         CheckConstraint(
-            "status IN ('pending', 'confirmed', 'rejected')",
+            "status IN ('pending', 'confirmed', 'rejected', 'not_required')",   # LOGIC-A: closed by a pause
             name="ck_attendance_excuse_status",
         ),
         Index("idx_attendance_excuses_org_status", "org_id", "status"),

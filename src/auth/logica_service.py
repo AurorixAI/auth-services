@@ -432,6 +432,7 @@ class PauseService(_Base):
                 created_by=UUID(str(actor_id)), created_at=_utcnow())
             self.db.add(row)
             self.db.flush()
+            self._close_excuses(membership, row.first_day, row.last_day, actor_id)
             after = self.pay._entry_of(org_id, membership_id, today).ledger
             if not dry_run:
                 self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAUSE_SET, {
@@ -459,6 +460,11 @@ class PauseService(_Base):
         logger.info("pause created id=%s membership=%s actor=%s", row.id, membership_id, actor_id)
         return self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=False, today=today,
                            first=row.first_day, last=row.last_day)
+
+    def _close_excuses(self, membership: StudentGroup, first: date, last: date, actor_id: str) -> int:
+        from .attendance_excuses import AttendanceExcuseService  # lazy: the excuses module pulls in the service
+
+        return AttendanceExcuseService(self.db).close_for_pause(membership.student_id, membership.group_id, first, last, actor_id, _utcnow())
 
     def _locked_pause(self, org_id: str, pause_id: UUID) -> MembershipPause:
         probe = self.db.query(MembershipPause).filter(MembershipPause.id == pause_id, MembershipPause.org_id == org_id).first()
@@ -509,6 +515,7 @@ class PauseService(_Base):
             if body.reason is not None:
                 row.reason = body.reason.strip() or None
             self.db.flush()
+            self._close_excuses(membership, first, last, actor_id)       # newly covered days only change anything; closed ones stay closed
             after = self.pay._entry_of(org_id, row.membership_id, today).ledger
             self.pay._family_check(org_id, [row.membership_id])
             if after.charged > before.charged and bl.F_OUTFLOW_EXCEEDS in after.flags:

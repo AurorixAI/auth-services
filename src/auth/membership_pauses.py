@@ -32,3 +32,18 @@ def not_paused_now():
 def not_paused_at(instant: datetime):
     """The same for the business day of an instant (naive UTC / aware, as ``ps.business_date`` reads it)."""
     return not_paused_on(ps.business_date(instant))
+
+
+def paused_student_ids(db, group_id, student_ids, day: date) -> set:
+    """The students of ``student_ids`` that have a live pause in ``group_id`` covering ``day`` (one query)."""
+    ids = list(student_ids)
+    if not ids:
+        return set()
+    rows = (
+        db.query(StudentGroup.student_id)
+        .join(MembershipPause, MembershipPause.membership_id == StudentGroup.id)
+        .filter(StudentGroup.group_id == group_id, StudentGroup.student_id.in_(ids), MembershipPause.voided_at.is_(None),
+                MembershipPause.first_day <= day, MembershipPause.last_day >= day)
+        .all()
+    )
+    return {str(r[0]) for r in rows}

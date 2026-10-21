@@ -16,6 +16,10 @@ New tables (every one guarded by the inspector - the revision is idempotent):
 ``group_audit.ck_group_audit_action`` accepts ``membership_pause_set`` / ``membership_pause_void`` / ``opening_balance_set`` /
 ``opening_balance_void`` / ``group_lesson_type_set`` / ``student_left_group``.
 
+Excuses (pause): ``attendance_excuses.status`` accepts ``not_required`` («Не требуется: ученик на паузе», set when a pause is created over the
+lesson; the downgrade turns those rows into ``confirmed`` - a confirmed excuse is not counted either) and ``group_attendance_audit.action``
+accepts ``excuse_closed_pause`` (the downgrade deletes those audit rows).
+
 Data: (1) F13 - for every membership that is closed (left / archived) and whose individual price WITH A SUM was in force on its last day a
 marker is written to ``membership_price_overrides``: ``amount NULL`` from the day after (``reason = 'left_group'``, ``created_by NULL``), so
 that a return is priced by the group; memberships that returned since are not touched (money of the past is not changed); (2) the seeds above.
@@ -54,6 +58,13 @@ VOID_ALL_OR_NONE = (
     "(voided_at IS NOT NULL AND voided_by IS NOT NULL AND void_reason IS NOT NULL)"
 )
 LESSON_TYPES = "'group', 'mini_group', 'pair', 'individual'"
+EXCUSE_STATUS_OLD = "status IN ('pending', 'confirmed', 'rejected')"
+EXCUSE_STATUS_NEW = "status IN ('pending', 'confirmed', 'rejected', 'not_required')"
+ATT_AUDIT_OLD = (
+    "action IN ('started', 'reconciliation_started', 'created', 'updated', 'corrected', 'cancelled', 'reconciliation_cancelled', "
+    "'excuse_reviewed', 'excuse_reset', 'excuse_removed', 'excuse_file_added', 'excuse_file_removed')"
+)
+ATT_AUDIT_NEW = ATT_AUDIT_OLD[:-1] + ", 'excuse_closed_pause')"
 TABLES = ("payroll_payouts", "payroll_divisors", "group_lesson_type_history", "membership_opening_balances", "membership_pauses")
 
 
@@ -69,6 +80,11 @@ def _now():
 def _replace_check(expression: str) -> None:
     op.execute(f"ALTER TABLE {GROUP_AUDIT} DROP CONSTRAINT IF EXISTS ck_group_audit_action")
     op.execute(f"ALTER TABLE {GROUP_AUDIT} ADD CONSTRAINT ck_group_audit_action CHECK ({expression})")
+
+
+def _replace_named_check(table: str, name: str, expression: str) -> None:
+    op.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {name}")
+    op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK ({expression})")
 
 
 def upgrade() -> None:
@@ -197,6 +213,8 @@ def upgrade() -> None:
         op.create_index("ix_pp_sheet_live", "payroll_payouts", ["sheet_id"], postgresql_where=sa.text("voided_at IS NULL"))
 
     _replace_check(AUDIT_NEW)
+    _replace_named_check("attendance_excuses", "ck_attendance_excuse_status", EXCUSE_STATUS_NEW)
+    _replace_named_check("group_attendance_audit", "ck_group_attendance_audit_action", ATT_AUDIT_NEW)
 
     # ---- data: seeds
     if seed_types:
@@ -216,38 +234,31 @@ def upgrade() -> None:
                 {"id": uuid4(), "o": org_id, "d": divisor},
             )
 
-    # ---- data: F13 - the individual price of a closed membership ends the day after its last day
-    closed = bind.execute(sa.text(
+    # ---- data: F13 - the individual price of a closed membership ends the day after its last day.  ONE query finds them (the last day of
+    # the last stay in the business time, the exception with a sum in force on it) and ONE batch inserts the markers.
+    found = bind.execute(sa.text(
         """
-        SELECT sg.id,
-               COALESCE((SELECT max(p.left_at) FROM student_group_periods p WHERE p.membership_id = sg.id AND p.left_at IS NOT NULL),
-                        sg.left_at) AS left_at
-          FROM student_groups sg
-         WHERE sg.is_active = false
+        SELECT x.id, x.left_day
+          FROM (
+            SELECT sg.id,
+                   ((COALESCE(max(p.left_at), sg.left_at)) AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tashkent')::date AS left_day
+              FROM student_groups sg
+              LEFT JOIN student_group_periods p ON p.membership_id = sg.id AND p.left_at IS NOT NULL
+             WHERE sg.is_active = false
+             GROUP BY sg.id, sg.left_at
+          ) x
+         WHERE x.left_day IS NOT NULL
+           AND (SELECT o.amount FROM membership_price_overrides o
+                 WHERE o.membership_id = x.id AND o.valid_from <= x.left_day
+                 ORDER BY o.valid_from DESC LIMIT 1) IS NOT NULL
         """
     )).fetchall()
-    for mid, left_at in closed:
-        if left_at is None:
-            continue
-        row = bind.execute(
-            sa.text(
-                "SELECT (CAST(:left_at AS timestamp) AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tashkent')::date AS left_day"
-            ),
-            {"left_at": left_at},
-        ).first()
-        left_day = row[0]
-        in_force = bind.execute(
-            sa.text("SELECT amount FROM membership_price_overrides WHERE membership_id = :m AND valid_from <= :d "
-                    "ORDER BY valid_from DESC LIMIT 1"),
-            {"m": mid, "d": left_day},
-        ).first()
-        if in_force is None or in_force[0] is None:
-            continue
+    if found:
         bind.execute(
             sa.text("INSERT INTO membership_price_overrides (id, membership_id, amount, valid_from, reason, created_by, created_at) "
                     "VALUES (:id, :m, NULL, CAST(:d AS date) + 1, 'left_group', NULL, timezone('utc', now())) "
                     "ON CONFLICT ON CONSTRAINT uq_membership_price_overrides_from DO NOTHING"),
-            {"id": uuid4(), "m": mid, "d": left_day},
+            [{"id": uuid4(), "m": mid, "d": left_day} for mid, left_day in found],
         )
 
 
@@ -261,3 +272,7 @@ def downgrade() -> None:
     op.execute("DELETE FROM membership_price_overrides WHERE reason = 'left_group' AND amount IS NULL")
     op.execute(f"DELETE FROM {GROUP_AUDIT} WHERE action IN ({', '.join(repr(a) for a in NEW_ACTIONS)})")
     _replace_check(AUDIT_OLD)
+    op.execute("UPDATE attendance_excuses SET status = 'confirmed' WHERE status = 'not_required'")
+    op.execute("DELETE FROM group_attendance_audit WHERE action = 'excuse_closed_pause'")
+    _replace_named_check("attendance_excuses", "ck_attendance_excuse_status", EXCUSE_STATUS_OLD)
+    _replace_named_check("group_attendance_audit", "ck_group_attendance_audit_action", ATT_AUDIT_OLD)

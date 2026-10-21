@@ -104,6 +104,7 @@ from .dependencies import (
 
 from sqlalchemy.exc import OperationalError
 
+from .attendance_excuses import ExcusePauseRefused
 from .payments_service import CONCURRENT_EDIT_MESSAGE, PaymentError, is_deadlock
 from src.core.database import get_db
 from src.api.internal_router import has_valid_internal_token, require_internal_service_token
@@ -1604,6 +1605,8 @@ def save_group_attendance(
         return {"ok": True, "saved": True}
     except PermissionError as e:
         raise HTTPException(403, str(e))
+    except ExcusePauseRefused as e:  # LOGIC-A: an excuse on a day of the student's pause
+        raise HTTPException(422, {"code": e.code, "message": str(e)})
     except ValueError as e:
         raise HTTPException(400, str(e))
     except RuntimeError as e:
