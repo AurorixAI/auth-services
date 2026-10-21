@@ -1236,6 +1236,7 @@ def _check_pay2_objects(engine,config,ids):
     assert rep['migrated_in_transaction'] and rep['ok'], rep
     t=rep['orgs'][str(ids['org'])]
     assert t['money_before']==t['money_after']==money_before and t['money_equal'] and t['distribution_ok']
+    assert t['centre']['payments_ok'] and t['centre']['transfers_ok'] and t['centre']['distribution_ok'] and t['centre']['payments_sum']==money_before
     mine={r['membership_id']:r for r in rep['memberships']}
     first=mine[str(ids['membership'])]
     assert (first['old_status'],first['old_paid_until'])==('active','2026-11-04')       # old: the periods said paid until 04.11

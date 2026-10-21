@@ -169,6 +169,35 @@ def new_picture(session: Session, today: date, orgs: List[str]) -> Dict[str, Dic
 # ------------------------------------------------------------------------------------------------ the report
 
 
+def centre_check(session: Session, org_id: str, today: date) -> Dict[str, Any]:
+    """The centre-wide books over EVERY membership with money (left, archived, transferred out too): what was paid equals
+    what the ledgers distributed plus what went back (refunds, transfers out); every membership distributes exactly its net
+    money; transfers out equal transfers in."""
+    from src.auth import ledger_service as ls
+
+    entries = ls.LedgerLoader(session, org_id, today).load(scope="all")
+    paid = distributed_plus_cut = 0
+    out = back = 0
+    bad: List[str] = []
+    for e in entries:
+        l = e.ledger
+        ids = {str(p.id) for p in e.payments if p.amount and p.amount > 0}
+        paid += sum(int(p.amount) for p in e.payments if p.amount and p.amount > 0)
+        net = sum(v for k, v in l.net_money.items() if k in ids)
+        cut = sum(v for k, v in l.refunded_from.items() if k in ids)
+        distributed_plus_cut += net + cut
+        out += l.transferred_out
+        back += l.transferred_in
+        distributed = sum(a.amount for a in l.allocations)
+        if distributed != sum(l.net_money.values()) or not l.reconciles:
+            bad.append(str(e.membership.id)[:8])
+    return {
+        "memberships": len(entries), "payments_sum": paid, "net_plus_returned": distributed_plus_cut,
+        "payments_ok": paid == distributed_plus_cut, "transfer_out": out, "transfer_in": back,
+        "transfers_ok": out == back, "bad_memberships": bad[:20], "distribution_ok": not bad,
+    }
+
+
 def build_report(connection, *, today: date, org: Optional[str] = None, apply_migration: bool = True) -> Dict[str, Any]:
     """Everything the script prints, as data.  ``connection`` is inside a transaction the CALLER rolls back."""
     from alembic.migration import MigrationContext
@@ -186,7 +215,8 @@ def build_report(connection, *, today: date, org: Optional[str] = None, apply_mi
             module.upgrade()
         migrated_here = True
     session.expire_all()
-    orgs = sorted({v["org_id"] for v in before.values()})
+    with_money = {str(r[0]) for r in connection.execute(text("SELECT DISTINCT org_id FROM student_payments WHERE voided_at IS NULL"))}
+    orgs = sorted({v["org_id"] for v in before.values()} | (with_money if not org else {org} & with_money))
     after = new_picture(session, today, orgs)
     totals = {}
     for org_id in orgs:
@@ -217,6 +247,7 @@ def build_report(connection, *, today: date, org: Optional[str] = None, apply_mi
             "with_advance": sum(1 for v in mine_after.values() if v["advance"] > 0),
             "distribution_ok": all(
                 v["distributed"] == v["net_money"] and v["reconciles"] for v in mine_after.values()),
+            "centre": centre_check(session, org_id, today),
             "flags": dict(Counter(f for v in mine_after.values() for f in v["flags"])),
         }
     rows = []
@@ -232,7 +263,8 @@ def build_report(connection, *, today: date, org: Optional[str] = None, apply_mi
     return {
         "as_of": today.isoformat(), "migrated_in_transaction": migrated_here, "version_before": version,
         "orgs": totals, "memberships": rows,
-        "ok": all(t["money_equal"] and t["distribution_ok"] for t in totals.values()),
+        "ok": all(t["money_equal"] and t["distribution_ok"] and t["centre"]["payments_ok"] and t["centre"]["transfers_ok"]
+                  and t["centre"]["distribution_ok"] for t in totals.values()),
     }
 
 
@@ -246,6 +278,12 @@ def render(report: Dict[str, Any], limit: int) -> str:
                    f"{'РАВНЫ' if t['money_equal'] else 'НЕ РАВНЫ !!!'}")
         out.append(f"  распределение: оплачено у отслеживаемых {money(t['tracked_net'])} из {money(t['tracked_money'])} "
                    f"(остальное — у ушедших / архивных / перенесено) · сходится: {'да' if t['distribution_ok'] else 'НЕТ !!!'}")
+        c = t["centre"]
+        out.append(f"  по всему центру ({c['memberships']} членств, с ушедшими и архивными): оплачено {money(c['payments_sum'])} · "
+                   f"распределено + возвращено {money(c['net_plus_returned'])} · {'сходится' if c['payments_ok'] else 'НЕ СХОДИТСЯ !!!'}; "
+                   f"переводы: ушло {money(c['transfer_out'])} / пришло {money(c['transfer_in'])} · "
+                   f"{'сходится' if c['transfers_ok'] else 'НЕ СХОДИТСЯ !!!'}; распределение по членствам: "
+                   f"{'ок' if c['distribution_ok'] else 'ОШИБКА ' + ', '.join(c['bad_memberships'])}")
         out.append(f"  статусы до:    {dict(sorted(t['status_before'].items()))}")
         out.append(f"  статусы после: {dict(sorted(t['status_after'].items()))}")
         out.append(f"  долг: {money(t['debt_total'])} у {t['with_debt']} членств · аванс: {money(t['advance_total'])} у {t['with_advance']}"
