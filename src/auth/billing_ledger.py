@@ -1140,7 +1140,9 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     open_debt = next((s for s in segments if s.kind == "opening" and s.unpaid > 0), None)
     if open_debt is not None:
         owed_since = open_debt.period_start
-    status = _status(inp, mode, has_event, open_now, through, lessons_view, price_today, paused_until, owed_since, pause_days)
+    # m2: a student whose price is 0 stays FREE whatever pauses / openings he has - only money that was really paid (or moved in) changes that
+    status = _status(inp, mode, has_event, open_now, through, lessons_view, price_today, paused_until, owed_since, pause_days,
+                     has_money=bool(credits))
 
     # ---- statement
     events: List[StatementEvent] = []
@@ -1188,9 +1190,9 @@ def overdue_days(through: date, today: date, pauses: Sequence[Tuple[date, date]]
 
 def _status(inp: LedgerInput, mode: str, has_event: bool, open_now: bool, through: Optional[date],
             lessons: Optional[LessonsView], price_today: Optional[int], paused_until: Optional[date] = None,
-            owed_since: Optional[date] = None, pauses: Sequence[Tuple[date, date]] = ()) -> ps.StatusResult:
+            owed_since: Optional[date] = None, pauses: Sequence[Tuple[date, date]] = (), has_money: Optional[bool] = None) -> ps.StatusResult:
     today = inp.today
-    if price_today == 0 and (not has_event or mode == LESSONS):
+    if price_today == 0 and (not (has_event if has_money is None else has_money) or mode == LESSONS):
         return ps.StatusResult(status=ps.FREE, period_mode=mode)
     if not has_event or not open_now:
         return ps.StatusResult(status=ps.NONE, period_mode=mode)
