@@ -1676,17 +1676,23 @@ class PaymentService:
         skip = {mid: {d for p in e.pauses for d in ls._days(p.first_day, p.last_day)} for mid, e in entries.items() if e.pauses}
         self._counted_lesson_dates(org_id, rows, {}, since=first_day, until=last_day, detail_out=detail, exclude_days=skip)
         regimes = loader.settings.regimes
+        by_segment = {mid: {sg.id: sg for sg in e.ledger.segments} for mid, e in entries.items()}
         out: Dict[Tuple[UUID, date, str], LessonCover] = {}
         for membership, _student, _group in rows:
             entry = entries.get(membership.id)
             for day, lesson_id, _attendance in detail.get(membership.id, ()):
                 if not first_day <= day <= last_day:
                     continue
-                regime = bl.regime_at(regimes, day)
                 info = entry.ledger.lesson_cover(day, lesson_id or "") if entry else None
+                seg = by_segment[membership.id].get(info.segment_id) if info is not None and info.segment_id else None
+                if seg is not None:    # M1: the mode / divisor of a lesson are those of the ledger segment that covers it (a deferred change of the regime lets the running period / package finish)
+                    mode, size = (ps.LESSONS, seg.nominal_days) if seg.kind == "package" else (ps.CALENDAR, None)
+                else:
+                    regime = bl.regime_at(regimes, day)
+                    mode, size = regime.mode, (regime.package_size if regime.mode == ps.LESSONS else None)
                 paid = info.paid if info is not None else False
                 out[(membership.id, day, lesson_id)] = LessonCover(
-                    None, regime.mode, regime.package_size if regime.mode == ps.LESSONS else None, paid,
+                    None, mode, size, paid,
                     info.price if info is not None else None, info.source if info is not None else "unpaid",
                     info.segment_id if info is not None else None)
         return out
