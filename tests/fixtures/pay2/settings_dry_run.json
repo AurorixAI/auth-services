@@ -14,6 +14,9 @@
   "dry_run": true,
   "impact": {
     "memberships_with_new_debt": 12,
-    "debt_delta": 5400000
+    "debt_delta": 5400000,
+    "memberships_with_changed_advance": 3,
+    "advance_delta": -1200000,
+    "refundable_delta": -900000
   }
 }

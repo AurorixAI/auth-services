@@ -1065,8 +1065,14 @@ class ReceiptSnapshot(PayModel):
 
 
 class AccountingStartImpact(PayModel):
+    """What moving the start of the accounting does (all centre-wide, today): new debts AND changes of the advance / of what
+    can be refunded (an earlier start charges more, so advances shrink)."""
+
     memberships_with_new_debt: int = 0
     debt_delta: int = 0
+    memberships_with_changed_advance: int = 0
+    advance_delta: int = 0
+    refundable_delta: int = 0
 
 
 class PaymentSettingsChanged(PaymentSettings):

@@ -116,6 +116,7 @@ MAX_PAID_AGO_YEARS = ps.MAX_PAID_AGO_YEARS
 LARGE_OVERPAY_PERIODS = 3  # an advance of more than this many periods asks "are you sure"
 WARN_PAID_AGO_DAYS = ps.WARN_PAID_AGO_DAYS
 ACCOUNTING_START_AHEAD_DAYS = 31
+ACCOUNTING_START_MIN = date(2020, 1, 1)
 
 # a transfer between groups (the warning of the response of ``add_student_to_group``)
 CARRY_CODE = "payment_carried_over"
@@ -427,8 +428,8 @@ class PaymentService:
         changes = patch.model_dump(exclude_none=True)
         today = ps.business_today()
         new_start: Optional[date] = changes.pop("accounting_start_date", None)
-        if new_start is not None and new_start > today + timedelta(days=ACCOUNTING_START_AHEAD_DAYS):
-            raise AccountingStartRange("Начало учёта оплат — не позже, чем через 31 день от сегодня")
+        if new_start is not None:
+            self._check_accounting_start(org_id, new_start, today)
         before = self.get_settings(org_id)
         block = dict(((org.settings or {}).get("payments")) or {})
         impact: Optional[AccountingStartImpact] = None
@@ -466,6 +467,29 @@ class PaymentService:
         )
         return PaymentSettingsChanged(**self.get_settings(org_id).model_dump())
 
+    def _check_accounting_start(self, org_id: str, new_start: date, today: date) -> None:
+        """The start is not before 01.01.2020, not later than today + 31 days, and never later than the earliest live money
+        event of the centre (a payment, a write-off, a refund, a transfer): that money would lose its place in the account."""
+        if new_start < ACCOUNTING_START_MIN:
+            raise AccountingStartRange("Начало учёта оплат — не раньше 01.01.2020")
+        if new_start > today + timedelta(days=ACCOUNTING_START_AHEAD_DAYS):
+            raise AccountingStartRange("Начало учёта оплат — не позже, чем через 31 день от сегодня")
+        firsts = [
+            self.db.query(func.min(StudentPayment.paid_on)).filter(
+                StudentPayment.org_id == org_id, StudentPayment.voided_at.is_(None), StudentPayment.kind == "payment").scalar(),
+            self.db.query(func.min(StudentWriteoff.effective_on)).filter(
+                StudentWriteoff.org_id == org_id, StudentWriteoff.voided_at.is_(None)).scalar(),
+            self.db.query(func.min(StudentRefund.effective_on)).filter(
+                StudentRefund.org_id == org_id, StudentRefund.voided_at.is_(None)).scalar(),
+        ]
+        moved = self.db.query(func.min(MembershipTransfer.at)).filter(
+            MembershipTransfer.org_id == org_id, MembershipTransfer.voided_at.is_(None)).scalar()
+        if moved is not None:
+            firsts.append(ps.business_date(moved))
+        earliest = min((d for d in firsts if d is not None), default=None)
+        if earliest is not None and new_start > earliest:
+            raise AccountingStartRange(f"Есть оплаты до этой даты: {earliest.strftime('%d.%m.%Y')}")
+
     def _accounting_start_impact(self, org_id: str, new_start: date) -> AccountingStartImpact:
         """How many memberships get a NEW debt (and how much debt appears) if the accounting starts on ``new_start``."""
         today = ps.business_today()
@@ -474,11 +498,14 @@ class PaymentService:
         old_loader = ls.LedgerLoader(self.db, org_id, today, current)
         new_loader = ls.LedgerLoader(self.db, org_id, today, moved)
         ids = list(dict.fromkeys(old_loader.select(scope="all") + new_loader.select(scope="all")))
-        old = {r.membership.id: r.ledger.debt for r in old_loader.run(ids)}
-        new = {r.membership.id: r.ledger.debt for r in new_loader.run(ids)}
-        grew = [m for m in new if new[m] > old.get(m, 0)]
+        old = {r.membership.id: r.ledger for r in old_loader.run(ids)}
+        new = {r.membership.id: r.ledger for r in new_loader.run(ids)}
+        grew = [m for m in new if new[m].debt > (old[m].debt if m in old else 0)]
         return AccountingStartImpact(
-            memberships_with_new_debt=len(grew), debt_delta=sum(new.values()) - sum(old.values()))
+            memberships_with_new_debt=len(grew), debt_delta=sum(l.debt for l in new.values()) - sum(l.debt for l in old.values()),
+            memberships_with_changed_advance=len({m for m in new if new[m].advance != (old[m].advance if m in old else 0)}),
+            advance_delta=sum(l.advance for l in new.values()) - sum(l.advance for l in old.values()),
+            refundable_delta=sum(l.refundable for l in new.values()) - sum(l.refundable for l in old.values()))
 
     # -------------------------------------------------------------- loading
 

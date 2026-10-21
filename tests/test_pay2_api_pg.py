@@ -625,3 +625,32 @@ def test_replaying_a_replace_with_the_same_key_is_the_duplicate_answer_not_alrea
     assert again.status_code == 409 and again.json()["detail"]["code"] == "DUPLICATE_PAYMENT"
     assert again.json()["detail"]["payment_id"] == first.json()["payment"]["id"]
     assert world.db.query(StudentPayment).filter_by(membership_id=m.id, voided_at=None).count() == 2   # seeded + the replacement
+
+
+def test_accounting_start_bounds_and_the_earliest_money_event(world, fixed_today):
+    m = e1_world(world)                                       # a payment of 231 000 on 20.09; start 01.09
+    c = owner(world)
+    r = c.put(f"{API}/org/settings/payments", json={"accounting_start_date": "2019-12-31"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "ACCOUNTING_START_RANGE" and "2020" in r.json()["detail"]["message"]
+    r = c.put(f"{API}/org/settings/payments", json={"accounting_start_date": "2026-10-01"})
+    assert r.status_code == 422 and r.json()["detail"]["message"] == "Есть оплаты до этой даты: 20.09.2026"
+    r = c.put(f"{API}/org/settings/payments", params={"dry_run": "true"}, json={"accounting_start_date": "2026-09-21"})
+    assert r.status_code == 422                                # the dry run says the same
+    # not later than the payment, earlier is fine; a write-off / refund dated earlier counts too
+    assert c.put(f"{API}/org/settings/payments", json={"accounting_start_date": "2026-09-20"}).status_code == 200
+    assert c.post(f"{API}/org/memberships/{m.id}/writeoffs", json={"amount": 1000, "reason": "льгота", "effective_on": "2026-09-19"}).status_code == 201
+    r = c.put(f"{API}/org/settings/payments", json={"accounting_start_date": "2026-09-20"})
+    assert r.status_code == 422 and "19.09.2026" in r.json()["detail"]["message"]
+
+
+def test_the_dry_run_impact_reports_the_advance_too(world, fixed_today):
+    settings_block(world, accounting_start_date="2026-10-01")
+    give_group_price(world.db, world.group, 500_000, valid_from=D(2026, 1, 1))
+    m = membership(world)
+    stay(world, m, D(2026, 8, 15))
+    seed_payment(world, m, 2_000_000, D(2026, 10, 2))
+    r = owner(world).put(f"{API}/org/settings/payments", params={"dry_run": "true"}, json={"accounting_start_date": "2026-08-15"})
+    assert r.status_code == 200, r.text
+    impact = r.json()["impact"]
+    assert impact["advance_delta"] < 0 and impact["refundable_delta"] < 0 and impact["memberships_with_changed_advance"] == 1
+    assert impact["debt_delta"] >= 0

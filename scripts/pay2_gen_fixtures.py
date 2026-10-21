@@ -960,7 +960,8 @@ def report(store):
         expiring_days=3, expiring_lessons=3, excuse_deadline_days=5, excuse_deadline_lessons=2,
         admin_can_manage=True, accounting_start_date=D(2026, 9, 1), updated_by=uid(901),
         updated_at="2026-10-01T08:00:00", dry_run=True,
-        impact={"memberships_with_new_debt": 12, "debt_delta": 5_400_000})
+        impact={"memberships_with_new_debt": 12, "debt_delta": 5_400_000, "memberships_with_changed_advance": 3,
+                "advance_delta": -1_200_000, "refundable_delta": -900_000})
     write("settings_dry_run.json", st, store)
 
     # error bodies the front maps to texts
