@@ -32,7 +32,8 @@ class RateBook:
         for row in rows:
             self._by_key.setdefault((row.teacher_id, row.lesson_type), []).append(row)
         for items in self._by_key.values():
-            items.sort(key=lambda r: (r.valid_from, r.created_at))
+            # equal valid_from: the later created_at wins, then a row a person wrote over a migrated one
+            items.sort(key=lambda r: (r.valid_from, r.created_at, r.created_by is not None))
 
     def at(self, teacher_id: UUID, lesson_type: str, first: date) -> Optional[PayrollRate]:
         """The row in force for the month that starts on ``first``; None - no rate yet."""

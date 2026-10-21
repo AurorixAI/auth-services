@@ -75,7 +75,13 @@ class RatesService:
         user = (
             self.db.query(User)
             .join(OrganizationMember, OrganizationMember.user_id == User.id)
-            .filter(OrganizationMember.org_id == org_id, User.id == teacher_id)
+            .filter(
+                OrganizationMember.org_id == org_id,
+                OrganizationMember.user_id == teacher_id,
+                OrganizationMember.is_active.is_(True),
+                OrganizationMember.org_role.in_(("teacher", "owner", "admin")),  # owners and admins may teach
+                User.is_active.isnot(False),
+            )
             .first()
         )
         if user is None:

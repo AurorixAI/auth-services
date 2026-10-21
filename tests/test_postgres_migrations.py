@@ -1148,6 +1148,9 @@ def _check_ux2_payroll_rates_objects(engine,config,ids):
         (d,'group',date(2026,9,1),Decimal('30'),note,None,org2),
     ])
     assert rates()==expected
+    # created_at is naive UTC like the app's own timestamps: a same-month PUT right after the release always has a later one
+    with engine.connect() as c:
+        assert c.execute(text("SELECT count(*) FROM payroll_rates WHERE abs(extract(epoch FROM (created_at - timezone('utc', now()))))<120")).scalar_one()==len(expected)
     # every saved month keeps its own rate: the lookup of the code (the last row not after the month) gives the percent of each sheet
     def rate_of(teacher,kind,month):
         with engine.connect() as c:

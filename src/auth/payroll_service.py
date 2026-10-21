@@ -636,6 +636,12 @@ class PayrollService:
     def _rate_required(missing: List[Dict[str, Any]]) -> PercentRequired:
         return PercentRequired(RATE_REQUIRED, missing=missing)
 
+    @staticmethod
+    def _has_manual_fee(lines: Optional[List[Dict[str, Any]]]) -> bool:
+        """A line of the sheet carries a manual price (an old sheet): a recalculation would drop it (UX-2), so the sheet
+        is "changed" - the same answer in the overview, the list, the sheet and the diff.  A JSON check, nothing is rendered."""
+        return any(isinstance(line, dict) and line.get("fee_overridden") for line in lines or ())
+
     def _stale_by_rates(self, saved: Dict[str, str], book: payroll_rates.RateBook, teacher_id: UUID, first: date) -> bool:
         """The rate in force for the sheet's month is not the percent the sheet was calculated with."""
         return bool(saved) and bool(payroll_rates.rate_changes(saved, book.percents_at(teacher_id, first)))
@@ -776,6 +782,7 @@ class PayrollService:
                 PayrollSheet.source_fingerprint,
                 PayrollSheet.percent_inputs,
                 PayrollSheet.updated_at,
+                PayrollSheet.lines.contains([{"fee_overridden": True}]).label("manual_fee"),
             ).filter(PayrollSheet.org_id == org_id, PayrollSheet.period_month == first)
         }
         teacher_ids = set(seed.teachers) | set(sheets)
@@ -819,6 +826,7 @@ class PayrollService:
                             revision=sheet.revision,
                             total_amount=sheet.total_amount,
                             stale=sheet.source_fingerprint != fresh
+                            or bool(sheet.manual_fee)
                             or self._stale_by_rates(dict(sheet.percent_inputs or {}), book, tid, first),
                             updated_at=_iso(sheet.updated_at),
                         )
@@ -1085,7 +1093,9 @@ class PayrollService:
         Without ``recalculate`` the new revision is computed from the SAVED lines (fee, percent,
         "include unpaid"): attendance and payments are not read again, the data fingerprint stays.
         With it the month is read again with the rate of the sheet's month; the owner's ticks are kept, a manual
-        price of an old sheet is not (the price comes from «Цены групп» / the card of the student).
+        price of an old sheet is not (the price comes from «Цены групп» / the card of the student).  Known limit
+        (accepted): ``expected_fingerprint`` guards the DATA only - a rate changed between the diff and this call is
+        not caught, the recalculation takes the rate in force now and the owner sees the new numbers in the answer.
         """
         if not (body.line_overrides or body.recalculate or (body.note or "").strip()):
             raise PayrollInvalid("Нечего менять", code="NOTHING_TO_CHANGE")
@@ -1176,7 +1186,7 @@ class PayrollService:
         seed = self._collect(org_id, first, last, teacher_ids={sheet.teacher_id})
         teacher = seed.teachers.get(sheet.teacher_id)
         fresh = teacher.fingerprint if teacher else fingerprint_of(first, sheet.teacher_id, [])
-        if fresh != sheet.source_fingerprint:
+        if fresh != sheet.source_fingerprint or self._has_manual_fee(sheet.lines):
             return True
         book = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])
         return self._stale_by_rates(dict(sheet.percent_inputs or {}), book, sheet.teacher_id, first)
@@ -1194,6 +1204,7 @@ class PayrollService:
             PayrollSheet.total_amount,
             PayrollSheet.source_fingerprint,
             PayrollSheet.percent_inputs,
+            PayrollSheet.lines.contains([{"fee_overridden": True}]).label("manual_fee"),
             PayrollSheet.updated_by,
             PayrollSheet.updated_at,
         ).filter(PayrollSheet.org_id == org_id)
@@ -1221,6 +1232,7 @@ class PayrollService:
                 total_amount=r.total_amount,
                 stale=(
                     fresh.get(r.teacher_id, fingerprint_of(first, r.teacher_id, [])) != r.source_fingerprint
+                    or bool(r.manual_fee)
                     or self._stale_by_rates(dict(r.percent_inputs or {}), book, r.teacher_id, first)
                     if first is not None
                     else None
@@ -1279,13 +1291,15 @@ class PayrollService:
         changes = self._carried_changes(sheet)
         fresh = self._render(teacher, percents, changes, seed.divisor)
         rows = engine.diff_lines(saved, fresh)
-        dropped = self._note_dropped_fees(rows, saved, fresh)
+        self._note_dropped_fees(rows, saved, fresh)
         rate_rows = payroll_rates.rate_changes(dict(sheet.percent_inputs or {}), percents)
         saved_total, fresh_total = engine.sheet_total(saved), engine.sheet_total(fresh)
         return SheetDiff(
             sheet_id=str(sheet.id),
             revision=sheet.revision,
-            stale=teacher.fingerprint != sheet.source_fingerprint or bool(rate_rows) or dropped,
+            stale=teacher.fingerprint != sheet.source_fingerprint
+            or bool(rate_rows)
+            or self._has_manual_fee(saved),
             source_fingerprint=teacher.fingerprint,
             saved_total=saved_total,
             fresh_total=fresh_total,

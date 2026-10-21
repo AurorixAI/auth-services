@@ -78,6 +78,13 @@ def test_a_correction_of_the_same_month_is_a_newer_row_and_wins(world):
     set_rate(world, t, "group", "55", valid_from=date(2026, 9, 1))
     book = load_book(world.db, world.org.id, [t.id])
     assert str(book.at(t.id, "group", date(2026, 9, 1)).percent) == "55.00"
+    # the very same created_at: a row a person wrote wins over a migrated one (created_by NULL), whatever the order
+    stamp = datetime(2026, 10, 1, 12, 0, 0)
+    for by, percent in ((None, "33"), (world.owner.id, "44")):
+        world.db.add(PayrollRate(org_id=world.org.id, teacher_id=world.teacher2.id, lesson_type="pair", percent=Decimal(percent),
+                                 valid_from=date(2026, 9, 1), created_by=by, created_at=stamp))
+    world.db.commit()
+    assert str(load_book(world.db, world.org.id, [world.teacher2.id]).at(world.teacher2.id, "pair", date(2026, 9, 1)).percent) == "44.00"
     assert world.db.query(PayrollRate).filter_by(teacher_id=t.id).count() == 2                # nothing was overwritten
     # two future rows for the same month: the newer one is "next"
     set_rate(world, t, "group", "30", valid_from=date(2027, 1, 1))
@@ -395,7 +402,12 @@ def test_a_manual_price_of_an_old_sheet_is_not_carried_to_a_recalculation_and_th
     world.db.commit()
     old = owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}").json()
     assert line_of(old, s0)["fee_overridden"] is True and line_of(old, s0)["monthly_fee"] == 300_000     # an old sheet reads as it was
+    # the data did not move, but a recalculation would drop the manual price: "changed" EVERYWHERE, the same answer
+    assert old["stale"] is True
+    assert teacher_row(overview(world, m), world.teacher)["sheet"]["stale"] is True
+    assert owner(world).get(f"{API}/org/payroll/sheets", params={"month": m.label}).json()[0]["stale"] is True
     diff = owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}/diff").json()
+    assert diff["stale"] is True
     (changed,) = diff["lines"]
     assert changed["student_name"] == "Каримова Алия" and changed["status"] == "changed"
     assert "оплата" in changed["changes"] and "цена из «Цен групп» вместо ручной 300 000 сум" in changed["changes"]
@@ -406,8 +418,36 @@ def test_a_manual_price_of_an_old_sheet_is_not_carried_to_a_recalculation_and_th
     assert line_of(fresh, s0)["fee_overridden"] is False and line_of(fresh, s0)["monthly_fee"] == FEE
     assert line_of(fresh, s0)["amount"] == FEE * 50 * 6 // 1200 and fresh["stale"] is False
     assert owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}/diff").json()["lines"] == []
+    assert owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}").json()["stale"] is False
+    assert teacher_row(overview(world, m), world.teacher)["sheet"]["stale"] is False
+    assert owner(world).get(f"{API}/org/payroll/sheets", params={"month": m.label}).json()[0]["stale"] is False
+    assert owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}/diff").json()["stale"] is False
     # the history still shows what was: the revision before kept the manual price
     world.db.expire_all()
     first = world.db.query(PayrollSheetRevision).filter_by(sheet_id=sheet["id"], revision=1).one()
     assert next(x for x in first.lines if x["student_id"] == str(s0.id))["monthly_fee"] == FEE        # revision 1 was saved before the edit
     assert owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}").json()["revision"] == 2
+
+
+def test_only_active_members_who_may_teach_have_rates(world):
+    from src.models.auth import OrganizationMember
+
+    body = {"valid_from": "2026-09", "percents": {"group": "50"}}
+    c = owner(world)
+    # an owner and an administrator may teach: they get rates
+    for who in (world.owner, world.admin):
+        assert c.put(f"{API}/org/payroll/rates/{who.id}", json=body).status_code == 200
+        assert c.get(f"{API}/org/payroll/rates/{who.id}/history").status_code == 200
+    # a deactivated member, a user who is not a member of the centre, and an unknown id: 404 «Преподаватель не найден»
+    gone = make_user(world.db, "teacher", "Уволенный")
+    make_member(world.db, world.org, gone, "teacher")
+    outsider = make_user(world.db, "teacher", "Посторонний")
+    world.db.commit()
+    world.db.query(OrganizationMember).filter_by(org_id=world.org.id, user_id=gone.id).update({"is_active": False})
+    world.db.commit()
+    for uid in (gone.id, outsider.id, uuid4()):
+        r = c.put(f"{API}/org/payroll/rates/{uid}", json=body)
+        assert r.status_code == 404 and r.json()["detail"] == "Преподаватель не найден", uid
+        assert c.get(f"{API}/org/payroll/rates/{uid}/history").status_code == 404
+    assert world.db.query(PayrollRate).filter(PayrollRate.teacher_id.in_([gone.id, outsider.id])).count() == 0
+    assert str(gone.id) not in {i["teacher_id"] for i in rates_of(world, "2026-09")["items"]}

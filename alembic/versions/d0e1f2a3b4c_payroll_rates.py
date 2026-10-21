@@ -67,7 +67,7 @@ def upgrade() -> None:
         sa.Column("valid_from", sa.Date(), nullable=False),
         sa.Column("note", sa.String(300), nullable=True),
         sa.Column("created_by", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("timezone('utc', now())")),
         sa.CheckConstraint("lesson_type IN ('group', 'mini_group', 'pair', 'individual')", name="ck_payroll_rates_lesson_type"),
         sa.CheckConstraint("percent >= 0 AND percent <= 100", name="ck_payroll_rates_percent"),
         sa.CheckConstraint("EXTRACT(DAY FROM valid_from) = 1", name="ck_payroll_rates_first_day"),
@@ -97,7 +97,7 @@ def upgrade() -> None:
         bind.execute(
             sa.text(
                 "INSERT INTO payroll_rates (id, org_id, teacher_id, lesson_type, percent, valid_from, note, created_by, created_at) "
-                "VALUES (:id, :o, :t, :k, :p, :v, :n, NULL, now())"
+                "VALUES (:id, :o, :t, :k, :p, :v, :n, NULL, timezone('utc', now()))"
             ),
             rows,
         )
