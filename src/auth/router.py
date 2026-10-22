@@ -783,6 +783,7 @@ def list_students(
     exclude_status: Optional[str] = Query(None),
     has_primary_group: Optional[bool] = Query(None),
     search: Optional[str] = None,
+    teacher_id: Optional[UUID] = Query(None, description="Ученики активных групп этого учителя (без повторов)"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     include_meta: bool = Query(False),
@@ -808,6 +809,7 @@ def list_students(
         has_primary_group=has_primary_group,
         actor_id=user["user_id"],
         is_org_admin=is_org_admin(user),
+        teacher_id=str(teacher_id) if teacher_id else None,
     )
     if include_meta:
         return {"items": items, "total": total, "limit": limit, "offset": offset}

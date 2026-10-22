@@ -112,3 +112,51 @@ def test_the_receipt_carries_the_ids_to_link_onward(world, fixed_today):
     # a foreign centre never reads it
     foreign = make_client(world, user=world.foreign_admin, org="other", org_role="owner")
     assert foreign.get(f"{API}/org/payments/{p['payment']['id']}/receipt").status_code in (403, 404)
+
+
+# ---- the teacher filter of the students list ----------------------------------------------------------------------------------------------------
+
+
+def test_students_list_teacher_filter_distinct_paginated_org_scoped(world):
+    from src.models.auth import Group, Student, StudentGroup
+    from tests.pg_world import make_group, make_student
+
+    teacher2_group = make_group(world.db, world.org, world.teacher2, "Второго учителя")
+    other = make_student(world.db, world.org, teacher2_group, "Чужой", "Ученик", "T-9")
+    # a student of BOTH groups of teacher 1 (distinct), one in an archived group of teacher 1 (not counted), one who left the group
+    second_t1 = make_group(world.db, world.org, world.teacher, "Вторая группа учителя")
+    world.db.add(StudentGroup(student_id=world.students[0].id, group_id=second_t1.id, is_active=True))
+    arch = make_group(world.db, world.org, world.teacher, "Архивная")
+    arch.status = "archived"
+    lonely = make_student(world.db, world.org, arch, "Архивный", "Ученик", "T-10")
+    world.db.query(StudentGroup).filter_by(student_id=world.students[2].id, group_id=world.group.id).update({"is_active": False})
+    world.db.commit()
+    c = owner(world)
+
+    def ids(**params):
+        r = c.get(f"{API}/org/students", params={"teacher_id": str(world.teacher.id), "include_meta": True, **params})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    out = ids()
+    got = [s["id"] for s in out["items"]]
+    assert set(got) == {str(world.students[0].id), str(world.students[1].id)} and len(got) == len(set(got)) and out["total"] == 2
+    assert str(other.id) not in got and str(lonely.id) not in got and str(world.students[2].id) not in got
+    # paginated: the total stays, the pages split it
+    p1, p2 = ids(limit=1, offset=0), ids(limit=1, offset=1)
+    assert p1["total"] == p2["total"] == 2 and len(p1["items"]) == len(p2["items"]) == 1 and p1["items"][0]["id"] != p2["items"][0]["id"]
+    # the other teacher; a teacher with no group; a made-up / malformed id
+    t2 = c.get(f"{API}/org/students", params={"teacher_id": str(world.teacher2.id)}).json()
+    assert [s["id"] for s in t2] == [str(other.id)]
+    assert c.get(f"{API}/org/students", params={"teacher_id": str(world.admin.id)}).json() == []
+    assert c.get(f"{API}/org/students", params={"teacher_id": "nope"}).status_code == 422
+    # combined with another filter
+    assert [s["id"] for s in c.get(f"{API}/org/students", params={"teacher_id": str(world.teacher.id), "group_id": str(second_t1.id)}).json()] == [str(world.students[0].id)]
+    # a foreign teacher's id (another centre) shows nothing of that centre to us, and our teacher shows nothing to them
+    foreign = make_client(world, user=world.foreign_admin, org="other", org_role="admin")
+    assert foreign.get(f"{API}/org/students", params={"teacher_id": str(world.teacher.id)}).json() == []
+    assert c.get(f"{API}/org/students", params={"teacher_id": str(world.foreign_admin.id)}).json() == []
+    # a teacher sees only his own students whatever he asks for
+    me = make_client(world, user=world.teacher)
+    mine = me.get(f"{API}/org/students", params={"teacher_id": str(world.teacher2.id)}).json()
+    assert mine == []

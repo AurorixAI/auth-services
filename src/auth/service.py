@@ -1256,6 +1256,7 @@ class AuthService:
         *,
         actor_id: Optional[str],
         is_org_admin: bool,
+        teacher_id: Optional[str] = None,
     ):
         """Filtered student query, or ``None`` when the actor can see nobody."""
         if status == "no_group":
@@ -1300,6 +1301,21 @@ class AuthService:
                 Student.id.in_(
                     self.db.query(StudentGroup.student_id).filter(
                         StudentGroup.group_id == group_id,
+                        StudentGroup.is_active.is_(True),
+                        student_not_archived(),
+                    )
+                )
+            )
+        if teacher_id:
+            # IA fix pack: the students of the teacher's ACTIVE groups (distinct: an IN over memberships), this organisation only
+            query = query.filter(
+                Student.id.in_(
+                    self.db.query(StudentGroup.student_id)
+                    .join(Group, Group.id == StudentGroup.group_id)
+                    .filter(
+                        Group.org_id == org_id,
+                        Group.teacher_id == teacher_id,
+                        Group.status == "active",
                         StudentGroup.is_active.is_(True),
                         student_not_archived(),
                     )
@@ -1391,6 +1407,7 @@ class AuthService:
         *,
         actor_id: Optional[str],
         is_org_admin: bool,
+        teacher_id: Optional[str] = None,
     ) -> tuple[list[StudentResponse], int]:
         """One page of students plus the exact total of the filtered set."""
         query = self._students_query(
@@ -1404,6 +1421,7 @@ class AuthService:
             has_primary_group=has_primary_group,
             actor_id=actor_id,
             is_org_admin=is_org_admin,
+            teacher_id=teacher_id,
         )
         if query is None:
             return [], 0
