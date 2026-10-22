@@ -1,0 +1,13 @@
+{
+  "models": {
+    "O01_list_pending": "OpeningsList",
+    "O02_list_include_left": "OpeningsList",
+    "O03_summary_pending": "OpeningsSummary",
+    "O04_preview_ok": "OpeningBatchPreview",
+    "O05_preview_errors_and_reason": "OpeningBatchPreview",
+    "O06_preview_lessons": "OpeningBatchPreview",
+    "O07_applied": "OpeningBatchApplied",
+    "O08_applied_replayed": "OpeningBatchApplied",
+    "O09_import_preview": "OpeningsImportPreview"
+  }
+}

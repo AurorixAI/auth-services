@@ -1,0 +1,11 @@
+{
+  "accounting_start": "2026-11-01",
+  "state": "pending",
+  "totals": {
+    "left_available": 1,
+    "memberships": 9,
+    "missing": 6,
+    "shown": 0,
+    "with_opening": 2
+  }
+}

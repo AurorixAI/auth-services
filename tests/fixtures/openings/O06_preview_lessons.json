@@ -1,0 +1,74 @@
+{
+  "accounting_start": "2026-11-01",
+  "digest": "f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3",
+  "impact": {
+    "advance_delta": 0,
+    "debt_delta": 0,
+    "debt_total_after": 0,
+    "debt_total_before": 0,
+    "debtors_after": 0,
+    "debtors_before": 0,
+    "indirect_changed": 0,
+    "memberships_changed": 1,
+    "memberships_with_changed_advance": 0,
+    "memberships_with_new_debt": 0,
+    "refundable_delta": 0
+  },
+  "items": [
+    {
+      "after": {
+        "advance": 0,
+        "debt": 0,
+        "lessons_left": 8,
+        "opening": {
+          "debt_amount": null,
+          "debt_on": null,
+          "paid_until": "2026-11-14"
+        },
+        "paid_until": "2026-11-14",
+        "status": "active"
+      },
+      "before": {
+        "advance": 0,
+        "debt": 0,
+        "lessons_left": null,
+        "opening": null,
+        "paid_until": null,
+        "status": "none"
+      },
+      "changed": true,
+      "code": null,
+      "group_name": "Физика 10Б",
+      "has_money_records": false,
+      "kind": "paid_until",
+      "lessons": {
+        "lessons_left": 8,
+        "paid_until": "2026-11-14",
+        "text": "осталось 8 уроков → оплачено до 14.11"
+      },
+      "membership_id": "00000000-0000-4000-8000-000000000106",
+      "message": null,
+      "needs_reason": false,
+      "status": "ok",
+      "student_name": "Ахмедов Руслан",
+      "target": {
+        "debt_amount": null,
+        "debt_on": null,
+        "paid_until": "2026-11-14"
+      },
+      "warnings": []
+    }
+  ],
+  "needs_reason": [],
+  "ok": true,
+  "summary": {
+    "changed": 1,
+    "cleared": 0,
+    "debt": 0,
+    "debt_total_added": 0,
+    "errors": 0,
+    "items": 1,
+    "paid_until": 1,
+    "unchanged": 0
+  }
+}

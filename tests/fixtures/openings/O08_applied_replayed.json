@@ -1,0 +1,29 @@
+{
+  "batch_id": "00000000-0000-4000-8000-0000000004b1",
+  "changed": 2,
+  "impact": {
+    "advance_delta": 0,
+    "debt_delta": 550000,
+    "debt_total_after": 550000,
+    "debt_total_before": 0,
+    "debtors_after": 1,
+    "debtors_before": 0,
+    "indirect_changed": 0,
+    "memberships_changed": 2,
+    "memberships_with_changed_advance": 0,
+    "memberships_with_new_debt": 1,
+    "refundable_delta": 0
+  },
+  "replayed": true,
+  "state": "pending",
+  "summary": {
+    "changed": 2,
+    "cleared": 0,
+    "debt": 1,
+    "debt_total_added": 550000,
+    "errors": 0,
+    "items": 3,
+    "paid_until": 1,
+    "unchanged": 1
+  }
+}

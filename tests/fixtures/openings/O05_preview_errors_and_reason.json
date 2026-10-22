@@ -1,0 +1,98 @@
+{
+  "accounting_start": "2026-11-01",
+  "digest": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+  "impact": {
+    "advance_delta": 0,
+    "debt_delta": 0,
+    "debt_total_after": 0,
+    "debt_total_before": 0,
+    "debtors_after": 0,
+    "debtors_before": 0,
+    "indirect_changed": 0,
+    "memberships_changed": 1,
+    "memberships_with_changed_advance": 0,
+    "memberships_with_new_debt": 0,
+    "refundable_delta": 0
+  },
+  "items": [
+    {
+      "after": null,
+      "before": null,
+      "changed": false,
+      "code": "OPENING_RANGE",
+      "group_name": "Математика 9А",
+      "has_money_records": true,
+      "kind": "error",
+      "lessons": null,
+      "membership_id": "00000000-0000-4000-8000-000000000104",
+      "message": "Оплачено до — не раньше 31.10.2026: за более ранние дни внесите как долг",
+      "needs_reason": false,
+      "status": "error",
+      "student_name": "Сидоров Тимур",
+      "target": null,
+      "warnings": []
+    },
+    {
+      "after": {
+        "advance": 0,
+        "debt": 0,
+        "lessons_left": null,
+        "opening": {
+          "debt_amount": null,
+          "debt_on": null,
+          "paid_until": "2026-12-15"
+        },
+        "paid_until": "2026-12-15",
+        "status": "active"
+      },
+      "before": {
+        "advance": 0,
+        "debt": 0,
+        "lessons_left": null,
+        "opening": {
+          "debt_amount": null,
+          "debt_on": null,
+          "paid_until": "2026-11-30"
+        },
+        "paid_until": "2026-11-30",
+        "status": "active"
+      },
+      "changed": true,
+      "code": null,
+      "group_name": "Математика 9А",
+      "has_money_records": true,
+      "kind": "paid_until",
+      "lessons": null,
+      "membership_id": "00000000-0000-4000-8000-000000000101",
+      "message": null,
+      "needs_reason": true,
+      "status": "ok",
+      "student_name": "Каримова Алия",
+      "target": {
+        "debt_amount": null,
+        "debt_on": null,
+        "paid_until": "2026-12-15"
+      },
+      "warnings": [
+        {
+          "code": "HAS_MONEY",
+          "message": "У ученика уже есть оплаты: нужна причина"
+        }
+      ]
+    }
+  ],
+  "needs_reason": [
+    "00000000-0000-4000-8000-000000000101"
+  ],
+  "ok": false,
+  "summary": {
+    "changed": 1,
+    "cleared": 0,
+    "debt": 0,
+    "debt_total_added": 0,
+    "errors": 1,
+    "items": 2,
+    "paid_until": 1,
+    "unchanged": 0
+  }
+}

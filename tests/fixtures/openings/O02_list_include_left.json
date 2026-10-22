@@ -1,0 +1,63 @@
+{
+  "accounting_start": "2026-11-01",
+  "as_of": "2026-10-22",
+  "groups": [
+    {
+      "id": "00000000-0000-4000-8000-0000000000a2",
+      "memberships": [
+        {
+          "editable": true,
+          "enrolled_on": "2025-09-01",
+          "floor": "2026-10-31",
+          "group": {
+            "id": "00000000-0000-4000-8000-0000000000a2",
+            "name": "Физика 10Б"
+          },
+          "has_money_records": false,
+          "left_on": "2026-06-30",
+          "membership_id": "00000000-0000-4000-8000-000000000110",
+          "missing": false,
+          "mode": "calendar",
+          "only_debt": true,
+          "opening": {
+            "debt_amount": 300000,
+            "debt_on": "2026-06-30",
+            "paid_until": null
+          },
+          "paused": false,
+          "price": {
+            "amount": 600000,
+            "group_amount": null,
+            "reason": null,
+            "source": "group",
+            "valid_from": "2026-01-01"
+          },
+          "reason_not_editable": null,
+          "status": "left",
+          "student": {
+            "class_level": 9,
+            "display_id": "A-1010",
+            "id": "00000000-0000-4000-8000-000000000210",
+            "name": "Мирзаев Одил"
+          },
+          "version": "00000000-0000-4000-8000-000000000310"
+        }
+      ],
+      "missing": 0,
+      "name": "Физика 10Б",
+      "teacher_name": "Петров П.",
+      "total": 1,
+      "with_opening": 1
+    }
+  ],
+  "paid_until_max": "2027-10-23",
+  "period_mode": "calendar",
+  "state": "pending",
+  "totals": {
+    "left_available": 1,
+    "memberships": 9,
+    "missing": 6,
+    "shown": 1,
+    "with_opening": 2
+  }
+}

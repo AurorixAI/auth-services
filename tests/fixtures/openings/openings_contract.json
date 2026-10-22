@@ -1,0 +1,2341 @@
+{
+  "components": {
+    "schemas": {
+      "Body_import_preview_api_v1_auth_org_opening_balances_import_preview_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_preview_api_v1_auth_org_opening_balances_import_preview_post",
+        "type": "object"
+      },
+      "OpeningBatchApplied": {
+        "description": "``POST /org/opening-balances/batch``: all or nothing.  ``replayed`` = the same ``idempotency_key`` came again (the same answer; nothing is\nwritten twice).  ``state`` = ``payments.openings_state`` after the write.",
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "changed": {
+            "default": 0,
+            "title": "Changed",
+            "type": "integer"
+          },
+          "impact": {
+            "$ref": "#/components/schemas/OpeningBatchImpact"
+          },
+          "replayed": {
+            "default": false,
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "state": {
+            "default": "none",
+            "enum": [
+              "none",
+              "pending",
+              "done",
+              "skipped"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/OpeningBatchSummary"
+          }
+        },
+        "required": [
+          "batch_id",
+          "replayed",
+          "summary",
+          "impact",
+          "changed",
+          "state"
+        ],
+        "title": "OpeningBatchApplied",
+        "type": "object"
+      },
+      "OpeningBatchImpact": {
+        "description": "The effect on the debts - the same dry run as ``previewPaymentSettings`` (the ledger of every touched membership before / after, one\ncheap pass).  The scope is the touched memberships: the items and the memberships linked to them by a transfer (``indirect_changed``).",
+        "properties": {
+          "advance_delta": {
+            "default": 0,
+            "title": "Advance Delta",
+            "type": "integer"
+          },
+          "debt_delta": {
+            "default": 0,
+            "title": "Debt Delta",
+            "type": "integer"
+          },
+          "debt_total_after": {
+            "default": 0,
+            "title": "Debt Total After",
+            "type": "integer"
+          },
+          "debt_total_before": {
+            "default": 0,
+            "title": "Debt Total Before",
+            "type": "integer"
+          },
+          "debtors_after": {
+            "default": 0,
+            "title": "Debtors After",
+            "type": "integer"
+          },
+          "debtors_before": {
+            "default": 0,
+            "title": "Debtors Before",
+            "type": "integer"
+          },
+          "indirect_changed": {
+            "default": 0,
+            "title": "Indirect Changed",
+            "type": "integer"
+          },
+          "memberships_changed": {
+            "default": 0,
+            "title": "Memberships Changed",
+            "type": "integer"
+          },
+          "memberships_with_changed_advance": {
+            "default": 0,
+            "title": "Memberships With Changed Advance",
+            "type": "integer"
+          },
+          "memberships_with_new_debt": {
+            "default": 0,
+            "title": "Memberships With New Debt",
+            "type": "integer"
+          },
+          "refundable_delta": {
+            "default": 0,
+            "title": "Refundable Delta",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "memberships_changed",
+          "memberships_with_new_debt",
+          "memberships_with_changed_advance",
+          "debt_total_before",
+          "debt_total_after",
+          "debt_delta",
+          "debtors_before",
+          "debtors_after",
+          "advance_delta",
+          "refundable_delta",
+          "indirect_changed"
+        ],
+        "title": "OpeningBatchImpact",
+        "type": "object"
+      },
+      "OpeningBatchItem": {
+        "description": "One membership of a batch: the item REPLACES the whole opening of the membership (the same as ``PUT .../opening-balance``).\n\n* ``paid_until`` / ``debt_amount`` + ``debt_on`` (a debt without a date gets ``max(first_day, accounting_start) - 1``);\n* ``lessons_left`` (a lessons-mode centre only, instead of ``paid_until``): the server turns «осталось K уроков» into «оплачено до» = the date of\n  the K-th lesson of the group from ``max(first_day, accounting_start)`` (K = 0: nothing is left = no opening);\n* ``clear`` = true: remove the live opening;\n* nothing at all = error ``EMPTY_ITEM``.\n``paid_until`` = the day before the accounting start means «nothing owed at the start» (no row; a live one is removed).",
+        "properties": {
+          "clear": {
+            "default": false,
+            "title": "Clear",
+            "type": "boolean"
+          },
+          "debt_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Amount"
+          },
+          "debt_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt On"
+          },
+          "lessons_left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Left"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "paid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until"
+          },
+          "version": {
+            "maxLength": 64,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "membership_id",
+          "version"
+        ],
+        "title": "OpeningBatchItem",
+        "type": "object"
+      },
+      "OpeningBatchPreview": {
+        "description": "``POST /org/opening-balances/batch/preview``: nothing is written.  ``ok`` = no item is an error (the batch can be applied once the reason is\ngiven: ``needs_reason`` lists the memberships that have money records).  ``digest`` = the hash of the normalised plan and its effect: the apply\nrepeats the plan under the locks and refuses (409 ``PREVIEW_STALE``) when it came out differently.",
+        "properties": {
+          "accounting_start": {
+            "format": "date",
+            "title": "Accounting Start",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "impact": {
+            "$ref": "#/components/schemas/OpeningBatchImpact"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OpeningItemResult"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "needs_reason": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Needs Reason",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/OpeningBatchSummary"
+          }
+        },
+        "required": [
+          "ok",
+          "digest",
+          "accounting_start",
+          "summary",
+          "impact",
+          "needs_reason",
+          "items"
+        ],
+        "title": "OpeningBatchPreview",
+        "type": "object"
+      },
+      "OpeningBatchPreviewRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OpeningBatchItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "OpeningBatchPreviewRequest",
+        "type": "object"
+      },
+      "OpeningBatchRequest": {
+        "properties": {
+          "digest": {
+            "maxLength": 64,
+            "title": "Digest",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OpeningBatchItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "items",
+          "idempotency_key",
+          "digest"
+        ],
+        "title": "OpeningBatchRequest",
+        "type": "object"
+      },
+      "OpeningBatchSummary": {
+        "description": "Counts by kind (an item with both «оплачено до» and a debt is in both counts).",
+        "properties": {
+          "changed": {
+            "default": 0,
+            "title": "Changed",
+            "type": "integer"
+          },
+          "cleared": {
+            "default": 0,
+            "title": "Cleared",
+            "type": "integer"
+          },
+          "debt": {
+            "default": 0,
+            "title": "Debt",
+            "type": "integer"
+          },
+          "debt_total_added": {
+            "default": 0,
+            "title": "Debt Total Added",
+            "type": "integer"
+          },
+          "errors": {
+            "default": 0,
+            "title": "Errors",
+            "type": "integer"
+          },
+          "items": {
+            "default": 0,
+            "title": "Items",
+            "type": "integer"
+          },
+          "paid_until": {
+            "default": 0,
+            "title": "Paid Until",
+            "type": "integer"
+          },
+          "unchanged": {
+            "default": 0,
+            "title": "Unchanged",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "changed",
+          "paid_until",
+          "debt",
+          "cleared",
+          "unchanged",
+          "errors",
+          "debt_total_added"
+        ],
+        "title": "OpeningBatchSummary",
+        "type": "object"
+      },
+      "OpeningFresh": {
+        "properties": {
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "opening": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "membership_id",
+          "version",
+          "opening"
+        ],
+        "title": "OpeningFresh",
+        "type": "object"
+      },
+      "OpeningGroupBlock": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/OpeningMembershipRow"
+            },
+            "title": "Memberships",
+            "type": "array"
+          },
+          "missing": {
+            "default": 0,
+            "title": "Missing",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "with_opening": {
+            "default": 0,
+            "title": "With Opening",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "teacher_name",
+          "total",
+          "with_opening",
+          "missing",
+          "memberships"
+        ],
+        "title": "OpeningGroupBlock",
+        "type": "object"
+      },
+      "OpeningGroupRef": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "OpeningGroupRef",
+        "type": "object"
+      },
+      "OpeningItemResult": {
+        "description": "The verdict of one item.  Error codes: ``NOT_FOUND`` ``STUDENT_ARCHIVED`` ``MEMBERSHIP_CLOSED`` ``DUPLICATE_ITEM`` ``STALE_VERSION`` ``EMPTY_ITEM``\n``CLEAR_WITH_VALUES`` ``OPENING_RANGE`` ``AMOUNT_RANGE`` ``OPENING_NOT_ALLOWED`` (a transfer) ``FREE_MEMBERSHIP`` ``VOID_BREAKS_REFUND``\n``LESSONS_NOT_APPLICABLE`` ``LESSONS_RANGE`` ``LESSONS_AND_PAID_UNTIL``.  ``target`` = what will be stored (after the defaults, the lessons\nconversion and the normalisation); null for an error.",
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningItemState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningItemState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changed": {
+            "default": false,
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Name"
+          },
+          "has_money_records": {
+            "default": false,
+            "title": "Has Money Records",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "paid_until",
+              "debt",
+              "both",
+              "cleared",
+              "unchanged",
+              "error"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lessons": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningLessons"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "needs_reason": {
+            "default": false,
+            "title": "Needs Reason",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "noop",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OpeningWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "membership_id",
+          "student_name",
+          "group_name",
+          "status",
+          "kind",
+          "code",
+          "message",
+          "changed",
+          "target",
+          "lessons",
+          "before",
+          "after",
+          "has_money_records",
+          "needs_reason",
+          "warnings"
+        ],
+        "title": "OpeningItemResult",
+        "type": "object"
+      },
+      "OpeningItemState": {
+        "description": "The ledger of a membership as it stands (``before``) / will stand (``after``).",
+        "properties": {
+          "advance": {
+            "default": 0,
+            "title": "Advance",
+            "type": "integer"
+          },
+          "debt": {
+            "default": 0,
+            "title": "Debt",
+            "type": "integer"
+          },
+          "lessons_left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Left"
+          },
+          "opening": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until"
+          },
+          "status": {
+            "default": "none",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "opening",
+          "debt",
+          "advance",
+          "paid_until",
+          "status",
+          "lessons_left"
+        ],
+        "title": "OpeningItemState",
+        "type": "object"
+      },
+      "OpeningLessons": {
+        "description": "``lessons_left`` -> «оплачено до»: the text is for the preview («осталось 8 уроков → оплачено до 14.11»).",
+        "properties": {
+          "lessons_left": {
+            "title": "Lessons Left",
+            "type": "integer"
+          },
+          "paid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lessons_left",
+          "paid_until",
+          "text"
+        ],
+        "title": "OpeningLessons",
+        "type": "object"
+      },
+      "OpeningMembershipRow": {
+        "description": "One membership of the table.  ``version`` = the id of the live opening (``-`` when there is none): send it back with the item - a\nchange made by somebody else in between gives 409 ``STALE_ITEMS``.  ``floor`` = ``L``: «оплачено до» is not earlier and «долг на дату» is not\nlater than it (the front never repeats the rule).  ``missing``: a membership that came before the accounting start and has neither an\nopening nor money - the rows the checklist counts.",
+        "properties": {
+          "editable": {
+            "default": true,
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "enrolled_on": {
+            "format": "date",
+            "title": "Enrolled On",
+            "type": "string"
+          },
+          "floor": {
+            "format": "date",
+            "title": "Floor",
+            "type": "string"
+          },
+          "group": {
+            "$ref": "#/components/schemas/OpeningGroupRef"
+          },
+          "has_money_records": {
+            "default": false,
+            "title": "Has Money Records",
+            "type": "boolean"
+          },
+          "left_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left On"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "missing": {
+            "default": false,
+            "title": "Missing",
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": [
+              "calendar",
+              "lessons"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "only_debt": {
+            "default": false,
+            "title": "Only Debt",
+            "type": "boolean"
+          },
+          "opening": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paused": {
+            "default": false,
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "price": {
+            "$ref": "#/components/schemas/PriceOut"
+          },
+          "reason_not_editable": {
+            "anyOf": [
+              {
+                "enum": [
+                  "transfer",
+                  "free"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Not Editable"
+          },
+          "status": {
+            "default": "active",
+            "enum": [
+              "active",
+              "left"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student": {
+            "$ref": "#/components/schemas/OpeningStudentRef"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "membership_id",
+          "student",
+          "group",
+          "mode",
+          "price",
+          "enrolled_on",
+          "status",
+          "left_on",
+          "paused",
+          "opening",
+          "version",
+          "has_money_records",
+          "missing",
+          "floor",
+          "only_debt",
+          "editable",
+          "reason_not_editable"
+        ],
+        "title": "OpeningMembershipRow",
+        "type": "object"
+      },
+      "OpeningStudentRef": {
+        "properties": {
+          "class_level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Level"
+          },
+          "display_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "display_id",
+          "class_level"
+        ],
+        "title": "OpeningStudentRef",
+        "type": "object"
+      },
+      "OpeningTotals": {
+        "description": "Centre-wide, whatever the filters are (the progress bar and the banner): ``memberships`` = the tracked (active) ones, ``with_opening`` = those\nthat have a live opening, ``missing`` = see ``OpeningMembershipRow.missing``.  ``left_available`` = memberships of students who left before the\naccounting start (``include_left=1`` shows them).  ``shown`` = memberships in ``groups``.",
+        "properties": {
+          "left_available": {
+            "default": 0,
+            "title": "Left Available",
+            "type": "integer"
+          },
+          "memberships": {
+            "default": 0,
+            "title": "Memberships",
+            "type": "integer"
+          },
+          "missing": {
+            "default": 0,
+            "title": "Missing",
+            "type": "integer"
+          },
+          "shown": {
+            "default": 0,
+            "title": "Shown",
+            "type": "integer"
+          },
+          "with_opening": {
+            "default": 0,
+            "title": "With Opening",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "memberships",
+          "with_opening",
+          "missing",
+          "left_available",
+          "shown"
+        ],
+        "title": "OpeningTotals",
+        "type": "object"
+      },
+      "OpeningValue": {
+        "description": "The live opening balance of a membership: «оплачено до» and / or «долг на дату».",
+        "properties": {
+          "debt_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Amount"
+          },
+          "debt_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt On"
+          },
+          "paid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until"
+          }
+        },
+        "required": [
+          "paid_until",
+          "debt_amount",
+          "debt_on"
+        ],
+        "title": "OpeningValue",
+        "type": "object"
+      },
+      "OpeningWarning": {
+        "description": "Soft: ``PAID_UNTIL_AT_START`` (normalised to no opening), ``PAID_UNTIL_FAR`` (> today + 120), ``DEBT_LARGE`` (> 12 prices), ``NO_PRICE``,\n``HAS_MONEY`` (the row has money records: a reason is needed), ``CLEARS_EXISTING`` (removes a live opening).",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "OpeningWarning",
+        "type": "object"
+      },
+      "OpeningsError": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/OpeningsErrorDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "OpeningsError",
+        "type": "object"
+      },
+      "OpeningsErrorDetail": {
+        "description": "Error body of the opening-balance endpoints (``PayErrorDetail`` + lists).  Codes: ``STALE_ITEMS`` (409, ``membership_ids`` + ``fresh``),\n``PREVIEW_STALE`` (409, ``preview`` = the fresh one), ``IDEMPOTENCY_MISMATCH`` (409), ``CONCURRENT_EDIT`` (409), ``BATCH_INVALID`` (422,\n``items`` = the items that are errors), ``REASON_REQUIRED`` (422, ``membership_ids``), ``TOO_MANY_ITEMS`` / ``TOO_MANY_ROWS`` /\n``TOO_MANY_CHANGES`` / ``FILE_TOO_LARGE`` / ``FILE_UNREADABLE`` / ``SHEET_MISSING`` (422), ``NOT_FOUND`` (404, ``membership_ids``); 403 plain.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "debt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt"
+          },
+          "fresh": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OpeningFresh"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fresh"
+          },
+          "items": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OpeningItemResult"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Items"
+          },
+          "membership_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Membership Ids"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Id"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningBatchPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "refundable": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refundable"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "debt",
+          "refundable",
+          "payment_id",
+          "membership_ids",
+          "fresh",
+          "items",
+          "preview"
+        ],
+        "title": "OpeningsErrorDetail",
+        "type": "object"
+      },
+      "OpeningsImportFile": {
+        "properties": {
+          "changed": {
+            "default": 0,
+            "title": "Changed",
+            "type": "integer"
+          },
+          "errors": {
+            "default": 0,
+            "title": "Errors",
+            "type": "integer"
+          },
+          "matched": {
+            "default": 0,
+            "title": "Matched",
+            "type": "integer"
+          },
+          "missing_in_file": {
+            "default": 0,
+            "title": "Missing In File",
+            "type": "integer"
+          },
+          "rows_read": {
+            "default": 0,
+            "title": "Rows Read",
+            "type": "integer"
+          },
+          "unchanged": {
+            "default": 0,
+            "title": "Unchanged",
+            "type": "integer"
+          },
+          "unknown": {
+            "default": 0,
+            "title": "Unknown",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows_read",
+          "matched",
+          "changed",
+          "unchanged",
+          "errors",
+          "unknown",
+          "missing_in_file"
+        ],
+        "title": "OpeningsImportFile",
+        "type": "object"
+      },
+      "OpeningsImportPreview": {
+        "description": "``POST /org/opening-balances/import/preview`` (multipart ``file``): the preview of the rows that are fine (the same shape as\n``batch/preview``) + what happened to every row.  Rows with an error are NOT in ``batch_items`` (the rest applies).  ``batch_items`` are ready\nfor ``POST /org/opening-balances/batch`` (with this ``digest``): the file is never uploaded again.",
+        "properties": {
+          "accounting_start": {
+            "format": "date",
+            "title": "Accounting Start",
+            "type": "string"
+          },
+          "batch_items": {
+            "items": {
+              "$ref": "#/components/schemas/OpeningBatchItem"
+            },
+            "title": "Batch Items",
+            "type": "array"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "file": {
+            "$ref": "#/components/schemas/OpeningsImportFile"
+          },
+          "impact": {
+            "$ref": "#/components/schemas/OpeningBatchImpact"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OpeningItemResult"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "needs_reason": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Needs Reason",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/OpeningsImportRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/OpeningBatchSummary"
+          }
+        },
+        "required": [
+          "ok",
+          "digest",
+          "accounting_start",
+          "summary",
+          "impact",
+          "needs_reason",
+          "items",
+          "file",
+          "rows",
+          "batch_items"
+        ],
+        "title": "OpeningsImportPreview",
+        "type": "object"
+      },
+      "OpeningsImportRow": {
+        "description": "One data row of the file.  ``matched_by``: ``membership_id`` (column K) -> ``student_group`` (column J + the group) -> ``name`` (surname + name\n+ class + group, exactly one).  Row error codes: ``UNKNOWN`` ``AMBIGUOUS`` ``ID_MISMATCH`` ``DUPLICATE`` ``BAD_DATE`` ``BAD_AMOUNT`` ``FORMULA``\n``ROW_CONFLICT`` and the item codes of ``OpeningItemResult``.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Name"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "paid_until",
+                  "debt",
+                  "both",
+                  "cleared",
+                  "unchanged",
+                  "error"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "matched_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "membership_id",
+                  "student_group",
+                  "name"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matched By"
+          },
+          "membership_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Membership Id"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "row": {
+            "title": "Row",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "noop",
+              "error",
+              "skipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
+          }
+        },
+        "required": [
+          "row",
+          "membership_id",
+          "matched_by",
+          "student_name",
+          "group_name",
+          "status",
+          "code",
+          "message",
+          "kind"
+        ],
+        "title": "OpeningsImportRow",
+        "type": "object"
+      },
+      "OpeningsList": {
+        "properties": {
+          "accounting_start": {
+            "format": "date",
+            "title": "Accounting Start",
+            "type": "string"
+          },
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/OpeningGroupBlock"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "paid_until_max": {
+            "format": "date",
+            "title": "Paid Until Max",
+            "type": "string"
+          },
+          "period_mode": {
+            "default": "calendar",
+            "enum": [
+              "calendar",
+              "lessons"
+            ],
+            "title": "Period Mode",
+            "type": "string"
+          },
+          "state": {
+            "default": "none",
+            "enum": [
+              "none",
+              "pending",
+              "done",
+              "skipped"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/OpeningTotals"
+          }
+        },
+        "required": [
+          "as_of",
+          "accounting_start",
+          "state",
+          "period_mode",
+          "paid_until_max",
+          "totals",
+          "groups"
+        ],
+        "title": "OpeningsList",
+        "type": "object"
+      },
+      "OpeningsStateIn": {
+        "description": "The owner / an admin with the right to money ends the checklist: ``done`` («Готово») or ``skipped`` («Не нужно»).  ``pending`` is set by the\nrelease script only (``scripts/set_openings_pending.py``).",
+        "properties": {
+          "state": {
+            "enum": [
+              "done",
+              "skipped"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "OpeningsStateIn",
+        "type": "object"
+      },
+      "OpeningsSummary": {
+        "description": "``GET /org/opening-balances/summary``: no rows (the banner of «Должники», the checklist of the settings).",
+        "properties": {
+          "accounting_start": {
+            "format": "date",
+            "title": "Accounting Start",
+            "type": "string"
+          },
+          "state": {
+            "default": "none",
+            "enum": [
+              "none",
+              "pending",
+              "done",
+              "skipped"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/OpeningTotals"
+          }
+        },
+        "required": [
+          "accounting_start",
+          "state",
+          "totals"
+        ],
+        "title": "OpeningsSummary",
+        "type": "object"
+      },
+      "PriceOut": {
+        "description": "The effective price of a membership on a day (ROADMAP #105, ``src/auth/pricing.py``).\n\n``source``: ``group`` - the price of the group; ``override`` - the individual price of the student (then\n``reason`` says why and ``group_amount`` is what the group price would be); ``none`` - not set anywhere.\n``valid_from`` - the day the row that gave the price started.  The sum means \"Оплата в месяц\" (calendar\nperiods) or \"Стоимость пакета\" (lesson packages) as the centre's billing mode says.",
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "group_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Amount"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "source": {
+            "default": "none",
+            "enum": [
+              "group",
+              "override",
+              "none"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          }
+        },
+        "title": "PriceOut",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "ALGO auth - OPENING-BULK contract",
+    "version": "openings-1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/org/opening-balances": {
+      "get": {
+        "description": "Все активные членства центра по группам: что внесено, версия строки, можно ли править. Без пересчёта долгов.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group Id"
+            }
+          },
+          {
+            "description": "Только членства без остатка (до начала учёта, без денег)",
+            "in": "query",
+            "name": "missing_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Только членства без остатка (до начала учёта, без денег)",
+              "title": "Missing Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Поиск: фамилия, имя, ID ученика",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Поиск: фамилия, имя, ID ученика",
+              "title": "Q"
+            }
+          },
+          {
+            "description": "Добавить ушедших до начала учёта (им доступен только долг)",
+            "in": "query",
+            "name": "include_left",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Добавить ушедших до начала учёта (им доступен только долг)",
+              "title": "Include Left",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Openings",
+        "tags": [
+          "Payments",
+          "Openings"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа к оплатам",
+            "status": 403
+          },
+          {
+            "message": "Группа не найдена",
+            "status": 404
+          },
+          {
+            "code": "TOO_MANY_ROWS",
+            "message": "Слишком много учеников — выберите группу",
+            "status": 422
+          }
+        ]
+      }
+    },
+    "/org/opening-balances/batch": {
+      "post": {
+        "description": "Применить пакет одной транзакцией (всё или ничего). Повтор того же idempotency_key — тот же ответ.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpeningBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningBatchApplied"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Apply Batch",
+        "tags": [
+          "Payments",
+          "Openings"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа к оплатам",
+            "status": 403
+          },
+          {
+            "code": "NOT_FOUND",
+            "message": "Членство не найдено (чужая организация = несуществующее)",
+            "status": 404
+          },
+          {
+            "code": "STALE_ITEMS",
+            "message": "Кто-то уже изменил эти строки — обновите таблицу",
+            "status": 409
+          },
+          {
+            "code": "PREVIEW_STALE",
+            "message": "Данные изменились после проверки — проверьте ещё раз",
+            "status": 409
+          },
+          {
+            "code": "IDEMPOTENCY_MISMATCH",
+            "message": "Этот ключ уже использован для другого пакета",
+            "status": 409
+          },
+          {
+            "code": "CONCURRENT_EDIT",
+            "message": "Другой пользователь меняет эти данные — повторите через секунду",
+            "status": 409
+          },
+          {
+            "code": "BATCH_INVALID",
+            "message": "В пакете есть строки с ошибкой — ничего не записано",
+            "status": 422
+          },
+          {
+            "code": "REASON_REQUIRED",
+            "message": "У учеников уже есть оплаты: укажите причину изменения остатка (от 3 до 500 символов)",
+            "status": 422
+          },
+          {
+            "code": "TOO_MANY_ITEMS",
+            "message": "Не больше 2000 строк за один раз — сохраните по группам",
+            "status": 422
+          }
+        ]
+      }
+    },
+    "/org/opening-balances/batch/preview": {
+      "post": {
+        "description": "Сухой прогон пакета: ошибки по строкам, сводка по видам, эффект на долги, digest. Ничего не пишется.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpeningBatchPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningBatchPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Preview Batch",
+        "tags": [
+          "Payments",
+          "Openings"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа к оплатам",
+            "status": 403
+          },
+          {
+            "code": "NOT_FOUND",
+            "message": "Членство не найдено (чужая организация = несуществующее)",
+            "status": 404
+          },
+          {
+            "code": "TOO_MANY_ITEMS",
+            "message": "Не больше 2000 строк за один раз — сохраните по группам",
+            "status": 422
+          },
+          {
+            "code": "EMPTY_BATCH",
+            "message": "Нечего проверять: список строк пуст",
+            "status": 422
+          }
+        ]
+      }
+    },
+    "/org/opening-balances/export": {
+      "get": {
+        "description": "Остатки файлом .xlsx, заполненным текущими значениями: колонки A–I как в импорте, ID ученика, ID членства, «Без остатка», справочные.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "missing_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Missing Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_left",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Left",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
+            },
+            "description": "Файл остатков (лист «Остатки»)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Openings",
+        "tags": [
+          "Payments",
+          "Openings"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа к оплатам",
+            "status": 403
+          },
+          {
+            "message": "Группа не найдена",
+            "status": 404
+          },
+          {
+            "code": "TOO_MANY_ROWS",
+            "message": "Слишком много учеников для файла — выберите группу",
+            "status": 422
+          }
+        ]
+      }
+    },
+    "/org/opening-balances/import/preview": {
+      "post": {
+        "description": "Разобрать файл остатков (.xlsx, ≤ 5 МБ, ≤ 5 000 строк): что будет изменено, ошибки строк, готовые items для POST /batch. Ничего не пишется.",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_preview_api_v1_auth_org_opening_balances_import_preview_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsImportPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Import Preview",
+        "tags": [
+          "Payments",
+          "Openings"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа к оплатам",
+            "status": 403
+          },
+          {
+            "code": "FILE_TOO_LARGE",
+            "message": "Файл слишком большой (макс. 5 МБ)",
+            "status": 422
+          },
+          {
+            "code": "FILE_UNREADABLE",
+            "message": "Не удалось прочитать файл. Загрузите .xlsx, скачанный из ALGO",
+            "status": 422
+          },
+          {
+            "code": "SHEET_MISSING",
+            "message": "В файле нет листа «Остатки». Скачайте актуальный файл",
+            "status": 422
+          },
+          {
+            "code": "TOO_MANY_ROWS",
+            "message": "В файле больше 5000 строк",
+            "status": 422
+          },
+          {
+            "code": "TOO_MANY_CHANGES",
+            "message": "В файле больше 2000 изменений — загрузите файл по группам",
+            "status": 422
+          }
+        ]
+      }
+    },
+    "/org/opening-balances/state": {
+      "post": {
+        "description": "«Готово» / «Не нужно»: состояние запуска остатков (``pending`` ставит только скрипт релиза).",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpeningsStateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Openings State",
+        "tags": [
+          "Payments",
+          "Openings"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа к оплатам",
+            "status": 403
+          }
+        ]
+      }
+    },
+    "/org/opening-balances/summary": {
+      "get": {
+        "description": "Состояние запуска и счётчики без строк (баннер «Должников», чек-лист настроек).",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpeningsError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Openings Summary",
+        "tags": [
+          "Payments",
+          "Openings"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа к оплатам",
+            "status": 403
+          }
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1/auth"
+    }
+  ]
+}

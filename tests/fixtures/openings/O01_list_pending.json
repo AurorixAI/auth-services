@@ -1,0 +1,341 @@
+{
+  "accounting_start": "2026-11-01",
+  "as_of": "2026-10-22",
+  "groups": [
+    {
+      "id": "00000000-0000-4000-8000-0000000000a1",
+      "memberships": [
+        {
+          "editable": true,
+          "enrolled_on": "2025-09-01",
+          "floor": "2026-10-31",
+          "group": {
+            "id": "00000000-0000-4000-8000-0000000000a1",
+            "name": "Математика 9А"
+          },
+          "has_money_records": false,
+          "left_on": null,
+          "membership_id": "00000000-0000-4000-8000-000000000101",
+          "missing": false,
+          "mode": "calendar",
+          "only_debt": false,
+          "opening": {
+            "debt_amount": null,
+            "debt_on": null,
+            "paid_until": "2026-11-30"
+          },
+          "paused": false,
+          "price": {
+            "amount": 600000,
+            "group_amount": null,
+            "reason": null,
+            "source": "group",
+            "valid_from": "2026-01-01"
+          },
+          "reason_not_editable": null,
+          "status": "active",
+          "student": {
+            "class_level": 9,
+            "display_id": "A-1001",
+            "id": "00000000-0000-4000-8000-000000000201",
+            "name": "Каримова Алия"
+          },
+          "version": "00000000-0000-4000-8000-000000000301"
+        },
+        {
+          "editable": true,
+          "enrolled_on": "2025-09-01",
+          "floor": "2026-10-31",
+          "group": {
+            "id": "00000000-0000-4000-8000-0000000000a1",
+            "name": "Математика 9А"
+          },
+          "has_money_records": false,
+          "left_on": null,
+          "membership_id": "00000000-0000-4000-8000-000000000102",
+          "missing": false,
+          "mode": "calendar",
+          "only_debt": false,
+          "opening": {
+            "debt_amount": 550000,
+            "debt_on": "2026-10-31",
+            "paid_until": null
+          },
+          "paused": false,
+          "price": {
+            "amount": 600000,
+            "group_amount": null,
+            "reason": null,
+            "source": "group",
+            "valid_from": "2026-01-01"
+          },
+          "reason_not_editable": null,
+          "status": "active",
+          "student": {
+            "class_level": 9,
+            "display_id": "A-1002",
+            "id": "00000000-0000-4000-8000-000000000202",
+            "name": "Юсупов Бек"
+          },
+          "version": "00000000-0000-4000-8000-000000000302"
+        },
+        {
+          "editable": true,
+          "enrolled_on": "2025-09-01",
+          "floor": "2026-10-31",
+          "group": {
+            "id": "00000000-0000-4000-8000-0000000000a1",
+            "name": "Математика 9А"
+          },
+          "has_money_records": false,
+          "left_on": null,
+          "membership_id": "00000000-0000-4000-8000-000000000103",
+          "missing": true,
+          "mode": "calendar",
+          "only_debt": false,
+          "opening": null,
+          "paused": false,
+          "price": {
+            "amount": 600000,
+            "group_amount": null,
+            "reason": null,
+            "source": "group",
+            "valid_from": "2026-01-01"
+          },
+          "reason_not_editable": null,
+          "status": "active",
+          "student": {
+            "class_level": 9,
+            "display_id": "A-1003",
+            "id": "00000000-0000-4000-8000-000000000203",
+            "name": "Орлова Дана"
+          },
+          "version": "-"
+        },
+        {
+          "editable": true,
+          "enrolled_on": "2025-09-01",
+          "floor": "2026-10-31",
+          "group": {
+            "id": "00000000-0000-4000-8000-0000000000a1",
+            "name": "Математика 9А"
+          },
+          "has_money_records": true,
+          "left_on": null,
+          "membership_id": "00000000-0000-4000-8000-000000000104",
+          "missing": false,
+          "mode": "calendar",
+          "only_debt": false,
+          "opening": null,
+          "paused": false,
+          "price": {
+            "amount": 450000,
+            "group_amount": 600000,
+            "reason": "скидка",
+            "source": "override",
+            "valid_from": "2026-01-01"
+          },
+          "reason_not_editable": null,
+          "status": "active",
+          "student": {
+            "class_level": 9,
+            "display_id": "A-1004",
+            "id": "00000000-0000-4000-8000-000000000204",
+            "name": "Сидоров Тимур"
+          },
+          "version": "-"
+        },
+        {
+          "editable": true,
+          "enrolled_on": "2025-09-01",
+          "floor": "2026-10-31",
+          "group": {
+            "id": "00000000-0000-4000-8000-0000000000a1",
+            "name": "Математика 9А"
+          },
+          "has_money_records": false,
+          "left_on": null,
+          "membership_id": "00000000-0000-4000-8000-000000000105",
+          "missing": true,
+          "mode": "calendar",
+          "only_debt": false,
+          "opening": null,
+          "paused": true,
+          "price": {
+            "amount": 600000,
+            "group_amount": null,
+            "reason": null,
+            "source": "group",
+            "valid_from": "2026-01-01"
+          },
+          "reason_not_editable": null,
+          "status": "active",
+          "student": {
+            "class_level": 9,
+            "display_id": "A-1005",
+            "id": "00000000-0000-4000-8000-000000000205",
+            "name": "Назарова Лола"
+          },
+          "version": "-"
+        }
+      ],
+      "missing": 2,
+      "name": "Математика 9А",
+      "teacher_name": "Иванова А.",
+      "total": 5,
+      "with_opening": 2
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000a2",
+      "memberships": [
+        {
+          "editable": true,
+          "enrolled_on": "2026-09-07",
+          "floor": "2026-10-31",
+          "group": {
+            "id": "00000000-0000-4000-8000-0000000000a2",
+            "name": "Физика 10Б"
+          },
+          "has_money_records": false,
+          "left_on": null,
+          "membership_id": "00000000-0000-4000-8000-000000000106",
+          "missing": true,
+          "mode": "lessons",
+          "only_debt": false,
+          "opening": null,
+          "paused": false,
+          "price": {
+            "amount": 1200000,
+            "group_amount": null,
+            "reason": null,
+            "source": "group",
+            "valid_from": "2026-01-01"
+          },
+          "reason_not_editable": null,
+          "status": "active",
+          "student": {
+            "class_level": 9,
+            "display_id": "A-1006",
+            "id": "00000000-0000-4000-8000-000000000206",
+            "name": "Ахмедов Руслан"
+          },
+          "version": "-"
+        },
+        {
+          "editable": false,
+          "enrolled_on": "2026-10-05",
+          "floor": "2026-10-31",
+          "group": {
+            "id": "00000000-0000-4000-8000-0000000000a2",
+            "name": "Физика 10Б"
+          },
+          "has_money_records": false,
+          "left_on": null,
+          "membership_id": "00000000-0000-4000-8000-000000000107",
+          "missing": true,
+          "mode": "calendar",
+          "only_debt": false,
+          "opening": null,
+          "paused": false,
+          "price": {
+            "amount": 600000,
+            "group_amount": null,
+            "reason": null,
+            "source": "group",
+            "valid_from": "2026-01-01"
+          },
+          "reason_not_editable": "transfer",
+          "status": "active",
+          "student": {
+            "class_level": 9,
+            "display_id": "A-1007",
+            "id": "00000000-0000-4000-8000-000000000207",
+            "name": "Ким Софья"
+          },
+          "version": "-"
+        },
+        {
+          "editable": false,
+          "enrolled_on": "2025-09-01",
+          "floor": "2026-10-31",
+          "group": {
+            "id": "00000000-0000-4000-8000-0000000000a2",
+            "name": "Физика 10Б"
+          },
+          "has_money_records": false,
+          "left_on": null,
+          "membership_id": "00000000-0000-4000-8000-000000000108",
+          "missing": true,
+          "mode": "calendar",
+          "only_debt": false,
+          "opening": null,
+          "paused": false,
+          "price": {
+            "amount": 0,
+            "group_amount": null,
+            "reason": null,
+            "source": "group",
+            "valid_from": "2026-01-01"
+          },
+          "reason_not_editable": "free",
+          "status": "active",
+          "student": {
+            "class_level": 9,
+            "display_id": "A-1008",
+            "id": "00000000-0000-4000-8000-000000000208",
+            "name": "Рахимов Джамшид"
+          },
+          "version": "-"
+        },
+        {
+          "editable": true,
+          "enrolled_on": "2026-11-03",
+          "floor": "2026-11-03",
+          "group": {
+            "id": "00000000-0000-4000-8000-0000000000a2",
+            "name": "Физика 10Б"
+          },
+          "has_money_records": false,
+          "left_on": null,
+          "membership_id": "00000000-0000-4000-8000-000000000109",
+          "missing": false,
+          "mode": "calendar",
+          "only_debt": false,
+          "opening": null,
+          "paused": false,
+          "price": {
+            "amount": 600000,
+            "group_amount": null,
+            "reason": null,
+            "source": "group",
+            "valid_from": "2026-01-01"
+          },
+          "reason_not_editable": null,
+          "status": "active",
+          "student": {
+            "class_level": 9,
+            "display_id": "A-1009",
+            "id": "00000000-0000-4000-8000-000000000209",
+            "name": "Исмаилова Зарина"
+          },
+          "version": "-"
+        }
+      ],
+      "missing": 1,
+      "name": "Физика 10Б",
+      "teacher_name": "Петров П.",
+      "total": 4,
+      "with_opening": 0
+    }
+  ],
+  "paid_until_max": "2027-10-23",
+  "period_mode": "calendar",
+  "state": "pending",
+  "totals": {
+    "left_available": 1,
+    "memberships": 9,
+    "missing": 6,
+    "shown": 9,
+    "with_opening": 2
+  }
+}
