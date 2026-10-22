@@ -78,7 +78,8 @@
             "bucket": "current",
             "closes": false,
             "label": "На текущий период 15.09–14.10",
-            "price": 500000
+            "price": 500000,
+            "segment_remaining_after": 269000
           }
         ],
         "refunded": 0,
@@ -108,6 +109,12 @@
     "price_missing": false,
     "lessons_unpaid": 0,
     "refundable": 0,
-    "writeoff_allowed": true
+    "writeoff_allowed": true,
+    "paused": null,
+    "opening": null,
+    "price_ends_on_leave": false,
+    "bucket": null,
+    "debt_reason": null,
+    "reason": null
   }
 }

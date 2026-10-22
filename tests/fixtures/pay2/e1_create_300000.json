@@ -22,7 +22,8 @@
           "bucket": "past_debt",
           "closes": true,
           "label": "Закрыла долг 15.09–14.10",
-          "price": 500000
+          "price": 500000,
+          "segment_remaining_after": 0
         },
         {
           "segment_id": "seg:0:2026-10-15",
@@ -33,7 +34,8 @@
           "bucket": "current",
           "closes": false,
           "label": "На текущий период 15.10–14.11",
-          "price": 500000
+          "price": 500000,
+          "segment_remaining_after": 469000
         }
       ],
       "refunded": 0,
@@ -66,7 +68,8 @@
         "bucket": "past_debt",
         "closes": true,
         "label": "Закрыла долг 15.09–14.10",
-        "price": 500000
+        "price": 500000,
+        "segment_remaining_after": 0
       },
       {
         "segment_id": "seg:0:2026-10-15",
@@ -77,7 +80,8 @@
         "bucket": "current",
         "closes": false,
         "label": "На текущий период 15.10–14.11",
-        "price": 500000
+        "price": 500000,
+        "segment_remaining_after": 469000
       }
     ],
     "debt_before": 769000,
@@ -138,7 +142,8 @@
             "bucket": "past_debt",
             "closes": true,
             "label": "Закрыла долг 15.09–14.10",
-            "price": 500000
+            "price": 500000,
+            "segment_remaining_after": 0
           },
           {
             "segment_id": "seg:0:2026-10-15",
@@ -149,7 +154,8 @@
             "bucket": "current",
             "closes": false,
             "label": "На текущий период 15.10–14.11",
-            "price": 500000
+            "price": 500000,
+            "segment_remaining_after": 469000
           }
         ],
         "refunded": 0,
@@ -179,6 +185,12 @@
     "price_missing": false,
     "lessons_unpaid": 0,
     "refundable": 0,
-    "writeoff_allowed": true
+    "writeoff_allowed": true,
+    "paused": null,
+    "opening": null,
+    "price_ends_on_leave": false,
+    "bucket": null,
+    "debt_reason": null,
+    "reason": null
   }
 }

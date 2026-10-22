@@ -1,0 +1,16 @@
+{
+  "divisor": 13,
+  "valid_from": "2026-10",
+  "updated_by": "Арслан",
+  "updated_at": "2026-10-02T08:00:00",
+  "history": [
+    {
+      "valid_from": "2020-01",
+      "divisor": 12
+    },
+    {
+      "valid_from": "2026-10",
+      "divisor": 13
+    }
+  ]
+}

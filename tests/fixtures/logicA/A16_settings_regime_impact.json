@@ -1,0 +1,22 @@
+{
+  "period_mode": "calendar",
+  "billing_anchor": "payment_date",
+  "billing_day": 1,
+  "lessons_per_payment": 12,
+  "expiring_days": 3,
+  "expiring_lessons": 3,
+  "excuse_deadline_days": 5,
+  "excuse_deadline_lessons": 2,
+  "admin_can_manage": false,
+  "accounting_start_date": "2026-10-01",
+  "updated_by": "Арслан",
+  "updated_at": "2026-10-01T08:00:00",
+  "dry_run": true,
+  "impact": null,
+  "regime_impact": {
+    "students_affected": 38,
+    "first_switch": "2026-11-01",
+    "latest_switch": "2026-11-14",
+    "defer": true
+  }
+}

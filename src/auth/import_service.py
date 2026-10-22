@@ -23,7 +23,10 @@ Key data-model facts this module respects (see src/models/auth.py):
 """
 from __future__ import annotations
 
+import math
+import re
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from io import BytesIO
 from typing import Optional
 
@@ -49,7 +52,8 @@ SHEET_INSTRUCTIONS = "Инструкция"
 
 # Column headers per sheet. "*" marks required — stripped when matching.
 COLS_GROUPS = ["Название группы*", "Класс (1-11)", "Email учителя", "Макс. учеников"]
-COLS_STUDENTS = ["Фамилия*", "Имя*", "Класс (1-11)*", "Телефон", "Группа*", "Комментарий"]
+COLS_STUDENTS = ["Фамилия*", "Имя*", "Класс (1-11)*", "Телефон", "Группа*", "Комментарий",
+                 "Оплачено до (дата)", "Долг, сум", "Долг на дату"]   # LOGIC-A (decision 1): the opening balance of the student in the group
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -70,6 +74,7 @@ class ImportCounts(BaseModel):
     groups_existing: int = 0
     students_new: int = 0
     students_existing: int = 0
+    openings: int = 0  # LOGIC-A: opening balances that the commit writes (the rows with «оплачено до» / «долг»)
 
 
 class ImportPreviewResponse(BaseModel):
@@ -200,6 +205,9 @@ K_STUDENT_CLASS = "класс (1-11)"
 K_PHONE = "телефон"
 K_GROUP = "группа"
 K_COMMENT = "комментарий"
+K_PAID_UNTIL = "оплачено до (дата)"
+K_DEBT = "долг, сум"
+K_DEBT_ON = "долг на дату"
 
 
 @dataclass
@@ -224,6 +232,10 @@ class StudentPlan:
     comment: str
     action: str            # create | existing
     existing_student_id: Optional[str] = None
+    # LOGIC-A: the opening balance asked for in the row (already checked; ``None`` fields = not asked / skipped with a warning)
+    paid_until: Optional[date] = None
+    debt_amount: Optional[int] = None
+    debt_on: Optional[date] = None
 
 
 @dataclass
@@ -246,6 +258,8 @@ class ImportPlan:
         for s in self.students:
             if s.action == "create":
                 c.students_new += 1
+                if s.paid_until or s.debt_amount:
+                    c.openings += 1
             else:
                 c.students_existing += 1
         return c
@@ -256,12 +270,49 @@ def _parse_class_level(raw: str) -> Optional[int]:
         return None
     try:
         return int(float(raw))
-    except ValueError:
+    except (ValueError, OverflowError):          # m7: «inf» / «1e999» are not a class
         return None
 
 
-def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session) -> ImportPlan:
+_DATE_FORMATS = ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d.%m.%y", "%d-%m-%Y")
+
+
+def _parse_date(raw: str) -> Optional[date]:
+    """An Excel date cell (read as text by ``_cell``): ``2026-10-31`` / ``2026-10-31 00:00:00`` / ``31.10.2026`` / ``31/10/2026``."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    raw = raw.split(" ")[0].split("T")[0]
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(raw)
+
+
+def _parse_money(raw: str) -> Optional[int]:
+    text = re.sub(r"[\s\u00a0\u202f]", "", (raw or "")).replace(",", ".")
+    if not text:
+        return None
+    try:
+        value = float(text)
+        if not math.isfinite(value) or value != int(value):       # m7: inf / nan / 1e999 are a row error (never an OverflowError -> 500)
+            raise ValueError(raw)
+        return int(value)
+    except (ValueError, OverflowError):
+        raise ValueError(raw) from None
+
+
+def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session, *, money: bool = True) -> ImportPlan:
+    """``money``: the caller may enter money (owner / an admin with the switch): without it the opening-balance columns are ignored with a
+    warning and the rows are imported without them."""
     plan = ImportPlan()
+    from .ledger_service import accounting_start_of
+    from .payments_service import PaymentService
+
+    accounting_start = PaymentService(db)._loader(org_id).settings.accounting_start
+    enrol_day = _today()
 
     def err(sheet, row, field_, msg):
         plan.issues.append(ImportIssue(sheet=sheet, row=row, field=field_, level="error", message=msg))
@@ -372,6 +423,37 @@ def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session) -> ImportPlan:
                     f"Группа '{group_name}' не найдена во вкладке «Группы» и не существует.")
                 continue
 
+        paid_until = debt_amount = debt_on = None
+        asked = any(d.get(k) for k in (K_PAID_UNTIL, K_DEBT, K_DEBT_ON))
+        if asked:
+            try:
+                raw_paid, raw_debt, raw_on = _parse_date(d.get(K_PAID_UNTIL, "")), _parse_money(d.get(K_DEBT, "")), _parse_date(d.get(K_DEBT_ON, ""))
+            except ValueError as bad:
+                err(SHEET_STUDENTS, r.row, "Остаток", f"Не удалось прочитать дату или сумму остатка: '{bad}'")
+                continue
+            if raw_debt is not None and not 1 <= raw_debt <= 10_000_000_000:
+                err(SHEET_STUDENTS, r.row, "Долг, сум", "Долг: от 1 до 10 000 000 000 сум")
+                continue
+            if raw_on is not None and raw_debt is None:
+                warn(SHEET_STUDENTS, r.row, "Долг на дату", "Указана дата долга без суммы — дата пропущена.")
+            if not money:
+                warn(SHEET_STUDENTS, r.row, "Остаток", "Нет прав вносить остатки — ученик импортирован без остатка.")
+            else:
+                if raw_paid is not None and raw_paid < max(accounting_start, enrol_day):
+                    warn(SHEET_STUDENTS, r.row, "Оплачено до (дата)", "«Оплачено до» раньше даты зачисления — остаток пропущен.")
+                    raw_paid = None
+                if raw_paid is not None and raw_paid > enrol_day + timedelta(days=366):
+                    warn(SHEET_STUDENTS, r.row, "Оплачено до (дата)", "«Оплачено до» дальше чем через год — остаток пропущен.")
+                    raw_paid = None
+                if raw_debt is not None:
+                    day = raw_on or (enrol_day - timedelta(days=1))   # default: the day before the enrolment
+                    if day > enrol_day or day < date(2020, 1, 1):
+                        warn(SHEET_STUDENTS, r.row, "Долг на дату", "Дата долга должна быть не позже дня зачисления и не раньше 2020 года — долг пропущен.")
+                        raw_debt = None
+                    else:
+                        debt_amount, debt_on = raw_debt, day
+                paid_until = raw_paid
+
         dedup_key = (last.lower(), first.lower(), (phone or "").strip())
         if dedup_key in seen_students:
             warn(SHEET_STUDENTS, r.row, "ФИО", f"Ученик {last} {first} повторяется — строка пропущена.")
@@ -390,6 +472,8 @@ def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session) -> ImportPlan:
         existing = existing_q.first()
 
         if existing:
+            if paid_until or debt_amount:
+                warn(SHEET_STUDENTS, r.row, "Остаток", "Ученик уже есть в системе — остаток не внесён.")
             plan.students.append(StudentPlan(
                 row=r.row, last_name=last, first_name=first, class_level=class_level,
                 phone=phone, group_name=group_name, comment=d.get(K_COMMENT, ""),
@@ -399,7 +483,7 @@ def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session) -> ImportPlan:
             plan.students.append(StudentPlan(
                 row=r.row, last_name=last, first_name=first, class_level=class_level,
                 phone=phone, group_name=group_name, comment=d.get(K_COMMENT, ""),
-                action="create",
+                action="create", paid_until=paid_until, debt_amount=debt_amount, debt_on=debt_on,
             ))
 
     return plan
@@ -408,7 +492,13 @@ def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session) -> ImportPlan:
 # ════════════════════════════════════════════════════════════════════════════
 # Public API: preview + commit
 # ════════════════════════════════════════════════════════════════════════════
-def preview(org_id: str, data: bytes, db: Session) -> ImportPreviewResponse:
+def _today() -> date:
+    from . import payment_status as ps
+
+    return ps.business_today()
+
+
+def preview(org_id: str, data: bytes, db: Session, *, money: bool = True) -> ImportPreviewResponse:
     parsed = parse_workbook(data)
     if parsed.fatal:
         return ImportPreviewResponse(
@@ -417,7 +507,7 @@ def preview(org_id: str, data: bytes, db: Session) -> ImportPreviewResponse:
             issues=[ImportIssue(sheet="-", row=0, level="error", message=parsed.fatal)],
         )
 
-    plan = build_plan(org_id, parsed, db)
+    plan = build_plan(org_id, parsed, db, money=money)
     return ImportPreviewResponse(
         ok=not plan.has_errors,
         counts=plan.counts(),
@@ -435,7 +525,7 @@ def preview(org_id: str, data: bytes, db: Session) -> ImportPreviewResponse:
     )
 
 
-def commit(org_id: str, creator_id: str, data: bytes, db: Session) -> ImportCommitResponse:
+def commit(org_id: str, creator_id: str, data: bytes, db: Session, *, money: bool = True) -> ImportCommitResponse:
     parsed = parse_workbook(data)
     if parsed.fatal:
         return ImportCommitResponse(
@@ -444,7 +534,7 @@ def commit(org_id: str, creator_id: str, data: bytes, db: Session) -> ImportComm
             issues=[ImportIssue(sheet="-", row=0, level="error", message=parsed.fatal)],
         )
 
-    plan = build_plan(org_id, parsed, db)
+    plan = build_plan(org_id, parsed, db, money=money)
     if plan.has_errors:
         # Never write a partially-valid file — return the errors, change nothing.
         return ImportCommitResponse(ok=False, counts=plan.counts(), issues=plan.issues)
@@ -523,6 +613,15 @@ def commit(org_id: str, creator_id: str, data: bytes, db: Session) -> ImportComm
                 membership = StudentGroup(student_id=student.id, group_id=group_id)
                 open_period(membership)  # the first stay of the student in the group
                 db.add(membership)
+                if s.paid_until or s.debt_amount:  # LOGIC-A: the opening balance, in the same transaction (all or nothing)
+                    from .logica_service import OpeningService
+                    from .payments_schemas import OpeningIn
+
+                    db.flush()
+                    OpeningService(db).apply(
+                        org_id, membership, creator_id, "admin",
+                        OpeningIn(paid_until=s.paid_until, debt_amount=s.debt_amount, debt_on=s.debt_on), source="import",
+                        today=_today(), require_reason_when_money=False)
 
         db.commit()
     except Exception as exc:  # noqa: BLE001 — surface as a single import failure
@@ -579,6 +678,10 @@ def build_template_xlsx() -> bytes:
         ("", False),
         ("2) Ученики — Фамилия, Имя и Класс (1–11) обязательны. Телефон — по желанию.", False),
         ("   «Группа» — название из вкладки «Группы» (ученик попадёт в эту группу).", False),
+        ("", False),
+        ("   «Оплачено до (дата)», «Долг, сум», «Долг на дату» — необязательно: что было ДО запуска в ALGO. «Оплачено до» — ученик уже", False),
+        ("   заплатил до этой даты (дни не начисляются и не превращаются в аванс). «Долг» — сколько он был должен; дата долга по умолчанию", False),
+        ("   день перед зачислением. Остатки вносят владелец и администратор с доступом к оплатам.", False),
         ("", False),
         ("Повторная загрузка безопасна: группы сверяются по названию,", False),
         ("ученики по ФИО+телефону — существующие не дублируются.", False),

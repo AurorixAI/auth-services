@@ -1,0 +1,42 @@
+{
+  "models": {
+    "A01_*": "OpeningSaved",
+    "A02_*": "OpeningSaved",
+    "A03_*": "OpeningSaved",
+    "A04_*": "OpeningOut",
+    "A05_*": "OpeningVoided",
+    "A06_*": "PauseSaved",
+    "A07_*": "PauseVoided",
+    "A09_*": "LeavePreview",
+    "A10_*": "LeaveResult",
+    "A11_*": "LeavePreview",
+    "A12_*": "LeavePreview",
+    "A14_*": "GroupPriceChanged",
+    "A15_*": "GroupPriceChanged",
+    "A16_*": "PaymentSettingsChanged",
+    "A17_*": "GroupLessonTypes",
+    "A18_*": "GroupLessonTypeChanged",
+    "A19_*": "PayrollSettings",
+    "A20_*": "PayoutCreated",
+    "A21_*": "PayoutState",
+    "A22_*": "PayoutState",
+    "A23_*": "PayoutCreated",
+    "A24_*": "PayoutState",
+    "A25_*": "PayoutVoided",
+    "A26_*": "SheetOut",
+    "A27_*": "SheetOut",
+    "A28_*": "PayoutState",
+    "A29_*": "MembershipPaymentRow",
+    "A30_*": "PaymentsSummary",
+    "A31_*": "StatementOut",
+    "A32_*": "StatementOut",
+    "A33_*": "PriceOverrideChanged"
+  },
+  "payroll_models": [
+    "PayoutCreated",
+    "PayoutState",
+    "PayoutVoided",
+    "PayrollSettings",
+    "SheetOut"
+  ]
+}

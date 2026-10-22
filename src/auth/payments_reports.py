@@ -79,6 +79,7 @@ class PaymentsReports:
         users = self.service._users(
             x for coll in (entry.payments, entry.writeoffs, entry.refunds) for r in coll for x in (r.created_by,))
         payments = {str(p.id): p for p in entry.payments}
+        was, becomes = self._correction_chain(org_id, entry.payments)
         writeoffs = {str(w.id): w for w in entry.writeoffs}
         refunds = {str(r.id): r for r in entry.refunds}
         transfers = {f"tr:{t.id}": t for t in entry.transfers_in + entry.transfers_out}
@@ -95,9 +96,21 @@ class PaymentsReports:
                           balance_text=tx.balance_text(balance))
             if e.kind == "charge":
                 seg = segments[e.ref_id]
-                title = f"Начисление {tx.period_text(seg.period_start, seg.period_end)}" if seg.kind == "period" else (
-                    f"Начисление: пакет №{seg.package_no} ({tx.period_text(seg.period_start, seg.period_end)})")
+                title = f"Стоимость {tx.period_text(seg.period_start, seg.period_end)}" if seg.kind == "period" else (
+                    f"Стоимость: пакет №{seg.package_no} ({tx.period_text(seg.period_start, seg.period_end)})")
                 rows.append(StatementRow(type="charge", title=title, details=StatementDetails(segment=pv.segment_out(seg)), **common))
+            elif e.kind == "opening_debt":
+                seg = segments[e.ref_id]
+                rows.append(StatementRow(type="opening_debt", title=f"Долг на начало учёта на {seg.period_start.strftime('%d.%m.%Y')}",
+                                         details=StatementDetails(segment=pv.segment_out(seg)), **common))
+            elif e.kind == "opening_paid_until":
+                until = ledger.opening.paid_until if ledger.opening and ledger.opening.paid_until else None
+                rows.append(StatementRow(
+                    type="opening_paid_until", title=f"Остаток на начало: оплачено до {until.strftime('%d.%m')}" if until else "Остаток на начало",
+                    **common))
+            elif e.kind == "pause":
+                first, last = (date.fromisoformat(x) for x in e.ref_id.split(":")[1:3])
+                rows.append(StatementRow(type="pause", title=f"Пауза {tx.period_text(first, last)} — начислений нет", **common))
             elif e.kind == bl.PAYMENT:
                 p = payments[e.ref_id]
                 rows.append(StatementRow(
@@ -105,10 +118,12 @@ class PaymentsReports:
                     details=StatementDetails(
                         payment_id=str(p.id), receipt_no=p.receipt_no, method=p.method or "unknown",
                         created_by_name=_person(users.get(p.created_by)), note=p.note,
-                        allocations=pv.allocations_of(ledger, e.ref_id)), **common))
+                        allocations=pv.allocations_of(ledger, e.ref_id),
+                        replaces_receipt_no=was.get(p.id, (None, None))[0], replaces_amount=was.get(p.id, (None, None))[1],
+                        replaced_by_receipt_no=becomes.get(p.id)), **common))
             elif e.kind == bl.WRITEOFF:
                 w = writeoffs[e.ref_id]
-                rows.append(StatementRow(type="writeoff", title="Списание долга", details=StatementDetails(
+                rows.append(StatementRow(type="writeoff", title=tx.forgiven_title(w.reason), details=StatementDetails(
                     writeoff_id=str(w.id), reason=w.reason, created_by_name=_person(users.get(w.created_by))), **common))
             elif e.kind == bl.REFUND:
                 r = refunds[e.ref_id]
@@ -144,6 +159,27 @@ class PaymentsReports:
             as_of=today, mode=ledger.mode, accounting_start=loader.settings.accounting_start, summary=summary, rows=rows,
             voided=voided, upcoming=[pv.segment_out(s) for s in ledger.segments if not s.begun and (s.money or s.forgiven)])
 
+    def _correction_chain(self, org_id: str, payments) -> Tuple[Dict[Any, tuple], Dict[Any, Optional[int]]]:
+        """For a set of payments: ``was[id] = (receipt_no, amount)`` of the payment it corrects and ``becomes[id]`` = the receipt
+        number of the payment that corrected it (two queries at most, whatever the number of payments)."""
+        ids = [p.id for p in payments]
+        replaced_ids = [p.replaces_payment_id for p in payments if p.replaces_payment_id]
+        was: Dict[Any, tuple] = {}
+        if replaced_ids:
+            old = {o.id: o for o in self.db.query(StudentPayment).filter(
+                StudentPayment.org_id == org_id, StudentPayment.id.in_(replaced_ids))}
+            for p in payments:
+                o = old.get(p.replaces_payment_id)
+                if o is not None:
+                    was[p.id] = (o.receipt_no, int(o.amount))
+        becomes: Dict[Any, Optional[int]] = {}
+        if ids:
+            for new in self.db.query(StudentPayment).filter(
+                    StudentPayment.org_id == org_id, StudentPayment.replaces_payment_id.in_(ids),
+                    StudentPayment.voided_at.is_(None)):
+                becomes[new.replaces_payment_id] = new.receipt_no
+        return was, becomes
+
     def _voided_rows(self, org_id: str, membership_id: UUID) -> List[StatementRow]:
         users_ids: List[Any] = []
         pay = self.db.query(StudentPayment).filter(
@@ -156,6 +192,7 @@ class PaymentsReports:
             StudentRefund.org_id == org_id, StudentRefund.membership_id == membership_id,
             StudentRefund.voided_at.isnot(None)).all()
         users = self.service._users(x for r in (*pay, *wo, *rf) for x in (r.created_by, r.voided_by))
+        was, becomes = self._correction_chain(org_id, pay)
         out: List[tuple] = []
         for p in pay:
             out.append((p.paid_on, p.voided_at, StatementRow(
@@ -163,10 +200,13 @@ class PaymentsReports:
                 credit=int(p.amount), voided_at=_iso(p.voided_at), void_reason=p.void_reason,
                 voided_by_name=_person(users.get(p.voided_by)),
                 details=StatementDetails(payment_id=str(p.id), receipt_no=p.receipt_no, method=p.method or "unknown",
-                                         created_by_name=_person(users.get(p.created_by)), note=p.note))))
+                                         created_by_name=_person(users.get(p.created_by)), note=p.note,
+                                         replaces_receipt_no=was.get(p.id, (None, None))[0],
+                                         replaces_amount=was.get(p.id, (None, None))[1],
+                                         replaced_by_receipt_no=becomes.get(p.id)))))
         for w in wo:
             out.append((w.effective_on, w.voided_at, StatementRow(
-                seq=0, date=w.effective_on, type="writeoff", title="Списание долга", credit=int(w.amount),
+                seq=0, date=w.effective_on, type="writeoff", title=tx.forgiven_title(w.reason), credit=int(w.amount),
                 voided_at=_iso(w.voided_at), void_reason=w.void_reason, voided_by_name=_person(users.get(w.voided_by)),
                 details=StatementDetails(writeoff_id=str(w.id), reason=w.reason,
                                          created_by_name=_person(users.get(w.created_by))))))
@@ -189,7 +229,7 @@ class PaymentsReports:
     ) -> Tuple[bytes, str, str]:
         """``(bytes, content type, filename)`` of the statement as xlsx / csv."""
         st = self.statement(org_id, membership_id, date_from=date_from, date_to=date_to, include_voided=include_voided)
-        header = ["№", "Дата", "Операция", "Начислено", "Внесено / списано", "Возвращено / перенесено", "Баланс", "Подробности"]
+        header = ["№", "Дата", "Операция", "Стоимость", "Оплачено / прощено", "Возвращено / перенесено", "Баланс", "Подробности"]
 
         def detail(r: StatementRow) -> str:
             d = r.details
@@ -206,9 +246,9 @@ class PaymentsReports:
 
         top = [
             ["Выписка", f"{st.membership.student_name} · {st.membership.group_name}", f"на {st.as_of.strftime('%d.%m.%Y')}"],
-            ["Начислено", st.summary.charged, "Оплачено", st.summary.paid + st.summary.transferred_in],
-            ["Списано", st.summary.written_off, "Возвращено / перенесено", st.summary.refunded + st.summary.transferred_out],
-            ["Долг", st.summary.debt, "Аванс", st.summary.advance],
+            ["Стоимость обучения", st.summary.charged, "Оплачено", st.summary.paid + st.summary.transferred_in],
+            ["Прощено", st.summary.written_off, "Возвращено / перенесено", st.summary.refunded + st.summary.transferred_out],
+            ["Баланс", tx.balance_text(st.summary.advance - st.summary.debt)],
         ]
         body = [[r.seq, r.date.strftime("%d.%m.%Y"), r.title, r.debit or "", r.credit or "", r.outflow or "",
                  r.balance_after if r.balance_after is not None else "", detail(r)] for r in [*st.rows, *st.voided]]

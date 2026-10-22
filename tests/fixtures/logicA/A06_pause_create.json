@@ -1,0 +1,98 @@
+{
+  "pause": {
+    "id": "00000000-0000-4000-8000-000000000011",
+    "membership_id": "00000000-0000-4000-8000-000000000101",
+    "first_day": "2026-10-20",
+    "last_day": "2026-10-24",
+    "days": 5,
+    "reason": "уехал к родственникам",
+    "created_by_name": "Арслан",
+    "created_at": "2026-10-21T09:45:00",
+    "voided_at": null,
+    "void_reason": null
+  },
+  "impact": {
+    "debt_before": 20000,
+    "debt_after": 0,
+    "advance_before": 0,
+    "advance_after": 80000,
+    "paid_until_before": "2026-10-30",
+    "paid_until_after": "2026-11-03",
+    "charged_delta": -100000,
+    "refundable_before": 0,
+    "refundable_after": 80000
+  },
+  "lessons": {
+    "excluded": [
+      {
+        "date": "2026-10-20",
+        "marks": "absent"
+      },
+      {
+        "date": "2026-10-22",
+        "marks": null
+      }
+    ],
+    "attended": []
+  },
+  "payroll": {
+    "months": [
+      "2026-10"
+    ],
+    "saved_sheets_changed": 1
+  },
+  "dry_run": false,
+  "row": {
+    "membership_id": "00000000-0000-4000-8000-000000000101",
+    "student_id": "00000000-0000-4000-8000-000000000201",
+    "student_name": "Каримов Алишер",
+    "display_id": "S-1001",
+    "class_level": 7,
+    "group_id": "00000000-0000-4000-8000-000000000301",
+    "group_name": "A-1",
+    "teacher_id": "00000000-0000-4000-8000-000000000400",
+    "teacher_name": "Каримова",
+    "is_primary": true,
+    "is_active": true,
+    "price": {
+      "amount": 620000,
+      "source": "group",
+      "valid_from": "2026-01-01",
+      "group_amount": 620000,
+      "reason": null
+    },
+    "monthly_fee": 620000,
+    "status": "paused",
+    "period_mode": "calendar",
+    "paid_until": "2026-11-03",
+    "days_overdue": null,
+    "days_left": null,
+    "lessons_total": null,
+    "lessons_used": null,
+    "lessons_left": null,
+    "last_payment": null,
+    "debt": 0,
+    "past_debt": 0,
+    "current_due": 0,
+    "advance": 80000,
+    "partial_credit": 0,
+    "price_missing": false,
+    "lessons_unpaid": 0,
+    "refundable": 80000,
+    "writeoff_allowed": false,
+    "paused": {
+      "from": "2026-10-20",
+      "to": "2026-10-24"
+    },
+    "opening": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "paid_until": "2026-10-15",
+      "debt_amount": null,
+      "debt_on": null
+    },
+    "price_ends_on_leave": false,
+    "bucket": null,
+    "debt_reason": null,
+    "reason": null
+  }
+}

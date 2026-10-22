@@ -26,6 +26,7 @@ from src.core.database import get_db
 from . import payments_group_prices, pricing
 from .dependencies import require_payments_access, require_payments_settings
 from .payments_files import MAX_BODY_BYTES, MAX_FILE_BYTES, file_headers
+from .logica_router import router as logica_router
 from .payments_pay2_router import router as pay2_router
 from .payments_schemas import (
     MAX_MONEY,
@@ -56,6 +57,7 @@ from .payments_service import PaymentError, PaymentService
 
 router = APIRouter(prefix="/auth", tags=["Payments"])
 router.include_router(pay2_router)  # PAY-2: preview, write-off, refund, statement, receipts report, balances
+router.include_router(logica_router)  # LOGIC-A: opening balance, pause, leave with money, lesson type
 
 
 def _http(exc: PaymentError | pricing.PriceError) -> HTTPException:
@@ -102,7 +104,7 @@ def payments_summary(user: dict = Depends(require_payments_access), db: Session 
 
 @router.get("/org/payments/status", response_model=PaymentStatusPage)
 def payments_status(
-    bucket: Literal["due", "expiring", "none", "active", "all", "debt"] = "all",
+    bucket: Literal["debt", "expiring", "active", "paused", "all", "due", "none"] = "all",
     group_id: Optional[UUID] = None,
     teacher_id: Optional[UUID] = None,
     search: Optional[str] = Query(None, max_length=100),
@@ -113,7 +115,9 @@ def payments_status(
     db: Session = Depends(get_db),
 ):
     """Членства со статусом оплаты (по вкладкам), с точным total. PAY-2: вкладка ``debt`` — члены с долгом > 0
-    (в том числе ушедшие и архивные), ``sort=debt`` — по убыванию долга."""
+    (в том числе ушедшие и архивные), ``sort=debt`` — по убыванию долга. LOGIC-A (решение владельца 21.10): вкладки
+    ``debt`` Должники / ``expiring`` Скоро платить / ``active`` Оплачено / ``paused`` На паузе (``due`` — старое имя ``debt``; ``none`` — старая
+    вкладка, один релиз)."""
     return PaymentService(db).status_page(
         user["org_id"], bucket=bucket, group_id=group_id, teacher_id=teacher_id,
         search=search, limit=limit, offset=offset, sort=sort,
@@ -187,7 +191,8 @@ def set_group_price(
     В ответе — новая история и ``impact``: сколько учеников возьмут цену (``students_following``), у скольких
     индивидуальная (``students_with_override``) и сколько сохранённых ведомостей зарплаты станут «данные изменились»
     (``stale_payroll_sheets``; их список ``stale_sheets`` — только владельцу). ``?dry_run=1`` — только ``impact``.
-    Оплаты, уже внесённые, не меняются никогда.
+    LOGIC-A: ``impact.money`` - что изменится у денег (долг / аванс / «оплачено до»); цена задним числом, которая меняет начисление
+    уже начавшегося периода у ученика с оплатами, - 409 ``PRICE_BACKDATE_WITH_PAYMENTS``.
 
     Каждая запись (новая, исправление той же даты) оставляет строку аудита (``group_audit``, ``group_price_set``) в той
     же транзакции — она видна в ``history[].changes``. Тот же запрос ещё раз (двойной клик: сумма, примечание и
@@ -233,6 +238,7 @@ def get_price_override(
 def set_price_override(
     membership_id: UUID,
     request: PriceOverrideUpdate,
+    dry_run: bool = Query(False, description="1 — только последствия (money), ничего не записывать"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
@@ -245,7 +251,8 @@ def set_price_override(
     try:
         out = pricing.PricingService(db).set_override(
             user["org_id"], membership_id, user["user_id"], amount=request.amount,
-            valid_from=request.valid_from, reason=request.reason,
+            valid_from=request.valid_from, reason=request.reason, dry_run=dry_run,
+            owner_view=user.get("org_role") == "owner",
         )
         out["row"] = PaymentService(db)._row(user["org_id"], membership_id)
         return out

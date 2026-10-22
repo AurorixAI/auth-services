@@ -93,6 +93,14 @@ def paid_month(w, m):
         pay_calendar(w, s, m.first, m.last, fee=None)          # the price comes from the group, not from the payment
 
 
+def era_before(w, m):
+    """The month lies BEFORE the accounting of the centre (the time before ALGO): its lessons are paid for nobody's money and each is priced by
+    the price of its own day (LOGIC-A F1: ``price_source = "day"``) - the case where a mid-month price still splits a month."""
+    from tests.pg_world import payments_block
+
+    payments_block(w.db, w.org, accounting_start_date=(m.last + timedelta(days=1)).isoformat())
+
+
 # ============================================================================================
 # the group price: reading, writing, history
 # ============================================================================================
@@ -154,7 +162,9 @@ def test_the_dry_run_computes_the_impact_and_writes_nothing(world):
     before = group_rows(world)
     out = put_price(world, 999_000, valid_from=day(-5), dry=True)
     assert out["dry_run"] is True and out["current"] is None and out["history"] is None
-    assert out["impact"] == {"students_following": 3, "students_with_override": 0, "stale_payroll_sheets": 0, "stale_sheets": []}
+    assert {k: v for k, v in out["impact"].items() if k != "money"} == {
+        "students_following": 3, "students_with_override": 0, "stale_payroll_sheets": 0, "stale_sheets": []}
+    assert out["impact"]["money"]["backdated"] is True                     # LOGIC-A: the money window is part of the impact
     assert group_rows(world) == before
 
 
@@ -252,7 +262,9 @@ def test_a_group_price_may_be_set_for_a_group_without_students(world):
     empty = make_group(world.db, world.org, world.teacher2, "Пустая")
     world.db.commit()
     out = put_price(world, 100_000, group=empty)
-    assert out["impact"] == {"students_following": 0, "students_with_override": 0, "stale_payroll_sheets": 0, "stale_sheets": []}
+    assert {k: v for k, v in out["impact"].items() if k != "money"} == {
+        "students_following": 0, "students_with_override": 0, "stale_payroll_sheets": 0, "stale_sheets": []}
+    assert out["impact"]["money"]["items"] == []
 
 
 # ============================================================================================
@@ -278,7 +290,8 @@ def test_the_status_none_free_follows_the_price_of_the_group(world):
 # ============================================================================================
 
 
-def test_a_price_raised_from_the_15th_splits_the_month_by_lesson_date(world):
+def test_a_price_raised_from_the_15th_is_the_price_of_the_period_when_the_month_is_paid(world):
+    """LOGIC-A F1: the base of a lesson is the price of the PERIOD that carries it (the price of its first day), not the price of the day."""
     m, (s0, s1, s2) = previous_month(), world.students
     give_group_price(world.db, world.group, 400_000, EPOCH)
     give_group_price(world.db, world.group, 500_000, m.d(15))
@@ -286,18 +299,28 @@ def test_a_price_raised_from_the_15th_splits_the_month_by_lesson_date(world):
     paid_month(world, m)
     sheet = preview(world, m)
     line = line_of(sheet, s0)
+    assert line["amount"] == 66_667                                          # 4 * 400 000 * 50 % / 12: the whole month at the price of its first day
+    assert {(x["price"], x["price_source"], x["cover"]) for x in line["marks"]} == {(400_000, "group", "money")}
+    assert line["monthly_fee"] == 400_000 and line["price_changed"] is False and line["price_steps"] == []
+    assert sheet["total_amount"] == 3 * 66_667
+
+
+def test_a_price_raised_from_the_15th_splits_a_month_before_the_accounting_by_lesson_date(world):
+    m, (s0, s1, s2) = previous_month(), world.students
+    give_group_price(world.db, world.group, 400_000, EPOCH)
+    give_group_price(world.db, world.group, 500_000, m.d(15))
+    month_lessons(world, m, (10, 12, 15, 17))
+    era_before(world, m)
+    sheet = preview(world, m)
+    line = line_of(sheet, s0)
     # two lessons at 400 000 and two at 500 000: (2 * 400 000 + 2 * 500 000) * 50 % / 12 = 75 000
     assert line["amount"] == (2 * 400_000 + 2 * 500_000) * 50 // 1200 == 75_000
-    assert [(x["date"], x["price"], x["price_source"]) for x in line["marks"]] == [
-        (m.d(10).isoformat(), 400_000, "group"), (m.d(12).isoformat(), 400_000, "group"),
-        (m.d(15).isoformat(), 500_000, "group"), (m.d(17).isoformat(), 500_000, "group")]
-    assert line["monthly_fee"] == 500_000 and line["source_fee"] == 500_000 and line["price_source"] == "group"
-    assert line["price_changed"] is True
+    assert [(x["date"], x["price"], x["price_source"], x["cover"]) for x in line["marks"]] == [
+        (m.d(10).isoformat(), 400_000, "day", "before_start"), (m.d(12).isoformat(), 400_000, "day", "before_start"),
+        (m.d(15).isoformat(), 500_000, "day", "before_start"), (m.d(17).isoformat(), 500_000, "day", "before_start")]
+    assert line["monthly_fee"] == 500_000 and line["source_fee"] == 500_000 and line["price_changed"] is True
     assert line["price_steps"] == [{"date": m.d(10).isoformat(), "amount": 400_000}, {"date": m.d(15).isoformat(), "amount": 500_000}]
     assert sheet["total_amount"] == 3 * 75_000
-    # neither the old price for the whole month nor the new one for the whole month
-    assert line["amount"] not in (4 * 400_000 * 50 // 1200, 4 * 500_000 * 50 // 1200)
-    # the saved sheet and its Excel say so as well
     saved = save_sheet(world, m)
     assert line_of(saved, s0)["price_steps"] == line["price_steps"] and saved["stale"] is False
     ws = workbook(money_owner_get(world, f"{API}/org/payroll/sheets/{saved['id']}/export.xlsx")).active
@@ -311,11 +334,12 @@ def money_owner_get(w, url):
 
 
 def test_an_individual_price_applies_from_its_day_and_the_way_back_too(world):
+    """A month before the accounting: each lesson has the price of its own day, an exception included."""
     m, (s0, s1, s2) = previous_month(), world.students
     give_group_price(world.db, world.group, 400_000, EPOCH)
     give_price(world.db, world.db.get(StudentGroup, mid(world, s0)), 300_000, reason="скидка", valid_from=m.d(11))
     month_lessons(world, m, (10, 12, 15, 17))
-    paid_month(world, m)
+    era_before(world, m)
     line = line_of(preview(world, m), s0)
     assert [x["price"] for x in line["marks"]] == [400_000, 300_000, 300_000, 300_000]
     assert line["amount"] == 54_167 and line["price_source"] == "override"
@@ -324,11 +348,20 @@ def test_an_individual_price_applies_from_its_day_and_the_way_back_too(world):
     world.db.commit()
     line = line_of(preview(world, m), s0)
     assert [(x["price"], x["price_source"]) for x in line["marks"]] == [
-        (400_000, "group"), (300_000, "override"), (400_000, "group"), (400_000, "group")]
+        (400_000, "day"), (300_000, "day"), (400_000, "day"), (400_000, "day")]
     assert line["amount"] == 62_500
     assert line_of(preview(world, m), s1)["amount"] == 66_667            # a neighbour: the plain group price
     assert line_of(preview(world, m), s1)["price_changed"] is False and line_of(preview(world, m), s1)["price_steps"] == []
+    # a paid month (F1): the exception that starts on the 11th is the price of the NEXT period; this one keeps its first day's price
+    world.db.query(MembershipPriceOverride).filter_by(membership_id=mid(world, s0)).delete()
+    world.db.commit()
+    give_price(world.db, world.db.get(StudentGroup, mid(world, s0)), 300_000, reason="скидка", valid_from=m.d(11))
+    from tests.pg_world import payments_block
 
+    payments_block(world.db, world.org, accounting_start_date=m.first.isoformat())
+    paid_month(world, m)
+    line = line_of(preview(world, m), s0)
+    assert {x["price"] for x in line["marks"]} == {400_000} and line["amount"] == 66_667
 
 
 def test_the_price_of_a_sheet_is_the_price_of_each_lesson_and_cannot_be_overwritten_on_the_sheet(world):
@@ -337,7 +370,7 @@ def test_the_price_of_a_sheet_is_the_price_of_each_lesson_and_cannot_be_overwrit
     give_group_price(world.db, world.group, 400_000, EPOCH)
     give_group_price(world.db, world.group, 500_000, m.d(15))
     month_lessons(world, m, (10, 12, 15, 17))
-    paid_month(world, m)
+    era_before(world, m)
     mid = line_of(preview(world, m), s0)["membership_id"]
     r = money_owner(world).post(f"{API}/org/payroll/sheets", json={
         "month": m.label, "teacher_id": str(world.teacher.id), "line_overrides": [{"membership_id": mid, "monthly_fee": 300_000}]})
@@ -362,7 +395,7 @@ def saved_flat_month(w, price=400_000):
     m = previous_month()
     give_group_price(w.db, w.group, price, EPOCH)
     month_lessons(w, m, (10, 12, 15, 17))
-    paid_month(w, m)
+    era_before(w, m)
     return m, save_sheet(w, m)
 
 
@@ -380,7 +413,7 @@ def test_a_mid_month_change_with_the_same_last_price_and_total_is_stale_with_a_d
     give_group_price(world.db, world.group, 400_000, m.d(11))
     give_group_price(world.db, world.group, 500_000, m.d(14))
     month_lessons(world, m, (10, 12, 15, 17))                                       # 500 000, 400 000, 500 000, 500 000
-    paid_month(world, m)
+    era_before(world, m)
     saved = save_sheet(world, m)
     # the dip moves from the 12th to the 10th: same lessons, same total, same last price - only the days differ
     put_price(world, 500_000, valid_from=m.d(11), note="поправили")
@@ -416,7 +449,8 @@ def test_a_price_set_backdated_marks_the_saved_sheet_stale_and_the_sheet_itself_
     fresh = preview(world, m)
     assert fresh["source_fingerprint"] != fingerprint and line_of(fresh, world.students[0])["price_steps"] == [
         {"date": m.d(10).isoformat(), "amount": 400_000}, {"date": m.d(12).isoformat(), "amount": 450_000}]
-    r = money_owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 1, "recalculate": True})
+    r = money_owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json={
+        "revision": 1, "recalculate": True, "expected_fingerprint": fresh["source_fingerprint"]})
     assert r.status_code == 200 and r.json()["stale"] is False and r.json()["total_amount"] == 3 * 72_917
 
 
@@ -1353,7 +1387,7 @@ def test_cancelling_a_scheduled_individual_price_and_a_scheduled_way_back(world)
     assert price_on(world, day(), s0).amount == 300_000 and price_on(world, day(20), s0).amount == 300_000   # the previous step
     assert [h["valid_from"] for h in out["history"]] == [day(60).isoformat(), day(-3).isoformat()]
     assert out["row"]["membership_id"] == str(mid(world, s0)) and out["row"]["price"]["amount"] == 300_000
-    assert {k: v for k, v in out.items() if k != "row"} == get_override(world, s0)
+    assert {k: v for k, v in out.items() if k not in ("row", "dry_run", "impact")} == get_override(world, s0)
     assert out["cancelled"][0]["amount"] == 250_000 and out["cancelled"][0]["reason"] == "с нового сезона"
     assert out["cancelled"][0]["actor_name"] == "Иван Owner" and set(out["cancelled"][0]) == {"at", "actor_name", "amount", "valid_from", "reason"}
     out = cancel_override(world, row_id_of(get_override(world, s0), day(60)), s0)
@@ -1617,20 +1651,25 @@ def test_the_dry_run_script_connection_is_read_only(world):
 
 
 def test_a_backdated_price_never_alters_a_payment_already_entered(world):
+    """LOGIC-A (decision 4): a price that rewrites a charged period of a student with money is REFUSED; what is allowed never moves a payment."""
     give_group_price(world.db, world.group, 400_000, EPOCH)
     made = pay(world, amount=400_000, paid_on=day(-20))["payment"]
     second = pay(world, world.students[1], amount=123_456, paid_on=day(-5))["payment"]
     stored = [(p.id, p.amount, p.paid_on, p.method, p.voided_at, p.receipt_no, p.created_at) for p in
               world.db.query(StudentPayment).filter_by(org_id=world.org.id).order_by(StudentPayment.created_at)]
-    put_price(world, 999_000, valid_from=day(-40))                                   # far in the past, far above
-    put_price(world, 1, valid_from=day(-19))
-    put_override(world, world.students[1], amount=5, reason="проверка", valid_from=day(-30))
+    for body in ({"amount": 999_000, "valid_from": day(-40).isoformat()}, {"amount": 1, "valid_from": day(-19).isoformat()}):
+        r = money_owner(world).put(f"{API}/org/groups/{world.group.id}/price", json=body)
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "PRICE_BACKDATE_WITH_PAYMENTS", r.text
+        assert {s["membership_id"] for s in r.json()["detail"]["students"]} <= {str(mid(world, s)) for s in world.students}
+    r = money_owner(world).put(f"{API}/org/memberships/{mid(world, world.students[1])}/price-override",
+                               json={"amount": 5, "reason": "проверка", "valid_from": day(-30).isoformat()})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "PRICE_BACKDATE_WITH_PAYMENTS"
+    put_price(world, 450_000, valid_from=day(10))                                      # the future is always allowed
     world.db.expire_all()
     assert [(p.id, p.amount, p.paid_on, p.method, p.voided_at, p.receipt_no, p.created_at) for p in
             world.db.query(StudentPayment).filter_by(org_id=world.org.id).order_by(StudentPayment.created_at)] == stored
     assert money_owner(world).get(f"{API}/org/payments/{made['id']}/receipt").json()["amount"] == 400_000
     assert money_owner(world).get(f"{API}/org/payments/{second['id']}/receipt").json()["amount"] == 123_456
-    # what a payment BUYS is derived: the new prices change the days it covers, never its sum
     assert money_owner(world).get(f"{API}/org/memberships/{mid(world)}/payments").json()[0]["amount"] == 400_000
 
 
@@ -1658,8 +1697,8 @@ def test_a_free_group_owes_nothing_and_its_lessons_are_not_unpaid_news(world):
 
 
 def test_the_whole_chain_group_price_then_payment_then_payroll_with_a_rise_in_the_middle_of_the_month(world):
-    """The owner's flow through the API only: set the prices, enter the payments, hold the lessons, calculate the payroll;
-    then the price is changed backdated: the payments stay, the sheet turns stale."""
+    """The owner's flow through the API only: set the prices, enter the payments, hold the lessons, calculate the payroll (F1: the price of the
+    PERIOD); a price backdated over paid periods is refused, the payments stay and the sheet stays current."""
     m, (s0, s1, s2) = previous_month(), world.students
     put_price(world, 400_000, valid_from=EPOCH, note="до повышения")
     put_price(world, 500_000, valid_from=m.d(15), note="повышение с 15-го")
@@ -1668,17 +1707,17 @@ def test_the_whole_chain_group_price_then_payment_then_payroll_with_a_rise_in_th
     amounts = {s.id: money_owner(world).get(f"{API}/org/memberships/{mid(world, s)}/payments").json()[0]["amount"] for s in world.students}
     month_lessons(world, m, (10, 12, 15, 17))
     sheet = preview(world, m)
-    assert [line_of(sheet, s)["amount"] for s in world.students] == [75_000] * 3 and sheet["total_amount"] == 225_000
+    assert [line_of(sheet, s)["amount"] for s in world.students] == [66_667] * 3 and sheet["total_amount"] == 200_001   # the period's price
     saved = save_sheet(world, m)
-    # a rise from the 11th: the payments are what they were, the sheet says "данные изменились", the recalculation uses the new prices
-    changed = put_price(world, 450_000, valid_from=m.d(11), note="пересмотр задним числом")
-    assert changed["impact"]["stale_payroll_sheets"] == 1 and changed["impact"]["students_following"] == 3
+    # a price from the 11th does not touch a period that began on the 1st: allowed, the sheet stays current ...
+    changed = put_price(world, 450_000, valid_from=m.d(11), note="пересмотр")
+    assert changed["impact"]["stale_payroll_sheets"] == 0 and changed["impact"]["money"]["items"] == []
+    # ... a price from the 1st rewrites a charged period that has money in it: refused
+    r = money_owner(world).put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 450_000, "valid_from": m.first.isoformat()})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "PRICE_BACKDATE_WITH_PAYMENTS"
     assert {s.id: money_owner(world).get(f"{API}/org/memberships/{mid(world, s)}/payments").json()[0]["amount"]
             for s in world.students} == amounts
-    assert sheet_state(world, m, saved)["stale"] is True and saved["total_amount"] == 225_000
-    fresh = preview(world, m)
-    # 10th at 400 000; 12th and 15th at 450 000 (the 11th raise); 17th at 500 000 (the 15th rise stays)
-    assert [x["price"] for x in line_of(fresh, s0)["marks"]] == [400_000, 450_000, 500_000, 500_000]
-    assert line_of(fresh, s0)["amount"] == 77_083                                     # 1 850 000 * 50 % / 12 = 77 083.33
+    assert sheet_state(world, m, saved)["stale"] is False and saved["total_amount"] == 200_001
     assert [h["amount"] for h in get_prices(world)["history"]] == [500_000, 450_000, 400_000]
+
 

@@ -30,8 +30,8 @@ def ddmm(day: date) -> str:
 
 
 def period_text(start: date, end: date) -> str:
-    """``15.09–14.10`` (an en dash)."""
-    return f"{ddmm(start)}–{ddmm(end)}"
+    """``15.09–14.10`` (an en dash); a period of one day is just ``30.09`` («за 30.09», m6)."""
+    return ddmm(start) if start == end else f"{ddmm(start)}–{ddmm(end)}"
 
 
 def plural(count: int, one: str, few: str, many: str) -> str:
@@ -52,12 +52,18 @@ def lessons_word(count: int) -> str:
 
 
 def balance_text(balance: int) -> str:
-    """Running total of a statement: negative = debt, positive = advance."""
+    """«Баланс» of a statement (the personal account): negative = ``Долг N``, positive = ``Аванс N``, zero = ``0``."""
     if balance < 0:
         return f"Долг {num(-balance)}"
     if balance > 0:
         return f"Аванс {num(balance)}"
-    return "Нет долга"
+    return "0"
+
+
+def forgiven_title(reason: Optional[str]) -> str:
+    """Title of a write-off row of the statement: ``Долг прощён — причина …`` (the owner's vocabulary: «Простить долг»)."""
+    reason = (reason or "").strip()
+    return f"Долг прощён — причина {reason}" if reason else "Долг прощён"
 
 
 def days_text(*, basis: str, billable_days: int, period_days: int, first_day: Optional[date] = None,
@@ -88,6 +94,12 @@ def allocation_label(*, bucket: str, closes: bool, start: date, end: date, packa
     return f"Аванс на {span}"
 
 
+def opening_label(day: date, closes: bool) -> str:
+    """Where a payment went when it landed on the opening debt."""
+    on = day.strftime("%d.%m.%Y")
+    return f"Закрыла долг на начало учёта на {on}" if closes else f"Частично погасила долг на начало учёта на {on}"
+
+
 def advance_label_lessons() -> str:
     return "Аванс на следующие уроки"
 
@@ -106,6 +118,8 @@ def summary_text(
     paid_until_after: Optional[date],
     advance_periods: Sequence[tuple[date, date]] = (),
     lessons: Optional[tuple[int, int]] = None,
+    opening: int = 0,
+    opening_before: int = 0,
 ) -> str:
     """The one-line answer to «что закроет» (calendar: ``paid_until_after``; lessons: ``(covered_after, left_after)``).
 
@@ -114,6 +128,9 @@ def summary_text(
     * lessons: ``Закроет долг 600 000 → оплачено уроков 12, осталось 0 · аванс 30 000``
     """
     parts = []
+    if opening:  # LOGIC-A: the debt of the opening balance is paid before any period
+        parts.append(f"Закроет долг на начало {num(opening)}" if opening >= opening_before
+                     else f"Погасит {num(opening)} из долга на начало {num(opening_before)}")
     if past:
         parts.append(
             f"Закроет долг {num(past)}" if past >= past_debt_before else f"Погасит {num(past)} из долга {num(past_debt_before)}"
@@ -154,3 +171,19 @@ def price_change_warning(start: date, end: date, amount: int, current: int) -> s
         f"Цена периода {period_text(start, end)} — {money(amount)} (сейчас {money(current)}): "
         f"аванс на него купит {more} дней"
     )
+
+
+# ---- LOGIC-A: payroll payouts (decision 6) ------------------------------------------------------------------
+
+
+def payout_text(*, state: str, saved_total: int, fresh_total: Optional[int], target: int, paid: int, balance: int) -> str:
+    """The sentence of ``PayoutState.text`` (spec §5.8).  A sheet is "stale" when the fresh total differs from the saved one."""
+    if state == "unpaid":
+        return "Не выплачено"
+    if state == "settled":
+        return "Выплачено полностью"
+    if state == "overpaid":
+        return f"Переплачено {num(-balance)}"
+    if fresh_total is not None and fresh_total != saved_total:
+        return f"Выплачено {num(paid)} · после изменений данных доплатить {num(balance)}"
+    return f"Выплачено {num(paid)} из {num(target)} · осталось {num(balance)}"

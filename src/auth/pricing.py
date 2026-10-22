@@ -146,6 +146,10 @@ MIN_REASON = 3
 MAX_REASON = 200
 
 PRICE_CONFLICT_MESSAGE = "Цену только что изменили. Обновите страницу и повторите."
+LEFT_MARKERS = ("left_group", "return_group")   # LOGIC-A (F13): rows the system writes when a stay is closed / reopened
+PRICE_MARKER_MESSAGE = "Эту запись создала система при уходе из группы: её нельзя отменить"
+BACKDATE_LIST = 20          # students named by the refusal
+IMPACT_ITEMS = 50           # items of the money impact
 ARCHIVED_STUDENT_MESSAGE = "Ученик в архиве — сначала верните его"
 
 
@@ -158,15 +162,16 @@ class PriceError(Exception):
     status_code = 400
     code: Optional[str] = None
 
-    def __init__(self, message: str, *, code: Optional[str] = None) -> None:
+    def __init__(self, message: str, *, code: Optional[str] = None, **extra: Any) -> None:
         self.message = message
+        self.extra = extra
         if code:
             self.code = code
         super().__init__(message)
 
     @property
     def detail(self) -> Any:
-        return {"code": self.code, "message": self.message} if self.code else self.message
+        return {"code": self.code, "message": self.message, **self.extra} if self.code else self.message
 
 
 class PriceNotFound(PriceError):
@@ -304,6 +309,10 @@ class PriceBooks:
         if group_row is not None:
             return Price(group_row[1], SOURCE_GROUP, group_row[0], group_amount)
         return NO_PRICE
+
+    def with_override_books(self, books: Dict[UUID, "OverrideBook"]) -> "PriceBooks":
+        """The same books with the exception history of some memberships replaced ("what if this exception were written")."""
+        return PriceBooks(self.groups, {**self.overrides, **books})
 
     def with_group_books(self, books: Dict[UUID, GroupBook]) -> "PriceBooks":
         """The same books with some group histories replaced ("what if the price of this group were ...")."""
@@ -794,6 +803,105 @@ class PricingService:
             else [],
         }
 
+    # --------------------------------------------- LOGIC-A: the money effect of a price (decision 4)
+
+    def _money_ids(self, org_id: str, *, group_id: Optional[UUID] = None, membership_id: Optional[UUID] = None) -> List[UUID]:
+        """The memberships a price touches: the active ones (student not archived) and the closed ones that carry money."""
+        from sqlalchemy import exists, or_
+
+        query = (
+            self.db.query(StudentGroup.id)
+            .join(Student, Student.id == StudentGroup.student_id)
+            .join(Group, Group.id == StudentGroup.group_id)
+            .filter(Student.org_id == org_id, Group.org_id == org_id)
+        )
+        if membership_id is not None:
+            query = query.filter(StudentGroup.id == membership_id)
+        else:
+            from src.models.auth import MembershipTransfer, StudentPayment, StudentRefund, StudentWriteoff
+
+            money = or_(*(
+                exists().where((model.membership_id == StudentGroup.id) & (model.voided_at.is_(None)))
+                for model in (StudentPayment, StudentWriteoff, StudentRefund)
+            ), exists().where((MembershipTransfer.to_membership_id == StudentGroup.id) & (MembershipTransfer.voided_at.is_(None))))
+            query = query.filter(
+                StudentGroup.group_id == group_id,
+                or_((StudentGroup.is_active.is_(True)) & (Student.status != "archived"), money),
+            )
+        return [r[0] for r in query.all()]
+
+    def _lock_memberships(self, ids: Sequence[UUID]) -> None:
+        """a row lock (``key_share``, as ``_lock_family``) on the memberships, ascending id (the order of ``PaymentService._lock_family``)."""
+        if ids:
+            self.db.query(StudentGroup.id).filter(StudentGroup.id.in_(list(ids))).order_by(StudentGroup.id).with_for_update(key_share=True).all()
+
+    def money_impact(
+        self, org_id: str, ids: Sequence[UUID], *, what_if, valid_from: date, today: date,
+    ) -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
+        """``(PriceImpactMoney as a dict, memberships that are BLOCKED)`` - the ledger "what if" before / after.
+
+        ``what_if(books) -> books``: the price books with the change.  A membership is blocked when the price is backdated, it already has
+        money (a payment, a write-off, a refund, a transfer in) and the change alters what was CHARGED for periods that have begun."""
+        from . import billing_ledger as bl
+        from . import ledger_service as ls
+        from .payments_files import person_name
+
+        ids = list(ids)
+        backdated = valid_from < today
+        empty = {"memberships_with_new_debt": 0, "debt_delta": 0, "memberships_with_less_advance": 0, "advance_delta": 0,
+                 "days_lost_total": 0, "backdated": backdated, "items": []}
+        if not ids:
+            return empty, []
+        old_loader = ls.LedgerLoader(self.db, str(org_id), today)
+        old_loader.load_facts(ids)
+        new_loader = ls.LedgerLoader(self.db, str(org_id), today)
+        new_loader.load_facts(ids)
+        new_loader.books = what_if(new_loader.books)
+        items, blocked = [], []
+        new_debt = less_adv = days_lost = 0
+        debt_delta = advance_delta = 0
+        for mid in ids:
+            if mid not in old_loader.members:
+                continue
+            inp_old, inp_new = old_loader.build_input(mid), new_loader.build_input(mid)
+            before, after = bl.run_ledger(inp_old), bl.run_ledger(inp_new)
+            membership, student, _group, _t = old_loader.members[mid]
+            has_money = bool(inp_old.credits or inp_old.outflows)
+            name = person_name(student.last_name, student.first_name) or "—"
+            if backdated and has_money and after.charged != before.charged:
+                blocked.append({"membership_id": str(mid), "student_name": name})
+            lost = 0
+            if before.covered_through and after.covered_through and after.covered_through < before.covered_through:
+                lost = (before.covered_through - after.covered_through).days
+            changed = (before.debt, before.advance, before.covered_through) != (after.debt, after.advance, after.covered_through)
+            if not changed:
+                continue
+            if after.debt > before.debt:
+                new_debt += 1
+                debt_delta += after.debt - before.debt
+            if after.advance < before.advance or lost:
+                less_adv += 1
+                advance_delta += min(0, after.advance - before.advance)
+                days_lost += lost
+            items.append({
+                "membership_id": str(mid), "student_name": name, "debt_before": before.debt, "debt_after": after.debt,
+                "advance_before": before.advance, "advance_after": after.advance, "paid_until_before": before.covered_through,
+                "paid_until_after": after.covered_through, "has_money": has_money})
+        items.sort(key=lambda i: (-(i["debt_after"] - i["debt_before"]), i["advance_after"] - i["advance_before"], i["student_name"]))
+        return {"memberships_with_new_debt": new_debt, "debt_delta": debt_delta, "memberships_with_less_advance": less_adv,
+                "advance_delta": advance_delta, "days_lost_total": days_lost, "backdated": backdated,
+                "items": items[:IMPACT_ITEMS]}, blocked
+
+    @staticmethod
+    def _refuse_backdate(blocked: List[Dict[str, str]]) -> None:
+        if not blocked:
+            return
+        names = ", ".join(b["student_name"] for b in blocked[:3]) + ("…" if len(blocked) > 3 else "")
+        raise PriceConflict(
+            f"Нельзя изменить цену задним числом: у {len(blocked)} {'ученика' if len(blocked) == 1 else 'учеников'} уже есть оплаты за период, "
+            f"который это затронет ({names}). Разницу за прошлое закройте прощением долга или возвратом.",
+            code="PRICE_BACKDATE_WITH_PAYMENTS", students=blocked[:BACKDATE_LIST])
+
     # ----------------------------------------------------------------- writing
 
     @_guard
@@ -825,6 +933,15 @@ class PricingService:
         try:
             group = self._group(org_id, group_id, lock=not dry_run)
             impact = self.impact(org_id, group, amount, valid_from, today, owner_view=owner_view)
+            book = load_books(self.db, [group.id], []).group_book(group.id).with_step(valid_from, amount)
+            money_ids = self._money_ids(org_id, group_id=group.id)
+            if not dry_run:       # m4: the family locks (the memberships of the group, ascending id - the order every money write takes) BEFORE the what-if
+                self._lock_memberships(money_ids)
+            money, blocked = self.money_impact(
+                org_id, money_ids, valid_from=valid_from, today=today,
+                what_if=lambda books: books.with_group_books({group.id: book}))
+            impact["money"] = money
+            self._refuse_backdate(blocked)          # LOGIC-A: a backdated price that rewrites charged periods with money in them
             if dry_run:
                 self.db.rollback()
                 return {"dry_run": True, "impact": impact, "current": None, "history": None}
@@ -993,6 +1110,8 @@ class PricingService:
             )
             if row is None:
                 raise PriceNotFound("Цена не найдена")
+            if row.amount is None and (row.reason or "") in LEFT_MARKERS:
+                raise PriceConflict(PRICE_MARKER_MESSAGE, code="PRICE_MARKER")
             if row.valid_from <= today:
                 raise PriceConflict(CANCEL_IN_FORCE_MESSAGE)
             self._refuse_if_lessons_held(membership.group_id, row.valid_from)
@@ -1033,6 +1152,8 @@ class PricingService:
         amount: Optional[int],
         valid_from: Optional[date] = None,
         reason: Optional[str] = None,
+        dry_run: bool = False,
+        owner_view: bool = False,
     ) -> Dict[str, Any]:
         """The individual price of a student from a day (reason mandatory), or ``amount=None``: the group price again.
 
@@ -1046,6 +1167,27 @@ class PricingService:
             student, membership = self._lock_membership(org_id, membership_id)
             if student.status == "archived":  # read after the locks: an archiving that held the student is seen
                 raise PriceConflict(ARCHIVED_STUDENT_MESSAGE)
+            old_book = load_books(self.db, [membership.group_id], [membership.id]).override_book(membership.id)
+            rows = [(d, a, r) for d, a, r in old_book._rows if d != valid_from] + [(valid_from, amount, reason)]
+            new_book = OverrideBook(rows)
+            money, blocked = self.money_impact(
+                org_id, [membership.id], valid_from=valid_from, today=today,
+                what_if=lambda books: books.with_override_books({membership.id: new_book}))
+            self._refuse_backdate(blocked)
+            from .payroll_service import PayrollService  # lazy: payroll pulls in the payments service
+
+            sheets = PayrollService(self.db).sheets_changed_by_override(org_id, membership, new_book, valid_from)
+            impact = {
+                "students_following": 1 if amount is None else 0, "students_with_override": 0 if amount is None else 1,
+                "stale_payroll_sheets": len(sheets),
+                "stale_sheets": [{"sheet_id": s["sheet_id"], "month": s["month"], "teacher_id": s["teacher_id"],
+                                  "teacher_name": s["teacher_name"]} for s in sheets] if owner_view else [],
+                "money": money}
+            if dry_run:
+                self.db.rollback()
+                out = self.override_history(org_id, membership_id)
+                out.update({"dry_run": True, "impact": impact})
+                return out
             write_override(
                 self.db, membership.id, actor_id, amount=amount, valid_from=valid_from, reason=reason,
                 seen_before=requested_at,
@@ -1065,7 +1207,9 @@ class PricingService:
             "price override set membership=%s valid_from=%s cleared=%s actor=%s",
             membership_id, valid_from, amount is None, actor_id,
         )
-        return self.override_history(org_id, membership_id)
+        out = self.override_history(org_id, membership_id)
+        out.update({"dry_run": False, "impact": impact})
+        return out
 
 
 # ============================================================================

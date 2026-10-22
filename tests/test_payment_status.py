@@ -95,7 +95,9 @@ def test_buckets():
         ps.EXPIRED: ps.BUCKET_DUE, ps.ENDS_TODAY: ps.BUCKET_DUE, ps.EXPIRING: ps.BUCKET_EXPIRING,
         ps.NONE: ps.BUCKET_NONE, ps.ACTIVE: ps.BUCKET_ACTIVE, ps.FREE: ps.BUCKET_ACTIVE,
     }
-    assert set(cases) == set(ps.STATUSES)
+    assert set(cases) | {ps.PAUSED} == set(ps.STATUSES)
+    assert ps.bucket_of(ps.PAUSED) == ps.BUCKET_PAUSED                      # LOGIC-A: a paused student is on the "all" tab only
+    assert ps.in_bucket(ps.PAUSED, ps.BUCKET_ALL) and not any(ps.in_bucket(ps.PAUSED, b) for b in ps.BUCKETS[:4])
     for st, bucket in cases.items():
         assert ps.bucket_of(st) == bucket
         assert ps.in_bucket(st, bucket) and ps.in_bucket(st, ps.BUCKET_ALL)

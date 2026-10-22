@@ -1,0 +1,89 @@
+{
+  "membership_id": "00000000-0000-4000-8000-000000000102",
+  "group_id": "00000000-0000-4000-8000-000000000301",
+  "as_of": "2026-10-21",
+  "period_mode": "calendar",
+  "price_label": "Оплата в месяц",
+  "price": {
+    "amount": 500000,
+    "source": "group",
+    "valid_from": "2026-01-01",
+    "group_amount": 500000,
+    "reason": null
+  },
+  "history": [],
+  "cancelled": [],
+  "row": {
+    "membership_id": "00000000-0000-4000-8000-000000000102",
+    "student_id": "00000000-0000-4000-8000-000000000202",
+    "student_name": "Ахмедов Б.",
+    "display_id": "S-1002",
+    "class_level": 7,
+    "group_id": "00000000-0000-4000-8000-000000000302",
+    "group_name": "A-1",
+    "teacher_id": "00000000-0000-4000-8000-000000000400",
+    "teacher_name": "Каримова",
+    "is_primary": true,
+    "is_active": true,
+    "price": {
+      "amount": 500000,
+      "source": "group",
+      "valid_from": "2026-01-01",
+      "group_amount": 500000,
+      "reason": null
+    },
+    "monthly_fee": 500000,
+    "status": "active",
+    "period_mode": "calendar",
+    "paid_until": "2026-11-12",
+    "days_overdue": null,
+    "days_left": 22,
+    "lessons_total": null,
+    "lessons_used": null,
+    "lessons_left": null,
+    "last_payment": null,
+    "debt": 0,
+    "past_debt": 0,
+    "current_due": 0,
+    "advance": 200000,
+    "partial_credit": 0,
+    "price_missing": false,
+    "lessons_unpaid": 0,
+    "refundable": 200000,
+    "writeoff_allowed": false,
+    "paused": null,
+    "opening": null,
+    "price_ends_on_leave": false,
+    "bucket": null,
+    "debt_reason": null,
+    "reason": null
+  },
+  "dry_run": true,
+  "impact": {
+    "students_following": 0,
+    "students_with_override": 1,
+    "stale_payroll_sheets": 0,
+    "stale_sheets": [],
+    "money": {
+      "memberships_with_new_debt": 0,
+      "debt_delta": 0,
+      "memberships_with_less_advance": 1,
+      "advance_delta": 0,
+      "days_lost_total": 2,
+      "backdated": false,
+      "items": [
+        {
+          "membership_id": "00000000-0000-4000-8000-000000000102",
+          "student_name": "Ахмедов Б.",
+          "debt_before": 0,
+          "debt_after": 0,
+          "advance_before": 200000,
+          "advance_after": 200000,
+          "paid_until_before": "2026-11-12",
+          "paid_until_after": "2026-11-10",
+          "has_money": true
+        }
+      ]
+    }
+  }
+}

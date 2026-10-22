@@ -42,6 +42,7 @@ from src.models.auth import (
 
 logger = logging.getLogger(__name__)
 
+PAUSE_NOT_REQUIRED = "Не требуется: ученик на паузе"   # LOGIC-A: the note of an excuse closed by a pause / the refusal to open one on a pause day
 EXCUSED = "excused"
 REASON_MIN = 3
 REASON_MAX = 300
@@ -102,6 +103,12 @@ def _user_name(user: Optional[User]) -> Optional[str]:
 # ============================================================================
 # Errors (mapped to HTTP by the router)
 # ============================================================================
+
+
+class ExcusePauseRefused(ValueError):
+    """422 ``EXCUSE_ON_PAUSE``: an excuse cannot be given for a lesson on a day of the student's pause (the router maps it)."""
+
+    code = "EXCUSE_ON_PAUSE"
 
 
 class ExcuseError(Exception):
@@ -389,7 +396,41 @@ class AttendanceExcuseService:
         # No longer excused (or the lesson was cancelled): the excuse goes away
         # together with its files.
         plan.delete = [e for sid, e in existing.items() if sid not in excused_now]
+        if att is not None and plan.create and self._paused_students(att, set(plan.create)):
+            raise ExcusePauseRefused(PAUSE_NOT_REQUIRED)       # LOGIC-A: a day of a pause needs no excuse
         return plan
+
+    def _paused_students(self, att: GroupAttendance, student_ids: set) -> set:
+        """Students (of ``student_ids``) whose live pause covers the day of the lesson."""
+        from .membership_pauses import paused_student_ids  # lazy
+
+        try:
+            day = date.fromisoformat(att.lesson_date)
+        except (TypeError, ValueError):
+            return set()
+        return paused_student_ids(self.db, att.group_id, student_ids, day)
+
+    def close_for_pause(self, student_id: UUID, group_id: UUID, first: date, last: date, actor_id: str, now: datetime) -> int:
+        """LOGIC-A: the undecided excuses of the student for lessons of the group on pause days become «Не требуется: ученик на паузе»
+        (status ``not_required``: not counted anywhere).  Decided ones stay as the record they are.  A later shortening / cancelling of the
+        pause does NOT reopen them.  Returns how many were closed."""
+        rows = (
+            self.db.query(AttendanceExcuse, GroupAttendance)
+            .join(GroupAttendance, GroupAttendance.id == AttendanceExcuse.attendance_id)
+            .filter(
+                AttendanceExcuse.student_id == student_id, AttendanceExcuse.status == "pending",
+                GroupAttendance.group_id == group_id,
+                GroupAttendance.lesson_date >= first.isoformat(), GroupAttendance.lesson_date <= last.isoformat(),
+            )
+            .all()
+        )
+        for excuse, att in rows:
+            excuse.status, excuse.reviewed_by, excuse.reviewed_at, excuse.review_note = "not_required", UUID(str(actor_id)), now, PAUSE_NOT_REQUIRED
+            excuse.decided_after_deadline = None
+            excuse.deadline_at_decision = None
+            self._audit(att, actor_id, "excuse_closed_pause", {
+                "excuse_id": str(excuse.id), "student_id": str(excuse.student_id), "status_before": "pending", "note": PAUSE_NOT_REQUIRED})
+        return len(rows)
 
     def apply_save(self, att: GroupAttendance, plan: ExcusePlan, actor_id: str, now: datetime) -> None:
         """Persist ``plan``; ``att`` must already be flushed (has an id)."""

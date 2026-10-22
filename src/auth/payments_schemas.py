@@ -12,7 +12,7 @@ MAX_MONEY = 10_000_000_000
 PeriodMode = Literal["calendar", "lessons"]
 BillingAnchor = Literal["payment_date", "fixed_day"]
 QuoteBasis = Literal["full", "lessons", "days", "package", "custom", "none"]
-MembershipStatus = Literal["none", "free", "expired", "ends_today", "expiring", "active"]
+MembershipStatus = Literal["none", "free", "expired", "ends_today", "expiring", "active", "paused"]
 PriceSource = Literal["group", "override", "none"]
 
 
@@ -43,17 +43,18 @@ PaymentMethod = Literal["cash", "card", "bank_transfer", "click", "payme", "othe
 NewPaymentMethod = Literal["cash", "card", "bank_transfer", "click", "payme", "other"]
 PaymentKind = Literal["payment", "legacy_carry"]
 AllocationBucket = Literal["past_debt", "current", "advance"]
-SegmentKind = Literal["period", "package"]
-SegmentBasis = Literal["full", "lessons", "days", "zero"]
+SegmentKind = Literal["period", "package", "opening"]  # "opening": the debt of the opening balance (LOGIC-A)
+SegmentBasis = Literal["full", "lessons", "days", "zero", "opening"]
 # closed: nothing unpaid; future: the period has not begun, something is unpaid; partial: begun, some money, not all;
 # open: begun, no money; unpriced: no price is set for the period (nothing is charged).
 SegmentState = Literal["closed", "partial", "open", "future", "unpriced"]
 SegmentBucket = Literal["past_debt", "current", "future"]
-StatementRowType = Literal["charge", "payment", "writeoff", "refund", "transfer_in", "transfer_out"]
+StatementRowType = Literal["charge", "payment", "writeoff", "refund", "transfer_in", "transfer_out",
+                           "opening_debt", "opening_paid_until", "pause"]  # LOGIC-A: the opening balance and a pause (info row, no money)
 ReceiptColumn = Literal["received", "to_past_debt", "to_current", "to_advance", "written_off", "refunded"]
 ReceiptItemType = Literal["payment", "writeoff", "refund"]
 PayWarningCode = Literal[
-    "price_missing", "horizon_capped", "large_overpay", "student_archived", "price_change_ahead",
+    "price_missing", "horizon_capped", "large_overpay", "student_archived", "left_debt_only", "price_change_ahead",
     "paid_over_60_days_ago",
     # LEGACY (period payments of the old model): no longer emitted after PAY-2 stream B, dropped from this list then.
     "overlaps_previous", "gap_before", "period_over_62_days", "short_period_full_amount",
@@ -110,6 +111,7 @@ class Segment(PayModel):
     paid: int = 0  # money that lies on the segment (payments and transfers in; write-offs not included)
     written_off: int = 0
     unpaid: int = 0  # charge - paid - written_off
+    remaining: int = 0  # LOGIC-A: the same as ``unpaid`` under the name the month header uses (charge - paid - written_off)
     covered_days: int = 0  # floor(money * billable_days / charge); a day is paid only when paid in full
     covered_through: Optional[date_type] = None  # last paid day of the segment (null - none)
     partial_credit: int = 0  # money "inside" the first unpaid day; counts towards the next payment
@@ -130,6 +132,9 @@ class Allocation(PayModel):
     closes: bool  # after this piece the segment is paid in full
     label: str  # «Закрыла долг 15.09–14.10» | «На текущий период 15.10–14.11» | «Аванс на 15.11–14.12»
     price: Optional[int] = None  # the price of that period (differs from today's price when a price change is announced)
+    # LOGIC-A: what is still unpaid of THAT period right after this piece (after the earlier payments / write-offs / refunds in
+    # the order of the money line); null on the "advance" line and on a snapshot of a receipt made before LOGIC-A.
+    segment_remaining_after: Optional[int] = None
 
 
 class SnapshotPrice(PayModel):
@@ -297,6 +302,27 @@ class MembershipPaymentRow(BaseModel):
     lessons_unpaid: int = 0
     refundable: int = 0
     writeoff_allowed: bool = False
+    # LOGIC-A.  ``paused``: today lies inside a live pause (status ``paused``); ``opening``: the live "opening balance" of
+    # the membership; ``price_ends_on_leave``: the individual price of the membership was ended by a departure.
+    paused: Optional["PausedRange"] = None
+    opening: Optional["OpeningBrief"] = None
+    price_ends_on_leave: bool = False
+    # LOGIC-A (owner, 21.10): the tab of the row - ``debt`` Должники (debt > 0, any reason; students who left included), ``expiring`` Скоро
+    # платить (no debt, the next period is due within ``expiring_days``), ``active`` Оплачено (no debt, not due soon; an advance included),
+    # ``paused`` На паузе (today is inside a pause, no debt); null: a free student, one without a price, a membership that is not tracked.
+    # ``debt_reason`` (code) and ``reason`` (the sentence of the debtor line) say why a debtor is one.
+    bucket: Optional[Literal["debt", "expiring", "active", "paused"]] = None
+    debt_reason: Optional[Literal["overdue", "partial", "never_paid"]] = None
+    reason: Optional[str] = None  # the line of a debtor: «Просрочено на 12 дней» | «Не доплачено за октябрь: 150 000» | «Ещё не платил»
+
+
+class PaymentsBuckets(BaseModel):
+    """Memberships per tab of the payments page (the same sets ``GET /org/payments/status?bucket=`` lists)."""
+
+    debt: int = 0
+    expiring: int = 0
+    active: int = 0
+    paused: int = 0
 
 
 class PaymentsSummary(BaseModel):
@@ -322,6 +348,14 @@ class PaymentsSummary(BaseModel):
     memberships_with_debt: int = 0
     students_with_debt: int = 0
     accounting_start_date: Optional[date_type] = None
+    paused: int = 0  # LOGIC-A: memberships whose today is inside a pause
+    # LOGIC-A (owner, 21.10): the new tabs.  ``buckets.debt`` == ``memberships_with_debt``; Σ debt of that tab == ``debt_total``;
+    # ``debtors`` == ``students_with_debt`` (distinct students).  ``free`` (existing) and ``price_missing`` are the students outside the
+    # tabs (a warning line); ``students_with_advance`` is the advance card (with ``advance_total``).
+    buckets: "PaymentsBuckets" = Field(default_factory=lambda: PaymentsBuckets())
+    price_missing: int = 0
+    students_with_advance: int = 0
+    debtors: int = 0
 
 
 class PaymentStatusPage(BaseModel):
@@ -433,6 +467,8 @@ class PriceImpact(BaseModel):
     students_with_override: int  # active students with an individual price: not touched
     stale_payroll_sheets: int  # saved payroll sheets that would turn «данные изменились»
     stale_sheets: List[PriceImpactSheet] = Field(default_factory=list)  # the sheets themselves: the owner only
+    # LOGIC-A (decision 4): the money effect, computed by the ledger "what if"; null for a caller without access to money.
+    money: Optional["PriceImpactMoney"] = None
 
 
 class GroupPriceUpdate(BaseModel):
@@ -514,6 +550,10 @@ class PriceOverrideUpdate(BaseModel):
 
 class PriceOverrideChanged(MembershipPriceOut):
     row: "MembershipPaymentRow"
+    dry_run: bool = False
+    # LOGIC-A: what this price of this membership touches - the same block as the group price: the counters, the stale sheets (the list for
+    # the owner only) and ``money`` (the ledger "what if": debt / advance / «оплачено до» of this membership).  ``null`` on GET / cancel.
+    impact: Optional["PriceImpact"] = None
 
 
 class PaymentCreate(BaseModel):
@@ -649,6 +689,7 @@ class ReceiptOut(BaseModel):
     void_reason: Optional[str] = None
     replaced_by_receipt_no: Optional[int] = None
     replaces_receipt_no: Optional[int] = None
+    replaces_amount: Optional[int] = None  # LOGIC-A: the sum of the payment this one corrects («исправлена: было 450 000»)
 
 
 # ============================================================================================================
@@ -857,6 +898,11 @@ class StatementDetails(PayModel):
     from_membership_id: Optional[str] = None
     to_group_name: Optional[str] = None  # transfer_out
     to_membership_id: Optional[str] = None
+    # LOGIC-A: the correction chain of a payment row.  A correction shows «исправлена: было 450 000»; the voided original
+    # (``include_voided``) links to the receipt that replaced it.
+    replaces_receipt_no: Optional[int] = None
+    replaces_amount: Optional[int] = None
+    replaced_by_receipt_no: Optional[int] = None
 
 
 class StatementRow(PayModel):
@@ -868,7 +914,7 @@ class StatementRow(PayModel):
     credit: int = 0  # money in (payment, transfer in, write-off)
     outflow: int = 0  # money out (refund, transfer out)
     balance_after: Optional[int] = None  # negative = debt, positive = advance; null on a voided row
-    balance_text: Optional[str] = None  # «Долг 500 000» | «Аванс 21 000» | «Нет долга»
+    balance_text: Optional[str] = None  # «Долг 500 000» | «Аванс 21 000» | «0» (the «Баланс» column)
     voided_at: Optional[str] = None
     void_reason: Optional[str] = None
     voided_by_name: Optional[str] = None
@@ -1084,3 +1130,312 @@ class PaymentSettingsChanged(PaymentSettings):
 
     dry_run: bool = False
     impact: Optional[AccountingStartImpact] = None
+    # LOGIC-A (F12): with ``dry_run`` and a change of the billing mode: who switches and when (null otherwise).
+    regime_impact: Optional["RegimeImpact"] = None
+
+
+# ================================================================================================================
+# LOGIC-A (pack «деньги»): opening balance, pause, leave / archive with money, price impact, regime impact, lesson type.
+# FROZEN with ``artifacts/partner_doc_check/logicA_contract.json`` and ``tests/fixtures/logicA``: a change = change the
+# spec (``logicA_spec.md``) and these schemas first.
+# ================================================================================================================
+
+
+class LogicAErrorDetail(PayErrorDetail):
+    """Error body of the LOGIC-A endpoints: ``PayErrorDetail`` + the lists some codes carry.
+
+    Codes: ``OPENING_RANGE`` / ``PAUSE_RANGE`` / ``PAUSE_LOCKED`` / ``NOTHING_TO_PAY`` / ``PAYMENT_EXCEEDS_DEBT`` (``debt``) /
+    ``LESSON_TYPE_RANGE`` / ``METHOD_REQUIRED`` / ``REASON_REQUIRED`` (422); ``OPENING_NOT_ALLOWED`` / ``PAUSE_OVERLAP`` /
+    ``PAUSE_OVERLAPS_ATTENDED`` (``dates``) / ``PAUSE_BREAKS_REFUND`` / ``MEMBERSHIP_CLOSED`` / ``BALANCE_CHANGED`` (``fresh``) /
+    ``PRICE_BACKDATE_WITH_PAYMENTS`` (``students``) / ``PRICE_MARKER`` / ``PRICE_CONFLICT`` / ``VOID_BREAKS_REFUND`` (409).
+    """
+
+    dates: Optional[List[date_type]] = None  # PAUSE_OVERLAPS_ATTENDED
+    students: Optional[List["PriceBlockedStudent"]] = None  # PRICE_BACKDATE_WITH_PAYMENTS (first 20)
+    fresh: Optional[List["FreshBalance"]] = None  # BALANCE_CHANGED: the numbers as they are now
+
+
+class LogicAError(PayModel):
+    detail: LogicAErrorDetail
+
+
+class FreshBalance(PayModel):
+    membership_id: str
+    debt: int = 0
+    advance: int = 0
+    refundable: int = 0
+
+
+class PriceBlockedStudent(PayModel):
+    membership_id: str
+    student_name: str
+
+
+class ImpactMoney(PayModel):
+    """The money effect of a change of one membership (the ledger before / after, same day)."""
+
+    debt_before: int = 0
+    debt_after: int = 0
+    advance_before: int = 0
+    advance_after: int = 0
+    paid_until_before: Optional[date_type] = None
+    paid_until_after: Optional[date_type] = None
+    charged_delta: int = 0
+    refundable_before: int = 0
+    refundable_after: int = 0
+
+
+class PausedRange(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, json_schema_serialization_defaults_required=True)
+
+    from_: date_type = Field(..., alias="from")
+    to: date_type
+
+
+# ---- opening balance ("остаток на начало") ----------------------------------------------------------
+
+
+class OpeningBrief(PayModel):
+    id: str
+    paid_until: Optional[date_type] = None
+    debt_amount: Optional[int] = None
+    debt_on: Optional[date_type] = None
+
+
+class OpeningIn(BaseModel):
+    """The opening balance of a membership: «оплачено до» and / or «долг X на дату T» (the debt needs its date)."""
+
+    paid_until: Optional[date_type] = None
+    debt_amount: Optional[int] = None  # 1..10^10
+    debt_on: Optional[date_type] = None  # not after the first day of the stay; default in an import: the day before
+    reason: Optional[str] = Field(None, max_length=500)  # m13: required (3..500) when the opening it replaces sits on a membership that has money
+
+
+class OpeningPut(OpeningIn):
+    """``PUT /org/memberships/{id}/opening-balance``: all three empty = void of the live one.  ``reason`` is required
+    (3..500) when the membership already has money, write-offs or refunds."""
+
+    note: Optional[str] = Field(None, max_length=300)
+
+
+class OpeningOut(PayModel):
+    id: str
+    membership_id: str
+    paid_until: Optional[date_type] = None
+    debt_amount: Optional[int] = None
+    debt_on: Optional[date_type] = None
+    note: Optional[str] = None
+    source: Literal["import", "manual", "add"] = "manual"
+    created_by_name: Optional[str] = None
+    created_at: Optional[str] = None
+    voided_at: Optional[str] = None
+    void_reason: Optional[str] = None
+
+
+class OpeningSaved(PayModel):
+    """``opening`` null: the call voided the live one (or ``dry_run`` of such a call)."""
+
+    opening: Optional[OpeningOut] = None
+    impact: ImpactMoney
+    dry_run: bool = False
+    row: MembershipPaymentRow
+
+
+class OpeningVoided(PayModel):
+    opening: OpeningOut
+    impact: ImpactMoney
+    row: MembershipPaymentRow
+
+
+# ---- pause ------------------------------------------------------------------------------------------
+
+
+class PauseCreate(BaseModel):
+    first_day: date_type
+    last_day: date_type
+    reason: Optional[str] = Field(None, max_length=300)
+
+
+class PausePatch(BaseModel):
+    first_day: Optional[date_type] = None
+    last_day: Optional[date_type] = None
+    reason: Optional[str] = Field(None, max_length=300)
+
+
+class PauseOut(PayModel):
+    id: str
+    membership_id: str
+    first_day: date_type
+    last_day: date_type
+    days: int
+    reason: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: Optional[str] = None
+    voided_at: Optional[str] = None
+    void_reason: Optional[str] = None
+
+
+class PauseLessonMark(PayModel):
+    date: date_type
+    marks: Optional[str] = None  # absent | excused | present | late | null (no mark yet)
+
+
+class PauseLessons(PayModel):
+    excluded: List[PauseLessonMark] = Field(default_factory=list)  # lessons that will no longer be counted
+    attended: List[PauseLessonMark] = Field(default_factory=list)  # present / late: a pause over them is refused
+
+
+class PausePayroll(PayModel):
+    months: List[str] = Field(default_factory=list)  # "YYYY-MM"
+    saved_sheets_changed: int = 0
+
+
+class PauseSaved(PayModel):
+    pause: PauseOut
+    impact: Optional[ImpactMoney] = None  # null without access to money
+    lessons: PauseLessons
+    payroll: Optional[PausePayroll] = None  # the owner only
+    dry_run: bool = False
+    row: Optional[MembershipPaymentRow] = None  # null on ``dry_run``
+
+
+class PauseVoided(PayModel):
+    pause: PauseOut
+    impact: Optional[ImpactMoney] = None
+    row: Optional[MembershipPaymentRow] = None
+
+
+class PauseVoid(RecordVoid):
+    """Cancel a pause: the reason 3..500 characters."""
+
+
+# ---- leave / archive with money ---------------------------------------------------------------------
+
+SettleAction = Literal["keep", "writeoff", "refund"]
+
+
+class LeaveMoney(PayModel):
+    debt: int = 0
+    advance: int = 0
+    refundable: int = 0
+    paid_until: Optional[date_type] = None
+    charged_after_leave: int = 0
+    individual_price_ends: bool = False
+
+
+class LeaveMembership(PayModel):
+    membership_id: str
+    group_id: str
+    group_name: str
+    money: Optional[LeaveMoney] = None  # null without access to money
+    has_open_balance: bool = False
+    allowed: List[SettleAction] = Field(default_factory=lambda: ["keep"])
+
+
+class LeavePreview(PayModel):
+    as_of: date_type
+    memberships: List[LeaveMembership] = Field(default_factory=list)
+
+
+class SettleItem(BaseModel):
+    membership_id: str
+    action: SettleAction = "keep"
+    expected_refundable: Optional[int] = None  # refund
+    expected_debt: Optional[int] = None  # writeoff
+    method: Optional[NewPaymentMethod] = None  # refund: mandatory
+    reason: Optional[str] = Field(None, max_length=500)  # writeoff: mandatory (3..500)
+
+
+class LeaveRequest(BaseModel):
+    reason: Optional[str] = Field(None, max_length=300)
+    settle: List[SettleItem] = Field(default_factory=list, max_length=200)
+
+
+class SettledOut(PayModel):
+    membership_id: str
+    action: SettleAction
+    amount: int = 0
+    refund_id: Optional[str] = None
+    writeoff_id: Optional[str] = None
+
+
+class LeaveResult(PayModel):
+    message: str
+    settled: List[SettledOut] = Field(default_factory=list)
+
+
+# ---- price impact (decision 4) ----------------------------------------------------------------------
+
+
+class PriceImpactItem(PayModel):
+    membership_id: str
+    student_name: str
+    debt_before: int = 0
+    debt_after: int = 0
+    advance_before: int = 0
+    advance_after: int = 0
+    paid_until_before: Optional[date_type] = None
+    paid_until_after: Optional[date_type] = None
+    has_money: bool = False
+
+
+class PriceImpactMoney(PayModel):
+    memberships_with_new_debt: int = 0
+    debt_delta: int = 0
+    memberships_with_less_advance: int = 0
+    advance_delta: int = 0
+    days_lost_total: int = 0
+    backdated: bool = False
+    items: List[PriceImpactItem] = Field(default_factory=list)  # at most 50
+
+
+# ---- billing mode change (F12) ----------------------------------------------------------------------
+
+
+class RegimeImpact(PayModel):
+    students_affected: int = 0
+    first_switch: Optional[date_type] = None
+    latest_switch: Optional[date_type] = None
+    defer: bool = True
+
+
+# ---- lesson type of a group (F14) -------------------------------------------------------------------
+
+LessonTypeName = Literal["group", "mini_group", "pair", "individual"]
+
+
+class LessonTypeRow(PayModel):
+    valid_from: date_type
+    lesson_type: LessonTypeName
+    created_by_name: Optional[str] = None
+
+
+class GroupLessonTypes(PayModel):
+    current: LessonTypeName
+    history: List[LessonTypeRow] = Field(default_factory=list)
+
+
+class LessonTypePut(BaseModel):
+    lesson_type: LessonTypeName
+    valid_from: Optional[date_type] = None  # default: today
+
+
+class LessonTypeSheet(PayModel):
+    sheet_id: str
+    month: str
+    teacher_name: Optional[str] = None
+
+
+class LessonTypeImpact(PayModel):
+    stale_payroll_sheets: int = 0
+    stale_sheets: List[LessonTypeSheet] = Field(default_factory=list)
+
+
+class GroupLessonTypeChanged(GroupLessonTypes):
+    dry_run: bool = False
+    impact: Optional[LessonTypeImpact] = None  # the owner only
+
+
+for _model in (MembershipPaymentRow, PriceImpact, PaymentSettingsChanged, LogicAErrorDetail, LogicAError, OpeningSaved,
+               OpeningVoided, PauseSaved, PauseVoided):
+    _model.model_rebuild()

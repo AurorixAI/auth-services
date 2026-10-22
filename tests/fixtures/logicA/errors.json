@@ -1,0 +1,237 @@
+{
+  "PAYMENT_EXCEEDS_DEBT": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "PAYMENT_EXCEEDS_DEBT",
+        "message": "Ученик ушёл: принять можно не больше долга 347 000 сум",
+        "debt": 347000,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": null,
+        "fresh": null
+      }
+    }
+  },
+  "NOTHING_TO_PAY": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "NOTHING_TO_PAY",
+        "message": "Ученик ушёл, долга нет: принимать нечего",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": null,
+        "fresh": null
+      }
+    }
+  },
+  "BALANCE_CHANGED": {
+    "status": 409,
+    "body": {
+      "detail": {
+        "code": "BALANCE_CHANGED",
+        "message": "Данные оплат изменились — проверьте суммы",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": null,
+        "fresh": [
+          {
+            "membership_id": "00000000-0000-4000-8000-000000000102",
+            "debt": 0,
+            "advance": 135000,
+            "refundable": 135000
+          }
+        ]
+      }
+    }
+  },
+  "PRICE_BACKDATE_WITH_PAYMENTS": {
+    "status": 409,
+    "body": {
+      "detail": {
+        "code": "PRICE_BACKDATE_WITH_PAYMENTS",
+        "message": "Нельзя изменить цену задним числом: у 1 ученика уже есть оплаты за период, который это затронет. Разницу за прошлое закройте прощением долга или возвратом.",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": [
+          {
+            "membership_id": "00000000-0000-4000-8000-000000000101",
+            "student_name": "Каримов А."
+          }
+        ],
+        "fresh": null
+      }
+    }
+  },
+  "PAUSE_OVERLAPS_ATTENDED": {
+    "status": 409,
+    "body": {
+      "detail": {
+        "code": "PAUSE_OVERLAPS_ATTENDED",
+        "message": "Ученик был отмечен на уроках 12.10, 14.10 — на эти даты паузу поставить нельзя",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": [
+          "2026-10-12",
+          "2026-10-14"
+        ],
+        "students": null,
+        "fresh": null
+      }
+    }
+  },
+  "PAUSE_OVERLAP": {
+    "status": 409,
+    "body": {
+      "detail": {
+        "code": "PAUSE_OVERLAP",
+        "message": "Пауза пересекается с другой паузой этого ученика",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": null,
+        "fresh": null
+      }
+    }
+  },
+  "PAUSE_RANGE": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "PAUSE_RANGE",
+        "message": "Пауза начинается не раньше чем 30 дней назад",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": null,
+        "fresh": null
+      }
+    }
+  },
+  "OPENING_RANGE": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "OPENING_RANGE",
+        "message": "Оплачено до не раньше даты зачисления",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": null,
+        "fresh": null
+      }
+    }
+  },
+  "OPENING_NOT_ALLOWED": {
+    "status": 409,
+    "body": {
+      "detail": {
+        "code": "OPENING_NOT_ALLOWED",
+        "message": "Остаток нельзя внести: ученик пришёл переводом",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": null,
+        "fresh": null
+      }
+    }
+  },
+  "LESSON_TYPE_RANGE": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "LESSON_TYPE_RANGE",
+        "message": "Тип занятий можно менять с начала прошлого месяца",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": null,
+        "fresh": null
+      }
+    }
+  },
+  "PRICE_MARKER": {
+    "status": 409,
+    "body": {
+      "detail": {
+        "code": "PRICE_MARKER",
+        "message": "Эту запись создала система при уходе из группы; её нельзя отменить",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": null,
+        "fresh": null
+      }
+    }
+  },
+  "FINGERPRINT_REQUIRED": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "FINGERPRINT_REQUIRED",
+        "message": "Откройте расчёт заново: сохранение без проверки данных невозможно",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": null,
+        "fresh": null
+      }
+    }
+  },
+  "DUPLICATE_PAYOUT": {
+    "status": 409,
+    "body": {
+      "detail": {
+        "code": "DUPLICATE_PAYOUT",
+        "message": "Выплата уже внесена",
+        "payout_id": "00000000-0000-4000-8000-000000000601"
+      }
+    }
+  },
+  "SHEET_NOT_SAVED": {
+    "status": 409,
+    "body": {
+      "detail": {
+        "code": "SHEET_NOT_SAVED",
+        "message": "Сначала сохраните ведомость",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": null,
+        "fresh": null
+      }
+    }
+  },
+  "DIVISOR_RANGE": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "DIVISOR_RANGE",
+        "message": "Делитель: от 1 до 31",
+        "debt": null,
+        "refundable": null,
+        "payment_id": null,
+        "dates": null,
+        "students": null,
+        "fresh": null
+      }
+    }
+  }
+}

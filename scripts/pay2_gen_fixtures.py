@@ -209,7 +209,7 @@ def seg_model(s: HSeg, today: date) -> Segment:
         id=s.id, kind=s.kind, period_from=s.a, period_to=s.b, billable_days=s.n, days_text=s.text,
         price=GROUP_PRICE(s.price, s.since) if s.price is not None else PriceOut(), charge=s.charge, basis=s.basis,
         lessons=SegmentLessons(in_part=s.lessons[0], in_period=s.lessons[1]) if s.lessons else None,
-        paid=s.money, written_off=s.wo, unpaid=unpaid, covered_days=cd, covered_through=through,
+        paid=s.money, written_off=s.wo, unpaid=unpaid, remaining=unpaid, covered_days=cd, covered_through=through,
         partial_credit=partial, state=state, bucket=bucket,
     )
 
@@ -238,9 +238,20 @@ def allocations_of(segs: List[HSeg], credits: List[HCredit], cid: str) -> List[A
                 segment_id=s.id, period_from=s.a, period_to=s.b, amount=amount, days=piece_days(s, credits, cid),
                 bucket=bucket, closes=closes, price=s.price,
                 label=tx.allocation_label(bucket=bucket, closes=closes, start=s.a, end=s.b, package_no=s.pkg_no),
+                segment_remaining_after=_remaining_after(s, credits, cid),
             )
         )
     return out
+
+
+def _remaining_after(s: HSeg, credits: List[HCredit], cid: str) -> int:
+    """What is still unpaid of the segment right after credit ``cid`` (credits in line order)."""
+    run = 0
+    for c in credits:
+        run += s.pieces.get(c.id, 0)
+        if c.id == cid:
+            return max(0, s.charge - run)
+    return s.charge
 
 
 def _closes_with(s: HSeg, credits: List[HCredit], cid: str) -> bool:
@@ -518,10 +529,10 @@ def e1_statement(store):
                                  outflow=outflow, balance_after=bal, balance_text=tx.balance_text(bal),
                                  details=details or StatementDetails()))
 
-    add(D(2026, 9, 15), "charge", "Начисление 15.09–14.10", debit=500_000, details=StatementDetails(segment=sm[0]))
+    add(D(2026, 9, 15), "charge", "Стоимость 15.09–14.10", debit=500_000, details=StatementDetails(segment=sm[0]))
     add(D(2026, 9, 20), "payment", "Оплата № 17", credit=231_000, details=StatementDetails(
         payment_id=uid(17), receipt_no=17, method="cash", created_by_name="Рустам Каримов", allocations=a17))
-    add(D(2026, 10, 15), "charge", "Начисление 15.10–14.11", debit=500_000, details=StatementDetails(segment=sm[1]))
+    add(D(2026, 10, 15), "charge", "Стоимость 15.10–14.11", debit=500_000, details=StatementDetails(segment=sm[1]))
     add(D(2026, 10, 21), "payment", "Оплата № 18", credit=790_000, details=StatementDetails(
         payment_id=uid(18), receipt_no=18, method="cash", created_by_name="Рустам Каримов", note="аванс", allocations=a18))
     assert bal == 21_000 and rows[-1].balance_text == "Аванс 21 000"
@@ -685,7 +696,7 @@ def e4(store):
         StatementRow(seq=1, date=T, type="transfer_in", title="Перенос из «Математика 7А»", debit=0, credit=x,
                      outflow=0, balance_after=x, balance_text="Аванс 323 000", details=StatementDetails(
                          from_group_name="Математика 7А", from_membership_id=uid(1), allocations=al)),
-        StatementRow(seq=2, date=D(2026, 10, 12), type="charge", title="Начисление 01.10–31.10",
+        StatementRow(seq=2, date=D(2026, 10, 12), type="charge", title="Стоимость 01.10–31.10",
                      debit=charge_b, credit=0, outflow=0, balance_after=x - charge_b, balance_text="Аванс 65 000",
                      details=StatementDetails(segment=sm[0])),
     ]
@@ -708,17 +719,17 @@ def e4(store):
     sma = seg_model(seg_a[0], today)
     assert sma.covered_days == 11 and sma.state == "closed"
     al_a = [Allocation(segment_id=seg_a[0].id, period_from=D(2026, 10, 1), period_to=D(2026, 10, 11), amount=500_000,
-                       days=11, bucket="current", closes=True, price=500_000,
+                       days=11, bucket="current", closes=True, price=500_000, segment_remaining_after=0,
                        label=tx.allocation_label(bucket="current", closes=True, start=D(2026, 10, 1), end=D(2026, 10, 11)))]
     rows_a = [
-        StatementRow(seq=1, date=D(2026, 10, 1), type="charge", title="Начисление 01.10–11.10", debit=charge_a, credit=0,
+        StatementRow(seq=1, date=D(2026, 10, 1), type="charge", title="Стоимость 01.10–11.10", debit=charge_a, credit=0,
                      outflow=0, balance_after=-charge_a, balance_text="Долг 177 000", details=StatementDetails(segment=sma)),
         StatementRow(seq=2, date=D(2026, 10, 1), type="payment", title="Оплата № 21", debit=0, credit=500_000, outflow=0,
                      balance_after=x, balance_text="Аванс 323 000", details=StatementDetails(
                          payment_id=uid(21), receipt_no=21, method="cash", created_by_name="Рустам Каримов",
                          allocations=al_a)),
         StatementRow(seq=3, date=T, type="transfer_out", title="Перенос в «Алгебра 7Б»", debit=0, credit=0, outflow=x,
-                     balance_after=0, balance_text="Нет долга", details=StatementDetails(
+                     balance_after=0, balance_text="0", details=StatementDetails(
                          to_group_name="Алгебра 7Б", to_membership_id=uid(2))),
     ]
     write("e4_statement_A.json", StatementOut(
@@ -967,7 +978,7 @@ def report(store):
     # error bodies the front maps to texts
     errors = {
         "WRITEOFF_EXCEEDS_DEBT": (422, PayError(detail=dict(code="WRITEOFF_EXCEEDS_DEBT",
-                                                           message="Списать можно не больше долга: 60 000 сум", debt=60_000))),
+                                                           message="Простить можно не больше долга: 60 000 сум", debt=60_000))),
         "REFUND_EXCEEDS_ADVANCE": (422, PayError(detail=dict(code="REFUND_EXCEEDS_ADVANCE",
                                                              message="Вернуть можно не больше 344 000 сум",
                                                              refundable=344_000))),

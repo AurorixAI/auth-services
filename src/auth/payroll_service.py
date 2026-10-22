@@ -32,7 +32,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from uuid import UUID
@@ -48,6 +48,7 @@ from src.models.auth import (
     GroupAttendance,
     Organization,
     OrganizationMember,
+    PayrollDivisor,
     PayrollSheet,
     PayrollSheetRevision,
     Student,
@@ -55,6 +56,7 @@ from src.models.auth import (
     User,
 )
 
+from . import lesson_types
 from . import payment_status as ps
 from . import payroll_engine as engine
 from . import payroll_rates
@@ -62,6 +64,8 @@ from . import pricing
 from .payments_files import person_name, staff_name
 from .payments_service import PaymentService
 from .payroll_schemas import (
+    DivisorRow,
+    PayoutState,
     CalculateRequest,
     CalculateResponse,
     DiffLine,
@@ -126,6 +130,14 @@ class PayrollInvalid(PayrollError):
 
 class MonthInvalid(PayrollInvalid):
     code = "MONTH_INVALID"
+
+
+class DivisorRange(PayrollInvalid):
+    code = "DIVISOR_RANGE"
+
+
+class FingerprintRequired(PayrollInvalid):
+    code = "FINGERPRINT_REQUIRED"
 
 
 class PercentRequired(PayrollInvalid):
@@ -211,7 +223,7 @@ def fingerprint_of(month: date, teacher_id: UUID, lines: List["LineSeed"]) -> st
         if len(steps) > 1:
             item.append(steps)
         items.append(item)
-    items.sort(key=lambda item: (item[0], item[1]))
+    items.sort(key=lambda item: (item[0], item[1], item[2]))
     blob = json.dumps(
         {"v": FINGERPRINT_VERSION, "month": month.isoformat(), "teacher": str(teacher_id), "lines": items},
         sort_keys=True,
@@ -288,13 +300,41 @@ class PayrollService:
         block = raw.get("payroll") if isinstance(raw, dict) else None
         return dict(block) if isinstance(block, dict) else {}
 
+    def _divisor_rows(self, org_id: str) -> List[Tuple[date, int, datetime]]:
+        """``(valid_from, divisor, created_at)`` of the history, oldest first; on one ``valid_from`` the later row wins."""
+        rows = (
+            self.db.query(PayrollDivisor.valid_from, PayrollDivisor.divisor, PayrollDivisor.created_at)
+            .filter(PayrollDivisor.org_id == org_id)
+            .order_by(PayrollDivisor.valid_from, PayrollDivisor.created_at, PayrollDivisor.id)
+            .all()
+        )
+        return [(r[0], int(r[1]), r[2]) for r in rows]
+
+    @staticmethod
+    def _divisor_in(rows: List[Tuple[date, int, datetime]], first: date, fallback: int = engine.DEFAULT_DIVISOR) -> int:
+        """The divisor of the month that begins on ``first``: the last row with ``valid_from <= first`` (a later one wins a tie)."""
+        value = None
+        for valid_from, divisor, _ in rows:
+            if valid_from <= first:
+                value = divisor
+        return value if value is not None else fallback
+
     def get_settings(self, org_id: str) -> PayrollSettings:
         block = self._block(org_id)
+        rows = self._divisor_rows(org_id)
+        current_month = ps.business_today().replace(day=1)
         try:
+            history: Dict[str, int] = {}
+            for valid_from, divisor, _ in rows:
+                history[month_label(valid_from)] = divisor           # the later row of the same month wins
+            in_force = self._divisor_in(rows, current_month, block.get("divisor", engine.DEFAULT_DIVISOR))
+            since = max((d for d, _, _ in rows if d <= current_month), default=None)
             return PayrollSettings(
-                divisor=block.get("divisor", engine.DEFAULT_DIVISOR),
+                divisor=in_force,
+                valid_from=month_label(since) if since else None,
                 updated_by=block.get("updated_by"),
                 updated_at=block.get("updated_at"),
+                history=[DivisorRow(valid_from=m, divisor=d) for m, d in sorted(history.items())],
             )
         except ValueError:  # a hand-edited, out-of-range value must not break the page
             logger.warning("Invalid payroll settings stored for org %s; using defaults", org_id)
@@ -303,17 +343,50 @@ class PayrollService:
     def divisor(self, org_id: str) -> int:
         return self.get_settings(org_id).divisor
 
-    def update_settings(self, org_id: str, actor_id: str, divisor: int) -> PayrollSettings:
+    def divisor_at(self, org_id: str, first: date) -> int:
+        """The divisor of the month that begins on ``first`` (LOGIC-A, F7)."""
+        return self._divisor_in(self._divisor_rows(org_id), first, self._block(org_id).get("divisor", engine.DEFAULT_DIVISOR))
+
+    def update_settings(self, org_id: str, actor_id: str, divisor: int, valid_from: Optional[str] = None) -> PayrollSettings:
+        """The divisor acts from the 1st day of ``valid_from`` (a month "YYYY-MM", default: this month); earlier months keep theirs."""
+        if not isinstance(divisor, int) or isinstance(divisor, bool) or not engine.MIN_DIVISOR <= divisor <= engine.MAX_DIVISOR:
+            raise DivisorRange(f"Делитель: от {engine.MIN_DIVISOR} до {engine.MAX_DIVISOR}")
+        today = ps.business_today()
+        if valid_from:
+            match = MONTH_RE.match(valid_from)
+            if not match or not 1 <= int(match.group(2)) <= 12:
+                raise MonthInvalid("Месяц указывается в формате ГГГГ-ММ, например 2026-09")
+            month = date(int(match.group(1)), int(match.group(2)), 1)
+            if month < date(2020, 1, 1):
+                raise MonthInvalid("Делитель можно задать не раньше января 2020")
+        else:
+            month = today.replace(day=1)
         org = self.db.query(Organization).filter(Organization.id == org_id).with_for_update().first()
         if not org:
             raise PayrollNotFound("Организация не найдена")
+        if self._divisor_at_locked(org_id, month, org) == divisor:      # the same divisor from the same month: nothing to write
+            self.db.rollback()
+            return self.get_settings(org_id)
+        if not self._divisor_rows(org_id):   # an organisation without a history (made after the migration): the divisor so far is "always"
+            before = (org.settings or {}).get("payroll", {}).get("divisor", engine.DEFAULT_DIVISOR)
+            self.db.add(PayrollDivisor(org_id=UUID(str(org_id)), valid_from=date(2020, 1, 1),
+                                       divisor=before if isinstance(before, int) and 1 <= before <= 31 else engine.DEFAULT_DIVISOR,
+                                       note="the divisor before the history", created_at=_utcnow() - timedelta(seconds=1)))
+        self.db.add(PayrollDivisor(org_id=UUID(str(org_id)), valid_from=month, divisor=divisor, created_by=UUID(str(actor_id)),
+                                   created_at=_utcnow()))
+        self.db.flush()
         block = dict(((org.settings or {}).get("payroll")) or {})
-        block.update({"divisor": divisor, "updated_by": str(actor_id), "updated_at": _utcnow().isoformat()})
+        block.update({"divisor": self._divisor_in(self._divisor_rows(org_id), today.replace(day=1)),   # the mirror of the current month
+                      "updated_by": str(actor_id), "updated_at": _utcnow().isoformat()})
         org.settings = {**(org.settings or {}), "payroll": block}
         flag_modified(org, "settings")
         self.db.commit()
-        logger.info("payroll settings updated org=%s actor=%s", org_id, actor_id)
+        logger.info("payroll divisor set org=%s actor=%s from=%s", org_id, actor_id, month)
         return self.get_settings(org_id)
+
+    def _divisor_at_locked(self, org_id: str, first: date, org: Organization) -> int:
+        block = (org.settings or {}).get("payroll") or {}
+        return self._divisor_in(self._divisor_rows(org_id), first, block.get("divisor", engine.DEFAULT_DIVISOR))
 
     # ------------------------------------------------------------- reading
 
@@ -364,6 +437,8 @@ class PayrollService:
         teacher_ids: Optional[Set[UUID]] = None,
         with_open: bool = False,
         group_books: Optional[Dict[UUID, pricing.GroupBook]] = None,
+        type_rows: Optional[Dict[UUID, List[Tuple[date, str]]]] = None,
+        override_books: Optional[Dict[UUID, "pricing.OverrideBook"]] = None,
     ) -> MonthSeed:
         """Everything the month's calculation needs, in a fixed number of queries.
 
@@ -375,9 +450,14 @@ class PayrollService:
         7. the schedule of those groups (lesson times);
         8. the price history of those groups and memberships (two queries) - every lesson is priced in memory.
 
-        ``group_books`` replaces the price history of some groups ("what if", see ``sheets_changed_by_group_price``).
+        ``group_books`` replaces the price history of some groups ("what if", see ``sheets_changed_by_group_price``); ``type_rows``
+        the history of the lesson types of some groups (``sheets_changed_by_lesson_type``).
+
+        LOGIC-A: the divisor is the one of the MONTH (F7); the price of a lesson is the price of the period / package that carries it
+        (F1: what the student is charged - ``LessonCover.price``); the kind of lessons is the one of the DAY of the lesson (F14), so the
+        line of a student splits in two when the group changed its type inside the month.
         """
-        divisor = self.divisor(org_id)
+        divisor = self.divisor_at(org_id, first)
         seed = MonthSeed(first, last, divisor)
         open_by_teacher = self._open_lessons(org_id, first, last) if with_open else {}
         if teacher_ids is not None:
@@ -481,7 +561,12 @@ class PayrollService:
         books = pricing.load_books(self.db, group_ids, [membership.id for membership, _ in memberships.values()])
         if group_books:
             books = books.with_group_books(group_books)
+        if override_books:
+            books = books.with_override_books(override_books)
         times = self._lesson_times([groups[gid] for gid in group_ids if gid in groups], first, last)
+        types = lesson_types.load_book(self.db, groups.values())
+        for gid, rows_ in (type_rows or {}).items():
+            types = types.with_group(gid, rows_)
 
         for (teacher_id, group_id), lessons in by_pair.items():
             group = groups.get(group_id)
@@ -489,8 +574,10 @@ class PayrollService:
                 continue
             lessons.sort(key=lambda lesson: (lesson.day, lesson.lesson_id))
             teacher = seed.teachers[teacher_id]
-            lesson_type = group.lesson_type or "group"
-            teacher.groups_by_type.setdefault(lesson_type, set()).add(str(group.id))
+            month_types = {types.type_at(group.id, lesson.day) for lesson in lessons}
+            split = len(month_types) > 1
+            for month_type in month_types:
+                teacher.groups_by_type.setdefault(month_type, set()).add(str(group.id))
             slots = sorted(
                 {times[(group.id, lesson.day.isoformat(), lesson.lesson_id)]
                  for lesson in lessons if (group.id, lesson.day.isoformat(), lesson.lesson_id) in times}
@@ -506,6 +593,8 @@ class PayrollService:
                     continue  # a student that no longer exists: there is nobody to take a fee from
                 membership, student = found
                 marks: List[engine.Mark] = []
+                mark_type: List[str] = []
+                pending_by_type: Dict[str, int] = {}
                 pending = 0
                 for lesson in lessons:
                     in_roster = sid in (lesson.roster if lesson.roster is not None else lesson.records)
@@ -519,47 +608,75 @@ class PayrollService:
                             else engine.NOT_IN_GROUP
                         )
                         marks.append(engine.Mark(lesson.day, lesson.lesson_id, state))
+                        mark_type.append(types.type_at(group.id, lesson.day))
                         continue
                     # a package lesson: the size of the package; an unpaid one of a package student: the
                     # size of his latest package; a calendar lesson (and the rest): the centre's divisor
                     lesson_divisor = cover.package_size if cover.package_size else divisor
                     if excuse == "pending":
                         pending += 1
+                        pending_by_type[types.type_at(group.id, lesson.day)] = pending_by_type.get(types.type_at(group.id, lesson.day), 0) + 1
                     if not cover.paid:
                         state = engine.UNPAID
                     elif excuse == "pending":
                         state = engine.EXCUSED_PENDING
                     else:
                         state = engine.COUNTED
-                    price = books.price(membership.id, membership.group_id, lesson.day)
+                    # F1: the base is the price of the PERIOD (package) that carries the lesson - what the student is charged;
+                    # a lesson before the first charged day (accounting start / "paid until" / transfer day) has the price of its day
+                    if cover.price is not None:
+                        price_amount, price_source = cover.price.amount, cover.price.source
+                    elif cover.cover_source == "before_start":
+                        day_price = books.price(membership.id, membership.group_id, lesson.day)
+                        price_amount, price_source = day_price.amount, "day"
+                    else:
+                        price_amount, price_source = None, "none"
+                    cover_label = "unpaid" if not cover.paid else (
+                        cover.cover_source if cover.cover_source in ("money", "writeoff", "before_start") else "money")
                     marks.append(
                         engine.Mark(
-                            lesson.day, lesson.lesson_id, state, lesson_divisor, price.amount, True, price.source
+                            lesson.day, lesson.lesson_id, state, lesson_divisor, price_amount, True, price_source, cover_label
                         )
                     )
-                # the price of the line on its reference day: the last lesson that carries money, else the last one
-                money_days = [m.day for m in marks if m.carries_money]
-                reference = books.price(
-                    membership.id, membership.group_id, max(money_days) if money_days else marks[-1].day
-                )
-                teacher.lines.append(
-                    LineSeed(
-                        identity={
-                            "membership_id": str(membership.id),
-                            "student_id": str(student.id),
-                            "student_name": person_name(student.last_name, student.first_name) or "—",
-                            "display_id": student.display_id,
-                            "group_id": str(group.id),
-                            "group_name": group.name,
-                            "lesson_type": lesson_type,
-                            "lesson_time": lesson_time,
-                        },
-                        marks=marks,
-                        source_fee=reference.amount,
-                        pending_excused=pending,
-                        price_source=reference.source,
+                    mark_type.append(types.type_at(group.id, lesson.day))
+                by_type: Dict[str, List[engine.Mark]] = {}
+                for mark_item, kind in zip(marks, mark_type):
+                    by_type.setdefault(kind, []).append(mark_item)
+                kinds = sorted(by_type, key=engine.LESSON_TYPES.index)
+                if split:  # a type in which the student has no lesson at all gives no line (he was not in the group then)
+                    real = [k for k in kinds if any(m.state != engine.NOT_IN_GROUP for m in by_type[k])]
+                    kinds = real or kinds[:1]
+                for kind in kinds:
+                    kind_marks = by_type[kind]
+                    # the price of the line on its reference day: the last lesson that carries money, else the price of the last day
+                    money_marks = [m for m in kind_marks if m.carries_money and m.priced]
+                    if money_marks:
+                        last_money = max(money_marks, key=lambda m: (m.day, m.lesson_id))
+                        ref_amount, ref_source = last_money.price, last_money.price_source
+                        if ref_source == "day":   # a lesson before the accounting: the line still says whose price it was (group / exception)
+                            ref_source = books.price(membership.id, membership.group_id, last_money.day).source
+                    else:
+                        reference = books.price(membership.id, membership.group_id, kind_marks[-1].day)
+                        ref_amount, ref_source = reference.amount, reference.source
+                    teacher.lines.append(
+                        LineSeed(
+                            identity={
+                                "line_key": f"{membership.id}:{kind}" if split else str(membership.id),
+                                "membership_id": str(membership.id),
+                                "student_id": str(student.id),
+                                "student_name": person_name(student.last_name, student.first_name) or "—",
+                                "display_id": student.display_id,
+                                "group_id": str(group.id),
+                                "group_name": group.name,
+                                "lesson_type": kind,
+                                "lesson_time": lesson_time,
+                            },
+                            marks=kind_marks,
+                            source_fee=ref_amount,
+                            pending_excused=pending_by_type.get(kind, 0),
+                            price_source=ref_source,
+                        )
                     )
-                )
 
         for tid, teacher in seed.teachers.items():
             teacher.lines.sort(
@@ -568,6 +685,7 @@ class PayrollService:
                     line.identity["group_id"],
                     line.identity["student_name"].casefold(),
                     line.identity["membership_id"],
+                    line.identity["lesson_type"],
                 )
             )
             teacher.fingerprint = fingerprint_of(first, tid, teacher.lines)
@@ -655,7 +773,7 @@ class PayrollService:
     ) -> List[Dict[str, Any]]:
         lines = []
         for seed in teacher.lines:
-            change = changes.get(seed.identity["membership_id"], _Change())
+            change = changes.get(seed.identity["line_key"]) or changes.get(seed.identity["membership_id"]) or _Change()      # m12: the line first, then the membership
             lines.append(
                 engine.compute_line(
                     seed.identity,
@@ -693,6 +811,7 @@ class PayrollService:
         stale: Optional[bool],
         note: Optional[str] = None,
         open_lessons: Optional[int] = None,
+        payout: Optional[PayoutState] = None,
     ) -> SheetOut:
         counters = engine.sheet_counters(lines)
         return SheetOut(
@@ -707,12 +826,14 @@ class PayrollService:
             revision=revision,
             percents=percent_inputs,
             divisor_default=divisor_default,
-            lines=[LineOut(**line) for line in lines],
+            lines=[LineOut(**{**line, "line_key": line.get("line_key") or line["membership_id"]}) for line in lines],
             groups=[GroupBlockOut(**block) for block in engine.group_blocks(lines)],
             total_amount=counters["total_amount"],
             counted_total=counters["counted"],
             unpaid_total=counters["unpaid"],
             pending_excused_total=counters["pending_excused"],
+            written_off_total=counters["written_off"],
+            payout=payout,
             warnings=SheetWarnings(
                 open_lessons=open_lessons,
                 pending_excused=counters["pending_excused"],
@@ -748,6 +869,7 @@ class PayrollService:
         stale: Optional[bool],
         names: Optional[Dict[UUID, Optional[str]]] = None,
         notes: Optional[Dict[UUID, Optional[str]]] = None,
+        payout: Optional[PayoutState] = None,
     ) -> SheetOut:
         first = sheet.period_month
         last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
@@ -766,7 +888,28 @@ class PayrollService:
             fingerprint=sheet.source_fingerprint,
             stale=stale,
             note=note,
+            payout=payout,
         )
+
+    def _fresh_total(self, org_id: str, sheet: PayrollSheet, seed: Optional[MonthSeed] = None, book=None) -> Optional[int]:
+        """What the sheet would total if it were recalculated now (rates of its month, the ticks of its last revision); ``None`` when it
+        cannot be (a rate is missing, a line carries a manual price of an old sheet) - the target is then the saved total."""
+        if self._has_manual_fee(sheet.lines):
+            return None
+        first = sheet.period_month
+        last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
+        seed = seed or self._collect(org_id, first, last, teacher_ids={sheet.teacher_id})
+        teacher = seed.teachers.get(sheet.teacher_id) or TeacherSeed(sheet.teacher_id, fingerprint=fingerprint_of(first, sheet.teacher_id, []))
+        book = book or payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])
+        percents = book.percents_at(sheet.teacher_id, first)
+        if self._missing_percents(teacher, percents):
+            return None
+        return engine.sheet_total(self._render(teacher, percents, self._carried_changes(sheet), seed.divisor))
+
+    def payout_state(self, org_id: str, sheet: PayrollSheet, seed: Optional[MonthSeed] = None, book=None) -> PayoutState:
+        from .payroll_payouts import PayrollPayoutService
+
+        return PayrollPayoutService(self.db).state_for(org_id, sheet, self._fresh_total(org_id, sheet, seed, book))
 
     # ---------------------------------------------------------------- month
 
@@ -783,9 +926,13 @@ class PayrollService:
                 PayrollSheet.source_fingerprint,
                 PayrollSheet.percent_inputs,
                 PayrollSheet.updated_at,
+                PayrollSheet.lines,                      # m8: the carried ticks come from this row, no ``db.get`` per sheet
                 PayrollSheet.lines.contains([{"fee_overridden": True}]).label("manual_fee"),
             ).filter(PayrollSheet.org_id == org_id, PayrollSheet.period_month == first)
         }
+        from .payroll_payouts import PayrollPayoutService, state_of
+
+        payouts = PayrollPayoutService(self.db).payouts_of(org_id, month=first)
         teacher_ids = set(seed.teachers) | set(sheets)
         names = self._names(teacher_ids)
         suggestions = self._suggested(org_id, teacher_ids)
@@ -805,6 +952,14 @@ class PayrollService:
             )
             fresh = teacher.fingerprint if teacher and teacher.fingerprint else fingerprint_of(first, tid, [])
             in_force = book.percents_at(tid, first)
+            payout = None
+            if sheet is not None:
+                fresh_total = None
+                if not sheet.manual_fee:
+                    t_seed = teacher or TeacherSeed(tid, fingerprint=fresh)
+                    if not self._missing_percents(t_seed, in_force):
+                        fresh_total = engine.sheet_total(self._render(t_seed, in_force, self._carried_changes(sheet), seed.divisor))
+                payout = state_of(saved_total=int(sheet.total_amount), fresh_total=fresh_total, items=payouts.get((tid, first), []))
             out.append(
                 MonthTeacher(
                     teacher_id=str(tid),
@@ -834,6 +989,7 @@ class PayrollService:
                         if sheet
                         else None
                     ),
+                    payout=payout,
                     warnings=MonthWarnings(
                         open_lessons=teacher.open_lessons if teacher else 0,
                         pending_excused=counters["pending_excused"] if counters else 0,
@@ -938,16 +1094,18 @@ class PayrollService:
         )
 
     @staticmethod
-    def _changes_from_body(overrides, known: Optional[Set[str]]) -> Dict[str, Any]:
-        """``{membership_id: LineOverride}``; with ``known`` a line that is not on the sheet is a 422.
+    def _changes_from_body(overrides, known: Optional[Dict[str, List[str]]]) -> Dict[str, Any]:
+        """``{line key or membership_id: LineOverride}``; with ``known`` (``_line_keys``) a line that is not on the sheet is a 422.
 
         A price on a sheet is not edited any more (UX-2): ``monthly_fee`` with a value is a 422."""
         for item in overrides or ():
             if item.monthly_fee is not None:
                 raise PriceNotEditable(PRICE_NOT_EDITABLE)
-            if known is not None and str(item.membership_id) not in known:
+            if known is not None and (
+                str(item.membership_id) not in known or (item.line_key is not None and item.line_key not in known[str(item.membership_id)])
+            ):
                 raise PayrollInvalid("Такой строки нет в ведомости", code="LINE_NOT_FOUND")
-        return {str(item.membership_id): item for item in overrides or ()}
+        return {(item.line_key or str(item.membership_id)): item for item in overrides or ()}
 
     def save_sheet(self, org_id: str, actor_id: str, body: SheetCreate) -> SheetOut:
         """Save the calculation of a teacher's month; if a sheet exists this is its next revision.
@@ -963,7 +1121,6 @@ class PayrollService:
         teacher = seed.teachers.get(body.teacher_id) or TeacherSeed(
             body.teacher_id, fingerprint=fingerprint_of(first, body.teacher_id, [])
         )
-        self._check_expected(body.expected_fingerprint, teacher.fingerprint)
         percents = payroll_rates.load_book(self.db, org_id, [body.teacher_id]).percents_at(body.teacher_id, first)
         missing = self._missing_percents(teacher, percents)
         if missing:
@@ -973,7 +1130,9 @@ class PayrollService:
                     for t in missing
                 ]
             )
-        given = self._changes_from_body(body.line_overrides, {s.identity["membership_id"] for s in teacher.lines})
+        keys = self._line_keys(s.identity for s in teacher.lines)
+        given = self._changes_from_body(body.line_overrides, keys)
+        self._check_expected(body.expected_fingerprint, teacher.fingerprint)
         now = _utcnow()
         actor = UUID(str(actor_id))
 
@@ -994,7 +1153,7 @@ class PayrollService:
             if sheet is None and body.revision is not None:
                 raise self._conflict(0)
             changes = self._carried_changes(sheet)
-            self._apply_overrides(changes, given)
+            self._apply_overrides(changes, given, keys)
             lines = self._render(teacher, percents, changes, seed.divisor)
             inputs = self._percent_inputs(lines, percents)
             total = engine.sheet_total(lines)
@@ -1046,11 +1205,15 @@ class PayrollService:
         logger.info(
             "payroll sheet saved org=%s sheet=%s revision=%s actor=%s", org_id, sheet.id, sheet.revision, actor_id
         )
-        return self._saved_out(sheet, stale=False)
+        return self._saved_out(sheet, stale=False, payout=self.payout_state(org_id, sheet))
 
     @staticmethod
     def _check_expected(expected: Optional[str], fresh: str) -> None:
-        if expected and expected != fresh:
+        """LOGIC-A (F14): saving a calculation needs the fingerprint of the preview the owner looked at (422 ``FINGERPRINT_REQUIRED``);
+        if the data moved since, nothing is saved (409 ``SHEET_DATA_CHANGED``)."""
+        if not expected:
+            raise FingerprintRequired("Откройте расчёт заново: сохранение без проверки данных невозможно")
+        if expected != fresh:
             raise DataChanged(
                 "Данные изменились после расчёта — пересчитайте и проверьте суммы", source_fingerprint=fresh
             )
@@ -1061,17 +1224,30 @@ class PayrollService:
         "include unpaid", by membership.  A manual price of a line (an old sheet) is NOT carried (UX-2): the price
         of a new revision is the price from «Цены групп» / the card of the student."""
         return {
-            line["membership_id"]: _Change(include_unpaid=bool(line.get("include_unpaid")))
+            (line.get("line_key") or line["membership_id"]): _Change(include_unpaid=bool(line.get("include_unpaid")))
             for line in (sheet.lines or [] if sheet is not None else [])
         }
 
     @staticmethod
-    def _apply_overrides(changes: Dict[str, _Change], given: Dict[str, Any]) -> None:
-        """What a request says about a line wins over what the sheet had; a field it leaves out stays."""
-        for mid, item in given.items():
-            change = changes.setdefault(mid, _Change())
-            if item.include_unpaid is not None:
-                change.include_unpaid = item.include_unpaid
+    def _line_keys(lines) -> Dict[str, List[str]]:
+        """``{membership_id: [line keys]}`` of the lines of a sheet (``lines``: dicts or seeds' identities)."""
+        out: Dict[str, List[str]] = {}
+        for line in lines:
+            out.setdefault(line["membership_id"], []).append(line.get("line_key") or line["membership_id"])
+        return out
+
+    @staticmethod
+    def _apply_overrides(changes: Dict[str, _Change], given: Dict[str, Any], keys: Optional[Dict[str, List[str]]] = None) -> None:
+        """What a request says about a line wins over what the sheet had; a field it leaves out stays.
+
+        m12: an override with a ``line_key`` is for that line only; one without it is for every line of the membership (``keys`` =
+        ``_line_keys``: ``{membership_id: [line keys]}``), and the more specific one is applied last."""
+        keys = keys or {}
+        for key, item in sorted(given.items(), key=lambda kv: kv[1].line_key is not None):
+            for target in ([item.line_key] if item.line_key else keys.get(key) or [key]):
+                change = changes.setdefault(target, _Change())
+                if item.include_unpaid is not None:
+                    change.include_unpaid = item.include_unpaid
 
     def _add_revision(self, sheet: PayrollSheet, actor: UUID, now: datetime, note: Optional[str]) -> None:
         self.db.add(
@@ -1130,20 +1306,18 @@ class PayrollService:
                             for t in missing
                         ]
                     )
-                self._check_expected(body.expected_fingerprint, teacher.fingerprint)
                 changes = self._carried_changes(sheet)
-                fresh_ids = {s.identity["membership_id"] for s in teacher.lines}
-                for mid in given:
-                    if mid not in fresh_ids:
-                        raise PayrollInvalid("Такой строки нет в ведомости", code="LINE_NOT_FOUND")
-                self._apply_overrides(changes, given)
+                keys = self._line_keys(s.identity for s in teacher.lines)
+                self._changes_from_body(body.line_overrides, keys)           # LINE_NOT_FOUND for a line (or line key) that is not on the fresh sheet
+                self._check_expected(body.expected_fingerprint, teacher.fingerprint)
+                self._apply_overrides(changes, given, keys)
                 lines = self._render(teacher, percents, changes, seed.divisor)
                 fingerprint, divisor_default = teacher.fingerprint, seed.divisor
             else:
-                given = self._changes_from_body(body.line_overrides, {line["membership_id"] for line in saved_lines})
+                given = self._changes_from_body(body.line_overrides, self._line_keys(saved_lines))
                 lines = []
                 for line in saved_lines:
-                    item = given.get(line["membership_id"])
+                    item = given.get(line.get("line_key") or line["membership_id"]) or given.get(line["membership_id"])      # m12: the line first
                     fee_reset = item is not None and "monthly_fee" in item.model_fields_set  # null: no manual price
                     lines.append(
                         engine.recompute_line(
@@ -1178,24 +1352,28 @@ class PayrollService:
             "payroll sheet changed org=%s sheet=%s revision=%s actor=%s recalculate=%s",
             org_id, sheet_id, sheet.revision, actor_id, body.recalculate,
         )
-        return self._saved_out(sheet, stale=False if body.recalculate else self._is_stale(org_id, sheet))
+        return self._saved_out(sheet, stale=False if body.recalculate else self._is_stale(org_id, sheet),
+                               payout=self.payout_state(org_id, sheet))
 
     # ----------------------------------------------------------------- read
 
-    def _is_stale(self, org_id: str, sheet: PayrollSheet) -> bool:
+    def _is_stale(self, org_id: str, sheet: PayrollSheet, seed: Optional[MonthSeed] = None, book=None) -> bool:
         first = sheet.period_month
         last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
-        seed = self._collect(org_id, first, last, teacher_ids={sheet.teacher_id})
+        seed = seed or self._collect(org_id, first, last, teacher_ids={sheet.teacher_id})
         teacher = seed.teachers.get(sheet.teacher_id)
         fresh = teacher.fingerprint if teacher else fingerprint_of(first, sheet.teacher_id, [])
         if fresh != sheet.source_fingerprint or self._has_manual_fee(sheet.lines):
             return True
-        book = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])
+        book = book or payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])
         return self._stale_by_rates(dict(sheet.percent_inputs or {}), book, sheet.teacher_id, first)
 
     def get_sheet(self, org_id: str, sheet_id: UUID) -> SheetOut:
         sheet = self._lock_sheet(org_id, sheet_id, lock=False)
-        return self._saved_out(sheet, stale=self._is_stale(org_id, sheet))
+        first = sheet.period_month
+        seed = self._collect(org_id, first, date(first.year, first.month, calendar.monthrange(first.year, first.month)[1]), teacher_ids={sheet.teacher_id})
+        book = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])     # m8: ONE collection of the month serves the stale flag and the payout state
+        return self._saved_out(sheet, stale=self._is_stale(org_id, sheet, seed, book), payout=self.payout_state(org_id, sheet, seed, book))
 
     def list_sheets(self, org_id: str, month: Optional[str]) -> List[SheetBrief]:
         query = self.db.query(
@@ -1388,13 +1566,80 @@ class PayrollService:
                     )
         return changed
 
+    def sheets_changed_by_override(self, org_id: str, membership: StudentGroup, book: "pricing.OverrideBook", since: date) -> List[Dict[str, Any]]:
+        """Saved sheets that would turn "данные изменились" if the exception history of ``membership`` were ``book`` (same comparison)."""
+        sheets = (
+            self.db.query(PayrollSheet.id, PayrollSheet.teacher_id, PayrollSheet.period_month)
+            .filter(
+                PayrollSheet.org_id == org_id,
+                PayrollSheet.period_month >= since.replace(day=1),
+                PayrollSheet.lines.contains([{"membership_id": str(membership.id)}]),
+            )
+            .order_by(PayrollSheet.period_month, PayrollSheet.teacher_id)
+            .all()
+        )
+        names = self._names(s.teacher_id for s in sheets)
+        changed: List[Dict[str, Any]] = []
+        by_month: Dict[date, List[Any]] = {}
+        for row in sheets:
+            by_month.setdefault(row.period_month, []).append(row)
+        for first, items in by_month.items():
+            last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
+            teachers = {row.teacher_id for row in items}
+            now = self._collect(org_id, first, last, teacher_ids=teachers)
+            then = self._collect(org_id, first, last, teacher_ids=teachers, override_books={membership.id: book})
+            for row in items:
+                before, after = now.teachers.get(row.teacher_id), then.teachers.get(row.teacher_id)
+                empty = fingerprint_of(first, row.teacher_id, [])
+                if (before.fingerprint if before and before.fingerprint else empty) != (
+                    after.fingerprint if after and after.fingerprint else empty
+                ):
+                    changed.append({"sheet_id": str(row.id), "month": month_label(first), "teacher_id": str(row.teacher_id),
+                                    "teacher_name": names.get(row.teacher_id)})
+        return changed
+
+    def sheets_changed_by_lesson_type(
+        self, org_id: str, group: Group, rows: List[Tuple[date, str]], since: date
+    ) -> List[Dict[str, Any]]:
+        """Saved sheets that would turn "данные изменились" if the lesson-type history of ``group`` were ``rows`` (F14): the same
+        two-fingerprint comparison as ``sheets_changed_by_group_price``.  Reads only."""
+        sheets = (
+            self.db.query(PayrollSheet.id, PayrollSheet.teacher_id, PayrollSheet.period_month)
+            .filter(
+                PayrollSheet.org_id == org_id,
+                PayrollSheet.period_month >= since.replace(day=1),
+                PayrollSheet.lines.contains([{"group_id": str(group.id)}]),
+            )
+            .order_by(PayrollSheet.period_month, PayrollSheet.teacher_id)
+            .all()
+        )
+        names = self._names(s.teacher_id for s in sheets)
+        changed: List[Dict[str, Any]] = []
+        by_month: Dict[date, List[Any]] = {}
+        for row in sheets:
+            by_month.setdefault(row.period_month, []).append(row)
+        for first, items in by_month.items():
+            last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
+            teachers = {row.teacher_id for row in items}
+            now = self._collect(org_id, first, last, teacher_ids=teachers)
+            then = self._collect(org_id, first, last, teacher_ids=teachers, type_rows={group.id: rows})
+            for row in items:
+                before, after = now.teachers.get(row.teacher_id), then.teachers.get(row.teacher_id)
+                empty = fingerprint_of(first, row.teacher_id, [])
+                if (before.fingerprint if before and before.fingerprint else empty) != (
+                    after.fingerprint if after and after.fingerprint else empty
+                ):
+                    changed.append({"sheet_id": str(row.id), "month": month_label(first), "teacher_id": str(row.teacher_id),
+                                    "teacher_name": names.get(row.teacher_id)})
+        return changed
+
     # --------------------------------------------------------------- export
 
     def sheets_for_export(self, org_id: str, sheet_id: Optional[UUID], month: Optional[str]) -> Tuple[List[SheetOut], str]:
         """The saved sheets to put into a workbook and its month label (one sheet, or every sheet of a month)."""
         if sheet_id is not None:
             sheet = self._lock_sheet(org_id, sheet_id, lock=False)
-            return [self._saved_out(sheet, stale=None)], month_label(sheet.period_month)
+            return [self._saved_out(sheet, stale=None, payout=self.payout_state(org_id, sheet))], month_label(sheet.period_month)
         first, _ = parse_month(month or "")
         rows = (
             self.db.query(PayrollSheet)
@@ -1407,6 +1652,10 @@ class PayrollService:
             [r.teacher_id for r in rows] + [r.created_by for r in rows] + [r.updated_by for r in rows]
         )
         notes = self._notes(rows)
-        outs = [self._saved_out(r, stale=None, names=names, notes=notes) for r in rows]
+        # m8: ONE collection of the month (all the teachers) and one book of rates serve every sheet
+        seed = self._collect(org_id, first, date(first.year, first.month, calendar.monthrange(first.year, first.month)[1]),
+                             teacher_ids={r.teacher_id for r in rows})
+        book = payroll_rates.load_book(self.db, org_id, {r.teacher_id for r in rows})
+        outs = [self._saved_out(r, stale=None, names=names, notes=notes, payout=self.payout_state(org_id, r, seed, book)) for r in rows]
         outs.sort(key=lambda o: ((o.teacher_name or "").casefold(), o.teacher_id))
         return outs, month_label(first)

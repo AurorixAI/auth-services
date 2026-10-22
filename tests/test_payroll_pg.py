@@ -180,14 +180,29 @@ def preview(w, m, teacher=None, value="50"):
 def save(w, m, teacher=None, percents=None, expect=201, **extra):
     teacher = teacher or w.teacher
     seed_rates(w, percents or [pct(w, teacher=teacher)])
+    if "expected_fingerprint" not in extra:      # LOGIC-A (F14): a save carries the fingerprint of the preview the owner looked at
+        look = owner(w).post(f"{API}/org/payroll/months/{m.label}/calculate", json={"teacher_ids": [str(teacher.id)]})
+        if look.status_code == 200 and look.json()["sheets"]:
+            extra["expected_fingerprint"] = look.json()["sheets"][0]["source_fingerprint"]
     body = {"month": m.label, "teacher_id": str(teacher.id), **extra}
     r = owner(w).post(f"{API}/org/payroll/sheets", json=body)
     assert r.status_code == expect, r.text
     return r.json()
 
 
+def fpr(w, m, teacher=None):
+    """The fingerprint of the preview of a teacher's month (what a save must carry)."""
+    teacher = teacher or w.teacher
+    r = owner(w).post(f"{API}/org/payroll/months/{m.label}/calculate", json={"teacher_ids": [str(teacher.id)]})
+    return r.json()["sheets"][0]["source_fingerprint"] if r.status_code == 200 and r.json()["sheets"] else None
+
+
 def patch(w, sheet, expect=200, **body):
     body.setdefault("revision", sheet["revision"])
+    if body.get("recalculate") and "expected_fingerprint" not in body:
+        look = owner(w).get(f"{API}/org/payroll/sheets/{sheet['id']}/diff")
+        if look.status_code == 200:
+            body["expected_fingerprint"] = look.json()["source_fingerprint"]
     r = owner(w).patch(f"{API}/org/payroll/sheets/{sheet['id']}", json=body)
     assert r.status_code == expect, r.text
     return r.json()
@@ -266,7 +281,7 @@ def test_the_divisor_is_a_centre_setting(world):
     assert c.get(f"{API}/org/payroll/settings").json()["divisor"] == 12
     base = preview(world, m)
     assert line_of(base, world.students[0])["amount"] == FEE * 50 * 6 // 1200
-    r = c.put(f"{API}/org/payroll/settings", json={"divisor": 10})
+    r = c.put(f"{API}/org/payroll/settings", json={"divisor": 10, "valid_from": m.label})    # LOGIC-A (F7): a divisor acts from a month
     assert r.status_code == 200 and r.json()["divisor"] == 10 and r.json()["updated_by"] == str(world.owner.id)
     ten = preview(world, m)
     assert line_of(ten, world.students[0])["amount"] == FEE * 50 * 6 // 1000 and ten["divisor_default"] == 10
@@ -279,6 +294,9 @@ def test_the_divisor_is_a_centre_setting(world):
     assert c.put(f"{API}/org/payroll/settings", json={"divisor": 31}).status_code == 200
     assert c.get(f"{API}/org/settings/payments").json()["period_mode"] == "lessons"
     # garbage in the column falls back to the default, the page still opens
+    from src.models.auth import PayrollDivisor
+
+    world.db.query(PayrollDivisor).filter_by(org_id=world.org.id).delete()
     world.org.settings = {"payroll": {"divisor": 99}}
     world.db.commit()
     assert c.get(f"{API}/org/payroll/settings").json()["divisor"] == 12
@@ -646,9 +664,9 @@ def test_save_edit_history_and_conflicts(world):
     assert first["revision"] == 1 and first["saved"] and first["note"] == "Первый расчёт"
     sid = first["id"]
     # a second POST without the revision is a conflict (and so is a stale one) - nothing is overwritten
-    r = owner(world).post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id)})
+    r = owner(world).post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), "expected_fingerprint": fpr(world, m)})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_REVISION_CONFLICT" and r.json()["detail"]["current_revision"] == 1
-    r = owner(world).post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), "revision": 7})
+    r = owner(world).post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), "revision": 7, "expected_fingerprint": fpr(world, m)})
     assert r.status_code == 409
     # a note, a new rate, a tick: new revisions (the rate is read again only by "recalculate")
     line = line_of(first, s0)
@@ -703,9 +721,10 @@ def test_a_failed_first_save_leaves_nothing_behind_and_a_lost_race_is_a_409(worl
         raise IntegrityError("insert", {}, Exception("duplicate key value violates unique constraint"))
 
     set_rate(world, world.teacher)
+    fp0 = fpr(world, m)
     with monkeypatch.context() as patched:
         patched.setattr(PayrollService, "_add_revision", boom)
-        r = owner(world).post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id)})
+        r = owner(world).post(f"{API}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), "expected_fingerprint": fp0})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_REVISION_CONFLICT"
     world.db.expire_all()
     assert world.db.query(PayrollSheet).filter_by(org_id=world.org.id).count() == 0
@@ -790,8 +809,8 @@ def test_the_fingerprint_is_stable_and_follows_the_inputs(world):
     world.db.query(GroupAttendance).filter_by(lesson_date=m.d(9).isoformat()).update({"teacher_id": world.teacher2.id})
     world.db.commit()
     assert preview(world, m)["source_fingerprint"] == b                       # the lesson moved to another teacher
-    assert owner(world).put(f"{API}/org/payroll/settings", json={"divisor": 11}).status_code == 200
-    assert preview(world, m)["source_fingerprint"] != b                       # the divisor is data too
+    assert owner(world).put(f"{API}/org/payroll/settings", json={"divisor": 11, "valid_from": m.label}).status_code == 200
+    assert preview(world, m)["source_fingerprint"] != b                       # the divisor of the month is data too
 
 
 def test_a_fee_change_on_the_membership_after_saving_is_noticed_but_the_sheet_keeps_its_fee(world):
@@ -825,7 +844,8 @@ def test_edge_cases_of_percents_overrides_and_missing_data(world, monkeypatch):
     assert r.status_code == 200
     # a save for a revision that does not exist yet
     other = previous_month()
-    r = c.post(f"{API}/org/payroll/sheets", json={"month": other.label, "teacher_id": str(world.teacher2.id), "revision": 3})
+    r = c.post(f"{API}/org/payroll/sheets", json={"month": other.label, "teacher_id": str(world.teacher2.id), "revision": 3,
+                                                  "expected_fingerprint": fpr(world, other, world.teacher2)})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_REVISION_CONFLICT"
     # a recalculation that finds a new kind of lessons needs its percent
     second = make_group(world.db, world.org, world.teacher, "Индивидуальная")
@@ -1200,7 +1220,7 @@ def test_a_month_of_ten_teachers_and_two_hundred_students_costs_a_fixed_number_o
     # saving one sheet and opening it is bounded as well
     teacher_id = sheets[0]["teacher_id"]
     q_save, saved = count_queries(world, lambda: client.post(f"{API}/org/payroll/sheets", json={
-        "month": m.label, "teacher_id": teacher_id}))
+        "month": m.label, "teacher_id": teacher_id, "expected_fingerprint": sheets[0]["source_fingerprint"]}))
     assert saved.status_code == 201 and q_save <= 60, q_save
 
 
@@ -1268,7 +1288,7 @@ def test_simultaneous_first_saves_make_one_sheet(world):
     full_month(world, m, days=range(1, 4))
     set_rate(world, world.teacher)
     new_client = threaded_client(world)
-    body = {"month": m.label, "teacher_id": str(world.teacher.id)}
+    body = {"month": m.label, "teacher_id": str(world.teacher.id), "expected_fingerprint": fpr(world, m)}
 
     def create(_):
         return new_client().post(f"{API}/org/payroll/sheets", json=body)

@@ -397,7 +397,8 @@ def test_restore_returns_the_student_to_the_chosen_groups(two):
     rows = {m.group_id: m for m in memberships(two, s)}
     assert len(rows) == 2 and all(m.is_active and m.left_at is None for m in rows.values())
     for gid, m in rows.items():                                          # the membership is the OLD one: new period
-        assert m.joined_at > old_joined[gid] and price_rows(two, s, gid) == fee_before[gid]
+        # LOGIC-A (F13): the exception has an END marker now (``amount NULL``): a return is priced by the group
+        assert m.joined_at > old_joined[gid] and [r for r in price_rows(two, s, gid) if r[0] is not None] == fee_before[gid]
     assert [v for v in fee_before.values() if v] == [[(450000, "договорённость")]]        # the exception survived the archive
     assert two.db.query(StudentPayment).filter_by(student_id=s.id).count() == 1
     assert row_of(two, s, two.group)["last_payment"] is not None          # its payments are attached again
@@ -908,19 +909,20 @@ def test_create_replace_and_fee_are_refused_for_an_archived_student_but_void_and
     stored_before = {p.id: (p.amount, p.voided_at) for p in two.db.query(StudentPayment).filter_by(student_id=s.id)}
     fee_before = price_rows(two, s, two.group)
 
+    # LOGIC-A (S-5): a student who left pays his DEBT only - nothing owed: nothing is accepted; a correction may not exceed the debt either
     r = owner(two).post(f"{API}/org/memberships/{mid(two, s, two.group)}/payments",
                         json={"amount": 5, "paid_on": business_today().isoformat(), "method": "cash"})
-    assert r.status_code == 409 and r.json()["detail"] == {"code": "STUDENT_ARCHIVED", "message": ARCHIVED_MESSAGE}
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "NOTHING_TO_PAY"
     r = owner(two).post(f"{API}/org/payments/{first['id']}/replace",
-                        json={"amount": 7, "paid_on": business_today().isoformat(), "method": "cash", "reason": "исправление"})
-    assert r.status_code == 409 and r.json()["detail"] == {"code": "STUDENT_ARCHIVED", "message": ARCHIVED_MESSAGE}
+                        json={"amount": 10 ** 9, "paid_on": business_today().isoformat(), "method": "cash", "reason": "исправление"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PAYMENT_EXCEEDS_DEBT"
     r = owner(two).put(f"{API}/org/memberships/{mid(two, s, two.second)}/price-override", json={"amount": 1, "reason": "тест"})
     assert r.status_code == 409 and r.json()["detail"] == ARCHIVED_MESSAGE
     assert put_fee(two, s, two.group, 1, expect=409).json()["detail"] == ARCHIVED_MESSAGE
 
     two.db.expire_all()
     assert {p.id: (p.amount, p.voided_at) for p in two.db.query(StudentPayment).filter_by(student_id=s.id)} == stored_before
-    assert price_rows(two, s, two.group) == fee_before == [(500000, "тест")]          # the individual price stayed
+    assert price_rows(two, s, two.group) == fee_before == [(500000, "тест"), (None, "left_group")]   # the exception stayed; F13: it ENDS with the stay
 
     # reading the history stays allowed ...
     assert owner(two).get(f"{API}/org/memberships/{mid(two, s, two.group)}/payments").status_code == 200
@@ -945,7 +947,9 @@ def test_a_closed_membership_of_a_student_who_is_not_archived_keeps_working_as_b
     two.db.expire_all()
     assert fresh(two, s).status == "active" and not two.db.query(StudentGroup).filter_by(
         student_id=s.id, group_id=two.second.id).one().is_active
-    assert pay(two, s, two.second, amount=1234)["payment"]["amount"] == 1234               # transfer history: unchanged
+    r = owner(two).post(f"{API}/org/memberships/{mid(two, s, two.second)}/payments",          # LOGIC-A (S-5): only a debt is paid after leaving
+                        json={"amount": 1234, "paid_on": business_today().isoformat(), "method": "cash"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "NOTHING_TO_PAY"
     put_fee(two, s, two.second, 700000)
     r = owner(two).post(f"{API}/org/payments/{first['id']}/replace",
                         json={"amount": 99, "paid_on": business_today().isoformat(), "reason": "исправление"})
@@ -958,7 +962,7 @@ def test_a_payment_that_waits_for_an_archiving_is_refused_when_it_gets_the_lock(
     from sqlalchemy.orm import Session
 
     from src.auth.payments_schemas import PaymentCreate
-    from src.auth.payments_service import PaymentService, StudentArchived
+    from src.auth.payments_service import NothingToPay, PaymentService
 
     s = two.student
     m = mid(two, s, two.group)
@@ -974,7 +978,7 @@ def test_a_payment_that_waits_for_an_archiving_is_refused_when_it_gets_the_lock(
     holder.commit()
     holder.close()
     thread.join(timeout=20)
-    assert isinstance(outcome.get("error"), StudentArchived) and str(outcome["error"]) == ARCHIVED_MESSAGE
+    assert isinstance(outcome.get("error"), NothingToPay)                    # S-5: nothing owed by a student who left: no payment slips in
     two.db.expire_all()
     assert two.db.query(StudentPayment).filter_by(student_id=s.id).count() == 0
 
@@ -984,7 +988,7 @@ def test_archive_and_a_payment_in_parallel_never_deadlock_and_never_leave_a_paym
     import threading
 
     from src.auth.payments_schemas import PaymentCreate
-    from src.auth.payments_service import PaymentService, StudentArchived
+    from src.auth.payments_service import NothingToPay, PaymentService, StudentArchived
 
     student = make_student(two.db, two.org, two.group, f"Гонка{round_}", "Платёж", f"N13-9{round_}")
     two.db.commit()
@@ -1005,7 +1009,7 @@ def test_archive_and_a_payment_in_parallel_never_deadlock_and_never_leave_a_paym
     t1.join(timeout=30)
     t2.join(timeout=30)
     assert "error" not in archived, archived.get("error")                               # the archiving always succeeds
-    assert "value" in paid or isinstance(paid.get("error"), StudentArchived), paid       # paid first, or refused: never a deadlock / 500
+    assert "value" in paid or isinstance(paid.get("error"), (StudentArchived, NothingToPay)), paid   # paid first, or refused: never a deadlock / 500
     two.db.expire_all()
     assert two.db.query(StudentPayment).filter_by(student_id=student.id).count() == (1 if "value" in paid else 0)
     assert fresh(two, student).status == "archived" and not any(x.is_active for x in memberships(two, student))

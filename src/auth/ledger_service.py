@@ -23,7 +23,8 @@ from sqlalchemy.orm import Session
 
 from src.models.auth import (
     Group,
-    GroupAttendance,
+    MembershipOpeningBalance,
+    MembershipPause,
     MembershipTransfer,
     Organization,
     Student,
@@ -75,6 +76,7 @@ def regime_from_block(block: Dict[str, Any], effective_from: date) -> bl.Regime:
         anchor=anchor if anchor in (ps.PAYMENT_DATE, ps.FIXED_DAY) else ps.PAYMENT_DATE,
         billing_day=day if isinstance(day, int) and 1 <= day <= 28 else 1,
         package_size=size if isinstance(size, int) and 1 <= size <= 60 else ps.DEFAULT_LESSONS_PER_PAYMENT,
+        defer=block.get("defer") is True and effective_from != date.min,   # LOGIC-A (F12): from the start of the next period
     )
 
 
@@ -147,6 +149,8 @@ class MembershipLedger:
     transfers_in: List[MembershipTransfer] = field(default_factory=list)
     transfers_out: List[MembershipTransfer] = field(default_factory=list)
     credit_of_transfer: Dict[str, int] = field(default_factory=dict)  # transfer id -> the sum that travelled
+    pauses: List[MembershipPause] = field(default_factory=list)  # live (LOGIC-A)
+    opening: Optional[MembershipOpeningBalance] = None  # the live opening balance (LOGIC-A)
 
 
 def price_info(price: pricing.Price) -> bl.PriceInfo:
@@ -156,6 +160,10 @@ def price_info(price: pricing.Price) -> bl.PriceInfo:
 # ============================================================================================================
 # Loader
 # ============================================================================================================
+
+
+def _days(first: date, last: date) -> List[date]:
+    return [first + timedelta(days=i) for i in range((last - first).days + 1)]
 
 
 def _like(term: str) -> str:
@@ -175,6 +183,8 @@ class LedgerLoader:
         self.payments: Dict[UUID, List[StudentPayment]] = {}
         self.writeoffs: Dict[UUID, List[StudentWriteoff]] = {}
         self.refunds: Dict[UUID, List[StudentRefund]] = {}
+        self.pauses: Dict[UUID, List[MembershipPause]] = {}
+        self.openings: Dict[UUID, Optional[MembershipOpeningBalance]] = {}
         self.t_in: Dict[UUID, List[MembershipTransfer]] = {}
         self.t_out: Dict[UUID, List[MembershipTransfer]] = {}
         self.transfers: Dict[UUID, MembershipTransfer] = {}
@@ -185,7 +195,6 @@ class LedgerLoader:
         self._guard_hits = 0
         self._indexed: Set[Tuple[UUID, str]] = set()
         self._schedule: Optional[Any] = None
-        self._cancelled: Optional[Dict[Any, Set[Tuple[str, str]]]] = None
         self._lesson_days_cache: Dict[Tuple[Any, date, date], List[date]] = {}
         self._loaded: Set[UUID] = set()
 
@@ -231,6 +240,8 @@ class LedgerLoader:
                 exists().where(and_(StudentPayment.membership_id == StudentGroup.id, StudentPayment.voided_at.is_(None))),
                 exists().where(and_(StudentWriteoff.membership_id == StudentGroup.id, StudentWriteoff.voided_at.is_(None))),
                 exists().where(and_(StudentRefund.membership_id == StudentGroup.id, StudentRefund.voided_at.is_(None))),
+                exists().where(and_(MembershipOpeningBalance.membership_id == StudentGroup.id, MembershipOpeningBalance.voided_at.is_(None))),
+                exists().where(and_(MembershipPause.membership_id == StudentGroup.id, MembershipPause.voided_at.is_(None))),
             )
             query = query.filter(or_(tracked, since, money))
         if membership_id:
@@ -287,6 +298,8 @@ class LedgerLoader:
             self.payments.setdefault(mid, [])
             self.writeoffs.setdefault(mid, [])
             self.refunds.setdefault(mid, [])
+            self.pauses.setdefault(mid, [])
+            self.openings.setdefault(mid, None)
             self.t_in.setdefault(mid, [])
             self.t_out.setdefault(mid, [])
         if not found:
@@ -315,6 +328,15 @@ class LedgerLoader:
             StudentRefund.org_id == self.org_id, StudentRefund.membership_id.in_(found), StudentRefund.voided_at.is_(None)
         ):
             self.refunds[refund.membership_id].append(refund)
+        for pause in self.db.query(MembershipPause).filter(
+            MembershipPause.org_id == self.org_id, MembershipPause.membership_id.in_(found), MembershipPause.voided_at.is_(None)
+        ):
+            self.pauses[pause.membership_id].append(pause)
+        for opening in self.db.query(MembershipOpeningBalance).filter(
+            MembershipOpeningBalance.org_id == self.org_id, MembershipOpeningBalance.membership_id.in_(found),
+            MembershipOpeningBalance.voided_at.is_(None),
+        ):
+            self.openings[opening.membership_id] = opening
         touched: Set[Tuple[str, UUID]] = set()
         for t in self.db.query(MembershipTransfer).filter(
             MembershipTransfer.org_id == self.org_id, MembershipTransfer.voided_at.is_(None),
@@ -349,7 +371,10 @@ class LedgerLoader:
         since = max(floor, self.settings.accounting_start)
         members = [(self.members[m][0], self.members[m][1], self.members[m][2]) for m in ids if m in self.members]
         detail: Dict[UUID, List[tuple]] = {}
-        PaymentService(self.db)._counted_lesson_dates(self.org_id, members, {}, since=since, detail_out=detail)
+        skip = {
+            mid: {d for p in self.pauses.get(mid, []) for d in _days(p.first_day, p.last_day)} for mid in ids if self.pauses.get(mid)
+        }
+        PaymentService(self.db)._counted_lesson_dates(self.org_id, members, {}, since=since, detail_out=detail, exclude_days=skip)
         for mid in ids:
             self.counted[mid] = [bl.CountedLesson(day, str(lesson_id or "")) for day, lesson_id, _ in detail.get(mid, [])]
 
@@ -366,23 +391,12 @@ class LedgerLoader:
             high = self.today + timedelta(days=SCHEDULE_HORIZON_DAYS)
             gids = list({g.id for _, _, g, _ in self.members.values()})
             self._schedule = AuthService(self.db)._preload_schedule_data(gids, date_from=low, date_to=high)
-            self._cancelled = {}
-            for gid, lesson_date, lesson_id in self.db.query(
-                GroupAttendance.group_id, GroupAttendance.lesson_date, GroupAttendance.lesson_id
-            ).filter(
-                GroupAttendance.group_id.in_(gids), GroupAttendance.status == "cancelled",
-                GroupAttendance.lesson_date >= low.isoformat(),
-            ):
-                self._cancelled.setdefault(gid, set()).add((lesson_date, str(lesson_id)))
+        # LOGIC-A (S-4, decision 3): a lesson the CENTRE cancelled still counts - the month costs the same, so the share of an incomplete
+        # first period never depends on cancellations (and a late cancellation no longer rewrites a closed charge)
         occurrences = AuthService(self.db)._resolved_occurrences_for_group(
             group, date_from=start, date_to=end, preloaded=self._schedule
         )
-        cancelled = (self._cancelled or {}).get(group.id, set())
-        days = [
-            date.fromisoformat(item["occurrenceDate"])
-            for item in occurrences
-            if (item["occurrenceDate"], str(item["id"])) not in cancelled
-        ]
+        days = [date.fromisoformat(item["occurrenceDate"]) for item in occurrences]
         self._lesson_days_cache[key] = days
         return days
 
@@ -485,8 +499,16 @@ class LedgerLoader:
             counted_lessons=tuple(self.counted.get(mid, [])),
             expiring_days=self.settings.expiring_days,
             expiring_lessons=self.settings.expiring_lessons,
+            pauses=tuple(bl.Pause(p.first_day, p.last_day) for p in self.pauses.get(mid, [])),
+            opening=self._opening_of(mid),
         )
         return bl.sliced_input(inp, as_of) if as_of is not None else inp
+
+    def _opening_of(self, mid: UUID) -> Optional[bl.Opening]:
+        row = self.openings.get(mid)
+        if row is None:
+            return None
+        return bl.Opening(row.paid_until, int(row.debt_amount or 0), row.debt_on)
 
     # ---------------------------------------------------------------- results
 
@@ -507,6 +529,7 @@ class LedgerLoader:
                     writeoffs=list(self.writeoffs.get(mid, [])), refunds=list(self.refunds.get(mid, [])),
                     transfers_in=list(self.t_in.get(mid, [])), transfers_out=list(self.t_out.get(mid, [])),
                     credit_of_transfer={str(t.id): self.x_of(t) for t in self.t_in.get(mid, []) + self.t_out.get(mid, [])},
+                    pauses=sorted(self.pauses.get(mid, []), key=lambda p: p.first_day), opening=self.openings.get(mid),
                 )
             )
         return out

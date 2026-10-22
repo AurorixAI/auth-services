@@ -1,10 +1,11 @@
 """ALGO - request/response schemas of the payroll API (N13 P3).  snake_case.  Owner only."""
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from . import payroll_engine as engine
 
@@ -17,14 +18,27 @@ LessonType = Literal["group", "mini_group", "pair", "individual"]
 # ---- settings ---------------------------------------------------------------------
 
 
+class DivisorRow(BaseModel):
+    valid_from: str  # "YYYY-MM": the divisor acts from the 1st day of this month
+    divisor: int
+
+
 class PayrollSettings(BaseModel):
+    """LOGIC-A (F7): the divisor is a history by month (like the rates).  ``divisor`` / ``valid_from`` - the one of the
+    current month; ``history`` - every row, oldest first (the seed row of the migration is ``2020-01``)."""
+
     divisor: int = Field(engine.DEFAULT_DIVISOR, ge=engine.MIN_DIVISOR, le=engine.MAX_DIVISOR)
+    valid_from: Optional[str] = None
     updated_by: Optional[str] = None
     updated_at: Optional[str] = None
+    history: List[DivisorRow] = Field(default_factory=list)
 
 
 class PayrollSettingsUpdate(BaseModel):
-    divisor: int = Field(..., ge=engine.MIN_DIVISOR, le=engine.MAX_DIVISOR)
+    """422 ``DIVISOR_RANGE`` outside 1..31; ``valid_from`` "YYYY-MM" (default: the current month, not before 2020-01)."""
+
+    divisor: int
+    valid_from: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}$")
 
 
 # ---- requests ---------------------------------------------------------------------
@@ -45,12 +59,15 @@ class LineOverride(BaseModel):
     """
 
     membership_id: UUID
+    # m12: the line of a membership that changed its lesson type inside the month is ``"<membership_id>:<lesson_type>"`` (``LineOut.line_key``);
+    # absent = every line of the membership (what an older front sends)
+    line_key: Optional[str] = Field(None, max_length=80)
     monthly_fee: Optional[Any] = None
     include_unpaid: Optional[bool] = None
 
 
 def _unique_memberships(items: Optional[List[LineOverride]]) -> None:
-    ids = [item.membership_id for item in items or ()]
+    ids = [(item.membership_id, item.line_key) for item in items or ()]
     if len(ids) != len(set(ids)):
         raise ValueError("Строка ведомости указана дважды")
 
@@ -106,7 +123,9 @@ class MarkOut(BaseModel):
     # ROADMAP #105: the price of the student ON THE DAY of this lesson (only on a lesson that carries money, and only
     # on a sheet calculated after #105) and where it came from: group | override | none.
     price: Optional[int] = None
-    price_source: Optional[str] = None
+    price_source: Optional[str] = None  # LOGIC-A: group | override | none | day ("day": before the accounting start / transfer)
+    # LOGIC-A (F1, decision 5): how the lesson is covered: money | writeoff | before_start | unpaid (null: not a money lesson)
+    cover: Optional[str] = None
 
 
 class WarningOut(BaseModel):
@@ -122,6 +141,9 @@ class PriceStepOut(BaseModel):
 
 
 class LineOut(BaseModel):
+    # LOGIC-A (F14): ``"<membership_id>"``, or ``"<membership_id>:<lesson_type>"`` when the group changed its type inside
+    # the month and the line of the student splits in two (each with the percent of its type).
+    line_key: str = ""
     membership_id: str
     student_id: str
     student_name: str
@@ -148,6 +170,7 @@ class LineOut(BaseModel):
     unpaid: int = 0
     pending_excused: int = 0
     include_unpaid: bool = False
+    written_off: int = 0  # LOGIC-A (decision 5): counted lessons covered by a write-off of the centre
     amount: int = 0
     warnings: List[WarningOut] = Field(default_factory=list)
 
@@ -158,6 +181,10 @@ class BlockDate(BaseModel):
 
 
 class GroupBlockOut(BaseModel):
+    # LOGIC-A (F14): one block per (group, kind of lessons) - two blocks of one group when it changed its type inside the month.
+    # ``block_key`` = ``"<group_id>"`` (one kind in the month) or ``"<group_id>:<lesson_type>"`` (the group has several blocks); the lines of
+    # a block are the ``LineOut`` with the same ``group_id`` and ``lesson_type`` (their ``line_key`` is ``"<membership_id>[:<type>]"``).
+    block_key: str = ""
     group_id: str
     group_name: str
     lesson_type: str
@@ -198,6 +225,7 @@ class SheetOut(BaseModel):
     counted_total: int = 0
     unpaid_total: int = 0
     pending_excused_total: int = 0
+    written_off_total: int = 0  # LOGIC-A: «из них списано центром N уроков»
     warnings: SheetWarnings = Field(default_factory=SheetWarnings)
     source_fingerprint: str = ""
     stale: Optional[bool] = None  # saved: the data changed after the sheet was saved
@@ -206,6 +234,7 @@ class SheetOut(BaseModel):
     created_at: Optional[str] = None
     updated_by_name: Optional[str] = None
     updated_at: Optional[str] = None
+    payout: Optional["PayoutState"] = None  # LOGIC-A (decision 6): saved sheets only
 
 
 class SheetBrief(BaseModel):
@@ -262,6 +291,7 @@ class MonthTeacher(BaseModel):
     missing_rates: List[str] = Field(default_factory=list)
     sheet: Optional[MonthSheetRef] = None
     warnings: MonthWarnings = Field(default_factory=MonthWarnings)
+    payout: Optional["PayoutState"] = None  # LOGIC-A: only when the teacher has a saved sheet
 
 
 class MonthOverview(BaseModel):
@@ -298,6 +328,7 @@ class DiffBrief(BaseModel):
 
 
 class DiffLine(BaseModel):
+    line_key: str = ""  # LOGIC-A (F14)
     membership_id: str
     student_name: Optional[str] = None
     group_name: Optional[str] = None
@@ -377,3 +408,87 @@ class RateHistoryRow(BaseModel):
     set_by_name: Optional[str] = None
     set_at: Optional[str] = None
     note: Optional[str] = None
+
+
+# ---- payouts (LOGIC-A, decision 6) ---------------------------------------------------------------------
+
+PayoutMethod = Literal["cash", "card", "bank_transfer", "other"]
+PayoutStateName = Literal["unpaid", "due", "settled", "overpaid"]
+
+
+class PayoutCreate(BaseModel):
+    """``amount`` 1..10^10 (422 ``AMOUNT_RANGE``); ``paid_on`` default today, not in the future, not older than 3 years
+    (422 ``PAID_ON_RANGE``); ``method`` mandatory (422 ``METHOD_REQUIRED``)."""
+
+    amount: int
+    paid_on: Optional[date] = None
+    method: Optional[PayoutMethod] = None
+    note: Optional[str] = Field(None, max_length=500)
+
+
+class PayoutVoidRequest(BaseModel):
+    reason: str = Field(..., max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, value: str) -> str:
+        value = (value or "").strip()
+        if len(value) < 3:
+            raise ValueError("Причина отмены: от 3 до 500 символов")
+        return value
+
+
+class PayoutOut(BaseModel):
+    id: str
+    sheet_id: str
+    teacher_id: str
+    month: str
+    amount: int
+    paid_on: date
+    method: PayoutMethod
+    note: Optional[str] = None
+    sheet_revision: int
+    sheet_total: int
+    created_by_name: Optional[str] = None
+    created_at: Optional[str] = None
+    voided_at: Optional[str] = None
+    void_reason: Optional[str] = None
+
+
+class PayoutState(BaseModel):
+    """``target`` = ``fresh_total`` when the sheet is stale (``basis="fresh"``), else the saved total (``basis="saved"``;
+    ``fresh_total`` null when there is no rate / a manual price); ``balance = target - paid`` (negative = overpaid)."""
+
+    saved_total: int
+    fresh_total: Optional[int] = None
+    target: int
+    paid: int
+    balance: int
+    state: PayoutStateName
+    basis: Literal["fresh", "saved"] = "saved"
+    text: str
+    items: List[PayoutOut] = Field(default_factory=list)  # live and voided, oldest first
+
+
+class PayoutCreated(BaseModel):
+    payout: PayoutOut
+    state: PayoutState
+
+
+class PayoutVoided(BaseModel):
+    payout: PayoutOut
+    state: PayoutState
+
+
+class PayoutError(BaseModel):
+    """409 ``DUPLICATE_PAYOUT`` carries ``payout_id``; the other codes: ``SHEET_NOT_SAVED`` / ``ALREADY_VOIDED`` (409),
+    ``AMOUNT_RANGE`` / ``PAID_ON_RANGE`` / ``METHOD_REQUIRED`` / ``REASON_REQUIRED`` / ``FINGERPRINT_REQUIRED`` /
+    ``DIVISOR_RANGE`` (422)."""
+
+    code: Optional[str] = None
+    message: str
+    payout_id: Optional[str] = None
+
+
+for _model in (SheetOut, MonthTeacher):
+    _model.model_rebuild()

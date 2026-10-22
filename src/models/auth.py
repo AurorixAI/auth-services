@@ -521,7 +521,9 @@ class GroupAudit(Base):
         CheckConstraint(
             "action IN ('created', 'updated', 'teacher_changed', 'student_archived', 'student_restored', "
             "'group_price_set', 'membership_price_set', 'group_price_cancelled', 'membership_price_cancelled', "
-            "'payment_writeoff', 'payment_writeoff_void', 'payment_refund', 'payment_refund_void')",
+            "'payment_writeoff', 'payment_writeoff_void', 'payment_refund', 'payment_refund_void', "
+            "'membership_pause_set', 'membership_pause_void', 'opening_balance_set', 'opening_balance_void', "
+            "'group_lesson_type_set', 'student_left_group')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(
@@ -988,7 +990,7 @@ class GroupAttendanceAudit(Base):
     __table_args__ = (
         CheckConstraint(
             "action IN ('started', 'reconciliation_started', 'created', 'updated', 'corrected', 'cancelled', 'reconciliation_cancelled', "
-            "'excuse_reviewed', 'excuse_reset', 'excuse_removed', 'excuse_file_added', 'excuse_file_removed')",
+            "'excuse_reviewed', 'excuse_reset', 'excuse_removed', 'excuse_file_added', 'excuse_file_removed', 'excuse_closed_pause')",
             name="ck_group_attendance_audit_action",
         ),
         Index("idx_group_attendance_audit_attendance", "attendance_id"),
@@ -1041,7 +1043,7 @@ class AttendanceExcuse(Base):
     __table_args__ = (
         UniqueConstraint("attendance_id", "student_id", name="uq_attendance_excuse_student"),
         CheckConstraint(
-            "status IN ('pending', 'confirmed', 'rejected')",
+            "status IN ('pending', 'confirmed', 'rejected', 'not_required')",   # LOGIC-A: closed by a pause
             name="ck_attendance_excuse_status",
         ),
         Index("idx_attendance_excuses_org_status", "org_id", "status"),
@@ -1544,4 +1546,170 @@ class PayrollRate(Base):
         CheckConstraint("percent >= 0 AND percent <= 100", name="ck_payroll_rates_percent"),
         CheckConstraint("EXTRACT(DAY FROM valid_from) = 1", name="ck_payroll_rates_first_day"),
         Index("idx_payroll_rates_lookup", "org_id", "teacher_id", "lesson_type", "valid_from"),
+    )
+
+
+# ============================================================================
+# LOGIC-A (pack «деньги»): opening balance, pause, lesson type history, payroll divisor history, payroll payouts
+# ============================================================================
+
+
+class MembershipPause(Base):
+    """LOGIC-A (decision 2): a pause of the student in a group, business days ``first_day..last_day`` inclusive.
+
+    A FACT like a payment: the days of a live pause are not charged (``billing_ledger.Pause``) and the lessons of those days are not
+    counted (the student is not in the roster of the lesson).  Cancelled by ``voided_*``, never deleted.  Live pauses of one membership
+    do not overlap (the service under the family lock; ``btree_gist`` EXCLUDE as a second guard where the extension is available).
+    """
+
+    __tablename__ = "membership_pauses"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    membership_id = Column(UUID(as_uuid=True), ForeignKey("student_groups.id", ondelete="RESTRICT"), nullable=False)
+    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="RESTRICT"), nullable=False)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="RESTRICT"), nullable=False)
+    first_day = Column(Date, nullable=False)
+    last_day = Column(Date, nullable=False)
+    reason = Column(String(300), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    voided_at = Column(DateTime, nullable=True)
+    voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    void_reason = Column(String(500), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("last_day >= first_day AND last_day - first_day <= 365", name="ck_membership_pauses_range"),
+        CheckConstraint(
+            "(voided_at IS NULL AND voided_by IS NULL AND void_reason IS NULL) OR "
+            "(voided_at IS NOT NULL AND voided_by IS NOT NULL AND void_reason IS NOT NULL)",
+            name="ck_membership_pauses_void_all_or_none",
+        ),
+        Index("ix_mp_membership_live", "org_id", "membership_id", postgresql_where=text("voided_at IS NULL")),
+        Index("ix_mp_org_first_live", "org_id", "first_day", postgresql_where=text("voided_at IS NULL")),
+    )
+
+
+class MembershipOpeningBalance(Base):
+    """LOGIC-A (decision 1): the "opening balance" of a membership - «оплачено до D» and / or «долг X на дату T».
+
+    One LIVE row per membership (``uq_mob_membership_live``).  ``paid_until`` only raises the first billable day (no advance, no debt for
+    the days before the accounting); the debt is a charge of kind ``opening`` that the money pays first.  Cancelled by ``voided_*``.
+    """
+
+    __tablename__ = "membership_opening_balances"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    membership_id = Column(UUID(as_uuid=True), ForeignKey("student_groups.id", ondelete="RESTRICT"), nullable=False)
+    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="RESTRICT"), nullable=False)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="RESTRICT"), nullable=False)
+    paid_until = Column(Date, nullable=True)
+    debt_amount = Column(BigInteger, nullable=True)
+    debt_on = Column(Date, nullable=True)
+    note = Column(String(300), nullable=True)
+    source = Column(String(10), nullable=False, default="manual", server_default="manual")
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    voided_at = Column(DateTime, nullable=True)
+    voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    void_reason = Column(String(500), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("debt_amount IS NULL OR debt_amount > 0", name="ck_mob_debt_amount"),
+        CheckConstraint("paid_until IS NOT NULL OR debt_amount IS NOT NULL", name="ck_mob_not_empty"),
+        CheckConstraint("(debt_amount IS NULL) = (debt_on IS NULL)", name="ck_mob_debt_pair"),
+        CheckConstraint("source IN ('import', 'manual', 'add')", name="ck_mob_source"),
+        CheckConstraint(
+            "(voided_at IS NULL AND voided_by IS NULL AND void_reason IS NULL) OR "
+            "(voided_at IS NOT NULL AND voided_by IS NOT NULL AND void_reason IS NOT NULL)",
+            name="ck_mob_void_all_or_none",
+        ),
+        Index("uq_mob_membership_live", "membership_id", unique=True, postgresql_where=text("voided_at IS NULL")),
+        Index("ix_mob_org_live", "org_id", postgresql_where=text("voided_at IS NULL")),
+    )
+
+
+class GroupLessonTypeHistory(Base):
+    """LOGIC-A (F14, S-9): the type of lessons of a group by day (as the prices are).  The type of a lesson is the row with the
+    greatest ``valid_from <= the day of the lesson``; ``groups.lesson_type`` mirrors the current one."""
+
+    __tablename__ = "group_lesson_type_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    valid_from = Column(Date, nullable=False)
+    lesson_type = Column(String(16), nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("group_id", "valid_from", name="uq_group_lesson_type_from"),
+        CheckConstraint(
+            "lesson_type IN ('group', 'mini_group', 'pair', 'individual')", name="ck_group_lesson_type_history_type"
+        ),
+    )
+
+
+class PayrollDivisor(Base):
+    """LOGIC-A (F7, S-9): the payroll divisor by month (as the rates are).  The divisor of month *M* is the row with the greatest
+    ``valid_from <= the 1st of M`` (a later ``created_at`` wins on the same ``valid_from``); no row - 12."""
+
+    __tablename__ = "payroll_divisors"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    valid_from = Column(Date, nullable=False)
+    divisor = Column(SmallInteger, nullable=False)
+    note = Column(String(300), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+    __table_args__ = (
+        CheckConstraint("EXTRACT(DAY FROM valid_from) = 1", name="ck_payroll_divisors_first_day"),
+        CheckConstraint("divisor BETWEEN 1 AND 31", name="ck_payroll_divisors_range"),
+        Index("idx_payroll_divisors_lookup", "org_id", "valid_from"),
+    )
+
+
+class PayrollPayout(Base):
+    """LOGIC-A (decision 6, S-8): a payout of salary to a teacher for a month, against a SAVED sheet.  Append-only, cancelled by
+    ``voided_*``.  Belongs to (teacher, month) - ``period_month`` - not to a revision of the sheet; ``sheet_revision`` / ``sheet_total``
+    are what the owner saw.  Never changes the sheet (total, lines, fingerprint)."""
+
+    __tablename__ = "payroll_payouts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    sheet_id = Column(UUID(as_uuid=True), ForeignKey("payroll_sheets.id", ondelete="RESTRICT"), nullable=False)
+    teacher_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    period_month = Column(Date, nullable=False)
+    amount = Column(BigInteger, nullable=False)
+    paid_on = Column(Date, nullable=False)
+    method = Column(String(16), nullable=False)
+    note = Column(String(500), nullable=True)
+    sheet_revision = Column(Integer, nullable=False)
+    sheet_total = Column(BigInteger, nullable=False)
+    idempotency_key = Column(UUID(as_uuid=True), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    voided_at = Column(DateTime, nullable=True)
+    voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    void_reason = Column(String(500), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_payroll_payouts_amount"),
+        CheckConstraint("method IN ('cash', 'card', 'bank_transfer', 'other')", name="ck_payroll_payouts_method"),
+        CheckConstraint("EXTRACT(DAY FROM period_month) = 1", name="ck_payroll_payouts_first_day"),
+        CheckConstraint(
+            "(voided_at IS NULL AND voided_by IS NULL AND void_reason IS NULL) OR "
+            "(voided_at IS NOT NULL AND voided_by IS NOT NULL AND void_reason IS NOT NULL)",
+            name="ck_payroll_payouts_void_all_or_none",
+        ),
+        Index(
+            "uq_payroll_payouts_idem", "org_id", "idempotency_key", unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+        Index("ix_pp_org_month_live", "org_id", "period_month", postgresql_where=text("voided_at IS NULL")),
+        Index("ix_pp_sheet_live", "sheet_id", postgresql_where=text("voided_at IS NULL")),
     )

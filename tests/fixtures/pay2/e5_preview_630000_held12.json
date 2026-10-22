@@ -37,6 +37,7 @@
         "paid": 0,
         "written_off": 0,
         "unpaid": 600000,
+        "remaining": 600000,
         "covered_days": 0,
         "covered_through": null,
         "partial_credit": 0,
@@ -60,7 +61,8 @@
         "bucket": "past_debt",
         "closes": true,
         "label": "Закрыла долг: пакет №1 (25.09–21.10)",
-        "price": 600000
+        "price": 600000,
+        "segment_remaining_after": 0
       },
       {
         "segment_id": "advance",
@@ -71,7 +73,8 @@
         "bucket": "advance",
         "closes": false,
         "label": "Аванс на следующие уроки",
-        "price": null
+        "price": null,
+        "segment_remaining_after": null
       }
     ],
     "debt_after": 0,

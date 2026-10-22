@@ -10,6 +10,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticCustomError
+from .payments_schemas import OpeningIn
 
 PASSWORD_NUL_MESSAGE = "Пароль содержит недопустимый символ"
 
@@ -346,6 +347,8 @@ class AddStudentToGroupRequest(BaseModel):
 
     price_override: Optional[PriceOverrideInput] = None
     monthly_fee: Optional[int] = None  # retired (#105): refused with a message, never silently dropped
+    # LOGIC-A (decision 1): the opening balance of the new membership (needs access to money); see payments_schemas.OpeningIn
+    opening_balance: Optional[OpeningIn] = None
 
     @field_validator("monthly_fee")
     @classmethod

@@ -72,6 +72,9 @@ class Regime:
     anchor: str = ps.PAYMENT_DATE  # payment_date | fixed_day (calendar only)
     billing_day: int = 1  # 1..28 (fixed_day only; 1 = calendar months)
     package_size: int = ps.DEFAULT_LESSONS_PER_PAYMENT  # lessons only
+    # LOGIC-A (F12): the version acts for a run from the START OF ITS NEXT PERIOD under the previous regime (see ``_window_starts``)
+    # instead of from ``effective_from``; a version without the flag acts from its date as before.
+    defer: bool = False
 
 
 @dataclass(frozen=True)
@@ -115,6 +118,23 @@ class CountedLesson:
 
 
 @dataclass(frozen=True)
+class Pause:
+    """A live pause of the membership, business days, both ends included: its days are not charged."""
+
+    first: date
+    last: date
+
+
+@dataclass(frozen=True)
+class Opening:
+    """The "opening balance" of a membership (LOGIC-A, decision 1): paid until ``paid_until`` and / or owing ``debt_amount`` on ``debt_on``."""
+
+    paid_until: Optional[date] = None
+    debt_amount: int = 0
+    debt_on: Optional[date] = None
+
+
+@dataclass(frozen=True)
 class LedgerInput:
     today: date
     accounting_start: date
@@ -130,6 +150,8 @@ class LedgerInput:
     counted_lessons: Sequence[CountedLesson] = ()
     expiring_days: int = ps.DEFAULT_EXPIRING_DAYS
     expiring_lessons: int = ps.DEFAULT_EXPIRING_LESSONS
+    pauses: Sequence[Pause] = ()
+    opening: Optional[Opening] = None
 
 
 # ================================================================================================================
@@ -142,7 +164,7 @@ class Segment:
     """One charge: a period of the student (or a lessons package that has held lessons)."""
 
     id: str
-    kind: str  # period | package
+    kind: str  # period | package | opening (the debt of the opening balance: no days, no price)
     period_start: date
     period_end: date
     days: Tuple[date, ...]  # billable days (package: the dates of its held lessons)
@@ -209,6 +231,7 @@ class Allocation:
     label: str
     period_start: date
     period_end: date
+    remaining_after: Optional[int] = None  # what is still unpaid of the segment right after this piece (null: advance)
 
 
 @dataclass(frozen=True)
@@ -233,6 +256,16 @@ class LessonsView:
     left: int
     unpaid: int
     paid_flags: Tuple[bool, ...]  # per counted lesson, in hand-out order
+
+
+@dataclass(frozen=True)
+class LessonCoverInfo:
+    """How one lesson is covered (what payroll reads).  ``source``: money | writeoff | before_start | unpaid | unpriced."""
+
+    paid: bool
+    source: str
+    price: Optional[PriceInfo] = None  # the price of the SEGMENT that covers the lesson (null: no segment / no price)
+    segment_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -266,6 +299,11 @@ class Ledger:
     counted: Tuple[CountedLesson, ...] = ()
     calendar_windows: Tuple[Tuple[date, Optional[date]], ...] = ()
     lessons_windows: Tuple[Tuple[date, Optional[date]], ...] = ()
+    lesson_owner: Tuple[Optional[str], ...] = ()  # per counted lesson: the id of its package (null: held without a price)
+    package_costs: Dict[str, Tuple[int, ...]] = field(default_factory=dict, repr=False, compare=False)
+    pauses: Tuple[Tuple[date, date], ...] = ()
+    opening: Optional[Opening] = None
+    _cache: Dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def reconciles(self) -> bool:
@@ -276,19 +314,52 @@ class Ledger:
         )
 
     def lesson_paid(self, day: date, lesson_id: Optional[str] = None) -> bool:
-        """Whether the lesson of ``day`` is paid (what payroll reads).
+        """Whether the lesson of ``day`` is paid (what payroll reads): see ``lesson_cover``."""
+        return self.lesson_cover(day, lesson_id).paid
 
-        Days before the first charged day are "grace" (not charged, so not owed); a lessons-mode lesson is paid when its
-        place in hand-out order is covered; a calendar day when it is not after "paid until".
+    def lesson_cover(self, day: date, lesson_id: Optional[str] = None) -> LessonCoverInfo:
+        """How the lesson of ``day`` is covered and at WHAT PRICE (the price of the period / package that carries it).
+
+        Days before the first charged day (before the accounting start, up to "paid until", the transfer day, before the student
+        came) are "grace": not charged, so not owed - ``before_start``, paid, no price.  Lessons mode: the package of the place of
+        the lesson in hand-out order; calendar: the segment that holds the day, covered when the day is not after "paid until".
         """
         if self.first_billable is None or day < self.first_billable:
-            return True
+            return LessonCoverInfo(True, "before_start")
         if any(lo <= day and (hi is None or day <= hi) for lo, hi in self.lessons_windows) and self.lessons is not None:
             for index, lesson in enumerate(self.counted):
                 if lesson.day == day and (lesson_id is None or lesson.lesson_id == lesson_id):
-                    return self.lessons.paid_flags[index]
-            return False
-        return self.covered_through is not None and day <= self.covered_through
+                    paid = self.lessons.paid_flags[index]
+                    owner = self.lesson_owner[index] if index < len(self.lesson_owner) else None
+                    seg = self._segment(owner) if owner else None
+                    if seg is None:
+                        return LessonCoverInfo(paid, "unpriced")
+                    if not paid:
+                        return LessonCoverInfo(False, "unpaid", seg.price, seg.id)
+                    place = sum(1 for j in range(index) if self.lesson_owner[j] == owner)
+                    by_money = _cover(seg, seg.money, list(self.package_costs.get(seg.id, ())))
+                    return LessonCoverInfo(True, "money" if place < by_money else "writeoff", seg.price, seg.id)
+            return LessonCoverInfo(False, "unpaid")
+        paid = self.covered_through is not None and day <= self.covered_through
+        found = self._day_index().get(day)
+        if found is None:
+            return LessonCoverInfo(paid, "unpriced")
+        seg, place = found
+        if seg.unpriced:
+            return LessonCoverInfo(paid, "unpriced", None, seg.id)
+        if not paid:
+            return LessonCoverInfo(False, "unpaid", seg.price, seg.id)
+        return LessonCoverInfo(True, "money" if place < _cover(seg, seg.money) else "writeoff", seg.price, seg.id)
+
+    def _segment(self, seg_id: str) -> Optional[Segment]:
+        return next((s for s in self.segments if s.id == seg_id), None)
+
+    def _day_index(self) -> Dict[date, Tuple[Segment, int]]:
+        index = self._cache.get("days")
+        if index is None:
+            index = {d: (s, i) for s in self.segments if s.kind == "period" for i, d in enumerate(s.days)}
+            self._cache["days"] = index
+        return index
 
 
 # ================================================================================================================
@@ -440,24 +511,20 @@ class _Gen:
 
     # ---------------------------------------------------------------- calendar: payment date
 
-    def payment_date_chain(self, lo: date, hi: Optional[date], so_far: int) -> List[Segment]:
+    def payment_date_chain(self, lo: date, hi: Optional[date], so_far: int, pauses: Optional[List[Tuple[date, date]]] = None) -> List[Segment]:
         chain = self.chain
         self.chain += 1
         out: List[Segment] = []
-        anchor = lo.day
-        k = 0
         cum = so_far
         future = 0
-        while True:
-            try:
-                start = lo if k == 0 else _month_start(lo, anchor, k)
-                nxt = _month_start(lo, anchor, k + 1)
-            except (ValueError, OverflowError):
-                break
-            end = nxt - timedelta(days=1)
+        for start, end, length, days in _chain_periods(lo, pauses or []):
             if hi is not None and start > hi:
                 break
-            seg_hi = end if hi is None else min(end, hi)
+            if hi is not None:
+                days = [d for d in days if d <= hi]
+                if not days:
+                    break
+                end = min(end, hi)
             if start > self.today:
                 if hi is None:
                     if cum >= self.total_credit:
@@ -467,9 +534,7 @@ class _Gen:
                             self.flags.add(F_HORIZON)
                         break
                 future += 1
-            seg = self.segment(chain, start, end if seg_hi == end else seg_hi, _day_range(start, seg_hi),
-                               (end - start).days + 1, by_lessons=False, cell=None)
-            k += 1
+            seg = self.segment(chain, start, end, days, length, by_lessons=False, cell=None)
             if seg.unpriced:  # nothing is charged for it, it neither covers nor blocks; the next period is tried
                 self.unpriced_from = self.unpriced_from or start
                 if seg.begun:
@@ -564,6 +629,14 @@ class _Gen:
                 self.unpriced_from = self.unpriced_from or c.day
                 self.flags.add(F_PRICE_MISSING)
         lessons_all, lessons = lessons, [c for c, ok in zip(lessons, priced) if ok]
+        owners: List[Optional[str]] = []
+        place = 0
+        for ok in priced:
+            if ok:
+                owners.append(f"seg:{chain}:pkg{place // size + 1}")
+                place += 1
+            else:
+                owners.append(None)
         for k, start in enumerate(range(0, len(lessons), size), 1):
             chunk = lessons[start : start + size]
             first_day = chunk[0].day
@@ -593,7 +666,7 @@ class _Gen:
                 i += 1
                 if i > size:
                     i, price = 1, p_now
-        return segs, costs, priced
+        return segs, costs, priced, owners
 
 
 # ================================================================================================================
@@ -628,20 +701,199 @@ def _prefix(costs: Sequence[int]) -> List[int]:
     return out
 
 
+def _merge_pauses(pauses: Sequence[Pause]) -> List[Tuple[date, date]]:
+    """Overlapping and touching pauses become one."""
+    out: List[List[date]] = []
+    for first, last in sorted((p.first, max(p.first, p.last)) for p in pauses):
+        if out and first <= out[-1][1] + timedelta(days=1):
+            out[-1][1] = max(out[-1][1], last)
+        else:
+            out.append([first, last])
+    return [(a, b) for a, b in out]
+
+
+def _subtract_pauses(lo: date, hi: Optional[date], pauses: List[Tuple[date, date]]) -> List[Tuple[date, Optional[date]]]:
+    """``[lo, hi]`` (``hi`` None = open) without the days of the pauses: the pieces that are charged."""
+    out: List[Tuple[date, Optional[date]]] = []
+    cur: Optional[date] = lo
+    for first, last in pauses:
+        if cur is None or (hi is not None and first > hi):
+            break
+        if last < cur:
+            continue
+        if first > cur:
+            out.append((cur, first - timedelta(days=1)))
+        cur = last + timedelta(days=1)
+        if hi is not None and cur > hi:
+            cur = None
+    if cur is not None:
+        out.append((cur, hi))
+    return out
+
+
+def _is_paused(pauses: List[Tuple[date, date]], day: date) -> bool:
+    i = bisect_right(pauses, (day, date.max)) - 1
+    return i >= 0 and pauses[i][0] <= day <= pauses[i][1]
+
+
+def _first_unpaused(pauses: List[Tuple[date, date]], day: date) -> date:
+    while _is_paused(pauses, day):
+        day += timedelta(days=1)
+    return day
+
+
+def _chain_periods(lo: date, pauses: List[Tuple[date, date]]):
+    """The periods of a payment-date chain that begins on ``lo`` (LOGIC-A, owner decision: a pause never adds a charge).
+
+    ``yield (start, end, length, days)``: period ``k`` has the NOMINAL length of its month (anchor = the day of ``lo``) in study days;
+    the days of a pause are not study days, so a pause EXTENDS the period it falls into by the paused days and every later period
+    begins the day after the previous one ends (the anchors shift, the chain is not restarted).  Without pauses this is the usual
+    calendar chain ``s_k .. s_{k+1}-1``."""
+    anchor = lo.day
+    k = 0
+    start = lo
+    while True:
+        try:
+            cur = lo if k == 0 else _month_start(lo, anchor, k)
+            nxt = _month_start(lo, anchor, k + 1)
+        except (ValueError, OverflowError):
+            return
+        length = (nxt - cur).days
+        days: List[date] = []
+        day = start
+        try:
+            while len(days) < length:
+                if not _is_paused(pauses, day):
+                    days.append(day)
+                day += timedelta(days=1)
+        except OverflowError:
+            return
+        yield start, days[-1], length, days
+        start = days[-1] + timedelta(days=1)
+        k += 1
+
+
+def _lessons_switch(size: int, priced_days: List[date], start: date, c: date) -> date:
+    """A package under the old regime that has begun by ``c`` is finished first: the switch is the day after its last lesson
+    (``c + 1`` when every package is full, ``c`` when none has begun, never while the package is open)."""
+    held = [d for d in priced_days if d >= start]
+    n = bisect_right(held, c)
+    if n == 0:
+        return c
+    if n % size == 0:
+        return c + timedelta(days=1)
+    end = ((n + size - 1) // size) * size
+    return held[end - 1] + timedelta(days=1) if len(held) >= end else date.max
+
+
+def _window_starts(windows, piece_first: date, priced_days: List[date], pauses: Optional[List[Tuple[date, date]]] = None) -> List[date]:
+    """The first day of every regime version FOR ONE PIECE of the stay (spec §1.5).
+
+    A version without ``defer`` starts on its date.  A deferred one starts at the first day of the NEXT PERIOD of the regime that
+    was in force for the piece on that date (the later decision wins: a deferred version that has not begun yet is not "the
+    previous regime"): ``fixed_day`` - the next cell of the grid; ``payment_date`` - the next month of the piece's chain;
+    ``lessons`` - after the package in progress is finished.  A piece that had nothing charged by then switches at once.
+    """
+    starts = [date.min]
+    for k in range(1, len(windows)):
+        regime, c, _ = windows[k]
+        if not regime.defer:
+            starts.append(c)
+            continue
+        j = max(i for i in range(k) if starts[i] <= c)
+        prev = windows[j][0]
+        begin = max(piece_first, starts[j])
+        if begin > c:
+            starts.append(c)
+        elif prev.mode == LESSONS:
+            starts.append(_lessons_switch(max(1, prev.package_size), priced_days, begin, c))
+        elif prev.anchor == ps.FIXED_DAY:
+            day = prev.billing_day
+            starts.append(ps.billing_period_end(ps.billing_period_start(c, day), day) + timedelta(days=1))
+        else:  # payment_date: the first period of the chain (pauses extend it) that begins after c
+            first_day = _first_unpaused(pauses or [], begin)
+            nxt = None
+            for period_start, _end, _length, _days in _chain_periods(first_day, pauses or []):
+                if period_start > c:
+                    nxt = period_start
+                    break
+            starts.append(nxt if nxt is not None else date.max)
+    return starts
+
+
+def _window_bounds(starts: List[date]) -> List[Tuple[date, Optional[date]]]:
+    """``(lo, hi)`` of every version for one piece: a day belongs to the LAST version that has begun by then."""
+    out = []
+    for k, lo in enumerate(starts):
+        later = min(starts[k + 1:], default=None)
+        out.append((lo, None if later is None or later == date.max else later - timedelta(days=1)))
+    return out
+
+
+def _pieces_of(inp: LedgerInput):
+    """``(opening, floor, runs, pause_days, spans)``: the stay from the floor on (``spans``, the pauses are still inside: a payment-date
+    chain is extended by them); the days that are charged are ``_subtract_pauses`` of a span."""
+    opening = inp.opening
+    if opening is not None and not (opening.paid_until or (opening.debt_amount and opening.debt_on)):
+        opening = None
+    floor = max(inp.accounting_start, inp.first_billable_floor or date.min,
+                (opening.paid_until + timedelta(days=1)) if opening is not None and opening.paid_until else date.min)
+    runs = merge_stays(inp.stays)
+    pause_days = _merge_pauses(inp.pauses)
+    spans: List[Tuple[date, Optional[date]]] = []
+    for first, last in runs:
+        lo = max(first, floor)
+        if last is not None and lo > last:
+            continue
+        if _subtract_pauses(lo, last, pause_days):      # a span that lies wholly in a pause has no charged day
+            spans.append((lo, last))
+    return opening, floor, runs, pause_days, spans
+
+
+def regime_switch_days(inp: LedgerInput, new: Regime) -> List[date]:
+    """F12 «who switches when»: the first day under ``new`` (a version that begins today, ``defer``) of every piece of the stay that is still
+    open - ``max`` / ``min`` of the list are the last / first switch.  Closed stays do not switch."""
+    regimes = list(inp.regimes) + [replace(new, defer=True, effective_from=inp.today)]
+    windows = regime_windows(regimes)
+    _, _, _, pause_days, spans = _pieces_of(inp)
+    priced = sorted(c.day for c in inp.counted_lessons if inp.price_at(c.day).amount is not None)
+    return [_window_starts(windows, first, priced, pause_days)[-1] for first, last in spans if last is None]
+
+
 def run_ledger(inp: LedgerInput) -> Ledger:
     today = inp.today
     flags: set = set()
-    floor = max(inp.accounting_start, inp.first_billable_floor or date.min)
+    opening, floor, runs, pause_days, spans_of_stay = _pieces_of(inp)
     credits = sorted(inp.credits, key=_credit_key)
     net, refunded_from, transferred_from, exceeds = apply_outflows(credits, inp.outflows)
     if exceeds:
         flags.add(F_OUTFLOW_EXCEEDS)
     total_credit = sum(net.values())
     gen = _Gen(inp, total_credit, flags)
-    runs = merge_stays(inp.stays)
     windows = regime_windows(inp.regimes)
+    deferred = any(w[0].defer for w in windows[1:])
+    priced_days = sorted(c.day for c in inp.counted_lessons if inp.price_at(c.day).amount is not None) if deferred else []
+    bounds = [_window_bounds(_window_starts(windows, first, priced_days, pause_days) if deferred else [w[1] for w in windows])
+              for first, _ in spans_of_stay]
+    # the piece that tells which version is in force today (the one that holds today, else the last before it)
+    ref = next((i for i, (f, l) in enumerate(spans_of_stay) if f <= today and (l is None or l >= today)), None)
+    if ref is None:
+        before = [i for i, (f, _) in enumerate(spans_of_stay) if f <= today]
+        ref = before[-1] if before else (0 if spans_of_stay else None)
+    tail = len(windows) - 1
+    cur_index = None
+    if ref is not None:
+        started = [i for i, (lo, _) in enumerate(bounds[ref]) if lo <= today]
+        cur_index = started[-1] if started else 0
+        if windows[-1][0].defer and bounds[ref][-1][0] > today:
+            tail = cur_index
 
     segments: List[Segment] = []
+    if opening is not None and opening.debt_amount and opening.debt_on:
+        segments.append(Segment(
+            id="seg:opening", kind="opening", period_start=opening.debt_on, period_end=opening.debt_on, days=(), price=NO_PRICE,
+            amount=int(opening.debt_amount), basis="opening", nominal_days=0, lessons_in_part=None, lessons_in_period=None,
+            begun=True, ended=opening.debt_on < today))
     cal_windows: List[Tuple[date, Optional[date]]] = []
     les_windows: List[Tuple[date, Optional[date]]] = []
     package_costs: Dict[str, List[int]] = {}
@@ -649,45 +901,61 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     package_regime: Optional[Regime] = None
     held_all: List[CountedLesson] = []
     lesson_priced: List[bool] = []     # per held lesson: a price was in force that day
+    lesson_owner: List[Optional[str]] = []
     first_billable: Optional[date] = None
 
     for index, (regime, wlo, whi) in enumerate(windows):
-        last_window = index == len(windows) - 1
-        lo_bound = max(wlo, floor)
-        intervals: List[Tuple[date, Optional[date]]] = []
-        for first, last in runs:
-            lo = max(first, lo_bound)
-            hi = last if whi is None else (whi if last is None else min(last, whi))
+        last_window = index == tail
+        intervals: List[Tuple[date, Optional[date]]] = []      # the charged pieces (the pauses cut out)
+        span_ivs: List[Tuple[date, Optional[date]]] = []       # the same stay with the pauses still inside (payment-date chains)
+        spans_here: List[Tuple[date, Optional[date]]] = []
+        for (first, last), bnd in zip(spans_of_stay, bounds):
+            wlo_p, whi_p = bnd[index]
+            if wlo_p == date.max:
+                continue
+            lo = max(first, wlo_p)
+            hi = last if whi_p is None else (whi_p if last is None else min(last, whi_p))
+            if whi_p is None or wlo_p <= whi_p:
+                spans_here.append((wlo_p, whi_p))
             if hi is not None and lo > hi:
                 continue
-            intervals.append((lo, hi))
+            span_ivs.append((lo, hi))
+            intervals.extend(_subtract_pauses(lo, hi, pause_days))
+        if not spans_of_stay:
+            spans_here = [(wlo, whi)]
+        elif deferred or intervals:
+            # a day is looked up in the version of ITS piece: the span is clipped to the pieces it holds (pieces are apart in time,
+            # and a deferred version may begin earlier for a later piece than the old one ends for an earlier piece)
+            spans_here = list(intervals)
+        spans_here = sorted(set(spans_here), key=lambda x: (x[0], x[1] or date.max))
         if regime.mode == LESSONS:
-            les_windows.append((wlo, whi))
-            window_lessons = [c for c in inp.counted_lessons if lo_bound <= c.day and (whi is None or c.day <= whi)]
+            les_windows.extend(x for x in spans_here if x not in les_windows)
+            window_lessons = [c for c in inp.counted_lessons if any(lo <= c.day and (hi is None or c.day <= hi) for lo, hi in intervals)]
             window_lessons.sort(key=lambda c: c.day)
             if intervals:
-                first_billable = min(first_billable or date.max, intervals[0][0])
+                first_billable = min(first_billable or date.max, min(lo for lo, _ in intervals))
             so_far = sum(s.amount for s in segments)
-            segs, costs, priced_flags = gen.packages(regime, window_lessons, last_window, so_far)
+            segs, costs, priced_flags, owners = gen.packages(regime, window_lessons, last_window, so_far)
             lesson_priced.extend(priced_flags)
+            lesson_owner.extend(owners)
             segments.extend(segs)
             held_all.extend(window_lessons)
             lesson_costs_all.extend(costs)
             package_regime = regime
             continue
-        cal_windows.append((wlo, whi))
+        cal_windows.extend(x for x in spans_here if x not in cal_windows)
         if not intervals:
             continue
-        first_billable = min(first_billable or date.max, intervals[0][0])
+        first_billable = min(first_billable or date.max, min(lo for lo, _ in intervals))
         so_far = sum(s.amount for s in segments)
         if regime.anchor == ps.FIXED_DAY:
             segments.extend(gen.fixed_day_cells(regime, intervals, so_far))
         else:
-            for lo, hi in intervals:
+            for lo, hi in span_ivs:
                 so_far = sum(s.amount for s in segments)
-                segments.extend(gen.payment_date_chain(lo, hi, so_far))
+                segments.extend(gen.payment_date_chain(_first_unpaused(pause_days, lo), hi, so_far, pause_days))
 
-    segments.sort(key=lambda s: ((s.days[0] if s.days else s.period_start), s.period_start, s.id))
+    segments.sort(key=lambda s: (s.kind != "opening", (s.days[0] if s.days else s.period_start), s.period_start, s.id))
 
     # ---- the money line
     spans: Dict[str, Tuple[int, int]] = {}
@@ -757,7 +1025,9 @@ def run_ledger(inp: LedgerInput) -> Ledger:
             running[s.id] += part
             after = _cover(s, running[s.id], seg_costs.get(s.id))
             on = c.on
-            if s.kind == "package":
+            if s.kind == "opening":
+                bucket = PAST_DEBT
+            elif s.kind == "package":
                 bucket = PAST_DEBT if (s.complete_package and s.period_end <= on) else (
                     CURRENT if s.period_start <= on else ADVANCE)
             else:
@@ -766,9 +1036,11 @@ def run_ledger(inp: LedgerInput) -> Ledger:
             allocations.append(Allocation(
                 credit_id=c.id, segment_id=s.id, amount=part, days=after - before, bucket=bucket, closes=closes,
                 price=s.price.amount,
-                label=tx.allocation_label(bucket=bucket, closes=closes, start=s.period_start, end=s.period_end,
-                                          package_no=s.package_no),
-                period_start=s.period_start, period_end=s.period_end))
+                label=(tx.opening_label(s.period_start, closes) if s.kind == "opening" else
+                       tx.allocation_label(bucket=bucket, closes=closes, start=s.period_start, end=s.period_end,
+                                           package_no=s.package_no)),
+                period_start=s.period_start, period_end=s.period_end,
+                remaining_after=max(0, s.amount - running[s.id])))
             placed += part
         left = net[c.id] - placed
         if left > 0:
@@ -799,10 +1071,14 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     money_net = sum(v for k, v in net.items() if kind_of[k] != WRITEOFF)
     refundable = min(advance, money_net)
 
-    # ---- coverage prefix
-    through: Optional[date] = None
+    # ---- coverage prefix ("paid until" of the opening balance is where it starts; an unpaid opening debt stops it)
+    through: Optional[date] = opening.paid_until if opening is not None else None
     for s in segments:
         if s.unpriced:
+            continue
+        if s.kind == "opening":
+            if s.unpaid > 0:
+                break
             continue
         if s.covered_days >= len(s.days):
             if s.days:
@@ -816,6 +1092,10 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     for s in segments:
         if s.unpriced:
             continue
+        if s.kind == "opening":
+            if s.unpaid > 0:
+                break
+            continue
         covered_prefix += s.covered_days
         if s.covered_days < len(s.days):
             break
@@ -824,14 +1104,14 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     partial_credit = 0
     if not prefix_all:
         for s in segments:
-            if s.unpriced:
+            if s.unpriced or s.kind == "opening":
                 continue
             if s.covered_days < len(s.days):
                 partial_credit = s.partial_credit
                 break
 
     # ---- the lessons view
-    current_regime = regime_at(inp.regimes, today)
+    current_regime = windows[cur_index][0] if cur_index is not None else regime_at(inp.regimes, today)
     mode = current_regime.mode
     lessons_view: Optional[LessonsView] = None
     held_lessons = held_all
@@ -852,17 +1132,29 @@ def run_ledger(inp: LedgerInput) -> Ledger:
             unpaid=max(0, used - covered_lessons), paid_flags=flags_paid)
 
     # ---- status
-    has_event = bool(credits)
+    has_event = bool(credits) or opening is not None or bool(pause_days)
     open_now = any(last is None or last >= today for _, last in runs)
     price_today = inp.price_at(today).amount
-    status = _status(inp, mode, has_event, open_now, through, lessons_view, price_today)
+    paused_until = next((last for first, last in pause_days if first <= today <= last), None) if open_now else None
+    owed_since = None
+    open_debt = next((s for s in segments if s.kind == "opening" and s.unpaid > 0), None)
+    if open_debt is not None:
+        owed_since = open_debt.period_start
+    # m2: a student whose price is 0 stays FREE whatever pauses / openings he has - only money that was really paid (or moved in) changes that
+    status = _status(inp, mode, has_event, open_now, through, lessons_view, price_today, paused_until, owed_since, pause_days,
+                     has_money=bool(credits))
 
     # ---- statement
     events: List[StatementEvent] = []
     for s in begun:
         if s.amount:
-            events.append(StatementEvent(day=s.days[0] if s.days else s.period_start, rank=0, kind="charge",
-                                         ref_id=s.id, debit=s.amount))
+            events.append(StatementEvent(day=s.days[0] if s.days else s.period_start, rank=0,
+                                         kind="opening_debt" if s.kind == "opening" else "charge", ref_id=s.id, debit=s.amount))
+    if opening is not None and opening.paid_until:
+        shown = min(today, max(min((r[0] for r in runs), default=today), inp.accounting_start))
+        events.append(StatementEvent(day=shown, rank=0, kind="opening_paid_until", ref_id="opening:paid_until"))
+    for first, last in pause_days:
+        events.append(StatementEvent(day=first, rank=4, kind="pause", ref_id=f"pause:{first.isoformat()}:{last.isoformat()}"))
     for c in credits:
         rank = 2 if c.kind == WRITEOFF else 1
         events.append(StatementEvent(day=c.on, rank=rank, kind=c.kind, ref_id=c.id, credit=c.amount))
@@ -882,27 +1174,43 @@ def run_ledger(inp: LedgerInput) -> Ledger:
         advance=advance, refundable=refundable, partial_credit=partial_credit, covered_through=through,
         covered_days_total=covered_prefix, first_billable=first_billable, unpriced_from=gen.unpriced_from,
         status=status, lessons=lessons_view, statement=tuple(stmt), flags=tuple(sorted(flags)),
-        counted=tuple(held_lessons), calendar_windows=tuple(cal_windows), lessons_windows=tuple(les_windows))
+        counted=tuple(held_lessons), calendar_windows=tuple(cal_windows), lessons_windows=tuple(les_windows),
+        lesson_owner=tuple(lesson_owner), package_costs={sid: tuple(c) for sid, c in seg_costs.items()},
+        pauses=tuple(pause_days), opening=opening)
     return ledger
 
 
+def overdue_days(through: date, today: date, pauses: Sequence[Tuple[date, date]]) -> int:
+    """m1: the days after ``through`` up to ``today`` without the days of a pause (a pause never makes a student late: the count starts
+    with the first CHARGED unpaid day)."""
+    paused = sum((min(last, today) - max(first, through + timedelta(days=1))).days + 1
+                 for first, last in pauses if last > through and first <= today)
+    return max(1, (today - through).days - paused)
+
+
 def _status(inp: LedgerInput, mode: str, has_event: bool, open_now: bool, through: Optional[date],
-            lessons: Optional[LessonsView], price_today: Optional[int]) -> ps.StatusResult:
+            lessons: Optional[LessonsView], price_today: Optional[int], paused_until: Optional[date] = None,
+            owed_since: Optional[date] = None, pauses: Sequence[Tuple[date, date]] = (), has_money: Optional[bool] = None) -> ps.StatusResult:
     today = inp.today
-    if price_today == 0 and (not has_event or mode == LESSONS):
+    if price_today == 0 and (not (has_event if has_money is None else has_money) or mode == LESSONS):
         return ps.StatusResult(status=ps.FREE, period_mode=mode)
     if not has_event or not open_now:
         return ps.StatusResult(status=ps.NONE, period_mode=mode)
+    if paused_until is not None:  # the day lies inside a pause: no "days overdue", the place is kept
+        return ps.StatusResult(status=ps.PAUSED, period_mode=mode, paid_until=through, paused_until=paused_until)
     if mode == LESSONS and lessons is not None:
         left = lessons.left
         status = ps.EXPIRED if left == 0 else ps.EXPIRING if left <= inp.expiring_lessons else ps.ACTIVE
         return ps.StatusResult(status=status, period_mode=LESSONS, lessons_total=lessons.covered,
                                lessons_used=lessons.used, lessons_left=left)
     if through is None:
+        if owed_since is not None:  # an opening debt and nothing paid until: the student owes since that day
+            return ps.StatusResult(status=ps.EXPIRED, period_mode=CALENDAR, days_overdue=max(1, (today - owed_since).days))
         return ps.StatusResult(status=ps.NONE, period_mode=mode)
     delta = (through - today).days
     if delta < 0:
-        status, overdue, left = ps.EXPIRED, -delta, None
+        status, left = ps.EXPIRED, None
+        overdue = overdue_days(through, today, pauses)
     elif delta == 0:
         status, overdue, left = ps.ENDS_TODAY, None, 0
     elif delta <= inp.expiring_days:
@@ -933,6 +1241,7 @@ def sliced_input(inp: LedgerInput, as_of: date) -> LedgerInput:
         inp, today=as_of, stays=tuple(stays),
         credits=tuple(c for c in inp.credits if c.on <= as_of), outflows=tuple(o for o in inp.outflows if o.on <= as_of),
         counted_lessons=tuple(c for c in inp.counted_lessons if c.day <= as_of),
+        pauses=tuple(p for p in inp.pauses if p.first <= as_of),
     )
 
 

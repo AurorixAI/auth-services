@@ -28,6 +28,8 @@ from . import user_sessions
 from .student_id_service import assign_display_id
 from .attendance_excuses import AttendanceExcuseService
 from .diagnostic_level import level_fields, normalize_level_payload
+from .membership_pauses import not_paused_at, not_paused_now
+from .leave_service import on_membership_closed, on_membership_returned
 from .membership_periods import (
     close_period,
     group_period_spans,
@@ -2336,6 +2338,10 @@ class AuthService:
             diff[key] = [old_value, value]
             setattr(group, key, UUID(value) if key == "teacher_id" else value)
 
+        if "lesson_type" in diff:  # LOGIC-A B1: a new type is a history row effective today (+ audit), not a bare write
+            from .lesson_types import LessonTypeService
+            LessonTypeService(self.db).patch_type(org_id, group, diff["lesson_type"][0], diff["lesson_type"][1], actor_id, actor_role or "admin")
+
         if diff:
             self.db.add(
                 GroupAudit(
@@ -2748,6 +2754,7 @@ class AuthService:
         price_override: Optional[Any] = None,
         actor_id: Optional[str] = None,
         payments_detail: bool = False,
+        opening_balance: Optional[Any] = None,
     ) -> dict:
         """Enrol a student in a group.
 
@@ -2863,6 +2870,7 @@ class AuthService:
         self._assert_no_open_attendance_for_groups(org_id, affected_group_ids)
         for om in closing:
             close_period(om, now_dt)
+            on_membership_closed(self.db, om, now_dt, actor_id)  # LOGIC-A: F13 marker, pauses
 
         # Target membership is either a historical inactive record that will
         # be reactivated (its payment history stays attached), or a new one.
@@ -2885,6 +2893,7 @@ class AuthService:
                 # period (the earlier ones stay in ``student_group_periods``);
                 # recorded attendance stays tied to past lessons.
                 open_period(existing, now_dt)
+                on_membership_returned(self.db, existing, now_dt, actor_id)  # LOGIC-A (F13): the price of the group again
             if closing:
                 # A transfer into a group the student already belongs to keeps
                 # its old joined_at (past rosters need it); this instant lets
@@ -2902,6 +2911,12 @@ class AuthService:
                 self.db, membership.id, actor_id, amount=override_amount,
                 valid_from=ps.business_date(now_dt), reason=override_reason,
             )
+
+        if opening_balance is not None:  # LOGIC-A (decision 1): the opening balance of the new membership
+            from .leave_service import apply_add_opening  # lazy
+
+            self.db.flush()
+            apply_add_opening(self.db, org_id, membership, actor_id, opening_balance, transfer=bool(closing))
 
         # N13 P2.1: a transfer carries the payments in force over to the new group.  The price is not carried
         # (#105): in the new group the student follows the price of that group.
@@ -3007,6 +3022,7 @@ class AuthService:
         self._lock_groups_for_membership_change(org_id, [group.id])
         self._assert_no_open_attendance_for_groups(org_id, [group.id])
         close_period(sg, datetime.now(timezone.utc))
+        on_membership_closed(self.db, sg, datetime.now(timezone.utc), None)  # LOGIC-A: pauses (no author: no price marker)
         self.db.flush()
 
         if str(student.group_id or "") == str(group.id):
@@ -4579,6 +4595,7 @@ class AuthService:
                 StudentGroup.is_active.is_(True),
                 StudentGroup.left_at.is_(None),
                 student_not_archived(),
+                not_paused_now(),  # LOGIC-A: a student on a pause is not in the class
             )
             .order_by(StudentGroup.joined_at, StudentGroup.id)
             .all()
@@ -4618,6 +4635,7 @@ class AuthService:
                 StudentGroup.group_id == group_id,
                 # ANY stay of the student covers the instant, not only the last one.
                 member_at(occurred_at),
+                not_paused_at(occurred_at),  # LOGIC-A
             )
             .order_by(StudentGroup.joined_at, StudentGroup.id)
             .all()

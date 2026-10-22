@@ -4,7 +4,7 @@
     "body": {
       "detail": {
         "code": "WRITEOFF_EXCEEDS_DEBT",
-        "message": "Списать можно не больше долга: 60 000 сум",
+        "message": "Простить можно не больше долга: 60 000 сум",
         "debt": 60000,
         "refundable": null,
         "payment_id": null

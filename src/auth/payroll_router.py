@@ -9,7 +9,7 @@ from typing import Optional
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,12 @@ from .payroll_schemas import (
     CalculateRequest,
     CalculateResponse,
     MonthOverview,
+    PayoutCreate,
+    PayoutCreated,
+    PayoutError,
+    PayoutOut,
+    PayoutVoidRequest,
+    PayoutVoided,
     PayrollSettings,
     PayrollSettingsUpdate,
     RateHistoryRow,
@@ -35,7 +41,9 @@ from .payroll_schemas import (
     TeacherRates,
 )
 from .payroll_rates_service import RatesService
-from .payroll_service import PayrollError, PayrollService
+from .payroll_payouts import PayoutError as PayoutError_
+from .payroll_payouts import PayrollPayoutService as PrPayoutService
+from .payroll_service import PayrollError, PayrollService, parse_month
 
 router = APIRouter(prefix="/auth", tags=["Payroll"])
 
@@ -75,7 +83,7 @@ def update_payroll_settings(
     db: Session = Depends(get_db),
 ):
     try:
-        return PayrollService(db).update_settings(user["org_id"], user["user_id"], request.divisor)
+        return PayrollService(db).update_settings(user["org_id"], user["user_id"], request.divisor, request.valid_from)
     except PayrollError as exc:
         raise _http(exc)
 
@@ -228,3 +236,60 @@ def export_sheet(sheet_id: UUID, user: dict = Depends(require_payroll_owner), db
         raise _http(exc)
     sheet = sheets[0]
     return _xlsx(build_workbook([sheet.model_dump()]), export_filename(label, sheet.teacher_name))
+
+
+# ---- payouts (LOGIC-A, decision 6) ---------------------------------------------------------------------
+
+_PAYOUT_ERRORS = {403: {"model": PayoutError}, 404: {"model": PayoutError}, 409: {"model": PayoutError}, 422: {"model": PayoutError}}
+
+
+def _payout_http(exc: PayoutError_) -> HTTPException:
+    return HTTPException(exc.status_code, exc.detail)
+
+
+def _fresh(db: Session, org_id: str):
+    service = PayrollService(db)
+    return lambda sheet: service._fresh_total(org_id, sheet)
+
+
+@router.get("/org/payroll/payouts", response_model=list[PayoutOut], responses=_PAYOUT_ERRORS)
+def list_payouts(
+    month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$"),
+    teacher_id: Optional[UUID] = None,
+    user: dict = Depends(require_payroll_owner),
+    db: Session = Depends(get_db),
+):
+    """Выплаты (живые и отменённые) за месяц / преподавателя."""
+    try:
+        first = parse_month(month)[0] if month else None
+        return PrPayoutService(db).list(user["org_id"], month=first, teacher_id=teacher_id)
+    except PayrollError as exc:
+        raise _http(exc)
+
+
+@router.post("/org/payroll/sheets/{sheet_id}/payouts", response_model=PayoutCreated, status_code=201, responses=_PAYOUT_ERRORS)
+def create_payout(
+    sheet_id: UUID,
+    request: PayoutCreate,
+    idempotency_key: Optional[UUID] = Header(None, alias="Idempotency-Key"),
+    user: dict = Depends(require_payroll_owner),
+    db: Session = Depends(get_db),
+):
+    """Отметить выплату зарплаты по сохранённой ведомости (аванс учителю допустим: «переплачено»)."""
+    try:
+        return PrPayoutService(db).create(user["org_id"], sheet_id, user["user_id"], request, idempotency_key, _fresh(db, user["org_id"]))
+    except PayoutError_ as exc:
+        raise _payout_http(exc)
+
+
+@router.post("/org/payroll/payouts/{payout_id}/void", response_model=PayoutVoided, responses=_PAYOUT_ERRORS)
+def void_payout(
+    payout_id: UUID,
+    request: PayoutVoidRequest,
+    user: dict = Depends(require_payroll_owner),
+    db: Session = Depends(get_db),
+):
+    try:
+        return PrPayoutService(db).void(user["org_id"], payout_id, user["user_id"], request.reason, _fresh(db, user["org_id"]))
+    except PayoutError_ as exc:
+        raise _payout_http(exc)

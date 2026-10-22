@@ -1,0 +1,49 @@
+{
+  "dry_run": true,
+  "impact": {
+    "students_following": 2,
+    "students_with_override": 0,
+    "stale_payroll_sheets": 1,
+    "stale_sheets": [],
+    "money": {
+      "memberships_with_new_debt": 2,
+      "debt_delta": 200000,
+      "memberships_with_less_advance": 0,
+      "advance_delta": 0,
+      "days_lost_total": 0,
+      "backdated": true,
+      "items": [
+        {
+          "membership_id": "00000000-0000-4000-8000-000000000111",
+          "student_name": "Ученик 1",
+          "debt_before": 0,
+          "debt_after": 100000,
+          "advance_before": 0,
+          "advance_after": 0,
+          "paid_until_before": null,
+          "paid_until_after": null,
+          "has_money": false
+        },
+        {
+          "membership_id": "00000000-0000-4000-8000-000000000112",
+          "student_name": "Ученик 2",
+          "debt_before": 0,
+          "debt_after": 100000,
+          "advance_before": 0,
+          "advance_after": 0,
+          "paid_until_before": null,
+          "paid_until_after": null,
+          "has_money": false
+        }
+      ]
+    }
+  },
+  "group_id": null,
+  "group_name": null,
+  "as_of": null,
+  "period_mode": null,
+  "price_label": null,
+  "current": null,
+  "history": null,
+  "cancelled": null
+}

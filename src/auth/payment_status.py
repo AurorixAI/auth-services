@@ -87,8 +87,9 @@ EXPIRED = "expired"
 ENDS_TODAY = "ends_today"
 EXPIRING = "expiring"
 ACTIVE = "active"
+PAUSED = "paused"  # LOGIC-A: today lies inside a pause of the membership
 
-STATUSES = (NONE, FREE, EXPIRED, ENDS_TODAY, EXPIRING, ACTIVE)
+STATUSES = (NONE, FREE, EXPIRED, ENDS_TODAY, EXPIRING, ACTIVE, PAUSED)
 
 # Tab buckets of the payments page.
 BUCKET_DUE = "due"
@@ -96,6 +97,7 @@ BUCKET_EXPIRING = "expiring"
 BUCKET_NONE = "none"
 BUCKET_ACTIVE = "active"
 BUCKET_ALL = "all"
+BUCKET_PAUSED = "paused"  # not a tab of its own: in_bucket() is true for ``all`` only
 BUCKETS = (BUCKET_DUE, BUCKET_EXPIRING, BUCKET_NONE, BUCKET_ACTIVE, BUCKET_ALL)
 
 DEFAULT_EXPIRING_DAYS = 3
@@ -172,6 +174,7 @@ class StatusResult:
     lessons_used: Optional[int] = None
     lessons_left: Optional[int] = None
     last_payment_id: object = None
+    paused_until: Optional[date] = None  # LOGIC-A: the last day of the pause when ``status == "paused"``
 
 
 @dataclass
@@ -435,6 +438,8 @@ def bucket_of(status: str) -> str:
         return BUCKET_EXPIRING
     if status == NONE:
         return BUCKET_NONE
+    if status == PAUSED:
+        return BUCKET_PAUSED  # only the "all" tab shows a paused student
     return BUCKET_ACTIVE  # active + free
 
 

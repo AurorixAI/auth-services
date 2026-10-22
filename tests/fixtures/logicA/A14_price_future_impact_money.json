@@ -1,0 +1,38 @@
+{
+  "dry_run": true,
+  "impact": {
+    "students_following": 12,
+    "students_with_override": 1,
+    "stale_payroll_sheets": 0,
+    "stale_sheets": [],
+    "money": {
+      "memberships_with_new_debt": 0,
+      "debt_delta": 0,
+      "memberships_with_less_advance": 1,
+      "advance_delta": 0,
+      "days_lost_total": 2,
+      "backdated": false,
+      "items": [
+        {
+          "membership_id": "00000000-0000-4000-8000-000000000102",
+          "student_name": "Ахмедов Б.",
+          "debt_before": 0,
+          "debt_after": 0,
+          "advance_before": 200000,
+          "advance_after": 200000,
+          "paid_until_before": "2026-11-12",
+          "paid_until_after": "2026-11-10",
+          "has_money": true
+        }
+      ]
+    }
+  },
+  "group_id": null,
+  "group_name": null,
+  "as_of": null,
+  "period_mode": null,
+  "price_label": null,
+  "current": null,
+  "history": null,
+  "cancelled": null
+}
