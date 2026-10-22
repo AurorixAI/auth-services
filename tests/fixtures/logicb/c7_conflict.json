@@ -1,0 +1,18 @@
+{
+  "body": {
+    "detail": {
+      "code": "ATTENDANCE_CONFLICT",
+      "currentVersion": 2,
+      "message": "Отметки уже изменил(а) Рахимов Т. в 10:42",
+      "records": {
+        "a321d4be-89d1-510e-9a96-9d9e8e6d605c": "present"
+      },
+      "updatedAt": "2026-10-26T05:42:10",
+      "updatedBy": {
+        "id": "5fd041ac-c0cc-5b16-8903-db2bbc1e9333",
+        "name": "Рахимов Т."
+      }
+    }
+  },
+  "status": 409
+}

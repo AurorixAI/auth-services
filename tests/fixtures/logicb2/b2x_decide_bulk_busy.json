@@ -1,0 +1,22 @@
+{
+  "items": [],
+  "skipped": [
+    {
+      "code": "TEACHER_BUSY",
+      "conflicts": [
+        {
+          "date": "2026-10-27",
+          "endTime": "11:30",
+          "groupId": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+          "groupName": "9-А",
+          "startTime": "10:00",
+          "withGroupName": "7-Б"
+        }
+      ],
+      "id": "b8b0d820-ceb5-5119-ba33-bd241cc331f7",
+      "message": "У преподавателя уже есть урок",
+      "total": 1
+    }
+  ],
+  "updated": 4
+}

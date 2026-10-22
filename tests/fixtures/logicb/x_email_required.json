@@ -1,0 +1,9 @@
+{
+  "body": {
+    "detail": {
+      "code": "EMAIL_REQUIRED",
+      "message": "Укажите email приглашаемого сотрудника"
+    }
+  },
+  "status": 422
+}

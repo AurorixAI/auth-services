@@ -26,6 +26,11 @@ from src.models.auth import (
     GroupScheduleOverride,
     GroupScheduleOneOffLesson,
     GroupScheduleAudit,
+    LessonTeacherAssignment,
+    MemberAudit,
+    LessonSubstitutionRequest,
+    LessonSubstitutionEvent,
+    PayrollSheet,
 )
 
 __all__ = [
@@ -50,4 +55,9 @@ __all__ = [
     "GroupScheduleOverride",
     "GroupScheduleOneOffLesson",
     "GroupScheduleAudit",
+    "LessonTeacherAssignment",
+    "MemberAudit",
+    "LessonSubstitutionRequest",
+    "LessonSubstitutionEvent",
+    "PayrollSheet",
 ]

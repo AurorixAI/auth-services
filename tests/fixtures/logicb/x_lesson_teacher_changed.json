@@ -1,0 +1,11 @@
+{
+  "body": {
+    "detail": {
+      "code": "LESSON_TEACHER_CHANGED",
+      "currentTeacherId": "5fd041ac-c0cc-5b16-8903-db2bbc1e9333",
+      "message": "Преподаватель урока уже изменён: Рахимов Т. Обновите страницу",
+      "teacher_name": "Рахимов Т."
+    }
+  },
+  "status": 409
+}

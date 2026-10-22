@@ -1,0 +1,26 @@
+[
+  {
+    "action": "teacher_changed",
+    "created_at": "2026-10-21T09:00:00",
+    "group": "G1",
+    "snapshot": {
+      "teacher_id": [
+        "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "23da0f33-efdf-5266-af96-b052211c5c8f"
+      ],
+      "via": "handover"
+    }
+  },
+  {
+    "action": "teacher_changed",
+    "created_at": "2026-10-21T09:00:00",
+    "group": "G2",
+    "snapshot": {
+      "teacher_id": [
+        "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "dfa29678-0238-53bf-841f-f7b02e776e91"
+      ],
+      "via": "handover"
+    }
+  }
+]

@@ -1,0 +1,37 @@
+{
+  "archiveReason": "Группа закрыта",
+  "archivedAt": "2026-10-22T05:00:00",
+  "cancelledMissedLessons": 1,
+  "class_level": 8,
+  "closedSubstitutionRequests": 0,
+  "created_at": "2026-09-01T00:00:00",
+  "description": null,
+  "examReleasePending": false,
+  "id": "b5aa24ec-82c4-5190-b6ce-a45a812c649b",
+  "lesson_type": "group",
+  "max_students": 30,
+  "name": "8-В",
+  "org_id": "2f44d237-f012-5231-9345-f2205bf2ad5b",
+  "releasedExamIds": [
+    "EX_9"
+  ],
+  "schedule": [
+    {
+      "color": "blue",
+      "dayOfWeek": 1,
+      "endTime": "11:30",
+      "format": "offline",
+      "id": "lesson-l4",
+      "room": null,
+      "startTime": "10:00",
+      "subject": "Математика",
+      "topic": null,
+      "validFrom": "2026-10-19"
+    }
+  ],
+  "status": "archived",
+  "student_count": 0,
+  "substitution": false,
+  "teacher_id": "dfa29678-0238-53bf-841f-f7b02e776e91",
+  "teacher_name": "Пётр Петров"
+}

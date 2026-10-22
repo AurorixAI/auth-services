@@ -1,0 +1,15 @@
+{
+  "cancelled_row": {
+    "cancellation_reason": "Группа закрыта: Группа закрыта",
+    "lesson_date": "2026-10-19",
+    "status": "cancelled",
+    "teacher_id": "dfa29678-0238-53bf-841f-f7b02e776e91"
+  },
+  "group_audit_action": "group_archived",
+  "inactive_intervals": [
+    {
+      "from": "2026-10-22T05:00:00",
+      "to": null
+    }
+  ]
+}

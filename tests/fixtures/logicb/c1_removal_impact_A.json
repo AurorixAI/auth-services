@@ -1,0 +1,37 @@
+{
+  "canRemove": false,
+  "futureSubstitutions": {
+    "count": 0
+  },
+  "groups": [
+    {
+      "id": "e7a0b156-c39d-53e8-85e3-48880a13ea39",
+      "name": "7-Б",
+      "nextLesson": {
+        "date": "2026-10-27",
+        "startTime": "10:00"
+      },
+      "studentCount": 2
+    },
+    {
+      "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+      "name": "9-А",
+      "nextLesson": {
+        "date": "2026-10-21",
+        "startTime": "16:00"
+      },
+      "studentCount": 3
+    }
+  ],
+  "inProgressLessons": [],
+  "memberId": "6e0f7127-77e2-57f2-91ad-a2b57dd6e680",
+  "missedLessons": {
+    "count": 1
+  },
+  "name": "Иванов И.",
+  "orgRole": "teacher",
+  "pendingSubstitutionRequests": {
+    "count": 0
+  },
+  "userId": "917b0543-3c26-52c4-b849-5d99a8a9dd87"
+}

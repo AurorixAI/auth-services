@@ -1,0 +1,9 @@
+{
+  "body": {
+    "detail": {
+      "code": "DUPLICATE_SLOT",
+      "message": "Такой урок уже есть в расписании группы"
+    }
+  },
+  "status": 409
+}

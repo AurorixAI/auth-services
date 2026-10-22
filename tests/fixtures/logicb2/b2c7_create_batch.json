@@ -1,0 +1,197 @@
+{
+  "alreadyRequested": [],
+  "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+  "created": [
+    {
+      "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "comment": "Конференция",
+      "createdAt": "2026-10-21T09:00:00",
+      "decision": null,
+      "group": {
+        "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+        "name": "9-А",
+        "studentCount": 3
+      },
+      "id": "fc394dd4-82b3-5b2c-9a5f-dabe36b1632d",
+      "lesson": {
+        "date": "2026-10-21",
+        "endTime": "17:30",
+        "exists": true,
+        "format": "offline",
+        "lessonId": "lesson-l2",
+        "room": null,
+        "startTime": "16:00",
+        "startsAtUtc": "2026-10-21T11:00:00"
+      },
+      "minutesToStart": 120,
+      "origin": "teacher",
+      "overdue": false,
+      "previous": null,
+      "reasonCode": "personal",
+      "reasonLabel": "Личное",
+      "status": "pending",
+      "suggestedTeacher": null,
+      "teacher": {
+        "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "name": "Иванов И."
+      },
+      "urgent": true
+    },
+    {
+      "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "comment": "Конференция",
+      "createdAt": "2026-10-21T09:00:00",
+      "decision": null,
+      "group": {
+        "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+        "name": "9-А",
+        "studentCount": 3
+      },
+      "id": "1bf0f6fd-ff60-5d22-922c-2eb766e260b3",
+      "lesson": {
+        "date": "2026-10-26",
+        "endTime": "11:30",
+        "exists": true,
+        "format": "offline",
+        "lessonId": "lesson-l1",
+        "room": null,
+        "startTime": "10:00",
+        "startsAtUtc": "2026-10-26T05:00:00"
+      },
+      "minutesToStart": 6960,
+      "origin": "teacher",
+      "overdue": false,
+      "previous": null,
+      "reasonCode": "personal",
+      "reasonLabel": "Личное",
+      "status": "pending",
+      "suggestedTeacher": null,
+      "teacher": {
+        "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "name": "Иванов И."
+      },
+      "urgent": false
+    },
+    {
+      "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "comment": "Конференция",
+      "createdAt": "2026-10-21T09:00:00",
+      "decision": null,
+      "group": {
+        "id": "e7a0b156-c39d-53e8-85e3-48880a13ea39",
+        "name": "7-Б",
+        "studentCount": 2
+      },
+      "id": "c714967b-18e1-5d0c-8a82-ab4f85a7b5a1",
+      "lesson": {
+        "date": "2026-10-27",
+        "endTime": "11:00",
+        "exists": true,
+        "format": "offline",
+        "lessonId": "lesson-l3",
+        "room": null,
+        "startTime": "10:00",
+        "startsAtUtc": "2026-10-27T05:00:00"
+      },
+      "minutesToStart": 8400,
+      "origin": "teacher",
+      "overdue": false,
+      "previous": null,
+      "reasonCode": "personal",
+      "reasonLabel": "Личное",
+      "status": "pending",
+      "suggestedTeacher": null,
+      "teacher": {
+        "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "name": "Иванов И."
+      },
+      "urgent": false
+    },
+    {
+      "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "comment": "Конференция",
+      "createdAt": "2026-10-21T09:00:00",
+      "decision": null,
+      "group": {
+        "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+        "name": "9-А",
+        "studentCount": 3
+      },
+      "id": "151eabd7-b2ea-571f-bc98-fc9917aea1f0",
+      "lesson": {
+        "date": "2026-10-28",
+        "endTime": "17:30",
+        "exists": true,
+        "format": "offline",
+        "lessonId": "lesson-l2",
+        "room": null,
+        "startTime": "16:00",
+        "startsAtUtc": "2026-10-28T11:00:00"
+      },
+      "minutesToStart": 10200,
+      "origin": "teacher",
+      "overdue": false,
+      "previous": null,
+      "reasonCode": "personal",
+      "reasonLabel": "Личное",
+      "status": "pending",
+      "suggestedTeacher": null,
+      "teacher": {
+        "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "name": "Иванов И."
+      },
+      "urgent": false
+    },
+    {
+      "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "comment": "Конференция",
+      "createdAt": "2026-10-21T09:00:00",
+      "decision": null,
+      "group": {
+        "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+        "name": "9-А",
+        "studentCount": 3
+      },
+      "id": "454547e9-7d4e-5d67-b5b9-51c2291c66cf",
+      "lesson": {
+        "date": "2026-11-02",
+        "endTime": "11:30",
+        "exists": true,
+        "format": "offline",
+        "lessonId": "lesson-l1",
+        "room": null,
+        "startTime": "10:00",
+        "startsAtUtc": "2026-11-02T05:00:00"
+      },
+      "minutesToStart": 17040,
+      "origin": "teacher",
+      "overdue": false,
+      "previous": null,
+      "reasonCode": "personal",
+      "reasonLabel": "Личное",
+      "status": "pending",
+      "suggestedTeacher": null,
+      "teacher": {
+        "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "name": "Иванов И."
+      },
+      "urgent": false
+    }
+  ],
+  "skipped": [
+    {
+      "code": "LESSON_ALREADY_STARTED",
+      "groupId": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+      "lessonDate": "2026-10-19",
+      "lessonId": "lesson-l1",
+      "message": "Урок уже начался или прошёл. Обратитесь к администратору"
+    },
+    {
+      "code": "LESSON_ALREADY_STARTED",
+      "groupId": "e7a0b156-c39d-53e8-85e3-48880a13ea39",
+      "lessonDate": "2026-10-20",
+      "lessonId": "lesson-l3",
+      "message": "Урок уже начался или прошёл. Обратитесь к администратору"
+    }
+  ]
+}

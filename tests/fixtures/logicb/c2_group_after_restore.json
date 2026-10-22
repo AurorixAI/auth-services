@@ -1,0 +1,31 @@
+{
+  "archiveReason": null,
+  "archivedAt": null,
+  "class_level": 8,
+  "created_at": "2026-09-01T00:00:00",
+  "description": null,
+  "id": "b5aa24ec-82c4-5190-b6ce-a45a812c649b",
+  "lesson_type": "group",
+  "max_students": 30,
+  "name": "8-В",
+  "org_id": "2f44d237-f012-5231-9345-f2205bf2ad5b",
+  "schedule": [
+    {
+      "color": "blue",
+      "dayOfWeek": 1,
+      "endTime": "11:30",
+      "format": "offline",
+      "id": "lesson-l4",
+      "room": null,
+      "startTime": "10:00",
+      "subject": "Математика",
+      "topic": null,
+      "validFrom": "2026-10-19"
+    }
+  ],
+  "status": "active",
+  "student_count": 0,
+  "substitution": false,
+  "teacher_id": "23da0f33-efdf-5266-af96-b052211c5c8f",
+  "teacher_name": "Сергей Сидоров"
+}

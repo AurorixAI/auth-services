@@ -1,0 +1,35 @@
+{
+  "body": {
+    "detail": {
+      "blockers": [
+        {
+          "code": "ACTIVE_STUDENTS",
+          "count": 1,
+          "students": [
+            {
+              "displayId": "AL09-004",
+              "id": "736503b4-36d9-5d7e-a6af-1e9721379341",
+              "name": "Каримов А."
+            }
+          ]
+        },
+        {
+          "code": "MISSED_LESSONS",
+          "count": 1,
+          "lessons": [
+            {
+              "endTime": "11:30",
+              "lessonDate": "2026-10-19",
+              "lessonId": "lesson-l4",
+              "startTime": "10:00",
+              "teacherName": "Петров П."
+            }
+          ]
+        }
+      ],
+      "code": "GROUP_ARCHIVE_BLOCKED",
+      "message": "Группу нельзя архивировать"
+    }
+  },
+  "status": 409
+}

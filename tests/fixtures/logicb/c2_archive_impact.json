@@ -1,0 +1,45 @@
+{
+  "autoActions": [
+    {
+      "code": "RELEASE_EXAMS",
+      "count": 1
+    },
+    {
+      "code": "STOP_FUTURE_LESSONS",
+      "count": 8
+    }
+  ],
+  "blockers": [
+    {
+      "code": "ACTIVE_STUDENTS",
+      "count": 1,
+      "students": [
+        {
+          "displayId": "AL09-004",
+          "id": "736503b4-36d9-5d7e-a6af-1e9721379341",
+          "name": "Каримов А."
+        }
+      ]
+    },
+    {
+      "code": "MISSED_LESSONS",
+      "count": 1,
+      "lessons": [
+        {
+          "endTime": "11:30",
+          "lessonDate": "2026-10-19",
+          "lessonId": "lesson-l4",
+          "startTime": "10:00",
+          "teacherName": "Петров П."
+        }
+      ]
+    }
+  ],
+  "canArchive": false,
+  "examService": "ok",
+  "groupId": "b5aa24ec-82c4-5190-b6ce-a45a812c649b",
+  "groupName": "8-В",
+  "legacyStudentsLeft": 0,
+  "status": "active",
+  "warnings": []
+}

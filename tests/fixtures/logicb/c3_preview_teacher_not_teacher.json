@@ -1,0 +1,41 @@
+{
+  "counts": {
+    "groups_existing": 2,
+    "groups_new": 0,
+    "students_enrolled": 0,
+    "students_existing": 0,
+    "students_new": 0,
+    "students_skipped": 0,
+    "students_unchanged": 0,
+    "teachers_existing": 0,
+    "teachers_new": 0
+  },
+  "groups_preview": [
+    {
+      "action": "existing",
+      "class_level": 9,
+      "name": "9-А",
+      "teacher_email": ""
+    },
+    {
+      "action": "existing",
+      "class_level": 5,
+      "name": "5-В",
+      "teacher_email": ""
+    }
+  ],
+  "issues": [
+    {
+      "code": "TEACHER_NOT_FOUND",
+      "field": "Email учителя",
+      "level": "error",
+      "message": "Преподаватель nobody@algo.test не найден в системе. Добавьте его через интерфейс.",
+      "row": 4,
+      "sheet": "Группы"
+    }
+  ],
+  "ok": false,
+  "skipped": [],
+  "students_preview": [],
+  "teachers_preview": []
+}

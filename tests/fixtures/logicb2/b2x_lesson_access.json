@@ -1,0 +1,16 @@
+{
+  "class_level": 9,
+  "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+  "lessons": [
+    {
+      "lessonDate": "2026-10-26",
+      "lessonId": "lesson-l1"
+    }
+  ],
+  "name": "9-А",
+  "org_id": "2f44d237-f012-5231-9345-f2205bf2ad5b",
+  "status": "active",
+  "substitution": true,
+  "teacher_id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+  "teacher_name": "Иван Иванов"
+}

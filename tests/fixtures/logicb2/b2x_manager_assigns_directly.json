@@ -1,0 +1,9 @@
+{
+  "body": {
+    "detail": {
+      "code": "MANAGER_ASSIGNS_DIRECTLY",
+      "message": "Вы можете назначить замену сами: меню урока «Заменить преподавателя»"
+    }
+  },
+  "status": 403
+}

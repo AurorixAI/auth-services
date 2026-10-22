@@ -1,0 +1,75 @@
+{
+  "counts": {
+    "groups_existing": 3,
+    "groups_new": 0,
+    "students_enrolled": 0,
+    "students_existing": 3,
+    "students_new": 0,
+    "students_skipped": 5,
+    "students_unchanged": 2,
+    "teachers_existing": 0,
+    "teachers_new": 0
+  },
+  "created_groups": [],
+  "credentials": [],
+  "issues": [],
+  "ok": true,
+  "skipped": [
+    {
+      "code": "GROUP_FULL",
+      "group": "9-А",
+      "message": "В группе «9-А» нет мест: лимит 3, занято 3",
+      "row": 2,
+      "sheet": "Ученики",
+      "student": "Бобоев Али"
+    },
+    {
+      "code": "ALREADY_IN_GROUP",
+      "group": "6-Д",
+      "message": "Уже в этой группе",
+      "row": 3,
+      "sheet": "Ученики",
+      "student": "Каримова Лола"
+    },
+    {
+      "code": "ALREADY_IN_GROUP",
+      "group": "6-Д",
+      "message": "Уже в этой группе",
+      "row": 4,
+      "sheet": "Ученики",
+      "student": "Рахимов Жасур"
+    },
+    {
+      "code": "GROUP_FULL",
+      "group": "6-Д",
+      "message": "В группе «6-Д» нет мест: лимит 2, занято 2",
+      "row": 5,
+      "sheet": "Ученики",
+      "student": "Султанова Нодира"
+    },
+    {
+      "code": "IN_OTHER_GROUP",
+      "group": "6-Д",
+      "message": "Ученик уже есть в системе и состоит в группе «9-А». Перевод выполните вручную — при переводе переносятся оплаты",
+      "row": 6,
+      "sheet": "Ученики",
+      "student": "Иванов Иван"
+    },
+    {
+      "code": "GROUP_ARCHIVED",
+      "group": "5-В",
+      "message": "Группа «5-В» в архиве. Верните её из архива или выберите другую",
+      "row": 7,
+      "sheet": "Ученики",
+      "student": "Юсупов Тимур"
+    },
+    {
+      "code": "DUPLICATE_IN_FILE",
+      "group": "6-Д",
+      "message": "Строка повторяется в файле",
+      "row": 8,
+      "sheet": "Ученики",
+      "student": "Каримова Лола"
+    }
+  ]
+}

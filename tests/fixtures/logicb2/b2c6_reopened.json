@@ -1,0 +1,40 @@
+{
+  "batchId": "202a06d1-99e4-5c8c-8438-45802ece9d4b",
+  "comment": "Заменяющий Рахимов Т. больше не работает в центре. Нужно новое решение.",
+  "createdAt": "2026-10-25T05:00:00",
+  "decision": null,
+  "group": {
+    "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+    "name": "9-А",
+    "studentCount": 3
+  },
+  "id": "6554cc91-15af-5710-826d-7dd0eef4103d",
+  "lesson": {
+    "date": "2026-11-02",
+    "endTime": "11:30",
+    "exists": true,
+    "format": "offline",
+    "lessonId": "lesson-l1",
+    "room": null,
+    "startTime": "10:00",
+    "startsAtUtc": "2026-11-02T05:00:00"
+  },
+  "minutesToStart": 11520,
+  "origin": "system",
+  "overdue": false,
+  "previous": {
+    "id": "b406d538-4b4b-516f-9dd4-9ba2ac2ea9ca",
+    "status": "substituted",
+    "substituteName": "Рахимов Т.",
+    "teacherName": "Иванов И."
+  },
+  "reasonCode": "other",
+  "reasonLabel": "Другое",
+  "status": "pending",
+  "suggestedTeacher": null,
+  "teacher": {
+    "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+    "name": "Иванов И."
+  },
+  "urgent": false
+}

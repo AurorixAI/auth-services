@@ -1,0 +1,9 @@
+{
+  "body": {
+    "detail": {
+      "code": "VALID_FROM_PAST",
+      "message": "Дата начала не может быть в прошлом"
+    }
+  },
+  "status": 422
+}

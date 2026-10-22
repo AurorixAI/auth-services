@@ -195,6 +195,7 @@ class LedgerLoader:
         self._guard_hits = 0
         self._indexed: Set[Tuple[UUID, str]] = set()
         self._schedule: Optional[Any] = None
+        self._moved_one_offs: Dict[Any, Set[Tuple[str, str]]] = {}   # group id -> keys (loaded per group, the loader's groups grow)
         self._lesson_days_cache: Dict[Tuple[Any, date, date], List[date]] = {}
         self._loaded: Set[UUID] = set()
 
@@ -396,7 +397,18 @@ class LedgerLoader:
         occurrences = AuthService(self.db)._resolved_occurrences_for_group(
             group, date_from=start, date_to=end, preloaded=self._schedule
         )
-        days = [date.fromisoformat(item["occurrenceDate"]) for item in occurrences]
+        # LOGIC-B2 (decision 3, neutral move): a lesson moved by a substitution decision = the CANCELLED original (counted above) + a one-off copy;
+        # the copy is left out, so a move never changes the share of an incomplete first period
+        if group.id not in self._moved_one_offs:
+            from .payroll_hooks import moved_one_off_lesson_keys
+
+            todo = [gid for gid in {g.id for _, _, g, _ in self.members.values()} | {group.id} if gid not in self._moved_one_offs]
+            found = moved_one_off_lesson_keys(self.db, todo)
+            for gid in todo:
+                self._moved_one_offs[gid] = {k for k in found if k[0] == str(gid)}
+        moved = self._moved_one_offs[group.id]
+        days = [date.fromisoformat(item["occurrenceDate"]) for item in occurrences
+                if not (item.get("isOneOff") and (str(group.id), str(item["id"])) in moved)]
         self._lesson_days_cache[key] = days
         return days
 

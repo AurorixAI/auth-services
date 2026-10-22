@@ -1,0 +1,16 @@
+{
+  "classLevel": 10,
+  "color": "blue",
+  "dayOfWeek": 1,
+  "endTime": "11:30",
+  "format": "offline",
+  "groupId": "b1467c73-ea4c-5a17-9044-96642214a2cb",
+  "groupName": "10-А",
+  "id": "lesson-ab12cd34ef",
+  "room": null,
+  "startTime": "10:00",
+  "subject": "Математика",
+  "topic": null,
+  "validFrom": "2026-10-21",
+  "warnings": []
+}

@@ -73,9 +73,16 @@ def test_teacher_change_never_rewrites_old_lessons(world):
         actor_id=str(world.admin.id), actor_role="admin",
     )
     assert _row(world, day, lesson_id).teacher_id == world.teacher.id
-    # A lesson created after the change belongs to the new teacher.
+    # LOGIC-B O5: a past lesson that ended before the change stays with the teacher of that date ...
     day2, lesson2 = reconcile(world, offset_days=2)
-    assert _row(world, day2, lesson2).teacher_id == world.teacher2.id
+    assert _row(world, day2, lesson2).teacher_id == world.teacher.id
+    # ... a lesson that is still ahead (today's all-day slot ends at 23:59) belongs to the new teacher.
+    world.svc.start_group_attendance(
+        str(world.org.id), str(world.group.id),
+        StartAttendanceRequest(lessonDate=business_today(), lessonId=LIVE_SLOT),
+        started_by=str(world.teacher2.id), is_org_admin=False,
+    )
+    assert _row(world, business_today(), LIVE_SLOT).teacher_id == world.teacher2.id
     # Saving marks on the old lesson does not touch the snapshot either.
     save(world, day, lesson_id, [(s, "present") for s in world.students], status="completed")
     assert _row(world, day, lesson_id).teacher_id == world.teacher.id

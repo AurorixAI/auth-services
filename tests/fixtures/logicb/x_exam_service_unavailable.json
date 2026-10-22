@@ -1,0 +1,9 @@
+{
+  "body": {
+    "detail": {
+      "code": "EXAM_SERVICE_UNAVAILABLE",
+      "message": "Не удалось проверить экзамены группы. Повторите попытку."
+    }
+  },
+  "status": 503
+}

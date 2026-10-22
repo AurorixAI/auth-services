@@ -1,0 +1,9 @@
+{
+  "body": {
+    "detail": {
+      "code": "STAFF_ROLE_REQUIRED",
+      "message": "Добавлять учеников может администратор центра"
+    }
+  },
+  "status": 403
+}

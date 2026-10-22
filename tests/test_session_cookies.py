@@ -274,11 +274,14 @@ def test_garbage_and_wrong_type_cookies_are_401_too():
 
 
 def test_expired_access_cookie_does_not_break_public_endpoints(monkeypatch):
-    monkeypatch.setattr(AuthService, "get_invitation_info", lambda self, code: {"code": code, "role": "teacher"})
+    monkeypatch.setattr(
+        AuthService, "get_invitation_info",
+        lambda self, code: {"org_name": f"Центр {code}", "org_role": "teacher", "email": "t@x.uz", "is_returning": False},  # LOGIC-B: the answer is typed
+    )
     client = client_for()
     headers = cookie_header(access=expired_access_token())
     r = client.get(f"{API}/invite/ABC123", headers=headers)
-    assert r.status_code == 200 and r.json()["code"] == "ABC123"
+    assert r.status_code == 200 and r.json()["org_name"] == "Центр ABC123"
 
 
 def test_expired_access_cookie_does_not_break_login(monkeypatch):

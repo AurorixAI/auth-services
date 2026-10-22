@@ -117,19 +117,32 @@ def test_removing_member_revokes_its_refresh_token():
     from src.models.auth import OrganizationMember, User
 
     db = MagicMock()
-    member = SimpleNamespace(id=uuid4(), org_role="teacher", user_id=uuid4(), is_active=True)
+    member = SimpleNamespace(id=uuid4(), org_id=uuid4(), org_role="teacher", user_id=uuid4(), is_active=True)
     user = SimpleNamespace(id=uuid4(), is_active=True)
+
+    def locked(value):
+        query = _query_with(value)
+        chain = query.filter.return_value.with_for_update.return_value  # LOGIC-B: the member / user rows are locked
+        chain.first.return_value = value
+        chain.populate_existing.return_value.first.return_value = value
+        return query
 
     def query(model):
         if model is OrganizationMember:
-            return _query_with(member)
+            return locked(member)
         if model is User:
-            return _query_with(user)
+            return locked(user)
         raise AssertionError(f"Unexpected model: {model}")
 
     db.query.side_effect = query
-    with patch("src.auth.service.user_sessions.revoke_all") as revoke_all:
-        assert AuthService(db).remove_member(str(uuid4()), str(member.id)) is True
+    with patch("src.auth.service.user_sessions.revoke_all") as revoke_all, \
+            patch("src.auth.staff_lifecycle.StaffLifecycle._lock_groups_of", return_value=[]), \
+            patch("src.auth.staff_lifecycle.StaffLifecycle._in_progress", return_value=[]), \
+            patch("src.auth.staff_lifecycle.StaffLifecycle._audit"), \
+            patch("src.auth.lesson_teachers.LessonTeachers.release_substitutions_of", return_value=0), \
+            patch("src.auth.lesson_substitutions.on_member_removed", return_value=(0, 0)):
+        out = AuthService(db).remove_member(str(member.org_id), str(member.id))
+    assert out == {"message": "Сотрудник удалён", "releasedSubstitutions": 0}
     assert member.is_active is False
     assert user.is_active is False
     revoke_all.assert_called_once_with(db, user.id, "user_blocked")  # every session of the removed user ends

@@ -1,0 +1,23 @@
+{
+  "actionType": "missed",
+  "ageDays": 8,
+  "classLevel": 9,
+  "endTime": "11:00",
+  "format": "offline",
+  "groupId": "e7a0b156-c39d-53e8-85e3-48880a13ea39",
+  "groupName": "7-Б",
+  "isSubstitution": false,
+  "lessonDate": "2026-10-13",
+  "lessonId": "lesson-l3",
+  "markedCount": 0,
+  "remainingCount": 0,
+  "requiresAdmin": true,
+  "room": null,
+  "rosterCount": 0,
+  "startTime": "10:00",
+  "subject": "Математика",
+  "teacherId": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+  "teacherName": "Иван Иванов",
+  "topic": null,
+  "version": null
+}

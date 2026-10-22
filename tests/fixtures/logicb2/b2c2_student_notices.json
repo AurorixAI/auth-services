@@ -1,0 +1,15 @@
+[
+  {
+    "date": "2026-10-28",
+    "groupId": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+    "groupName": "9-А",
+    "kind": "rescheduled",
+    "lessonId": "lesson-l2",
+    "movedTo": {
+      "date": "2026-10-29",
+      "endTime": "17:30",
+      "lessonId": "one-off-1",
+      "startTime": "16:00"
+    }
+  }
+]

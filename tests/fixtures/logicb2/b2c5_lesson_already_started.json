@@ -1,0 +1,9 @@
+{
+  "body": {
+    "detail": {
+      "code": "LESSON_ALREADY_STARTED",
+      "message": "Урок уже начался или прошёл. Обратитесь к администратору"
+    }
+  },
+  "status": 409
+}

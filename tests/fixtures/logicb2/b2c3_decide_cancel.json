@@ -1,0 +1,62 @@
+{
+  "item": {
+    "batchId": "0815c358-23af-5667-aa07-1a21fee1c6bc",
+    "comment": null,
+    "createdAt": "2026-10-21T09:00:00",
+    "decision": {
+      "at": "2026-10-21T09:02:00",
+      "by": {
+        "id": "53d3d68e-604b-5982-9804-9ae7ce0e9893",
+        "name": "Каримова Н."
+      },
+      "closedReason": null,
+      "closedReasonText": null,
+      "kind": "cancel",
+      "movedTo": null,
+      "note": "Преподаватель болен, замены нет",
+      "substitute": null,
+      "via": "request"
+    },
+    "group": {
+      "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+      "name": "9-А",
+      "studentCount": 3
+    },
+    "id": "ef994850-8691-5421-8edf-97d52547f0c8",
+    "lesson": {
+      "date": "2026-11-02",
+      "endTime": "11:30",
+      "exists": true,
+      "format": "offline",
+      "lessonId": "lesson-l1",
+      "room": null,
+      "startTime": "10:00",
+      "startsAtUtc": "2026-11-02T05:00:00"
+    },
+    "minutesToStart": 17038,
+    "origin": "teacher",
+    "overdue": false,
+    "previous": null,
+    "reasonCode": "sick",
+    "reasonLabel": "Болезнь",
+    "status": "cancelled",
+    "suggestedTeacher": null,
+    "teacher": {
+      "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+      "name": "Иванов И."
+    },
+    "urgent": false
+  },
+  "result": {
+    "attendanceUpdated": null,
+    "cancelledVersion": null,
+    "isSubstitution": null,
+    "kind": "cancel",
+    "newLesson": null,
+    "payrollSheetsAffected": null,
+    "teacherId": null,
+    "teacherName": null,
+    "version": 1,
+    "warnings": null
+  }
+}

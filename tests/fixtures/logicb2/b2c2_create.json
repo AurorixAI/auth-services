@@ -1,0 +1,42 @@
+{
+  "alreadyRequested": [],
+  "batchId": "eb6b8a56-7596-5cdb-aeae-08164f1e478b",
+  "created": [
+    {
+      "batchId": "eb6b8a56-7596-5cdb-aeae-08164f1e478b",
+      "comment": null,
+      "createdAt": "2026-10-21T09:30:00",
+      "decision": null,
+      "group": {
+        "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+        "name": "9-А",
+        "studentCount": 3
+      },
+      "id": "c06f47b9-0942-57e9-9d9d-13a2233b4fc2",
+      "lesson": {
+        "date": "2026-10-28",
+        "endTime": "17:30",
+        "exists": true,
+        "format": "offline",
+        "lessonId": "lesson-l2",
+        "room": null,
+        "startTime": "16:00",
+        "startsAtUtc": "2026-10-28T11:00:00"
+      },
+      "minutesToStart": 10170,
+      "origin": "teacher",
+      "overdue": false,
+      "previous": null,
+      "reasonCode": "personal",
+      "reasonLabel": "Личное",
+      "status": "pending",
+      "suggestedTeacher": null,
+      "teacher": {
+        "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "name": "Иванов И."
+      },
+      "urgent": false
+    }
+  ],
+  "skipped": []
+}

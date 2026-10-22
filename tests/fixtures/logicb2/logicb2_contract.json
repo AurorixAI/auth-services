@@ -1,0 +1,3153 @@
+{
+  "components": {
+    "schemas": {
+      "AssignedToMe": {
+        "properties": {
+          "assignedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignedat"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "lessonDate": {
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "replacing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          }
+        },
+        "required": [
+          "groupId",
+          "groupName",
+          "lessonId",
+          "lessonDate",
+          "startTime",
+          "endTime"
+        ],
+        "title": "AssignedToMe",
+        "type": "object"
+      },
+      "BulkSkipped": {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "conflicts": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TeacherConflict"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conflicts"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "message"
+        ],
+        "title": "BulkSkipped",
+        "type": "object"
+      },
+      "CandidateBusy": {
+        "properties": {
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "lesson",
+              "substitution"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "pendingRequest": {
+            "default": false,
+            "title": "Pendingrequest",
+            "type": "boolean"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "groupName",
+          "startTime",
+          "endTime"
+        ],
+        "title": "CandidateBusy",
+        "type": "object"
+      },
+      "CandidateLesson": {
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          }
+        },
+        "required": [
+          "groupId",
+          "groupName",
+          "lessonId",
+          "date",
+          "startTime",
+          "endTime"
+        ],
+        "title": "CandidateLesson",
+        "type": "object"
+      },
+      "CandidatesOut": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/SubstitutionCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "lesson": {
+            "$ref": "#/components/schemas/CandidateLesson"
+          },
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "requesterId": {
+            "title": "Requesterid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "lesson",
+          "requesterId"
+        ],
+        "title": "CandidatesOut",
+        "type": "object"
+      },
+      "CreateSubstitutionOut": {
+        "properties": {
+          "alreadyRequested": {
+            "items": {
+              "$ref": "#/components/schemas/SubstitutionItem"
+            },
+            "title": "Alreadyrequested",
+            "type": "array"
+          },
+          "batchId": {
+            "title": "Batchid",
+            "type": "string"
+          },
+          "created": {
+            "items": {
+              "$ref": "#/components/schemas/SubstitutionItem"
+            },
+            "title": "Created",
+            "type": "array"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/SkippedLesson"
+            },
+            "title": "Skipped",
+            "type": "array"
+          }
+        },
+        "required": [
+          "batchId"
+        ],
+        "title": "CreateSubstitutionOut",
+        "type": "object"
+      },
+      "CreateSubstitutionRequest": {
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "lessons": {
+            "items": {
+              "$ref": "#/components/schemas/SubstitutionLessonRef"
+            },
+            "minItems": 1,
+            "title": "Lessons",
+            "type": "array"
+          },
+          "reasonCode": {
+            "enum": [
+              "sick",
+              "personal",
+              "other"
+            ],
+            "title": "Reasoncode",
+            "type": "string"
+          },
+          "suggestedTeacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggestedteacherid"
+          }
+        },
+        "required": [
+          "lessons",
+          "reasonCode"
+        ],
+        "title": "CreateSubstitutionRequest",
+        "type": "object"
+      },
+      "DecideBulkOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SubstitutionItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/BulkSkipped"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "updated": {
+            "default": 0,
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "title": "DecideBulkOut",
+        "type": "object"
+      },
+      "DecideBulkRequest": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "substitute",
+              "cancel",
+              "reject"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Ids",
+            "type": "array"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          }
+        },
+        "required": [
+          "ids",
+          "decision"
+        ],
+        "title": "DecideBulkRequest",
+        "type": "object"
+      },
+      "DecideOut": {
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/SubstitutionItem"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DecideResult"
+          }
+        },
+        "required": [
+          "item",
+          "result"
+        ],
+        "title": "DecideOut",
+        "type": "object"
+      },
+      "DecideRequest": {
+        "description": "One body for the four decisions; the service checks the fields of the chosen decision (422 with a code).",
+        "properties": {
+          "decision": {
+            "enum": [
+              "substitute",
+              "reschedule",
+              "cancel",
+              "reject"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "endTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endtime"
+          },
+          "expectedStatus": {
+            "anyOf": [
+              {
+                "const": "pending",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedstatus"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "enum": [
+                  "offline",
+                  "online"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          },
+          "newDate": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newdate"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "startTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starttime"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "DecideRequest",
+        "type": "object"
+      },
+      "DecideResult": {
+        "properties": {
+          "attendanceUpdated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attendanceupdated"
+          },
+          "cancelledVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelledversion"
+          },
+          "isSubstitution": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issubstitution"
+          },
+          "kind": {
+            "enum": [
+              "substitute",
+              "reschedule",
+              "cancel",
+              "reject"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "newLesson": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NewLesson"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payrollSheetsAffected": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payrollsheetsaffected"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachername"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MoveWarning"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "DecideResult",
+        "type": "object"
+      },
+      "ExamBinding": {
+        "properties": {
+          "canCancel": {
+            "default": true,
+            "title": "Cancancel",
+            "type": "boolean"
+          },
+          "state": {
+            "default": "none",
+            "enum": [
+              "ok",
+              "none",
+              "unavailable"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ExamBinding",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LessonAccessLesson": {
+        "properties": {
+          "lessonDate": {
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lessonId",
+          "lessonDate"
+        ],
+        "title": "LessonAccessLesson",
+        "type": "object"
+      },
+      "LessonAccessOut": {
+        "description": "What exam-service may ask a substitute about: the group (name, grade) and ONLY the lessons he substitutes in.",
+        "properties": {
+          "class_level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Level"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lessons": {
+            "items": {
+              "$ref": "#/components/schemas/LessonAccessLesson"
+            },
+            "title": "Lessons",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "status": {
+            "default": "active",
+            "title": "Status",
+            "type": "string"
+          },
+          "substitution": {
+            "default": true,
+            "title": "Substitution",
+            "type": "boolean"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "name"
+        ],
+        "title": "LessonAccessOut",
+        "type": "object"
+      },
+      "LessonRosterStudent": {
+        "properties": {
+          "class_level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Class Level"
+          },
+          "display_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Display Id"
+          },
+          "first_name": {
+            "title": "First Name",
+            "type": "string"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_name": {
+            "title": "Last Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "first_name",
+          "last_name",
+          "full_name"
+        ],
+        "title": "LessonRosterStudent",
+        "type": "object"
+      },
+      "MineOut": {
+        "properties": {
+          "assignedToMe": {
+            "items": {
+              "$ref": "#/components/schemas/AssignedToMe"
+            },
+            "title": "Assignedtome",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SubstitutionItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pendingTotal": {
+            "default": 0,
+            "title": "Pendingtotal",
+            "type": "integer"
+          }
+        },
+        "title": "MineOut",
+        "type": "object"
+      },
+      "MoveCheckOut": {
+        "properties": {
+          "groupConflicts": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherConflict"
+            },
+            "title": "Groupconflicts",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "teacherConflicts": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherConflict"
+            },
+            "title": "Teacherconflicts",
+            "type": "array"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachername"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/MoveWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "MoveCheckOut",
+        "type": "object"
+      },
+      "MoveWarning": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "MoveWarning",
+        "type": "object"
+      },
+      "MovedTo": {
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "lessonId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessonid"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "startTime",
+          "endTime"
+        ],
+        "title": "MovedTo",
+        "type": "object"
+      },
+      "MyLesson": {
+        "properties": {
+          "blockReason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "LESSON_ALREADY_STARTED",
+                  "LESSON_CANCELLED",
+                  "ALREADY_REQUESTED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blockreason"
+          },
+          "canRequest": {
+            "title": "Canrequest",
+            "type": "boolean"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "format": {
+            "default": "offline",
+            "title": "Format",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "isSubstitution": {
+            "default": false,
+            "title": "Issubstitution",
+            "type": "boolean"
+          },
+          "lessonDate": {
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "requestId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requestid"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "scheduled",
+              "requested",
+              "started",
+              "passed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "groupId",
+          "groupName",
+          "lessonId",
+          "lessonDate",
+          "startTime",
+          "endTime",
+          "status",
+          "canRequest"
+        ],
+        "title": "MyLesson",
+        "type": "object"
+      },
+      "MyLessonsOut": {
+        "properties": {
+          "dateFrom": {
+            "title": "Datefrom",
+            "type": "string"
+          },
+          "dateTo": {
+            "title": "Dateto",
+            "type": "string"
+          },
+          "lessons": {
+            "items": {
+              "$ref": "#/components/schemas/MyLesson"
+            },
+            "title": "Lessons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "dateFrom",
+          "dateTo"
+        ],
+        "title": "MyLessonsOut",
+        "type": "object"
+      },
+      "NewLesson": {
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "format": {
+            "default": "offline",
+            "title": "Format",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "groupId",
+          "date",
+          "startTime",
+          "endTime"
+        ],
+        "title": "NewLesson",
+        "type": "object"
+      },
+      "OpsErrorDetail": {
+        "additionalProperties": true,
+        "description": "``detail`` of every coded refusal; the extra keys depend on the code (``extra=\"allow\"``).",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "OpsErrorDetail",
+        "type": "object"
+      },
+      "OpsErrorResponse": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/OpsErrorDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "OpsErrorResponse",
+        "type": "object"
+      },
+      "PersonRef": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "PersonRef",
+        "type": "object"
+      },
+      "RequestClosed": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "substituted",
+              "rescheduled",
+              "cancelled",
+              "rejected",
+              "withdrawn",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "RequestClosed",
+        "type": "object"
+      },
+      "SkippedLesson": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "lessonDate": {
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "groupId",
+          "lessonId",
+          "lessonDate",
+          "code",
+          "message"
+        ],
+        "title": "SkippedLesson",
+        "type": "object"
+      },
+      "StudentNotice": {
+        "description": "``notices[]`` of the student card: what a student sees (no reasons, no comments - D-12).",
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "cancelled",
+              "rescheduled"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "movedTo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MovedTo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "lessonId",
+          "date",
+          "groupId",
+          "groupName",
+          "kind"
+        ],
+        "title": "StudentNotice",
+        "type": "object"
+      },
+      "SubDecision": {
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closedReason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "LESSON_STARTED",
+                  "LESSON_CANCELLED",
+                  "LESSON_REMOVED",
+                  "GROUP_ARCHIVED",
+                  "GROUP_TEACHER_CHANGED",
+                  "TEACHER_REMOVED",
+                  "LESSON_OUTSIDE_WINDOW"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closedreason"
+          },
+          "closedReasonText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closedreasontext"
+          },
+          "kind": {
+            "enum": [
+              "substitute",
+              "reschedule",
+              "cancel",
+              "reject",
+              "withdraw",
+              "closed"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "movedTo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MovedTo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "substitute": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "via": {
+            "anyOf": [
+              {
+                "enum": [
+                  "request",
+                  "lesson_teacher_put",
+                  "system",
+                  "withdraw"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Via"
+          }
+        },
+        "required": [
+          "kind",
+          "at"
+        ],
+        "title": "SubDecision",
+        "type": "object"
+      },
+      "SubGroup": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "studentCount": {
+            "default": 0,
+            "title": "Studentcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "SubGroup",
+        "type": "object"
+      },
+      "SubLesson": {
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "exists": {
+            "default": true,
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "format": {
+            "default": "offline",
+            "title": "Format",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "startsAtUtc": {
+            "title": "Startsatutc",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lessonId",
+          "date",
+          "startTime",
+          "endTime",
+          "startsAtUtc"
+        ],
+        "title": "SubLesson",
+        "type": "object"
+      },
+      "SubPrevious": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "substituted",
+              "rescheduled",
+              "cancelled",
+              "rejected",
+              "withdrawn",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "substituteName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Substitutename"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachername"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "SubPrevious",
+        "type": "object"
+      },
+      "SubstitutionAlreadyDecidedDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "item": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubstitutionItem"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "SubstitutionAlreadyDecidedDetail",
+        "type": "object"
+      },
+      "SubstitutionCandidate": {
+        "properties": {
+          "busy": {
+            "default": false,
+            "title": "Busy",
+            "type": "boolean"
+          },
+          "busyWith": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateBusy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "isDefaultTeacher": {
+            "default": false,
+            "title": "Isdefaultteacher",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "orgRole": {
+            "title": "Orgrole",
+            "type": "string"
+          },
+          "rateMissing": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratemissing"
+          },
+          "suggested": {
+            "default": false,
+            "title": "Suggested",
+            "type": "boolean"
+          },
+          "teacherId": {
+            "title": "Teacherid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "teacherId",
+          "name",
+          "orgRole"
+        ],
+        "title": "SubstitutionCandidate",
+        "type": "object"
+      },
+      "SubstitutionDetailOut": {
+        "properties": {
+          "chain": {
+            "items": {
+              "$ref": "#/components/schemas/SubstitutionItem"
+            },
+            "title": "Chain",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/SubstitutionEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "examBinding": {
+            "$ref": "#/components/schemas/ExamBinding"
+          },
+          "item": {
+            "$ref": "#/components/schemas/SubstitutionItem"
+          }
+        },
+        "required": [
+          "item"
+        ],
+        "title": "SubstitutionDetailOut",
+        "type": "object"
+      },
+      "SubstitutionEvent": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "snapshot": {
+            "additionalProperties": true,
+            "title": "Snapshot",
+            "type": "object"
+          }
+        },
+        "required": [
+          "action",
+          "at"
+        ],
+        "title": "SubstitutionEvent",
+        "type": "object"
+      },
+      "SubstitutionItem": {
+        "properties": {
+          "batchId": {
+            "title": "Batchid",
+            "type": "string"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "group": {
+            "$ref": "#/components/schemas/SubGroup"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lesson": {
+            "$ref": "#/components/schemas/SubLesson"
+          },
+          "minutesToStart": {
+            "title": "Minutestostart",
+            "type": "integer"
+          },
+          "origin": {
+            "default": "teacher",
+            "enum": [
+              "teacher",
+              "system"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "overdue": {
+            "default": false,
+            "title": "Overdue",
+            "type": "boolean"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubPrevious"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasonCode": {
+            "enum": [
+              "sick",
+              "personal",
+              "other"
+            ],
+            "title": "Reasoncode",
+            "type": "string"
+          },
+          "reasonLabel": {
+            "title": "Reasonlabel",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "substituted",
+              "rescheduled",
+              "cancelled",
+              "rejected",
+              "withdrawn",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "suggestedTeacher": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SuggestedTeacher"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "teacher": {
+            "$ref": "#/components/schemas/PersonRef"
+          },
+          "urgent": {
+            "default": false,
+            "title": "Urgent",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "batchId",
+          "status",
+          "group",
+          "lesson",
+          "teacher",
+          "reasonCode",
+          "reasonLabel",
+          "createdAt",
+          "minutesToStart"
+        ],
+        "title": "SubstitutionItem",
+        "type": "object"
+      },
+      "SubstitutionLessonRef": {
+        "properties": {
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "lessonDate": {
+            "format": "date",
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Lessonid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "groupId",
+          "lessonId",
+          "lessonDate"
+        ],
+        "title": "SubstitutionLessonRef",
+        "type": "object"
+      },
+      "SubstitutionListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SubstitutionItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pendingTotal": {
+            "default": 0,
+            "title": "Pendingtotal",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "urgentTotal": {
+            "default": 0,
+            "title": "Urgenttotal",
+            "type": "integer"
+          }
+        },
+        "title": "SubstitutionListOut",
+        "type": "object"
+      },
+      "SubstitutionOutcome": {
+        "description": "``substitutionOutcome`` of a cancelled original: no reason (D-12).",
+        "properties": {
+          "kind": {
+            "enum": [
+              "rescheduled",
+              "cancelled"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "movedTo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MovedTo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "SubstitutionOutcome",
+        "type": "object"
+      },
+      "SubstitutionRequestMark": {
+        "description": "``substitutionRequest`` of an occurrence / one entry of the journal's ``substitutionRequests`` (manager and the requester only).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "reasonCode": {
+            "enum": [
+              "sick",
+              "personal",
+              "other"
+            ],
+            "title": "Reasoncode",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "substituted",
+              "rescheduled",
+              "cancelled",
+              "rejected",
+              "withdrawn",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Teachername"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "reasonCode"
+        ],
+        "title": "SubstitutionRequestMark",
+        "type": "object"
+      },
+      "SubstitutionSummary": {
+        "properties": {
+          "overdueTotal": {
+            "default": 0,
+            "title": "Overduetotal",
+            "type": "integer"
+          },
+          "pendingTotal": {
+            "default": 0,
+            "title": "Pendingtotal",
+            "type": "integer"
+          },
+          "urgentTotal": {
+            "default": 0,
+            "title": "Urgenttotal",
+            "type": "integer"
+          }
+        },
+        "title": "SubstitutionSummary",
+        "type": "object"
+      },
+      "SuggestedTeacher": {
+        "properties": {
+          "active": {
+            "default": true,
+            "title": "Active",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "SuggestedTeacher",
+        "type": "object"
+      },
+      "TeacherConflict": {
+        "description": "One overlap of a teacher's lessons (``TEACHER_BUSY.conflicts[]``).",
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "withGroupName": {
+            "title": "Withgroupname",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "startTime",
+          "endTime",
+          "groupId",
+          "groupName",
+          "withGroupName"
+        ],
+        "title": "TeacherConflict",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WithdrawBatchOut": {
+        "properties": {
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/WithdrawSkipped"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "withdrawn": {
+            "items": {
+              "$ref": "#/components/schemas/SubstitutionItem"
+            },
+            "title": "Withdrawn",
+            "type": "array"
+          }
+        },
+        "title": "WithdrawBatchOut",
+        "type": "object"
+      },
+      "WithdrawBatchRequest": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "title": "WithdrawBatchRequest",
+        "type": "object"
+      },
+      "WithdrawSkipped": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "message"
+        ],
+        "title": "WithdrawSkipped",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "ALGO auth - LOGIC-B2 substitutions contract",
+    "version": "logicb2-1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/org/groups/{group_id}/lesson-access": {
+      "get": {
+        "description": "Для exam-service: заменяющему отдаётся только группа (название, класс) и ЕГО уроки замены; никакого состава и оплат.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonAccessOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Group Lesson Access",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    },
+    "/org/substitutions": {
+      "get": {
+        "description": "Раздел «Замены»: запросы преподавателей.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "pending",
+              "enum": [
+                "pending",
+                "decided",
+                "all"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "groupId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Groupid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "teacherId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Teacherid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dateFrom",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Datefrom"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dateTo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dateto"
+            }
+          },
+          {
+            "in": "query",
+            "name": "urgent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Urgent"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubstitutionListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Substitutions",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      },
+      "post": {
+        "description": "«Не смогу провести»: запрос на один или несколько своих будущих уроков.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSubstitutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateSubstitutionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Substitution Requests",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    },
+    "/org/substitutions/decide-bulk": {
+      "post": {
+        "description": "Массовое решение (substitute / cancel / reject); каждый запрос - своя транзакция.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideBulkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideBulkOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Decide Substitutions Bulk",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    },
+    "/org/substitutions/mine": {
+      "get": {
+        "description": "Мои запросы и уроки, где меня назначили заменяющим.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "pending",
+                "all"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MineOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "My Substitution Requests",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    },
+    "/org/substitutions/my-lessons": {
+      "get": {
+        "description": "Мои уроки периода: можно ли запросить замену (период ≤ 62 дней).",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "dateFrom",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Datefrom",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dateTo",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Dateto",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyLessonsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "My Lessons",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    },
+    "/org/substitutions/summary": {
+      "get": {
+        "description": "Счётчик бейджа меню «Замены» (только счёт, без записи).",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubstitutionSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Substitutions Summary",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    },
+    "/org/substitutions/withdraw": {
+      "post": {
+        "description": "Отозвать несколько запросов.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawBatchOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Withdraw Substitution Requests",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    },
+    "/org/substitutions/{request_id}": {
+      "get": {
+        "description": "Запрос с цепочкой, журналом и привязкой экзамена (manager или проситель).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubstitutionDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Substitution Detail",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    },
+    "/org/substitutions/{request_id}/candidates": {
+      "get": {
+        "description": "Кто может провести урок: предложенный первым, занятые отмечены.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidatesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Substitution Candidates",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    },
+    "/org/substitutions/{request_id}/decide": {
+      "post": {
+        "description": "Решение: назначить замену / перенести / отменить / отклонить.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Decide Substitution",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    },
+    "/org/substitutions/{request_id}/move-check": {
+      "get": {
+        "description": "Живая проверка переноса: пересечения учителя нового урока и группы.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "newDate",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Newdate",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "startTime",
+            "required": true,
+            "schema": {
+              "pattern": "^\\d{2}:\\d{2}$",
+              "title": "Starttime",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "endTime",
+            "required": true,
+            "schema": {
+              "pattern": "^\\d{2}:\\d{2}$",
+              "title": "Endtime",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoveCheckOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Substitution Move Check",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    },
+    "/org/substitutions/{request_id}/withdraw": {
+      "post": {
+        "description": "Отозвать свой запрос (только pending).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubstitutionItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Withdraw Substitution Request",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1/auth"
+    }
+  ],
+  "x-additive": [
+    {
+      "audience": "manager, requester",
+      "endpoint": "GET /org/schedule/occurrences",
+      "field": "substitutionRequest",
+      "schema": "SubstitutionRequestMark|null"
+    },
+    {
+      "audience": "everybody who sees the schedule",
+      "endpoint": "GET /org/schedule/occurrences",
+      "field": "substitutionOutcome",
+      "schema": "SubstitutionOutcome|null"
+    },
+    {
+      "audience": "manager, requester",
+      "endpoint": "GET /org/groups/{id}/attendance",
+      "field": "substitutionRequests",
+      "schema": "{<date>_<lessonId>: SubstitutionRequestMark}"
+    },
+    {
+      "audience": "a substitute: only the students of HIS lesson (the journal of a substitute holds only that lesson)",
+      "endpoint": "GET /org/groups/{id}/attendance",
+      "field": "lessonRoster",
+      "schema": "[LessonRosterStudent]"
+    },
+    {
+      "audience": "manager",
+      "endpoint": "GET /org/students/{id}/attendance",
+      "field": "lessons[].teacherName / isSubstitution",
+      "schema": "string|null / bool"
+    },
+    {
+      "audience": "manager",
+      "endpoint": "GET /org/students/{id}/attendance",
+      "field": "notices",
+      "schema": "[StudentNotice]"
+    },
+    {
+      "audience": "manager",
+      "endpoint": "GET /org/members/{id}/removal-impact",
+      "field": "pendingSubstitutionRequests",
+      "schema": "{count:int}"
+    },
+    {
+      "audience": "owner",
+      "endpoint": "DELETE /org/members/{id}",
+      "field": "closedSubstitutionRequests",
+      "schema": "int"
+    },
+    {
+      "audience": "manager",
+      "endpoint": "POST /org/members/{id}/handover",
+      "field": "closedSubstitutionRequests",
+      "schema": "int"
+    },
+    {
+      "audience": "manager",
+      "endpoint": "GET /org/groups/{id}/archive-impact",
+      "field": "warnings[PENDING_SUBSTITUTIONS]",
+      "schema": "{code,count,message}"
+    },
+    {
+      "audience": "manager",
+      "endpoint": "POST /org/groups/{id}/archive",
+      "field": "closedSubstitutionRequests",
+      "schema": "int"
+    },
+    {
+      "audience": "manager",
+      "endpoint": "PUT /org/groups/{id}/lesson-teacher",
+      "field": "requestClosed",
+      "schema": "RequestClosed|null"
+    },
+    {
+      "audience": "the lead's decision: a substitute has no group page",
+      "endpoint": "GET /org/groups/{id}",
+      "field": "(403 for a substitute)",
+      "schema": "-"
+    },
+    {
+      "audience": "exam-service D-1",
+      "endpoint": "GET /org/groups/{id}/lesson-access",
+      "field": "(new, internal for exam-service)",
+      "schema": "LessonAccessOut"
+    }
+  ],
+  "x-errors": {
+    "COMMENT_REQUIRED": {
+      "message": "Опишите причину — не менее 3 символов",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "GROUP_BUSY": {
+      "message": "У группы уже есть урок в это время",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "LESSON_ALREADY_STARTED": {
+      "message": "Урок уже начался или прошёл. Обратитесь к администратору",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "LESSON_TOO_FAR": {
+      "message": "Запрос можно подать не дальше чем на 90 дней вперёд",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "MANAGER_ASSIGNS_DIRECTLY": {
+      "message": "Вы можете назначить замену сами: меню урока «Заменить преподавателя»",
+      "model": "OpsErrorResponse",
+      "status": 403
+    },
+    "MOVE_FIELDS_REQUIRED": {
+      "message": "Укажите новую дату и время урока",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "MOVE_IN_PAST": {
+      "message": "Новое время урока уже прошло",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "MOVE_SAME_SLOT": {
+      "message": "Выберите другую дату или время",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "MOVE_TOO_FAR": {
+      "message": "Перенести можно не дальше чем на 60 дней",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "NOT_REQUEST_OWNER": {
+      "message": "Это запрос другого преподавателя",
+      "model": "OpsErrorResponse",
+      "status": 403
+    },
+    "NO_LESSONS_REQUESTABLE": {
+      "message": "Ни один из выбранных уроков нельзя запросить",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "PERIOD_TOO_LONG": {
+      "message": "Период не может превышать 63 дня",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "REASON_REQUIRED": {
+      "message": "Укажите причину (не менее 3 символов)",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "SUBSTITUTE_IS_REQUESTER": {
+      "message": "Нельзя назначить заменой того, кто запросил замену",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "SUBSTITUTION_ALREADY_DECIDED": {
+      "message": "Запрос уже решён",
+      "model": "SubstitutionAlreadyDecidedDetail",
+      "status": 409
+    },
+    "SUBSTITUTION_NOT_FOUND": {
+      "message": "Запрос на замену не найден",
+      "model": "OpsErrorResponse",
+      "status": 404
+    },
+    "TEACHER_REQUIRED": {
+      "message": "Выберите преподавателя",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "TOO_MANY_LESSONS": {
+      "message": "Не более 60 уроков в одном запросе",
+      "model": "OpsErrorResponse",
+      "status": 422
+    }
+  },
+  "x-labels": {
+    "closedReasons": {
+      "GROUP_ARCHIVED": "Группа закрыта",
+      "GROUP_TEACHER_CHANGED": "Преподаватель группы изменён",
+      "LESSON_CANCELLED": "Урок отменён",
+      "LESSON_OUTSIDE_WINDOW": "Срок разбора истёк",
+      "LESSON_REMOVED": "Урока больше нет в расписании",
+      "LESSON_STARTED": "Урок начат — запрос закрыт",
+      "TEACHER_REMOVED": "Преподаватель больше не работает в центре"
+    },
+    "reasons": {
+      "other": "Другое",
+      "personal": "Личное",
+      "sick": "Болезнь"
+    }
+  }
+}

@@ -32,6 +32,10 @@ from src.models.auth import (
     GroupScheduleOverride,
     GroupScheduleOneOffLesson,
     GroupScheduleAudit,
+    LessonTeacherAssignment,
+    MemberAudit,
+    LessonSubstitutionRequest,
+    LessonSubstitutionEvent,
 )
 from src.models.analytics import (
     AnswerEvent,
@@ -69,6 +73,10 @@ __all__ = [
     "GroupScheduleOverride",
     "GroupScheduleOneOffLesson",
     "GroupScheduleAudit",
+    "LessonTeacherAssignment",
+    "MemberAudit",
+    "LessonSubstitutionRequest",
+    "LessonSubstitutionEvent",
     # Analytics (skill states written by internal callback)
     "AnswerEvent",
     "SessionSummary",

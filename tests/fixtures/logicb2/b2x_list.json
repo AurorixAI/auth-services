@@ -1,0 +1,46 @@
+{
+  "items": [
+    {
+      "batchId": "546722b5-8b39-5a17-af41-f753ba1b4c42",
+      "comment": "Температура",
+      "createdAt": "2026-10-21T09:00:00",
+      "decision": null,
+      "group": {
+        "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+        "name": "9-А",
+        "studentCount": 3
+      },
+      "id": "5404e474-b04e-5e02-ba9a-e1862433c3c8",
+      "lesson": {
+        "date": "2026-10-26",
+        "endTime": "11:30",
+        "exists": true,
+        "format": "offline",
+        "lessonId": "lesson-l1",
+        "room": null,
+        "startTime": "10:00",
+        "startsAtUtc": "2026-10-26T05:00:00"
+      },
+      "minutesToStart": 6960,
+      "origin": "teacher",
+      "overdue": false,
+      "previous": null,
+      "reasonCode": "sick",
+      "reasonLabel": "Болезнь",
+      "status": "pending",
+      "suggestedTeacher": {
+        "active": true,
+        "id": "5fd041ac-c0cc-5b16-8903-db2bbc1e9333",
+        "name": "Рахимов Т."
+      },
+      "teacher": {
+        "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+        "name": "Иванов И."
+      },
+      "urgent": false
+    }
+  ],
+  "pendingTotal": 1,
+  "total": 1,
+  "urgentTotal": 0
+}

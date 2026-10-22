@@ -1,0 +1,18 @@
+{
+  "body": {
+    "detail": {
+      "code": "LESSON_HAS_LIVE_EXAM",
+      "exams": [
+        {
+          "examId": "EX_123",
+          "remainingSeconds": 900,
+          "status": "active",
+          "title": "Контрольная №3",
+          "waitingCount": 0
+        }
+      ],
+      "message": "Экзамен «Контрольная №3» ещё идёт (осталось 15 мин). Он продолжится по своему таймеру и закроется сам."
+    }
+  },
+  "status": 409
+}

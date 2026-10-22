@@ -1,0 +1,17 @@
+{
+  "body": {
+    "detail": {
+      "code": "PAYROLL_LOCKED",
+      "message": "Ведомость за этот месяц уже утверждена: смена преподавателя недоступна",
+      "sheets": [
+        {
+          "month": "2026-10",
+          "sheet_id": "70e70804-493a-5ba7-bf93-c59ec91f43a6",
+          "status": "approved",
+          "teacher_id": "917b0543-3c26-52c4-b849-5d99a8a9dd87"
+        }
+      ]
+    }
+  },
+  "status": 409
+}

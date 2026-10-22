@@ -1,0 +1,14 @@
+{
+  "lessonTeachers": {
+    "2026-10-26_lesson-l1": {
+      "defaultTeacherId": "23da0f33-efdf-5266-af96-b052211c5c8f",
+      "defaultTeacherName": "Сидоров С.",
+      "isSubstitution": true,
+      "teacherId": "5fd041ac-c0cc-5b16-8903-db2bbc1e9333",
+      "teacherName": "Рахимов Т."
+    }
+  },
+  "versions": {
+    "2026-10-26_lesson-l1": 5
+  }
+}

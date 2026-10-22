@@ -1,0 +1,9 @@
+{
+  "body": {
+    "detail": {
+      "code": "IMPORT_IN_PROGRESS",
+      "message": "Импорт уже выполняется. Подождите минуту"
+    }
+  },
+  "status": 409
+}

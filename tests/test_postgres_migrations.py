@@ -13,7 +13,10 @@ from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
-HEAD='f2a3b4c5d6e'          # LOGIC-A: pauses, opening balances, payouts, divisor / lesson-type history
+HEAD='lb3c4d5e6f7'          # LOGIC-B2: exam release marker, substitution requests
+LOGICB2='lb2b3c4d5e6'       # LOGIC-B (2/2): group archive, member audit, invitations
+LOGICB1='lb1a2b3c4d5'       # LOGIC-B (1/2): marks version, lesson teachers, validFrom
+LOGICA='f2a3b4c5d6e'        # LOGIC-A: pauses, opening balances, payouts, divisor / lesson-type history
 PAY2='e1f2a3b4c5d'          # PAY-2: payment = money (the revision before LOGIC-A)
 PAYROLL_RATES='d0e1f2a3b4c' # payroll rates (UX-2): the revision before PAY-2
 EXCUSE='c9d0e1f2a3b'        # excuse decision mark (N13 P4, #39): the revision before the payroll rates
@@ -23,6 +26,13 @@ PERIODS='z6a7b8c9d0e'       # membership periods (N13 tails, #59): the revision 
 INVITES='y5z6a7b8c9d'       # diagnostic invite «cancelled» (N13 tails, #89)
 ARCHIVE='x4y5z6a7b8c'       # student archive (N13)
 PREVIOUS='w3x4y5z6a7b'      # lesson type and payroll (N13 P3): the revision before the archive
+
+
+def _group_row(db,id,org_id,name,class_level=9,created_at=None):
+    """A group inserted with the oldest columns only: the DB of this test sits at many revisions, and the ORM would
+    insert columns of the newer ones (LOGIC-B: ``inactive_intervals``, ``archive_reason``)."""
+    db.execute(text("INSERT INTO groups (id,org_id,name,class_level,created_at) VALUES (:i,:o,:n,:c,coalesce(:t,now()))"),
+               {'i':id,'o':org_id,'n':name,'c':class_level,'t':created_at})
 
 
 def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatch):
@@ -271,7 +281,7 @@ def _check_n13_p22_objects(engine,config,ids):
     with Session(engine) as db:
         db.add(User(id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='R',last_name='R',role='owner'))
         db.add(Organization(id=org2,name='Second centre',status='active')); db.flush()
-        db.add(Group(id=group2,org_id=org2,name='G2',class_level=9))
+        _group_row(db,group2,org2,'G2',9)
         db.add(Student(id=student2,org_id=org2,first_name='S',last_name='Two',class_level=9,status='active')); db.flush()
         db.add(StudentGroup(id=membership2,student_id=student2,group_id=group2)); db.commit()
     def cols(): return {c['name'] for c in inspect(engine).get_columns('student_payments')}
@@ -465,7 +475,7 @@ def _check_n13_archive_objects(engine,config,ids,monkeypatch):
     audit_insert('teacher_changed')
     # The data as the generic PUT left it: archived students that still sit in groups.
     with Session(engine) as db:
-        db.add(Group(id=group2,org_id=org,name='Archive group 2',class_level=9)); db.flush()
+        _group_row(db,group2,org,'Archive group 2',9); db.flush()
         for sid,status,primary,name in ((a,'archived',group,'A'),(b,'archived',group2,'B'),(c,'active',group,'C'),(d,'archived',None,'D')):
             db.add(Student(id=sid,org_id=org,first_name=name,last_name='Archive',class_level=9,status=status,group_id=primary))
         db.flush()
@@ -646,8 +656,8 @@ def _check_n13_periods_objects(engine,config,ids):
     g1,g2=uuid4(),uuid4()
     students={n:uuid4() for n in range(1,11)}
     with Session(engine) as db:
-        db.add(Group(id=g1,org_id=org,name='Periods 1',class_level=9,created_at=datetime(2026,7,1,9,0,0)))
-        db.add(Group(id=g2,org_id=org,name='Periods 2',class_level=9,created_at=datetime(2026,7,1,9,0,0)))
+        _group_row(db,g1,org,'Periods 1',9,datetime(2026,7,1,9,0,0))
+        _group_row(db,g2,org,'Periods 2',9,datetime(2026,7,1,9,0,0))
         for n,sid in students.items():
             db.add(Student(id=sid,org_id=org,first_name=f'P{n}',last_name='Periods',class_level=9,status='active',created_at=datetime(2026,8,1,10,0,0)))
         db.commit()
@@ -878,7 +888,7 @@ def _check_n13_group_price_objects(engine,config,ids):
     groups={n:uuid4() for n in ('majority','tie_date','tie_sum','all_null','inactive_only','free','empty','single','pairs')}
     with Session(engine) as db:
         for name,gid in groups.items():
-            db.add(Group(id=gid,org_id=org,name=name,class_level=9))
+            _group_row(db,gid,org,name,9)
         db.commit()
     # --- the revision before the group price: no tables, and the audit CHECK has no price actions
     def audit(action):
@@ -1193,7 +1203,7 @@ def _check_pay2_objects(engine,config,ids):
     with Session(engine) as db:
         db.add(User(id=user,email=f'{user}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='A',role='owner'))
         db.add(Organization(id=org2,name='PAY-2 second centre',status='active',settings={'payments':{'period_mode':'lessons','lessons_per_payment':8}})); db.flush()
-        db.add(Group(id=group_b,org_id=ids['org'],name='PAY-2 group B',class_level=9)); db.flush()
+        _group_row(db,group_b,ids['org'],'PAY-2 group B',9); db.flush()
         db.add(StudentGroup(id=member_b,student_id=ids['student'],group_id=group_b)); db.commit()
     with engine.begin() as c:        # the earlier checks leave payments behind: start from none
         c.execute(text('DELETE FROM student_payment_files'))
@@ -1232,6 +1242,9 @@ def _check_pay2_objects(engine,config,ids):
     with engine.connect() as c:
         tx=c.begin()
         try:
+            # the ORM of today also reads the LOGIC-B columns, which a database at PAYROLL_RATES has not got yet (rolled back below)
+            c.execute(text("ALTER TABLE groups ADD COLUMN IF NOT EXISTS inactive_intervals jsonb NOT NULL DEFAULT '[]'::jsonb, ADD COLUMN IF NOT EXISTS archive_reason varchar(300), ADD COLUMN IF NOT EXISTS exam_release_pending boolean NOT NULL DEFAULT false"))
+            c.execute(text("ALTER TABLE group_attendance ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1"))
             rep=report_module.build_report(c,today=date(2026,10,21))
         finally:
             tx.rollback()
@@ -1345,8 +1358,11 @@ def _check_logic_a_objects(engine,config,ids):
     with Session(engine) as db:
         db.add(User(id=user,email=f'{user}@m.invalid',password_hash='synthetic-only',first_name='L',last_name='A',role='owner'))
         db.add(Organization(id=org_b,name='LOGIC-A second centre',status='active',settings={'payroll':{'divisor':13}})); db.flush()
-        db.add(Group(id=grp_pair,org_id=org_b,name='Pair group',class_level=9,lesson_type='pair'))
-        db.add(Group(id=grp_b,org_id=org_b,name='Plain group',class_level=9)); db.flush()
+        # raw SQL: the schema is the one BEFORE LOGIC-A and before pack B (the ORM group has columns of both, e.g. inactive_intervals)
+        for gid,gname,glt in ((grp_pair,'Pair group','pair'),(grp_b,'Plain group','group')):
+            db.execute(text("INSERT INTO groups (id,org_id,name,class_level,lesson_type,created_at,updated_at) VALUES (:i,:o,:n,9,:t,now(),now())"),
+                       {'i':gid,'o':org_b,'n':gname,'t':glt})
+        db.flush()
         for k,sid in studs.items():
             db.add(Student(id=sid,org_id=org_b,first_name=k,last_name='Logic',class_level=9,status='active')); db.flush()
             db.add(StudentGroup(id=mems[k],student_id=sid,group_id=grp_pair,is_active=k.startswith('active') or k=='closed_returned',
@@ -1445,7 +1461,10 @@ def _check_logic_a_objects(engine,config,ids):
         assert tuple(c.execute(text('SELECT count(*),COALESCE(sum(amount),0) FROM student_payments')).fetchone())==tuple(before_money)
         assert c.execute(text('SELECT count(*) FROM membership_price_overrides')).scalar_one()==before_overrides
         assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==PAY2
-    assert "'group_archived'" in check_def('group_audit','ck_group_audit_action') and "'student_left_group'" not in check_def('group_audit','ck_group_audit_action')   # only its own values go
+    # the chain is linear now (LOGIC-A -> LOGIC-B): a rollback to PAY-2 removes the values of both packs; that A's rollback alone keeps B's values is tested
+    # in tests/test_integration_ab_pg.py::test_the_linear_chain_composes_the_check_constraints_of_a_and_b
+    assert "'group_archived'" not in check_def('group_audit','ck_group_audit_action') and "'student_left_group'" not in check_def('group_audit','ck_group_audit_action')
+    assert "'created'" in check_def('group_audit','ck_group_audit_action')
     assert "'not_required'" not in check_def('attendance_excuses','ck_attendance_excuse_status') and "'excuse_closed_pause'" not in check_def('group_attendance_audit','ck_group_attendance_audit_action')
     assert "'excuse_file_removed'" in check_def('group_attendance_audit','ck_group_attendance_audit_action')
     with pytest.raises(IntegrityError):

@@ -1,0 +1,6635 @@
+{
+  "components": {
+    "schemas": {
+      "AcceptInviteRequestB": {
+        "description": "The e-mail comes from the invitation; a sent one that differs is refused (400 ``INVITE_EMAIL_MISMATCH``).",
+        "properties": {
+          "code": {
+            "maxLength": 20,
+            "minLength": 4,
+            "title": "Code",
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "first_name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Name"
+          },
+          "last_name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Name"
+          },
+          "password": {
+            "maxLength": 128,
+            "minLength": 6,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "password"
+        ],
+        "title": "AcceptInviteRequestB",
+        "type": "object"
+      },
+      "ArchiveAutoAction": {
+        "properties": {
+          "code": {
+            "enum": [
+              "RELEASE_EXAMS",
+              "STOP_FUTURE_LESSONS"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "count"
+        ],
+        "title": "ArchiveAutoAction",
+        "type": "object"
+      },
+      "ArchiveBlocker": {
+        "properties": {
+          "code": {
+            "enum": [
+              "ACTIVE_STUDENTS",
+              "OPEN_LESSON",
+              "MISSED_LESSONS",
+              "LIVE_EXAMS"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "exams": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exams"
+          },
+          "lessons": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons"
+          },
+          "students": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Students"
+          }
+        },
+        "required": [
+          "code",
+          "count"
+        ],
+        "title": "ArchiveBlocker",
+        "type": "object"
+      },
+      "ArchiveGroupOut": {
+        "properties": {
+          "archiveReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archivereason"
+          },
+          "archivedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archivedat"
+          },
+          "cancelledMissedLessons": {
+            "default": 0,
+            "title": "Cancelledmissedlessons",
+            "type": "integer"
+          },
+          "class_level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Level"
+          },
+          "closedSubstitutionRequests": {
+            "default": 0,
+            "title": "Closedsubstitutionrequests",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "examReleasePending": {
+            "default": false,
+            "title": "Examreleasepending",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lesson_type": {
+            "default": "group",
+            "title": "Lesson Type",
+            "type": "string"
+          },
+          "max_students": {
+            "default": 30,
+            "title": "Max Students",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "releasedExamIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Releasedexamids",
+            "type": "array"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule"
+          },
+          "status": {
+            "default": "active",
+            "title": "Status",
+            "type": "string"
+          },
+          "student_count": {
+            "default": 0,
+            "title": "Student Count",
+            "type": "integer"
+          },
+          "substitution": {
+            "default": false,
+            "title": "Substitution",
+            "type": "boolean"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "name"
+        ],
+        "title": "ArchiveGroupOut",
+        "type": "object"
+      },
+      "ArchiveGroupRequest": {
+        "properties": {
+          "missedLessonsAction": {
+            "anyOf": [
+              {
+                "const": "cancel",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missedlessonsaction"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "ArchiveGroupRequest",
+        "type": "object"
+      },
+      "ArchiveImpactOut": {
+        "properties": {
+          "autoActions": {
+            "items": {
+              "$ref": "#/components/schemas/ArchiveAutoAction"
+            },
+            "title": "Autoactions",
+            "type": "array"
+          },
+          "blockers": {
+            "items": {
+              "$ref": "#/components/schemas/ArchiveBlocker"
+            },
+            "title": "Blockers",
+            "type": "array"
+          },
+          "canArchive": {
+            "title": "Canarchive",
+            "type": "boolean"
+          },
+          "examService": {
+            "default": "ok",
+            "enum": [
+              "ok",
+              "unavailable"
+            ],
+            "title": "Examservice",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "legacyStudentsLeft": {
+            "default": 0,
+            "title": "Legacystudentsleft",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "groupId",
+          "groupName",
+          "status",
+          "canArchive"
+        ],
+        "title": "ArchiveImpactOut",
+        "type": "object"
+      },
+      "ArchivedGroupOut": {
+        "description": "A group the student was removed from by the last archiving (the return window offers it again).",
+        "properties": {
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "group_name": {
+            "title": "Group Name",
+            "type": "string"
+          },
+          "group_status": {
+            "title": "Group Status",
+            "type": "string"
+          },
+          "is_full": {
+            "title": "Is Full",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "group_id",
+          "group_name",
+          "group_status",
+          "is_full"
+        ],
+        "title": "ArchivedGroupOut",
+        "type": "object"
+      },
+      "AttendanceConflictDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "currentVersion": {
+            "title": "Currentversion",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "records": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Records",
+            "type": "object"
+          },
+          "updatedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Updatedat"
+          },
+          "updatedBy": {
+            "$ref": "#/components/schemas/AttendanceUpdatedBy"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "currentVersion",
+          "updatedBy"
+        ],
+        "title": "AttendanceConflictDetail",
+        "type": "object"
+      },
+      "AttendanceUpdatedBy": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          }
+        },
+        "title": "AttendanceUpdatedBy",
+        "type": "object"
+      },
+      "AuthResponse": {
+        "properties": {
+          "org": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrgResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tokens": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenPair"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserResponse"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "title": "AuthResponse",
+        "type": "object"
+      },
+      "Body_import_commit_api_v1_auth_org_import_commit_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_commit_api_v1_auth_org_import_commit_post",
+        "type": "object"
+      },
+      "Body_import_preview_api_v1_auth_org_import_preview_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_preview_api_v1_auth_org_import_preview_post",
+        "type": "object"
+      },
+      "BusyWith": {
+        "properties": {
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          }
+        },
+        "required": [
+          "groupName",
+          "startTime",
+          "endTime"
+        ],
+        "title": "BusyWith",
+        "type": "object"
+      },
+      "CompletedOut": {
+        "properties": {
+          "leftRunning": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Leftrunning",
+            "type": "array"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "released": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Released",
+            "type": "array"
+          }
+        },
+        "title": "CompletedOut",
+        "type": "object"
+      },
+      "CompletionCheckOut": {
+        "properties": {
+          "exams": {
+            "items": {
+              "$ref": "#/components/schemas/ExamCompletionItem"
+            },
+            "title": "Exams",
+            "type": "array"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "title": "CompletionCheckOut",
+        "type": "object"
+      },
+      "CountOut": {
+        "properties": {
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "title": "CountOut",
+        "type": "object"
+      },
+      "CreateLessonRequestB": {
+        "description": "``room`` has no default (``null`` = \"Кабинет не указан\"); ``validFrom`` defaults to the business today.",
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "blue",
+            "title": "Color"
+          },
+          "dayOfWeek": {
+            "maximum": 7.0,
+            "minimum": 1.0,
+            "title": "Dayofweek",
+            "type": "integer"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "offline",
+            "title": "Format"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "Математика",
+            "title": "Subject"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          },
+          "validFrom": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validfrom"
+          }
+        },
+        "required": [
+          "groupId",
+          "dayOfWeek",
+          "startTime",
+          "endTime"
+        ],
+        "title": "CreateLessonRequestB",
+        "type": "object"
+      },
+      "CreateOneOffLessonRequestB": {
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "blue",
+            "title": "Color"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "offline",
+            "title": "Format"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "lessonDate": {
+            "format": "date",
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          }
+        },
+        "required": [
+          "groupId",
+          "lessonDate",
+          "startTime",
+          "endTime"
+        ],
+        "title": "CreateOneOffLessonRequestB",
+        "type": "object"
+      },
+      "CreatedGroup": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "CreatedGroup",
+        "type": "object"
+      },
+      "ExamCompletionItem": {
+        "properties": {
+          "deliveryMode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Deliverymode"
+          },
+          "endsAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Endsat"
+          },
+          "examId": {
+            "title": "Examid",
+            "type": "string"
+          },
+          "remainingSeconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Remainingseconds"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "lobby",
+              "print_ready"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "waitingCount": {
+            "default": 0,
+            "title": "Waitingcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "examId",
+          "title",
+          "status"
+        ],
+        "title": "ExamCompletionItem",
+        "type": "object"
+      },
+      "ExamSyncOut": {
+        "properties": {
+          "leftRunning": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Leftrunning",
+            "type": "array"
+          },
+          "released": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Released",
+            "type": "array"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
+          }
+        },
+        "title": "ExamSyncOut",
+        "type": "object"
+      },
+      "GroupArchiveBlockedDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "blockers": {
+            "items": {
+              "$ref": "#/components/schemas/ArchiveBlocker"
+            },
+            "title": "Blockers",
+            "type": "array"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "GroupArchiveBlockedDetail",
+        "type": "object"
+      },
+      "GroupArchiveImpactExam": {
+        "properties": {
+          "blockerReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Blockerreason"
+          },
+          "canRelease": {
+            "default": true,
+            "title": "Canrelease",
+            "type": "boolean"
+          },
+          "examId": {
+            "title": "Examid",
+            "type": "string"
+          },
+          "lessonDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lessondate"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "examId",
+          "title",
+          "status"
+        ],
+        "title": "GroupArchiveImpactExam",
+        "type": "object"
+      },
+      "GroupArchiveImpactOut": {
+        "properties": {
+          "exams": {
+            "items": {
+              "$ref": "#/components/schemas/GroupArchiveImpactExam"
+            },
+            "title": "Exams",
+            "type": "array"
+          }
+        },
+        "title": "GroupArchiveImpactOut",
+        "type": "object"
+      },
+      "GroupArchiveReleaseOut": {
+        "properties": {
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "releasedExamIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Releasedexamids",
+            "type": "array"
+          }
+        },
+        "title": "GroupArchiveReleaseOut",
+        "type": "object"
+      },
+      "GroupAttendanceResponseB": {
+        "properties": {
+          "cancellationReasons": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Cancellationreasons",
+            "type": "object"
+          },
+          "corrections": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Corrections",
+            "type": "object"
+          },
+          "diagnosticReportNotices": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Diagnosticreportnotices",
+            "type": "array"
+          },
+          "excuses": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "title": "Excuses",
+            "type": "object"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "historicalStudents": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Historicalstudents",
+            "type": "array"
+          },
+          "lessonRoster": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessonroster"
+          },
+          "lessonTeachers": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LessonTeacherInfo"
+            },
+            "title": "Lessonteachers",
+            "type": "object"
+          },
+          "lessons": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Lessons",
+            "type": "array"
+          },
+          "membershipEvents": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Membershipevents",
+            "type": "array"
+          },
+          "month": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Month"
+          },
+          "records": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Records",
+            "type": "object"
+          },
+          "rosterStudentIds": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Rosterstudentids",
+            "type": "object"
+          },
+          "statuses": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Statuses",
+            "type": "object"
+          },
+          "substitutionRequests": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Substitutionrequests",
+            "type": "object"
+          },
+          "versions": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Versions",
+            "type": "object"
+          }
+        },
+        "required": [
+          "groupId"
+        ],
+        "title": "GroupAttendanceResponseB",
+        "type": "object"
+      },
+      "GroupBindingRequest": {
+        "description": "Body of ``POST /internal/group-bindings/archive-impact`` and ``.../archive-release`` (exam-service).",
+        "properties": {
+          "actor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Actor Id"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "org_id",
+          "group_id"
+        ],
+        "title": "GroupBindingRequest",
+        "type": "object"
+      },
+      "GroupCreateRequest": {
+        "properties": {
+          "class_level": {
+            "anyOf": [
+              {
+                "maximum": 11.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Level"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "lesson_type": {
+            "default": "group",
+            "enum": [
+              "group",
+              "mini_group",
+              "pair",
+              "individual"
+            ],
+            "title": "Lesson Type",
+            "type": "string"
+          },
+          "max_students": {
+            "default": 30,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Max Students",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "GroupCreateRequest",
+        "type": "object"
+      },
+      "GroupResponseB": {
+        "properties": {
+          "archiveReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archivereason"
+          },
+          "archivedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archivedat"
+          },
+          "class_level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Level"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lesson_type": {
+            "default": "group",
+            "title": "Lesson Type",
+            "type": "string"
+          },
+          "max_students": {
+            "default": 30,
+            "title": "Max Students",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule"
+          },
+          "status": {
+            "default": "active",
+            "title": "Status",
+            "type": "string"
+          },
+          "student_count": {
+            "default": 0,
+            "title": "Student Count",
+            "type": "integer"
+          },
+          "substitution": {
+            "default": false,
+            "title": "Substitution",
+            "type": "boolean"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "name"
+        ],
+        "title": "GroupResponseB",
+        "type": "object"
+      },
+      "GroupUpdateRequest": {
+        "properties": {
+          "class_level": {
+            "anyOf": [
+              {
+                "maximum": 11.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Level"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "lesson_type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "group",
+                  "mini_group",
+                  "pair",
+                  "individual"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Type"
+          },
+          "max_students": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Students"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
+          }
+        },
+        "title": "GroupUpdateRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HandedOverGroup": {
+        "properties": {
+          "fromTeacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fromteacherid"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "toTeacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Toteacherid"
+          }
+        },
+        "required": [
+          "groupId",
+          "groupName"
+        ],
+        "title": "HandedOverGroup",
+        "type": "object"
+      },
+      "HandoverAssignment": {
+        "properties": {
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          }
+        },
+        "required": [
+          "groupId"
+        ],
+        "title": "HandoverAssignment",
+        "type": "object"
+      },
+      "HandoverOut": {
+        "properties": {
+          "closedSubstitutionRequests": {
+            "default": 0,
+            "title": "Closedsubstitutionrequests",
+            "type": "integer"
+          },
+          "handedOver": {
+            "items": {
+              "$ref": "#/components/schemas/HandedOverGroup"
+            },
+            "title": "Handedover",
+            "type": "array"
+          },
+          "releasedSubstitutions": {
+            "default": 0,
+            "title": "Releasedsubstitutions",
+            "type": "integer"
+          },
+          "remainingGroups": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Remaininggroups",
+            "type": "array"
+          }
+        },
+        "title": "HandoverOut",
+        "type": "object"
+      },
+      "HandoverRequest": {
+        "properties": {
+          "assignments": {
+            "items": {
+              "$ref": "#/components/schemas/HandoverAssignment"
+            },
+            "title": "Assignments",
+            "type": "array"
+          },
+          "confirmUnassigned": {
+            "default": false,
+            "title": "Confirmunassigned",
+            "type": "boolean"
+          }
+        },
+        "title": "HandoverRequest",
+        "type": "object"
+      },
+      "ImportCommitResponseB": {
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/ImportCountsB"
+          },
+          "created_groups": {
+            "items": {
+              "$ref": "#/components/schemas/CreatedGroup"
+            },
+            "title": "Created Groups",
+            "type": "array"
+          },
+          "credentials": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TeacherCredential"
+            },
+            "title": "Credentials",
+            "type": "array"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/ImportIssueB"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/ImportSkipped"
+            },
+            "title": "Skipped",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok",
+          "counts",
+          "issues"
+        ],
+        "title": "ImportCommitResponseB",
+        "type": "object"
+      },
+      "ImportCountsB": {
+        "properties": {
+          "groups_existing": {
+            "default": 0,
+            "title": "Groups Existing",
+            "type": "integer"
+          },
+          "groups_new": {
+            "default": 0,
+            "title": "Groups New",
+            "type": "integer"
+          },
+          "students_enrolled": {
+            "default": 0,
+            "title": "Students Enrolled",
+            "type": "integer"
+          },
+          "students_existing": {
+            "default": 0,
+            "title": "Students Existing",
+            "type": "integer"
+          },
+          "students_new": {
+            "default": 0,
+            "title": "Students New",
+            "type": "integer"
+          },
+          "students_skipped": {
+            "default": 0,
+            "title": "Students Skipped",
+            "type": "integer"
+          },
+          "students_unchanged": {
+            "default": 0,
+            "title": "Students Unchanged",
+            "type": "integer"
+          },
+          "teachers_existing": {
+            "default": 0,
+            "title": "Teachers Existing",
+            "type": "integer"
+          },
+          "teachers_new": {
+            "default": 0,
+            "title": "Teachers New",
+            "type": "integer"
+          }
+        },
+        "title": "ImportCountsB",
+        "type": "object"
+      },
+      "ImportIssueB": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "row": {
+            "title": "Row",
+            "type": "integer"
+          },
+          "sheet": {
+            "title": "Sheet",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sheet",
+          "row",
+          "level",
+          "message"
+        ],
+        "title": "ImportIssueB",
+        "type": "object"
+      },
+      "ImportPreviewResponseB": {
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/ImportCountsB"
+          },
+          "groups_preview": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Groups Preview",
+            "type": "array"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/ImportIssueB"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/ImportSkipped"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "students_preview": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Students Preview",
+            "type": "array"
+          },
+          "teachers_preview": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Teachers Preview",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok",
+          "counts",
+          "issues"
+        ],
+        "title": "ImportPreviewResponseB",
+        "type": "object"
+      },
+      "ImportSkipped": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "row": {
+            "title": "Row",
+            "type": "integer"
+          },
+          "sheet": {
+            "title": "Sheet",
+            "type": "string"
+          },
+          "student": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student"
+          }
+        },
+        "required": [
+          "sheet",
+          "row",
+          "code",
+          "message"
+        ],
+        "title": "ImportSkipped",
+        "type": "object"
+      },
+      "InvitationOut": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_returning": {
+            "default": false,
+            "title": "Is Returning",
+            "type": "boolean"
+          },
+          "org_role": {
+            "title": "Org Role",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "accepted",
+              "expired",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "org_role",
+          "expires_at",
+          "status"
+        ],
+        "title": "InvitationOut",
+        "type": "object"
+      },
+      "InviteInfoOut": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "is_returning": {
+            "default": false,
+            "title": "Is Returning",
+            "type": "boolean"
+          },
+          "org_name": {
+            "title": "Org Name",
+            "type": "string"
+          },
+          "org_role": {
+            "title": "Org Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_name",
+          "org_role"
+        ],
+        "title": "InviteInfoOut",
+        "type": "object"
+      },
+      "InviteMemberRequestB": {
+        "description": "``email`` is mandatory, checked by the service (422 ``EMAIL_REQUIRED``), normalised ``lower().strip()``.",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "org_role": {
+            "default": "teacher",
+            "title": "Org Role",
+            "type": "string"
+          }
+        },
+        "title": "InviteMemberRequestB",
+        "type": "object"
+      },
+      "LessonAttendanceStatus": {
+        "description": "Допустимые состояния экземпляра урока.",
+        "enum": [
+          "in_progress",
+          "completed",
+          "cancelled"
+        ],
+        "title": "LessonAttendanceStatus",
+        "type": "string"
+      },
+      "LessonBindingRequest": {
+        "description": "Body of ``POST /internal/lesson-bindings/completion-check`` and ``.../completed`` (exam-service).",
+        "properties": {
+          "actor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Actor Id"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "lesson_date": {
+            "title": "Lesson Date",
+            "type": "string"
+          },
+          "lesson_id": {
+            "title": "Lesson Id",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "group_id",
+          "lesson_id",
+          "lesson_date"
+        ],
+        "title": "LessonBindingRequest",
+        "type": "object"
+      },
+      "LessonTeacherCandidate": {
+        "properties": {
+          "busy": {
+            "default": false,
+            "title": "Busy",
+            "type": "boolean"
+          },
+          "busyWith": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BusyWith"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "teacherId": {
+            "title": "Teacherid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "teacherId",
+          "name"
+        ],
+        "title": "LessonTeacherCandidate",
+        "type": "object"
+      },
+      "LessonTeacherCandidatesOut": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/LessonTeacherCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "currentTeacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentteacherid"
+          },
+          "defaultTeacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultteacherid"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "lessonDate": {
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lessonId",
+          "lessonDate",
+          "startTime",
+          "endTime"
+        ],
+        "title": "LessonTeacherCandidatesOut",
+        "type": "object"
+      },
+      "LessonTeacherChangedDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "currentTeacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Currentteacherid"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Teacher Name"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "LessonTeacherChangedDetail",
+        "type": "object"
+      },
+      "LessonTeacherInfo": {
+        "properties": {
+          "defaultTeacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultteacherid"
+          },
+          "defaultTeacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultteachername"
+          },
+          "isSubstitution": {
+            "default": false,
+            "title": "Issubstitution",
+            "type": "boolean"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachername"
+          }
+        },
+        "title": "LessonTeacherInfo",
+        "type": "object"
+      },
+      "LessonTeacherOut": {
+        "properties": {
+          "attendanceUpdated": {
+            "default": false,
+            "title": "Attendanceupdated",
+            "type": "boolean"
+          },
+          "defaultTeacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultteacherid"
+          },
+          "defaultTeacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultteachername"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "isSubstitution": {
+            "default": false,
+            "title": "Issubstitution",
+            "type": "boolean"
+          },
+          "lessonDate": {
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "payrollSheetsAffected": {
+            "items": {
+              "$ref": "#/components/schemas/LessonTeacherPayrollSheet"
+            },
+            "title": "Payrollsheetsaffected",
+            "type": "array"
+          },
+          "requestClosed": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requestclosed"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachername"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "groupId",
+          "lessonId",
+          "lessonDate"
+        ],
+        "title": "LessonTeacherOut",
+        "type": "object"
+      },
+      "LessonTeacherPayrollSheet": {
+        "properties": {
+          "month": {
+            "title": "Month",
+            "type": "string"
+          },
+          "sheet_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheet Id"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "teacher_id": {
+            "title": "Teacher Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "teacher_id",
+          "month"
+        ],
+        "title": "LessonTeacherPayrollSheet",
+        "type": "object"
+      },
+      "LessonTeacherPut": {
+        "properties": {
+          "expectedTeacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedteacherid"
+          },
+          "lessonDate": {
+            "format": "date",
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 300,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          }
+        },
+        "required": [
+          "lessonDate",
+          "lessonId",
+          "reason"
+        ],
+        "title": "LessonTeacherPut",
+        "type": "object"
+      },
+      "LiveExamDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "exams": {
+            "items": {
+              "$ref": "#/components/schemas/LiveExamItem"
+            },
+            "title": "Exams",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "LiveExamDetail",
+        "type": "object"
+      },
+      "LiveExamItem": {
+        "properties": {
+          "examId": {
+            "title": "Examid",
+            "type": "string"
+          },
+          "remainingSeconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Remainingseconds"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "lobby",
+              "print_ready"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "waitingCount": {
+            "default": 0,
+            "title": "Waitingcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "examId",
+          "title",
+          "status"
+        ],
+        "title": "LiveExamItem",
+        "type": "object"
+      },
+      "MemberHasAssignmentsDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "canRemove": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Canremove"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "futureSubstitutions": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CountOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/RemovalGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "inProgressLessons": {
+            "items": {
+              "$ref": "#/components/schemas/RemovalLesson"
+            },
+            "title": "Inprogresslessons",
+            "type": "array"
+          },
+          "memberId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Memberid"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "missedLessons": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CountOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "removal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RemovalImpactOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "MemberHasAssignmentsDetail",
+        "type": "object"
+      },
+      "MemberOut": {
+        "additionalProperties": true,
+        "description": "``GET /org/members`` item: the user's own fields (``User.to_dict``) + the membership.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "first_name": {
+            "title": "First Name",
+            "type": "string"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "last_name": {
+            "title": "Last Name",
+            "type": "string"
+          },
+          "member_id": {
+            "title": "Member Id",
+            "type": "string"
+          },
+          "org_role": {
+            "title": "Org Role",
+            "type": "string"
+          },
+          "removed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Removed At"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "first_name",
+          "last_name",
+          "org_role",
+          "member_id"
+        ],
+        "title": "MemberOut",
+        "type": "object"
+      },
+      "OpenAttendanceActionResponseB": {
+        "properties": {
+          "actionType": {
+            "default": "in_progress",
+            "enum": [
+              "in_progress",
+              "missed"
+            ],
+            "title": "Actiontype",
+            "type": "string"
+          },
+          "ageDays": {
+            "default": 0,
+            "title": "Agedays",
+            "type": "integer"
+          },
+          "classLevel": {
+            "title": "Classlevel",
+            "type": "integer"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "format": {
+            "default": "offline",
+            "title": "Format",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "isSubstitution": {
+            "default": false,
+            "title": "Issubstitution",
+            "type": "boolean"
+          },
+          "lessonDate": {
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "markedCount": {
+            "default": 0,
+            "title": "Markedcount",
+            "type": "integer"
+          },
+          "remainingCount": {
+            "default": 0,
+            "title": "Remainingcount",
+            "type": "integer"
+          },
+          "requiresAdmin": {
+            "default": false,
+            "title": "Requiresadmin",
+            "type": "boolean"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "rosterCount": {
+            "default": 0,
+            "title": "Rostercount",
+            "type": "integer"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachername"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "groupId",
+          "groupName",
+          "classLevel",
+          "lessonId",
+          "lessonDate",
+          "subject",
+          "startTime",
+          "endTime"
+        ],
+        "title": "OpenAttendanceActionResponseB",
+        "type": "object"
+      },
+      "OpsErrorDetail": {
+        "additionalProperties": true,
+        "description": "``detail`` of every coded refusal; the extra keys depend on the code (``extra=\"allow\"``).",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "OpsErrorDetail",
+        "type": "object"
+      },
+      "OpsErrorResponse": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/OpsErrorDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "OpsErrorResponse",
+        "type": "object"
+      },
+      "OpsWarning": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "OpsWarning",
+        "type": "object"
+      },
+      "OrgResponse": {
+        "properties": {
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_type": {
+            "title": "Org Type",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "org_type",
+          "status"
+        ],
+        "title": "OrgResponse",
+        "type": "object"
+      },
+      "OrgStatsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "active_diagnostics": {
+            "default": 0,
+            "title": "Active Diagnostics",
+            "type": "integer"
+          },
+          "completed_diagnostics": {
+            "default": 0,
+            "title": "Completed Diagnostics",
+            "type": "integer"
+          },
+          "new_students": {
+            "default": 0,
+            "title": "New Students",
+            "type": "integer"
+          },
+          "no_group_students": {
+            "default": 0,
+            "title": "No Group Students",
+            "type": "integer"
+          },
+          "total_groups": {
+            "default": 0,
+            "title": "Total Groups",
+            "type": "integer"
+          },
+          "total_members": {
+            "default": 0,
+            "title": "Total Members",
+            "type": "integer"
+          },
+          "total_students": {
+            "default": 0,
+            "title": "Total Students",
+            "type": "integer"
+          }
+        },
+        "title": "OrgStatsOut",
+        "type": "object"
+      },
+      "ReconcileCancelOut": {
+        "properties": {
+          "cancelled": {
+            "default": true,
+            "title": "Cancelled",
+            "type": "boolean"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "ReconcileCancelOut",
+        "type": "object"
+      },
+      "ReconcileMissedLessonRequest": {
+        "description": "Explicit teacher decision for a past lesson that was never started.",
+        "properties": {
+          "cancellationReason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Cancellationreason",
+            "type": "string"
+          },
+          "lessonDate": {
+            "format": "date",
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Lessonid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lessonDate",
+          "lessonId",
+          "cancellationReason"
+        ],
+        "title": "ReconcileMissedLessonRequest",
+        "type": "object"
+      },
+      "ReconcileOut": {
+        "properties": {
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "reconciled": {
+            "default": true,
+            "title": "Reconciled",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "ReconcileOut",
+        "type": "object"
+      },
+      "RemovalGroup": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "nextLesson": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextlesson"
+          },
+          "studentCount": {
+            "default": 0,
+            "title": "Studentcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "RemovalGroup",
+        "type": "object"
+      },
+      "RemovalImpactOut": {
+        "properties": {
+          "canRemove": {
+            "title": "Canremove",
+            "type": "boolean"
+          },
+          "futureSubstitutions": {
+            "$ref": "#/components/schemas/CountOut"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/RemovalGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "inProgressLessons": {
+            "items": {
+              "$ref": "#/components/schemas/RemovalLesson"
+            },
+            "title": "Inprogresslessons",
+            "type": "array"
+          },
+          "memberId": {
+            "title": "Memberid",
+            "type": "string"
+          },
+          "missedLessons": {
+            "$ref": "#/components/schemas/CountOut"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "orgRole": {
+            "title": "Orgrole",
+            "type": "string"
+          },
+          "pendingSubstitutionRequests": {
+            "$ref": "#/components/schemas/CountOut"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "memberId",
+          "userId",
+          "orgRole",
+          "canRemove"
+        ],
+        "title": "RemovalImpactOut",
+        "type": "object"
+      },
+      "RemovalLesson": {
+        "properties": {
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "lessonDate": {
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "groupId",
+          "groupName",
+          "lessonDate",
+          "lessonId"
+        ],
+        "title": "RemovalLesson",
+        "type": "object"
+      },
+      "RemoveMemberOut": {
+        "properties": {
+          "closedSubstitutionRequests": {
+            "default": 0,
+            "title": "Closedsubstitutionrequests",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "releasedSubstitutions": {
+            "default": 0,
+            "title": "Releasedsubstitutions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "RemoveMemberOut",
+        "type": "object"
+      },
+      "RestoreGroupRequest": {
+        "properties": {
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          }
+        },
+        "title": "RestoreGroupRequest",
+        "type": "object"
+      },
+      "RestoreMemberOut": {
+        "properties": {
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "member_id": {
+            "title": "Member Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "member_id"
+        ],
+        "title": "RestoreMemberOut",
+        "type": "object"
+      },
+      "SaveAttendanceOut": {
+        "properties": {
+          "examSync": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamSyncOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "saved": {
+            "default": true,
+            "title": "Saved",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "SaveAttendanceOut",
+        "type": "object"
+      },
+      "SaveAttendanceRequestB": {
+        "properties": {
+          "acknowledgeLiveExam": {
+            "default": false,
+            "title": "Acknowledgeliveexam",
+            "type": "boolean"
+          },
+          "cancellationReason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellationreason"
+          },
+          "correctionReason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correctionreason"
+          },
+          "excuseReasons": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "format": "uuid"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excusereasons"
+          },
+          "expectedVersion": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
+          },
+          "lessonDate": {
+            "format": "date",
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "records": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/StudentAttendanceStatus"
+            },
+            "propertyNames": {
+              "format": "uuid"
+            },
+            "title": "Records",
+            "type": "object"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LessonAttendanceStatus",
+            "default": "in_progress"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          }
+        },
+        "required": [
+          "lessonDate",
+          "lessonId"
+        ],
+        "title": "SaveAttendanceRequestB",
+        "type": "object"
+      },
+      "ScheduleLessonResponseB": {
+        "properties": {
+          "classLevel": {
+            "default": 5,
+            "title": "Classlevel",
+            "type": "integer"
+          },
+          "color": {
+            "default": "blue",
+            "title": "Color",
+            "type": "string"
+          },
+          "dayOfWeek": {
+            "title": "Dayofweek",
+            "type": "integer"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "format": {
+            "default": "offline",
+            "title": "Format",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "subject": {
+            "default": "Математика",
+            "title": "Subject",
+            "type": "string"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          },
+          "validFrom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validfrom"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/OpsWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "groupId",
+          "groupName",
+          "dayOfWeek",
+          "startTime",
+          "endTime"
+        ],
+        "title": "ScheduleLessonResponseB",
+        "type": "object"
+      },
+      "ScheduleOccurrenceResponseB": {
+        "properties": {
+          "classLevel": {
+            "default": 5,
+            "title": "Classlevel",
+            "type": "integer"
+          },
+          "color": {
+            "default": "blue",
+            "title": "Color",
+            "type": "string"
+          },
+          "dayOfWeek": {
+            "title": "Dayofweek",
+            "type": "integer"
+          },
+          "defaultTeacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultteacherid"
+          },
+          "defaultTeacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultteachername"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "format": {
+            "default": "offline",
+            "title": "Format",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isOneOff": {
+            "default": false,
+            "title": "Isoneoff",
+            "type": "boolean"
+          },
+          "isRescheduled": {
+            "default": false,
+            "title": "Isrescheduled",
+            "type": "boolean"
+          },
+          "isSubstitution": {
+            "default": false,
+            "title": "Issubstitution",
+            "type": "boolean"
+          },
+          "occurrenceDate": {
+            "title": "Occurrencedate",
+            "type": "string"
+          },
+          "originalEndTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Originalendtime"
+          },
+          "originalRoom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Originalroom"
+          },
+          "originalStartTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Originalstarttime"
+          },
+          "rescheduleReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reschedulereason"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "subject": {
+            "default": "Математика",
+            "title": "Subject",
+            "type": "string"
+          },
+          "substitutionOutcome": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Substitutionoutcome"
+          },
+          "substitutionRequest": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Substitutionrequest"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachername"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          },
+          "validFrom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validfrom"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/OpsWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "groupId",
+          "groupName",
+          "dayOfWeek",
+          "startTime",
+          "endTime",
+          "occurrenceDate"
+        ],
+        "title": "ScheduleOccurrenceResponseB",
+        "type": "object"
+      },
+      "StartAttendanceOut": {
+        "properties": {
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "started": {
+            "default": true,
+            "title": "Started",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "StartAttendanceOut",
+        "type": "object"
+      },
+      "StartAttendanceRequest": {
+        "description": "Explicit start of one scheduled lesson occurrence.",
+        "properties": {
+          "lessonDate": {
+            "format": "date",
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          }
+        },
+        "required": [
+          "lessonDate",
+          "lessonId"
+        ],
+        "title": "StartAttendanceRequest",
+        "type": "object"
+      },
+      "StudentAttendanceStatus": {
+        "description": "Допустимые отметки ученика в журнале.",
+        "enum": [
+          "present",
+          "absent",
+          "excused",
+          "late"
+        ],
+        "title": "StudentAttendanceStatus",
+        "type": "string"
+      },
+      "StudentCreateRequest": {
+        "description": "Добавить ученика",
+        "properties": {
+          "class_level": {
+            "maximum": 11.0,
+            "minimum": 1.0,
+            "title": "Class Level",
+            "type": "integer"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "first_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "First Name",
+            "type": "string"
+          },
+          "last_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Last Name",
+            "type": "string"
+          },
+          "student_phone": {
+            "maxLength": 30,
+            "title": "Student Phone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "first_name",
+          "last_name",
+          "class_level",
+          "student_phone"
+        ],
+        "title": "StudentCreateRequest",
+        "type": "object"
+      },
+      "StudentResponseB": {
+        "properties": {
+          "archive_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Reason"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "archived_groups": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ArchivedGroupOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived Groups"
+          },
+          "class_level": {
+            "title": "Class Level",
+            "type": "integer"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "current_group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Group Id"
+          },
+          "display_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Id"
+          },
+          "first_name": {
+            "title": "First Name",
+            "type": "string"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          },
+          "groups_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Groups Count"
+          },
+          "has_group": {
+            "default": false,
+            "title": "Has Group",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_name": {
+            "title": "Last Name",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence Number"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "status_view": {
+            "default": "new",
+            "enum": [
+              "new",
+              "diagnosed",
+              "active",
+              "no_group",
+              "archived"
+            ],
+            "title": "Status View",
+            "type": "string"
+          },
+          "student_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Number"
+          },
+          "student_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Phone"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "first_name",
+          "last_name",
+          "full_name",
+          "class_level",
+          "status"
+        ],
+        "title": "StudentResponseB",
+        "type": "object"
+      },
+      "StudentUpdateRequest": {
+        "description": "Обновить данные ученика (после диагностики и т.д.)",
+        "properties": {
+          "class_level": {
+            "anyOf": [
+              {
+                "maximum": 11.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Level"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "first_name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Name"
+          },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          },
+          "last_name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Name"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "student_number": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Number"
+          },
+          "student_phone": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Phone"
+          }
+        },
+        "title": "StudentUpdateRequest",
+        "type": "object"
+      },
+      "TeacherBusyDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherConflict"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "TeacherBusyDetail",
+        "type": "object"
+      },
+      "TeacherConflict": {
+        "description": "One overlap of a teacher's lessons (``TEACHER_BUSY.conflicts[]``).",
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "withGroupName": {
+            "title": "Withgroupname",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "startTime",
+          "endTime",
+          "groupId",
+          "groupName",
+          "withGroupName"
+        ],
+        "title": "TeacherConflict",
+        "type": "object"
+      },
+      "TeacherCredential": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "temp_password": {
+            "title": "Temp Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "full_name",
+          "email",
+          "role",
+          "temp_password"
+        ],
+        "title": "TeacherCredential",
+        "type": "object"
+      },
+      "TeacherDashboardLessonAttendanceStateResponse": {
+        "description": "Attendance state for one concrete lesson in the teacher dashboard.\n\n``status`` is intentionally nullable: a planned lesson has no attendance\nrow yet.  This lets the client distinguish it from an unavailable request\ninstead of guessing that the lesson was never started.",
+        "properties": {
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "hasSavedRecords": {
+            "default": false,
+            "title": "Hassavedrecords",
+            "type": "boolean"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "lessonId",
+          "groupId"
+        ],
+        "title": "TeacherDashboardLessonAttendanceStateResponse",
+        "type": "object"
+      },
+      "TeacherDashboardSummaryResponseB": {
+        "properties": {
+          "attendanceStates": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherDashboardLessonAttendanceStateResponse"
+            },
+            "title": "Attendancestates",
+            "type": "array"
+          },
+          "businessDate": {
+            "title": "Businessdate",
+            "type": "string"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/GroupResponseB"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "openAttendanceActions": {
+            "items": {
+              "$ref": "#/components/schemas/OpenAttendanceActionResponseB"
+            },
+            "title": "Openattendanceactions",
+            "type": "array"
+          },
+          "scheduleWindow": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleOccurrenceResponseB"
+            },
+            "title": "Schedulewindow",
+            "type": "array"
+          },
+          "studentCount": {
+            "default": 0,
+            "title": "Studentcount",
+            "type": "integer"
+          },
+          "todayLessons": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleOccurrenceResponseB"
+            },
+            "title": "Todaylessons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "businessDate"
+        ],
+        "title": "TeacherDashboardSummaryResponseB",
+        "type": "object"
+      },
+      "TeacherInactiveDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Teachername"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "TeacherInactiveDetail",
+        "type": "object"
+      },
+      "TokenPair": {
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_in": {
+            "default": 3600,
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          },
+          "token_type": {
+            "default": "bearer",
+            "title": "Token Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token",
+          "refresh_token"
+        ],
+        "title": "TokenPair",
+        "type": "object"
+      },
+      "UserResponse": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "default_org_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Org Id"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "first_name": {
+            "title": "First Name",
+            "type": "string"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "is_verified": {
+            "default": false,
+            "title": "Is Verified",
+            "type": "boolean"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "ru",
+            "title": "Language"
+          },
+          "last_name": {
+            "title": "Last Name",
+            "type": "string"
+          },
+          "must_change_password": {
+            "default": false,
+            "title": "Must Change Password",
+            "type": "boolean"
+          },
+          "org_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Org Name"
+          },
+          "org_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Org Role"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "first_name",
+          "last_name",
+          "full_name",
+          "role"
+        ],
+        "title": "UserResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "VerifyStudentAsOfOut": {
+        "additionalProperties": true,
+        "description": "Answer of ``GET /public/groups/{gid}/verify-student?as_of=...`` (same shape as without ``as_of``).",
+        "properties": {
+          "enrolled": {
+            "title": "Enrolled",
+            "type": "boolean"
+          },
+          "group_name": {
+            "default": "",
+            "title": "Group Name",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "student": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Student"
+          }
+        },
+        "required": [
+          "enrolled"
+        ],
+        "title": "VerifyStudentAsOfOut",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "ALGO auth - LOGIC-B operations contract",
+    "version": "logicb-1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/invite/accept": {
+      "post": {
+        "description": "Принять приглашение в организацию — создаёт аккаунт",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptInviteRequestB"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Invite",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/invite/{code}": {
+      "get": {
+        "description": "Публичная информация о приглашении (орг + роль) — для экрана принятия.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteInfoOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Invite Info",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/attendance/open-actions": {
+      "get": {
+        "description": "Started lessons that still need attendance or final closure.\n\nThis intentionally returns only persisted ``in_progress`` lesson\ninstances. A planned lesson is not an overdue attendance task until a\nteacher has explicitly begun it.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OpenAttendanceActionResponseB"
+                  },
+                  "title": "Response Get Open Attendance Actions Api V1 Auth Org Attendance Open Actions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Open Attendance Actions",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/groups": {
+      "get": {
+        "description": "Список групп организации (для денежных ролей — с ``price_current``, цена группы на сегодня)",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "teacher_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Teacher Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "class_level",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Class Level"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GroupResponseB"
+                  },
+                  "title": "Response List Groups Api V1 Auth Org Groups Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Groups",
+        "tags": [
+          "Authentication"
+        ]
+      },
+      "post": {
+        "description": "Создать группу в рамках полномочий текущего сотрудника.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupResponseB"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Group",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/groups/{group_id}": {
+      "put": {
+        "description": "Обновить группу",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupResponseB"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Group",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/groups/{group_id}/archive": {
+      "post": {
+        "description": "Архивировать группу (операция с предусловиями).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveGroupOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Archive Group",
+        "tags": [
+          "Authentication",
+          "LOGIC-B group archive"
+        ]
+      }
+    },
+    "/org/groups/{group_id}/archive-impact": {
+      "get": {
+        "description": "Что мешает архивации группы и что произойдёт автоматически.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveImpactOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Group Archive Impact",
+        "tags": [
+          "Authentication",
+          "LOGIC-B group archive"
+        ]
+      }
+    },
+    "/org/groups/{group_id}/attendance": {
+      "get": {
+        "description": "Журнал посещаемости группы за месяц или указанный период.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Месяц YYYY-MM",
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Месяц YYYY-MM",
+              "title": "Month"
+            }
+          },
+          {
+            "description": "Начало периода YYYY-MM-DD",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Начало периода YYYY-MM-DD",
+              "title": "Date From"
+            }
+          },
+          {
+            "description": "Конец периода YYYY-MM-DD",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Конец периода YYYY-MM-DD",
+              "title": "Date To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupAttendanceResponseB"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Group Attendance",
+        "tags": [
+          "Authentication"
+        ]
+      },
+      "post": {
+        "description": "Сохранить отметки посещаемости за урок/дату",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveAttendanceRequestB"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaveAttendanceOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Save Group Attendance",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/groups/{group_id}/attendance/reconcile": {
+      "post": {
+        "description": "Open the journal for a past occurrence that was never started.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartAttendanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconcileOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reconcile Missed Group Attendance",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/groups/{group_id}/attendance/reconcile/cancel": {
+      "post": {
+        "description": "Cancel a missed occurrence with a mandatory reason and audit trail.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileMissedLessonRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconcileCancelOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel Missed Group Attendance",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/groups/{group_id}/attendance/start": {
+      "post": {
+        "description": "Explicitly begin a lesson before any attendance can be marked.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartAttendanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartAttendanceOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start Group Attendance",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/groups/{group_id}/lesson-teacher": {
+      "put": {
+        "description": "Назначить или снять замену преподавателя на один урок (owner/admin).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonTeacherPut"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonTeacherOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put Lesson Teacher",
+        "tags": [
+          "Authentication",
+          "LOGIC-B lesson teacher"
+        ]
+      }
+    },
+    "/org/groups/{group_id}/lesson-teacher-candidates": {
+      "get": {
+        "description": "Кто может провести урок: преподаватели центра, занятые отмечены.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lessonId",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Lessonid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lessonDate",
+            "required": true,
+            "schema": {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "title": "Lessondate",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonTeacherCandidatesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Lesson Teacher Candidates",
+        "tags": [
+          "Authentication",
+          "LOGIC-B lesson teacher"
+        ]
+      }
+    },
+    "/org/groups/{group_id}/restore": {
+      "post": {
+        "description": "Вернуть группу из архива (ученики не возвращаются).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RestoreGroupRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupResponseB"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore Group",
+        "tags": [
+          "Authentication",
+          "LOGIC-B group archive"
+        ]
+      }
+    },
+    "/org/import/commit": {
+      "post": {
+        "description": "Записать данные из файла в базу транзакционно (всё или ничего).",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_commit_api_v1_auth_org_import_commit_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportCommitResponseB"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Import Commit",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/import/preview": {
+      "post": {
+        "description": "Разобрать и проверить файл (dry-run) — ничего не записывается.",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_preview_api_v1_auth_org_import_preview_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportPreviewResponseB"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Import Preview",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/invitations": {
+      "get": {
+        "description": "Список приглашений организации",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InvitationOut"
+                  },
+                  "title": "Response List Invitations Api V1 Auth Org Invitations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Invitations",
+        "tags": [
+          "Authentication"
+        ]
+      },
+      "post": {
+        "description": "Создать приглашение (owner/admin → admin/teacher)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteMemberRequestB"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Invitation",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/members": {
+      "get": {
+        "description": "Список сотрудников организации (по умолчанию — действующие; ``removed`` — бывшие, ``all`` — все)",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "active",
+              "enum": [
+                "active",
+                "removed",
+                "all"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemberOut"
+                  },
+                  "title": "Response List Members Api V1 Auth Org Members Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Members",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/members/{member_id}": {
+      "delete": {
+        "description": "Удалить сотрудника (только owner)",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "title": "Member Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoveMemberOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove Member",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/members/{member_id}/handover": {
+      "post": {
+        "description": "Передать группы сотрудника другим преподавателям (атомарно).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "title": "Member Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandoverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoverOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Handover Member Groups",
+        "tags": [
+          "Authentication",
+          "LOGIC-B staff"
+        ]
+      }
+    },
+    "/org/members/{member_id}/removal-impact": {
+      "get": {
+        "description": "Что мешает удалить сотрудника: группы, начатые уроки, замены, пропущенные уроки.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "title": "Member Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovalImpactOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Member Removal Impact",
+        "tags": [
+          "Authentication",
+          "LOGIC-B staff"
+        ]
+      }
+    },
+    "/org/members/{member_id}/restore": {
+      "post": {
+        "description": "Вернуть удалённого сотрудника в команду (только owner); группы не возвращаются.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "title": "Member Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreMemberOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore Member",
+        "tags": [
+          "Authentication",
+          "LOGIC-B staff"
+        ]
+      }
+    },
+    "/org/schedule": {
+      "get": {
+        "description": "Получить расписание уроков организации (или конкретного преподавателя).",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "teacher_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Teacher Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ScheduleLessonResponseB"
+                  },
+                  "title": "Response Get Schedule Api V1 Auth Org Schedule Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Schedule",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/schedule/lessons": {
+      "post": {
+        "description": "Создать/добавить урок в расписание",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLessonRequestB"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleLessonResponseB"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Lesson",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/schedule/occurrences": {
+      "get": {
+        "description": "Конкретные уроки периода с учётом переносов и версий расписания.",
+        "parameters": [
+          {
+            "description": "Начало периода YYYY-MM-DD",
+            "in": "query",
+            "name": "date_from",
+            "required": true,
+            "schema": {
+              "description": "Начало периода YYYY-MM-DD",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Конец периода YYYY-MM-DD",
+            "in": "query",
+            "name": "date_to",
+            "required": true,
+            "schema": {
+              "description": "Конец периода YYYY-MM-DD",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "teacher_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Teacher Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ScheduleOccurrenceResponseB"
+                  },
+                  "title": "Response Get Schedule Occurrences Api V1 Auth Org Schedule Occurrences Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Schedule Occurrences",
+        "tags": [
+          "Authentication"
+        ]
+      },
+      "post": {
+        "description": "Создать разовое занятие только на выбранную календарную дату.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOneOffLessonRequestB"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleOccurrenceResponseB"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create One Off Lesson",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/stats": {
+      "get": {
+        "description": "Сводная статистика всей организации для owner/admin dashboard.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgStatsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Org Stats",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/students": {
+      "post": {
+        "description": "Добавить ученика (O12: только owner/admin - зачисление запускает начисления, решает администратор)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentResponseB"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Student",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/students/{student_id}": {
+      "get": {
+        "description": "Данные одного ученика",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentResponseB"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Student",
+        "tags": [
+          "Authentication"
+        ]
+      },
+      "put": {
+        "description": "Обновить ученика",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentResponseB"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Student",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/org/teacher/dashboard/summary": {
+      "get": {
+        "description": "One operational snapshot for an actual teacher's dashboard.\n\nAdministrators and owners use their own dashboards.  Keeping this route\nteacher-scoped prevents a direct /teacher URL from silently showing an\nempty dashboard filtered by a manager's user id.",
+        "parameters": [
+          {
+            "description": "Дата сводки YYYY-MM-DD",
+            "in": "query",
+            "name": "business_date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Дата сводки YYYY-MM-DD",
+              "title": "Business Date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherDashboardSummaryResponseB"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Teacher Dashboard Summary",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1/auth"
+    }
+  ],
+  "x-errors": {
+    "ALREADY_ARCHIVED": {
+      "message": "Группа уже в архиве",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "ALREADY_MEMBER": {
+      "message": "Этот email уже работает в центре",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "ATTENDANCE_CONFLICT": {
+      "message": "Отметки уже изменил другой сотрудник",
+      "model": "AttendanceConflictDetail",
+      "status": 409
+    },
+    "DUPLICATE_SLOT": {
+      "message": "Такой урок уже есть в расписании группы",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "EMAIL_INVALID": {
+      "message": "Проверьте email приглашаемого сотрудника",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "EMAIL_IN_OTHER_ORG": {
+      "message": "Этот email уже зарегистрирован в другом центре. Пока один email работает только в одном центре.",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "EMAIL_REQUIRED": {
+      "message": "Укажите email приглашаемого сотрудника",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "END_BEFORE_START": {
+      "message": "Дата окончания не может быть раньше даты начала",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "EXAM_SERVICE_UNAVAILABLE": {
+      "message": "Не удалось проверить экзамены группы. Повторите попытку.",
+      "model": "OpsErrorResponse",
+      "status": 503
+    },
+    "GROUP_ARCHIVED": {
+      "message": "Группа в архиве: изменить её нельзя. Верните её из архива",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "GROUP_ARCHIVE_BLOCKED": {
+      "message": "Группу нельзя архивировать",
+      "model": "GroupArchiveBlockedDetail",
+      "status": 409
+    },
+    "GROUP_NOT_FOUND": {
+      "message": "Группа не найдена",
+      "model": "OpsErrorResponse",
+      "status": 404
+    },
+    "IMPORT_IN_PROGRESS": {
+      "message": "Импорт уже выполняется. Подождите минуту",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "INVITE_EMAIL_MISMATCH": {
+      "message": "Это приглашение выдано для другого email",
+      "model": "OpsErrorResponse",
+      "status": 400
+    },
+    "LESSON_CANCELLED": {
+      "message": "Урок отменён",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "LESSON_HAS_LIVE_EXAM": {
+      "message": "У урока есть незавершённый экзамен",
+      "model": "LiveExamDetail",
+      "status": 409
+    },
+    "LESSON_NOT_FOUND": {
+      "message": "Урок не найден",
+      "model": "OpsErrorResponse",
+      "status": 404
+    },
+    "LESSON_OUTSIDE_WINDOW": {
+      "message": "Урок вне окна незакрытых уроков",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "LESSON_TEACHER_CHANGED": {
+      "message": "Преподаватель урока уже изменён",
+      "model": "LessonTeacherChangedDetail",
+      "status": 409
+    },
+    "LESSON_TOO_OLD": {
+      "message": "Урок старше 7 дней — его закрывает администратор или владелец",
+      "model": "OpsErrorResponse",
+      "status": 403
+    },
+    "MEMBER_HAS_ASSIGNMENTS": {
+      "message": "У сотрудника есть группы или начатые уроки",
+      "model": "MemberHasAssignmentsDetail",
+      "status": 409
+    },
+    "MEMBER_NOT_FOUND": {
+      "message": "Сотрудник не найден",
+      "model": "OpsErrorResponse",
+      "status": 404
+    },
+    "NOT_ARCHIVED": {
+      "message": "Группа не в архиве",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "NOT_LESSON_TEACHER": {
+      "message": "Этот урок ведёт другой преподаватель",
+      "model": "OpsErrorResponse",
+      "status": 403
+    },
+    "NOT_REMOVED": {
+      "message": "Сотрудник не удалён",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "NO_STUDENTS": {
+      "message": "В группе нет учеников — урок начать нельзя. Добавьте учеников в группу.",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "NO_STUDENTS_COMPLETE": {
+      "message": "В составе урока нет учеников — завершить нельзя. Отметьте «Урока не было».",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "ONLY_OWNER_INVITES_ADMIN": {
+      "message": "Приглашать администраторов может только владелец",
+      "model": "OpsErrorResponse",
+      "status": 403
+    },
+    "PAYROLL_LOCKED": {
+      "message": "Ведомость за этот месяц уже утверждена: смена преподавателя недоступна",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "STAFF_ROLE_REQUIRED": {
+      "message": "Добавлять учеников может администратор центра",
+      "model": "OpsErrorResponse",
+      "status": 403
+    },
+    "STATUS_USE_ARCHIVE_ACTION": {
+      "message": "Используйте «В архив» / «Вернуть из архива» у группы",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "TARGET_NOT_TEACHER": {
+      "message": "Выберите преподавателя центра",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "TEACHER_BUSY": {
+      "message": "У преподавателя уже есть урок в это время",
+      "model": "TeacherBusyDetail",
+      "status": 409
+    },
+    "TEACHER_INACTIVE": {
+      "message": "Преподаватель группы больше не работает в центре",
+      "model": "TeacherInactiveDetail",
+      "status": 409
+    },
+    "UNASSIGNED_NOT_CONFIRMED": {
+      "message": "Подтвердите, что группа останется без преподавателя",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "VALID_FROM_PAST": {
+      "message": "Дата начала не может быть в прошлом",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "VALID_FROM_RANGE": {
+      "message": "Дата начала не может быть позже чем через 365 дней",
+      "model": "OpsErrorResponse",
+      "status": 422
+    }
+  },
+  "x-internal": {
+    "GET /public/groups/{group_id}/verify-student?as_of=": {
+      "request": null,
+      "response": "VerifyStudentAsOfOut"
+    },
+    "POST /internal/group-bindings/archive-impact": {
+      "request": "GroupBindingRequest",
+      "response": "GroupArchiveImpactOut"
+    },
+    "POST /internal/group-bindings/archive-release": {
+      "request": "GroupBindingRequest",
+      "response": "GroupArchiveReleaseOut"
+    },
+    "POST /internal/lesson-bindings/completed": {
+      "request": "LessonBindingRequest",
+      "response": "CompletedOut"
+    },
+    "POST /internal/lesson-bindings/completion-check": {
+      "request": "LessonBindingRequest",
+      "response": "CompletionCheckOut"
+    }
+  }
+}

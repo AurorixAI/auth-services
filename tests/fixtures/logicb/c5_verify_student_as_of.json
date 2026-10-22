@@ -1,0 +1,12 @@
+{
+  "enrolled": true,
+  "group_name": "9-А",
+  "student": {
+    "class_level": 9,
+    "display_id": "AL09-002",
+    "first_name": "Бек",
+    "full_name": "Юсупов Бек",
+    "id": "ff2e3f03-c8cd-58fa-bea4-c5e7b68c9ae0",
+    "last_name": "Юсупов"
+  }
+}

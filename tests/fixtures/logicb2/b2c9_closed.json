@@ -1,0 +1,45 @@
+{
+  "batchId": "95f7e549-d119-5b9d-9fe1-ca16dc320616",
+  "comment": null,
+  "createdAt": "2026-10-21T09:00:00",
+  "decision": {
+    "at": "2026-10-22T05:00:00",
+    "by": null,
+    "closedReason": "GROUP_ARCHIVED",
+    "closedReasonText": "Группа закрыта",
+    "kind": "closed",
+    "movedTo": null,
+    "note": null,
+    "substitute": null,
+    "via": "system"
+  },
+  "group": {
+    "id": "b5aa24ec-82c4-5190-b6ce-a45a812c649b",
+    "name": "8-В",
+    "studentCount": 0
+  },
+  "id": "8909a314-c0cc-53cd-ab74-d68c02b4550b",
+  "lesson": {
+    "date": "2026-10-26",
+    "endTime": "11:30",
+    "exists": true,
+    "format": "offline",
+    "lessonId": "lesson-l4",
+    "room": null,
+    "startTime": "10:00",
+    "startsAtUtc": "2026-10-26T05:00:00"
+  },
+  "minutesToStart": 5760,
+  "origin": "teacher",
+  "overdue": false,
+  "previous": null,
+  "reasonCode": "sick",
+  "reasonLabel": "Болезнь",
+  "status": "closed",
+  "suggestedTeacher": null,
+  "teacher": {
+    "id": "dfa29678-0238-53bf-841f-f7b02e776e91",
+    "name": "Петров П."
+  },
+  "urgent": false
+}

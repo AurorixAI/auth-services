@@ -304,6 +304,40 @@ def _parse_money(raw: str) -> Optional[int]:
         raise ValueError(raw) from None
 
 
+def parse_opening(d: dict, row: int, *, money: bool, accounting_start: date, enrol_day: date, err, warn):
+    """LOGIC-A: the opening-balance columns G-I of a student row -> ``(ok, paid_until, debt_amount, debt_on)``.  ``ok=False`` = a blocking error
+    (already reported through ``err``).  Shared by the legacy plan and by LOGIC-B's ``import_ops.build_plan``."""
+    paid_until = debt_amount = debt_on = None
+    if not any(d.get(k) for k in (K_PAID_UNTIL, K_DEBT, K_DEBT_ON)):
+        return True, None, None, None
+    try:
+        raw_paid, raw_debt, raw_on = _parse_date(d.get(K_PAID_UNTIL, "")), _parse_money(d.get(K_DEBT, "")), _parse_date(d.get(K_DEBT_ON, ""))
+    except ValueError as bad:
+        err(SHEET_STUDENTS, row, "Остаток", f"Не удалось прочитать дату или сумму остатка: '{bad}'")
+        return False, None, None, None
+    if raw_debt is not None and not 1 <= raw_debt <= 10_000_000_000:
+        err(SHEET_STUDENTS, row, "Долг, сум", "Долг: от 1 до 10 000 000 000 сум")
+        return False, None, None, None
+    if raw_on is not None and raw_debt is None:
+        warn(SHEET_STUDENTS, row, "Долг на дату", "Указана дата долга без суммы — дата пропущена.")
+    if not money:
+        warn(SHEET_STUDENTS, row, "Остаток", "Нет прав вносить остатки — ученик импортирован без остатка.")
+        return True, None, None, None
+    if raw_paid is not None and raw_paid < max(accounting_start, enrol_day):
+        warn(SHEET_STUDENTS, row, "Оплачено до (дата)", "«Оплачено до» раньше даты зачисления — остаток пропущен.")
+        raw_paid = None
+    if raw_paid is not None and raw_paid > enrol_day + timedelta(days=366):
+        warn(SHEET_STUDENTS, row, "Оплачено до (дата)", "«Оплачено до» дальше чем через год — остаток пропущен.")
+        raw_paid = None
+    if raw_debt is not None:
+        day = raw_on or (enrol_day - timedelta(days=1))   # default: the day before the enrolment
+        if day > enrol_day or day < date(2020, 1, 1):
+            warn(SHEET_STUDENTS, row, "Долг на дату", "Дата долга должна быть не позже дня зачисления и не раньше 2020 года — долг пропущен.")
+        else:
+            debt_amount, debt_on = raw_debt, day
+    return True, raw_paid, debt_amount, debt_on
+
+
 def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session, *, money: bool = True) -> ImportPlan:
     """``money``: the caller may enter money (owner / an admin with the switch): without it the opening-balance columns are ignored with a
     warning and the rows are imported without them."""
@@ -423,36 +457,10 @@ def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session, *, money: bool 
                     f"Группа '{group_name}' не найдена во вкладке «Группы» и не существует.")
                 continue
 
-        paid_until = debt_amount = debt_on = None
-        asked = any(d.get(k) for k in (K_PAID_UNTIL, K_DEBT, K_DEBT_ON))
-        if asked:
-            try:
-                raw_paid, raw_debt, raw_on = _parse_date(d.get(K_PAID_UNTIL, "")), _parse_money(d.get(K_DEBT, "")), _parse_date(d.get(K_DEBT_ON, ""))
-            except ValueError as bad:
-                err(SHEET_STUDENTS, r.row, "Остаток", f"Не удалось прочитать дату или сумму остатка: '{bad}'")
-                continue
-            if raw_debt is not None and not 1 <= raw_debt <= 10_000_000_000:
-                err(SHEET_STUDENTS, r.row, "Долг, сум", "Долг: от 1 до 10 000 000 000 сум")
-                continue
-            if raw_on is not None and raw_debt is None:
-                warn(SHEET_STUDENTS, r.row, "Долг на дату", "Указана дата долга без суммы — дата пропущена.")
-            if not money:
-                warn(SHEET_STUDENTS, r.row, "Остаток", "Нет прав вносить остатки — ученик импортирован без остатка.")
-            else:
-                if raw_paid is not None and raw_paid < max(accounting_start, enrol_day):
-                    warn(SHEET_STUDENTS, r.row, "Оплачено до (дата)", "«Оплачено до» раньше даты зачисления — остаток пропущен.")
-                    raw_paid = None
-                if raw_paid is not None and raw_paid > enrol_day + timedelta(days=366):
-                    warn(SHEET_STUDENTS, r.row, "Оплачено до (дата)", "«Оплачено до» дальше чем через год — остаток пропущен.")
-                    raw_paid = None
-                if raw_debt is not None:
-                    day = raw_on or (enrol_day - timedelta(days=1))   # default: the day before the enrolment
-                    if day > enrol_day or day < date(2020, 1, 1):
-                        warn(SHEET_STUDENTS, r.row, "Долг на дату", "Дата долга должна быть не позже дня зачисления и не раньше 2020 года — долг пропущен.")
-                        raw_debt = None
-                    else:
-                        debt_amount, debt_on = raw_debt, day
-                paid_until = raw_paid
+        ok, paid_until, debt_amount, debt_on = parse_opening(
+            d, r.row, money=money, accounting_start=accounting_start, enrol_day=enrol_day, err=err, warn=warn)
+        if not ok:
+            continue
 
         dedup_key = (last.lower(), first.lower(), (phone or "").strip())
         if dedup_key in seen_students:

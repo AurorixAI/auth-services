@@ -1,0 +1,9 @@
+{
+  "body": {
+    "detail": {
+      "code": "INVITE_EMAIL_MISMATCH",
+      "message": "Это приглашение выдано для другого email"
+    }
+  },
+  "status": 400
+}

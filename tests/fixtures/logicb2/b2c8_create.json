@@ -1,0 +1,47 @@
+{
+  "alreadyRequested": [],
+  "batchId": "19ffb739-8f2c-50f8-805d-020599e2fa4e",
+  "created": [
+    {
+      "batchId": "19ffb739-8f2c-50f8-805d-020599e2fa4e",
+      "comment": "Сам заболел",
+      "createdAt": "2026-10-21T09:20:00",
+      "decision": null,
+      "group": {
+        "id": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+        "name": "9-А",
+        "studentCount": 3
+      },
+      "id": "4d187357-6980-50fe-9f60-5a1ff9b53755",
+      "lesson": {
+        "date": "2026-10-26",
+        "endTime": "11:30",
+        "exists": true,
+        "format": "offline",
+        "lessonId": "lesson-l1",
+        "room": null,
+        "startTime": "10:00",
+        "startsAtUtc": "2026-10-26T05:00:00"
+      },
+      "minutesToStart": 6940,
+      "origin": "teacher",
+      "overdue": false,
+      "previous": {
+        "id": "5404e474-b04e-5e02-ba9a-e1862433c3c8",
+        "status": "substituted",
+        "substituteName": "Рахимов Т.",
+        "teacherName": "Иванов И."
+      },
+      "reasonCode": "sick",
+      "reasonLabel": "Болезнь",
+      "status": "pending",
+      "suggestedTeacher": null,
+      "teacher": {
+        "id": "5fd041ac-c0cc-5b16-8903-db2bbc1e9333",
+        "name": "Рахимов Т."
+      },
+      "urgent": false
+    }
+  ],
+  "skipped": []
+}

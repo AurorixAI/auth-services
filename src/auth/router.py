@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import Literal, Optional
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from .service import (
@@ -22,7 +22,7 @@ from .service import (
     verify_access_token,
 )
 from .attendance_access import is_org_admin, is_org_manager
-from .models import DiagnosticInvite
+from .models import DiagnosticInvite, Group
 from .student_archive import (
     ArchiveError,
     ArchiveStudentRequest,
@@ -32,8 +32,34 @@ from .student_archive import (
     StudentArchiveService,
     actor_role_for_audit,
 )
-from . import import_service
-from .import_service import ImportPreviewResponse, ImportCommitResponse
+from . import import_ops, import_service
+from .ops_router import router as ops_router
+from .ops_rules import GroupArchivedForEnrolment, OpsError
+from .ops_schemas import (
+    AcceptInviteRequestB,
+    CreateLessonRequestB,
+    CreateOneOffLessonRequestB,
+    GroupAttendanceResponseB,
+    GroupResponseB,
+    ImportCommitResponseB,
+    ImportPreviewResponseB,
+    InvitationOut,
+    InviteInfoOut,
+    InviteMemberRequestB,
+    MemberOut,
+    OpenAttendanceActionResponseB,
+    OrgStatsOut,
+    ReconcileCancelOut,
+    ReconcileOut,
+    RemoveMemberOut,
+    SaveAttendanceOut,
+    SaveAttendanceRequestB,
+    ScheduleLessonResponseB,
+    ScheduleOccurrenceResponseB,
+    StartAttendanceOut,
+    StudentResponseB,
+    TeacherDashboardSummaryResponseB,
+)
 from src.api.rate_limit import client_bucket, client_ip, enforce_rate_limit, hit_window, peek_window, rate_limit
 from src.core.config import get_settings
 from src.core.exceptions import InvalidCredentialsError
@@ -250,6 +276,7 @@ def refresh_tokens(
 
 @router.get(
     "/invite/{code}",
+    response_model=InviteInfoOut,
     dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint=INVITE_INFO_RATE_ENDPOINT))],
 )
 def get_invite_info(code: str, db: Session = Depends(get_db)):
@@ -266,7 +293,7 @@ def get_invite_info(code: str, db: Session = Depends(get_db)):
     status_code=201,
     dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint=INVITE_ACCEPT_RATE_ENDPOINT))],
 )
-def accept_invite(request: AcceptInviteRequest, db: Session = Depends(get_db), raw_request: Request = None):
+def accept_invite(request: AcceptInviteRequestB, db: Session = Depends(get_db), raw_request: Request = None):
     """Принять приглашение в организацию — создаёт аккаунт"""
     try:
         result = _svc(db, raw_request).accept_invitation(request)
@@ -409,6 +436,7 @@ def verify_group_student(
     q: Optional[str] = Query(default=None),
     student_id: Optional[str] = Query(default=None),
     student_name: Optional[str] = Query(default=None),
+    as_of: Optional[str] = Query(default=None, description="Naive UTC ISO instant: enrolled at that moment (O17)"),
     _: None = Depends(require_internal_service_token),
     db: Session = Depends(get_db),
 ):
@@ -418,11 +446,20 @@ def verify_group_student(
     больше не является публичным: UUID группы и ФИО нельзя использовать как
     способ перечисления учеников.
     """
+    instant = None
+    if as_of:
+        try:
+            instant = datetime.fromisoformat(as_of)
+        except ValueError as exc:
+            raise HTTPException(422, "as_of должен быть моментом в формате ISO") from exc
+        if instant.tzinfo is not None:  # an aware instant is converted to naive UTC
+            instant = instant.astimezone(timezone.utc).replace(tzinfo=None)
     return _svc(db).verify_group_student(
         group_id=group_id,
         query=q,
         student_id=student_id,
         student_name=student_name,
+        as_of=instant,
     )
 
 
@@ -608,7 +645,7 @@ def get_organization(
         raise HTTPException(404, str(e))
 
 
-@router.get("/org/stats")
+@router.get("/org/stats", response_model=OrgStatsOut)
 def get_org_stats(
     user: dict = Depends(require_org_admin), db: Session = Depends(get_db)
 ):
@@ -643,20 +680,20 @@ def update_organization(
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 
-@router.post("/org/invitations")
+@router.post("/org/invitations", response_model=InvitationOut)
 def create_invitation(
-    request: InviteMemberRequest,
+    request: InviteMemberRequestB,
     user: dict = Depends(require_org_admin),
     db: Session = Depends(get_db),
 ):
     """Создать приглашение (owner/admin → admin/teacher)"""
     try:
-        return _svc(db).create_invitation(user["org_id"], user["user_id"], request)
+        return _svc(db).create_invitation(user["org_id"], user["user_id"], request, creator_role=user.get("org_role"))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
-@router.get("/org/invitations")
+@router.get("/org/invitations", response_model=list[InvitationOut])
 def list_invitations(
     user: dict = Depends(require_org_admin), db: Session = Depends(get_db)
 ):
@@ -683,12 +720,14 @@ def revoke_invitation(
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 
-@router.get("/org/members")
+@router.get("/org/members", response_model=list[MemberOut])
 def list_members(
-    user: dict = Depends(require_org_admin), db: Session = Depends(get_db)
+    member_status: Literal["active", "removed", "all"] = Query("active", alias="status"),
+    user: dict = Depends(require_org_admin),
+    db: Session = Depends(get_db),
 ):
-    """Список сотрудников организации"""
-    return _svc(db).list_org_members(user["org_id"])
+    """Список сотрудников организации (по умолчанию — действующие; ``removed`` — бывшие, ``all`` — все)"""
+    return _svc(db).list_org_members(user["org_id"], member_status)
 
 
 @router.put("/org/members/{member_id}/role")
@@ -700,12 +739,12 @@ def update_member_role(
 ):
     """Изменить роль сотрудника (только owner)"""
     try:
-        return _svc(db).update_member_role(user["org_id"], member_id, role)
+        return _svc(db).update_member_role(user["org_id"], member_id, role, actor_id=user["user_id"])
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
-@router.delete("/org/members/{member_id}", response_model=MessageResponse)
+@router.delete("/org/members/{member_id}", response_model=RemoveMemberOut)
 def remove_member(
     member_id: str,
     user: dict = Depends(require_org_owner),
@@ -713,8 +752,7 @@ def remove_member(
 ):
     """Удалить сотрудника (только owner)"""
     try:
-        _svc(db).remove_member(user["org_id"], member_id)
-        return MessageResponse(message="Сотрудник удалён")
+        return _svc(db).remove_member(user["org_id"], member_id, actor_id=user["user_id"])
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -724,13 +762,15 @@ def remove_member(
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 
-@router.post("/org/students", response_model=StudentResponse, status_code=201)
+@router.post("/org/students", response_model=StudentResponseB, status_code=201)
 def create_student(
     request: StudentCreateRequest,
     user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
-    """Добавить ученика"""
+    """Добавить ученика (O12: только owner/admin - зачисление запускает начисления, решает администратор)"""
+    if not is_org_admin(user):
+        raise OpsError(403, "STAFF_ROLE_REQUIRED", "Добавлять учеников может администратор центра")
     return _svc(db).create_student(user["org_id"], request)
 
 
@@ -774,7 +814,7 @@ def list_students(
     return items
 
 
-@router.get("/org/students/{student_id}", response_model=StudentResponse)
+@router.get("/org/students/{student_id}", response_model=StudentResponseB)
 def get_student(
     student_id: str,
     user: dict = Depends(require_org_teacher),
@@ -823,14 +863,15 @@ def get_student_attendance_summary(
 ):
     """Месячная посещаемость ученика по всем группам, включая прошлые."""
     try:
-        return _svc(db).get_student_attendance_summary(
-            user["org_id"], student_id, month=month
-        )
+        svc = _svc(db)
+        from .lesson_substitutions import annotate_student_attendance  # LOGIC-B2: teacher of the lesson + notices of cancelled / moved lessons
+
+        return annotate_student_attendance(svc, user["org_id"], student_id, svc.get_student_attendance_summary(user["org_id"], student_id, month=month))
     except ValueError as e:
         raise HTTPException(404 if str(e) == "Ученик не найден" else 400, str(e))
 
 
-@router.put("/org/students/{student_id}", response_model=StudentResponse)
+@router.put("/org/students/{student_id}", response_model=StudentResponseB)
 def update_student(
     student_id: str,
     request: StudentUpdateRequest,
@@ -1008,7 +1049,7 @@ def acknowledge_diagnostic_report(
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 
-@router.post("/org/groups", response_model=GroupResponse, status_code=201)
+@router.post("/org/groups", response_model=GroupResponseB, status_code=201)
 def create_group(
     request: GroupCreateRequest,
     user: dict = Depends(require_org_member),
@@ -1029,7 +1070,7 @@ def create_group(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
 
-@router.get("/org/groups", response_model=list[GroupResponse])
+@router.get("/org/groups", response_model=list[GroupResponseB])
 def list_groups(
     teacher_id: Optional[str] = None,
     class_level: Optional[int] = None,
@@ -1103,7 +1144,7 @@ def get_group_stats(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
 
 
-@router.put("/org/groups/{group_id}", response_model=GroupResponse)
+@router.put("/org/groups/{group_id}", response_model=GroupResponseB)
 def update_group(
     group_id: str,
     request: GroupUpdateRequest,
@@ -1189,6 +1230,8 @@ def add_student_to_group(
         raise HTTPException(e.status_code, e.detail)
     except OperationalError as e:
         raise _concurrent_edit_or_raise(e, db)
+    except GroupArchivedForEnrolment as e:  # O4: an archived group takes nobody (409, coded)
+        raise OpsError(409, "GROUP_ARCHIVED", str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -1235,7 +1278,7 @@ def download_import_template(user: dict = Depends(require_org_admin)):
     )
 
 
-@router.post("/org/import/preview", response_model=ImportPreviewResponse)
+@router.post("/org/import/preview", response_model=ImportPreviewResponseB)
 async def import_preview(
     file: UploadFile = File(...),
     user: dict = Depends(require_org_admin),
@@ -1243,10 +1286,10 @@ async def import_preview(
 ):
     """Разобрать и проверить файл (dry-run) — ничего не записывается."""
     data = await _read_import_upload(file)
-    return import_service.preview(user["org_id"], data, db, money=has_payments_access(user, db))
+    return import_ops.preview(user["org_id"], data, db, money=has_payments_access(user, db))
 
 
-@router.post("/org/import/commit", response_model=ImportCommitResponse)
+@router.post("/org/import/commit", response_model=ImportCommitResponseB)
 async def import_commit(
     file: UploadFile = File(...),
     user: dict = Depends(require_org_admin),
@@ -1254,7 +1297,7 @@ async def import_commit(
 ):
     """Записать данные из файла в базу транзакционно (всё или ничего)."""
     data = await _read_import_upload(file)
-    return import_service.commit(user["org_id"], user["user_id"], data, db, money=has_payments_access(user, db))
+    return import_ops.commit(user["org_id"], user["user_id"], data, db, money=has_payments_access(user, db))
 
 
 async def _read_import_upload(file: UploadFile) -> bytes:
@@ -1292,7 +1335,7 @@ def list_users(
 # ═══════════════════════════════════════════════════════════════════
 
 
-@router.get("/org/teacher/dashboard/summary", response_model=TeacherDashboardSummaryResponse)
+@router.get("/org/teacher/dashboard/summary", response_model=TeacherDashboardSummaryResponseB)
 def get_teacher_dashboard_summary(
     business_date: Optional[str] = Query(None, description="Дата сводки YYYY-MM-DD"),
     user: dict = Depends(require_org_member),
@@ -1322,7 +1365,7 @@ def get_teacher_dashboard_summary(
     )
 
 
-@router.get("/org/schedule", response_model=list[ScheduleLessonResponse])
+@router.get("/org/schedule", response_model=list[ScheduleLessonResponseB])
 def get_schedule(
     teacher_id: Optional[str] = None,
     user: dict = Depends(require_org_member),
@@ -1335,7 +1378,7 @@ def get_schedule(
     return _svc(db).get_schedule(user["org_id"], teacher_id=tid)
 
 
-@router.get("/org/schedule/occurrences", response_model=list[ScheduleOccurrenceResponse])
+@router.get("/org/schedule/occurrences", response_model=list[ScheduleOccurrenceResponseB])
 def get_schedule_occurrences(
     date_from: str = Query(..., description="Начало периода YYYY-MM-DD"),
     date_to: str = Query(..., description="Конец периода YYYY-MM-DD"),
@@ -1351,16 +1394,18 @@ def get_schedule_occurrences(
         raise HTTPException(400, "date_from и date_to должны иметь формат YYYY-MM-DD") from exc
     tid = teacher_id if is_org_admin(user) else user["user_id"]
     try:
-        return _svc(db).get_schedule_occurrences(
-            user["org_id"], date_from=start, date_to=end, teacher_id=tid
-        )
+        svc = _svc(db)
+        items = svc.get_schedule_occurrences(user["org_id"], date_from=start, date_to=end, teacher_id=tid)
+        from .lesson_substitutions import annotate_occurrences  # LOGIC-B2: request mark + outcome of a cancelled / moved original
+
+        return annotate_occurrences(svc, user, items)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
-@router.post("/org/schedule/lessons", response_model=ScheduleLessonResponse, status_code=201)
+@router.post("/org/schedule/lessons", response_model=ScheduleLessonResponseB, status_code=201)
 def create_lesson(
-    request: CreateLessonRequest,
+    request: CreateLessonRequestB,
     user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
@@ -1380,11 +1425,11 @@ def create_lesson(
 
 @router.post(
     "/org/schedule/occurrences",
-    response_model=ScheduleOccurrenceResponse,
+    response_model=ScheduleOccurrenceResponseB,
     status_code=201,
 )
 def create_one_off_lesson(
-    request: CreateOneOffLessonRequest,
+    request: CreateOneOffLessonRequestB,
     user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
@@ -1402,7 +1447,7 @@ def create_one_off_lesson(
         raise HTTPException(400, str(e))
 
 
-@router.put("/org/schedule/lessons/{lesson_id}", response_model=ScheduleLessonResponse)
+@router.put("/org/schedule/lessons/{lesson_id}", response_model=ScheduleLessonResponseB)
 def update_lesson(
     lesson_id: str,
     request: UpdateLessonRequest,
@@ -1425,7 +1470,7 @@ def update_lesson(
     )
 
 
-@router.post("/org/schedule/lessons/{lesson_id}/reschedule", response_model=ScheduleOccurrenceResponse)
+@router.post("/org/schedule/lessons/{lesson_id}/reschedule", response_model=ScheduleOccurrenceResponseB)
 def reschedule_lesson_occurrence(
     lesson_id: str,
     request: RescheduleLessonRequest,
@@ -1447,7 +1492,7 @@ def reschedule_lesson_occurrence(
         raise HTTPException(400, str(e))
 
 
-@router.put("/org/schedule/lessons/{lesson_id}/recurrence", response_model=ScheduleLessonResponse)
+@router.put("/org/schedule/lessons/{lesson_id}/recurrence", response_model=ScheduleLessonResponseB)
 def revise_recurring_lesson(
     lesson_id: str,
     request: ReviseRecurringLessonRequest,
@@ -1537,7 +1582,7 @@ def delete_lesson(
     )
 
 
-@router.get("/org/attendance/open-actions", response_model=list[OpenAttendanceActionResponse])
+@router.get("/org/attendance/open-actions", response_model=list[OpenAttendanceActionResponseB])
 def get_open_attendance_actions(
     user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
@@ -1558,7 +1603,7 @@ def get_open_attendance_actions(
         raise HTTPException(403, str(e))
 
 
-@router.get("/org/groups/{group_id}/attendance", response_model=GroupAttendanceResponse)
+@router.get("/org/groups/{group_id}/attendance", response_model=GroupAttendanceResponseB)
 def get_group_attendance(
     group_id: str,
     month: Optional[str] = Query(None, description="Месяц YYYY-MM"),
@@ -1569,7 +1614,8 @@ def get_group_attendance(
 ):
     """Журнал посещаемости группы за месяц или указанный период."""
     try:
-        return _svc(db).get_group_attendance(
+        svc = _svc(db)
+        out = svc.get_group_attendance(
             user["org_id"],
             group_id,
             month=month,
@@ -1579,22 +1625,35 @@ def get_group_attendance(
             is_org_admin=is_org_admin(user),
             is_org_manager=is_org_manager(user),
         )
+        if not is_org_admin(user):
+            # LOGIC-B2: a substitute / a former teacher gets only the lessons that are his (see ``attendance_rules.restrict_journal``)
+            from .attendance_rules import AttendanceRules
+
+            group = db.query(Group).filter(Group.id == group_id, Group.org_id == user["org_id"]).first()
+            if group is not None:
+                out = AttendanceRules(svc).restrict_journal(group, out, user["user_id"])
+        group = db.query(Group).filter(Group.id == group_id, Group.org_id == user["org_id"]).first()
+        if group is not None:
+            from .lesson_substitutions import annotate_journal  # LOGIC-B2
+
+            out = annotate_journal(svc, user, group, out)
+        return out
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
-@router.post("/org/groups/{group_id}/attendance")
+@router.post("/org/groups/{group_id}/attendance", response_model=SaveAttendanceOut)
 def save_group_attendance(
     group_id: str,
-    request: SaveAttendanceRequest,
+    request: SaveAttendanceRequestB,
     user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
     """Сохранить отметки посещаемости за урок/дату"""
     try:
-        _svc(db).save_group_attendance(
+        result = _svc(db).save_group_attendance(
             user["org_id"],
             group_id,
             request,
@@ -1602,7 +1661,7 @@ def save_group_attendance(
             is_org_admin=is_org_admin(user),
             is_org_manager=is_org_manager(user),
         )
-        return {"ok": True, "saved": True}
+        return {"ok": True, "saved": True, "version": result["version"], "examSync": result["examSync"]}
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ExcusePauseRefused as e:  # LOGIC-A: an excuse on a day of the student's pause
@@ -1613,7 +1672,7 @@ def save_group_attendance(
         raise HTTPException(503, str(e))
 
 
-@router.post("/org/groups/{group_id}/attendance/start")
+@router.post("/org/groups/{group_id}/attendance/start", response_model=StartAttendanceOut)
 def start_group_attendance(
     group_id: str,
     request: StartAttendanceRequest,
@@ -1622,21 +1681,21 @@ def start_group_attendance(
 ):
     """Explicitly begin a lesson before any attendance can be marked."""
     try:
-        _svc(db).start_group_attendance(
+        version = _svc(db).start_group_attendance(
             user["org_id"],
             group_id,
             request,
             started_by=user["user_id"],
             is_org_admin=is_org_admin(user),
         )
-        return {"ok": True, "started": True}
+        return {"ok": True, "started": True, "version": version}
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
-@router.post("/org/groups/{group_id}/attendance/reconcile")
+@router.post("/org/groups/{group_id}/attendance/reconcile", response_model=ReconcileOut)
 def reconcile_missed_group_attendance(
     group_id: str,
     request: StartAttendanceRequest,
@@ -1645,21 +1704,21 @@ def reconcile_missed_group_attendance(
 ):
     """Open the journal for a past occurrence that was never started."""
     try:
-        _svc(db).reconcile_missed_group_attendance(
+        version = _svc(db).reconcile_missed_group_attendance(
             user["org_id"],
             group_id,
             request,
             reconciled_by=user["user_id"],
             is_org_admin=is_org_admin(user),
         )
-        return {"ok": True, "reconciled": True}
+        return {"ok": True, "reconciled": True, "version": version}
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
-@router.post("/org/groups/{group_id}/attendance/reconcile/cancel")
+@router.post("/org/groups/{group_id}/attendance/reconcile/cancel", response_model=ReconcileCancelOut)
 def cancel_missed_group_attendance(
     group_id: str,
     request: ReconcileMissedLessonRequest,
@@ -1668,17 +1727,21 @@ def cancel_missed_group_attendance(
 ):
     """Cancel a missed occurrence with a mandatory reason and audit trail."""
     try:
-        _svc(db).cancel_missed_group_attendance(
+        version = _svc(db).cancel_missed_group_attendance(
             user["org_id"],
             group_id,
             request,
             cancelled_by=user["user_id"],
             is_org_admin=is_org_admin(user),
         )
-        return {"ok": True, "cancelled": True}
+        return {"ok": True, "cancelled": True, "version": version}
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
     except RuntimeError as e:
         raise HTTPException(503, str(e))
+
+
+# LOGIC-B: the new operations routes (lesson teacher, group archive, staff handover / restore).
+router.include_router(ops_router)

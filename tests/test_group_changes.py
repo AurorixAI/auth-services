@@ -32,7 +32,7 @@ def test_teacher_change_is_validated_and_audited(world):
     assert row.snapshot == {"teacher_id": [str(world.teacher.id), str(world.teacher2.id)]}
 
 
-@pytest.mark.parametrize("who", ["foreign_teacher", "admin_user", "random", "inactive", "garbage"])
+@pytest.mark.parametrize("who", ["foreign_teacher", "random", "inactive", "garbage"])  # LOGIC-B (lead decision): an admin / owner of the centre may be a group teacher
 def test_wrong_teacher_is_400_and_nothing_changes(world, who):
     from tests.pg_world import make_member, make_user
 
@@ -59,10 +59,11 @@ def test_wrong_teacher_is_400_and_nothing_changes(world, who):
 
 def test_other_fields_write_updated_audit_with_old_and_new(world):
     client = make_client(world, user=world.owner)
-    assert put(client, world, name="Новая группа", max_students=12, status="archived").status_code == 200
+    # LOGIC-B O4: the status is not a field of this save any more (422 STATUS_USE_ARCHIVE_ACTION, see test_ops_o4_group_archive_pg)
+    assert put(client, world, name="Новая группа", max_students=12).status_code == 200
     (row,) = audits(world)
     assert row.action == "updated" and row.actor_id == world.owner.id and row.actor_role == "owner"
-    assert row.snapshot == {"name": ["Группа", "Новая группа"], "max_students": [30, 12], "status": ["active", "archived"]}
+    assert row.snapshot == {"name": ["Группа", "Новая группа"], "max_students": [30, 12]}
 
 
 def test_teacher_and_other_changes_in_one_save_is_a_single_teacher_changed_row(world):

@@ -1,0 +1,12 @@
+{
+  "examSync": {
+    "leftRunning": [],
+    "released": [
+      "EX_123"
+    ],
+    "warning": null
+  },
+  "ok": true,
+  "saved": true,
+  "version": 3
+}

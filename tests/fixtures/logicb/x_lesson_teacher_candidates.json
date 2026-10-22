@@ -1,0 +1,26 @@
+{
+  "candidates": [
+    {
+      "busy": false,
+      "busyWith": null,
+      "name": "Рахимов Т.",
+      "teacherId": "5fd041ac-c0cc-5b16-8903-db2bbc1e9333"
+    },
+    {
+      "busy": true,
+      "busyWith": {
+        "endTime": "11:30",
+        "groupName": "8-В",
+        "startTime": "10:00"
+      },
+      "name": "Петров П.",
+      "teacherId": "dfa29678-0238-53bf-841f-f7b02e776e91"
+    }
+  ],
+  "currentTeacherId": "23da0f33-efdf-5266-af96-b052211c5c8f",
+  "defaultTeacherId": "23da0f33-efdf-5266-af96-b052211c5c8f",
+  "endTime": "11:30",
+  "lessonDate": "2026-10-26",
+  "lessonId": "lesson-l1",
+  "startTime": "10:00"
+}

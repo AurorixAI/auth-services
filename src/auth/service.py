@@ -109,6 +109,19 @@ from src.core.config import get_settings
 from src.core.email import send_admin_new_application
 from src.core.exceptions import InvalidCredentialsError
 
+# LOGIC-B: the answers that grew (room may be null, validFrom, teacher of a lesson, ...) are the subclasses of ops_schemas, used under the old names.
+from .ops_schemas import (  # noqa: E402
+    GroupAttendanceResponseB as GroupAttendanceResponse,
+    GroupResponseB as GroupResponse,
+    OpenAttendanceActionResponseB as OpenAttendanceActionResponse,
+    ScheduleLessonResponseB as ScheduleLessonResponse,
+    ScheduleOccurrenceResponseB as ScheduleOccurrenceResponse,
+    StudentResponseB as StudentResponse,
+    TeacherDashboardSummaryResponseB as TeacherDashboardSummaryResponse,
+)
+from . import attendance_rules, business_clock, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
+from . import staff_lifecycle, student_views  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 # A transfer closes one membership and opens the next one in the same request;
@@ -721,107 +734,17 @@ class AuthService:
     # ═══════════════════════════════════════════════════════════════════
 
     def create_invitation(
-        self, org_id: str, creator_id: str, request: InviteMemberRequest
+        self, org_id: str, creator_id: str, request: InviteMemberRequest, *, creator_role: Optional[str] = None
     ) -> dict:
-        """Создать приглашение (owner/admin приглашает admin/teacher)"""
-        code = generate_code(INVITE_CODE_LENGTH, digits_only=False)
-
-        invite = Invitation(
-            org_id=org_id,
-            invited_by=creator_id,
-            email=request.email,
-            org_role=request.org_role,
-            code=code,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=7),
-        )
-        self.db.add(invite)
-        self.db.commit()
-
-        logger.info(
-            f"Invitation created: {code} for role={request.org_role} in org={org_id}"
-        )
-
-        return {
-            "code": code,
-            "org_role": request.org_role,
-            "expires_at": invite.expires_at.isoformat(),
-        }
+        """Создать приглашение (owner/admin приглашает teacher, admin приглашает только владелец) - ``invites.Invites``."""
+        return invites.Invites(self).create(org_id, creator_id, request, creator_role=creator_role)
 
     def accept_invitation(self, request: AcceptInviteRequest) -> AuthResponse:
-        """Принять приглашение — создать аккаунт и привязать к организации"""
-        invite = (
-            self.db.query(Invitation)
-            .filter(Invitation.code == request.code, Invitation.status == "pending")
-            .first()
-        )
-        if not invite:
-            raise ValueError("Приглашение не найдено или уже использовано")
-        if invite.expires_at:
-            exp = (
-                invite.expires_at
-                if invite.expires_at.tzinfo
-                else invite.expires_at.replace(tzinfo=timezone.utc)
-            )
-            if exp < datetime.now(timezone.utc):
-                invite.status = "expired"
-                self.db.commit()
-                raise ValueError("Приглашение истекло")
-
-        existing = self.db.query(User).filter(User.email == request.email).first()
-        if existing:
-            raise ValueError("Пользователь с таким email уже существует")
-
-        org = (
-            self.db.query(Organization).filter(Organization.id == invite.org_id).first()
-        )
-        if not org:
-            raise ValueError("Организация не найдена")
-
-        # Создание аккаунта
-        user = User(
-            email=request.email,
-            password_hash=hash_password(request.password),
-            first_name=request.first_name,
-            last_name=request.last_name,
-            role=invite.org_role,  # admin or teacher
-            default_org_id=org.id,
-        )
-        self.db.add(user)
-        self.db.flush()
-
-        # Привязка
-        member = OrganizationMember(
-            org_id=org.id,
-            user_id=user.id,
-            org_role=invite.org_role,
-        )
-        self.db.add(member)
-
-        # Закрыть приглашение
-        invite.status = "accepted"
-        invite.accepted_by = user.id
-        invite.accepted_at = datetime.now(timezone.utc)
-
-        tokens = self._create_tokens(user)
-        self.db.commit()
-
-        logger.info(f"Invite {invite.code} accepted by {user.email}")
-
-        return AuthResponse(
-            user=self._build_user_response(user),
-            tokens=tokens,
-            org=self._build_org_response(org),
-        )
+        """Принять приглашение - создать аккаунт (или вернуть удалённого сотрудника) и привязать к организации - ``invites.Invites``."""
+        return invites.Invites(self).accept(request)
 
     def list_invitations(self, org_id: str) -> list:
-        invites = (
-            self.db.query(Invitation)
-            .filter(Invitation.org_id == org_id)
-            .order_by(Invitation.created_at.desc())
-            .limit(100)
-            .all()
-        )
-        return [i.to_dict() for i in invites]
+        return invites.Invites(self).list(org_id)
 
     def revoke_invitation(self, org_id: str, invite_id: str) -> bool:
         invite = (
@@ -843,105 +766,17 @@ class AuthService:
 
     def get_invitation_info(self, code: str) -> dict:
         """Публичная информация о приглашении — для экрана принятия (до аутентификации)."""
-        invite = (
-            self.db.query(Invitation)
-            .filter(Invitation.code == code, Invitation.status == "pending")
-            .first()
-        )
-        if not invite:
-            raise ValueError("Приглашение не найдено или уже использовано")
-        if invite.expires_at:
-            exp = (
-                invite.expires_at
-                if invite.expires_at.tzinfo
-                else invite.expires_at.replace(tzinfo=timezone.utc)
-            )
-            if exp < datetime.now(timezone.utc):
-                raise ValueError("Приглашение истекло")
+        return invites.Invites(self).info(code)
 
-        org = self.db.query(Organization).filter(Organization.id == invite.org_id).first()
-        return {
-            "org_name": org.name if org else "",
-            "org_role": invite.org_role,
-            "email": invite.email,
-        }
+    def list_org_members(self, org_id: str, status: str = "active") -> list:
+        return staff_lifecycle.StaffLifecycle(self).list_members(org_id, status)
 
-    # ═══════════════════════════════════════════════════════════════════
-    # 5. ORG MEMBERS — управление сотрудниками
-    # ═══════════════════════════════════════════════════════════════════
+    def update_member_role(self, org_id: str, member_id: str, new_role: str, actor_id: Optional[str] = None) -> dict:
+        return staff_lifecycle.StaffLifecycle(self).change_role(org_id, member_id, new_role, actor_id=actor_id)
 
-    def list_org_members(self, org_id: str) -> list:
-        members = (
-            self.db.query(OrganizationMember)
-            .options(joinedload(OrganizationMember.user))
-            .filter(
-                OrganizationMember.org_id == org_id,
-                OrganizationMember.is_active,
-            )
-            .all()
-        )
-        result = []
-        for m in members:
-            if m.user:
-                d = m.user.to_dict()
-                d["org_role"] = m.org_role
-                d["member_id"] = str(m.id)
-                result.append(d)
-        return result
-
-    def update_member_role(self, org_id: str, member_id: str, new_role: str) -> dict:
-        if new_role not in {"admin", "teacher"}:
-            raise ValueError("Роль должна быть admin или teacher")
-
-        member = (
-            self.db.query(OrganizationMember)
-            .filter(
-                OrganizationMember.id == member_id, OrganizationMember.org_id == org_id
-            )
-            .first()
-        )
-        if not member:
-            raise ValueError("Сотрудник не найден")
-        if member.org_role == "owner":
-            raise ValueError("Нельзя изменить роль владельца")
-
-        member.org_role = new_role
-
-        # Обновим роль в User тоже
-        user = self.db.query(User).filter(User.id == member.user_id).first()
-        if user:
-            user.role = new_role
-
-        self.db.commit()
-        return {"member_id": str(member.id), "new_role": new_role}
-
-    def remove_member(self, org_id: str, member_id: str) -> bool:
-        member = (
-            self.db.query(OrganizationMember)
-            .filter(
-                OrganizationMember.id == member_id, OrganizationMember.org_id == org_id
-            )
-            .first()
-        )
-        if not member:
-            raise ValueError("Сотрудник не найден")
-        if member.org_role == "owner":
-            raise ValueError("Нельзя удалить владельца")
-
-        member.is_active = False
-        user = self.db.query(User).filter(User.id == member.user_id).first()
-        if user:
-            user.is_active = False
-            # A removed staff member must not be able to mint a fresh access
-            # token with a previously issued refresh cookie: all their sessions end.
-            user_sessions.revoke_all(self.db, user.id, user_sessions.REVOKE_USER_BLOCKED)
-
-        self.db.commit()
-        return True
-
-    # ═══════════════════════════════════════════════════════════════════
-    # 6. STUDENTS — ученики (без логина)
-    # ═══════════════════════════════════════════════════════════════════
+    def remove_member(self, org_id: str, member_id: str, actor_id: Optional[str] = None) -> dict:
+        """Удалить сотрудника: отказ, пока у него группы или идущий урок; будущие замены снимаются (``staff_lifecycle``)."""
+        return staff_lifecycle.StaffLifecycle(self).remove(org_id, member_id, actor_id=actor_id)
 
     def create_student(
         self, org_id: str, request: StudentCreateRequest
@@ -1419,6 +1254,9 @@ class AuthService:
         is_org_admin: bool,
     ):
         """Filtered student query, or ``None`` when the actor can see nobody."""
+        if status == "no_group":
+            # O15: "no group" = status "active" (was enrolled) and no live membership
+            status, has_group = "active", False
         query = self.db.query(Student).filter(Student.org_id == org_id)
 
         if not is_org_admin:
@@ -1591,8 +1429,8 @@ class AuthService:
                 memberships.setdefault(student_id, []).append(member_group_id)
         items = []
         for s in students:
-            item = self._build_student_response(s)
             groups_of = memberships.get(s.id, [])
+            item = self._build_student_response(s, has_group=bool(groups_of))
             item.groups_count = len(groups_of)
             # The group the student "is in now": the primary one while it is a live membership,
             # else the earliest live membership (students.group_id may be empty or stale).
@@ -1603,7 +1441,9 @@ class AuthService:
             items.append(item)
         return items, total
 
-    def _build_student_response(self, student: Student) -> StudentResponse:
+    def _build_student_response(self, student: Student, *, has_group: Optional[bool] = None) -> StudentResponse:
+        if has_group is None:
+            has_group = student.id in student_views.students_with_live_group(self.db, student.org_id, [student.id])
         return StudentResponse(
             id=str(student.id),
             org_id=str(student.org_id),
@@ -1619,12 +1459,10 @@ class AuthService:
             comment=student.comment,
             status=student.status or "new",
             created_at=student.created_at.isoformat() if student.created_at else None,
+            has_group=bool(has_group),
+            status_view=ops_rules.student_status_view(student.status, bool(has_group)),
             **archive_stamp(student),
         )
-
-    # ═══════════════════════════════════════════════════════════════════
-    # 7. DIAGNOSTIC INVITES — QR / ссылки для диагностики
-    # ═══════════════════════════════════════════════════════════════════
 
     def create_diagnostic_invite(
         self, org_id: str, creator_id: str, request: DiagnosticCreateRequest
@@ -2124,13 +1962,17 @@ class AuthService:
 
         results_by_invite = self._diagnostic_results_by_invite([inv.id for inv in invites])
 
+        live_group_students = student_views.students_with_live_group(
+            self.db, org_id, [inv.student_id for inv in invites if inv.student_id]
+        )
         result = []
         for inv in invites:
             student = inv.student
             group = student.primary_group if student else None
             group_id = str(student.group_id) if (student and student.group_id) else None
             group_name = group.name if group else None
-            is_assigned = bool(student and (student.group_id is not None or student.status == "active"))
+            # O15: "assigned" = in a live group now (a stale primary pointer or the status "active" alone does not count)
+            is_assigned = bool(student and student.id in live_group_students)
 
             r = results_by_invite.get(inv.id)
             res_dict = None
@@ -2282,7 +2124,7 @@ class AuthService:
             .filter(
                 OrganizationMember.org_id == org_id,
                 OrganizationMember.user_id == teacher_id,
-                OrganizationMember.org_role == "teacher",
+                OrganizationMember.org_role.in_(lesson_teachers.TEACHING_ROLES),  # lead decision: anybody who can teach (teacher / owner / admin)
                 OrganizationMember.is_active,
             )
             .first()
@@ -2299,15 +2141,23 @@ class AuthService:
         actor_id: str,
         actor_role: Optional[str] = None,
     ) -> GroupResponse:
+        changes = request.model_dump(exclude_none=True)
+        if "status" in changes:
+            # O4: archiving is an operation with preconditions (POST .../archive, .../restore), never a free string
+            raise ops_rules.unprocessable("STATUS_USE_ARCHIVE_ACTION", ops_rules.ERROR_CATALOGUE["STATUS_USE_ARCHIVE_ACTION"][1])
+        # The group is locked BEFORE it is read and compared: the diff and the audit are those of the row we hold (a concurrent change of
+        # the teacher by another administrator is seen, not overwritten).
         group = (
             self.db.query(Group)
             .filter(Group.id == group_id, Group.org_id == org_id)
+            .with_for_update()
+            .populate_existing()
             .first()
         )
         if not group:
             raise ValueError("Группа не найдена")
-
-        changes = request.model_dump(exclude_none=True)
+        if group.status != "active":
+            raise ops_rules.group_archived()  # O4: an archived group is read-only
         teacher_changed = False
         if "teacher_id" in changes:
             try:
@@ -2321,6 +2171,8 @@ class AuthService:
                     self._require_active_group_teacher(org_id, new_teacher_id)
                 except ValueError as exc:
                     raise ValueError("Выбранный сотрудник не преподаватель центра") from exc
+                # O5: the new teacher must be free for the lessons that pass to him (56 days ahead; his own lessons and substitutions count)
+                lesson_teachers.LessonTeachers(self).check_new_group_teacher(org_id, {group.id: (group, new_teacher_id)})
 
         # {field: [old, new]} for the audit trail; unchanged fields are skipped
         # so a no-op save never writes a journal row.
@@ -2352,8 +2204,12 @@ class AuthService:
                     action="teacher_changed" if teacher_changed else "updated",
                     assigned_teacher_id=group.teacher_id,
                     snapshot=diff,
+                    created_at=business_clock.utc_now(),
                 )
             )
+        if teacher_changed:
+            lesson_teachers.LessonTeachers(self).release_equal_to_group_teacher(group, actor_id)
+            lesson_substitutions.on_group_teacher_changed(self, group, actor_id, trigger="update_group")  # LOGIC-B2: requests of the old teacher are closed
         self.db.commit()
         return self._build_group_response(group)
 
@@ -2374,13 +2230,16 @@ class AuthService:
                 raise PermissionError("Нет доступа к группам")
             if teacher_id and str(teacher_id) != str(actor_id):
                 raise PermissionError("Нет доступа к группам другого преподавателя")
+            # LOGIC-B2: «Мои группы» - only the groups he teaches (a substitute has the lesson in the schedule, not the group)
             query = query.filter(Group.teacher_id == actor_id)
-        if teacher_id:
+        elif teacher_id:
             query = query.filter(Group.teacher_id == teacher_id)
         if class_level:
             query = query.filter(Group.class_level == class_level)
 
         groups = query.order_by(Group.name).all()
+        if not is_org_admin:
+            return [self._with_substitution_flag(g, "own") for g in groups]
         return [self._build_group_response(g) for g in groups]
 
     def get_group_detail(
@@ -2391,6 +2250,8 @@ class AuthService:
         actor_id: Optional[str] = None,
         is_org_admin: bool = False,
     ) -> dict:
+        # LOGIC-B2: the group page (roster with phones and diagnostics) is for its teacher and the managers; a substitute / a former teacher read only the
+        # lessons that are theirs (journal + start / marks), see ``attendance_rules.restrict_journal``
         group = self._require_group_access(
             org_id,
             group_id,
@@ -2582,6 +2443,7 @@ class AuthService:
         query: Optional[str] = None,
         student_id: Optional[str] = None,
         student_name: Optional[str] = None,
+        as_of: Optional[datetime] = None,
     ) -> dict:
         """Проверить принадлежность ученика к группе по ID/ФИО с валидацией обоих полей при их наличии."""
         group = self.db.query(Group).filter(Group.id == group_id).first()
@@ -2592,9 +2454,12 @@ class AuthService:
                 "message": "Группа не найдена",
             }
 
+        # O17: ``as_of`` (naive UTC) asks "was he enrolled at that instant" (any membership period covers it) - the exam that is running
+        # must stay open for a student who was moved or archived after it began.
+        member_filter = StudentGroup.is_active if as_of is None else member_at(as_of)
         memberships = (
             self.db.query(StudentGroup)
-            .filter(StudentGroup.group_id == group_id, StudentGroup.is_active)
+            .filter(StudentGroup.group_id == group_id, member_filter)
             .all()
         )
         # Only the *current* roster: a former member (inactive membership) or
@@ -2608,9 +2473,14 @@ class AuthService:
                 "message": f"В группе «{group.name}» нет зарегистрированных учеников. Обратитесь к преподавателю.",
             }
 
+        not_archived = (
+            Student.status != "archived"
+            if as_of is None
+            else or_(Student.status != "archived", Student.archived_at > as_of)
+        )
         students = (
             self.db.query(Student)
-            .filter(Student.id.in_(list(student_ids)), Student.status != "archived")
+            .filter(Student.id.in_(list(student_ids)), not_archived)
             .all()
         )
 
@@ -2808,7 +2678,7 @@ class AuthService:
         if not group:
             raise ValueError("Группа не найдена")
         if group.status != "active":
-            raise ValueError("Нельзя зачислить ученика в архивную группу")
+            raise ops_rules.GroupArchivedForEnrolment("Нельзя зачислить ученика в архивную группу")
 
         existing = (
             self.db.query(StudentGroup)
@@ -2867,6 +2737,9 @@ class AuthService:
         closing = other_active_memberships if mode == "transfer" else []
         affected_group_ids = [group.id, *(membership.group_id for membership in closing)]
         self._lock_groups_for_membership_change(org_id, affected_group_ids)
+        self.db.refresh(group)  # the lock is held now: an archiving that won the race is seen (O4.R4)
+        if group.status != "active":
+            raise ops_rules.GroupArchivedForEnrolment("Нельзя зачислить ученика в архивную группу")
         self._assert_no_open_attendance_for_groups(org_id, affected_group_ids)
         for om in closing:
             close_period(om, now_dt)
@@ -3079,7 +2952,15 @@ class AuthService:
             student_count=student_count,
             lesson_type=group.lesson_type or "group",
             created_at=group.created_at.isoformat() if group.created_at else None,
+            archivedAt=schedule_rules.archived_at(group),
+            archiveReason=group.archive_reason,
         )
+
+    def _with_substitution_flag(self, group: Group, reason: str) -> GroupResponse:
+        """A teacher's "my groups" entry: ``substitution`` when the group is shown only because he substitutes in it."""
+        response = self._build_group_response(group)
+        response.substitution = reason == "substitution"
+        return response
 
     # ═══════════════════════════════════════════════════════════════════
     # 9. ORG MANAGEMENT
@@ -3157,6 +3038,7 @@ class AuthService:
             "active_diagnostics": active_diagnostics,
             "completed_diagnostics": completed_diagnostics,
             "new_students": new_students,
+            "no_group_students": student_views.count_no_group_students(self.db, org_id),
         }
 
     def list_users(self, role: Optional[str] = None, limit: int = 50, offset: int = 0):
@@ -3205,27 +3087,37 @@ class AuthService:
                 for revision in recurring.get(str(lesson_id), []):
                     if revision.effective_date <= today.isoformat():
                         payload = dict(revision.payload or payload)
+                if not schedule_rules.slot_has_time(payload):
+                    continue
                 lessons_out.append(
                     ScheduleLessonResponse(
                         id=str(lesson_id),
                         groupId=str(g.id),
                         groupName=g.name,
                         classLevel=g.class_level or 5,
+                        validFrom=schedule_rules.slot_valid_from(g, s),
                         **payload,
                     )
                 )
 
         return lessons_out
 
-    @staticmethod
-    def _attendance_teacher_snapshot(group: Group) -> Optional[UUID]:
-        """Teacher to record on a new lesson row.
+    def _attendance_teacher_snapshot(
+        self,
+        group: Group,
+        lesson_id: Optional[str] = None,
+        lesson_date: Optional[date] = None,
+        occurrence: Optional[Dict[str, Any]] = None,
+    ) -> Optional[UUID]:
+        """Teacher to record on a new lesson row (LOGIC-B O5, SPEC 0.3a).
 
-        Groups keep no teacher history, so every created ``GroupAttendance``
-        freezes the teacher the group has *now*; a later reassignment of the
-        group never rewrites the lessons already taught.
+        The lesson-teacher resolver: the active substitution of the lesson, else the group's teacher at the planned END of the lesson
+        (a handover takes what is still ahead; lessons that ended before it stay with the old teacher).  The row freezes him: it is the only
+        source of "who taught" for payroll, and changes afterwards only through ``PUT /org/groups/{id}/lesson-teacher``.
         """
-        return group.teacher_id
+        if lesson_id is None or lesson_date is None:
+            return group.teacher_id
+        return lesson_teachers.lesson_teacher(self.db, group, lesson_id, lesson_date.isoformat(), occurrence)
 
     def _require_group_access(
         self,
@@ -3248,6 +3140,27 @@ class AuthService:
         if not actor_id or not group.teacher_id or str(group.teacher_id) != str(actor_id):
             raise PermissionError("Нет доступа к этой группе")
         return group
+
+    def _require_group_read_access(
+        self,
+        org_id: str,
+        group_id: str,
+        *,
+        actor_id: Optional[str],
+        is_org_admin: bool,
+    ) -> Group:
+        """Read access to a group's journal: its teacher, a teacher of it within the last 7 days, or a substitute (LOGIC-B O5).
+
+        Writing the schedule keeps ``_require_group_access`` (the group's teacher or a manager); acting on one lesson is judged by
+        ``attendance_rules.AttendanceRules.assert_lesson_rights``.
+        """
+        try:
+            return self._require_group_access(org_id, group_id, actor_id=actor_id, is_org_admin=is_org_admin)
+        except PermissionError:
+            group = self.db.query(Group).filter(Group.id == group_id, Group.org_id == org_id).first()
+            if group is not None and actor_id and lesson_teachers.LessonTeachers(self).can_read_group(group, actor_id):
+                return group
+            raise
 
     @staticmethod
     def _lesson_time_minutes(value: Any, field_name: str) -> int:
@@ -3275,10 +3188,10 @@ class AuthService:
         """Нормализовать шаблон занятия к единому формату override-таблицы."""
         return {
             "dayOfWeek": int(slot.get("dayOfWeek") or slot.get("day_of_week") or 1),
-            "startTime": slot.get("startTime") or slot.get("start_time") or "10:00",
-            "endTime": slot.get("endTime") or slot.get("end_time") or "11:30",
+            "startTime": slot.get("startTime") or slot.get("start_time"),
+            "endTime": slot.get("endTime") or slot.get("end_time"),
             "subject": slot.get("subject") or "Математика",
-            "room": slot.get("room") or "Кабинет 204",
+            "room": ops_rules.normalize_room(slot.get("room")),
             "format": slot.get("format") or "offline",
             "color": slot.get("color") or "blue",
             "topic": slot.get("topic"),
@@ -3571,6 +3484,9 @@ class AuthService:
         )
         slots = [slot for slot in (group.schedule or []) if isinstance(slot, dict)]
         result: List[Dict[str, Any]] = []
+        # O1: no lesson before the slot's "valid from"; O4: none whose start lies in an inactive (archived) interval of the group
+        intervals = schedule_rules.parse_intervals(group)
+        slot_starts = {self._lesson_id_for_slot(group, slot): schedule_rules.slot_valid_from(group, slot) for slot in slots}
         current_day = date_from
         while current_day <= date_to:
             current_iso = current_day.isoformat()
@@ -3582,6 +3498,8 @@ class AuthService:
                     # the recurrence was explicitly stopped. One-off lessons
                     # remain independent and are handled below.
                     continue
+                if current_iso < slot_starts[lesson_id]:
+                    continue
                 base_payload = self._slot_payload(slot)
                 configured_payload = dict(base_payload)
                 for revision in recurring.get(lesson_id, []):
@@ -3590,6 +3508,8 @@ class AuthService:
 
                 if configured_payload["dayOfWeek"] != current_day.isoweekday():
                     continue
+                if not schedule_rules.slot_has_time(configured_payload):
+                    continue
 
                 occurrence_override = occurrence_overrides.get((lesson_id, current_iso))
                 payload = (
@@ -3597,6 +3517,8 @@ class AuthService:
                     if occurrence_override
                     else configured_payload
                 )
+                if schedule_rules.lesson_is_inactive(intervals, current_iso, payload.get("startTime")):
+                    continue
                 result.append(
                     {
                         "id": lesson_id,
@@ -3622,6 +3544,10 @@ class AuthService:
                 if occurrence_override
                 else configured_payload
             )
+            if not schedule_rules.slot_has_time(payload) or schedule_rules.lesson_is_inactive(
+                intervals, one_off.lesson_date, payload.get("startTime")
+            ):
+                continue
             result.append(
                 {
                     "id": one_off.id,
@@ -3659,40 +3585,11 @@ class AuthService:
         occurrence_date: date,
         payload: Dict[str, Any],
     ) -> None:
-        """Reject a transfer/revision that overlaps another lesson of its teacher.
-
-        The browser check is only a convenience. This server-side check uses
-        resolved occurrences, so one-off transfers and already versioned
-        recurring schedules are both considered.
-        """
-        if not group.teacher_id:
-            return
-        candidate_start, candidate_end = self._validate_lesson_time_range(
-            payload["startTime"], payload["endTime"]
+        """Reject a transfer/revision/new lesson that overlaps another lesson of the teacher who teaches THIS lesson (the group teacher
+        on that date or a substitute); one check for every writer, ``TEACHER_BUSY`` 409 with ``conflicts`` (``schedule_rules``)."""
+        schedule_rules.ScheduleRules(self).assert_teacher_free(
+            group=group, lesson_id=lesson_id, occurrence_date=occurrence_date, payload=payload
         )
-        peers = (
-            self.db.query(Group)
-            .filter(
-                Group.org_id == group.org_id,
-                Group.status == "active",
-                Group.teacher_id == group.teacher_id,
-            )
-            .all()
-        )
-        for peer in peers:
-            for occurrence in self._resolved_occurrences_for_group(
-                peer, date_from=occurrence_date, date_to=occurrence_date
-            ):
-                if str(peer.id) == str(group.id) and occurrence["id"] == lesson_id:
-                    continue
-                peer_start, peer_end = self._validate_lesson_time_range(
-                    occurrence["startTime"], occurrence["endTime"]
-                )
-                if candidate_start < peer_end and candidate_end > peer_start:
-                    raise ValueError(
-                        f"У преподавателя уже есть урок «{occurrence['groupName']}» "
-                        f"{occurrence['startTime']}–{occurrence['endTime']} в это время"
-                    )
 
     def _upsert_schedule_override(
         self,
@@ -3770,15 +3667,17 @@ class AuthService:
             raise ValueError("Период расписания не может превышать 63 дня")
         query = self.db.query(Group).filter(Group.org_id == org_id, Group.status == "active")
         if teacher_id:
-            query = query.filter(Group.teacher_id == teacher_id)
-        occurrences: List[ScheduleOccurrenceResponse] = []
-        for group in query.order_by(Group.name).all():
-            occurrences.extend(
-                ScheduleOccurrenceResponse(**item)
-                for item in self._resolved_occurrences_for_group(
-                    group, date_from=date_from, date_to=date_to
-                )
+            # O5: by the teacher of the LESSON - his groups, the groups he substitutes in, the groups he taught before a handover
+            visible = lesson_teachers.LessonTeachers(self).groups_visible_to_teacher(
+                org_id, teacher_id, window_from=date_from, window_to=date_to
             )
+            query = query.filter(Group.id.in_(list(visible)))
+        occurrences: List[ScheduleOccurrenceResponse] = [
+            ScheduleOccurrenceResponse(**item)
+            for item in lesson_teachers.LessonTeachers(self).annotated_occurrences(
+                query.order_by(Group.name).all(), date_from, date_to, only_teacher=teacher_id
+            )
+        ]
         return sorted(occurrences, key=lambda item: (item.occurrenceDate, item.startTime, item.groupName))
 
     def reschedule_lesson_occurrence(
@@ -3823,6 +3722,8 @@ class AuthService:
         if not group:
             raise ValueError("Урок не найден")
         self._require_group_access(org_id, str(group.id), actor_id=actor_id, is_org_admin=is_org_admin)
+        if group.status != "active":
+            raise ops_rules.group_archived()
 
         now = datetime.now(BUSINESS_TIMEZONE)
         if req.lessonDate != now.date():
@@ -3863,6 +3764,7 @@ class AuthService:
             payload=updated_payload,
         )
 
+        room_warnings = schedule_rules.ScheduleRules(self).warnings_for(group, lesson_id, [req.lessonDate], updated_payload)
         self._upsert_schedule_override(
             group=group,
             lesson_id=lesson_id,
@@ -3918,6 +3820,7 @@ class AuthService:
                 # Otherwise the client could temporarily offer a permanent
                 # schedule edit for a one-off lesson before the next reload.
                 "isOneOff": bool(one_off),
+                "warnings": room_warnings,
             }
         )
 
@@ -3947,6 +3850,8 @@ class AuthService:
         if not group:
             raise ValueError("Урок не найден")
         self._require_group_access(org_id, str(group.id), actor_id=actor_id, is_org_admin=is_org_admin)
+        if group.status != "active":
+            raise ops_rules.group_archived()
         today = datetime.now(BUSINESS_TIMEZONE).date()
         if req.effectiveFrom <= today:
             raise ValueError("Постоянное расписание можно менять только начиная с будущей даты")
@@ -3983,6 +3888,12 @@ class AuthService:
                     payload=updated_payload,
                 )
 
+        room_warnings = schedule_rules.ScheduleRules(self).warnings_for(
+            group, lesson_id,
+            [req.effectiveFrom + timedelta(days=offset) for offset in range(56)
+             if (req.effectiveFrom + timedelta(days=offset)).isoweekday() == updated_payload["dayOfWeek"]],
+            updated_payload,
+        )
         self._upsert_schedule_override(
             group=group,
             lesson_id=lesson_id,
@@ -3999,6 +3910,8 @@ class AuthService:
             groupId=str(group.id),
             groupName=group.name,
             classLevel=group.class_level or 5,
+            validFrom=schedule_rules.slot_valid_from(group, self._find_schedule_slot(group, lesson_id)),
+            warnings=room_warnings,
             **updated_payload,
         )
 
@@ -4069,6 +3982,13 @@ class AuthService:
         today = datetime.now(BUSINESS_TIMEZONE).date()
         if effective_from <= today:
             raise ValueError("Регулярные занятия можно прекратить только начиная с будущей даты")
+        slot = next(
+            (s for s in (group.schedule or []) if isinstance(s, dict) and self._lesson_id_for_slot(group, s) == lesson_id), None
+        )
+        if slot is not None and effective_from.isoformat() < schedule_rules.slot_valid_from(group, slot):
+            raise ops_rules.unprocessable(  # O1.R3: an end before the start of the slot
+                "END_BEFORE_START", "Дата окончания не может быть раньше даты начала регулярного урока"
+            )
         existing_end = self._recurring_end_override(group, lesson_id, lock=lock)
         if existing_end and existing_end.effective_date <= effective_from.isoformat():
             raise ValueError(
@@ -4170,6 +4090,8 @@ class AuthService:
             actor_id=actor_id,
             is_org_admin=is_org_admin,
         )
+        if group.status != "active":
+            raise ops_rules.group_archived()
         existing_end = self._assert_recurring_end_is_allowed(
             group,
             lesson_id,
@@ -4290,65 +4212,9 @@ class AuthService:
         actor_id: Optional[str] = None,
         is_org_admin: bool = False,
     ) -> ScheduleLessonResponse:
-        group = self._require_group_access(
-            org_id, req.groupId, actor_id=actor_id, is_org_admin=is_org_admin
-        )
-
-        start_minutes, _ = self._validate_lesson_time_range(req.startTime, req.endTime)
-
-        # Validate that lesson is not in the past if scheduled for today
-        now = datetime.now(BUSINESS_TIMEZONE)
-        today_dow = now.weekday() + 1
-        if req.dayOfWeek == today_dow:
-            current_minutes = now.hour * 60 + now.minute
-            if start_minutes < current_minutes:
-                raise ValueError(
-                    f"Нельзя запланировать урок на прошедшее время сегодняшнего дня (текущее время: {now.strftime('%H:%M')})"
-                )
-
-        current_slots = list(group.schedule or [])
-        new_id = f"lesson-{uuid4().hex[:10]}"
-        new_slot = {
-            "id": new_id,
-            "dayOfWeek": req.dayOfWeek,
-            "startTime": req.startTime,
-            "endTime": req.endTime,
-            "subject": req.subject or "Математика",
-            "room": req.room or "Кабинет 204",
-            "format": req.format or "offline",
-            "color": req.color or "blue",
-            "topic": req.topic,
-        }
-        # A new recurring lesson must use the same server-side conflict guard
-        # as a transfer or a future recurrence edit.  Checking its next
-        # occurrence is sufficient: every peer's recurring weekday is present
-        # in that resolved date window, including one-off overrides.
-        days_until_occurrence = (req.dayOfWeek - now.isoweekday()) % 7
-        next_occurrence_date = now.date() + timedelta(days=days_until_occurrence)
-        self._assert_teacher_time_is_available(
-            group=group,
-            lesson_id=new_id,
-            occurrence_date=next_occurrence_date,
-            payload=new_slot,
-        )
-        current_slots.append(new_slot)
-        group.schedule = current_slots
-        flag_modified(group, "schedule")
-        self.db.commit()
-
-        return ScheduleLessonResponse(
-            id=new_id,
-            groupId=str(group.id),
-            groupName=group.name,
-            classLevel=group.class_level or 5,
-            subject=new_slot["subject"],
-            dayOfWeek=new_slot["dayOfWeek"],
-            startTime=new_slot["startTime"],
-            endTime=new_slot["endTime"],
-            room=new_slot["room"],
-            format=new_slot["format"],
-            color=new_slot["color"],
-            topic=new_slot["topic"],
+        """A new weekly slot with its "valid from" date (LOGIC-B O1 / O11): see ``schedule_rules.ScheduleRules.create_lesson``."""
+        return schedule_rules.ScheduleRules(self).create_lesson(
+            org_id, req, actor_id=actor_id, is_org_admin=is_org_admin
         )
 
     def create_one_off_lesson(
@@ -4359,61 +4225,9 @@ class AuthService:
         actor_id: Optional[str] = None,
         is_org_admin: bool = False,
     ) -> ScheduleOccurrenceResponse:
-        """Create a lesson for one date without altering a recurring rule."""
-        if not actor_id:
-            raise PermissionError("Не удалось определить автора занятия")
-        group = self._require_group_access(
-            org_id, req.groupId, actor_id=actor_id, is_org_admin=is_org_admin
-        )
-        now = datetime.now(BUSINESS_TIMEZONE)
-        if req.lessonDate < now.date():
-            raise ValueError("Нельзя добавить разовый урок на прошедшую дату")
-
-        payload = {
-            "dayOfWeek": req.lessonDate.isoweekday(),
-            "startTime": req.startTime,
-            "endTime": req.endTime,
-            "subject": "Математика",
-            "room": req.room or "Кабинет 204",
-            "format": req.format or "offline",
-            "color": req.color or "blue",
-            "topic": req.topic,
-        }
-        start_minutes, _ = self._validate_lesson_time_range(
-            payload["startTime"], payload["endTime"]
-        )
-        self._validate_schedule_payload(payload)
-        if req.lessonDate == now.date() and start_minutes < now.hour * 60 + now.minute:
-            raise ValueError(
-                "Нельзя добавить разовый урок на прошедшее время сегодняшнего дня"
-            )
-
-        lesson_id = f"one-off-{uuid4().hex[:16]}"
-        self._assert_teacher_time_is_available(
-            group=group,
-            lesson_id=lesson_id,
-            occurrence_date=req.lessonDate,
-            payload=payload,
-        )
-        self.db.add(
-            GroupScheduleOneOffLesson(
-                id=lesson_id,
-                org_id=group.org_id,
-                group_id=group.id,
-                lesson_date=req.lessonDate.isoformat(),
-                payload=payload,
-                created_by=UUID(actor_id),
-            )
-        )
-        self.db.commit()
-        return ScheduleOccurrenceResponse(
-            id=lesson_id,
-            groupId=str(group.id),
-            groupName=group.name,
-            classLevel=group.class_level or 5,
-            **payload,
-            occurrenceDate=req.lessonDate.isoformat(),
-            isOneOff=True,
+        """Create a lesson for one date without altering a recurring rule (``schedule_rules``)."""
+        return schedule_rules.ScheduleRules(self).create_one_off(
+            org_id, req, actor_id=actor_id, is_org_admin=is_org_admin
         )
 
     def update_lesson(
@@ -4737,6 +4551,7 @@ class AuthService:
         actor_id: Optional[str],
         is_org_admin: bool,
         now: Optional[datetime] = None,
+        only_group_id: Optional[str] = None,
     ) -> list[OpenAttendanceActionResponse]:
         """Return unfinished and never-started past lessons for follow-up.
 
@@ -4760,7 +4575,10 @@ class AuthService:
         if not is_org_admin:
             if not actor_id:
                 raise PermissionError("Нет доступа к открытым урокам")
-            query = query.filter(Group.teacher_id == actor_id)
+            # O5: the lesson's own teacher (frozen in its row; a legacy row without one follows the group's teacher)
+            query = query.filter(func.coalesce(GroupAttendance.teacher_id, Group.teacher_id) == actor_id)
+        if only_group_id:
+            query = query.filter(GroupAttendance.group_id == only_group_id)
         open_rows = query.order_by(
             GroupAttendance.lesson_date.asc(),
             GroupAttendance.started_at.asc(),
@@ -4771,14 +4589,22 @@ class AuthService:
         # data of every group involved is loaded once (two queries) instead of
         # per group: the cost of this call must not grow with the group count.
         reconciliation_from = missed_lesson_window_start(today_date)
+        # LOGIC-B (spec 5.2): an ARCHIVED group stays in the discovery - a lesson that began before the archive and was never started is still to be resolved
+        # (the lessons whose start lies inside the archive interval are not occurrences at all)
         groups_query = self.db.query(Group).filter(
             Group.org_id == org_id,
-            Group.status == "active",
+            Group.status.in_(("active", "archived")),
         )
         if not is_org_admin:
             if not actor_id:
                 raise PermissionError("Нет доступа к пропущенным урокам")
-            groups_query = groups_query.filter(Group.teacher_id == actor_id)
+            # O5: the groups he teaches, taught within the window or substitutes in (the lesson-by-lesson filter is below)
+            visible = lesson_teachers.LessonTeachers(self).groups_visible_to_teacher(
+                org_id, actor_id, window_from=reconciliation_from
+            )
+            groups_query = groups_query.filter(Group.id.in_(list(visible)))
+        if only_group_id:
+            groups_query = groups_query.filter(Group.id == only_group_id)
         actionable_groups = groups_query.order_by(Group.name).all()
         group_ids = [group.id for group in actionable_groups]
         open_dates = [row[0].lesson_date for row in open_rows if row[0].lesson_date]
@@ -4792,6 +4618,10 @@ class AuthService:
             date_from=preload_from_date,
             date_to=today_date,
         )
+        book = lesson_teachers.TeacherBook(self.db)
+        book_group_ids = [*(row[1].id for row in open_rows), *group_ids]
+        book.load_history(book_group_ids)
+        book.load_assignments(book_group_ids, min(preload_from, today), today)
         # A never-started lesson of a group nobody belonged to at that moment
         # is not a lesson that was missed (the group had no students yet).
         # One query for every candidate group, not one per group.
@@ -4829,6 +4659,12 @@ class AuthService:
                 roster_ids = set(records)
             roster_count = len(roster_ids)
             marked_count = len(set(records) & roster_ids) if roster_ids else len(records)
+            try:
+                row_end = self._lesson_time_minutes(occurrence.get("endTime"), "endTime")
+            except ValueError:
+                row_end = None
+            row_res = book.resolve(group, attendance.lesson_id, attendance.lesson_date, row_end)
+            row_teacher = lesson_teachers.effective_teacher(attendance, row_res)
 
             actions.append(
                 OpenAttendanceActionResponse(
@@ -4836,7 +4672,7 @@ class AuthService:
                     groupName=group.name,
                     classLevel=group.class_level or 5,
                     actionType="in_progress",
-                    teacherId=self._open_action_teacher_id(attendance, group),
+                    teacherId=str(row_teacher) if row_teacher else None,
                     lessonId=attendance.lesson_id,
                     lessonDate=attendance.lesson_date,
                     subject=occurrence.get("subject") or "Занятие",
@@ -4848,6 +4684,10 @@ class AuthService:
                     markedCount=marked_count,
                     rosterCount=roster_count,
                     remainingCount=max(roster_count - marked_count, 0),
+                    version=attendance.version,
+                    requiresAdmin=(not is_org_admin) and ops_rules.is_too_old_for_teacher(lesson_date, today_date),
+                    ageDays=ops_rules.lesson_age_days(lesson_date, today_date),
+                    isSubstitution=bool(row_teacher is not None and row_teacher != row_res.default_teacher_id),
                 )
             )
 
@@ -4901,6 +4741,9 @@ class AuthService:
                 )
                 if not is_past:
                     continue
+                missed_res = book.resolve(group, occurrence["id"], occurrence_date, end_minutes)
+                if not is_org_admin and str(missed_res.teacher_id or "") != str(actor_id):
+                    continue  # O5: somebody else leads this lesson (the teacher of that date, or the substitute)
                 lesson_start = lesson_start_as_naive_utc(
                     date.fromisoformat(occurrence_date), start_minutes
                 )
@@ -4912,7 +4755,7 @@ class AuthService:
                 actions.append(
                     OpenAttendanceActionResponse(
                         actionType="missed",
-                        teacherId=str(group.teacher_id) if group.teacher_id else None,
+                        teacherId=str(missed_res.teacher_id) if missed_res.teacher_id else None,
                         groupId=str(group.id),
                         groupName=group.name,
                         classLevel=group.class_level or 5,
@@ -4927,6 +4770,11 @@ class AuthService:
                         markedCount=0,
                         rosterCount=0,
                         remainingCount=0,
+                        version=None,
+                        requiresAdmin=(not is_org_admin)
+                        and ops_rules.is_too_old_for_teacher(date.fromisoformat(occurrence_date), today_date),
+                        ageDays=ops_rules.lesson_age_days(date.fromisoformat(occurrence_date), today_date),
+                        isSubstitution=missed_res.substitution,
                     )
                 )
 
@@ -4975,32 +4823,30 @@ class AuthService:
         if not actor_id:
             raise PermissionError("Не удалось определить преподавателя")
 
-        groups = (
+        # O5: his own groups, the groups where he substitutes, and (for the lessons of the window) the groups he taught before a handover
+        teachers_service = lesson_teachers.LessonTeachers(self)
+        visible = teachers_service.groups_visible_to_teacher(
+            org_id, actor_id, window_from=business_date - timedelta(days=30), window_to=business_date + timedelta(days=6)
+        )
+        schedule_groups = (
             self.db.query(Group)
-            .filter(
-                Group.org_id == org_id,
-                Group.status == "active",
-                Group.teacher_id == actor_id,
-            )
+            .filter(Group.org_id == org_id, Group.status == "active", Group.id.in_(list(visible)))
             .order_by(Group.name)
             .all()
         )
+        groups = [g for g in schedule_groups if visible[g.id] == "own"]  # LOGIC-B2: a substituted lesson is in the schedule, the group is not "his"
 
         # The dashboard uses a short retrospective window to attach an
         # operational exam to its concrete lesson, and six days ahead for the
         # group-focus cards.  It is well within the public 63-day limit.
         window_start = business_date - timedelta(days=30)
         window_end = business_date + timedelta(days=6)
-        schedule_window: list[ScheduleOccurrenceResponse] = []
-        for group in groups:
-            schedule_window.extend(
-                ScheduleOccurrenceResponse(**item)
-                for item in self._resolved_occurrences_for_group(
-                    group,
-                    date_from=window_start,
-                    date_to=window_end,
-                )
+        schedule_window: list[ScheduleOccurrenceResponse] = [
+            ScheduleOccurrenceResponse(**item)
+            for item in teachers_service.annotated_occurrences(
+                schedule_groups, window_start, window_end, only_teacher=actor_id
             )
+        ]
         schedule_window.sort(key=lambda item: (item.occurrenceDate, item.startTime, item.groupName))
         today_lessons = [
             occurrence
@@ -5008,7 +4854,7 @@ class AuthService:
             if occurrence.occurrenceDate == business_date.isoformat()
         ]
 
-        group_ids = [group.id for group in groups]
+        group_ids = [group.id for group in schedule_groups]
         attendance_by_instance: dict[tuple[str, str], GroupAttendance] = {}
         if group_ids:
             attendance_rows = (
@@ -5042,11 +4888,12 @@ class AuthService:
         # the teacher's groups is one student.  The per-group rosters keep
         # their own counts (groups[].student_count).
         distinct_student_count = 0
-        if group_ids:
+        own_group_ids = [group.id for group in groups if visible[group.id] == "own"]
+        if own_group_ids:
             distinct_student_count = (
                 self.db.query(func.count(func.distinct(StudentGroup.student_id)))
                 .filter(
-                    StudentGroup.group_id.in_(group_ids),
+                    StudentGroup.group_id.in_(own_group_ids),
                     StudentGroup.is_active.is_(True),
                     student_not_archived(),
                 )
@@ -5055,7 +4902,7 @@ class AuthService:
 
         return TeacherDashboardSummaryResponse(
             businessDate=business_date.isoformat(),
-            groups=[self._build_group_response(group) for group in groups],
+            groups=[self._with_substitution_flag(group, visible[group.id]) for group in groups],
             studentCount=distinct_student_count,
             todayLessons=today_lessons,
             scheduleWindow=schedule_window,
@@ -5080,7 +4927,7 @@ class AuthService:
         is_org_manager: bool = False,
     ) -> GroupAttendanceResponse:
         """Получить экземпляры уроков и отметки за строго заданный период."""
-        group = self._require_group_access(
+        group = self._require_group_read_access(
             org_id, group_id, actor_id=actor_id, is_org_admin=is_org_admin
         )
 
@@ -5434,6 +5281,9 @@ class AuthService:
             org_id, attendance_keys, include_review_note=is_org_manager, include_billing_mode=is_org_manager
         )
 
+        versions, teachers_of_lessons = attendance_rules.AttendanceRules(self).journal_extras(
+            group, att_records, sorted_lessons, period_start, period_end
+        )
         return GroupAttendanceResponse(
             groupId=str(group.id),
             month=month,
@@ -5447,6 +5297,8 @@ class AuthService:
             diagnosticReportNotices=diagnostic_report_notices,
             excuses=excuses_map,
             corrections=corrections_map,
+            versions=versions,
+            lessonTeachers=teachers_of_lessons,
         )
 
     def reconcile_missed_group_attendance(
@@ -5457,7 +5309,7 @@ class AuthService:
         *,
         reconciled_by: Optional[str],
         is_org_admin: bool,
-    ) -> bool:
+    ) -> int:
         """Open a historical journal without claiming that it was started now.
 
         This is a reconciliation decision, not a delayed "start lesson"
@@ -5466,13 +5318,14 @@ class AuthService:
         """
         if not reconciled_by:
             raise ValueError("Не удалось определить автора разбора урока")
-        group = self._require_group_access(
+        group = self._require_group_read_access(
             org_id, group_id, actor_id=reconciled_by, is_org_admin=is_org_admin
         )
         locked_group = (
             self.db.query(Group)
             .filter(Group.id == group.id, Group.org_id == org_id)
             .with_for_update()
+            .populate_existing()
             .first()
         )
         if not locked_group:
@@ -5493,12 +5346,17 @@ class AuthService:
             .with_for_update()
             .first()
         )
+        rules = attendance_rules.AttendanceRules(self)
+        rules.assert_lesson_rights(
+            group, attendance, occurrence, req.lessonDate, req.lessonId, actor_id=reconciled_by, is_org_admin=is_org_admin
+        )
         if attendance:
             if attendance.status == LessonAttendanceStatus.IN_PROGRESS.value:
-                return True  # Idempotent double click: preserve the original audit row.
+                return attendance.version  # Idempotent double click: preserve the original audit row.
             if attendance.status == LessonAttendanceStatus.CANCELLED.value:
                 raise ValueError("Пропущенный урок уже отменён")
             raise ValueError("Пропущенный урок уже завершён")
+        rules.assert_unclosed_window(req.lessonDate)
 
         start_minutes, _ = self._validate_lesson_time_range(
             occurrence.get("startTime"), occurrence.get("endTime")
@@ -5515,7 +5373,8 @@ class AuthService:
         attendance = GroupAttendance(
             org_id=org_id,
             group_id=group_id,
-            teacher_id=self._attendance_teacher_snapshot(group),
+            teacher_id=self._attendance_teacher_snapshot(group, req.lessonId, req.lessonDate, occurrence),
+            version=1,
             lesson_date=req.lessonDate.isoformat(),
             lesson_id=req.lessonId,
             topic=occurrence.get("topic") or req.topic or occurrence.get("subject"),
@@ -5543,7 +5402,7 @@ class AuthService:
             )
         )
         self.db.commit()
-        return True
+        return attendance.version
 
     def cancel_missed_group_attendance(
         self,
@@ -5553,17 +5412,18 @@ class AuthService:
         *,
         cancelled_by: Optional[str],
         is_org_admin: bool,
-    ) -> bool:
+    ) -> int:
         """Record an explicit, reasoned cancellation for a missed lesson."""
         if not cancelled_by:
             raise ValueError("Не удалось определить автора отмены урока")
-        group = self._require_group_access(
+        group = self._require_group_read_access(
             org_id, group_id, actor_id=cancelled_by, is_org_admin=is_org_admin
         )
         locked_group = (
             self.db.query(Group)
             .filter(Group.id == group.id, Group.org_id == org_id)
             .with_for_update()
+            .populate_existing()
             .first()
         )
         if not locked_group:
@@ -5583,10 +5443,15 @@ class AuthService:
             .with_for_update()
             .first()
         )
+        rules = attendance_rules.AttendanceRules(self)
+        rules.assert_lesson_rights(
+            group, attendance, occurrence, req.lessonDate, req.lessonId, actor_id=cancelled_by, is_org_admin=is_org_admin
+        )
         if attendance:
             if attendance.status == LessonAttendanceStatus.CANCELLED.value:
-                return True  # The same cancellation was already committed.
+                return attendance.version  # The same cancellation was already committed.
             raise ValueError("Нельзя отменить урок, который уже начали или завершили")
+        rules.assert_unclosed_window(req.lessonDate)
 
         self._sync_exam_lesson_cancellation(
             phase="cancellation-check",
@@ -5603,7 +5468,8 @@ class AuthService:
         attendance = GroupAttendance(
             org_id=org_id,
             group_id=group_id,
-            teacher_id=self._attendance_teacher_snapshot(group),
+            teacher_id=self._attendance_teacher_snapshot(group, req.lessonId, req.lessonDate, occurrence),
+            version=1,
             lesson_date=req.lessonDate.isoformat(),
             lesson_id=req.lessonId,
             topic=occurrence.get("topic") or occurrence.get("subject"),
@@ -5643,7 +5509,7 @@ class AuthService:
             self.db.rollback()
             raise
         self.db.commit()
-        return True
+        return attendance.version
 
     def start_group_attendance(
         self,
@@ -5653,11 +5519,11 @@ class AuthService:
         *,
         started_by: Optional[str],
         is_org_admin: bool,
-    ) -> bool:
+    ) -> int:
         """Create the only valid transition from scheduled to in_progress."""
         if not started_by:
             raise ValueError("Не удалось определить преподавателя, начавшего урок")
-        group = self._require_group_access(
+        group = self._require_group_read_access(
             org_id, group_id, actor_id=started_by, is_org_admin=is_org_admin
         )
         # The same group lock is acquired by a membership transfer. It makes
@@ -5666,11 +5532,14 @@ class AuthService:
             self.db.query(Group)
             .filter(Group.id == group.id, Group.org_id == org_id)
             .with_for_update()
+            .populate_existing()
             .first()
         )
         if not locked_group:
             raise ValueError("Группа не найдена")
         group = locked_group
+        if group.status != "active":
+            raise ops_rules.group_archived()  # O4: an archived group is read-only (the lock above made the status current)
         lesson_date = req.lessonDate
         today = datetime.now(BUSINESS_TIMEZONE).date()
         if lesson_date != today:
@@ -5699,12 +5568,6 @@ class AuthService:
         if current_minutes < start_minutes:
             raise ValueError("Нельзя начать урок до времени по расписанию")
 
-        # Serialize starts for the teacher who is assigned to this group.  It
-        # prevents two browser tabs (or two groups) from creating overlapping
-        # active lessons between the check below and the insert.
-        lesson_teacher_id = group.teacher_id or started_by
-        self.db.query(User.id).filter(User.id == lesson_teacher_id).with_for_update().first()
-
         att = (
             self.db.query(GroupAttendance)
             .filter(
@@ -5715,6 +5578,16 @@ class AuthService:
             )
             .first()
         )
+        # O5: who leads THIS lesson (the substitute / the group's teacher at the planned end of the lesson); the actor must be him
+        # (or a manager).  The lesson teacher is what the active-lesson checks below are about.
+        resolved_teacher_id = attendance_rules.AttendanceRules(self).assert_lesson_rights(
+            group, att, matching_slot, lesson_date, req.lessonId, actor_id=started_by, is_org_admin=is_org_admin, check_age=False
+        )
+        # Serialize starts for the teacher who leads this lesson.  It
+        # prevents two browser tabs (or two groups) from creating overlapping
+        # active lessons between the check below and the insert.
+        lesson_teacher_id = resolved_teacher_id or started_by
+        self.db.query(User.id).filter(User.id == lesson_teacher_id).with_for_update().first()
         if att:
             if att.status == LessonAttendanceStatus.CANCELLED.value:
                 raise ValueError("Отменённый урок нельзя начать")
@@ -5722,7 +5595,7 @@ class AuthService:
                 raise ValueError("Завершённый урок нельзя начать повторно")
             # Idempotency protects a double click/retry; it does not alter the
             # original actual start timestamp or audit trail.
-            return True
+            return att.version
 
         # A real teacher cannot conduct two lessons at the same time.  The
         # previous occurrence must first be completed or cancelled, otherwise
@@ -5737,9 +5610,9 @@ class AuthService:
                 GroupAttendance.status == LessonAttendanceStatus.IN_PROGRESS.value,
             )
         )
-        if group.teacher_id:
+        if resolved_teacher_id:
             active_lesson_query = active_lesson_query.filter(
-                Group.teacher_id == group.teacher_id
+                GroupAttendance.teacher_id == resolved_teacher_id
             )
         else:
             # Unassigned legacy groups have no designated instructor.  The
@@ -5778,9 +5651,9 @@ class AuthService:
                 GroupAttendance.started_at >= planned_end_at,
             )
         )
-        if group.teacher_id:
+        if resolved_teacher_id:
             subsequent_lesson_query = subsequent_lesson_query.filter(
-                Group.teacher_id == group.teacher_id
+                GroupAttendance.teacher_id == resolved_teacher_id
             )
         else:
             subsequent_lesson_query = subsequent_lesson_query.filter(
@@ -5800,10 +5673,13 @@ class AuthService:
 
         now = current_business_time.replace(tzinfo=None)
         roster_snapshot = self._active_attendance_roster(group.id)
+        if not roster_snapshot:  # O6: nobody to teach, nothing to start (also for a group that has just been emptied)
+            raise ops_rules.conflict("NO_STUDENTS", ops_rules.ERROR_CATALOGUE["NO_STUDENTS"][1])
         att = GroupAttendance(
             org_id=org_id,
             group_id=group_id,
-            teacher_id=self._attendance_teacher_snapshot(group),
+            version=1,
+            teacher_id=resolved_teacher_id,
             lesson_date=lesson_date.isoformat(),
             lesson_id=req.lessonId,
             topic=req.topic or matching_slot.get("topic"),
@@ -5829,7 +5705,7 @@ class AuthService:
             )
         )
         self.db.commit()
-        return True
+        return att.version
 
     def save_group_attendance(
         self,
@@ -5840,11 +5716,13 @@ class AuthService:
         marked_by: Optional[str],
         is_org_admin: bool,
         is_org_manager: bool = False,
-    ) -> bool:
-        """Сохранить полный проверенный снимок отметок одного экземпляра урока."""
+    ) -> Dict[str, Any]:
+        """Сохранить полный проверенный снимок отметок одного экземпляра урока.
+
+        Returns ``{"version": <row version>, "examSync": {...} | None}`` (LOGIC-B O7 / O8)."""
         if not marked_by:
             raise ValueError("Не удалось определить автора отметки")
-        group = self._require_group_access(
+        group = self._require_group_read_access(
             org_id, group_id, actor_id=marked_by, is_org_admin=is_org_admin
         )
         lesson_date = req.lessonDate
@@ -5888,6 +5766,19 @@ class AuthService:
             slot_day = int(matching_slot.get("dayOfWeek") or 0)
             if slot_day != lesson_date.isoweekday():
                 raise ValueError("Дата не соответствует дню урока в расписании")
+
+        # LOGIC-B: rights on THIS lesson (O5) and the 7-day window (decision 7); an archived group takes no new row (O4); the version of the
+        # marks (O7): a stale ``expectedVersion`` is a conflict, an identical repeat answers 200 without a write.
+        rules = attendance_rules.AttendanceRules(self)
+        lesson_teacher_id = rules.assert_lesson_rights(
+            group, att, matching_slot, lesson_date, target_lesson_id, actor_id=marked_by, is_org_admin=is_org_admin
+        )
+        if att is None and group.status != "active":
+            raise ops_rules.group_archived()
+        if att is None and is_cancellation:
+            rules.assert_unclosed_window(lesson_date)  # a never-started lesson older than the "unclosed lessons" window is nobody's to cancel
+        if rules.version_gate(att, req):
+            return {"version": att.version, "examSync": None}
 
         if not is_cancellation and not att:
             raise ValueError("Сначала начните урок, затем отмечайте посещаемость")
@@ -5952,6 +5843,14 @@ class AuthService:
                 # happened. Its saved record keys are the only durable roster.
                 roster_student_ids = {str(student_id) for student_id in (att.records or {})}
             if (
+                requested_status == LessonAttendanceStatus.COMPLETED.value
+                and att.status != LessonAttendanceStatus.COMPLETED.value
+                and not roster_student_ids
+            ):
+                # O6: a lesson with nobody in its roster is not "held" (it would be paid): the teacher cancels it instead.
+                # the code is ``NO_STUDENTS`` (one code for both steps); ``alias`` keeps the old ``NO_STUDENTS_COMPLETE`` readable for one release
+                raise ops_rules.conflict("NO_STUDENTS", ops_rules.ERROR_CATALOGUE["NO_STUDENTS_COMPLETE"][1], alias="NO_STUDENTS_COMPLETE")
+            if (
                 not roster_student_ids
                 and att.status == LessonAttendanceStatus.IN_PROGRESS.value
                 and att.roster_snapshot is None
@@ -5980,6 +5879,19 @@ class AuthService:
         # Reasons for new "excused" marks are validated before any write.
         excuse_service = AttendanceExcuseService(self.db)
         excuse_plan = excuse_service.plan_save(att, records, req.excuseReasons)
+
+        # O8: ending a lesson while an exam of it is still live: warn first, the exam runs on its own timer (fail-open).
+        completing = (
+            requested_status == LessonAttendanceStatus.COMPLETED.value
+            and att is not None
+            and att.status == LessonAttendanceStatus.IN_PROGRESS.value
+        )
+        exam_warning: Optional[str] = None
+        live_exams: List[Dict[str, Any]] = []
+        if completing:
+            exam_warning, live_exams = rules.live_exam_gate(
+                org_id, group_id, target_lesson_id, lesson_date.isoformat(), bool(getattr(req, "acknowledgeLiveExam", False))
+            )
 
         now = datetime.now(BUSINESS_TIMEZONE).replace(tzinfo=None)
         before_status = att.status if att else None
@@ -6033,7 +5945,8 @@ class AuthService:
             att = GroupAttendance(
                 org_id=org_id,
                 group_id=group_id,
-                teacher_id=self._attendance_teacher_snapshot(group),
+                teacher_id=lesson_teacher_id,
+                version=1,
                 lesson_date=lesson_date.isoformat(),
                 lesson_id=target_lesson_id,
                 topic=req.topic,
@@ -6049,6 +5962,7 @@ class AuthService:
         else:
             att.records = records
             flag_modified(att, "records")
+            att.version = (att.version or 1) + 1
             att.status = requested_status
             if req.topic is not None:
                 att.topic = req.topic
@@ -6104,7 +6018,12 @@ class AuthService:
                 self.db.rollback()
                 raise
         self.db.commit()
-        return True
+        exam_sync = (
+            rules.after_completion(org_id, group_id, target_lesson_id, lesson_date.isoformat(), marked_by, exam_warning, live_exams)
+            if completing
+            else None
+        )
+        return {"version": att.version, "examSync": exam_sync}
 
     def _sync_exam_lesson_cancellation(
         self,

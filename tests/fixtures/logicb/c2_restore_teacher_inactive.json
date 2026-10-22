@@ -1,0 +1,10 @@
+{
+  "body": {
+    "detail": {
+      "code": "TEACHER_INACTIVE",
+      "message": "Преподаватель группы больше не работает в центре",
+      "teacherName": "Петров П."
+    }
+  },
+  "status": 409
+}

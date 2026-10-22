@@ -1,0 +1,70 @@
+{
+  "candidates": [
+    {
+      "busy": false,
+      "busyWith": null,
+      "isDefaultTeacher": true,
+      "name": "Иванов И.",
+      "orgRole": "teacher",
+      "rateMissing": null,
+      "suggested": false,
+      "teacherId": "917b0543-3c26-52c4-b849-5d99a8a9dd87"
+    },
+    {
+      "busy": false,
+      "busyWith": null,
+      "isDefaultTeacher": false,
+      "name": "Каримова Н.",
+      "orgRole": "admin",
+      "rateMissing": null,
+      "suggested": false,
+      "teacherId": "53d3d68e-604b-5982-9804-9ae7ce0e9893"
+    },
+    {
+      "busy": false,
+      "busyWith": null,
+      "isDefaultTeacher": false,
+      "name": "Сидоров С.",
+      "orgRole": "teacher",
+      "rateMissing": null,
+      "suggested": false,
+      "teacherId": "23da0f33-efdf-5266-af96-b052211c5c8f"
+    },
+    {
+      "busy": false,
+      "busyWith": null,
+      "isDefaultTeacher": false,
+      "name": "Усманов У.",
+      "orgRole": "owner",
+      "rateMissing": null,
+      "suggested": false,
+      "teacherId": "2c55bf81-ae1c-532b-9fad-a5c3a63dda98"
+    },
+    {
+      "busy": true,
+      "busyWith": {
+        "endTime": "11:30",
+        "groupName": "8-В",
+        "kind": "lesson",
+        "pendingRequest": false,
+        "startTime": "10:00"
+      },
+      "isDefaultTeacher": false,
+      "name": "Петров П.",
+      "orgRole": "teacher",
+      "rateMissing": null,
+      "suggested": false,
+      "teacherId": "dfa29678-0238-53bf-841f-f7b02e776e91"
+    }
+  ],
+  "lesson": {
+    "date": "2026-10-26",
+    "endTime": "11:30",
+    "groupId": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+    "groupName": "9-А",
+    "lessonId": "lesson-l1",
+    "startTime": "10:00"
+  },
+  "requestId": "4d187357-6980-50fe-9f60-5a1ff9b53755",
+  "requesterId": "5fd041ac-c0cc-5b16-8903-db2bbc1e9333"
+}

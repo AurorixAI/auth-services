@@ -607,7 +607,7 @@ def test_a_blocked_user_is_signed_out_everywhere_and_others_are_not_touched(sess
     owner_dev = Device(w).login()
     admin_a, admin_b = Device(w, w.admin).login(), Device(w, w.admin).login()
     member = w.db.query(OrganizationMember).filter_by(org_id=w.org.id, user_id=w.admin.id).one()
-    assert AuthService(w.db).remove_member(str(w.org.id), str(member.id)) is True
+    assert AuthService(w.db).remove_member(str(w.org.id), str(member.id))["message"] == "Сотрудник удалён"
     assert admin_a.status_of_refresh() == 401 and admin_b.status_of_refresh() == 401
     assert len(live(w, w.admin)) == 0 and {s.revoke_reason for s in sessions(w, w.admin)} == {"user_blocked"}
     assert owner_dev.status_of_refresh() == 200 and len(live(w)) == 1
@@ -712,15 +712,16 @@ def test_invitation_accept_and_activation_each_create_a_session(session_world):
     w = session_world
     svc = AuthService(w.db)
     code = uuid4().hex[:10].upper()
+    invited_email = f"{uuid4()}@n13.invalid"          # LOGIC-B O10: the account gets the e-mail of the invitation
     w.db.add(
         Invitation(
-            org_id=w.org.id, invited_by=w.owner.id, email="invited@n13.invalid", org_role="teacher", code=code,
+            org_id=w.org.id, invited_by=w.owner.id, email=invited_email, org_role="teacher", code=code,
             expires_at=user_sessions._now() + timedelta(days=3),
         )
     )
     w.db.commit()
     result = svc.accept_invitation(
-        AcceptInviteRequest(code=code, email=f"{uuid4()}@n13.invalid", password="Invite-Pass-1!", first_name="Н", last_name="Н")
+        AcceptInviteRequest(code=code, email=invited_email, password="Invite-Pass-1!", first_name="Н", last_name="Н")
     )
     invited = w.db.query(User).filter(User.id == UUID(result.user.id)).one()
     (row,) = sessions(w, invited)

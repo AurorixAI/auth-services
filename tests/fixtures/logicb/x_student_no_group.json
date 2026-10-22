@@ -1,0 +1,23 @@
+{
+  "archive_reason": null,
+  "archived_at": null,
+  "archived_groups": null,
+  "class_level": 8,
+  "comment": null,
+  "created_at": "2026-09-01T00:00:00",
+  "current_group_id": null,
+  "display_id": "AL09-004",
+  "first_name": "Азиз",
+  "full_name": "Каримов Азиз",
+  "group_id": null,
+  "groups_count": 0,
+  "has_group": false,
+  "id": "736503b4-36d9-5d7e-a6af-1e9721379341",
+  "last_name": "Каримов",
+  "org_id": "2f44d237-f012-5231-9345-f2205bf2ad5b",
+  "sequence_number": 4,
+  "status": "active",
+  "status_view": "no_group",
+  "student_number": null,
+  "student_phone": "+998901112200"
+}

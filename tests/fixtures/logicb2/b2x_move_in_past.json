@@ -1,0 +1,9 @@
+{
+  "body": {
+    "detail": {
+      "code": "MOVE_IN_PAST",
+      "message": "Новое время урока уже прошло"
+    }
+  },
+  "status": 422
+}

@@ -1,0 +1,17 @@
+{
+  "created_at": "2026-09-01T00:00:00",
+  "default_org_id": "2f44d237-f012-5231-9345-f2205bf2ad5b",
+  "email": "a.ivanov@algo.test",
+  "first_name": "Иван",
+  "full_name": "Иванов Иван",
+  "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+  "is_active": false,
+  "is_verified": false,
+  "language": "ru",
+  "last_name": "Иванов",
+  "member_id": "6e0f7127-77e2-57f2-91ad-a2b57dd6e680",
+  "must_change_password": false,
+  "org_role": "teacher",
+  "removed_at": "2026-10-21T09:00:00",
+  "role": "teacher"
+}

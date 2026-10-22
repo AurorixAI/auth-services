@@ -1,0 +1,9 @@
+{
+  "body": {
+    "detail": {
+      "code": "NOT_LESSON_TEACHER",
+      "message": "Этот урок ведёт Иванов И."
+    }
+  },
+  "status": 403
+}

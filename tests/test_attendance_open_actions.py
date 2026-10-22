@@ -41,7 +41,8 @@ def test_teacher_name_present_for_both_action_types(world):
     assert all(i["teacherName"] for i in items)
 
 
-def test_in_progress_keeps_snapshot_teacher_missed_follows_group_teacher(world):
+def test_in_progress_keeps_snapshot_teacher_missed_follows_teacher_on_the_date(world):
+    """LOGIC-B O5 (changed on purpose): a missed lesson that ended BEFORE the handover stays with the teacher of that date."""
     day, lesson_id = reconcile(world, offset_days=1)
     change_group_teacher(world, world.teacher2)
     items = make_client(world).get(OPEN).json()
@@ -50,11 +51,12 @@ def test_in_progress_keeps_snapshot_teacher_missed_follows_group_teacher(world):
     assert started["teacherName"] == "Пётр Teacher"
     missed_day = day - (business_today() - day) * 2  # 3 days ago, never started
     missed = find(items, missed_day, f"s{missed_day.isoweekday()}", "missed")
-    assert missed["teacherId"] == str(world.teacher2.id)
-    assert missed["teacherName"] == "Мария Teacher"
+    assert missed["teacherId"] == str(world.teacher.id)
+    assert missed["teacherName"] == "Пётр Teacher"
 
 
-def test_in_progress_without_snapshot_falls_back_to_group_teacher(world):
+def test_in_progress_without_snapshot_falls_back_to_the_teacher_of_the_lesson_date(world):
+    """LOGIC-B O5: a legacy row without a teacher follows the resolver (the group's teacher at the end of that lesson), not today's one."""
     from src.models.auth import GroupAttendance
 
     day, lesson_id = reconcile(world, offset_days=1)
@@ -62,7 +64,7 @@ def test_in_progress_without_snapshot_falls_back_to_group_teacher(world):
     world.db.commit()
     change_group_teacher(world, world.teacher2)
     started = find(make_client(world).get(OPEN).json(), day, lesson_id, "in_progress")
-    assert started["teacherName"] == "Мария Teacher"
+    assert started["teacherName"] == "Пётр Teacher"
 
 
 def test_names_are_resolved_in_one_batched_query(world):
@@ -171,7 +173,7 @@ def test_open_actions_query_count_does_not_grow_with_group_count(world):
     big_items, big = _statements_for_open_actions(world)
     assert len(big_items) > len(small_items) > 0
     assert len(big) == len(small), (len(small), len(big))
-    assert len(big) <= 8
+    assert len(big) <= 10  # +2 for LOGIC-B (the teacher history and the substitutions of ALL the groups, one query each)
 
 
 def test_preloaded_schedule_gives_the_same_occurrences(world):
@@ -233,7 +235,7 @@ def test_open_actions_missed_lessons_start_on_the_first_of_the_previous_month(wo
     assert not any(d.startswith("2026-09") for d in dates)
     # The preload stays O(1): a window of two months costs the same queries as before.
     _, statements = _statements_for_open_actions(world)
-    assert len(statements) <= 8
+    assert len(statements) <= 10  # +2 for LOGIC-B (teacher history, substitutions)
 
 
 # ---- N13 P1.5: no student in the group at the lesson start = nothing was missed ----
@@ -391,7 +393,7 @@ def test_empty_roster_check_keeps_the_query_count_constant(world):
     big_items, big = _statements_for_open_actions(world)
     assert len(big_items) > len(small_items) > 0
     assert len(big) == len(small), (len(small), len(big))
-    assert len(big) <= 9
+    assert len(big) <= 11  # +2 for LOGIC-B (teacher history, substitutions)
 
 
 # ---- N13 P1.5: a lesson nobody could attend cannot be reconciled either ------------

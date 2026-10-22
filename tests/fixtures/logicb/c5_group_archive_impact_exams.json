@@ -1,0 +1,12 @@
+{
+  "exams": [
+    {
+      "blockerReason": null,
+      "canRelease": true,
+      "examId": "EX_9",
+      "lessonDate": "2026-10-26",
+      "status": "lobby",
+      "title": "Контрольная №4"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "closedSubstitutionRequests": 0,
+  "handedOver": [
+    {
+      "fromTeacherId": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+      "groupId": "4235a098-e818-5a7f-a19f-bedec8ab5b39",
+      "groupName": "9-А",
+      "toTeacherId": "23da0f33-efdf-5266-af96-b052211c5c8f"
+    },
+    {
+      "fromTeacherId": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
+      "groupId": "e7a0b156-c39d-53e8-85e3-48880a13ea39",
+      "groupName": "7-Б",
+      "toTeacherId": "dfa29678-0238-53bf-841f-f7b02e776e91"
+    }
+  ],
+  "releasedSubstitutions": 0,
+  "remainingGroups": []
+}

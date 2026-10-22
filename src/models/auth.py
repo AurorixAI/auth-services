@@ -325,6 +325,14 @@ class Invitation(Base):
     __table_args__ = (
         CheckConstraint("org_role IN ('admin', 'teacher')"),
         CheckConstraint("status IN ('pending', 'accepted', 'expired', 'cancelled')"),
+        # LOGIC-B O10: one pending invitation per e-mail and centre (a new one cancels the previous).
+        Index(
+            "uq_invitations_pending_email",
+            "org_id",
+            text("lower(email)"),
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
     )
 
     def to_dict(self) -> dict:
@@ -455,6 +463,13 @@ class Group(Base):
     # N13 P3: the kind of lessons (the payroll percent is set per teacher and kind).  Existing
     # groups are "group".  Changing it is written to ``group_audit`` like any other field.
     lesson_type = Column(String(16), nullable=False, default="group", server_default="group")
+    # LOGIC-B O4: archiving a group is an operation.  The periods in which no lesson of the group is generated:
+    # [{"from": "YYYY-MM-DDTHH:MM:SS", "to": "..."|null}], naive UTC; the last one is open (``to`` null) while archived.
+    inactive_intervals = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    archive_reason = Column(String(300), nullable=True)
+    # LOGIC-B: the group is archived (committed) but exam-service has not confirmed the release of its untouched exams yet: a durable marker,
+    # retried (idempotent) by the next archive-related call and by ``scripts/sweep_exam_releases.py``.
+    exam_release_pending = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -523,7 +538,8 @@ class GroupAudit(Base):
             "'group_price_set', 'membership_price_set', 'group_price_cancelled', 'membership_price_cancelled', "
             "'payment_writeoff', 'payment_writeoff_void', 'payment_refund', 'payment_refund_void', "
             "'membership_pause_set', 'membership_pause_void', 'opening_balance_set', 'opening_balance_void', "
-            "'group_lesson_type_set', 'student_left_group')",
+            "'group_lesson_type_set', 'student_left_group', "
+            "'group_archived', 'group_restored', 'lesson_teacher_set', 'lesson_teacher_cleared')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(
@@ -916,7 +932,12 @@ class GroupAttendance(Base):
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     cancellation_reason = Column(String(500), nullable=True)
+    # LOGIC-B O7: optimistic lock of the marks.  Grows by 1 on every successful write of the row (start / reconcile = 1,
+    # save, cancel, admin correction, change of the lesson teacher); the resolutions of excuses do not touch it.
+    version = Column(Integer, nullable=False, default=1, server_default="1")
 
+    # TIME_CONVENTIONS: ``started_at`` / ``completed_at`` are TASHKENT wall time, ``created_at`` / ``updated_at`` are
+    # UTC.  Compare them only through ``src/auth/business_clock.py``.
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
@@ -990,7 +1011,8 @@ class GroupAttendanceAudit(Base):
     __table_args__ = (
         CheckConstraint(
             "action IN ('started', 'reconciliation_started', 'created', 'updated', 'corrected', 'cancelled', 'reconciliation_cancelled', "
-            "'excuse_reviewed', 'excuse_reset', 'excuse_removed', 'excuse_file_added', 'excuse_file_removed', 'excuse_closed_pause')",
+            "'excuse_reviewed', 'excuse_reset', 'excuse_removed', 'excuse_file_added', 'excuse_file_removed', "
+            "'excuse_closed_pause', 'teacher_changed')",
             name="ck_group_attendance_audit_action",
         ),
         Index("idx_group_attendance_audit_attendance", "attendance_id"),
@@ -1077,6 +1099,145 @@ class AttendanceExcuseFile(Base):
             name="ck_attendance_excuse_file_size",
         ),
         Index("idx_attendance_excuse_files_excuse", "excuse_id"),
+    )
+
+
+class LessonTeacherAssignment(Base):
+    """LOGIC-B O5: the teacher of ONE lesson occurrence when it is not the teacher of the group (a substitution).
+
+    At most one active (``cancelled_at IS NULL``) row per (group, lesson, date).  Cancelling keeps the row (history).
+    ``lesson_date`` is a business date ``YYYY-MM-DD``; ``created_at`` / ``cancelled_at`` are UTC.
+    """
+
+    __tablename__ = "lesson_teacher_assignments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    lesson_id = Column(String(100), nullable=False)
+    lesson_date = Column(String(10), nullable=False)
+    teacher_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    reason = Column(String(300), nullable=False)
+    set_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancelled_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    __table_args__ = (
+        Index(
+            "uq_lesson_teacher_assignment_active",
+            "group_id",
+            "lesson_id",
+            "lesson_date",
+            unique=True,
+            postgresql_where=text("cancelled_at IS NULL"),
+        ),
+        Index("idx_lesson_teacher_assignment_teacher", "org_id", "teacher_id", "lesson_date"),
+    )
+
+
+class LessonSubstitutionRequest(Base):
+    """LOGIC-B2: a teacher's request "I cannot teach this lesson" and the administrator's decision on it.
+
+    One request = one lesson (group, lesson id, business date).  The request changes NOTHING until it is decided; the decision (substitute / reschedule / cancel /
+    reject) is made once (``status`` leaves ``pending`` exactly once).  Moments are UTC naive; ``lesson_date`` is a business date ``YYYY-MM-DD``.
+    """
+
+    __tablename__ = "lesson_substitution_requests"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    lesson_id = Column(String(100), nullable=False)
+    lesson_date = Column(String(10), nullable=False)
+    start_time = Column(String(5), nullable=False)
+    end_time = Column(String(5), nullable=False)
+    starts_at = Column(DateTime, nullable=False)
+    requester_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    origin = Column(String(8), nullable=False, default="teacher", server_default="teacher")
+    batch_id = Column(UUID(as_uuid=True), nullable=False)
+    reason_code = Column(String(8), nullable=False)
+    comment = Column(String(500), nullable=True)
+    suggested_teacher_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    status = Column(String(12), nullable=False, default="pending", server_default="pending")
+    decided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    decided_at = Column(DateTime, nullable=True)
+    decided_via = Column(String(20), nullable=True)
+    decision_note = Column(String(500), nullable=True)
+    substitute_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    assignment_id = Column(UUID(as_uuid=True), ForeignKey("lesson_teacher_assignments.id", ondelete="SET NULL"), nullable=True)
+    moved_to_lesson_id = Column(String(100), nullable=True)
+    moved_to_date = Column(String(10), nullable=True)
+    moved_to_start = Column(String(5), nullable=True)
+    moved_to_end = Column(String(5), nullable=True)
+    closed_reason = Column(String(30), nullable=True)
+    previous_request_id = Column(UUID(as_uuid=True), ForeignKey("lesson_substitution_requests.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    updated_at = Column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'substituted', 'rescheduled', 'cancelled', 'rejected', 'withdrawn', 'closed')", name="ck_lsr_status"
+        ),
+        CheckConstraint("reason_code IN ('sick', 'personal', 'other')", name="ck_lsr_reason_code"),
+        CheckConstraint("origin IN ('teacher', 'system')", name="ck_lsr_origin"),
+        CheckConstraint("(status = 'pending') = (decided_at IS NULL)", name="ck_lsr_decided_at"),
+        Index(
+            "uq_lsr_pending_lesson", "group_id", "lesson_id", "lesson_date", unique=True, postgresql_where=text("status = 'pending'")
+        ),
+        Index("idx_lsr_org_status_starts", "org_id", "status", "starts_at"),
+        Index("idx_lsr_org_requester", "org_id", "requester_id", "created_at"),
+        Index("idx_lsr_batch", "batch_id"),
+        Index("idx_lsr_lesson", "group_id", "lesson_id", "lesson_date"),
+        Index("idx_lsr_substitute", "substitute_id"),
+    )
+
+
+class LessonSubstitutionEvent(Base):
+    """LOGIC-B2: append-only journal of the requests (``actor_id`` NULL = the system); the source of the future notifications."""
+
+    __tablename__ = "lesson_substitution_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    request_id = Column(UUID(as_uuid=True), ForeignKey("lesson_substitution_requests.id", ondelete="CASCADE"), nullable=False)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    action = Column(String(24), nullable=False)
+    snapshot = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('requested', 'withdrawn', 'substituted', 'rescheduled', 'cancelled', 'rejected', 'closed', 'reopened', "
+            "'assignment_cleared', 'suggestion_unavailable')",
+            name="ck_lse_action",
+        ),
+        Index("idx_lse_request", "request_id", "created_at"),
+    )
+
+
+class MemberAudit(Base):
+    """LOGIC-B O2: immutable journal of the lifecycle of a staff member (removed / restored / reactivated by an
+    invitation / role changed).  ``snapshot`` holds ids and facts only."""
+
+    __tablename__ = "member_audit"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    member_id = Column(UUID(as_uuid=True), ForeignKey("organization_members.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    action = Column(String(30), nullable=False)
+    snapshot = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('removed', 'restored', 'reactivated_by_invite', 'role_changed')",
+            name="ck_member_audit_action",
+        ),
+        Index("idx_member_audit_org", "org_id", "created_at"),
+        Index("idx_member_audit_member", "member_id", "created_at"),
     )
 
 
