@@ -27,12 +27,46 @@ def fx(name):
     return json.loads((FIX / f"{name}.json").read_text(encoding="utf-8"))
 
 
+_CLOCKED_MODULES = ("service", "leave_service", "membership_periods", "payments_service", "student_archive", "logica_service", "payroll_service")
+
+
 @pytest.fixture
 def fixed_today(monkeypatch):
+    """The business day is ``day`` (``ps.business_today``) AND the clock of the code that stamps rows (``datetime.now`` in the modules below, ``business_clock``)
+    stands at 12:00 of that day (Tashkent): a test no longer depends on the date it runs at (a leave stamps ``left_at`` with the clock, the ledger reads the day)."""
+    import importlib
+    from datetime import datetime as real_datetime, timezone
+
+    from src.auth import business_clock as bc
+
+    state = {"day": TODAY}
+
+    def moment():
+        day = state["day"]
+        return real_datetime(day.year, day.month, day.day, 12, tzinfo=bc.BUSINESS_TIMEZONE)
+
+    class Frozen(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            m = moment()
+            return m.astimezone(tz) if tz is not None else m.astimezone(timezone.utc).replace(tzinfo=None)
+
+        @classmethod
+        def utcnow(cls):
+            return moment().astimezone(timezone.utc).replace(tzinfo=None)
+
+    for name in _CLOCKED_MODULES:
+        module = importlib.import_module(f"src.auth.{name}")
+        if getattr(module, "datetime", None) is real_datetime:
+            monkeypatch.setattr(module, "datetime", Frozen)
+    bc.set_clock(moment)
+
     def fix(day=TODAY):
+        state["day"] = day
         monkeypatch.setattr(ps, "business_today", lambda tz=None: day)
     fix()
-    return fix
+    yield fix
+    bc.set_clock(None)
 
 
 def owner(w):

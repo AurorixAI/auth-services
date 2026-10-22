@@ -121,6 +121,7 @@ def test_summary_survives_a_real_sql_error_in_the_open_lessons_count(world, monk
     from sqlalchemy import text
 
     excused_lesson(world)
+    real = AuthService.get_open_attendance_actions
 
     def poisoned(self, *a, **kw):
         # A genuine database error: the PostgreSQL transaction is aborted.
@@ -131,7 +132,9 @@ def test_summary_survives_a_real_sql_error_in_the_open_lessons_count(world, monk
     r = client.get(SUMMARY)
     assert r.status_code == 200
     assert r.json() == {"pending_total": 1, "open_lessons_total": None}
-    monkeypatch.undo()
+    # restore only this patch (``monkeypatch.undo()`` also removed the autouse "slot valid from the beginning" patch of conftest, and the result then
+    # depended on the time of day the suite ran at)
+    monkeypatch.setattr(AuthService, "get_open_attendance_actions", real)
     # The session was rolled back and is usable; the next summary is complete.
     again = client.get(SUMMARY).json()
     assert again["pending_total"] == 1 and again["open_lessons_total"] > 1
