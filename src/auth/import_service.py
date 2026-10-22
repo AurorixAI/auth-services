@@ -323,16 +323,19 @@ def parse_opening(d: dict, row: int, *, money: bool, accounting_start: date, enr
     if not money:
         warn(SHEET_STUDENTS, row, "Остаток", "Нет прав вносить остатки — ученик импортирован без остатка.")
         return True, None, None, None
-    if raw_paid is not None and raw_paid < max(accounting_start, enrol_day):
-        warn(SHEET_STUDENTS, row, "Оплачено до (дата)", "«Оплачено до» раньше даты зачисления — остаток пропущен.")
+    floor = max(enrol_day, accounting_start - timedelta(days=1))   # S0: the same L as ``OpeningService.floor_of``
+    if raw_paid is not None and raw_paid < floor:
+        warn(SHEET_STUDENTS, row, "Оплачено до (дата)", "«Оплачено до» раньше даты зачисления или начала учёта — остаток пропущен.")
         raw_paid = None
+    elif raw_paid is not None and raw_paid == accounting_start - timedelta(days=1):
+        raw_paid = None                                          # «оплачено до» the day before the start = nothing owed at the start
     if raw_paid is not None and raw_paid > enrol_day + timedelta(days=366):
         warn(SHEET_STUDENTS, row, "Оплачено до (дата)", "«Оплачено до» дальше чем через год — остаток пропущен.")
         raw_paid = None
     if raw_debt is not None:
-        day = raw_on or (enrol_day - timedelta(days=1))   # default: the day before the enrolment
-        if day > enrol_day or day < date(2020, 1, 1):
-            warn(SHEET_STUDENTS, row, "Долг на дату", "Дата долга должна быть не позже дня зачисления и не раньше 2020 года — долг пропущен.")
+        day = raw_on or (max(enrol_day, accounting_start) - timedelta(days=1))   # default: the day before the enrolment / the accounting start
+        if day > floor or day < date(2020, 1, 1):
+            warn(SHEET_STUDENTS, row, "Долг на дату", "Дата долга должна быть не позже дня зачисления (или дня перед началом учёта) и не раньше 2020 года — долг пропущен.")
         else:
             debt_amount, debt_on = raw_debt, day
     return True, raw_paid, debt_amount, debt_on

@@ -9,9 +9,10 @@ write inside the transaction, measures the impact and rolls back.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func
 
@@ -153,6 +154,17 @@ class _Base:
 # ============================================================================================================
 
 
+@dataclass
+class OpeningFacts:
+    """What ``OpeningService.apply`` reads about ONE membership, loaded once for a whole batch (see ``openings_service``)."""
+
+    first_day: date
+    accounting_start: date
+    existing: Optional[MembershipOpeningBalance]
+    has_money: bool
+    transfer_target: bool
+
+
 class OpeningService(_Base):
     def _out(self, row: MembershipOpeningBalance) -> OpeningOut:
         users = self.pay._users([row.created_by])
@@ -177,28 +189,38 @@ class OpeningService(_Base):
 
     # ---- validation
 
+    @staticmethod
+    def floor_of(first_day: date, accounting_start: date) -> date:
+        """``L``: the earliest «оплачено до» and the latest «долг на дату».  The day before the accounting start is the seam between the
+        old (their) books and ours: a student who came before it is "paid until / owing on" that day (S0, 22.10)."""
+        return max(first_day, accounting_start - timedelta(days=1))
+
     def validate(self, body, *, first_day: date, accounting_start: date, today: date) -> None:
         """422 ``OPENING_RANGE`` / ``AMOUNT_RANGE`` (``body``: anything with paid_until / debt_amount / debt_on)."""
+        floor = self.floor_of(first_day, accounting_start)
         if body.debt_amount is not None or body.debt_on is not None:
             if body.debt_amount is None or body.debt_on is None:
                 raise OpeningRange("Долг на начало: укажите и сумму, и дату долга")
             if not isinstance(body.debt_amount, int) or body.debt_amount < 1 or body.debt_amount > MAX_MONEY:
                 raise AmountRange(f"Сумма долга: от 1 до {MAX_MONEY:,}".replace(",", " "))
-            if body.debt_on > first_day:
-                raise OpeningRange("Долг на дату — не позже дня зачисления")
+            if body.debt_on > floor:
+                raise OpeningRange(f"Долг на дату — не позже {floor.strftime('%d.%m.%Y')}: долг после начала учёта считается сам")
             if body.debt_on < OPENING_MIN_DATE:
                 raise OpeningRange("Дата долга: не раньше 01.01.2020")
         if body.paid_until is not None:
-            lowest = max(accounting_start, first_day)
-            if body.paid_until < lowest:
-                raise OpeningRange("Оплачено до — не раньше даты зачисления")
+            if body.paid_until < floor:
+                hint = ": за более ранние дни внесите как долг" if floor == accounting_start - timedelta(days=1) else ""
+                raise OpeningRange(f"Оплачено до — не раньше {floor.strftime('%d.%m.%Y')}{hint}")
             if body.paid_until > today + timedelta(days=OPENING_AHEAD_DAYS):
                 raise OpeningRange("Оплачено до — не позже чем через год")
 
-    def _guard_transfer(self, membership_id: UUID) -> None:
-        if self.db.query(MembershipTransfer.id).filter(
+    def _transfer_target(self, membership_id: UUID) -> bool:
+        return self.db.query(MembershipTransfer.id).filter(
             MembershipTransfer.to_membership_id == membership_id, MembershipTransfer.voided_at.is_(None)
-        ).first():
+        ).first() is not None
+
+    def _guard_transfer(self, membership_id: UUID) -> None:
+        if self._transfer_target(membership_id):
             raise OpeningNotAllowed("Остаток нельзя внести: ученик пришёл переводом")
 
     # ---- write
@@ -206,25 +228,34 @@ class OpeningService(_Base):
     def apply(
         self, org_id: str, membership: StudentGroup, actor_id: str, actor_role: str, body, *, source: str, today: date,
         reason: Optional[str] = None, note: Optional[str] = None, require_reason_when_money: bool = True,
+        facts: Optional["OpeningFacts"] = None, flush: bool = True,
     ) -> Tuple[Optional[MembershipOpeningBalance], bool]:
         """The write inside the caller's transaction (no commit).  Returns ``(live row or None, changed)``.
 
-        Nothing but paid_until / debt given = the live one is voided; the same values again = noop."""
-        accounting_start = self.pay._loader(org_id, today).settings.accounting_start
-        first_day = self._first_stay_day(membership)
-        empty = body.paid_until is None and body.debt_amount is None and body.debt_on is None
+        Nothing but paid_until / debt given = the live one is voided; the same values again = noop.  S0: «оплачено до» = the day before the
+        accounting start means "nothing is owed at the start": it is the same as no opening (no row is written, a live one is voided).
+        ``facts`` (the bulk write): what the single call would read itself - read ONCE for all the rows, so the query count of a batch does
+        not depend on its size; ``flush=False``: the caller flushes once (the rows get their ids here)."""
+        accounting_start = facts.accounting_start if facts else self.pay._loader(org_id, today).settings.accounting_start
+        first_day = facts.first_day if facts else self._first_stay_day(membership)
+        paid_until, debt_amount, debt_on = body.paid_until, body.debt_amount, body.debt_on
+        empty = paid_until is None and debt_amount is None and debt_on is None
         if not empty:
             self.validate(body, first_day=first_day, accounting_start=accounting_start, today=today)
-            self._guard_transfer(membership.id)
-        existing = self.live(membership.id)
+            if facts.transfer_target if facts else self._transfer_target(membership.id):
+                raise OpeningNotAllowed("Остаток нельзя внести: ученик пришёл переводом")
+            if paid_until is not None and paid_until == accounting_start - timedelta(days=1):
+                paid_until = None
+                empty = debt_amount is None and debt_on is None
+        existing = facts.existing if facts else self.live(membership.id)
         if existing is not None and not empty and (existing.paid_until, int(existing.debt_amount or 0) or None, existing.debt_on) == (
-            body.paid_until, body.debt_amount, body.debt_on
+            paid_until, debt_amount, debt_on
         ):
             return existing, False
         if existing is None and empty:
             return None, False
         # m13: replacing a live opening of a membership that has money always needs a reason (a return through «Добавить в группу» included)
-        if (require_reason_when_money or existing is not None) and self._has_money_records(membership.id):
+        if (require_reason_when_money or existing is not None) and (facts.has_money if facts else self._has_money_records(membership.id)):
             reason = (reason or "").strip()
             if not 3 <= len(reason) <= 500:
                 raise ReasonRequired("У ученика уже есть оплаты: укажите причину изменения остатка (от 3 до 500 символов)")
@@ -232,16 +263,18 @@ class OpeningService(_Base):
         if existing is not None:
             existing.voided_at, existing.voided_by = _utcnow(), actor
             existing.void_reason = (reason or "").strip() or "заменён новым остатком"
-            self.db.flush()
+            if flush:
+                self.db.flush()
         new = None
         if not empty:
             new = MembershipOpeningBalance(
-                org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id, group_id=membership.group_id,
-                paid_until=body.paid_until, debt_amount=body.debt_amount, debt_on=body.debt_on, note=(note or "").strip() or None,
+                id=uuid4(), org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id, group_id=membership.group_id,
+                paid_until=paid_until, debt_amount=debt_amount, debt_on=debt_on, note=(note or "").strip() or None,
                 source=source, created_by=actor, created_at=_utcnow(),
             )
             self.db.add(new)
-            self.db.flush()
+            if flush:
+                self.db.flush()
         return new, True
 
     @deadlock_guard
