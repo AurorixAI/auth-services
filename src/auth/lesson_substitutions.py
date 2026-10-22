@@ -890,6 +890,10 @@ class Substitutions(SubstitutionsBase):
     def move_check(self, org_id: Any, request_id: Any, new_date: date, start: str, end: str) -> Dict[str, Any]:
         r = self._request(org_id, request_id)
         group = self.db.query(Group).filter(Group.id == r.group_id).first()
+        return self._move_check(group, r, new_date, start, end)
+
+    def _move_check(self, group: Group, r: Any, new_date: date, start: str, end: str) -> Dict[str, Any]:
+        """``r`` is a request or a lesson reference (``org_id, group_id, lesson_id, lesson_date``)."""
         try:
             start_m, end_m = self.svc._validate_lesson_time_range(start, end)
         except ValueError as exc:
@@ -950,6 +954,95 @@ class Substitutions(SubstitutionsBase):
                                               "cancelledVersion": row.version})
         return {"kind": "reschedule", "cancelledVersion": row.version, "warnings": warnings,
                 "newLesson": {"id": new_id, "groupId": str(group.id), "date": new_date.isoformat(), "startTime": start, "endTime": end, "room": room, "format": fmt}}
+
+    # ------------------------------------------------------------------------- #124: a move without a request
+    def _lesson_ref(self, group: Group, lesson_id: str, day: date, *, locked: bool = False) -> Tuple[SimpleNamespace, Dict[str, Any]]:
+        """A reference to the lesson of the schedule (the fields of a request that the shared code reads) and its occurrence; 404 ``LESSON_NOT_FOUND``."""
+        occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == lesson_id), None)
+        if occ is None:
+            raise not_found("LESSON_NOT_FOUND", "Урок не найден")
+        start_m = hhmm_to_minutes(occ["startTime"])
+        ref = SimpleNamespace(id=None, org_id=group.org_id, group_id=group.id, lesson_id=lesson_id, lesson_date=day.isoformat(), start_time=occ["startTime"],
+                              end_time=occ["endTime"], starts_at=bc.lesson_instant_utc(day, start_m))
+        return ref, occ
+
+    def lesson_move_check(self, org_id: Any, group_id: Any, lesson_id: str, day: date, new_date: date, start: str, end: str) -> Dict[str, Any]:
+        gid = _uuid(group_id)
+        group = self.db.query(Group).filter(Group.id == gid, Group.org_id == org_id).first() if gid else None
+        if group is None:
+            raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
+        ref, _ = self._lesson_ref(group, lesson_id, day)
+        return self._move_check(group, ref, new_date, start, end)
+
+    def lesson_exam_binding(self, org_id: Any, group_id: Any, lesson_id: str, day: date) -> Dict[str, Any]:
+        """The precheck of «Отменить урок» for the lesson sheet: the same answer as ``examBinding`` of the request detail."""
+        gid = _uuid(group_id)
+        group = self.db.query(Group).filter(Group.id == gid, Group.org_id == org_id).first() if gid else None
+        if group is None:
+            raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
+        ref, _ = self._lesson_ref(group, lesson_id, day)
+        return self.exam_binding(ref)
+
+    def move_lesson(self, org_id: Any, actor_id: Any, actor_role: str, group_id: Any, body) -> Dict[str, Any]:
+        """The administrator moves a future lesson without a teacher's request.  One path with the decision «Перенести урок»: a pending request of the lesson is decided
+        by ``decide``; without a request a system record of the move is made (origin ``system``, the teacher of the lesson as requester) and decided in the SAME
+        transaction, so the audit, the label of the student, the neutrality of package A and the payroll follow without a second code path."""
+        actor, gid = _uuid(actor_id), _uuid(group_id)
+        group = self._group_locked(org_id, gid) if gid else None
+        if group is None:
+            self.db.rollback()
+            raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
+        day = body.lessonDate
+        iso = day.isoformat()
+        one = SimpleNamespace(decision="reschedule", reason=body.reason, newDate=body.newDate, startTime=body.startTime, endTime=body.endTime, room=body.room,
+                              format=body.format, teacherId=None, note=None, expectedStatus=None)
+        try:
+            reqs = (self.db.query(Req).filter(Req.group_id == group.id, Req.lesson_id == body.lessonId, Req.lesson_date == iso)
+                    .order_by(Req.created_at.desc(), Req.id).all())
+            pending = next((r for r in reqs if r.status == PENDING), None)
+            if pending is not None:
+                self._check_expected(pending.start_time, pending.end_time, body)
+                return self.decide(org_id, actor, actor_role, pending.id, one)
+            done = next((r for r in reqs if r.status == "rescheduled"), None)
+            if done is not None:
+                if self._same_decision(done, actor, one):
+                    item = self.one(done)
+                    self.db.commit()
+                    return {"item": item, "result": self._result_of(done)}
+                raise self.already_decided(done)
+            if group.status != "active":
+                raise conflict("GROUP_ARCHIVED", "Группа в архиве: действие недоступно")
+            ref, occ = self._lesson_ref(group, body.lessonId, day)
+            row = self.db.query(GroupAttendance).filter(GroupAttendance.group_id == group.id, GroupAttendance.lesson_id == body.lessonId,
+                                                        GroupAttendance.lesson_date == iso).with_for_update().first()
+            if row is not None:
+                if row.status == "cancelled":
+                    raise conflict("LESSON_CANCELLED", "Урок отменён")
+                raise R.err(409, "LESSON_ALREADY_STARTED", "Урок уже начался или прошёл: перенести его нельзя")
+            now = self.now()
+            if ref.starts_at <= now:
+                raise R.err(409, "LESSON_ALREADY_STARTED", "Урок уже начался или прошёл: перенести его нельзя")
+            self._check_expected(ref.start_time, ref.end_time, body)
+            teacher = TeacherBook(self.db).resolve(group, body.lessonId, iso, hhmm_to_minutes(occ["endTime"])).teacher_id
+            reason, _ = self.closure_reason(SimpleNamespace(**{**ref.__dict__, "requester_id": teacher}), group)
+            if teacher is None or reason in ("TEACHER_REMOVED", "GROUP_TEACHER_CHANGED"):
+                raise R.err(422, "LESSON_HAS_NO_TEACHER")
+            prev = reqs[0] if reqs else None
+            r = Req(org_id=org_id, group_id=group.id, lesson_id=body.lessonId, lesson_date=iso, start_time=ref.start_time, end_time=ref.end_time, starts_at=ref.starts_at,
+                    requester_id=teacher, origin="system", batch_id=uuid4(), reason_code="other", comment=(body.reason or "").strip()[:500] or None, status=PENDING,
+                    previous_request_id=prev.id if prev is not None else None, created_at=now, updated_at=now)
+            self.db.add(r)
+            self.db.flush()
+            self.event(r, "requested", actor, {"reasonCode": "other", "trigger": "manager_move", "batchId": str(r.batch_id)})
+        except BaseException:
+            self.db.rollback()
+            raise
+        return self.decide(org_id, actor, actor_role, r.id, one)
+
+    @staticmethod
+    def _check_expected(start: str, end: str, body) -> None:
+        if (body.expectedStartTime and body.expectedStartTime != start) or (body.expectedEndTime and body.expectedEndTime != end):
+            raise R.err(409, "LESSON_CHANGED", current={"startTime": start, "endTime": end})
 
     # ------------------------------------------------------------------------------------------------- bulk
     def decide_bulk(self, org_id: Any, actor_id: Any, actor_role: str, body) -> Dict[str, Any]:

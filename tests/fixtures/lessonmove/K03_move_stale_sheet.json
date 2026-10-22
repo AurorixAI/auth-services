@@ -1,0 +1,13 @@
+{
+  "status": 409,
+  "body": {
+    "detail": {
+      "code": "LESSON_CHANGED",
+      "message": "Расписание урока изменилось: обновите страницу и повторите",
+      "current": {
+        "startTime": "16:00",
+        "endTime": "17:30"
+      }
+    }
+  }
+}

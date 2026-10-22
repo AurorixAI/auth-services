@@ -26,7 +26,9 @@ from .substitution_schemas import (
     DecideBulkRequest,
     DecideOut,
     DecideRequest,
+    ExamBinding,
     LessonAccessOut,
+    LessonMoveRequest,
     MineOut,
     MoveCheckOut,
     MyLessonsOut,
@@ -172,6 +174,40 @@ def substitution_move_check(
 def decide_substitution(request_id: str, request: DecideRequest, user: dict = Depends(_manager), db: Session = Depends(get_db)):
     """Решение: назначить замену / перенести / отменить / отклонить."""
     return _subs(db).decide(user["org_id"], user["user_id"], user.get("org_role") or "admin", request_id, request)
+
+
+# ------------------------------------------------------------------------------ #124: the lesson sheet (no request needed)
+@router.post("/org/groups/{group_id}/lesson-move", response_model=DecideOut)
+def move_lesson_directly(group_id: str, request: LessonMoveRequest, user: dict = Depends(_manager), db: Session = Depends(get_db)):
+    """Администратор переносит будущий урок прямо из листа урока: правила и проверки решения «Перенести урок»; открытый запрос урока решается тем же путём."""
+    return _subs(db).move_lesson(user["org_id"], user["user_id"], user.get("org_role") or "admin", group_id, request)
+
+
+@router.get("/org/groups/{group_id}/lesson-move-check", response_model=MoveCheckOut)
+def lesson_move_check(
+    group_id: str,
+    lessonId: str = Query(..., min_length=1, max_length=100),
+    lessonDate: date = Query(...),
+    newDate: date = Query(...),
+    startTime: str = Query(..., pattern=r"^\d{2}:\d{2}$"),
+    endTime: str = Query(..., pattern=r"^\d{2}:\d{2}$"),
+    user: dict = Depends(_manager),
+    db: Session = Depends(get_db),
+):
+    """Живая проверка переноса урока без запроса: пересечения учителя нового урока и группы."""
+    return _subs(db).lesson_move_check(user["org_id"], group_id, lessonId, lessonDate, newDate, startTime, endTime)
+
+
+@router.get("/org/groups/{group_id}/lesson-exam-binding", response_model=ExamBinding)
+def lesson_exam_binding(
+    group_id: str,
+    lessonId: str = Query(..., min_length=1, max_length=100),
+    lessonDate: date = Query(...),
+    user: dict = Depends(_manager),
+    db: Session = Depends(get_db),
+):
+    """Предпроверка «Отменить урок» для листа урока (экзамен, привязанный к уроку): `canCancel=false` — активный экзамен; тот же ответ, что `examBinding` диалога «Замены»."""
+    return _subs(db).lesson_exam_binding(user["org_id"], group_id, lessonId, lessonDate)
 
 
 # ------------------------------------------------------------------------------------ exam-service (D-1)

@@ -1,0 +1,75 @@
+{
+  "item": {
+    "id": "<id:1>",
+    "batchId": "<id:2>",
+    "status": "rescheduled",
+    "origin": "system",
+    "group": {
+      "id": "G1",
+      "name": "9-А",
+      "studentCount": 3
+    },
+    "lesson": {
+      "lessonId": "lesson-l2",
+      "date": "2026-10-28",
+      "startTime": "16:00",
+      "endTime": "17:30",
+      "room": null,
+      "format": "offline",
+      "startsAtUtc": "2026-10-28T11:00:00",
+      "exists": true
+    },
+    "teacher": {
+      "id": "A",
+      "name": "Иванов И."
+    },
+    "reasonCode": "other",
+    "reasonLabel": "Другое",
+    "comment": "Перенос по просьбе центра",
+    "suggestedTeacher": null,
+    "createdAt": "2026-10-21T09:00:00",
+    "minutesToStart": 10200,
+    "urgent": false,
+    "overdue": false,
+    "decision": {
+      "kind": "reschedule",
+      "by": {
+        "id": "admin",
+        "name": "Каримова Н."
+      },
+      "at": "2026-10-21T09:00:00",
+      "via": "request",
+      "note": "Перенос по просьбе центра",
+      "substitute": null,
+      "movedTo": {
+        "lessonId": "one-off-NEW",
+        "date": "2026-10-29",
+        "startTime": "16:00",
+        "endTime": "17:30"
+      },
+      "closedReason": null,
+      "closedReasonText": null
+    },
+    "previous": null
+  },
+  "result": {
+    "kind": "reschedule",
+    "teacherId": null,
+    "teacherName": null,
+    "isSubstitution": null,
+    "attendanceUpdated": null,
+    "payrollSheetsAffected": null,
+    "cancelledVersion": 1,
+    "newLesson": {
+      "id": "one-off-NEW",
+      "groupId": "G1",
+      "date": "2026-10-29",
+      "startTime": "16:00",
+      "endTime": "17:30",
+      "room": null,
+      "format": "offline"
+    },
+    "version": null,
+    "warnings": []
+  }
+}

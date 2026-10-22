@@ -1,0 +1,17 @@
+{
+  "ok": false,
+  "teacherId": "A",
+  "teacherName": "Иванов И.",
+  "teacherConflicts": [
+    {
+      "date": "2026-10-27",
+      "startTime": "10:00",
+      "endTime": "11:30",
+      "groupId": "G1",
+      "groupName": "9-А",
+      "withGroupName": "7-Б"
+    }
+  ],
+  "groupConflicts": [],
+  "warnings": []
+}

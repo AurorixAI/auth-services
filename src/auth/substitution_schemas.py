@@ -295,6 +295,22 @@ class DecideRequest(BaseModel):
     expectedStatus: Optional[Literal["pending"]] = None
 
 
+class LessonMoveRequest(BaseModel):
+    """#124: the administrator moves a future lesson straight from the lesson sheet (no request of a teacher needed).  Same fields and rules as the decision
+    ``reschedule``; ``expectedStartTime`` / ``expectedEndTime`` are what the sheet showed (409 ``LESSON_CHANGED`` when the schedule moved meanwhile)."""
+
+    lessonId: str = Field(..., min_length=1, max_length=100)
+    lessonDate: date
+    newDate: Optional[date] = None
+    startTime: Optional[str] = None
+    endTime: Optional[str] = None
+    room: Optional[str] = None
+    format: Optional[Literal["offline", "online"]] = None
+    reason: Optional[str] = Field(None, max_length=500)
+    expectedStartTime: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
+    expectedEndTime: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
+
+
 class NewLesson(BaseModel):
     id: str
     groupId: str

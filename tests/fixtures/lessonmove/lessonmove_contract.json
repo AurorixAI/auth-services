@@ -1,0 +1,1339 @@
+{
+  "components": {
+    "schemas": {
+      "DecideOut": {
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/SubstitutionItem"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DecideResult"
+          }
+        },
+        "required": [
+          "item",
+          "result"
+        ],
+        "title": "DecideOut",
+        "type": "object"
+      },
+      "DecideResult": {
+        "properties": {
+          "attendanceUpdated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attendanceupdated"
+          },
+          "cancelledVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelledversion"
+          },
+          "isSubstitution": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issubstitution"
+          },
+          "kind": {
+            "enum": [
+              "substitute",
+              "reschedule",
+              "cancel",
+              "reject"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "newLesson": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NewLesson"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payrollSheetsAffected": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payrollsheetsaffected"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachername"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MoveWarning"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "DecideResult",
+        "type": "object"
+      },
+      "ExamBinding": {
+        "properties": {
+          "canCancel": {
+            "default": true,
+            "title": "Cancancel",
+            "type": "boolean"
+          },
+          "state": {
+            "default": "none",
+            "enum": [
+              "ok",
+              "none",
+              "unavailable"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ExamBinding",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LessonMoveRequest": {
+        "description": "#124: the administrator moves a future lesson straight from the lesson sheet (no request of a teacher needed).  Same fields and rules as the decision\n``reschedule``; ``expectedStartTime`` / ``expectedEndTime`` are what the sheet showed (409 ``LESSON_CHANGED`` when the schedule moved meanwhile).",
+        "properties": {
+          "endTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endtime"
+          },
+          "expectedEndTime": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{2}:\\d{2}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedendtime"
+          },
+          "expectedStartTime": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{2}:\\d{2}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedstarttime"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "enum": [
+                  "offline",
+                  "online"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          },
+          "lessonDate": {
+            "format": "date",
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "newDate": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newdate"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "startTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starttime"
+          }
+        },
+        "required": [
+          "lessonId",
+          "lessonDate"
+        ],
+        "title": "LessonMoveRequest",
+        "type": "object"
+      },
+      "MoveCheckOut": {
+        "properties": {
+          "groupConflicts": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherConflict"
+            },
+            "title": "Groupconflicts",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "teacherConflicts": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherConflict"
+            },
+            "title": "Teacherconflicts",
+            "type": "array"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachername"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/MoveWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "MoveCheckOut",
+        "type": "object"
+      },
+      "MoveWarning": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "MoveWarning",
+        "type": "object"
+      },
+      "MovedTo": {
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "lessonId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessonid"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "startTime",
+          "endTime"
+        ],
+        "title": "MovedTo",
+        "type": "object"
+      },
+      "NewLesson": {
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "format": {
+            "default": "offline",
+            "title": "Format",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "groupId",
+          "date",
+          "startTime",
+          "endTime"
+        ],
+        "title": "NewLesson",
+        "type": "object"
+      },
+      "PersonRef": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "PersonRef",
+        "type": "object"
+      },
+      "SubDecision": {
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closedReason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "LESSON_STARTED",
+                  "LESSON_CANCELLED",
+                  "LESSON_REMOVED",
+                  "GROUP_ARCHIVED",
+                  "GROUP_TEACHER_CHANGED",
+                  "TEACHER_REMOVED",
+                  "LESSON_OUTSIDE_WINDOW"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closedreason"
+          },
+          "closedReasonText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closedreasontext"
+          },
+          "kind": {
+            "enum": [
+              "substitute",
+              "reschedule",
+              "cancel",
+              "reject",
+              "withdraw",
+              "closed"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "movedTo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MovedTo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "substitute": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "via": {
+            "anyOf": [
+              {
+                "enum": [
+                  "request",
+                  "lesson_teacher_put",
+                  "system",
+                  "withdraw"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Via"
+          }
+        },
+        "required": [
+          "kind",
+          "at"
+        ],
+        "title": "SubDecision",
+        "type": "object"
+      },
+      "SubGroup": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "studentCount": {
+            "default": 0,
+            "title": "Studentcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "SubGroup",
+        "type": "object"
+      },
+      "SubLesson": {
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "exists": {
+            "default": true,
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "format": {
+            "default": "offline",
+            "title": "Format",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "startsAtUtc": {
+            "title": "Startsatutc",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lessonId",
+          "date",
+          "startTime",
+          "endTime",
+          "startsAtUtc"
+        ],
+        "title": "SubLesson",
+        "type": "object"
+      },
+      "SubPrevious": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "substituted",
+              "rescheduled",
+              "cancelled",
+              "rejected",
+              "withdrawn",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "substituteName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Substitutename"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachername"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "SubPrevious",
+        "type": "object"
+      },
+      "SubstitutionItem": {
+        "properties": {
+          "batchId": {
+            "title": "Batchid",
+            "type": "string"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "group": {
+            "$ref": "#/components/schemas/SubGroup"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lesson": {
+            "$ref": "#/components/schemas/SubLesson"
+          },
+          "minutesToStart": {
+            "title": "Minutestostart",
+            "type": "integer"
+          },
+          "origin": {
+            "default": "teacher",
+            "enum": [
+              "teacher",
+              "system"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "overdue": {
+            "default": false,
+            "title": "Overdue",
+            "type": "boolean"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubPrevious"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasonCode": {
+            "enum": [
+              "sick",
+              "personal",
+              "other"
+            ],
+            "title": "Reasoncode",
+            "type": "string"
+          },
+          "reasonLabel": {
+            "title": "Reasonlabel",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "substituted",
+              "rescheduled",
+              "cancelled",
+              "rejected",
+              "withdrawn",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "suggestedTeacher": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SuggestedTeacher"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "teacher": {
+            "$ref": "#/components/schemas/PersonRef"
+          },
+          "urgent": {
+            "default": false,
+            "title": "Urgent",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "batchId",
+          "status",
+          "group",
+          "lesson",
+          "teacher",
+          "reasonCode",
+          "reasonLabel",
+          "createdAt",
+          "minutesToStart"
+        ],
+        "title": "SubstitutionItem",
+        "type": "object"
+      },
+      "SuggestedTeacher": {
+        "properties": {
+          "active": {
+            "default": true,
+            "title": "Active",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "SuggestedTeacher",
+        "type": "object"
+      },
+      "TeacherConflict": {
+        "description": "One overlap of a teacher's lessons (``TEACHER_BUSY.conflicts[]``).",
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          },
+          "withGroupName": {
+            "title": "Withgroupname",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "startTime",
+          "endTime",
+          "groupId",
+          "groupName",
+          "withGroupName"
+        ],
+        "title": "TeacherConflict",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "ALGO auth - lesson sheet moves (#124)",
+    "version": "lessonmove-1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/org/groups/{group_id}/lesson-exam-binding": {
+      "get": {
+        "description": "Предпроверка «Отменить урок» для листа урока (экзамен, привязанный к уроку): `canCancel=false` — активный экзамен; тот же ответ, что `examBinding` диалога «Замены».",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lessonId",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Lessonid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lessonDate",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Lessondate",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamBinding"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Lesson Exam Binding",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа (только владелец и администратор центра)",
+            "status": 403
+          },
+          {
+            "code": "GROUP_NOT_FOUND",
+            "message": "Группа не найдена",
+            "status": 404
+          },
+          {
+            "code": "LESSON_NOT_FOUND",
+            "message": "Урок не найден",
+            "status": 404
+          }
+        ]
+      }
+    },
+    "/org/groups/{group_id}/lesson-move": {
+      "post": {
+        "description": "Администратор переносит будущий урок прямо из листа урока: правила и проверки решения «Перенести урок»; открытый запрос урока решается тем же путём.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonMoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Move Lesson Directly",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа (только владелец и администратор центра)",
+            "status": 403
+          },
+          {
+            "code": "GROUP_NOT_FOUND",
+            "message": "Группа не найдена",
+            "status": 404
+          },
+          {
+            "code": "LESSON_NOT_FOUND",
+            "message": "Урок не найден",
+            "status": 404
+          },
+          {
+            "code": "GROUP_ARCHIVED",
+            "message": "Группа в архиве: действие недоступно",
+            "status": 409
+          },
+          {
+            "code": "LESSON_CANCELLED",
+            "message": "Урок отменён",
+            "status": 409
+          },
+          {
+            "code": "LESSON_ALREADY_STARTED",
+            "message": "Урок уже начался или прошёл. Обратитесь к администратору",
+            "status": 409
+          },
+          {
+            "code": "LESSON_CHANGED",
+            "message": "Расписание урока изменилось: обновите страницу и повторите",
+            "status": 409
+          },
+          {
+            "code": "SUBSTITUTION_ALREADY_DECIDED",
+            "message": "Запрос уже решён",
+            "status": 409
+          },
+          {
+            "code": "GROUP_BUSY",
+            "message": "У группы уже есть урок в это время",
+            "status": 409
+          },
+          {
+            "code": "TEACHER_BUSY",
+            "message": "У преподавателя в это время другой урок (conflicts, total)",
+            "status": 409
+          },
+          {
+            "code": "LESSON_HAS_LIVE_EXAM",
+            "message": "Нельзя перенести урок с активным экзаменом (текст exam-service)",
+            "status": 409
+          },
+          {
+            "code": "EXAM_SERVICE_UNAVAILABLE",
+            "message": "Не удалось проверить экзамены группы. Повторите попытку.",
+            "status": 503
+          },
+          {
+            "code": "REASON_REQUIRED",
+            "message": "Укажите причину (не менее 3 символов)",
+            "status": 422
+          },
+          {
+            "code": "MOVE_FIELDS_REQUIRED",
+            "message": "Укажите новую дату и время урока",
+            "status": 422
+          },
+          {
+            "code": "MOVE_IN_PAST",
+            "message": "Новое время урока уже прошло",
+            "status": 422
+          },
+          {
+            "code": "MOVE_TOO_FAR",
+            "message": "Перенести можно не дальше чем на 60 дней",
+            "status": 422
+          },
+          {
+            "code": "MOVE_SAME_SLOT",
+            "message": "Выберите другую дату или время",
+            "status": 422
+          },
+          {
+            "code": "LESSON_HAS_NO_TEACHER",
+            "message": "У урока нет действующего преподавателя: назначьте его и повторите",
+            "status": 422
+          },
+          {
+            "code": "REASON_TOO_LONG",
+            "message": "Причина не длиннее 500 символов",
+            "status": 422
+          }
+        ]
+      }
+    },
+    "/org/groups/{group_id}/lesson-move-check": {
+      "get": {
+        "description": "Живая проверка переноса урока без запроса: пересечения учителя нового урока и группы.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lessonId",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Lessonid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lessonDate",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Lessondate",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "newDate",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Newdate",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "startTime",
+            "required": true,
+            "schema": {
+              "pattern": "^\\d{2}:\\d{2}$",
+              "title": "Starttime",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "endTime",
+            "required": true,
+            "schema": {
+              "pattern": "^\\d{2}:\\d{2}$",
+              "title": "Endtime",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoveCheckOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Lesson Move Check",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа (только владелец и администратор центра)",
+            "status": 403
+          },
+          {
+            "code": "GROUP_NOT_FOUND",
+            "message": "Группа не найдена",
+            "status": 404
+          },
+          {
+            "code": "LESSON_NOT_FOUND",
+            "message": "Урок не найден",
+            "status": 404
+          },
+          {
+            "code": "MOVE_FIELDS_REQUIRED",
+            "message": "Укажите новую дату и время урока",
+            "status": 422
+          }
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1/auth"
+    }
+  ]
+}

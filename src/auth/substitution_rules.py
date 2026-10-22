@@ -35,8 +35,15 @@ ERROR_CATALOGUE: Dict[str, tuple[int, str]] = {
 }
 
 
+# #124: the codes of the administrator's move without a request (kept apart: the frozen ``logicB2_contract.json`` lists ``ERROR_CATALOGUE`` only)
+DIRECT_MOVE_ERRORS: Dict[str, tuple[int, str]] = {
+    "LESSON_CHANGED": (409, "Расписание урока изменилось: обновите страницу и повторите"),
+    "LESSON_HAS_NO_TEACHER": (422, "У урока нет действующего преподавателя: назначьте его и повторите"),
+}
+
+
 def err(status: int, code: str, message: str = None, **extra: Any) -> OpsError:
-    default = ERROR_CATALOGUE.get(code, (status, ""))[1]
+    default = {**DIRECT_MOVE_ERRORS, **ERROR_CATALOGUE}.get(code, (status, ""))[1]
     return OpsError(status, code, message or default, **extra)
 
 
