@@ -7,7 +7,7 @@ sentences (``payments_texts``).  Nothing here decides an amount.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from . import billing_ledger as bl
@@ -187,3 +187,39 @@ def preview_result(before: bl.Ledger, after: bl.Ledger, credit_id: str, price_to
         partial_credit_after=after.partial_credit, lessons=lessons, summary_text=text,
         price_ahead=price_ahead(after, credit_id, price_today),
     )
+
+
+# ---- INCOME-2: the one-line «куда пошли» of the payments journal -------------------------------------------
+
+
+def _segment_word(seg: Optional[bl.Segment]) -> str:
+    """``за сентябрь`` (a whole calendar month) / ``за 15.09–14.10`` / ``пакет №2`` / ``долг на начало учёта``."""
+    if seg is None:
+        return "аванс"
+    if seg.kind == "opening":
+        return "долг на начало учёта"
+    if seg.kind == "package" and seg.package_no is not None:
+        return f"пакет №{seg.package_no}"
+    first, last = seg.period_start, seg.period_end
+    if first.day == 1 and (last + timedelta(days=1)).day == 1 and (first.year, first.month) == (last.year, last.month):
+        return f"за {tx.MONTHS_NOMINATIVE[first.month - 1]}"
+    return f"за {tx.period_text(first, last)}"
+
+
+def allocation_text(ledger: bl.Ledger, credit_id: str) -> str:
+    """``за сентябрь — 200 000 · аванс — 50 000`` (+ ``возвращено — N`` / ``перенесено в другую группу — N``).  Money that reached a
+    period that has not begun at the day of the payment, and money no period has absorbed, are both «аванс»."""
+    by_id = {s.id: s for s in ledger.segments}
+    parts: List[Tuple[str, int]] = []
+    for a in ledger.allocations:
+        if a.credit_id != credit_id:
+            continue
+        if a.bucket == bl.ADVANCE or a.segment_id == bl.ADVANCE_SEGMENT:
+            parts.append(("аванс", a.amount))
+        else:
+            parts.append((_segment_word(by_id.get(a.segment_id)), a.amount))
+    parts.append(("возвращено", ledger.refunded_from.get(credit_id, 0)))
+    parts.append(("перенесено в другую группу", ledger.transferred_from.get(credit_id, 0)))
+    # the advance goes last, the cut-offs after it
+    parts.sort(key=lambda p: {"аванс": 1, "возвращено": 2, "перенесено в другую группу": 3}.get(p[0], 0))
+    return tx.allocation_summary(parts)

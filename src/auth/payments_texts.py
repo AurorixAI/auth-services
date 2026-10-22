@@ -187,3 +187,78 @@ def payout_text(*, state: str, saved_total: int, fresh_total: Optional[int], tar
     if fresh_total is not None and fresh_total != saved_total:
         return f"Выплачено {num(paid)} · после изменений данных доплатить {num(balance)}"
     return f"Выплачено {num(paid)} из {num(target)} · осталось {num(balance)}"
+
+
+# ---- INCOME-2 («Поступления» v2): the owner's vocabulary ------------------------------------------------------
+
+MONTHS_NOMINATIVE = ("январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь",
+                     "декабрь")
+MONTHS_GENITIVE = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября",
+                   "декабря")
+METHOD_LABELS = {
+    "cash": "Наличные", "card": "Карта", "bank_transfer": "Перевод", "click": "Click", "payme": "Payme", "other": "Другое",
+    "unknown": "Способ не указан",
+}
+
+
+def method_label(method: Optional[str]) -> str:
+    return METHOD_LABELS.get(method or "unknown", METHOD_LABELS["other"])
+
+
+def day_genitive(day: date) -> str:
+    """``21 октября``."""
+    return f"{day.day} {MONTHS_GENITIVE[day.month - 1]}"
+
+
+def span_text(first: date, last: date) -> str:
+    """``12–18 октября`` / ``30 сентября – 6 октября`` / ``21 октября`` (one day)."""
+    if first == last:
+        return day_genitive(first)
+    if (first.year, first.month) == (last.year, last.month):
+        return f"{first.day}–{last.day} {MONTHS_GENITIVE[last.month - 1]}"
+    return f"{day_genitive(first)} – {day_genitive(last)}"
+
+
+def allocation_summary(parts: Sequence[tuple]) -> str:
+    """The journal line «куда пошли деньги»: ``за сентябрь — 200 000 · аванс — 50 000``; ``parts`` = ``(label, amount)``;
+    the pieces with the same label are added up, the order of the first appearance stays."""
+    merged: dict = {}
+    for label, amount in parts:
+        if amount:
+            merged[label] = merged.get(label, 0) + amount
+    return " · ".join(f"{label} — {num(amount)}" for label, amount in merged.items())
+
+
+def percent_change(current: int, previous: int) -> Optional[int]:
+    """``+12`` for 112 against 100; ``None`` when there is nothing to compare with.  Rounded half away from zero."""
+    if previous <= 0:
+        return None
+    raw = (current - previous) * 100
+    sign = -1 if raw < 0 else 1
+    return sign * ((abs(raw) * 2 + previous) // (2 * previous))
+
+
+def income_summary_text(*, lead: str, received: int, previous_received: int, previous_ref: str,
+                        collected_pct: Optional[int] = None) -> str:
+    """The one sentence under the cards: ``За октябрь пришло 7 885 000 сум — на 12% больше, чем за сентябрь. Собрано 63% стоимости месяца.``
+
+    ``lead`` = «За октябрь» / «Сегодня»; ``previous_ref`` = «за сентябрь» / «вчера» (what it is compared with).
+    """
+    if received <= 0:
+        text = f"{lead} оплат не было"
+        text += f"; {previous_ref} пришло {money(previous_received)}." if previous_received > 0 else "."
+    elif previous_received <= 0:
+        text = f"{lead} пришло {money(received)}; {previous_ref} оплат не было."
+    else:
+        pct = percent_change(received, previous_received)
+        if received == previous_received:
+            diff = "столько же"
+        elif pct == 0:
+            diff = "почти столько же"
+        else:
+            diff = f"на {abs(pct)}% {'больше' if pct > 0 else 'меньше'}"
+        diff = diff + (f", чем {previous_ref}" if "%" in diff else f", сколько {previous_ref}")
+        text = f"{lead} пришло {money(received)} — {diff}."
+    if collected_pct is not None:
+        text += f" Собрано {collected_pct}% стоимости месяца."
+    return text
