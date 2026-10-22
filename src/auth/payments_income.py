@@ -234,8 +234,16 @@ def _previous_ref(cur: Period, prev: Period, today: date) -> str:
     return f"за предыдущие {n} {tx.days_word(n)}"
 
 
+def _previous_hint(cur: Period, prev: Period, today: date) -> str:
+    """The comparison phrase in the dative WITHOUT the preposition, ready to follow «к» (the front appends it to the delta line): «сентябрю» / «1–21 сентября» /
+    «вчерашнему дню» / «прошлой неделе» / «тем же дням прошлой недели (12–14 окт.)» / «предыдущему периоду»."""
+    return _previous_dative(cur, prev, today).split(" ", 1)[1]
+
+
 def _previous_dative(cur: Period, prev: Period, today: date) -> str:
-    """«к сентябрю» / «к 1–21 сентября» / «к вчерашнему дню» / «к прошлой неделе» / «к предыдущему периоду»."""
+    """«к сентябрю» / «к 1–21 сентября» / «ко вчерашнему дню» / «к прошлой неделе» / «к тем же дням прошлой недели (12–14 окт.)» / «к предыдущему периоду»."""
+    if cur.in_progress and cur.kind == "week":
+        return "к тем же дням прошлой недели (" + tx.short_span_text(prev.first, prev.last) + ")"
     if cur.kind == "day":
         return "ко вчерашнему дню" if prev.first == today - timedelta(days=1) else "к " + tx.day_genitive(prev.first)
     if cur.kind != "custom" and (cur.in_progress or (cur.kind == "month" and prev.last != month_end(prev.first))):
@@ -365,15 +373,31 @@ class IncomeReports:
             t = collection.total
             g = collection.groups
             checks.append(IncomeCheck(code="collection_total_eq_groups", left=t.charged, right=sum(r.charged for r in g), diff=0))
+        journal_kinds = self._journal_kind_sums(org_id, entries, cur.first, cur.last, method, group_id, teacher_id)
+        for kind, amount in self._strip_amounts(current).items():           # Σ of the strip by kind == Σ of the journal rows' split by kind (same filters)
+            if amount or journal_kinds.get(kind, 0):
+                checks.append(IncomeCheck(code=f"strip_{kind}_eq_journal", left=amount, right=journal_kinds.get(kind, 0), diff=0))
         for c in checks:
             c.diff = c.left - c.right
         return IncomeOverview(
             as_of=today, period=_period_out(cur), previous_period=_period_out(prev), previous_label=_previous_label(cur, prev, today),
-            previous_hint=tx.short_span_text(prev.first, prev.last), current=current, previous=previous,
+            previous_hint=_previous_hint(cur, prev, today), current=current, previous=previous,
             delta_amount=current.received - previous.received, delta_pct=pct, delta_direction=direction,
             delta_text=tx.delta_text(pct, _previous_dative(cur, prev, today)) if pct is not None else None, summary_text=text, by_method=by_method,
             strip=strip_parts(self._strip_amounts(current), only_nonzero=False), series=series, series_by=series_by, cash=self._cash(org_id, cur, today, pay_rows, refund_rows, group_id, teacher_id), collection=collection,
             position=position, checks=checks, ok=all(c.diff == 0 for c in checks))
+
+    def _journal_kind_sums(self, org_id: str, entries, first: date, last: date, method, group_id, teacher_id) -> Dict[str, int]:
+        """The kinds of the ACTIVE payments of the journal set (the journal's own filters, one query) from the ledgers: what the rows' ``split`` add up to."""
+        query = self._journal_filters(
+            self._journal_base(StudentPayment.id, StudentPayment.membership_id), org_id, first, last, method, group_id, teacher_id, None, None)
+        sums: Dict[str, int] = defaultdict(int)
+        for pid, mid in query.filter(StudentPayment.voided_at.is_(None)).all():
+            entry = entries.get(mid)
+            if entry:
+                for kind, amount in split_kinds(entry.ledger, str(pid)).items():
+                    sums[kind] += amount
+        return sums
 
     @staticmethod
     def _strip_amounts(t: IncomeTotals) -> Dict[str, int]:

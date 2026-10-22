@@ -5,7 +5,7 @@ import pytest
 
 from src.auth import payments_texts as tx
 from src.auth.payments_income import (
-    _lead, _previous_dative, _previous_label, _previous_ref, csv_safe_row, entry_times, month_end, previous_period, resolve_period, split_kinds, strip_parts)
+    _lead, _previous_dative, _previous_hint, _previous_label, _previous_ref, csv_safe_row, entry_times, month_end, previous_period, resolve_period, split_kinds, strip_parts)
 from src.auth.payments_service import PaymentInvalid
 
 D = date
@@ -116,7 +116,7 @@ def test_dates_and_method_words():
 def test_the_short_comparison_phrase():
     cases = [((D(2026, 9, 1), D(2026, 9, 30)), "к августу"), ((D(2026, 10, 1), D(2026, 10, 31)), "к 1–21 сентября"),
              ((D(2026, 10, 21), D(2026, 10, 21)), "ко вчерашнему дню"), ((D(2026, 10, 15), D(2026, 10, 15)), "к 14 октября"),
-             ((D(2026, 10, 5), D(2026, 10, 11)), "к прошлой неделе"), ((D(2026, 10, 19), D(2026, 10, 25)), "к 12–14 октября"),
+             ((D(2026, 10, 5), D(2026, 10, 11)), "к прошлой неделе"), ((D(2026, 10, 19), D(2026, 10, 25)), "к тем же дням прошлой недели (12–14 окт.)"),
              ((D(2026, 9, 3), D(2026, 9, 20)), "к предыдущему периоду"), ((D(2026, 9, 1), D(2026, 9, 21)), "к предыдущему периоду")]
     for (first, last), want in cases:
         cur = resolve_period(first, last, TODAY, "custom" if (first, last) == (D(2026, 9, 1), D(2026, 9, 21)) else None)
@@ -187,7 +187,7 @@ def test_running_week_and_month_are_worded_as_running():
     cur, p = prev(D(2026, 10, 19), D(2026, 10, 25))                                       # Mon 19 - Sun 25, today Wed 21
     assert cur.in_progress and _lead(cur, TODAY) == "За эту неделю (пн–ср)"
     assert _previous_ref(cur, p, TODAY) == "за те же дни прошлой недели" and _previous_label(cur, p, TODAY) == "те же дни прошлой недели"
-    assert (p.first, p.last) == (D(2026, 10, 12), D(2026, 10, 14))
+    assert (p.first, p.last) == (D(2026, 10, 12), D(2026, 10, 14)) and _previous_hint(cur, p, TODAY) == "тем же дням прошлой недели (12–14 окт.)"
     assert tx.income_summary_text(lead=_lead(cur, TODAY), received=2_700_000, previous_received=1_000_000, previous_ref=_previous_ref(cur, p, TODAY)) == (
         "За эту неделю (пн–ср) пришло 2 700 000 сум — на 170% больше, чем за те же дни прошлой недели.")
     monday = D(2026, 10, 19)
@@ -196,7 +196,7 @@ def test_running_week_and_month_are_worded_as_running():
     cur, p = prev(D(2026, 10, 1), D(2026, 10, 31))
     assert _lead(cur, TODAY) == "За октябрь (по 21-е)"
     assert _previous_ref(cur, p, TODAY) == "за те же дни сентября" and _previous_label(cur, p, TODAY) == "те же дни сентября"
-    assert tx.short_span_text(p.first, p.last) == "1–21 сент."                              # the hint with the dates
+    assert _previous_hint(cur, p, TODAY) == "1–21 сентября"                                # the phrase after «к» / «чем за»
     cur, p = prev(D(2026, 9, 1), D(2026, 9, 30))                                           # a closed month / week keep their names
     assert _lead(cur, TODAY) == "За сентябрь" and _previous_label(cur, p, TODAY) == "август"
     cur, p = prev(D(2026, 10, 12), D(2026, 10, 18))

@@ -59,7 +59,9 @@ def test_october_overview_hand_calculated(world, seeded):
     assert [(x["kind"], x["label"], x["amount"]) for x in o["strip"]] == [
         ("old_debt", "на старые долги", 1_000_000), ("current", "за текущий период", 1_900_000), ("forward", "вперёд (за будущие периоды)", 0),
         ("advance", "пока не потрачено (аванс)", 450_000), ("refunded", "возвращено", 100_000), ("transferred", "перенесено в другую группу", 0)]
-    assert o["previous_label"] == "те же дни сентября" and o["previous_hint"] == "1–21 сент."
+    assert o["previous_label"] == "те же дни сентября" and o["previous_hint"] == "1–21 сентября"
+    assert [c["code"] for c in o["checks"] if c["code"].startswith("strip_")] == [
+        "strip_old_debt_eq_journal", "strip_current_eq_journal", "strip_advance_eq_journal", "strip_refunded_eq_journal"]
     prev = o["previous"]
     assert (prev["received"], prev["payments_count"], prev["to_current"], prev["to_past_debt"]) == (1_500_000, 4, 1_500_000, 0)
     assert (o["delta_amount"], o["delta_pct"]) == (1_950_000, 130)
@@ -279,7 +281,7 @@ def test_lessons_mode_collects_by_the_package_that_began_in_the_month(world, fix
 
 def test_previous_label_is_always_there_and_human(world, seeded, fixed_today):
     running = income(world, "2026-10-01", "2026-10-31")                                  # S2: a running month is compared day for day
-    assert (running["previous_label"], running["previous_hint"]) == ("те же дни сентября", "1–21 сент.")
+    assert (running["previous_label"], running["previous_hint"]) == ("те же дни сентября", "1–21 сентября")
     assert income(world, "2026-10-21", "2026-10-21")["previous_label"] == "вчера"
     assert income(world, "2026-10-15", "2026-10-15")["previous_label"] == "14 окт."
     assert income(world, "2026-10-12", "2026-10-18")["previous_label"] == "5–11 окт."
@@ -695,10 +697,11 @@ def test_a_back_dated_payment_is_forward_once_its_period_has_begun(world, seeded
 def test_a_running_week_is_worded_and_compared_day_for_day(world, seeded):
     o = income(world, "2026-10-19", "2026-10-25")                                      # Mon 19 - Sun 25, today Wed 21
     assert o["period"]["kind"] == "week" and o["period"]["in_progress"] is True
-    assert (o["previous_label"], o["previous_hint"]) == ("те же дни прошлой недели", "12–14 окт.")
+    assert (o["previous_label"], o["previous_hint"]) == ("те же дни прошлой недели", "тем же дням прошлой недели (12–14 окт.)")
     assert o["current"]["received"] == 250_000 and o["previous"]["received"] == 200_000                     # 12.10: a2 200 000
     assert o["summary_text"] == "За эту неделю (пн–ср) пришло 250 000 сум — на 25% больше, чем за те же дни прошлой недели."
     month = income(world, "2026-10-01", "2026-10-31")
     assert month["summary_text"].startswith("За октябрь (по 21-е) пришло 3 450 000 сум — на 130% больше, чем за те же дни сентября.")
     closed = income(world, "2026-09-01", "2026-09-30")
-    assert closed["previous_hint"] == "1–31 авг."
+    assert closed["previous_hint"] == "августу" and income(world, "2026-10-21", "2026-10-21")["previous_hint"] == "вчерашнему дню"
+    assert o["delta_text"] == "25% к тем же дням прошлой недели (12–14 окт.)"

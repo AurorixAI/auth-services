@@ -17,7 +17,7 @@
     "in_progress": false
   },
   "previous_label": "те же дни сентября",
-  "previous_hint": "1–21 сент.",
+  "previous_hint": "1–21 сентября",
   "current": {
     "received": 1050000,
     "payments_count": 2,
@@ -327,6 +327,24 @@
       "code": "collection_total_eq_groups",
       "left": 600000,
       "right": 600000,
+      "diff": 0
+    },
+    {
+      "code": "strip_old_debt_eq_journal",
+      "left": 300000,
+      "right": 300000,
+      "diff": 0
+    },
+    {
+      "code": "strip_current_eq_journal",
+      "left": 450000,
+      "right": 450000,
+      "diff": 0
+    },
+    {
+      "code": "strip_advance_eq_journal",
+      "left": 300000,
+      "right": 300000,
       "diff": 0
     }
   ],

@@ -17,7 +17,7 @@
     "in_progress": false
   },
   "previous_label": "август",
-  "previous_hint": "1–31 авг.",
+  "previous_hint": "августу",
   "current": {
     "received": 1500000,
     "payments_count": 4,
@@ -348,6 +348,12 @@
       "code": "collection_total_eq_groups",
       "left": 2500000,
       "right": 2500000,
+      "diff": 0
+    },
+    {
+      "code": "strip_current_eq_journal",
+      "left": 1500000,
+      "right": 1500000,
       "diff": 0
     }
   ],

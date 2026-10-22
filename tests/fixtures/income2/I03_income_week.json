@@ -17,7 +17,7 @@
     "in_progress": false
   },
   "previous_label": "5–11 окт.",
-  "previous_hint": "5–11 окт.",
+  "previous_hint": "прошлой неделе",
   "current": {
     "received": 550000,
     "payments_count": 2,
@@ -167,6 +167,18 @@
       "code": "received_eq_journal",
       "left": 550000,
       "right": 550000,
+      "diff": 0
+    },
+    {
+      "code": "strip_old_debt_eq_journal",
+      "left": 200000,
+      "right": 200000,
+      "diff": 0
+    },
+    {
+      "code": "strip_current_eq_journal",
+      "left": 350000,
+      "right": 350000,
       "diff": 0
     }
   ],

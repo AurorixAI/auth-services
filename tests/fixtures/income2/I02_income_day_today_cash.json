@@ -17,7 +17,7 @@
     "in_progress": false
   },
   "previous_label": "вчера",
-  "previous_hint": "20 окт.",
+  "previous_hint": "вчерашнему дню",
   "current": {
     "received": 250000,
     "payments_count": 2,
@@ -140,6 +140,12 @@
     },
     {
       "code": "received_eq_journal",
+      "left": 250000,
+      "right": 250000,
+      "diff": 0
+    },
+    {
+      "code": "strip_current_eq_journal",
       "left": 250000,
       "right": 250000,
       "diff": 0

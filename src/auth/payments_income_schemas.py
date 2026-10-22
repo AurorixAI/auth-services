@@ -121,7 +121,10 @@ class IncomePosition(ReceiptsPosition):
 
 class IncomeCheck(PayModel):
     code: Literal[
-        "received_eq_strip", "received_eq_methods", "received_eq_series", "received_eq_journal", "collection_total_eq_groups"
+        "received_eq_strip", "received_eq_methods", "received_eq_series", "received_eq_journal", "collection_total_eq_groups",
+        # Σ of the strip by kind == Σ of the journal rows' split by kind (same filters); present for a kind when either side is non-zero
+        "strip_old_debt_eq_journal", "strip_current_eq_journal", "strip_forward_eq_journal", "strip_advance_eq_journal", "strip_refunded_eq_journal",
+        "strip_transferred_eq_journal",
     ]
     left: int
     right: int
@@ -135,7 +138,7 @@ class IncomeOverview(PayModel):
     period: IncomePeriod
     previous_period: IncomePeriod  # the same kind of period before it (a running one is cut to the same number of days)
     previous_label: str  # the human name of that period, ALWAYS present (also when it had no payments): «сентябрь» | «вчера» | «прошлая неделя» | «12–18 окт.»
-    previous_hint: Optional[str] = None  # the dates of that period, short: «5–8 окт.» / «1–22 сент.» (for a running week / month ``previous_label`` is «те же дни …»)
+    previous_hint: Optional[str] = None  # the comparison phrase in the dative, ready to follow «к»: «сентябрю» / «1–22 сентября» / «тем же дням прошлой недели (12–15 окт.)»
     current: IncomeTotals
     previous: IncomeTotals  # the totals of ``previous_period``
     delta_amount: int = 0  # current.received - previous.received

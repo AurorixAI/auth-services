@@ -267,7 +267,13 @@
               "received_eq_methods",
               "received_eq_series",
               "received_eq_journal",
-              "collection_total_eq_groups"
+              "collection_total_eq_groups",
+              "strip_old_debt_eq_journal",
+              "strip_current_eq_journal",
+              "strip_forward_eq_journal",
+              "strip_advance_eq_journal",
+              "strip_refunded_eq_journal",
+              "strip_transferred_eq_journal"
             ],
             "title": "Code",
             "type": "string"
