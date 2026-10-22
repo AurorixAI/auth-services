@@ -5,16 +5,20 @@
         "code": "BATCH_INVALID",
         "items": [
           {
+            "after": null,
+            "before": null,
             "changed": false,
             "code": "OPENING_RANGE",
             "group_name": "Математика 9А",
             "has_money_records": true,
             "kind": "error",
+            "lessons": null,
             "membership_id": "00000000-0000-4000-8000-000000000104",
             "message": "Оплачено до — не раньше 31.10.2026: за более ранние дни внесите как долг",
             "needs_reason": false,
             "status": "error",
             "student_name": "Сидоров Тимур",
+            "target": null,
             "warnings": []
           }
         ],
@@ -97,7 +101,10 @@
               "after": {
                 "advance": 0,
                 "debt": 0,
+                "lessons_left": null,
                 "opening": {
+                  "debt_amount": null,
+                  "debt_on": null,
                   "paid_until": "2026-11-30"
                 },
                 "paid_until": "2026-11-30",
@@ -106,17 +113,25 @@
               "before": {
                 "advance": 0,
                 "debt": 0,
+                "lessons_left": null,
+                "opening": null,
+                "paid_until": null,
                 "status": "none"
               },
               "changed": true,
+              "code": null,
               "group_name": "Математика 9А",
               "has_money_records": false,
               "kind": "paid_until",
+              "lessons": null,
               "membership_id": "00000000-0000-4000-8000-000000000103",
+              "message": null,
               "needs_reason": false,
               "status": "ok",
               "student_name": "Орлова Дана",
               "target": {
+                "debt_amount": null,
+                "debt_on": null,
                 "paid_until": "2026-11-30"
               },
               "warnings": []
@@ -125,28 +140,38 @@
               "after": {
                 "advance": 0,
                 "debt": 550000,
+                "lessons_left": null,
                 "opening": {
                   "debt_amount": 550000,
-                  "debt_on": "2026-10-31"
+                  "debt_on": "2026-10-31",
+                  "paid_until": null
                 },
+                "paid_until": null,
                 "status": "expired"
               },
               "before": {
                 "advance": 0,
                 "debt": 0,
+                "lessons_left": null,
+                "opening": null,
+                "paid_until": null,
                 "status": "none"
               },
               "changed": true,
+              "code": null,
               "group_name": "Математика 9А",
               "has_money_records": false,
               "kind": "debt",
+              "lessons": null,
               "membership_id": "00000000-0000-4000-8000-000000000105",
+              "message": null,
               "needs_reason": false,
               "status": "ok",
               "student_name": "Назарова Лола",
               "target": {
                 "debt_amount": 550000,
-                "debt_on": "2026-10-31"
+                "debt_on": "2026-10-31",
+                "paid_until": null
               },
               "warnings": []
             },
@@ -154,21 +179,31 @@
               "after": {
                 "advance": 0,
                 "debt": 0,
+                "lessons_left": null,
+                "opening": null,
+                "paid_until": null,
                 "status": "none"
               },
               "before": {
                 "advance": 0,
                 "debt": 0,
+                "lessons_left": null,
+                "opening": null,
+                "paid_until": null,
                 "status": "none"
               },
               "changed": false,
+              "code": null,
               "group_name": "Физика 10Б",
               "has_money_records": false,
               "kind": "unchanged",
+              "lessons": null,
               "membership_id": "00000000-0000-4000-8000-000000000106",
+              "message": null,
               "needs_reason": false,
               "status": "noop",
               "student_name": "Ахмедов Руслан",
+              "target": null,
               "warnings": [
                 {
                   "code": "PAID_UNTIL_AT_START",
@@ -223,6 +258,8 @@
           {
             "membership_id": "00000000-0000-4000-8000-000000000103",
             "opening": {
+              "debt_amount": null,
+              "debt_on": null,
               "paid_until": "2026-11-30"
             },
             "version": "00000000-0000-4000-8000-0000000003ff"

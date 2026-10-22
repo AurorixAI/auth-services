@@ -153,7 +153,9 @@ def build() -> dict:
             OpeningBatchItem(membership_id=rows2[0].membership_id, version="-", paid_until=D(2026, 10, 31))])
 
     def err(status, code, message, **extra):
-        return {"status": status, "body": OpeningsError.model_validate({"detail": {"code": code, "message": message, **extra}}).model_dump(mode="json", exclude_none=True)}
+        body = {"detail": {"code": code, "message": message, **extra}}      # exactly what the server sends (PaymentError.detail)
+        OpeningsError.model_validate(body)
+        return {"status": status, "body": body}
 
     fresh = OpeningFresh(membership_id=rows1[2].membership_id, version="00000000-0000-4000-8000-0000000003ff", opening=OpeningValue(paid_until=D(2026, 11, 30)))
     errors = {
