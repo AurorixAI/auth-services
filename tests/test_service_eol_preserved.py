@@ -44,5 +44,9 @@ def test_service_py_keeps_its_mixed_endings():
 
 
 @pytest.mark.skipif(not _have_base(), reason="the base commit is not in this checkout")
-def test_schemas_py_is_untouched():
-    assert _git("diff", "--stat", BASE, "--", "src/auth/schemas.py").stdout == ""
+def test_schemas_py_diff_is_not_an_eol_normalisation():
+    # LOGIC-A added the opening balance field to schemas.py on purpose (3 lines); the rule is that its mixed
+    # endings are never normalised: the diff must be the same with and without ignoring end-of-line spaces
+    plain = _git("diff", "--stat", BASE, "--", "src/auth/schemas.py").stdout
+    quiet = _git("diff", "--ignore-space-at-eol", "--stat", BASE, "--", "src/auth/schemas.py").stdout
+    assert plain == quiet
