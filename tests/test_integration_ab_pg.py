@@ -375,8 +375,8 @@ def test_the_linear_chain_composes_the_check_constraints_of_a_and_b(monkeypatch)
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["lb3c4d5e6f7"]
-    assert [r.revision for r in script.walk_revisions()][:5] == ["lb3c4d5e6f7", "lb2b3c4d5e6", "lb1a2b3c4d5", "f2a3b4c5d6e", "e1f2a3b4c5d"]
+    assert script.get_heads() == ["sa1b2c3d4e5"]                              # IA fix pack: the student journal, on top of LOGIC-B2
+    assert [r.revision for r in script.walk_revisions()][:6] == ["sa1b2c3d4e5", "lb3c4d5e6f7", "lb2b3c4d5e6", "lb1a2b3c4d5", "f2a3b4c5d6e", "e1f2a3b4c5d"]
     name = "a5_auth_chain_migrations"
     url_base = make_url(base)
     admin = create_engine(url_base.set(database="postgres"), isolation_level="AUTOCOMMIT", connect_args=utc_connect_args(base))
@@ -414,7 +414,7 @@ def test_the_linear_chain_composes_the_check_constraints_of_a_and_b(monkeypatch)
             assert not any(f"'{v}'" in d for v in A_VALUES[table] + B_VALUES[table]), (table, d)
         command.upgrade(config, "head")
         with eng.connect() as c:
-            assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "lb3c4d5e6f7"
+            assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "sa1b2c3d4e5"
     finally:
         eng.dispose()
         with admin.connect() as c:

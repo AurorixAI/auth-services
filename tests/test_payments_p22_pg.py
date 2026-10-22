@@ -594,6 +594,7 @@ def test_receipt_content(world):
     assert body == {
         "receipt_no": 1, "org_name": "ALGO Math Center", "org_city": "Ташкент", "org_phone": "+998901234567",
         "student_name": "Каримова Алия", "display_id": "N13-001", "group_name": "Группа",
+        "student_id": str(world.students[0].id), "membership_id": str(mid(world)), "group_id": str(world.group.id),
         "amount": 1_250_000, "amount_words": "Один миллион двести пятьдесят тысяч сум", "currency": "UZS",
         "paid_on": day(-3).isoformat(), "lessons_count": None, "partial_period": False, "method": "cash",
         "note": "Наличные", "accepted_by_name": "Иван Owner", "created_at": p["created_at"], "voided_at": None,
