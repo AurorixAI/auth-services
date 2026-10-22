@@ -16,7 +16,8 @@
     "days": 21,
     "in_progress": false
   },
-  "previous_label": "1–21 сент.",
+  "previous_label": "те же дни сентября",
+  "previous_hint": "1–21 сент.",
   "current": {
     "received": 3450000,
     "payments_count": 7,
@@ -25,6 +26,7 @@
     "transferred": 0,
     "to_past_debt": 1000000,
     "to_current": 1900000,
+    "to_forward": 0,
     "to_advance": 450000,
     "written_off": 100000,
     "net_received": 3350000
@@ -37,6 +39,7 @@
     "transferred": 0,
     "to_past_debt": 0,
     "to_current": 1500000,
+    "to_forward": 0,
     "to_advance": 0,
     "written_off": 0,
     "net_received": 1500000
@@ -45,7 +48,7 @@
   "delta_pct": 130,
   "delta_direction": "up",
   "delta_text": "130% к 1–21 сентября",
-  "summary_text": "За октябрь пришло 3 450 000 сум — на 130% больше, чем за 1–21 сентября. Собрано 76% стоимости месяца.",
+  "summary_text": "За октябрь (по 21-е) пришло 3 450 000 сум — на 130% больше, чем за те же дни сентября. Собрано 76% стоимости месяца.",
   "by_method": [
     {
       "method": "click",
@@ -70,6 +73,38 @@
       "label": "Карта",
       "amount": 350000,
       "count": 1
+    }
+  ],
+  "strip": [
+    {
+      "kind": "old_debt",
+      "label": "на старые долги",
+      "amount": 1000000
+    },
+    {
+      "kind": "current",
+      "label": "за текущий период",
+      "amount": 1900000
+    },
+    {
+      "kind": "forward",
+      "label": "вперёд (за будущие периоды)",
+      "amount": 0
+    },
+    {
+      "kind": "advance",
+      "label": "пока не потрачено (аванс)",
+      "amount": 450000
+    },
+    {
+      "kind": "refunded",
+      "label": "возвращено",
+      "amount": 100000
+    },
+    {
+      "kind": "transferred",
+      "label": "перенесено в другую группу",
+      "amount": 0
     }
   ],
   "series": [

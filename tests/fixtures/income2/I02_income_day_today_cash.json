@@ -17,6 +17,7 @@
     "in_progress": false
   },
   "previous_label": "вчера",
+  "previous_hint": "20 окт.",
   "current": {
     "received": 250000,
     "payments_count": 2,
@@ -25,6 +26,7 @@
     "transferred": 0,
     "to_past_debt": 0,
     "to_current": 250000,
+    "to_forward": 0,
     "to_advance": 0,
     "written_off": 0,
     "net_received": 150000
@@ -37,6 +39,7 @@
     "transferred": 0,
     "to_past_debt": 0,
     "to_current": 0,
+    "to_forward": 0,
     "to_advance": 0,
     "written_off": 100000,
     "net_received": 0
@@ -45,13 +48,45 @@
   "delta_pct": null,
   "delta_direction": null,
   "delta_text": null,
-  "summary_text": "Сегодня пришло 250 000 сум; вчера оплат не было.",
+  "summary_text": "Сегодня пришло 250 000 сум.",
   "by_method": [
     {
       "method": "cash",
       "label": "Наличные",
       "amount": 250000,
       "count": 2
+    }
+  ],
+  "strip": [
+    {
+      "kind": "old_debt",
+      "label": "на старые долги",
+      "amount": 0
+    },
+    {
+      "kind": "current",
+      "label": "за текущий период",
+      "amount": 250000
+    },
+    {
+      "kind": "forward",
+      "label": "вперёд (за будущие периоды)",
+      "amount": 0
+    },
+    {
+      "kind": "advance",
+      "label": "пока не потрачено (аванс)",
+      "amount": 0
+    },
+    {
+      "kind": "refunded",
+      "label": "возвращено",
+      "amount": 0
+    },
+    {
+      "kind": "transferred",
+      "label": "перенесено в другую группу",
+      "amount": 0
     }
   ],
   "series": [

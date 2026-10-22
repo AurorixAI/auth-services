@@ -38,6 +38,7 @@ from .payments_income_schemas import (
     IncomeOverview,
     IncomePeriod,
     IncomePosition,
+    IncomeStripPart,
     IncomeTotals,
     JournalAuthor,
     JournalRow,
@@ -61,6 +62,38 @@ class InvalidPeriod(PaymentInvalid):
 
 class ExportTooLong(PaymentInvalid):
     code = "EXPORT_TOO_LONG"
+
+
+def split_kinds(ledger: bl.Ledger, payment_id: str) -> Dict[str, int]:
+    """Where ONE payment went, by the CURRENT ledger allocation (FIFO as of today), each piece classified relative to the payment's own date:
+    ``old_debt`` (the period ended before it), ``current`` (the period contains it), ``forward`` (the period starts after it and has been consumed since),
+    ``advance`` (not consumed today: the money sits in a period that has not begun, or in no period at all - exactly the money the ledger counts as «аванс»).
+    ``refunded`` / ``transferred`` stay what they are.  The pieces + refunded + transferred == the payment."""
+    begun = {s.id: s.begun for s in ledger.segments}
+    out = {tx.KIND_OLD_DEBT: 0, tx.KIND_CURRENT: 0, tx.KIND_FORWARD: 0, tx.KIND_ADVANCE: 0}
+    for a in ledger.allocations:
+        if a.credit_id != payment_id:
+            continue
+        if a.segment_id == bl.ADVANCE_SEGMENT or not begun.get(a.segment_id, False):
+            kind = tx.KIND_ADVANCE
+        elif a.bucket == bl.PAST_DEBT:
+            kind = tx.KIND_OLD_DEBT
+        elif a.bucket == bl.CURRENT:
+            kind = tx.KIND_CURRENT
+        else:
+            kind = tx.KIND_FORWARD
+        out[kind] += a.amount
+    out[tx.KIND_REFUNDED] = ledger.refunded_from.get(payment_id, 0)
+    out[tx.KIND_TRANSFERRED] = ledger.transferred_from.get(payment_id, 0)
+    return out
+
+
+_KIND_ORDER = (tx.KIND_OLD_DEBT, tx.KIND_CURRENT, tx.KIND_FORWARD, tx.KIND_ADVANCE, tx.KIND_REFUNDED, tx.KIND_TRANSFERRED)
+
+
+def strip_parts(amounts: Dict[str, int], *, only_nonzero: bool) -> List[IncomeStripPart]:
+    return [IncomeStripPart(kind=k, label=tx.INCOME_KIND_LABELS[k], amount=amounts.get(k, 0))
+            for k in _KIND_ORDER if amounts.get(k, 0) or not only_nonzero]
 
 
 def csv_safe_row(row: Sequence[Any]) -> List[Any]:
@@ -166,19 +199,31 @@ def previous_period(p: Period, today: date) -> Period:
     return Period(p.kind, first, last, _label(p.kind, first, last, today, partial), False)
 
 
+_WEEKDAYS = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+
+
 def _lead(p: Period, today: date) -> str:
     if p.kind == "day" and p.first == today:
         return "Сегодня"
     if p.kind == "day" and p.first == today - timedelta(days=1):
         return "Вчера"
+    if p.kind == "week" and p.in_progress:               # a running week says so: «За эту неделю (пн–чт)»
+        first, last = _WEEKDAYS[p.first.isoweekday() - 1], _WEEKDAYS[today.isoweekday() - 1]
+        return "За эту неделю (" + (first if first == last else f"{first}–{last}") + ")"
     if p.kind == "week":
         return "За неделю " + tx.span_text(p.first, p.last)
+    if p.kind == "month" and p.in_progress:              # «За октябрь (по 22-е)»
+        return f"За {p.label} (по {today.day}-е)"
     return "За " + p.label
 
 
 def _previous_ref(cur: Period, prev: Period, today: date) -> str:
     if cur.kind == "day":
         return "вчера" if prev.first == today - timedelta(days=1) else "за " + prev.label
+    if cur.in_progress and cur.kind == "week":
+        return "за те же дни прошлой недели"
+    if cur.in_progress and cur.kind == "month":
+        return "за те же дни " + tx.MONTHS_GENITIVE[prev.first.month - 1]
     if cur.kind != "custom" and (cur.in_progress or (cur.kind == "month" and prev.last != month_end(prev.first))):
         return "за " + tx.span_text(prev.first, prev.last)
     if cur.kind == "week":
@@ -203,9 +248,14 @@ def _previous_dative(cur: Period, prev: Period, today: date) -> str:
 
 
 def _previous_label(cur: Period, prev: Period, today: date) -> str:
-    """The name of the compared period: «вчера» / «20 окт.» / «прошлая неделя» / «12–18 окт.» / «сентябрь» (a month that is cut: «1–21 сент.»)."""
+    """The name of the compared period: «вчера» / «20 окт.» / «прошлая неделя» / «12–18 окт.» / «сентябрь»; a RUNNING week / month is compared day for day:
+    «те же дни прошлой недели» / «те же дни сентября» (the dates are in ``previous_hint``)."""
     if cur.kind == "day":
         return "вчера" if prev.first == today - timedelta(days=1) else tx.short_span_text(prev.first, prev.last)
+    if cur.in_progress and cur.kind == "week":
+        return "те же дни прошлой недели"
+    if cur.in_progress and cur.kind == "month":
+        return "те же дни " + tx.MONTHS_GENITIVE[prev.first.month - 1]
     if cur.kind == "week" and not cur.in_progress:
         this_monday = today - timedelta(days=today.isoweekday() - 1)
         if prev.first == this_monday - timedelta(days=7):
@@ -304,7 +354,8 @@ class IncomeReports:
         journal_sum = self._journal_totals(org_id, cur.first, cur.last, method, group_id, teacher_id, None, None)[1]
         checks = [
             IncomeCheck(code="received_eq_strip", left=current.received, right=(
-                current.to_past_debt + current.to_current + current.to_advance + current.refunded_from_received + current.transferred),
+                current.to_past_debt + current.to_current + current.to_forward + current.to_advance + current.refunded_from_received
+                + current.transferred),
                 diff=0),
             IncomeCheck(code="received_eq_methods", left=current.received, right=sum(m.amount for m in by_method), diff=0),
             IncomeCheck(code="received_eq_series", left=current.received, right=sum(d.received for d in series), diff=0),
@@ -317,11 +368,17 @@ class IncomeReports:
         for c in checks:
             c.diff = c.left - c.right
         return IncomeOverview(
-            as_of=today, period=_period_out(cur), previous_period=_period_out(prev), previous_label=_previous_label(cur, prev, today), current=current, previous=previous,
+            as_of=today, period=_period_out(cur), previous_period=_period_out(prev), previous_label=_previous_label(cur, prev, today),
+            previous_hint=tx.short_span_text(prev.first, prev.last), current=current, previous=previous,
             delta_amount=current.received - previous.received, delta_pct=pct, delta_direction=direction,
             delta_text=tx.delta_text(pct, _previous_dative(cur, prev, today)) if pct is not None else None, summary_text=text, by_method=by_method,
-            series=series, series_by=series_by, cash=self._cash(org_id, cur, today, pay_rows, refund_rows, group_id, teacher_id), collection=collection,
+            strip=strip_parts(self._strip_amounts(current), only_nonzero=False), series=series, series_by=series_by, cash=self._cash(org_id, cur, today, pay_rows, refund_rows, group_id, teacher_id), collection=collection,
             position=position, checks=checks, ok=all(c.diff == 0 for c in checks))
+
+    @staticmethod
+    def _strip_amounts(t: IncomeTotals) -> Dict[str, int]:
+        return {tx.KIND_OLD_DEBT: t.to_past_debt, tx.KIND_CURRENT: t.to_current, tx.KIND_FORWARD: t.to_forward, tx.KIND_ADVANCE: t.to_advance,
+                tx.KIND_REFUNDED: t.refunded_from_received, tx.KIND_TRANSFERRED: t.transferred}
 
     @staticmethod
     def _shown(entries: Dict[UUID, ls.MembershipLedger], group_id: Optional[UUID], teacher_id: Optional[UUID]):
@@ -355,15 +412,15 @@ class IncomeReports:
                 continue
             amount = int(amount)
             entry = entries.get(mid)
-            split = PaymentsReports._split(entry.ledger, str(pid)) if entry else {bl.PAST_DEBT: 0, bl.CURRENT: 0, bl.ADVANCE: 0}
+            split = split_kinds(entry.ledger, str(pid)) if entry else {}
             t["received"] += amount
             t["payments_count"] += 1
-            t["to_past_debt"] += split[bl.PAST_DEBT]
-            t["to_current"] += split[bl.CURRENT]
-            t["to_advance"] += split[bl.ADVANCE]
-            if entry:
-                t["refunded_from_received"] += entry.ledger.refunded_from.get(str(pid), 0)
-                t["transferred"] += entry.ledger.transferred_from.get(str(pid), 0)
+            t["to_past_debt"] += split.get(tx.KIND_OLD_DEBT, 0)
+            t["to_current"] += split.get(tx.KIND_CURRENT, 0)
+            t["to_forward"] += split.get(tx.KIND_FORWARD, 0)
+            t["to_advance"] += split.get(tx.KIND_ADVANCE, 0)
+            t["refunded_from_received"] += split.get(tx.KIND_REFUNDED, 0)
+            t["transferred"] += split.get(tx.KIND_TRANSFERRED, 0)
             key = pay_method or "unknown"
             methods[key][0] += amount
             methods[key][1] += 1
@@ -592,6 +649,7 @@ class IncomeReports:
                 created_by_name=_staff(users.get(p.created_by)), note=p.note,
                 allocation_text=pv.allocation_text(ledger, str(p.id)) if ledger else None,
                 allocations=pv.allocations_of(ledger, str(p.id)) if ledger else [],
+                split=strip_parts(split_kinds(ledger, str(p.id)), only_nonzero=True) if ledger else [],
                 refunded=ledger.refunded_from.get(str(p.id), 0) if ledger else 0,
                 transferred=ledger.transferred_from.get(str(p.id), 0) if ledger else 0, status=status,
                 replaces_receipt_no=old.receipt_no if old else None, replaces_amount=int(old.amount) if old else None,

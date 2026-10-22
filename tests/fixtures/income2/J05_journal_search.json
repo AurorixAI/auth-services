@@ -32,7 +32,7 @@
       "created_by_id": "user:owner",
       "created_by_name": "Азиз Хакимов",
       "note": "=SUM(A1)",
-      "allocation_text": "за октябрь — 150 000",
+      "allocation_text": "за октябрь — 150 000 сум",
       "allocations": [
         {
           "segment_id": "seg:0:2026-10-01",
@@ -45,6 +45,13 @@
           "label": "На текущий период 01.10–31.10",
           "price": 300000,
           "segment_remaining_after": 150000
+        }
+      ],
+      "split": [
+        {
+          "kind": "current",
+          "label": "за текущий период",
+          "amount": 150000
         }
       ],
       "refunded": 0,
@@ -79,6 +86,7 @@
       "note": null,
       "allocation_text": null,
       "allocations": [],
+      "split": [],
       "refunded": 0,
       "transferred": 0,
       "status": "voided",

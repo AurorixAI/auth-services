@@ -32,7 +32,7 @@
       "created_by_id": "user:admin",
       "created_by_name": "Нодира Саидова",
       "note": null,
-      "allocation_text": "за сентябрь — 200 000",
+      "allocation_text": "за сентябрь — 200 000 сум",
       "allocations": [
         {
           "segment_id": "seg:0:2026-09-01",
@@ -45,6 +45,13 @@
           "label": "Закрыла долг 01.09–30.09",
           "price": 500000,
           "segment_remaining_after": 0
+        }
+      ],
+      "split": [
+        {
+          "kind": "old_debt",
+          "label": "на старые долги",
+          "amount": 200000
         }
       ],
       "refunded": 0,
@@ -77,7 +84,7 @@
       "created_by_id": "user:owner",
       "created_by_name": "Азиз Хакимов",
       "note": null,
-      "allocation_text": "за сентябрь — 500 000 · за октябрь — 500 000 · аванс — 150 000 · возвращено — 100 000",
+      "allocation_text": "за сентябрь — 500 000 сум · за октябрь — 500 000 сум · аванс — 150 000 сум · возвращено — 100 000 сум",
       "allocations": [
         {
           "segment_id": "seg:0:2026-09-01",
@@ -116,6 +123,28 @@
           "segment_remaining_after": 350000
         }
       ],
+      "split": [
+        {
+          "kind": "old_debt",
+          "label": "на старые долги",
+          "amount": 500000
+        },
+        {
+          "kind": "current",
+          "label": "за текущий период",
+          "amount": 500000
+        },
+        {
+          "kind": "advance",
+          "label": "пока не потрачено (аванс)",
+          "amount": 150000
+        },
+        {
+          "kind": "refunded",
+          "label": "возвращено",
+          "amount": 100000
+        }
+      ],
       "refunded": 100000,
       "transferred": 0,
       "status": "active",
@@ -146,7 +175,7 @@
       "created_by_id": "user:admin",
       "created_by_name": "Нодира Саидова",
       "note": null,
-      "allocation_text": "за октябрь — 500 000",
+      "allocation_text": "за октябрь — 500 000 сум",
       "allocations": [
         {
           "segment_id": "seg:0:2026-10-01",
@@ -159,6 +188,13 @@
           "label": "На текущий период 01.10–31.10",
           "price": 500000,
           "segment_remaining_after": 0
+        }
+      ],
+      "split": [
+        {
+          "kind": "current",
+          "label": "за текущий период",
+          "amount": 500000
         }
       ],
       "refunded": 0,
@@ -191,7 +227,7 @@
       "created_by_id": "user:owner",
       "created_by_name": "Азиз Хакимов",
       "note": null,
-      "allocation_text": "за сентябрь — 300 000 · за октябрь — 300 000 · аванс — 300 000",
+      "allocation_text": "за сентябрь — 300 000 сум · за октябрь — 300 000 сум · аванс — 300 000 сум",
       "allocations": [
         {
           "segment_id": "seg:0:2026-09-01",
@@ -228,6 +264,23 @@
           "label": "Аванс на 01.11–30.11",
           "price": 300000,
           "segment_remaining_after": 0
+        }
+      ],
+      "split": [
+        {
+          "kind": "old_debt",
+          "label": "на старые долги",
+          "amount": 300000
+        },
+        {
+          "kind": "current",
+          "label": "за текущий период",
+          "amount": 300000
+        },
+        {
+          "kind": "advance",
+          "label": "пока не потрачено (аванс)",
+          "amount": 300000
         }
       ],
       "refunded": 0,

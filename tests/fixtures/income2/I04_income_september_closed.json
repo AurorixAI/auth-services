@@ -17,6 +17,7 @@
     "in_progress": false
   },
   "previous_label": "август",
+  "previous_hint": "1–31 авг.",
   "current": {
     "received": 1500000,
     "payments_count": 4,
@@ -25,6 +26,7 @@
     "transferred": 0,
     "to_past_debt": 0,
     "to_current": 1500000,
+    "to_forward": 0,
     "to_advance": 0,
     "written_off": 0,
     "net_received": 1500000
@@ -37,6 +39,7 @@
     "transferred": 0,
     "to_past_debt": 0,
     "to_current": 0,
+    "to_forward": 0,
     "to_advance": 0,
     "written_off": 0,
     "net_received": 0
@@ -45,7 +48,7 @@
   "delta_pct": null,
   "delta_direction": null,
   "delta_text": null,
-  "summary_text": "За сентябрь пришло 1 500 000 сум; за август оплат не было. Собрано 100% стоимости месяца.",
+  "summary_text": "За сентябрь пришло 1 500 000 сум. Собрано 100% стоимости месяца.",
   "by_method": [
     {
       "method": "cash",
@@ -58,6 +61,38 @@
       "label": "Карта",
       "amount": 700000,
       "count": 2
+    }
+  ],
+  "strip": [
+    {
+      "kind": "old_debt",
+      "label": "на старые долги",
+      "amount": 0
+    },
+    {
+      "kind": "current",
+      "label": "за текущий период",
+      "amount": 1500000
+    },
+    {
+      "kind": "forward",
+      "label": "вперёд (за будущие периоды)",
+      "amount": 0
+    },
+    {
+      "kind": "advance",
+      "label": "пока не потрачено (аванс)",
+      "amount": 0
+    },
+    {
+      "kind": "refunded",
+      "label": "возвращено",
+      "amount": 0
+    },
+    {
+      "kind": "transferred",
+      "label": "перенесено в другую группу",
+      "amount": 0
     }
   ],
   "series": [

@@ -4,7 +4,8 @@ from datetime import date, datetime
 import pytest
 
 from src.auth import payments_texts as tx
-from src.auth.payments_income import _previous_dative, csv_safe_row, entry_times, month_end, previous_period, resolve_period
+from src.auth.payments_income import (
+    _lead, _previous_dative, _previous_label, _previous_ref, csv_safe_row, entry_times, month_end, previous_period, resolve_period, split_kinds, strip_parts)
 from src.auth.payments_service import PaymentInvalid
 
 D = date
@@ -88,16 +89,19 @@ def test_summary_sentences():
     assert text(received=6_000_000, previous_received=8_000_000) == "За октябрь пришло 6 000 000 сум — на 25% меньше, чем за сентябрь."
     assert text(received=100, previous_received=100) == "За октябрь пришло 100 сум — столько же, сколько за сентябрь."
     assert text(received=100_001, previous_received=100_000).startswith("За октябрь пришло 100 001 сум — почти столько же, сколько")
-    assert text(previous_received=0) == "За октябрь пришло 7 885 000 сум; за сентябрь оплат не было."
+    assert text(previous_received=0) == "За октябрь пришло 7 885 000 сум."                      # S2: no comparison clause when the previous period had no payments
+    assert text(previous_received=0, collected_pct=69) == "За октябрь пришло 7 885 000 сум. Собрано 69% стоимости месяца."
     assert text(received=0) == "За октябрь оплат не было; за сентябрь пришло 7 040 000 сум."
     assert text(received=0, previous_received=0, collected_pct=0) == "За октябрь оплат не было. Собрано 0% стоимости месяца."
     assert tx.income_summary_text(lead="Сегодня", received=1_200_000, previous_received=1_000_000, previous_ref="вчера") == (
         "Сегодня пришло 1 200 000 сум — на 20% больше, чем вчера.")
+    assert tx.income_summary_text(lead="Сегодня", received=250_000, previous_received=0, previous_ref="вчера") == "Сегодня пришло 250 000 сум."
 
 
 def test_allocation_summary_joins_pieces_in_the_owners_words():
-    assert tx.allocation_summary([("за сентябрь", 200_000), ("аванс", 50_000)]) == "за сентябрь — 200 000 · аванс — 50 000"
-    assert tx.allocation_summary([("за сентябрь", 100_000), ("за сентябрь", 100_000), ("возвращено", 0)]) == "за сентябрь — 200 000"
+    assert tx.allocation_summary([("за сентябрь", 200_000), ("аванс", 50_000)]) == "за сентябрь — 200 000 сум · аванс — 50 000 сум"
+    assert tx.allocation_summary([("за сентябрь", 100_000), ("за сентябрь", 100_000), ("возвращено", 0)]) == "за сентябрь — 200 000 сум"
+    assert tx.allocation_summary([("за 22.10–21.11", 450_000)]) == "за 22.10–21.11 — 450 000 сум"
     assert tx.allocation_summary([]) == ""
 
 
@@ -174,3 +178,52 @@ def test_tashkent_midnight_boundary():
 def test_csv_formula_guard_covers_tab_and_cr():
     assert csv_safe_row(["=1+1", "+7", "-2", "@x", "\t=cmd", "\r=cmd", "ok", "a=b", "", 5, None, "-"]) == [
         "'=1+1", "'+7", "'-2", "'@x", "'\t=cmd", "'\r=cmd", "ok", "a=b", "", 5, None, "'-"]
+
+
+# ---- S2: a running period says so and is compared day for day ----------------------------------------------------
+
+
+def test_running_week_and_month_are_worded_as_running():
+    cur, p = prev(D(2026, 10, 19), D(2026, 10, 25))                                       # Mon 19 - Sun 25, today Wed 21
+    assert cur.in_progress and _lead(cur, TODAY) == "За эту неделю (пн–ср)"
+    assert _previous_ref(cur, p, TODAY) == "за те же дни прошлой недели" and _previous_label(cur, p, TODAY) == "те же дни прошлой недели"
+    assert (p.first, p.last) == (D(2026, 10, 12), D(2026, 10, 14))
+    assert tx.income_summary_text(lead=_lead(cur, TODAY), received=2_700_000, previous_received=1_000_000, previous_ref=_previous_ref(cur, p, TODAY)) == (
+        "За эту неделю (пн–ср) пришло 2 700 000 сум — на 170% больше, чем за те же дни прошлой недели.")
+    monday = D(2026, 10, 19)
+    cur2, _ = prev(D(2026, 10, 19), D(2026, 10, 25), today=monday)
+    assert _lead(cur2, monday) == "За эту неделю (пн)"
+    cur, p = prev(D(2026, 10, 1), D(2026, 10, 31))
+    assert _lead(cur, TODAY) == "За октябрь (по 21-е)"
+    assert _previous_ref(cur, p, TODAY) == "за те же дни сентября" and _previous_label(cur, p, TODAY) == "те же дни сентября"
+    assert tx.short_span_text(p.first, p.last) == "1–21 сент."                              # the hint with the dates
+    cur, p = prev(D(2026, 9, 1), D(2026, 9, 30))                                           # a closed month / week keep their names
+    assert _lead(cur, TODAY) == "За сентябрь" and _previous_label(cur, p, TODAY) == "август"
+    cur, p = prev(D(2026, 10, 12), D(2026, 10, 18))
+    assert _lead(cur, TODAY) == "За неделю 12–18 октября" and _previous_label(cur, p, TODAY) == "5–11 окт."
+
+
+# ---- S1: where the money went -------------------------------------------------------------------------------------
+
+
+def test_the_kinds_of_a_payment_split_by_the_current_allocation():
+    from types import SimpleNamespace as NS
+
+    from src.auth import billing_ledger as bl
+
+    def alloc(credit, bucket, segment, amount):
+        return NS(credit_id=credit, bucket=bucket, segment_id=segment, amount=amount)
+
+    segments = [NS(id="s1", begun=True), NS(id="s2", begun=True), NS(id="s3", begun=True), NS(id="s4", begun=False)]      # s3 starts after the payment but has begun since
+    ledger = NS(allocations=[alloc("p1", bl.PAST_DEBT, "s1", 100), alloc("p1", bl.CURRENT, "s2", 200), alloc("p1", bl.ADVANCE, "s3", 300),
+                             alloc("p1", bl.ADVANCE, "s4", 25), alloc("p1", bl.ADVANCE, bl.ADVANCE_SEGMENT, 15), alloc("p2", bl.CURRENT, "s2", 999)],
+                segments=segments, refunded_from={"p1": 10}, transferred_from={"p1": 5})
+    got = split_kinds(ledger, "p1")
+    assert got == {"old_debt": 100, "current": 200, "forward": 300, "advance": 40, "refunded": 10, "transferred": 5}     # advance = not-begun period 25 + no period 15
+    assert sum(got.values()) == 655                                                         # pieces + refunded + transferred = the payment
+    parts = strip_parts(got, only_nonzero=True)
+    assert [(x.kind, x.label, x.amount) for x in parts] == [
+        ("old_debt", "на старые долги", 100), ("current", "за текущий период", 200), ("forward", "вперёд (за будущие периоды)", 300),
+        ("advance", "пока не потрачено (аванс)", 40), ("refunded", "возвращено", 10), ("transferred", "перенесено в другую группу", 5)]
+    assert [x.kind for x in strip_parts({"current": 5}, only_nonzero=False)] == ["old_debt", "current", "forward", "advance", "refunded", "transferred"]
+    assert [x.kind for x in strip_parts({"current": 5}, only_nonzero=True)] == ["current"]

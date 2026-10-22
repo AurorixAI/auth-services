@@ -17,6 +17,7 @@
     "in_progress": false
   },
   "previous_label": "5–11 окт.",
+  "previous_hint": "5–11 окт.",
   "current": {
     "received": 550000,
     "payments_count": 2,
@@ -25,6 +26,7 @@
     "transferred": 0,
     "to_past_debt": 200000,
     "to_current": 350000,
+    "to_forward": 0,
     "to_advance": 0,
     "written_off": 0,
     "net_received": 550000
@@ -37,6 +39,7 @@
     "transferred": 0,
     "to_past_debt": 500000,
     "to_current": 1000000,
+    "to_forward": 0,
     "to_advance": 150000,
     "written_off": 0,
     "net_received": 1750000
@@ -58,6 +61,38 @@
       "label": "Наличные",
       "amount": 200000,
       "count": 1
+    }
+  ],
+  "strip": [
+    {
+      "kind": "old_debt",
+      "label": "на старые долги",
+      "amount": 200000
+    },
+    {
+      "kind": "current",
+      "label": "за текущий период",
+      "amount": 350000
+    },
+    {
+      "kind": "forward",
+      "label": "вперёд (за будущие периоды)",
+      "amount": 0
+    },
+    {
+      "kind": "advance",
+      "label": "пока не потрачено (аванс)",
+      "amount": 0
+    },
+    {
+      "kind": "refunded",
+      "label": "возвращено",
+      "amount": 0
+    },
+    {
+      "kind": "transferred",
+      "label": "перенесено в другую группу",
+      "amount": 0
     }
   ],
   "series": [

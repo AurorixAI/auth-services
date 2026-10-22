@@ -221,14 +221,28 @@ def span_text(first: date, last: date) -> str:
     return f"{day_genitive(first)} – {day_genitive(last)}"
 
 
+# «Куда ушли деньги» of the period and of one payment (S1, lead's decision 22.10): every payment is split by the CURRENT ledger allocation (FIFO, as of today - the same as the
+# drawer / the statement), each piece classified relative to the payment's OWN date.
+KIND_OLD_DEBT, KIND_CURRENT, KIND_FORWARD, KIND_ADVANCE, KIND_REFUNDED, KIND_TRANSFERRED = (
+    "old_debt", "current", "forward", "advance", "refunded", "transferred")
+INCOME_KIND_LABELS = {
+    KIND_OLD_DEBT: "на старые долги",                       # the period ended before the payment's date
+    KIND_CURRENT: "за текущий период",                      # the period contains the payment's date
+    KIND_FORWARD: "вперёд (за будущие периоды)",            # the period starts after the payment's date (and is already consumed today)
+    KIND_ADVANCE: "пока не потрачено (аванс)",              # no period has absorbed it yet
+    KIND_REFUNDED: "возвращено",
+    KIND_TRANSFERRED: "перенесено в другую группу",
+}
+
+
 def allocation_summary(parts: Sequence[tuple]) -> str:
-    """The journal line «куда пошли деньги»: ``за сентябрь — 200 000 · аванс — 50 000``; ``parts`` = ``(label, amount)``;
+    """The journal line «куда пошли деньги»: ``за сентябрь — 200 000 сум · аванс — 50 000 сум``; ``parts`` = ``(label, amount)``;
     the pieces with the same label are added up, the order of the first appearance stays."""
     merged: dict = {}
     for label, amount in parts:
         if amount:
             merged[label] = merged.get(label, 0) + amount
-    return " · ".join(f"{label} — {num(amount)}" for label, amount in merged.items())
+    return " · ".join(f"{label} — {money(amount)}" for label, amount in merged.items())
 
 
 def percent_change(current: int, previous: int) -> Optional[int]:
@@ -250,7 +264,7 @@ def income_summary_text(*, lead: str, received: int, previous_received: int, pre
         text = f"{lead} оплат не было"
         text += f"; {previous_ref} пришло {money(previous_received)}." if previous_received > 0 else "."
     elif previous_received <= 0:
-        text = f"{lead} пришло {money(received)}; {previous_ref} оплат не было."
+        text = f"{lead} пришло {money(received)}."          # nothing to compare with: the card says «за … оплат не было», the sentence does not repeat it
     else:
         pct = percent_change(received, previous_received)
         if received == previous_received:

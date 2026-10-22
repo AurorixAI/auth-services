@@ -461,6 +461,17 @@
           "previous": {
             "$ref": "#/components/schemas/IncomeTotals"
           },
+          "previous_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Hint"
+          },
           "previous_label": {
             "title": "Previous Label",
             "type": "string"
@@ -484,6 +495,13 @@
             "title": "Series By",
             "type": "string"
           },
+          "strip": {
+            "items": {
+              "$ref": "#/components/schemas/IncomeStripPart"
+            },
+            "title": "Strip",
+            "type": "array"
+          },
           "summary_text": {
             "title": "Summary Text",
             "type": "string"
@@ -494,6 +512,7 @@
           "period",
           "previous_period",
           "previous_label",
+          "previous_hint",
           "current",
           "previous",
           "delta_amount",
@@ -502,6 +521,7 @@
           "delta_text",
           "summary_text",
           "by_method",
+          "strip",
           "series",
           "series_by",
           "cash",
@@ -612,8 +632,41 @@
         "title": "IncomePosition",
         "type": "object"
       },
+      "IncomeStripPart": {
+        "description": "One part of «Куда ушли деньги» (the labels are the server's words): ``old_debt`` «на старые долги» (the period ended before the payment's date), ``current`` «за текущий период»\n(the period contains it), ``forward`` «вперёд (за будущие периоды)» (starts after it, consumed since), ``advance`` «пока не потрачено (аванс)», ``refunded``, ``transferred``.",
+        "properties": {
+          "amount": {
+            "default": 0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "old_debt",
+              "current",
+              "forward",
+              "advance",
+              "refunded",
+              "transferred"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "amount"
+        ],
+        "title": "IncomeStripPart",
+        "type": "object"
+      },
       "IncomeTotals": {
-        "description": "Where the money of the period went.  ``to_past_debt + to_current + to_advance + refunded_from_received + transferred == received``.",
+        "description": "Where the money of the period went.  ``to_past_debt + to_current + to_forward + to_advance + refunded_from_received + transferred == received``.\nEach payment is split by the CURRENT ledger allocation, every piece classified relative to the payment's own date (see ``IncomeStripPart``).",
         "properties": {
           "net_received": {
             "default": 0,
@@ -650,6 +703,11 @@
             "title": "To Current",
             "type": "integer"
           },
+          "to_forward": {
+            "default": 0,
+            "title": "To Forward",
+            "type": "integer"
+          },
           "to_past_debt": {
             "default": 0,
             "title": "To Past Debt",
@@ -674,6 +732,7 @@
           "transferred",
           "to_past_debt",
           "to_current",
+          "to_forward",
           "to_advance",
           "written_off",
           "net_received"
@@ -900,6 +959,13 @@
             ],
             "title": "Replaces Receipt No"
           },
+          "split": {
+            "items": {
+              "$ref": "#/components/schemas/IncomeStripPart"
+            },
+            "title": "Split",
+            "type": "array"
+          },
           "status": {
             "default": "active",
             "enum": [
@@ -990,6 +1056,7 @@
           "note",
           "allocation_text",
           "allocations",
+          "split",
           "refunded",
           "transferred",
           "status",

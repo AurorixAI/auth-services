@@ -207,14 +207,16 @@ def _segment_word(seg: Optional[bl.Segment]) -> str:
 
 
 def allocation_text(ledger: bl.Ledger, credit_id: str) -> str:
-    """``за сентябрь — 200 000 · аванс — 50 000`` (+ ``возвращено — N`` / ``перенесено в другую группу — N``).  Money that reached a
-    period that has not begun at the day of the payment, and money no period has absorbed, are both «аванс»."""
+    """``за сентябрь — 200 000 сум · аванс — 50 000 сум`` (+ ``возвращено — N сум`` / ``перенесено в другую группу — N сум``).  «Аванс» is money that is NOT consumed today: it
+    sits in a period that has not begun yet, or in no period at all.  Money that reached a period which started after the payment but has begun since (a back-dated
+    payment, a period that began meanwhile) is shown with that period: ``за 22.10–21.11 — 450 000 сум`` (S1: the same words as the drawer and the statement)."""
     by_id = {s.id: s for s in ledger.segments}
     parts: List[Tuple[str, int]] = []
     for a in ledger.allocations:
         if a.credit_id != credit_id:
             continue
-        if a.bucket == bl.ADVANCE or a.segment_id == bl.ADVANCE_SEGMENT:
+        seg = by_id.get(a.segment_id)
+        if a.segment_id == bl.ADVANCE_SEGMENT or seg is None or not seg.begun:
             parts.append(("аванс", a.amount))
         else:
             parts.append((_segment_word(by_id.get(a.segment_id)), a.amount))

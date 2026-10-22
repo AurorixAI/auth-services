@@ -30,7 +30,8 @@ class IncomePeriod(PayModel):
 
 
 class IncomeTotals(PayModel):
-    """Where the money of the period went.  ``to_past_debt + to_current + to_advance + refunded_from_received + transferred == received``."""
+    """Where the money of the period went.  ``to_past_debt + to_current + to_forward + to_advance + refunded_from_received + transferred == received``.
+    Each payment is split by the CURRENT ledger allocation, every piece classified relative to the payment's own date (see ``IncomeStripPart``)."""
 
     received: int = 0  # money payments entered in the period (transfers between groups are not receipts)
     payments_count: int = 0
@@ -39,9 +40,19 @@ class IncomeTotals(PayModel):
     transferred: int = 0  # the part of the period's payments that moved to another group of the student
     to_past_debt: int = 0  # the period's payments by what they paid (relative to each payment's date)
     to_current: int = 0
-    to_advance: int = 0
+    to_forward: int = 0  # S1: paid FORWARD - a period that starts after the payment's date and has been consumed since (was inside ``to_advance``)
+    to_advance: int = 0  # S1: money no period has absorbed yet (the ledger's advance); always <= position.advance_total
     written_off: int = 0  # debts forgiven in the period
     net_received: int = 0  # received - refunded
+
+
+class IncomeStripPart(PayModel):
+    """One part of «Куда ушли деньги» (the labels are the server's words): ``old_debt`` «на старые долги» (the period ended before the payment's date), ``current`` «за текущий период»
+    (the period contains it), ``forward`` «вперёд (за будущие периоды)» (starts after it, consumed since), ``advance`` «пока не потрачено (аванс)», ``refunded``, ``transferred``."""
+
+    kind: Literal["old_debt", "current", "forward", "advance", "refunded", "transferred"]
+    label: str
+    amount: int = 0
 
 
 class IncomeMethod(PayModel):
@@ -124,6 +135,7 @@ class IncomeOverview(PayModel):
     period: IncomePeriod
     previous_period: IncomePeriod  # the same kind of period before it (a running one is cut to the same number of days)
     previous_label: str  # the human name of that period, ALWAYS present (also when it had no payments): «сентябрь» | «вчера» | «прошлая неделя» | «12–18 окт.»
+    previous_hint: Optional[str] = None  # the dates of that period, short: «5–8 окт.» / «1–22 сент.» (for a running week / month ``previous_label`` is «те же дни …»)
     current: IncomeTotals
     previous: IncomeTotals  # the totals of ``previous_period``
     delta_amount: int = 0  # current.received - previous.received
@@ -132,6 +144,7 @@ class IncomeOverview(PayModel):
     delta_text: Optional[str] = None  # «12% к сентябрю» (the front adds ▲ / ▼ and the colour by ``delta_direction``)
     summary_text: str
     by_method: List[IncomeMethod] = Field(default_factory=list)  # only the methods that were used
+    strip: List[IncomeStripPart] = Field(default_factory=list)  # «Куда ушли деньги»: the six parts of ``current`` (zeros included) with the server's labels; the amounts sum to ``current.received``
     series: List[IncomeDay] = Field(default_factory=list)
     series_by: Literal["day", "month"] = "day"
     cash: Optional[IncomeCash] = None
@@ -169,6 +182,7 @@ class JournalRow(PayModel):
     note: Optional[str] = None
     allocation_text: Optional[str] = None  # «за сентябрь — 200 000 · аванс — 50 000»; null on a voided / replaced payment
     allocations: List[Allocation] = Field(default_factory=list)
+    split: List[IncomeStripPart] = Field(default_factory=list)  # the same kinds as the strip, only the non-zero parts of THIS payment; the rows of a set sum to the strip of the same filters
     refunded: int = 0
     transferred: int = 0
     status: JournalStatus = "active"
