@@ -120,7 +120,7 @@ class PaymentsReports:
                 rows.append(StatementRow(type="opening_paid_until", title=title, **common))
             elif e.kind == "pause":
                 first, last = (date.fromisoformat(x) for x in e.ref_id.split(":")[1:3])
-                rows.append(StatementRow(type="pause", title=f"Пауза {tx.period_text(first, last)} — начислений нет", **common))
+                rows.append(StatementRow(type="pause", title=f"Пауза {tx.period_text(first, last)} — стоимость не считается", **common))
             elif e.kind == bl.PAYMENT:
                 p = payments[e.ref_id]
                 rows.append(StatementRow(

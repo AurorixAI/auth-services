@@ -485,7 +485,7 @@ class OpeningsService(_Base):
                 p.warn("HAS_MONEY", "У ученика уже есть оплаты: нужна причина")
         if p.target is not None:
             if price.amount is None:
-                p.warn("NO_PRICE", "У группы нет цены: начисления не пойдут, пока цена не задана")
+                p.warn("NO_PRICE", "У группы нет цены: стоимость не считается, пока цена не задана")
             if p.target[0] is not None and p.target[0] > plan.today + timedelta(days=PAID_UNTIL_FAR_DAYS):
                 p.warn("PAID_UNTIL_FAR", "«Оплачено до» дальше чем через 4 месяца — проверьте дату")
             if p.target[1] and price.amount and p.target[1] > DEBT_LARGE_PRICES * price.amount:

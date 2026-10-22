@@ -571,7 +571,7 @@ def tabs_and_statement(store):
     info = [
         StatementRow(seq=1, date=D(2026, 10, 11), type="opening_paid_until", title="Остаток на начало: оплачено до 15.11", balance_after=0,
                      balance_text="0"),
-        StatementRow(seq=2, date=D(2026, 11, 5), type="pause", title="Пауза 05.11–20.11 — начислений нет", balance_after=0, balance_text="0"),
+        StatementRow(seq=2, date=D(2026, 11, 5), type="pause", title="Пауза 05.11–20.11 — стоимость не считается", balance_after=0, balance_text="0"),
     ]
     write("A32_statement_info_rows.json", StatementOut(
         membership=member, as_of=TODAY, mode="calendar", accounting_start=AS,
