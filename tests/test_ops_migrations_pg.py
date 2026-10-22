@@ -59,7 +59,7 @@ def _seed(engine):
     slots = [
         {"id": "slot-a", "dayOfWeek": 1, "startTime": "10:00", "endTime": "11:30", "subject": "Математика", "room": "Кабинет 204"},
         {"id": "slot-b", "dayOfWeek": 3, "startTime": "16:00", "endTime": "17:30", "room": "12"},        # first row 14.10
-        {"id": "slot-c", "dayOfWeek": 5, "startTime": "09:00", "endTime": "10:00", "validFrom": "2026-09-01"},   # kept as it is
+        {"id": "slot-c", "dayOfWeek": 5, "startTime": "09:00", "endTime": "10:00", "validFrom": "2026-09-02"},   # kept as it is
         {"dayOfWeek": 2, "startTime": "10:00", "endTime": "11:00"},                                         # legacy: no id, no room
     ]
     legacy = [{"day_of_week": 4, "start_time": "08:00", "end_time": "09:00"}]
@@ -124,14 +124,14 @@ def test_logicb_migrations_on_stage_like_data(engine):
         # O1: validFrom of every slot
         schedule = c.execute(text("SELECT schedule FROM groups WHERE id=:g"), {"g": ids["g_slots"]}).scalar_one()
         by_id = {s.get("id"): s for s in schedule}
-        assert by_id["slot-a"]["validFrom"] == "2026-10-12"          # min(lesson_date) of its rows
-        assert by_id["slot-b"]["validFrom"] == "2026-10-14"
-        assert by_id["slot-c"]["validFrom"] == "2026-09-01"          # already there: kept
+        # the backfill does NOT change history: a legacy slot is valid from the day the GROUP was created (01.09 13:00 Tashkent), whatever its first row is
+        assert by_id["slot-a"]["validFrom"] == "2026-09-01"          # first row 12.10: not used any more
+        assert by_id["slot-b"]["validFrom"] == "2026-09-01"
+        assert by_id["slot-c"]["validFrom"] == "2026-09-02"          # already there: kept (the seed gives it 2026-09-02)
         no_id = [s for s in schedule if "id" not in s][0]
-        today = c.execute(text("SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date::text")).scalar_one()
-        assert no_id["validFrom"] == today                           # no rows: the day of the migration
+        assert no_id["validFrom"] == "2026-09-01"                    # no rows at all: still the creation day (its past lessons stay "missed", not erased)
         legacy = c.execute(text("SELECT schedule FROM groups WHERE id=:g"), {"g": ids["g_legacy"]}).scalar_one()
-        assert legacy[0]["validFrom"] == "2026-10-15"                # id computed as the service does it
+        assert legacy[0]["validFrom"] == "2026-09-01"
         assert c.execute(text("SELECT schedule FROM groups WHERE id=:g"), {"g": ids["g_empty"]}).scalar_one() is None
         # O11: the placeholder room is gone, a real one stays, the immutable audit is untouched
         assert by_id["slot-a"]["room"] is None and by_id["slot-b"]["room"] == "12"
@@ -242,7 +242,7 @@ def test_logicb_migrations_on_stage_like_data(engine):
         assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == B3
         # a slot keeps the validFrom the first upgrade wrote (the data steps are not reverted)
         schedule = c.execute(text("SELECT schedule FROM groups WHERE id=:g"), {"g": ids["g_slots"]}).scalar_one()
-        assert {s.get("id"): s["validFrom"] for s in schedule if "id" in s}["slot-a"] == "2026-10-12"
+        assert {s.get("id"): s["validFrom"] for s in schedule if "id" in s}["slot-a"] == "2026-09-01"
         # the archived group got its interval again (the column was dropped and re-created)
         assert c.execute(text("SELECT inactive_intervals FROM groups WHERE id=:g"), {"g": ids["g_archived"]}).scalar_one() == [{"from": "2026-10-05T07:30:15", "to": None}]
 

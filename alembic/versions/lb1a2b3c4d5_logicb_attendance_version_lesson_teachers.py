@@ -11,10 +11,13 @@ Spec: ``artifacts/partner_doc_check/logicB_spec.md`` 3.1.
   parallel change of the list by another revision is kept);
 * ``lesson_teacher_assignments`` (O5: the teacher of ONE lesson occurrence when it is a substitution) + a partial unique index
   (one active row per group / lesson / date) + ``(org_id, teacher_id, lesson_date)``;
-* DATA ``groups.schedule``: every slot gets ``validFrom`` (O1) = the date of the FIRST lesson row of the slot
-  (``min(group_attendance.lesson_date)`` of (group, slot id)), else the business day (Asia/Tashkent) of the migration.  A slot that
-  already has ``validFrom`` is kept; the slot id of a legacy slot without ``id`` is ``lesson-<group>-<day>-<start>`` (the id the
-  service computes);
+* DATA ``groups.schedule``: every slot without ``validFrom`` gets it (O1) = the business date (Asia/Tashkent) the GROUP was created
+  (``groups.created_at``); if ``created_at`` is missing, the earliest of the first attendance row of the group and the first membership
+  ``joined_at``.  The backfill must NOT change history: the lessons the old code generated for a legacy slot (from the day the group
+  existed) are generated unchanged, so the ledger (proration of a partial first period) and «Незакрытые» are identical before and after;
+  ``validFrom`` only bounds slots that are created later.  (Rehearsal on a stage copy, 22.10: the first version took the first attendance
+  row / the migration day and moved 27 memberships from lessons to days and dropped the past lessons of a slot without rows.)  A slot that
+  already has ``validFrom`` is kept;
 * DATA (O11): the placeholder room ``Кабинет 204`` (exactly) becomes ``null`` in the schedule slots, in
   ``group_schedule_one_off_lessons.payload.room`` and in ``group_schedule_overrides.payload.room``.  The audit payloads stay
   (immutable).  Declared risk: a centre that really names a room "Кабинет 204" has to enter it again;
@@ -84,27 +87,35 @@ def _slot_lesson_id(group_id, slot: dict) -> str:
     )
 
 
+def _tashkent_date(moment) -> "str | None":
+    """The business date (Asia/Tashkent) of a naive UTC instant."""
+    if moment is None:
+        return None
+    return moment.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Asia/Tashkent")).date().isoformat()
+
+
 def _backfill_schedule(bind) -> None:
-    today = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Tashkent")).date().isoformat()
+    """``validFrom`` of a legacy slot = the business date the group was created (see the module docstring); idempotent (a slot that has it is kept)."""
     rows = bind.execute(
         sa.text(
-            "SELECT id, schedule FROM groups "
+            "SELECT id, schedule, created_at FROM groups "
             "WHERE schedule IS NOT NULL AND jsonb_typeof(schedule) = 'array' AND jsonb_array_length(schedule) > 0"
         )
     ).fetchall()
-    for group_id, schedule in rows:
+    for group_id, schedule, created_at in rows:
         changed = False
+        fallback = None
         for slot in schedule:
             if not isinstance(slot, dict):
                 continue
             if not slot.get("validFrom"):
-                first = bind.execute(
-                    sa.text(
-                        "SELECT min(lesson_date) FROM group_attendance WHERE group_id = :g AND lesson_id = :l"
-                    ),
-                    {"g": group_id, "l": _slot_lesson_id(group_id, slot)},
-                ).scalar()
-                slot["validFrom"] = first or today
+                if fallback is None:
+                    fallback = _tashkent_date(created_at)
+                    if fallback is None:          # no creation date: the earliest evidence that the group existed
+                        first_row = bind.execute(sa.text("SELECT min(lesson_date) FROM group_attendance WHERE group_id = :g"), {"g": group_id}).scalar()
+                        joined = _tashkent_date(bind.execute(sa.text("SELECT min(joined_at) FROM student_groups WHERE group_id = :g"), {"g": group_id}).scalar())
+                        fallback = min([d for d in (first_row, joined) if d] or ["0001-01-01"])
+                slot["validFrom"] = fallback
                 changed = True
             if slot.get("room") == PLACEHOLDER_ROOM:
                 slot["room"] = None
