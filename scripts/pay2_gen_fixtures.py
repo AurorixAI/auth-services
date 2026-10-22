@@ -438,7 +438,8 @@ def e1_create_replace_void(store):
     write("e1_receipt_snapshot.json", snapshot, store)
     write("e1_receipt_300000.json", ReceiptOut(
         receipt_no=18, org_name="ALGO Math Center", org_city="Ташкент", org_phone="+998901234567",
-        student_name="Хасанов Азиз", display_id="N13-004", group_name="Математика 7А", amount=300_000,
+        student_name="Хасанов Азиз", display_id="N13-004", group_name="Математика 7А",
+        student_id=uid(101), membership_id=uid(1), group_id=uid(11), amount=300_000,
         amount_words="Триста тысяч сум", currency="UZS", paid_on=TODAY, valid_from=D(2026, 9, 15),
         valid_to=t["through"], lessons_count=None, partial_period=False, method="cash", mode="calendar", allocations=allocs,
         debt_before=769_000, debt_after=469_000, advance_after=0, paid_until_before=t0["through"],

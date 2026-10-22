@@ -676,6 +676,10 @@ class ReceiptOut(BaseModel):
     student_name: str
     display_id: Optional[str] = None
     group_name: str
+    # IA fix pack (additive): where a receipt opened by a bare link links onward (the student card, the account of the membership, the group)
+    student_id: str
+    membership_id: str
+    group_id: str
     amount: int
     amount_words: str
     currency: str

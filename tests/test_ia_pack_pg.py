@@ -94,3 +94,21 @@ def test_a_refused_edit_leaves_no_journal_and_the_rights_are_the_old_ones(world)
     foreign = make_client(world, user=world.foreign_admin, org="other", org_role="admin")
     assert foreign.put(f"{API}/org/students/{s.id}", json={"first_name": "Ч"}).status_code in (400, 404)
     assert not journal_of(world, s)
+
+
+# ---- receipt links ------------------------------------------------------------------------------------------------------------------------------
+
+
+def test_the_receipt_carries_the_ids_to_link_onward(world, fixed_today):
+    world.group.schedule = []
+    world.db.commit()
+    settings_block(world, accounting_start_date="2026-10-01", billing_anchor="fixed_day", billing_day=1)
+    give_group_price(world.db, world.group, 600_000, valid_from=D(2026, 1, 1))
+    m = membership(world)
+    stay(world, m, D(2026, 10, 1))
+    p = post_payment(world, m, amount=100_000)
+    rc = owner(world).get(f"{API}/org/payments/{p['payment']['id']}/receipt").json()
+    assert (rc["student_id"], rc["membership_id"], rc["group_id"]) == (str(m.student_id), str(m.id), str(world.group.id))
+    # a foreign centre never reads it
+    foreign = make_client(world, user=world.foreign_admin, org="other", org_role="owner")
+    assert foreign.get(f"{API}/org/payments/{p['payment']['id']}/receipt").status_code in (403, 404)

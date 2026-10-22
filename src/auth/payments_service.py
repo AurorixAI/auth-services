@@ -1648,6 +1648,7 @@ class PaymentService:
             student_name=person_name(student.last_name, student.first_name) or "",
             display_id=student.display_id,
             group_name=group.name,
+            student_id=str(student.id), membership_id=str(payment.membership_id), group_id=str(group.id),
             amount=int(payment.amount),
             amount_words=amount_words(int(payment.amount)),
             currency=payment.currency,

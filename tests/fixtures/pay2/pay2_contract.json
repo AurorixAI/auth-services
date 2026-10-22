@@ -2971,6 +2971,10 @@
             ],
             "title": "Display Id"
           },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
           "group_name": {
             "title": "Group Name",
             "type": "string"
@@ -2985,6 +2989,10 @@
               }
             ],
             "title": "Lessons Count"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
           },
           "method": {
             "default": "unknown",
@@ -3133,6 +3141,10 @@
             ],
             "title": "Replaces Receipt No"
           },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
           "student_name": {
             "title": "Student Name",
             "type": "string"
@@ -3189,6 +3201,9 @@
           "org_name",
           "student_name",
           "group_name",
+          "student_id",
+          "membership_id",
+          "group_id",
           "amount",
           "amount_words",
           "currency",
