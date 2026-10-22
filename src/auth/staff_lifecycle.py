@@ -288,10 +288,10 @@ class StaffLifecycle:
             impact = self._impact_of(org_id, member, groups)
             self.db.rollback()
             raise self._assignments_error(impact)
+        user = self.db.query(User).filter(User.id == member.user_id).with_for_update().first()        # the user row before the substitutions are released (same order as an assignment)
         released = self.teachers.release_substitutions_of(org_id, member.user_id, actor_id)
         closed_requests, reopened = lesson_substitutions.on_member_removed(self.svc, org_id, member.user_id, actor_id, self.teachers.last_released)
         member.is_active = False
-        user = self.db.query(User).filter(User.id == member.user_id).with_for_update().first()
         if user is not None:
             user.is_active = False
             # a removed member must not mint a fresh access token with a refresh cookie issued earlier: every session ends

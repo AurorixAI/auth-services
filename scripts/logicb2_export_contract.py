@@ -26,6 +26,7 @@ OPERATIONS = [
     ("get", "/org/substitutions/my-lessons"),
     ("post", "/org/substitutions"),
     ("get", "/org/substitutions/mine"),
+    ("get", "/org/substitutions/colleagues"),
     ("post", "/org/substitutions/withdraw"),
     ("post", "/org/substitutions/decide-bulk"),
     ("get", "/org/substitutions/summary"),

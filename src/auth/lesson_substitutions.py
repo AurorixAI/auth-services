@@ -270,9 +270,16 @@ class SubstitutionsBase:
         r.updated_at = now
         self.event(r, "closed", actor_id, {"closedReason": reason, "trigger": trigger})
 
+    @staticmethod
+    def _sync_times(r: Req, occ: Dict[str, Any]) -> None:
+        """The lesson was moved in the schedule after the request: the request follows (start / end / UTC start)."""
+        r.start_time, r.end_time = occ["startTime"], occ["endTime"]
+        r.starts_at = bc.lesson_instant_utc(date.fromisoformat(r.lesson_date), hhmm_to_minutes(occ["startTime"]))
+
     def revalidate(self, reqs: Sequence[Req], *, trigger: str = "revalidate", lock: bool = True) -> int:
         """Lazy pass over the PENDING requests (list / detail / decide / withdraw): close what is no longer valid, refresh the times of a moved lesson.  Writes.  Returns the closed count."""
         closed = 0
+        touched = False
         by_group: Dict[UUID, List[Req]] = {}
         for r in reqs:
             if r.status == PENDING:
@@ -298,13 +305,13 @@ class SubstitutionsBase:
                     if fresh is None or fresh.status != PENDING:
                         continue
                     r = fresh
+                touched = True
                 if reason:
                     self.close(r, reason, trigger=trigger, group=group)
                     closed += 1
                 elif times_changed and occ:
-                    r.start_time, r.end_time = occ["startTime"], occ["endTime"]
-                    r.starts_at = bc.lesson_instant_utc(date.fromisoformat(r.lesson_date), hhmm_to_minutes(occ["startTime"]))
-        if closed or by_group:
+                    self._sync_times(r, occ)
+        if touched:                 # a read that found nothing to fix commits nothing
             self.db.commit()
         return closed
 
@@ -343,11 +350,12 @@ class SubstitutionsBase:
         already: List[Req] = []
         skipped: List[Dict[str, Any]] = []
         locked: Dict[str, Optional[Group]] = {}
+        book = TeacherBook(self.db)                                    # one book (histories, assignments) for the whole batch
         for gid in sorted({k[0] for k in refs}):                       # groups in ascending id (D-16)
             locked[gid] = self._group_locked(org_id, gid) if _uuid(gid) else None
         for gid, lesson_id, day in sorted(refs, key=lambda k: (k[2], k[0], k[1])):
             try:
-                kind, r = self._create_one(locked.get(gid), org_id, actor, lesson_id, day, body.reasonCode, comment, suggested, batch, now)
+                kind, r = self._create_one(locked.get(gid), org_id, actor, lesson_id, day, body.reasonCode, comment, suggested, batch, now, book)
             except OpsError as exc:
                 if single:
                     self.db.rollback()
@@ -364,7 +372,7 @@ class SubstitutionsBase:
         return {"batchId": str(out_batch), "created": self.items(created), "alreadyRequested": self.items(already), "skipped": skipped}
 
     def _create_one(self, group: Optional[Group], org_id: Any, actor: UUID, lesson_id: str, day: str, reason: str, comment: Optional[str],
-                    suggested: Optional[UUID], batch: UUID, now: datetime) -> Tuple[str, Req]:
+                    suggested: Optional[UUID], batch: UUID, now: datetime, book: Optional[TeacherBook] = None) -> Tuple[str, Req]:
         if group is None:
             raise not_found("LESSON_NOT_FOUND", "Урок не найден")
         existing = self.db.query(Req).filter(Req.group_id == group.id, Req.lesson_id == lesson_id, Req.lesson_date == day, Req.status == PENDING).first()
@@ -386,7 +394,7 @@ class SubstitutionsBase:
         starts_at = bc.lesson_instant_utc(d, start)
         if starts_at <= now:
             raise R.err(409, "LESSON_ALREADY_STARTED")
-        teacher = TeacherBook(self.db).resolve(group, lesson_id, day, end).teacher_id
+        teacher = (book or TeacherBook(self.db)).resolve(group, lesson_id, day, end).teacher_id
         if teacher != actor:
             who = short_name(self.db.query(User).filter(User.id == teacher).first()) if teacher else None
             raise forbidden("NOT_LESSON_TEACHER", (f"Этот урок ведёт {who}" if who else "Этот урок ведёт другой преподаватель"))
@@ -466,7 +474,12 @@ class SubstitutionsBase:
         )
         out = []
         book = TeacherBook(self.db)
+        gone = ({(r.group_id, r.lesson_id, r.lesson_date) for r in self.db.query(GroupAttendance.group_id, GroupAttendance.lesson_id, GroupAttendance.lesson_date).filter(
+            GroupAttendance.group_id.in_({g.id for _a, g in rows}), GroupAttendance.status == "cancelled",
+            GroupAttendance.lesson_date.in_({a.lesson_date for a, _g in rows}))} if rows else set())
         for asg, group in rows:
+            if (group.id, asg.lesson_id, asg.lesson_date) in gone:
+                continue                                    # a cancelled / moved lesson is not shown as «Замена»
             d = date.fromisoformat(asg.lesson_date)
             occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=d, date_to=d) if o["id"] == asg.lesson_id), None)
             if occ is None:
@@ -524,9 +537,6 @@ class SubstitutionsBase:
 
     def list(self, org_id: Any, *, status: str, group_id: Optional[str], teacher_id: Optional[str], date_from: Optional[date], date_to: Optional[date],
              urgent: Optional[bool], search: Optional[str], limit: int, offset: int) -> Dict[str, Any]:
-        # a lazy pass first: stale pending requests must not be listed
-        stale = self.db.query(Req).filter(Req.org_id == org_id, Req.status == PENDING).all()
-        self.revalidate(stale)
         now, today = self.now(), bc.business_today()
         q = self.db.query(Req).filter(Req.org_id == org_id)
         if status == "pending":
@@ -557,6 +567,14 @@ class SubstitutionsBase:
         else:
             q = q.order_by((Req.status == PENDING).desc(), Req.starts_at, Req.id)
         reqs = q.offset(offset).limit(limit).all()
+        # a lazy pass over what is being RETURNED (not over every pending request of the centre): a stale request must not be listed
+        if self.revalidate([r for r in reqs if r.status == PENDING]):
+            if status == "pending":
+                reqs = q.offset(offset).limit(limit).all()       # the page refills with the next ones
+                total = q.count()
+            else:
+                for r in reqs:
+                    self.db.refresh(r)
         counts = self.summary(org_id)
         return {"items": self.items(reqs), "total": total, "pendingTotal": counts["pendingTotal"], "urgentTotal": counts["urgentTotal"]}
 
@@ -603,6 +621,23 @@ class SubstitutionsBase:
                     PayrollRate.valid_from <= month).first() is None
         )
 
+    def rates_missing(self, org_id: Any, teacher_ids: Iterable[UUID], lesson_type: str, lesson_date: str) -> Set[UUID]:
+        """The teachers (of ``teacher_ids``) without a payroll rate for the type of lessons in the month of the lesson - one query for all of them."""
+        ids = list(teacher_ids)
+        if not ids:
+            return set()
+        month = date.fromisoformat(lesson_date[:7] + "-01")
+        have = {t for (t,) in self.db.query(PayrollRate.teacher_id).filter(
+            PayrollRate.org_id == org_id, PayrollRate.teacher_id.in_(ids), PayrollRate.lesson_type == (lesson_type or "group"), PayrollRate.valid_from <= month)}
+        return set(ids) - have
+
+    def colleagues(self, org_id: Any, actor_id: Any) -> List[Dict[str, Any]]:
+        """«Предложить коллегу»: the active staff of the centre who can teach (teacher / owner / admin) except the caller - id, name and role only (no e-mail, no phone)."""
+        actor = _uuid(actor_id)
+        roles = dict(self.db.query(OrganizationMember.user_id, OrganizationMember.org_role).filter(OrganizationMember.org_id == org_id).all())
+        return [{"id": str(u.id), "name": short_name(u) or "", "role": roles.get(u.id, "teacher")}
+                for u in self.teachers.staff_who_can_teach(org_id) if u.id != actor]
+
     def candidates(self, org_id: Any, is_owner: bool, request_id: Any) -> Dict[str, Any]:
         r = self._request(org_id, request_id)
         if r.status == PENDING:
@@ -620,7 +655,9 @@ class SubstitutionsBase:
         out = []
         everybody = self.teachers.busy_map(org_id, d, d, exclude_keys={cand.key}, book=book)          # one pass for all the teachers
         roles = dict(self.db.query(OrganizationMember.user_id, OrganizationMember.org_role).filter(OrganizationMember.org_id == org_id).all())
-        for user in self.teachers.staff_who_can_teach(org_id):
+        staff = self.teachers.staff_who_can_teach(org_id)
+        no_rate = self.rates_missing(org_id, [u.id for u in staff], group.lesson_type, r.lesson_date) if is_owner else set()
+        for user in staff:
             if user.id == r.requester_id:
                 continue
             member = SimpleNamespace(org_role=roles.get(user.id, "teacher"))
@@ -631,7 +668,7 @@ class SubstitutionsBase:
                 "suggested": user.id == r.suggested_teacher_id, "isDefaultTeacher": user.id == default, "busy": other is not None,
                 "busyWith": ({"kind": "substitution" if other.substitution else "lesson", "groupName": other.group_name, "startTime": other.startTime,
                               "endTime": other.endTime, "pendingRequest": other.key in pending_by_user.get(user.id, set())} if other is not None else None),
-                "rateMissing": self.rate_missing(org_id, user.id, group.lesson_type, r.lesson_date) if is_owner else None,
+                "rateMissing": (user.id in no_rate) if is_owner else None,
             })
         out.sort(key=lambda c: (0 if c["suggested"] else 1, 1 if c["busy"] and not c["suggested"] else 0, c["name"]))
         return {"requestId": str(r.id), "lesson": {"groupId": str(group.id), "groupName": group.name, "lessonId": r.lesson_id, "date": r.lesson_date,
@@ -655,11 +692,13 @@ class Substitutions(SubstitutionsBase):
         actor = _uuid(actor_id)
         group, r = self._lock_request(org_id, request_id)
         if r.status == PENDING:
-            reason, _occ = self.closure_reason(r, group)
+            reason, occ = self.closure_reason(r, group)
             if reason and reason != "LESSON_OUTSIDE_WINDOW":
                 self.close(r, reason, trigger="decide", group=group)
                 self.db.commit()
                 raise self.already_decided(r)
+            if occ and (occ.get("startTime") != r.start_time or occ.get("endTime") != r.end_time):
+                self._sync_times(r, occ)           # the lesson was moved in the schedule: reschedule / cancel judge the CURRENT time, not the one of the request
         if r.status != PENDING:
             if self._same_decision(r, actor, body):
                 item = self.one(r)
@@ -729,7 +768,7 @@ class Substitutions(SubstitutionsBase):
         if teacher == r.requester_id:
             raise R.err(422, "SUBSTITUTE_IS_REQUESTER")
         note = (body.note or "").strip() or None
-        reason = (note or _label_text(r))[:300]
+        reason = (note or REASON_LABELS[r.reason_code])[:300]       # the admin's note; the teacher's own comment stays in the request only
         put = LessonTeacherPut(lessonDate=date.fromisoformat(r.lesson_date), lessonId=r.lesson_id, teacherId=str(teacher), reason=reason)
         out = self.teachers._put_locked(org_id, group, put, actor_id=actor, actor_role=actor_role, commit=False, skip_request_id=r.id)
         asg = self.teachers.last_assignment
@@ -791,6 +830,12 @@ class Substitutions(SubstitutionsBase):
             self.db.flush()
         finally:
             skip.discard(key)
+        # the lesson is gone (cancelled / moved): a substitute assigned to it is released (no «Замена» for a lesson that will not happen)
+        asg = (self.db.query(LessonTeacherAssignment)
+               .filter(LessonTeacherAssignment.group_id == group.id, LessonTeacherAssignment.lesson_id == r.lesson_id,
+                       LessonTeacherAssignment.lesson_date == r.lesson_date, LessonTeacherAssignment.cancelled_at.is_(None)).first())
+        if asg is not None:
+            self.teachers.cancel_assignment(asg, actor, group=group, reason="Урок отменён или перенесён: замена снята")
         return row
 
     # ---------------------------------------------------------------------------------------------- cancel
@@ -884,11 +929,15 @@ class Substitutions(SubstitutionsBase):
         room = normalize_room(body.room) if body.room is not None else None
         fmt = body.format or occ.get("format") or "offline"
         text = f"Перенесён на {new_date.strftime('%d.%m')}, {start}–{end}: {reason}"[:500]
+        payload = {"dayOfWeek": new_date.isoweekday(), "startTime": start, "endTime": end, "subject": "Математика", "room": room, "format": fmt,
+                   "color": occ.get("color") or "blue", "topic": occ.get("topic")}
+        try:
+            self.svc._validate_schedule_payload(payload)         # the same rules as every one-off lesson (format, day, time range)
+        except ValueError as exc:
+            raise unprocessable("SCHEDULE_PAYLOAD_INVALID", str(exc)) from exc
         self._exam_check(r, text)
         row = self._cancelled_row(group, r, actor, text, {"moved_to": {"date": new_date.isoformat(), "startTime": start, "endTime": end}})
         new_id = f"one-off-{uuid4().hex[:16]}"
-        payload = {"dayOfWeek": new_date.isoweekday(), "startTime": start, "endTime": end, "subject": "Математика", "room": room, "format": fmt,
-                   "color": occ.get("color") or "blue", "topic": occ.get("topic")}
         self.db.add(GroupScheduleOneOffLesson(id=new_id, org_id=group.org_id, group_id=group.id, lesson_date=new_date.isoformat(), payload=payload, created_by=actor))
         self.db.flush()
         self._exam_release(r, text)
@@ -908,7 +957,11 @@ class Substitutions(SubstitutionsBase):
         order = [str(r.id) for r in rows] + [i for i in body.ids if i not in {str(r.id) for r in rows}]
         updated, items, skipped = 0, [], []
         one = DecideRequestLike(body)
+        stopped: Optional[OpsError] = None
         for rid in order:
+            if stopped is not None:         # exam-service is down: the rest would only repeat the failure (and each try waits for it)
+                skipped.append({"id": str(rid), "code": stopped.code, "message": stopped.message})
+                continue
             try:
                 out = self.decide(org_id, actor_id, actor_role, rid, one)
                 updated += 1
@@ -916,6 +969,8 @@ class Substitutions(SubstitutionsBase):
             except OpsError as exc:
                 self.db.rollback()
                 entry = {"id": str(rid), "code": exc.code, "message": exc.message}
+                if exc.code == "EXAM_SERVICE_UNAVAILABLE":
+                    stopped = exc
                 for key in ("conflicts", "total"):
                     if key in exc.extra:
                         entry[key] = exc.extra[key]
@@ -1010,6 +1065,7 @@ def on_member_removed(svc, org_id: Any, user_id: UUID, actor_id: Any, released: 
         closed += 1
     for r in db.query(Req).filter(Req.org_id == org_id, Req.suggested_teacher_id == user_id, Req.status == PENDING).all():
         subs.event(r, "suggestion_unavailable", actor_id, {"teacherId": str(user_id)})
+    db.flush()      # the sessions of production run with autoflush=False: the closings above must be visible to the "pending already on this lesson?" query
     reopened = 0
     removed_user = db.query(User).filter(User.id == user_id).first()
     book = TeacherBook(db)
@@ -1029,6 +1085,9 @@ def on_member_removed(svc, org_id: Any, user_id: UUID, actor_id: Any, released: 
             continue
         if db.query(Req).filter(Req.group_id == group.id, Req.lesson_id == asg.lesson_id, Req.lesson_date == asg.lesson_date, Req.status == PENDING).first():
             continue
+        if db.query(GroupAttendance.id).filter(GroupAttendance.group_id == group.id, GroupAttendance.lesson_id == asg.lesson_id,
+                                               GroupAttendance.lesson_date == asg.lesson_date, GroupAttendance.status == "cancelled").first():
+            continue                                       # the lesson was cancelled / moved meanwhile: nothing to reopen
         new = Req(org_id=org_id, group_id=group.id, lesson_id=asg.lesson_id, lesson_date=asg.lesson_date, start_time=occ["startTime"], end_time=occ["endTime"],
                   starts_at=starts_at, requester_id=old.requester_id, origin="system", batch_id=uuid4(), reason_code="other",
                   comment=f"Заменяющий {short_name(removed_user)} больше не работает в центре. Нужно новое решение.", suggested_teacher_id=None,
@@ -1167,6 +1226,16 @@ def annotate_journal(svc, user: Dict[str, Any], group: Group, resp) -> Any:
             continue
         marks[key] = {"id": str(r.id), "status": r.status, "reasonCode": r.reason_code, "teacherName": short_name(names.get(str(r.requester_id)))}
     resp.substitutionRequests = marks
+    # the outcome of a cancelled / moved lesson on the lesson itself (the shape of ``schedule/occurrences``): the journal needs no parsing of cancellation reasons;
+    # visible to everybody who reads the journal (no reason, no comment - D-12)
+    done: Dict[str, Req] = {}
+    for r in reqs:
+        if r.status in ("rescheduled", "cancelled"):
+            done[f"{r.lesson_date}_{r.lesson_id}"] = r
+    for key, lesson in keys.items():
+        r = done.get(key)
+        if r is not None:
+            lesson["substitutionOutcome"] = {"kind": "rescheduled" if r.status == "rescheduled" else "cancelled", "movedTo": _moved(r)}
     return resp
 
 
@@ -1193,13 +1262,20 @@ def annotate_student_attendance(svc, org_id: Any, student_id: Any, summary: Dict
             lesson["isSubstitution"] = bool(teacher is not None and default is not None and teacher != default)
     sid = str(student_id)
     notices: List[Dict[str, Any]] = []
-    for r in db.query(Req).filter(Req.org_id == org_id, Req.status.in_(("cancelled", "rescheduled")), Req.lesson_date >= d_from, Req.lesson_date <= d_to).order_by(Req.lesson_date, Req.id):
-        row = db.query(GroupAttendance).filter(GroupAttendance.group_id == r.group_id, GroupAttendance.lesson_id == r.lesson_id, GroupAttendance.lesson_date == r.lesson_date).first()
-        snapshot = (row.roster_snapshot if row is not None else None) or []
-        if sid not in {str(x.get("student_id")) for x in snapshot if isinstance(x, dict)}:
-            continue
-        group = db.query(Group).filter(Group.id == r.group_id).first()
-        notices.append({"lessonId": r.lesson_id, "date": r.lesson_date, "groupId": str(r.group_id), "groupName": group.name if group else "",
-                        "kind": "rescheduled" if r.status == "rescheduled" else "cancelled", "movedTo": _moved(r, True)})
+    own_groups = [gid for (gid,) in db.query(StudentGroup.group_id).filter(StudentGroup.student_id == student_id)]      # only the groups he is / was in
+    reqs = (db.query(Req).filter(Req.org_id == org_id, Req.group_id.in_(own_groups), Req.status.in_(("cancelled", "rescheduled")),
+                                 Req.lesson_date >= d_from, Req.lesson_date <= d_to).order_by(Req.lesson_date, Req.id).all()) if own_groups else []
+    if reqs:
+        row_of = {(x.group_id, x.lesson_id, x.lesson_date): x for x in db.query(GroupAttendance).filter(
+            GroupAttendance.group_id.in_({r.group_id for r in reqs}), GroupAttendance.lesson_date >= d_from, GroupAttendance.lesson_date <= d_to)}
+        group_of = {g.id: g for g in db.query(Group).filter(Group.id.in_({r.group_id for r in reqs})).all()}
+        for r in reqs:
+            row = row_of.get((r.group_id, r.lesson_id, r.lesson_date))
+            snapshot = (row.roster_snapshot if row is not None else None) or []
+            if sid not in {str(x.get("student_id")) for x in snapshot if isinstance(x, dict)}:
+                continue
+            group = group_of.get(r.group_id)
+            notices.append({"lessonId": r.lesson_id, "date": r.lesson_date, "groupId": str(r.group_id), "groupName": group.name if group else "",
+                            "kind": "rescheduled" if r.status == "rescheduled" else "cancelled", "movedTo": _moved(r, True)})
     summary["notices"] = notices
     return summary

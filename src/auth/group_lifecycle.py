@@ -220,10 +220,12 @@ class GroupLifecycle:
         now = bc.utc_now()
         reason = req.reason
         future = self.future_lessons(group)
+        pending_requests = lesson_substitutions.count_pending_of_group(self.db, group.id)     # counted BEFORE the missed lessons are cancelled: that closes some of them
         cancelled = 0
         if cancel_missed:
             cancelled = self._cancel_missed(group, missed, reason, actor_id)
-        closed_requests = lesson_substitutions.close_group_requests(self.svc, group, "GROUP_ARCHIVED", actor_id=actor_id, trigger="group_archived")
+        lesson_substitutions.close_group_requests(self.svc, group, "GROUP_ARCHIVED", actor_id=actor_id, trigger="group_archived")
+        closed_requests = pending_requests
         group.status = "archived"
         group.archive_reason = reason
         schedule_rules.open_interval(group, now)

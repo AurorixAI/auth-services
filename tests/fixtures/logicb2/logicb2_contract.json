@@ -213,6 +213,35 @@
         "title": "CandidatesOut",
         "type": "object"
       },
+      "ColleagueOut": {
+        "description": "«Предложить коллегу»: a member of the centre who can teach (no e-mail, no phone).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "teacher",
+              "owner",
+              "admin"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role"
+        ],
+        "title": "ColleagueOut",
+        "type": "object"
+      },
       "CreateSubstitutionOut": {
         "properties": {
           "alreadyRequested": {
@@ -2437,6 +2466,37 @@
         ]
       }
     },
+    "/org/substitutions/colleagues": {
+      "get": {
+        "description": "«Предложить коллегу»: активные сотрудники центра, которые могут вести уроки (кроме меня); id, имя, роль.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ColleagueOut"
+                  },
+                  "title": "Response Substitution Colleagues Api V1 Auth Org Substitutions Colleagues Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Substitution Colleagues",
+        "tags": [
+          "Authentication",
+          "LOGIC-B2 substitutions"
+        ]
+      }
+    },
     "/org/substitutions/decide-bulk": {
       "post": {
         "description": "Массовое решение (substitute / cancel / reject); каждый запрос - своя транзакция.",
@@ -2967,6 +3027,12 @@
       "audience": "everybody who sees the schedule",
       "endpoint": "GET /org/schedule/occurrences",
       "field": "substitutionOutcome",
+      "schema": "SubstitutionOutcome|null"
+    },
+    {
+      "audience": "everybody who reads the journal (a cancelled / moved lesson; no reason)",
+      "endpoint": "GET /org/groups/{id}/attendance",
+      "field": "lessons[].substitutionOutcome",
       "schema": "SubstitutionOutcome|null"
     },
     {

@@ -273,7 +273,8 @@ class AttendanceRules:
         resp.rosterStudentIds = {k: v for k, v in roster_ids.items() if k in resp.rosterStudentIds or True}
         resp.excuses, resp.corrections = only(resp.excuses), only(resp.corrections)
         resp.versions, resp.lessonTeachers = only(resp.versions), only(resp.lessonTeachers)
-        resp.historicalStudents = [h for h in resp.historicalStudents if h.get("id") in ids]
+        resp.historicalStudents = [{k: h.get(k) for k in ("id", "first_name", "last_name", "full_name", "display_id")}      # name + display id only: no periods, no transfers
+                                   for h in resp.historicalStudents if h.get("id") in ids]
         resp.membershipEvents, resp.diagnosticReportNotices = [], []
         resp.lessonRoster = roster
         return resp

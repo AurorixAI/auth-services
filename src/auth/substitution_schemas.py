@@ -174,6 +174,14 @@ class MineOut(BaseModel):
     assignedToMe: List[AssignedToMe] = Field(default_factory=list)
 
 
+class ColleagueOut(BaseModel):
+    """«Предложить коллегу»: a member of the centre who can teach (no e-mail, no phone)."""
+
+    id: str
+    name: str
+    role: Literal["teacher", "owner", "admin"]
+
+
 class WithdrawBatchRequest(BaseModel):
     ids: List[str] = Field(..., min_length=1, max_length=100)
 
@@ -388,6 +396,7 @@ class LessonRosterStudent(BaseModel):
 ADDITIVE_FIELDS = [
     {"endpoint": "GET /org/schedule/occurrences", "field": "substitutionRequest", "schema": "SubstitutionRequestMark|null", "audience": "manager, requester"},
     {"endpoint": "GET /org/schedule/occurrences", "field": "substitutionOutcome", "schema": "SubstitutionOutcome|null", "audience": "everybody who sees the schedule"},
+    {"endpoint": "GET /org/groups/{id}/attendance", "field": "lessons[].substitutionOutcome", "schema": "SubstitutionOutcome|null", "audience": "everybody who reads the journal (a cancelled / moved lesson; no reason)"},
     {"endpoint": "GET /org/groups/{id}/attendance", "field": "substitutionRequests", "schema": "{<date>_<lessonId>: SubstitutionRequestMark}", "audience": "manager, requester"},
     {"endpoint": "GET /org/groups/{id}/attendance", "field": "lessonRoster", "schema": "[LessonRosterStudent]", "audience": "a substitute: only the students of HIS lesson (the journal of a substitute holds only that lesson)"},
     {"endpoint": "GET /org/students/{id}/attendance", "field": "lessons[].teacherName / isSubstitution", "schema": "string|null / bool", "audience": "manager"},

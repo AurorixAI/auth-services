@@ -78,7 +78,7 @@ def test_s4_r1_substitute_creates_the_assignment_and_the_audit(w, clock):
     assert r.status_code == 200, r.text
     assert r.json()["item"]["status"] == "substituted" and r.json()["item"]["decision"]["substitute"]["name"] == "Рахимов Т."
     (asg,) = assignments(w)
-    assert asg.teacher_id == w.D.id and asg.reason == "Болезнь: Температура"
+    assert asg.teacher_id == w.D.id and asg.reason == "Болезнь"      # the label only: the teacher's comment stays in the request (R3 m8)
     assert [a.action for a in w.db.query(GroupAudit).filter_by(group_id=w.G1.id, action="lesson_teacher_set")] == ["lesson_teacher_set"]
     assert [e.action for e in events_of(w)] == ["requested", "substituted"] and events_of(w)[1].snapshot["via"] == "request"
     mine = occurrence(w, "D", "L1", "2026-10-26")

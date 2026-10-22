@@ -41,8 +41,8 @@ def err(status: int, code: str, message: str = None, **extra: Any) -> OpsError:
 
 
 def minutes_to_start(starts_at: datetime, now_utc: datetime) -> int:
-    """Whole minutes from now to the start (floor; negative after the start)."""
-    return int((starts_at - now_utc).total_seconds() // 60)
+    """Whole minutes from now to the start, rounded UP (a lesson 0-59 s ahead is 1 minute: urgent, not overdue; <= 0 once it has started)."""
+    return -int((-(starts_at - now_utc).total_seconds()) // 60)
 
 
 def is_urgent(minutes: int) -> bool:

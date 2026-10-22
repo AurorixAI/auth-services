@@ -19,6 +19,7 @@ from .ops_router import _manager
 from .substitution_rules import err
 from .substitution_schemas import (
     CandidatesOut,
+    ColleagueOut,
     CreateSubstitutionOut,
     CreateSubstitutionRequest,
     DecideBulkOut,
@@ -90,6 +91,12 @@ def my_substitution_requests(
 ):
     """Мои запросы и уроки, где меня назначили заменяющим."""
     return _subs(db).mine(user["org_id"], user["user_id"], status)
+
+
+@router.get("/org/substitutions/colleagues", response_model=list[ColleagueOut])
+def substitution_colleagues(user: dict = Depends(_member), db: Session = Depends(get_db)):
+    """«Предложить коллегу»: активные сотрудники центра, которые могут вести уроки (кроме меня); id, имя, роль."""
+    return _subs(db).colleagues(user["org_id"], user["user_id"])
 
 
 @router.post("/org/substitutions/withdraw", response_model=WithdrawBatchOut)

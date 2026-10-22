@@ -754,6 +754,7 @@ class LessonTeachers:
             return self._out(group, req.lessonId, lesson_date, current if row is None else row.teacher_id, default, row, version_changed=False,
                              sheets=[])
         if not clearing:
+            self.db.query(User.id).filter(User.id == target).with_for_update().first()      # the target's row first: a removal of him serialises with this assignment
             member = self.teaching_member(org_id, target)
             if member is None:
                 raise unprocessable("TARGET_NOT_TEACHER", "Выберите преподавателя центра")
