@@ -1,0 +1,20 @@
+{
+  "RANGE_TOO_LONG": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "RANGE_TOO_LONG",
+        "message": "Период не длиннее 366 дней"
+      }
+    }
+  },
+  "INVALID_PERIOD": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "INVALID_PERIOD",
+        "message": "День — это один день"
+      }
+    }
+  }
+}

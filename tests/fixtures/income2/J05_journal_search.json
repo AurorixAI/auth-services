@@ -1,0 +1,103 @@
+{
+  "as_of": "2026-10-21",
+  "from": "2026-10-01",
+  "to": "2026-10-31",
+  "page": 1,
+  "size": 25,
+  "total": 2,
+  "pages": 1,
+  "totals": {
+    "count": 1,
+    "sum": 150000,
+    "voided_count": 1
+  },
+  "rows": [
+    {
+      "id": "payment:b2-oct21",
+      "receipt_no": 13,
+      "paid_on": "2026-10-21",
+      "paid_time": "11:40",
+      "created_at": "2026-10-21T06:40:00",
+      "student_id": "student:b2",
+      "student_name": "Алиев Тимур",
+      "display_id": "INC-005",
+      "membership_id": "membership:b2",
+      "group_id": "group:B",
+      "group_name": "Английский 7Б",
+      "teacher_name": "Мария Ким",
+      "amount": 150000,
+      "method": "cash",
+      "method_label": "Наличные",
+      "created_by_id": "user:owner",
+      "created_by_name": "Азиз Хакимов",
+      "note": "=SUM(A1)",
+      "allocation_text": "за октябрь — 150 000",
+      "allocations": [
+        {
+          "segment_id": "seg:0:2026-10-01",
+          "period_from": "2026-10-01",
+          "period_to": "2026-10-31",
+          "amount": 150000,
+          "days": 15,
+          "bucket": "current",
+          "closes": false,
+          "label": "На текущий период 01.10–31.10",
+          "price": 300000,
+          "segment_remaining_after": 150000
+        }
+      ],
+      "refunded": 0,
+      "transferred": 0,
+      "status": "active",
+      "replaces_receipt_no": null,
+      "replaces_amount": null,
+      "replaced_by_receipt_no": null,
+      "void_reason": null,
+      "voided_at": null,
+      "voided_by_name": null
+    },
+    {
+      "id": "payment:b2-oct20-void",
+      "receipt_no": 10,
+      "paid_on": "2026-10-20",
+      "paid_time": "13:08",
+      "created_at": "2026-10-20T08:08:00",
+      "student_id": "student:b2",
+      "student_name": "Алиев Тимур",
+      "display_id": "INC-005",
+      "membership_id": "membership:b2",
+      "group_id": "group:B",
+      "group_name": "Английский 7Б",
+      "teacher_name": "Мария Ким",
+      "amount": 777000,
+      "method": "cash",
+      "method_label": "Наличные",
+      "created_by_id": "user:admin",
+      "created_by_name": "Нодира Саидова",
+      "note": null,
+      "allocation_text": null,
+      "allocations": [],
+      "refunded": 0,
+      "transferred": 0,
+      "status": "voided",
+      "replaces_receipt_no": null,
+      "replaces_amount": null,
+      "replaced_by_receipt_no": null,
+      "void_reason": "Ошибочный ввод",
+      "voided_at": "2026-10-20T09:00:00",
+      "voided_by_name": "Нодира Саидова"
+    }
+  ],
+  "authors": [
+    {
+      "user_id": "user:owner",
+      "name": "Азиз Хакимов",
+      "count": 4
+    },
+    {
+      "user_id": "user:admin",
+      "name": "Нодира Саидова",
+      "count": 3
+    }
+  ]
+}

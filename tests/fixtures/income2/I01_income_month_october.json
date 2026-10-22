@@ -1,0 +1,332 @@
+{
+  "as_of": "2026-10-21",
+  "period": {
+    "kind": "month",
+    "from": "2026-10-01",
+    "to": "2026-10-31",
+    "label": "октябрь",
+    "days": 31,
+    "in_progress": true
+  },
+  "previous_period": {
+    "kind": "month",
+    "from": "2026-09-01",
+    "to": "2026-09-21",
+    "label": "1–21 сентября",
+    "days": 21,
+    "in_progress": false
+  },
+  "current": {
+    "received": 3450000,
+    "payments_count": 7,
+    "refunded": 100000,
+    "refunded_from_received": 100000,
+    "transferred": 0,
+    "to_past_debt": 1000000,
+    "to_current": 1900000,
+    "to_advance": 450000,
+    "written_off": 100000,
+    "net_received": 3350000
+  },
+  "previous": {
+    "received": 1500000,
+    "payments_count": 4,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "transferred": 0,
+    "to_past_debt": 0,
+    "to_current": 1500000,
+    "to_advance": 0,
+    "written_off": 0,
+    "net_received": 1500000
+  },
+  "delta_amount": 1950000,
+  "delta_pct": 130,
+  "summary_text": "За октябрь пришло 3 450 000 сум — на 130% больше, чем за 1–21 сентября. Собрано 76% стоимости месяца.",
+  "by_method": [
+    {
+      "method": "click",
+      "label": "Click",
+      "amount": 1250000,
+      "count": 1
+    },
+    {
+      "method": "cash",
+      "label": "Наличные",
+      "amount": 950000,
+      "count": 4
+    },
+    {
+      "method": "bank_transfer",
+      "label": "Перевод",
+      "amount": 900000,
+      "count": 1
+    },
+    {
+      "method": "card",
+      "label": "Карта",
+      "amount": 350000,
+      "count": 1
+    }
+  ],
+  "series": [
+    {
+      "bucket": "2026-10-01",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-02",
+      "received": 900000,
+      "count": 1
+    },
+    {
+      "bucket": "2026-10-03",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-04",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-05",
+      "received": 500000,
+      "count": 1
+    },
+    {
+      "bucket": "2026-10-06",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-07",
+      "received": 1250000,
+      "count": 1
+    },
+    {
+      "bucket": "2026-10-08",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-09",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-10",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-11",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-12",
+      "received": 200000,
+      "count": 1
+    },
+    {
+      "bucket": "2026-10-13",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-14",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-15",
+      "received": 350000,
+      "count": 1
+    },
+    {
+      "bucket": "2026-10-16",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-17",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-18",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-19",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-20",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-21",
+      "received": 250000,
+      "count": 2
+    },
+    {
+      "bucket": "2026-10-22",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-23",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-24",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-25",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-26",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-27",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-28",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-29",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-30",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-31",
+      "received": 0,
+      "count": 0
+    }
+  ],
+  "series_by": "day",
+  "cash": null,
+  "collection": {
+    "month": "2026-10",
+    "month_label": "октябрь 2026",
+    "from": "2026-10-01",
+    "to": "2026-10-31",
+    "total": {
+      "group_id": null,
+      "group_name": null,
+      "teacher_id": null,
+      "teacher_name": null,
+      "charged": 2500000,
+      "paid": 1900000,
+      "forgiven": 100000,
+      "debt": 500000,
+      "students": 6,
+      "students_with_debt": 3,
+      "pct": 76
+    },
+    "groups": [
+      {
+        "group_id": "group:A",
+        "group_name": "Математика 9А",
+        "teacher_id": "user:teacher-petr",
+        "teacher_name": "Пётр Иванов",
+        "charged": 1500000,
+        "paid": 1100000,
+        "forgiven": 100000,
+        "debt": 300000,
+        "students": 3,
+        "students_with_debt": 1,
+        "pct": 73
+      },
+      {
+        "group_id": "group:B",
+        "group_name": "Английский 7Б",
+        "teacher_id": "user:teacher-maria",
+        "teacher_name": "Мария Ким",
+        "charged": 600000,
+        "paid": 450000,
+        "forgiven": 0,
+        "debt": 150000,
+        "students": 2,
+        "students_with_debt": 1,
+        "pct": 75
+      },
+      {
+        "group_id": "group:C",
+        "group_name": "Физика 10В",
+        "teacher_id": "user:teacher-petr",
+        "teacher_name": "Пётр Иванов",
+        "charged": 400000,
+        "paid": 350000,
+        "forgiven": 0,
+        "debt": 50000,
+        "students": 1,
+        "students_with_debt": 1,
+        "pct": 87
+      }
+    ]
+  },
+  "position": {
+    "debt_total": 500000,
+    "past_debt_total": 0,
+    "advance_total": 450000,
+    "memberships_with_debt": 3,
+    "students_with_debt": 3,
+    "memberships_with_advance": 2
+  },
+  "checks": [
+    {
+      "code": "received_eq_strip",
+      "left": 3450000,
+      "right": 3450000,
+      "diff": 0
+    },
+    {
+      "code": "received_eq_methods",
+      "left": 3450000,
+      "right": 3450000,
+      "diff": 0
+    },
+    {
+      "code": "received_eq_series",
+      "left": 3450000,
+      "right": 3450000,
+      "diff": 0
+    },
+    {
+      "code": "received_eq_journal",
+      "left": 3450000,
+      "right": 3450000,
+      "diff": 0
+    },
+    {
+      "code": "collection_total_eq_groups",
+      "left": 2500000,
+      "right": 2500000,
+      "diff": 0
+    }
+  ],
+  "ok": true
+}

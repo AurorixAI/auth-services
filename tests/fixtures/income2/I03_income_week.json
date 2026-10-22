@@ -1,0 +1,135 @@
+{
+  "as_of": "2026-10-21",
+  "period": {
+    "kind": "week",
+    "from": "2026-10-12",
+    "to": "2026-10-18",
+    "label": "неделя 12–18 октября",
+    "days": 7,
+    "in_progress": false
+  },
+  "previous_period": {
+    "kind": "week",
+    "from": "2026-10-05",
+    "to": "2026-10-11",
+    "label": "неделя 5–11 октября",
+    "days": 7,
+    "in_progress": false
+  },
+  "current": {
+    "received": 550000,
+    "payments_count": 2,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "transferred": 0,
+    "to_past_debt": 200000,
+    "to_current": 350000,
+    "to_advance": 0,
+    "written_off": 0,
+    "net_received": 550000
+  },
+  "previous": {
+    "received": 1750000,
+    "payments_count": 2,
+    "refunded": 0,
+    "refunded_from_received": 100000,
+    "transferred": 0,
+    "to_past_debt": 500000,
+    "to_current": 1000000,
+    "to_advance": 150000,
+    "written_off": 0,
+    "net_received": 1750000
+  },
+  "delta_amount": -1200000,
+  "delta_pct": -69,
+  "summary_text": "За неделю 12–18 октября пришло 550 000 сум — на 69% меньше, чем за предыдущую неделю.",
+  "by_method": [
+    {
+      "method": "card",
+      "label": "Карта",
+      "amount": 350000,
+      "count": 1
+    },
+    {
+      "method": "cash",
+      "label": "Наличные",
+      "amount": 200000,
+      "count": 1
+    }
+  ],
+  "series": [
+    {
+      "bucket": "2026-10-12",
+      "received": 200000,
+      "count": 1
+    },
+    {
+      "bucket": "2026-10-13",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-14",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-15",
+      "received": 350000,
+      "count": 1
+    },
+    {
+      "bucket": "2026-10-16",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-17",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-10-18",
+      "received": 0,
+      "count": 0
+    }
+  ],
+  "series_by": "day",
+  "cash": null,
+  "collection": null,
+  "position": {
+    "debt_total": 500000,
+    "past_debt_total": 0,
+    "advance_total": 450000,
+    "memberships_with_debt": 3,
+    "students_with_debt": 3,
+    "memberships_with_advance": 2
+  },
+  "checks": [
+    {
+      "code": "received_eq_strip",
+      "left": 550000,
+      "right": 550000,
+      "diff": 0
+    },
+    {
+      "code": "received_eq_methods",
+      "left": 550000,
+      "right": 550000,
+      "diff": 0
+    },
+    {
+      "code": "received_eq_series",
+      "left": 550000,
+      "right": 550000,
+      "diff": 0
+    },
+    {
+      "code": "received_eq_journal",
+      "left": 550000,
+      "right": 550000,
+      "diff": 0
+    }
+  ],
+  "ok": true
+}

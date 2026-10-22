@@ -1,0 +1,315 @@
+{
+  "as_of": "2026-10-21",
+  "period": {
+    "kind": "month",
+    "from": "2026-09-01",
+    "to": "2026-09-30",
+    "label": "сентябрь",
+    "days": 30,
+    "in_progress": false
+  },
+  "previous_period": {
+    "kind": "month",
+    "from": "2026-08-01",
+    "to": "2026-08-31",
+    "label": "август",
+    "days": 31,
+    "in_progress": false
+  },
+  "current": {
+    "received": 1500000,
+    "payments_count": 4,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "transferred": 0,
+    "to_past_debt": 0,
+    "to_current": 1500000,
+    "to_advance": 0,
+    "written_off": 0,
+    "net_received": 1500000
+  },
+  "previous": {
+    "received": 0,
+    "payments_count": 0,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "transferred": 0,
+    "to_past_debt": 0,
+    "to_current": 0,
+    "to_advance": 0,
+    "written_off": 0,
+    "net_received": 0
+  },
+  "delta_amount": 1500000,
+  "delta_pct": null,
+  "summary_text": "За сентябрь пришло 1 500 000 сум; за август оплат не было. Собрано 100% стоимости месяца.",
+  "by_method": [
+    {
+      "method": "cash",
+      "label": "Наличные",
+      "amount": 800000,
+      "count": 2
+    },
+    {
+      "method": "card",
+      "label": "Карта",
+      "amount": 700000,
+      "count": 2
+    }
+  ],
+  "series": [
+    {
+      "bucket": "2026-09-01",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-02",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-03",
+      "received": 500000,
+      "count": 1
+    },
+    {
+      "bucket": "2026-09-04",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-05",
+      "received": 300000,
+      "count": 1
+    },
+    {
+      "bucket": "2026-09-06",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-07",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-08",
+      "received": 400000,
+      "count": 1
+    },
+    {
+      "bucket": "2026-09-09",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-10",
+      "received": 300000,
+      "count": 1
+    },
+    {
+      "bucket": "2026-09-11",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-12",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-13",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-14",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-15",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-16",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-17",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-18",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-19",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-20",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-21",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-22",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-23",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-24",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-25",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-26",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-27",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-28",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-29",
+      "received": 0,
+      "count": 0
+    },
+    {
+      "bucket": "2026-09-30",
+      "received": 0,
+      "count": 0
+    }
+  ],
+  "series_by": "day",
+  "cash": null,
+  "collection": {
+    "month": "2026-09",
+    "month_label": "сентябрь 2026",
+    "from": "2026-09-01",
+    "to": "2026-09-30",
+    "total": {
+      "group_id": null,
+      "group_name": null,
+      "teacher_id": null,
+      "teacher_name": null,
+      "charged": 2500000,
+      "paid": 2500000,
+      "forgiven": 0,
+      "debt": 0,
+      "students": 6,
+      "students_with_debt": 0,
+      "pct": 100
+    },
+    "groups": [
+      {
+        "group_id": "group:B",
+        "group_name": "Английский 7Б",
+        "teacher_id": "user:teacher-maria",
+        "teacher_name": "Мария Ким",
+        "charged": 600000,
+        "paid": 600000,
+        "forgiven": 0,
+        "debt": 0,
+        "students": 2,
+        "students_with_debt": 0,
+        "pct": 100
+      },
+      {
+        "group_id": "group:A",
+        "group_name": "Математика 9А",
+        "teacher_id": "user:teacher-petr",
+        "teacher_name": "Пётр Иванов",
+        "charged": 1500000,
+        "paid": 1500000,
+        "forgiven": 0,
+        "debt": 0,
+        "students": 3,
+        "students_with_debt": 0,
+        "pct": 100
+      },
+      {
+        "group_id": "group:C",
+        "group_name": "Физика 10В",
+        "teacher_id": "user:teacher-petr",
+        "teacher_name": "Пётр Иванов",
+        "charged": 400000,
+        "paid": 400000,
+        "forgiven": 0,
+        "debt": 0,
+        "students": 1,
+        "students_with_debt": 0,
+        "pct": 100
+      }
+    ]
+  },
+  "position": {
+    "debt_total": 500000,
+    "past_debt_total": 0,
+    "advance_total": 450000,
+    "memberships_with_debt": 3,
+    "students_with_debt": 3,
+    "memberships_with_advance": 2
+  },
+  "checks": [
+    {
+      "code": "received_eq_strip",
+      "left": 1500000,
+      "right": 1500000,
+      "diff": 0
+    },
+    {
+      "code": "received_eq_methods",
+      "left": 1500000,
+      "right": 1500000,
+      "diff": 0
+    },
+    {
+      "code": "received_eq_series",
+      "left": 1500000,
+      "right": 1500000,
+      "diff": 0
+    },
+    {
+      "code": "received_eq_journal",
+      "left": 1500000,
+      "right": 1500000,
+      "diff": 0
+    },
+    {
+      "code": "collection_total_eq_groups",
+      "left": 2500000,
+      "right": 2500000,
+      "diff": 0
+    }
+  ],
+  "ok": true
+}

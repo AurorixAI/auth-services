@@ -1,0 +1,14 @@
+{
+  "models": {
+    "I01_income_month_october": "IncomeOverview",
+    "I02_income_day_today_cash": "IncomeOverview",
+    "I03_income_week": "IncomeOverview",
+    "I04_income_september_closed": "IncomeOverview",
+    "I05_income_group_filter": "IncomeOverview",
+    "J01_journal_page1": "PaymentsJournal",
+    "J02_journal_page2": "PaymentsJournal",
+    "J03_journal_cash": "PaymentsJournal",
+    "J04_journal_voided_and_replaced": "PaymentsJournal",
+    "J05_journal_search": "PaymentsJournal"
+  }
+}

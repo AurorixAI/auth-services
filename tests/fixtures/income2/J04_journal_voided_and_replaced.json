@@ -1,0 +1,90 @@
+{
+  "as_of": "2026-10-21",
+  "from": "2026-10-01",
+  "to": "2026-10-31",
+  "page": 1,
+  "size": 25,
+  "total": 2,
+  "pages": 1,
+  "totals": {
+    "count": 7,
+    "sum": 3450000,
+    "voided_count": 2
+  },
+  "rows": [
+    {
+      "id": "payment:b2-oct20-void",
+      "receipt_no": 10,
+      "paid_on": "2026-10-20",
+      "paid_time": "13:08",
+      "created_at": "2026-10-20T08:08:00",
+      "student_id": "student:b2",
+      "student_name": "Алиев Тимур",
+      "display_id": "INC-005",
+      "membership_id": "membership:b2",
+      "group_id": "group:B",
+      "group_name": "Английский 7Б",
+      "teacher_name": "Мария Ким",
+      "amount": 777000,
+      "method": "cash",
+      "method_label": "Наличные",
+      "created_by_id": "user:admin",
+      "created_by_name": "Нодира Саидова",
+      "note": null,
+      "allocation_text": null,
+      "allocations": [],
+      "refunded": 0,
+      "transferred": 0,
+      "status": "voided",
+      "replaces_receipt_no": null,
+      "replaces_amount": null,
+      "replaced_by_receipt_no": null,
+      "void_reason": "Ошибочный ввод",
+      "voided_at": "2026-10-20T09:00:00",
+      "voided_by_name": "Нодира Саидова"
+    },
+    {
+      "id": "payment:c1-oct15-old",
+      "receipt_no": 9,
+      "paid_on": "2026-10-15",
+      "paid_time": "10:00",
+      "created_at": "2026-10-15T05:00:00",
+      "student_id": "student:c1",
+      "student_name": "Нуров Жасур",
+      "display_id": "INC-006",
+      "membership_id": "membership:c1",
+      "group_id": "group:C",
+      "group_name": "Физика 10В",
+      "teacher_name": "Пётр Иванов",
+      "amount": 400000,
+      "method": "card",
+      "method_label": "Карта",
+      "created_by_id": "user:owner",
+      "created_by_name": "Азиз Хакимов",
+      "note": null,
+      "allocation_text": null,
+      "allocations": [],
+      "refunded": 0,
+      "transferred": 0,
+      "status": "replaced",
+      "replaces_receipt_no": null,
+      "replaces_amount": null,
+      "replaced_by_receipt_no": 11,
+      "void_reason": "Исправлено",
+      "voided_at": "2026-10-15T06:30:00",
+      "voided_by_name": "Азиз Хакимов"
+    }
+  ],
+  "authors": [
+    {
+      "user_id": "user:owner",
+      "name": "Азиз Хакимов",
+      "count": 4
+    },
+    {
+      "user_id": "user:admin",
+      "name": "Нодира Саидова",
+      "count": 3
+    }
+  ]
+}

@@ -1,0 +1,1729 @@
+{
+  "components": {
+    "schemas": {
+      "Allocation": {
+        "description": "A piece of one payment in one segment (\"where the money went\").",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "bucket": {
+            "enum": [
+              "past_debt",
+              "current",
+              "advance"
+            ],
+            "title": "Bucket",
+            "type": "string"
+          },
+          "closes": {
+            "title": "Closes",
+            "type": "boolean"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "period_from": {
+            "format": "date",
+            "title": "Period From",
+            "type": "string"
+          },
+          "period_to": {
+            "format": "date",
+            "title": "Period To",
+            "type": "string"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "segment_id": {
+            "title": "Segment Id",
+            "type": "string"
+          },
+          "segment_remaining_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Remaining After"
+          }
+        },
+        "required": [
+          "segment_id",
+          "period_from",
+          "period_to",
+          "amount",
+          "days",
+          "bucket",
+          "closes",
+          "label",
+          "price",
+          "segment_remaining_after"
+        ],
+        "title": "Allocation",
+        "type": "object"
+      },
+      "CollectionRow": {
+        "description": "One group of «Собрано за месяц» (or the total).  ``charged`` = the cost of the periods that BEGAN in the month.",
+        "properties": {
+          "charged": {
+            "default": 0,
+            "title": "Charged",
+            "type": "integer"
+          },
+          "debt": {
+            "default": 0,
+            "title": "Debt",
+            "type": "integer"
+          },
+          "forgiven": {
+            "default": 0,
+            "title": "Forgiven",
+            "type": "integer"
+          },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          },
+          "group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Name"
+          },
+          "paid": {
+            "default": 0,
+            "title": "Paid",
+            "type": "integer"
+          },
+          "pct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct"
+          },
+          "students": {
+            "default": 0,
+            "title": "Students",
+            "type": "integer"
+          },
+          "students_with_debt": {
+            "default": 0,
+            "title": "Students With Debt",
+            "type": "integer"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          }
+        },
+        "required": [
+          "group_id",
+          "group_name",
+          "teacher_id",
+          "teacher_name",
+          "charged",
+          "paid",
+          "forgiven",
+          "debt",
+          "students",
+          "students_with_debt",
+          "pct"
+        ],
+        "title": "CollectionRow",
+        "type": "object"
+      },
+      "IncomeCash": {
+        "description": "«Наличные в кассе за сегодня» - only when the period is one day.",
+        "properties": {
+          "cash_received": {
+            "default": 0,
+            "title": "Cash Received",
+            "type": "integer"
+          },
+          "cash_refunded": {
+            "default": 0,
+            "title": "Cash Refunded",
+            "type": "integer"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "expected": {
+            "default": 0,
+            "title": "Expected",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "payments_count": {
+            "default": 0,
+            "title": "Payments Count",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "label",
+          "cash_received",
+          "cash_refunded",
+          "expected",
+          "payments_count",
+          "text"
+        ],
+        "title": "IncomeCash",
+        "type": "object"
+      },
+      "IncomeCheck": {
+        "properties": {
+          "code": {
+            "enum": [
+              "received_eq_strip",
+              "received_eq_methods",
+              "received_eq_series",
+              "received_eq_journal",
+              "collection_total_eq_groups"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "diff": {
+            "title": "Diff",
+            "type": "integer"
+          },
+          "left": {
+            "title": "Left",
+            "type": "integer"
+          },
+          "right": {
+            "title": "Right",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "left",
+          "right",
+          "diff"
+        ],
+        "title": "IncomeCheck",
+        "type": "object"
+      },
+      "IncomeDay": {
+        "description": "A bar of the chart.  EVERY day of the period is present (zeros included); a period longer than 92 days is cut by months.",
+        "properties": {
+          "bucket": {
+            "title": "Bucket",
+            "type": "string"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "received": {
+            "default": 0,
+            "title": "Received",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bucket",
+          "received",
+          "count"
+        ],
+        "title": "IncomeDay",
+        "type": "object"
+      },
+      "IncomeMethod": {
+        "properties": {
+          "amount": {
+            "default": 0,
+            "title": "Amount",
+            "type": "integer"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "method": {
+            "enum": [
+              "cash",
+              "card",
+              "bank_transfer",
+              "click",
+              "payme",
+              "other",
+              "unknown"
+            ],
+            "title": "Method",
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "label",
+          "amount",
+          "count"
+        ],
+        "title": "IncomeMethod",
+        "type": "object"
+      },
+      "IncomeOverview": {
+        "description": "``GET /org/payments/income``: the whole page above the journal in one answer.",
+        "properties": {
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "by_method": {
+            "items": {
+              "$ref": "#/components/schemas/IncomeMethod"
+            },
+            "title": "By Method",
+            "type": "array"
+          },
+          "cash": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IncomeCash"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/IncomeCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "collection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MonthCollection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current": {
+            "$ref": "#/components/schemas/IncomeTotals"
+          },
+          "delta_amount": {
+            "default": 0,
+            "title": "Delta Amount",
+            "type": "integer"
+          },
+          "delta_pct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Pct"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "period": {
+            "$ref": "#/components/schemas/IncomePeriod"
+          },
+          "position": {
+            "$ref": "#/components/schemas/ReceiptsPosition"
+          },
+          "previous": {
+            "$ref": "#/components/schemas/IncomeTotals"
+          },
+          "previous_period": {
+            "$ref": "#/components/schemas/IncomePeriod"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/IncomeDay"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "series_by": {
+            "default": "day",
+            "enum": [
+              "day",
+              "month"
+            ],
+            "title": "Series By",
+            "type": "string"
+          },
+          "summary_text": {
+            "title": "Summary Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "as_of",
+          "period",
+          "previous_period",
+          "current",
+          "previous",
+          "delta_amount",
+          "delta_pct",
+          "summary_text",
+          "by_method",
+          "series",
+          "series_by",
+          "cash",
+          "collection",
+          "position",
+          "checks",
+          "ok"
+        ],
+        "title": "IncomeOverview",
+        "type": "object"
+      },
+      "IncomePeriod": {
+        "description": "A period and its name in the owner's words.",
+        "properties": {
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "from": {
+            "format": "date",
+            "title": "From",
+            "type": "string"
+          },
+          "in_progress": {
+            "default": false,
+            "title": "In Progress",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "custom"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "to": {
+            "format": "date",
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "from",
+          "to",
+          "label",
+          "days",
+          "in_progress"
+        ],
+        "title": "IncomePeriod",
+        "type": "object"
+      },
+      "IncomeTotals": {
+        "description": "Where the money of the period went.  ``to_past_debt + to_current + to_advance + refunded_from_received + transferred == received``.",
+        "properties": {
+          "net_received": {
+            "default": 0,
+            "title": "Net Received",
+            "type": "integer"
+          },
+          "payments_count": {
+            "default": 0,
+            "title": "Payments Count",
+            "type": "integer"
+          },
+          "received": {
+            "default": 0,
+            "title": "Received",
+            "type": "integer"
+          },
+          "refunded": {
+            "default": 0,
+            "title": "Refunded",
+            "type": "integer"
+          },
+          "refunded_from_received": {
+            "default": 0,
+            "title": "Refunded From Received",
+            "type": "integer"
+          },
+          "to_advance": {
+            "default": 0,
+            "title": "To Advance",
+            "type": "integer"
+          },
+          "to_current": {
+            "default": 0,
+            "title": "To Current",
+            "type": "integer"
+          },
+          "to_past_debt": {
+            "default": 0,
+            "title": "To Past Debt",
+            "type": "integer"
+          },
+          "transferred": {
+            "default": 0,
+            "title": "Transferred",
+            "type": "integer"
+          },
+          "written_off": {
+            "default": 0,
+            "title": "Written Off",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "received",
+          "payments_count",
+          "refunded",
+          "refunded_from_received",
+          "transferred",
+          "to_past_debt",
+          "to_current",
+          "to_advance",
+          "written_off",
+          "net_received"
+        ],
+        "title": "IncomeTotals",
+        "type": "object"
+      },
+      "JournalAuthor": {
+        "properties": {
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "name",
+          "count"
+        ],
+        "title": "JournalAuthor",
+        "type": "object"
+      },
+      "JournalRow": {
+        "properties": {
+          "allocation_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allocation Text"
+          },
+          "allocations": {
+            "items": {
+              "$ref": "#/components/schemas/Allocation"
+            },
+            "title": "Allocations",
+            "type": "array"
+          },
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Id"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
+          },
+          "display_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Id"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "group_name": {
+            "title": "Group Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "method": {
+            "enum": [
+              "cash",
+              "card",
+              "bank_transfer",
+              "click",
+              "payme",
+              "other",
+              "unknown"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "method_label": {
+            "title": "Method Label",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "paid_on": {
+            "format": "date",
+            "title": "Paid On",
+            "type": "string"
+          },
+          "paid_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Time"
+          },
+          "receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt No"
+          },
+          "refunded": {
+            "default": 0,
+            "title": "Refunded",
+            "type": "integer"
+          },
+          "replaced_by_receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced By Receipt No"
+          },
+          "replaces_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Amount"
+          },
+          "replaces_receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Receipt No"
+          },
+          "status": {
+            "default": "active",
+            "enum": [
+              "active",
+              "voided",
+              "replaced"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          },
+          "transferred": {
+            "default": 0,
+            "title": "Transferred",
+            "type": "integer"
+          },
+          "void_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Void Reason"
+          },
+          "voided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided At"
+          },
+          "voided_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided By Name"
+          }
+        },
+        "required": [
+          "id",
+          "receipt_no",
+          "paid_on",
+          "paid_time",
+          "created_at",
+          "student_id",
+          "student_name",
+          "display_id",
+          "membership_id",
+          "group_id",
+          "group_name",
+          "teacher_name",
+          "amount",
+          "method",
+          "method_label",
+          "created_by_id",
+          "created_by_name",
+          "note",
+          "allocation_text",
+          "allocations",
+          "refunded",
+          "transferred",
+          "status",
+          "replaces_receipt_no",
+          "replaces_amount",
+          "replaced_by_receipt_no",
+          "void_reason",
+          "voided_at",
+          "voided_by_name"
+        ],
+        "title": "JournalRow",
+        "type": "object"
+      },
+      "JournalTotals": {
+        "description": "Of the ACTIVE payments of the filtered set; equals the period's «Поступило» for the same filters.",
+        "properties": {
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "sum": {
+            "default": 0,
+            "title": "Sum",
+            "type": "integer"
+          },
+          "voided_count": {
+            "default": 0,
+            "title": "Voided Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count",
+          "sum",
+          "voided_count"
+        ],
+        "title": "JournalTotals",
+        "type": "object"
+      },
+      "MonthCollection": {
+        "properties": {
+          "from": {
+            "format": "date",
+            "title": "From",
+            "type": "string"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionRow"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "month": {
+            "title": "Month",
+            "type": "string"
+          },
+          "month_label": {
+            "title": "Month Label",
+            "type": "string"
+          },
+          "to": {
+            "format": "date",
+            "title": "To",
+            "type": "string"
+          },
+          "total": {
+            "$ref": "#/components/schemas/CollectionRow"
+          }
+        },
+        "required": [
+          "month",
+          "month_label",
+          "from",
+          "to",
+          "total",
+          "groups"
+        ],
+        "title": "MonthCollection",
+        "type": "object"
+      },
+      "PayError": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/PayErrorDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "PayError",
+        "type": "object"
+      },
+      "PayErrorDetail": {
+        "description": "``{\"detail\": {...}}`` of an error (``PriceError`` / ``PaymentError`` with a code).\n\nCodes: ``DUPLICATE_PAYMENT`` (409), ``STUDENT_ARCHIVED`` (409), ``ALREADY_VOIDED`` (409), ``VOID_BREAKS_REFUND``\n(409), ``CONCURRENT_EDIT`` (409), ``AMOUNT_RANGE`` (422), ``PAID_ON_RANGE`` (422), ``METHOD_REQUIRED`` (422),\n``REASON_REQUIRED`` (422), ``WRITEOFF_EXCEEDS_DEBT`` (422, ``debt``), ``REFUND_EXCEEDS_ADVANCE`` (422,\n``refundable``), ``ACCOUNTING_START_RANGE`` (422), ``RANGE_TOO_LONG`` (422).  403 / 404 carry a plain message.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "debt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Id"
+          },
+          "refundable": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refundable"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "debt",
+          "refundable",
+          "payment_id"
+        ],
+        "title": "PayErrorDetail",
+        "type": "object"
+      },
+      "PaymentsJournal": {
+        "description": "``GET /org/payments/journal``.",
+        "properties": {
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "authors": {
+            "items": {
+              "$ref": "#/components/schemas/JournalAuthor"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
+          "from": {
+            "format": "date",
+            "title": "From",
+            "type": "string"
+          },
+          "page": {
+            "default": 1,
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "default": 0,
+            "title": "Pages",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/JournalRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "size": {
+            "default": 25,
+            "title": "Size",
+            "type": "integer"
+          },
+          "to": {
+            "format": "date",
+            "title": "To",
+            "type": "string"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/JournalTotals"
+          }
+        },
+        "required": [
+          "as_of",
+          "from",
+          "to",
+          "page",
+          "size",
+          "total",
+          "pages",
+          "totals",
+          "rows",
+          "authors"
+        ],
+        "title": "PaymentsJournal",
+        "type": "object"
+      },
+      "ReceiptsPosition": {
+        "description": "Where the whole centre stands TODAY (not limited to the range; includes students who left and archived ones).",
+        "properties": {
+          "advance_total": {
+            "default": 0,
+            "title": "Advance Total",
+            "type": "integer"
+          },
+          "debt_total": {
+            "default": 0,
+            "title": "Debt Total",
+            "type": "integer"
+          },
+          "memberships_with_advance": {
+            "default": 0,
+            "title": "Memberships With Advance",
+            "type": "integer"
+          },
+          "memberships_with_debt": {
+            "default": 0,
+            "title": "Memberships With Debt",
+            "type": "integer"
+          },
+          "past_debt_total": {
+            "default": 0,
+            "title": "Past Debt Total",
+            "type": "integer"
+          },
+          "students_with_debt": {
+            "default": 0,
+            "title": "Students With Debt",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "debt_total",
+          "past_debt_total",
+          "advance_total",
+          "memberships_with_debt",
+          "students_with_debt",
+          "memberships_with_advance"
+        ],
+        "title": "ReceiptsPosition",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "ALGO auth - INCOME-2 contract",
+    "version": "income2-1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/org/payments/income": {
+      "get": {
+        "description": "Страница «Поступления» над журналом: четыре цифры периода с сравнением с предыдущим таким же, фраза-вывод, «куда ушли\nденьги», способы, ряд по дням (каждый день есть, с нулями), наличные за день, «Собрано за месяц» по группам (только месяц).",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Вид периода; без него определяется по датам (один день / 7 дней с понедельника / целый месяц / свой)",
+            "in": "query",
+            "name": "period",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "day",
+                    "week",
+                    "month",
+                    "custom"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Вид периода; без него определяется по датам (один день / 7 дней с понедельника / целый месяц / свой)",
+              "title": "Period"
+            }
+          },
+          {
+            "in": "query",
+            "name": "method",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Method"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "teacher_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Teacher Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncomeOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Income Overview",
+        "tags": [
+          "Payments",
+          "Payments"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа к оплатам",
+            "status": 403
+          },
+          {
+            "code": "INVALID_PERIOD",
+            "message": "Конец периода раньше начала | День — это один день | Неделя — это семь дней | Месяц начинается с первого числа и не выходит за свой месяц",
+            "status": 422
+          },
+          {
+            "code": "RANGE_TOO_LONG",
+            "message": "Период не длиннее 366 дней",
+            "status": 422
+          }
+        ]
+      }
+    },
+    "/org/payments/journal": {
+      "get": {
+        "description": "Журнал оплат периода: новые сверху, отменённые и исправленные видны (status), итог = сумма действующих оплат набора.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "size",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "method",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Method"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "teacher_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Teacher Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Created By"
+            }
+          },
+          {
+            "description": "Имя / фамилия / ID ученика (или № квитанции)",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Имя / фамилия / ID ученика (или № квитанции)",
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "active",
+                "voided"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentsJournal"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Payments Journal",
+        "tags": [
+          "Payments",
+          "Payments"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа к оплатам",
+            "status": 403
+          },
+          {
+            "code": "INVALID_PERIOD",
+            "message": "Конец периода раньше начала | День — это один день | Неделя — это семь дней | Месяц начинается с первого числа и не выходит за свой месяц",
+            "status": 422
+          },
+          {
+            "code": "RANGE_TOO_LONG",
+            "message": "Период не длиннее 366 дней",
+            "status": 422
+          }
+        ]
+      }
+    },
+    "/org/payments/journal/export": {
+      "get": {
+        "description": "Журнал оплат файлом (xlsx / csv) с теми же фильтрами; ячейка, начинающаяся с = + - @, формулой не становится.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "xlsx",
+              "enum": [
+                "xlsx",
+                "csv"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "method",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Method"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "teacher_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Teacher Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "created_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Created By"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "active",
+                "voided"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {},
+              "text/csv": {}
+            },
+            "description": "Файл журнала"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Payments Journal Export",
+        "tags": [
+          "Payments",
+          "Payments"
+        ],
+        "x-errors": [
+          {
+            "message": "Нет доступа к оплатам",
+            "status": 403
+          },
+          {
+            "code": "INVALID_PERIOD",
+            "message": "Конец периода раньше начала | День — это один день | Неделя — это семь дней | Месяц начинается с первого числа и не выходит за свой месяц",
+            "status": 422
+          },
+          {
+            "code": "RANGE_TOO_LONG",
+            "message": "Период не длиннее 366 дней",
+            "status": 422
+          },
+          {
+            "code": "EXPORT_TOO_LONG",
+            "message": "Слишком много оплат для файла — сузьте период или фильтры",
+            "status": 422
+          }
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1/auth"
+    }
+  ]
+}
