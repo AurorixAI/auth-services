@@ -1,0 +1,114 @@
+{
+  "as_of": "2026-10-21",
+  "period": {
+    "kind": "day",
+    "from": "2026-10-21",
+    "to": "2026-10-21",
+    "label": "сегодня",
+    "days": 1,
+    "in_progress": false
+  },
+  "previous_period": {
+    "kind": "day",
+    "from": "2026-10-20",
+    "to": "2026-10-20",
+    "label": "вчера",
+    "days": 1,
+    "in_progress": false
+  },
+  "previous_label": "вчера",
+  "current": {
+    "received": 150000,
+    "payments_count": 1,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "transferred": 0,
+    "to_past_debt": 0,
+    "to_current": 150000,
+    "to_advance": 0,
+    "written_off": 0,
+    "net_received": 150000
+  },
+  "previous": {
+    "received": 0,
+    "payments_count": 0,
+    "refunded": 0,
+    "refunded_from_received": 0,
+    "transferred": 0,
+    "to_past_debt": 0,
+    "to_current": 0,
+    "to_advance": 0,
+    "written_off": 0,
+    "net_received": 0
+  },
+  "delta_amount": 150000,
+  "delta_pct": null,
+  "delta_direction": null,
+  "delta_text": null,
+  "summary_text": "Сегодня пришло 150 000 сум; вчера оплат не было.",
+  "by_method": [
+    {
+      "method": "cash",
+      "label": "Наличные",
+      "amount": 150000,
+      "count": 1
+    }
+  ],
+  "series": [
+    {
+      "bucket": "2026-10-21",
+      "received": 150000,
+      "count": 1
+    }
+  ],
+  "series_by": "day",
+  "cash": {
+    "date": "2026-10-21",
+    "label": "Наличные в кассе за сегодня",
+    "cash_received": 250000,
+    "cash_refunded": 100000,
+    "expected": 150000,
+    "payments_count": 2,
+    "text": "Наличные в кассе за сегодня: 150 000 сум (принято 250 000 сум, возвращено 100 000 сум)",
+    "scope": "centre",
+    "filtered_view": true,
+    "scope_text": "в кассе центра за сегодня (все группы)"
+  },
+  "collection": null,
+  "position": {
+    "debt_total": 150000,
+    "past_debt_total": 0,
+    "advance_total": 300000,
+    "memberships_with_debt": 1,
+    "students_with_debt": 1,
+    "memberships_with_advance": 1,
+    "students_with_advance": 1
+  },
+  "checks": [
+    {
+      "code": "received_eq_strip",
+      "left": 150000,
+      "right": 150000,
+      "diff": 0
+    },
+    {
+      "code": "received_eq_methods",
+      "left": 150000,
+      "right": 150000,
+      "diff": 0
+    },
+    {
+      "code": "received_eq_series",
+      "left": 150000,
+      "right": 150000,
+      "diff": 0
+    },
+    {
+      "code": "received_eq_journal",
+      "left": 150000,
+      "right": 150000,
+      "diff": 0
+    }
+  ],
+  "ok": true
+}

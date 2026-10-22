@@ -436,7 +436,7 @@ def test_journal_excel_is_complete_and_formula_safe(world, seeded):
     body = rows[head + 1:]
     assert len(body) == 9 and [r[0] for r in body] == [13, 12, 10, 11, 9, 8, 7, 6, 5]
     assert body[0][1:] == ["21.10.2026", "11:40", "Алиев Тимур", "INC-005", "Английский 7Б", "Мария Ким", 150_000, "Наличные",
-                           "Азиз Хакимов", "за октябрь — 150 000", "Действует", "=SUM(A1)", ""]
+                           "Азиз Хакимов", "за октябрь — 150 000", "Действует", "=SUM(A1)", None]       # an empty cell reads back as None
     assert body[2][11] == "Отменена" and body[3][11] == "Действует (исправляет № 9)" and body[4][11] == "Исправлена (№ 11)"
     cells = [c for row in ws.iter_rows() for c in row if isinstance(c.value, str) and c.value.startswith("=")]
     assert cells and all(c.data_type == "s" for c in cells)                       # the note starts with "=": text, never a formula
@@ -569,7 +569,7 @@ def test_paid_time_is_the_entry_time_only_for_a_payment_entered_on_its_own_day(w
     sheet = [[c.value for c in row] for row in load_workbook(io.BytesIO(r.content)).active.iter_rows()]
     head = next(i for i, row in enumerate(sheet) if row[0] == "№ квитанции")
     assert sheet[head][2] == "Время" and sheet[head][13] == "Внесена"
-    by_receipt = {row[0]: row for row in sheet[head + 1:]}
+    by_receipt = {row[0]: [c if c is not None else "" for c in row] for row in sheet[head + 1:]}      # an empty cell reads back as None
     assert (by_receipt[900][1], by_receipt[900][2], by_receipt[900][13]) == ("15.10.2026", "", "21.10 11:40")
     assert (by_receipt[901][1], by_receipt[901][2], by_receipt[901][13]) == ("21.10.2026", "00:30", "")
     assert (by_receipt[902][1], by_receipt[902][2], by_receipt[902][13]) == ("20.10.2026", "", "21.10 00:30")

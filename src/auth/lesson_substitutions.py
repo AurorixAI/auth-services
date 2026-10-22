@@ -927,7 +927,7 @@ class Substitutions(SubstitutionsBase):
         if target is not None:
             # R3 #5: the teacher of the NEW slot is locked (the m1 pattern of PUT lesson-teacher) before his conflicts are read, so two moves of two groups of the same
             # teacher into one slot serialise: the second one sees the first one's lesson.  Lock order: group -> request -> User (SPEC B2, no cycle with the substitute path).
-            self.db.query(User.id).filter(User.id == target).with_for_update().first()
+            self.db.query(User.id).filter(User.id == target).with_for_update(key_share=True).first()      # FOR NO KEY UPDATE: two moves serialise, but the FK key-share of the request row (requester_id) taken before does not deadlock them
         teacher_id, t_conf, g_conf = self.conflicts_for_move(group, r, new_date, start_m, end_m, start, end)
         if t_conf:
             user = self.db.query(User).filter(User.id == teacher_id).first()

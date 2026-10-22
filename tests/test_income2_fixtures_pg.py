@@ -24,6 +24,7 @@ CASES = {
     "I03_income_week": ("IncomeOverview", "income", {"from": "2026-10-12", "to": "2026-10-18"}),
     "I04_income_september_closed": ("IncomeOverview", "income", {"from": "2026-09-01", "to": "2026-09-30"}),
     "I05_income_group_filter": ("IncomeOverview", "income", {**OCT, "group_id": "{group:B}"}),
+    "I06_income_day_group_filter": ("IncomeOverview", "income", {"from": "2026-10-21", "to": "2026-10-21", "group_id": "{group:B}"}),
     "J01_journal_page1": ("PaymentsJournal", "journal", {**OCT, "size": 5}),
     "J02_journal_page2": ("PaymentsJournal", "journal", {**OCT, "size": 5, "page": 2}),
     "J03_journal_cash": ("PaymentsJournal", "journal", {**OCT, "method": "cash"}),

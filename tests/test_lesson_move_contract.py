@@ -59,6 +59,6 @@ def test_reschedule_locks_the_target_teacher_before_reading_his_conflicts():
     from src.auth.lesson_substitutions import Substitutions
 
     source = inspect.getsource(Substitutions._reschedule)
-    assert "User.id == target).with_for_update()" in source
-    assert source.index("with_for_update()") < source.index("self.conflicts_for_move(")
+    assert "User.id == target).with_for_update(key_share=True)" in source
+    assert source.index("with_for_update(key_share=True)") < source.index("self.conflicts_for_move(")
 
