@@ -33,6 +33,7 @@ CASES = {
 ERRORS = {
     "RANGE_TOO_LONG": ("income", {"from": "2025-10-01", "to": "2026-10-21"}),
     "INVALID_PERIOD": ("income", {"from": "2026-10-01", "to": "2026-10-02", "period": "day"}),
+    "EXPORT_TOO_LONG": ("journal/export", {"from": "2026-10-01", "to": "2026-10-31"}),          # the 20 000-row cap is lowered to 3 for this one call
 }
 
 
@@ -47,7 +48,7 @@ def normalise(node, names):
     return node
 
 
-def test_the_endpoints_reproduce_the_golden_fixtures(world, fixed_today):
+def test_the_endpoints_reproduce_the_golden_fixtures(world, fixed_today, monkeypatch):
     seeded = income2_world(world)
     names = names_of(world, seeded)
     by_name = {v: k for k, v in names.items()}
@@ -65,6 +66,9 @@ def test_the_endpoints_reproduce_the_golden_fixtures(world, fixed_today):
             target.write_text(json.dumps(got, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         else:
             assert json.loads(target.read_text(encoding="utf-8")) == got, stem
+    from src.auth import payments_income
+
+    monkeypatch.setattr(payments_income, "MAX_EXPORT_ROWS", 3)
     for code, (path, params) in ERRORS.items():
         r = c.get(f"{API}/org/payments/{path}", params=params)
         assert r.status_code == 422 and r.json()["detail"]["code"] == code

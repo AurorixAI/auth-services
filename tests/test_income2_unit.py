@@ -1,10 +1,10 @@
 """INCOME-2: periods, the comparison with the previous period and the Russian sentences (pure functions, no database)."""
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
 from src.auth import payments_texts as tx
-from src.auth.payments_income import _previous_dative, month_end, previous_period, resolve_period
+from src.auth.payments_income import _previous_dative, csv_safe_row, entry_times, month_end, previous_period, resolve_period
 from src.auth.payments_service import PaymentInvalid
 
 D = date
@@ -125,3 +125,52 @@ def test_short_span_labels():
     assert tx.short_span_text(D(2026, 10, 12), D(2026, 10, 18)) == "12–18 окт."
     assert tx.short_span_text(D(2026, 9, 30), D(2026, 10, 6)) == "30 сент. – 6 окт."
     assert tx.short_span_text(D(2026, 5, 3), D(2026, 5, 3)) == "3 мая"
+
+
+# ---- R3: leap years -------------------------------------------------------------------------------------------
+
+
+def test_leap_year_previous_period():
+    cur, p = prev(D(2028, 3, 1), D(2028, 3, 31), today=D(2028, 4, 15))                    # a whole March against the whole leap February
+    assert not cur.in_progress and (p.first, p.last, p.days, p.label) == (D(2028, 2, 1), D(2028, 2, 29), 29, "февраль")
+    cur, p = prev(D(2028, 3, 1), D(2028, 3, 31), today=D(2028, 3, 30))                    # a running March, 30 days elapsed: February has 29 -> cut to 29
+    assert cur.in_progress and (p.first, p.last, p.label) == (D(2028, 2, 1), D(2028, 2, 29), "1–29 февраля")
+    cur, p = prev(D(2028, 3, 1), D(2028, 3, 31), today=D(2028, 3, 29))                    # 29 elapsed: exactly the leap February
+    assert (p.first, p.last) == (D(2028, 2, 1), D(2028, 2, 29))
+    cur, p = prev(D(2028, 3, 1), D(2028, 3, 31), today=D(2028, 3, 10))                    # 10 elapsed: 1-10 February
+    assert (p.first, p.last, p.label) == (D(2028, 2, 1), D(2028, 2, 10), "1–10 февраля")
+    cur, p = prev(D(2028, 2, 1), D(2028, 2, 29), today=D(2028, 4, 15))                    # the leap February itself: the whole January
+    assert cur.kind == "month" and cur.days == 29 and (p.first, p.last) == (D(2028, 1, 1), D(2028, 1, 31))
+    cur, p = prev(D(2027, 3, 1), D(2027, 3, 31), today=D(2027, 4, 15))                    # the same March in a common year: 28 days
+    assert (p.first, p.last) == (D(2027, 2, 1), D(2027, 2, 28))
+    cur, p = prev(D(2028, 2, 24), D(2028, 3, 1), today=D(2028, 4, 15))                    # a custom week across the leap day: the seven days right before
+    assert (p.first, p.last, p.days) == (D(2028, 2, 17), D(2028, 2, 23), 7)
+
+
+# ---- R3: the time of a payment ------------------------------------------------------------------------------------
+
+
+def test_paid_time_only_for_a_payment_entered_on_its_own_day():
+    same_day = entry_times(datetime(2026, 10, 21, 6, 40), D(2026, 10, 21))                # 06:40 UTC = 11:40 Tashkent, same date
+    assert same_day == ("11:40", None)
+    back_dated = entry_times(datetime(2026, 10, 21, 6, 40), D(2026, 10, 15))              # entered on the 21st for the 15th
+    assert back_dated == (None, "внесена 21.10 в 11:40")
+    ahead = entry_times(datetime(2026, 10, 21, 6, 40), D(2026, 10, 25))                   # a payment for a later day
+    assert ahead == (None, "внесена 21.10 в 11:40")
+    assert entry_times(None, D(2026, 10, 21)) == (None, None)
+
+
+def test_tashkent_midnight_boundary():
+    """19:30 UTC is 00:30 of the NEXT day in Tashkent (UTC+5): the Tashkent date decides, not the UTC one."""
+    late = datetime(2026, 10, 20, 19, 30)
+    assert entry_times(late, D(2026, 10, 21)) == ("00:30", None)                            # paid_on = the Tashkent date: it has a time
+    assert entry_times(late, D(2026, 10, 20)) == (None, "внесена 21.10 в 00:30")           # paid_on = the UTC date: entered after midnight, back-dated
+    just_before = datetime(2026, 10, 20, 18, 59)                                           # 23:59 Tashkent, still the 20th
+    assert entry_times(just_before, D(2026, 10, 20)) == ("23:59", None)
+    assert entry_times(datetime(2026, 12, 31, 19, 0), D(2027, 1, 1)) == ("00:00", None)    # a year border
+    assert entry_times(datetime(2026, 12, 31, 19, 0), D(2026, 12, 31)) == (None, "внесена 01.01 в 00:00")
+
+
+def test_csv_formula_guard_covers_tab_and_cr():
+    assert csv_safe_row(["=1+1", "+7", "-2", "@x", "\t=cmd", "\r=cmd", "ok", "a=b", "", 5, None, "-"]) == [
+        "'=1+1", "'+7", "'-2", "'@x", "'\t=cmd", "'\r=cmd", "ok", "a=b", "", 5, None, "'-"]

@@ -209,6 +209,11 @@
             "title": "Expected",
             "type": "integer"
           },
+          "filtered_view": {
+            "default": false,
+            "title": "Filtered View",
+            "type": "boolean"
+          },
           "label": {
             "title": "Label",
             "type": "string"
@@ -217,6 +222,22 @@
             "default": 0,
             "title": "Payments Count",
             "type": "integer"
+          },
+          "scope": {
+            "default": "centre",
+            "title": "Scope",
+            "type": "string"
+          },
+          "scope_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Text"
           },
           "text": {
             "title": "Text",
@@ -230,7 +251,10 @@
           "cash_refunded",
           "expected",
           "payments_count",
-          "text"
+          "text",
+          "scope",
+          "filtered_view",
+          "scope_text"
         ],
         "title": "IncomeCash",
         "type": "object"
@@ -756,6 +780,17 @@
             ],
             "title": "Display Id"
           },
+          "entered_at_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entered At Text"
+          },
           "group_id": {
             "title": "Group Id",
             "type": "string"
@@ -938,6 +973,7 @@
           "receipt_no",
           "paid_on",
           "paid_time",
+          "entered_at_text",
           "created_at",
           "student_id",
           "student_name",

@@ -69,7 +69,10 @@
     "cash_refunded": 100000,
     "expected": 150000,
     "payments_count": 2,
-    "text": "Наличные в кассе за сегодня: 150 000 сум (принято 250 000 сум, возвращено 100 000 сум)"
+    "text": "Наличные в кассе за сегодня: 150 000 сум (принято 250 000 сум, возвращено 100 000 сум)",
+    "scope": "centre",
+    "filtered_view": false,
+    "scope_text": null
   },
   "collection": null,
   "position": {

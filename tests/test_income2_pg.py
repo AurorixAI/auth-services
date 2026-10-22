@@ -157,12 +157,25 @@ def test_day_today_with_the_cash_hint(world, seeded):
     assert o["cash"] == {
         "date": "2026-10-21", "label": "Наличные в кассе за сегодня", "cash_received": 250_000, "cash_refunded": 100_000,
         "expected": 150_000, "payments_count": 2,
-        "text": "Наличные в кассе за сегодня: 150 000 сум (принято 250 000 сум, возвращено 100 000 сум)"}
-    # the cash hint ignores the method filter and follows the group / teacher scope
+        "text": "Наличные в кассе за сегодня: 150 000 сум (принято 250 000 сум, возвращено 100 000 сум)",
+        "scope": "centre", "filtered_view": False, "scope_text": None}
+    # R3 #7: the cash hint is the physical till of the WHOLE centre: the method, group and teacher filters never narrow it
     card = income(world, "2026-10-21", "2026-10-21", method="card")
-    assert card["current"]["received"] == 0 and card["cash"]["expected"] == 150_000
-    only_a = income(world, "2026-10-21", "2026-10-21", group_id=str(seeded["groups"]["A"].id))
-    assert only_a["cash"]["cash_received"] == 100_000 and only_a["cash"]["cash_refunded"] == 100_000
+    assert card["current"]["received"] == 0 and card["cash"]["expected"] == 150_000 and card["cash"]["filtered_view"] is False
+    ga, gb = seeded["groups"]["A"], seeded["groups"]["B"]
+    only_a = income(world, "2026-10-21", "2026-10-21", group_id=str(ga.id))
+    assert only_a["current"]["received"] == 100_000                                       # the page itself IS filtered ...
+    assert (only_a["cash"]["cash_received"], only_a["cash"]["cash_refunded"], only_a["cash"]["expected"], only_a["cash"]["payments_count"]) == (
+        250_000, 100_000, 150_000, 2)                                                     # ... the till is not
+    assert only_a["cash"]["scope"] == "centre" and only_a["cash"]["filtered_view"] is True
+    assert only_a["cash"]["scope_text"] == "в кассе центра за сегодня (все группы)"
+    assert only_a["cash"]["text"] == o["cash"]["text"] and only_a["cash"]["label"] == o["cash"]["label"]
+    only_b = income(world, "2026-10-21", "2026-10-21", group_id=str(gb.id), method="card")
+    assert only_b["current"]["received"] == 0 and only_b["cash"]["expected"] == 150_000 and only_b["cash"]["filtered_view"] is True
+    by_teacher = income(world, "2026-10-21", "2026-10-21", teacher_id=str(world.teacher2.id))
+    assert by_teacher["cash"]["expected"] == 150_000 and by_teacher["cash"]["filtered_view"] is True and by_teacher["cash"]["cash_received"] == 250_000
+    past_filtered = income(world, "2026-10-15", "2026-10-15", group_id=str(ga.id))
+    assert past_filtered["cash"]["scope_text"] == "в кассе центра за 15 октября (все группы)"
     past = income(world, "2026-10-15", "2026-10-15")
     assert past["cash"]["label"] == "Наличные в кассе за 15 октября" and past["cash"]["expected"] == 0 and past["cash"]["text"].endswith("0 сум")
 
@@ -343,6 +356,7 @@ def test_journal_rows_order_and_texts(world, seeded):
     assert (by[10]["status"], by[10]["void_reason"], by[10]["voided_by_name"], by[10]["replaced_by_receipt_no"]) == (
         "voided", "Ошибочный ввод", "Нодира Саидова", None)
     assert [a["name"] for a in j["authors"]] == ["Азиз Хакимов", "Нодира Саидова"] and [a["count"] for a in j["authors"]] == [4, 3]
+    assert all(r["entered_at_text"] is None and r["paid_time"] for r in j["rows"])                  # every seeded payment was entered on its own day
 
 
 def test_journal_pagination_walks_every_row_once(world, seeded):
@@ -418,11 +432,11 @@ def test_journal_excel_is_complete_and_formula_safe(world, seeded):
     assert rows[0][:2] == ["Журнал оплат", "с 01.10.2026 по 31.10.2026"]
     assert rows[1][:4] == ["Оплат", 7, "На сумму", 3_450_000]
     head = rows.index(["№ квитанции", "Дата", "Время", "Ученик", "ID ученика", "Группа", "Преподаватель", "Сумма", "Способ", "Кто внёс",
-                       "Куда пошли", "Статус", "Примечание"])
+                       "Куда пошли", "Статус", "Примечание", "Внесена"])
     body = rows[head + 1:]
     assert len(body) == 9 and [r[0] for r in body] == [13, 12, 10, 11, 9, 8, 7, 6, 5]
     assert body[0][1:] == ["21.10.2026", "11:40", "Алиев Тимур", "INC-005", "Английский 7Б", "Мария Ким", 150_000, "Наличные",
-                           "Азиз Хакимов", "за октябрь — 150 000", "Действует", "=SUM(A1)"]
+                           "Азиз Хакимов", "за октябрь — 150 000", "Действует", "=SUM(A1)", ""]
     assert body[2][11] == "Отменена" and body[3][11] == "Действует (исправляет № 9)" and body[4][11] == "Исправлена (№ 11)"
     cells = [c for row in ws.iter_rows() for c in row if isinstance(c.value, str) and c.value.startswith("=")]
     assert cells and all(c.data_type == "s" for c in cells)                       # the note starts with "=": text, never a formula
@@ -518,3 +532,101 @@ def test_identities_hold_on_random_data(world, fixed_today, seed):
                 assert col["total"]["students_with_debt"] <= sum(r["students_with_debt"] for r in col["groups"])
                 pcts = [r["paid"] / r["charged"] for r in col["groups"]]
                 assert pcts == sorted(pcts)
+
+
+# ---- R3 fixes -----------------------------------------------------------------------------------------------------
+
+
+def add_payments(world, seeded, *rows):
+    """``(key, paid_on, created_at UTC, amount, note)`` for the membership a1; returns ``{key: payment id string}``."""
+    m = seeded["memberships"]["a1"]
+    out = {}
+    for n, (key, paid_on, created_at, amount, note) in enumerate(rows):
+        p = StudentPayment(id=uid(world.org, "r3:" + key), org_id=world.org.id, membership_id=m.id, student_id=m.student_id, group_id=m.group_id, amount=amount,
+                           paid_on=paid_on, method="cash", receipt_no=900 + n, created_by=world.owner.id, created_at=created_at, note=note)
+        world.db.add(p)
+        out[key] = str(p.id)
+    world.db.commit()
+    return out
+
+
+def test_paid_time_is_the_entry_time_only_for_a_payment_entered_on_its_own_day(world, seeded):
+    """R3 #2: a back-dated payment has no time of its own (null) and says when it was entered; the Tashkent midnight (19:30 UTC = 00:30 next day) decides, not UTC."""
+    ids = add_payments(
+        world, seeded,
+        ("backdated", D(2026, 10, 15), datetime(2026, 10, 21, 6, 40), 10_000, None),             # entered 21.10 11:40 Tashkent for 15.10
+        ("after-midnight-own-day", D(2026, 10, 21), datetime(2026, 10, 20, 19, 30), 20_000, None),   # 00:30 on 21.10 Tashkent, for 21.10
+        ("after-midnight-utc-day", D(2026, 10, 20), datetime(2026, 10, 20, 19, 30), 30_000, None))   # 00:30 on 21.10 Tashkent, but for 20.10: back-dated
+    rows = {r["id"]: r for r in journal(world, "2026-10-01", "2026-10-31", size=100)["rows"]}
+    back = rows[ids["backdated"]]
+    assert (back["paid_time"], back["entered_at_text"], back["created_at"]) == (None, "внесена 21.10 в 11:40", "2026-10-21T06:40:00")
+    own = rows[ids["after-midnight-own-day"]]
+    assert (own["paid_time"], own["entered_at_text"]) == ("00:30", None)
+    utc_day = rows[ids["after-midnight-utc-day"]]
+    assert (utc_day["paid_time"], utc_day["entered_at_text"], utc_day["created_at"]) == (None, "внесена 21.10 в 00:30", "2026-10-20T19:30:00")
+    # Excel / CSV: the «Время» cell follows the same rule; «Внесена» is filled only for a back-dated payment
+    r = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31"})
+    sheet = [[c.value for c in row] for row in load_workbook(io.BytesIO(r.content)).active.iter_rows()]
+    head = next(i for i, row in enumerate(sheet) if row[0] == "№ квитанции")
+    assert sheet[head][2] == "Время" and sheet[head][13] == "Внесена"
+    by_receipt = {row[0]: row for row in sheet[head + 1:]}
+    assert (by_receipt[900][1], by_receipt[900][2], by_receipt[900][13]) == ("15.10.2026", "", "21.10 11:40")
+    assert (by_receipt[901][1], by_receipt[901][2], by_receipt[901][13]) == ("21.10.2026", "00:30", "")
+    assert (by_receipt[902][1], by_receipt[902][2], by_receipt[902][13]) == ("20.10.2026", "", "21.10 00:30")
+    assert by_receipt[13][2] == "11:40" and by_receipt[13][13] == ""
+
+
+def test_a_non_ascii_digit_in_the_search_is_text_not_a_receipt_number(world, seeded):
+    """R3 #3: ``"²".isdigit()`` is True but ``int("²")`` raises - the receipt number is looked up for ASCII digits only; any other glyph is plain text (200, no rows)."""
+    for q in ("²", "٣", "①", "１２"):                                                   # superscript, Arabic-Indic, circled, full-width
+        j = journal(world, q=q)
+        assert j["total"] == 0 and j["rows"] == [], q
+    assert journal(world, q="7")["total"] == 1                                       # the receipt number still works for ASCII digits
+
+
+def test_csv_cells_starting_with_tab_or_cr_are_neutralised(world, seeded):
+    """R3 #4 (OWASP): not only = + - @ but a leading TAB / CR makes a spreadsheet read a formula."""
+    add_payments(world, seeded, ("tab", D(2026, 10, 21), datetime(2026, 10, 21, 7, 0), 1_000, "\t=HYPERLINK(1)"),
+                 ("cr", D(2026, 10, 21), datetime(2026, 10, 21, 7, 1), 2_000, "\r=HYPERLINK(2)"),
+                 ("minus", D(2026, 10, 21), datetime(2026, 10, 21, 7, 2), 3_000, "-1+1"))
+    r = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-21", "to": "2026-10-21", "format": "csv"})
+    import csv as csv_module
+
+    cells = [c for line in csv_module.reader(io.StringIO(r.text.lstrip("\ufeff")), delimiter=";") for c in line]
+    assert "'\t=HYPERLINK(1)" in cells and "'\r=HYPERLINK(2)" in cells and "'-1+1" in cells and "'=SUM(A1)" in cells
+    assert not [c for c in cells if c[:1] in ("=", "+", "-", "@", "\t", "\r")]
+
+
+def test_export_too_long_cap_and_the_voided_export(world, seeded, monkeypatch):
+    """R3 #10: the 20 000-row cap (monkeypatched low) answers 422 EXPORT_TOO_LONG for both formats and counts the SELECTED status; a voided-only export holds only the voided rows."""
+    from src.auth import payments_income
+
+    params = {"from": "2026-10-01", "to": "2026-10-31"}
+    monkeypatch.setattr(payments_income, "MAX_EXPORT_ROWS", 3)
+    for fmt in ("xlsx", "csv"):
+        r = owner(world).get(f"{API}/org/payments/journal/export", params={**params, "format": fmt})
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "EXPORT_TOO_LONG" and "Слишком много оплат" in r.json()["detail"]["message"], fmt
+    assert owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "active"}).status_code == 422      # 7 live rows > 3
+    ok = owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "voided"})                       # 2 voided rows <= 3
+    assert ok.status_code == 200
+    monkeypatch.setattr(payments_income, "MAX_EXPORT_ROWS", 2)
+    assert owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "voided"}).status_code == 200       # exactly the cap passes
+    monkeypatch.setattr(payments_income, "MAX_EXPORT_ROWS", 1)
+    assert owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "voided"}).status_code == 422
+    monkeypatch.setattr(payments_income, "MAX_EXPORT_ROWS", 20_000)
+    voided = journal(world, status="voided", size=100)
+    assert voided["total"] == 2 and sorted(r["receipt_no"] for r in voided["rows"]) == [9, 10]
+    for fmt in ("xlsx", "csv"):
+        r = owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "voided", "format": fmt})
+        assert r.status_code == 200
+        if fmt == "xlsx":
+            sheet = [[c.value for c in row] for row in load_workbook(io.BytesIO(r.content)).active.iter_rows()]
+        else:
+            import csv as csv_module
+
+            sheet = [line for line in csv_module.reader(io.StringIO(r.text.lstrip("\ufeff")), delimiter=";")]
+        head = next(i for i, row in enumerate(sheet) if row and row[0] == "№ квитанции")
+        body = [row for row in sheet[head + 1:] if row]
+        assert sorted(str(row[0]) for row in body) == ["10", "9"], fmt
+        assert {str(row[0]): row[11] for row in body} == {"9": "Исправлена (№ 11)", "10": "Отменена"}, fmt
+

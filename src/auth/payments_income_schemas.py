@@ -69,6 +69,9 @@ class IncomeCash(PayModel):
     expected: int = 0  # cash_received - cash_refunded
     payments_count: int = 0
     text: str
+    scope: str = "centre"  # the till of the whole centre, always: group / teacher / method filters never narrow it
+    filtered_view: bool = False  # true when a group or teacher filter is active: say «в кассе центра за сегодня (все группы)»
+    scope_text: Optional[str] = None  # «в кассе центра за сегодня (все группы)» when filtered_view, else null
 
 
 class CollectionRow(PayModel):
@@ -148,8 +151,9 @@ class JournalRow(PayModel):
     id: str
     receipt_no: Optional[int] = None
     paid_on: date_type
-    paid_time: Optional[str] = None  # "14:35" - when it was entered, Tashkent time
-    created_at: Optional[str] = None  # naive UTC, ISO
+    paid_time: Optional[str] = None  # "14:35" - the entry time, Tashkent; ONLY when the payment was entered on its own day (paid_on), null for a back-dated one
+    entered_at_text: Optional[str] = None  # «внесена 21.10 в 11:40» (Tashkent) when the payment was entered on another day than paid_on, else null
+    created_at: Optional[str] = None  # naive UTC, ISO (the raw moment of entry)
     student_id: str
     student_name: str
     display_id: Optional[str] = None

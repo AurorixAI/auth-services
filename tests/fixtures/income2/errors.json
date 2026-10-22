@@ -16,5 +16,14 @@
         "message": "День — это один день"
       }
     }
+  },
+  "EXPORT_TOO_LONG": {
+    "status": 422,
+    "body": {
+      "detail": {
+        "code": "EXPORT_TOO_LONG",
+        "message": "Слишком много оплат для файла — сузьте период или фильтры"
+      }
+    }
   }
 }

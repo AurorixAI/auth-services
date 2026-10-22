@@ -51,6 +51,7 @@ from .payments_service import PaymentInvalid, PaymentService, RangeTooLong
 MAX_DAY_SERIES_DAYS = 92
 MAX_JOURNAL_PAGE = 100
 MAX_EXPORT_ROWS = 20_000
+FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")          # OWASP: a cell that starts with one of these is never a formula
 STATUS_TEXT = {"active": "Действует", "voided": "Отменена", "replaced": "Исправлена"}
 
 
@@ -60,6 +61,11 @@ class InvalidPeriod(PaymentInvalid):
 
 class ExportTooLong(PaymentInvalid):
     code = "EXPORT_TOO_LONG"
+
+
+def csv_safe_row(row: Sequence[Any]) -> List[Any]:
+    """A text cell that starts with = + - @ TAB CR gets a leading apostrophe: a spreadsheet never runs it as a formula (OWASP CSV injection)."""
+    return [("'" + v) if isinstance(v, str) and v[:1] in FORMULA_STARTS else v for v in row]
 
 
 def validate_range(first: date, last: date) -> None:
@@ -219,12 +225,24 @@ def _period_out(p: Period) -> IncomePeriod:
 # ============================================================================================================
 
 
-def _business_time(moment: Optional[datetime]) -> Optional[str]:
+def _business_moment(moment: Optional[datetime]) -> Optional[datetime]:
     if moment is None:
         return None
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
-    return moment.astimezone(BUSINESS_TIMEZONE).strftime("%H:%M")
+    return moment.astimezone(BUSINESS_TIMEZONE)
+
+
+def entry_times(created_at: Optional[datetime], paid_on: date) -> Tuple[Optional[str], Optional[str]]:
+    """``(paid_time, entered_at_text)`` of a payment.  The time of the payment is the clock time of ``created_at`` ONLY when it was entered on the day it is for
+    (Tashkent date of ``created_at`` == ``paid_on``); a back-dated payment has no time of its own (null) and says when it was entered instead:
+    «внесена 21.10 в 11:40»."""
+    local = _business_moment(created_at)
+    if local is None:
+        return None, None
+    if local.date() == paid_on:
+        return local.strftime("%H:%M"), None
+    return None, f"внесена {local.strftime('%d.%m')} в {local.strftime('%H:%M')}"
 
 
 def _iso(moment: Optional[datetime]) -> Optional[str]:
@@ -302,7 +320,7 @@ class IncomeReports:
             as_of=today, period=_period_out(cur), previous_period=_period_out(prev), previous_label=_previous_label(cur, prev, today), current=current, previous=previous,
             delta_amount=current.received - previous.received, delta_pct=pct, delta_direction=direction,
             delta_text=tx.delta_text(pct, _previous_dative(cur, prev, today)) if pct is not None else None, summary_text=text, by_method=by_method,
-            series=series, series_by=series_by, cash=self._cash(cur, today, pay_rows, refund_rows), collection=collection,
+            series=series, series_by=series_by, cash=self._cash(org_id, cur, today, pay_rows, refund_rows, group_id, teacher_id), collection=collection,
             position=position, checks=checks, ok=all(c.diff == 0 for c in checks))
 
     @staticmethod
@@ -310,7 +328,7 @@ class IncomeReports:
         return [e for e in entries.values()
                 if (not group_id or e.group.id == group_id) and (not teacher_id or e.group.teacher_id == teacher_id)]
 
-    def _facts(self, org_id: str, first: date, last: date, group_id: Optional[UUID], teacher_id: Optional[UUID]):
+    def _facts(self, org_id: str, first: date, last: date, group_id: Optional[UUID], teacher_id: Optional[UUID], *, with_writeoffs: bool = True):
         """The live payments / refunds / write-offs of the union of both periods, three queries, no method filter (cash needs them all)."""
         def scoped(model, columns, day):
             query = self.db.query(*columns)
@@ -325,7 +343,7 @@ class IncomeReports:
         refunds = scoped(StudentRefund, (StudentRefund.effective_on, StudentRefund.amount, StudentRefund.method),
                          StudentRefund.effective_on).all()
         writeoffs = scoped(StudentWriteoff, (StudentWriteoff.effective_on, StudentWriteoff.amount),
-                           StudentWriteoff.effective_on).all()
+                           StudentWriteoff.effective_on).all() if with_writeoffs else []
         return pay, refunds, writeoffs
 
     def _totals(self, entries, p: Period, method: Optional[str], pay_rows, refund_rows, writeoff_rows):
@@ -378,11 +396,15 @@ class IncomeReports:
             months[d.strftime("%Y-%m")][1] += v[1]
         return [IncomeDay(bucket=k, received=v[0], count=v[1]) for k, v in months.items()], "month"
 
-    @staticmethod
-    def _cash(p: Period, today: date, pay_rows, refund_rows) -> Optional[IncomeCash]:
+    def _cash(self, org_id: str, p: Period, today: date, pay_rows, refund_rows, group_id: Optional[UUID], teacher_id: Optional[UUID]) -> Optional[IncomeCash]:
+        """The cash hint is the physical till of the CENTRE: always the whole centre, whatever the group / teacher / method filters of the page say
+        (``scope = "centre"``; ``filtered_view`` tells the front that the page is filtered, so it words «в кассе центра за сегодня (все группы)»)."""
         if p.first != p.last:
             return None
         day = p.first
+        filtered = bool(group_id or teacher_id)
+        if filtered:             # the rows of the page are scoped: ask the centre's own cash of the day (two small queries)
+            pay_rows, refund_rows, _ = self._facts(org_id, day, day, None, None, with_writeoffs=False)
         got = [int(a) for _pid, _mid, d, a, m in pay_rows if d == day and (m or "unknown") == "cash"]
         out = [int(a) for d, a, m in refund_rows if d == day and m == "cash"]
         label = "Наличные в кассе за " + ("сегодня" if day == today else tx.day_genitive(day))
@@ -390,8 +412,9 @@ class IncomeReports:
         text = f"{label}: {tx.money(expected)}"
         if out:
             text += f" (принято {tx.money(sum(got))}, возвращено {tx.money(sum(out))})"
+        scope_text = ("в кассе центра за " + ("сегодня" if day == today else tx.day_genitive(day)) + " (все группы)") if filtered else None
         return IncomeCash(date=day, label=label, cash_received=sum(got), cash_refunded=sum(out), expected=expected,
-                          payments_count=len(got), text=text)
+                          payments_count=len(got), text=text, scope="centre", filtered_view=filtered, scope_text=scope_text)
 
     # ------------------------------------------------------------------ month collection
 
@@ -469,7 +492,7 @@ class IncomeReports:
             pattern = ls._like(word)
             conds = [Student.first_name.ilike(pattern, escape="\\"), Student.last_name.ilike(pattern, escape="\\"),
                      Student.display_id.ilike(pattern, escape="\\")]
-            if len(words) == 1 and word.isdigit() and len(word) <= 9:
+            if len(words) == 1 and word.isascii() and word.isdigit() and len(word) <= 9:
                 conds.append(StudentPayment.receipt_no == int(word))      # «№ квитанции» typed into the search
             query = query.filter(or_(*conds))
         return query
@@ -514,7 +537,7 @@ class IncomeReports:
     def _status_filter(query, status: str):
         if status == "active":
             return query.filter(StudentPayment.voided_at.is_(None))
-        if status in ("voided", "replaced"):
+        if status == "voided":
             return query.filter(StudentPayment.voided_at.isnot(None))
         return query
 
@@ -559,9 +582,9 @@ class IncomeReports:
             replaced_by = becomes.get(p.id)
             status = "active" if p.voided_at is None else ("replaced" if p.id in becomes else "voided")
             old = was.get(p.replaces_payment_id)
+            paid_time, entered_at_text = entry_times(p.created_at, p.paid_on)
             out.append(JournalRow(
-                id=str(p.id), receipt_no=p.receipt_no, paid_on=p.paid_on, paid_time=_business_time(p.created_at),
-                created_at=_iso(p.created_at), student_id=str(student.id),
+                id=str(p.id), receipt_no=p.receipt_no, paid_on=p.paid_on, paid_time=paid_time, entered_at_text=entered_at_text, created_at=_iso(p.created_at), student_id=str(student.id),
                 student_name=person_name(student.last_name, student.first_name) or "", display_id=student.display_id,
                 membership_id=str(p.membership_id), group_id=str(group.id), group_name=group.name,
                 teacher_name=_staff(users.get(group.teacher_id)), amount=int(p.amount), method=p.method or "unknown",
@@ -583,7 +606,7 @@ class IncomeReports:
         group_id: Optional[UUID] = None, teacher_id: Optional[UUID] = None, created_by: Optional[UUID] = None,
         q: Optional[str] = None, status: str = "all",
     ) -> Tuple[bytes, str, str]:
-        """``(bytes, content type, filename)`` of the whole filtered journal (xlsx / csv); a cell that starts with = + - @ never runs."""
+        """``(bytes, content type, filename)`` of the whole filtered journal (xlsx / csv); a cell that starts with = + - @ TAB CR never runs."""
         validate_range(first, last)
         count, total_sum, voided = self._journal_totals(org_id, first, last, method, group_id, teacher_id, created_by, q)
         if {"active": count, "voided": voided}.get(status, count + voided) > MAX_EXPORT_ROWS:
@@ -592,11 +615,15 @@ class IncomeReports:
             self._journal_base(StudentPayment, Student, Group), org_id, first, last, method, group_id, teacher_id, created_by, q)
         rows = self._rows(org_id, self._journal_order(self._status_filter(query, status)).all())
         header = ["№ квитанции", "Дата", "Время", "Ученик", "ID ученика", "Группа", "Преподаватель", "Сумма", "Способ", "Кто внёс",
-                  "Куда пошли", "Статус", "Примечание"]
+                  "Куда пошли", "Статус", "Примечание", "Внесена"]
         top = [
             ["Журнал оплат", f"с {first.strftime('%d.%m.%Y')} по {last.strftime('%d.%m.%Y')}"],
             ["Оплат", count, "На сумму", total_sum] + (["Отменённых / исправленных", voided] if voided else []),
         ]
+        def entered_cell(r) -> str:
+            """Only for a back-dated payment (the «Время» cell is empty then): «21.10 11:40»."""
+            return r.entered_at_text.replace("внесена ", "", 1).replace(" в ", " ", 1) if r.entered_at_text else ""
+
         body = []
         for r in rows:
             status_text = STATUS_TEXT[r.status]
@@ -606,21 +633,17 @@ class IncomeReports:
                 status_text += f" (исправляет № {r.replaces_receipt_no})"
             body.append([r.receipt_no if r.receipt_no is not None else "", r.paid_on.strftime("%d.%m.%Y"), r.paid_time or "",
                          r.student_name, r.display_id or "", r.group_name, r.teacher_name or "", r.amount, r.method_label,
-                         r.created_by_name or "", r.allocation_text or "", status_text, r.note or ""])
+                         r.created_by_name or "", r.allocation_text or "", status_text, r.note or "", entered_cell(r)])
         base = f"payments-{first.isoformat()}-{last.isoformat()}"
         if fmt == "csv":
             buf = io.StringIO()
             writer = csv.writer(buf, delimiter=";")
-
-            def safe(row):
-                return [("'" + v) if isinstance(v, str) and v[:1] in ("=", "+", "-", "@") else v for v in row]
-
             for line in top:
-                writer.writerow(safe(line))
+                writer.writerow(csv_safe_row(line))
             writer.writerow([])
             writer.writerow(header)
             for line in body:
-                writer.writerow(safe(line))
+                writer.writerow(csv_safe_row(line))
             return ("﻿" + buf.getvalue()).encode("utf-8"), "text/csv; charset=utf-8", base + ".csv"
         from openpyxl import Workbook
         from openpyxl.styles import Font
@@ -643,7 +666,7 @@ class IncomeReports:
             cell.font = Font(bold=True)
         for line in body:
             put(line)
-        for col, width in zip("ABCDEFGHIJKLM", (12, 12, 8, 28, 14, 22, 22, 14, 16, 22, 52, 22, 36)):
+        for col, width in zip("ABCDEFGHIJKLMN", (12, 12, 8, 28, 14, 22, 22, 14, 16, 22, 52, 22, 36, 14)):
             ws.column_dimensions[col].width = width
         out = io.BytesIO()
         wb.save(out)
