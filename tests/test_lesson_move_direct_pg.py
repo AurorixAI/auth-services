@@ -242,6 +242,28 @@ def test_move_check_by_lesson_equals_the_check_by_request(w, sync):
     assert len(requests_of(w)) == 1                       # the check writes nothing
 
 
+def test_other_organisations_see_nothing_of_the_group(w, sync, exams):
+    """[M14] An administrator of another centre: 404 GROUP_NOT_FOUND on all three endpoints, nothing written."""
+    from tests.pg_world import make_client
+
+    foreign = make_client(w, user=w.foreign_admin, org="other", org_role="admin", role="admin")
+    g, lesson, _ = L(w, "L2", "2026-10-28")
+    r = foreign.post(f"{API}/org/groups/{g.id}/lesson-move", json={"lessonId": lesson, "lessonDate": "2026-10-28", **BODY})
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "GROUP_NOT_FOUND"
+    q = {"lessonId": lesson, "lessonDate": "2026-10-28"}
+    assert foreign.get(f"{API}/org/groups/{g.id}/lesson-exam-binding", params=q).status_code == 404
+    assert foreign.get(f"{API}/org/groups/{g.id}/lesson-move-check", params={**q, "newDate": "2026-10-29", "startTime": "16:00", "endTime": "17:30"}).status_code == 404
+    nothing_written(w)
+
+
+def test_m2b_the_expected_slot_also_guards_the_pending_request_path(w, sync):
+    """[M5/M2] With an open request the sheet's expected time is checked against the request, nothing is decided on a mismatch."""
+    item = one(w, "A", "L2", "2026-10-28")
+    r = move(w, expectedStartTime="11:00", expectedEndTime="12:00")
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "LESSON_CHANGED"
+    assert [x.status for x in requests_of(w)] == ["pending"] and item
+
+
 # ------------------------------------------------------------------------------------------------------ X
 def binding(w, who="admin", key="L2", day="2026-10-28", **q):
     g, lesson, _ = L(w, key, day)
