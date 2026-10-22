@@ -517,9 +517,10 @@ class StudentAudit(Base):
     student_id = Column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
     actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     actor_role = Column(String(20), nullable=False)
-    action = Column(String(30), nullable=False, default="profile_updated")
+    action = Column(String(30), nullable=False, default="profile_updated", server_default="profile_updated")
     changes = Column(JSONB, nullable=False)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    # UTC wall time from the database itself (the same expression as the migration sa1b2c3d4e5: no schema drift between create_all and alembic)
+    created_at = Column(DateTime, nullable=False, server_default=text("timezone('utc', now())"))
 
     __table_args__ = (
         CheckConstraint("actor_role IN ('owner', 'admin', 'teacher', 'superadmin')", name="ck_student_audit_actor_role"),

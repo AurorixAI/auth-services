@@ -89,7 +89,9 @@ def test_e1_in_the_database(world):
 
 def test_accounting_start_default_is_the_day_the_centre_was_created(world):
     start = ls.load_settings(world.db, str(world.org.id)).accounting_start
-    assert start == (world.org.created_at.date() if world.org.created_at else start)
+    from src.auth import payment_status as ps
+
+    assert start == (ps.business_date(world.org.created_at) if world.org.created_at else start)       # the day in Tashkent, not the UTC date of the stamp
     set_payments_settings(world.db, world.org, accounting_start_date="2026-01-05")
     assert ls.load_settings(world.db, str(world.org.id)).accounting_start == D(2026, 1, 5)
 

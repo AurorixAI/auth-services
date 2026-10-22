@@ -140,7 +140,7 @@ def build_export(svc: OpeningsService, org_id: str, *, group_id=None, missing_on
          "). «Оплачено до» = день перед началом учёта означает «на начало долга нет»: строка считается заполненной.", False),
         ("«Долг, сум» + «Долг на дату» — сколько он был должен и на какую дату (дата не позже дня перед началом учёта; пусто = этот день).", False),
         ("«Осталось уроков (пакет)» — только для центра, где платят пакетами: вместо «Оплачено до» (дата считается по расписанию группы).", False),
-        ("«Без остатка (да)» — проверено, на начало учёта долга нет (записывается «оплачено до» " + (start - _day()).strftime("%d.%m.%Y") + ").", False),
+        ("«Без остатка (да)» — проверено, на начало учёта долга нет (записывается «оплачено до» " + (start - _day()).strftime("%d.%m.%Y") + "). Ученику, пришедшему уже после начала учёта, остаток не нужен: «да» ничего не меняет.", False),
         ("Пустые поля у ученика, у которого остаток уже внесён, — убирают этот остаток.", False),
         ("Колонки J и K (ID) не меняйте и не сортируйте отдельно от строки: по ним ALGO находит ученика. Остальные колонки справочные.", False),
         ("После загрузки вы увидите сравнение «было → станет»; ничего не записывается, пока вы не нажмёте «Сохранить».", False),
@@ -432,6 +432,10 @@ def _item_of(rec: Dict[str, _Cell], match: TableRow, start: date) -> Optional[Op
     if flag:
         if match.left or not match.editable:
             return OpeningBatchItem(**base, clear=True)
+        if match.first_day >= start:
+            # joined AFTER the start: the floor of an opening is his first day, «оплачено до» = start - 1 is out of range (OPENING_RANGE) and
+            # there is nothing to review - no change (an opening that exists is cleared)
+            return OpeningBatchItem(**base, clear=True) if match.opening is not None else None
         return OpeningBatchItem(**base, paid_until=start - timedelta(days=1))
     if not has_values and match.opening is not None:
         return OpeningBatchItem(**base, clear=True)

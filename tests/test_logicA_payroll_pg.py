@@ -14,6 +14,13 @@ from tests.test_payroll_pg import (  # noqa: F401
 )
 from tests.pg_world import money_for, payments_block
 
+
+def _today():
+    """The business day (Tashkent) - the one the code under test uses; ``date.today()`` is the machine's (UTC) day and differs between 19:00 and 24:00 UTC."""
+    from src.auth import payment_status as ps
+
+    return ps.business_today()
+
 pytestmark = pytest.mark.skipif(not __import__("os").environ.get("A2_AUTH_TEST_DATABASE_URL"), reason="Requires disposable A2 auth PostgreSQL")
 
 LESSONS = [1, 3, 6, 8, 10, 13, 15, 17, 20, 22, 24, 27]          # the lessons of G-PAY / G-F1
@@ -227,7 +234,7 @@ def g_pay_world(w):
 
 
 def payout(w, sheet, amount, expect=201, **extra):
-    body = {"amount": amount, "paid_on": date.today().isoformat(), "method": "cash", **extra}
+    body = {"amount": amount, "paid_on": _today().isoformat(), "method": "cash", **extra}
     r = owner(w).post(f"{API}/org/payroll/sheets/{sheet['id']}/payouts", json=body, headers=extra.pop("headers", {}))
     assert r.status_code == expect, r.text
     return r.json()
@@ -245,7 +252,7 @@ def test_g_pay_chain_pay_late_payment_to_pay_recalc_overpaid_void(world):
 
     mem2 = student_group(world, s2)
     late = StudentPayment(org_id=world.org.id, membership_id=mem2.id, student_id=s2.id, group_id=mem2.group_id, amount=300_000,
-                          paid_on=date.today(), created_by=world.owner.id, method="cash")
+                          paid_on=_today(), created_by=world.owner.id, method="cash")
     world.db.add(late)
     world.db.commit()
     got = owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}").json()
@@ -282,9 +289,9 @@ def test_payout_matrix_errors_idempotency_rights_and_listing(world):
     r = c.post(f"{API}/org/payroll/sheets/{__import__('uuid').uuid4()}/payouts", json={"amount": 1, "method": "cash"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_NOT_SAVED"
     sheet = save_sheet(world, m)
-    base = {"paid_on": date.today().isoformat(), "method": "cash"}
+    base = {"paid_on": _today().isoformat(), "method": "cash"}
     for body, code in (({**base, "amount": 0}, "AMOUNT_RANGE"), ({**base, "amount": 10**10 + 1}, "AMOUNT_RANGE"),
-                       ({**base, "amount": 5, "paid_on": (date.today() + timedelta(days=1)).isoformat()}, "PAID_ON_RANGE"),
+                       ({**base, "amount": 5, "paid_on": (_today() + timedelta(days=1)).isoformat()}, "PAID_ON_RANGE"),
                        ({**base, "amount": 5, "paid_on": "2000-01-01"}, "PAID_ON_RANGE"),
                        ({"amount": 5, "paid_on": base["paid_on"]}, "METHOD_REQUIRED")):
         r = c.post(f"{API}/org/payroll/sheets/{sheet['id']}/payouts", json=body)
@@ -300,7 +307,7 @@ def test_payout_matrix_errors_idempotency_rights_and_listing(world):
     assert r1.status_code == 201 and r2.status_code == 409 and r2.json()["detail"]["code"] == "DUPLICATE_PAYOUT"
     assert r2.json()["detail"]["payout_id"] == r1.json()["payout"]["id"]
     # B: a payout dated in the past is fine; M: it belongs to the sheet's month
-    old = payout(world, sheet, 3, paid_on=(date.today() - timedelta(days=400)).isoformat())
+    old = payout(world, sheet, 3, paid_on=(_today() - timedelta(days=400)).isoformat())
     assert old["payout"]["month"] == m.label
     listing = c.get(f"{API}/org/payroll/payouts", params={"month": m.label, "teacher_id": str(world.teacher.id)}).json()
     assert len(listing) == 4 and all(p["month"] == m.label for p in listing)

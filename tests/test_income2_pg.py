@@ -275,7 +275,7 @@ def test_lessons_mode_collects_by_the_package_that_began_in_the_month(world, fix
     assert (sept["total"]["students_with_debt"], sept["total"]["students"]) == (1, 1)
     octo = income(world, "2026-10-01", "2026-10-31")
     assert octo["collection"]["groups"] == [] and octo["collection"]["total"]["pct"] is None
-    assert octo["collection"]["text"] == "За этот месяц ничего не начислено"
+    assert octo["collection"]["text"] == "За этот месяц стоимость не считалась"
     assert "Собрано" not in octo["summary_text"] and octo["current"]["received"] == 300_000 and octo["ok"]
 
 

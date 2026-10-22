@@ -283,7 +283,7 @@ def income_summary_text(*, lead: str, received: int, previous_received: int, pre
 def collection_text(paid: int, charged: int, pct: Optional[int]) -> str:
     """The line of the card «Собрано за месяц»."""
     if charged <= 0:
-        return "За этот месяц ничего не начислено"
+        return "За этот месяц стоимость не считалась"
     return f"Оплачено {num(paid)} из {num(charged)} сум ({pct}%)"
 
 
