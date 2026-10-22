@@ -125,3 +125,26 @@ def test_s0_import_and_add_to_group_use_the_same_floor(world, fixed_today):
     d = {imp.K_DEBT: "250 000", imp.K_DEBT_ON: "01.11.2026"}
     ok, paid, debt, on = imp.parse_opening(d, 5, money=True, accounting_start=start, enrol_day=enrol, err=err, warn=warn)
     assert debt is None and len(warns) == 2 and not errs
+
+
+def test_s0_add_to_group_uses_the_same_floor(world, fixed_today):
+    from src.models.auth import Student
+
+    centre_nov(world)
+    c = owner(world)
+
+    def new(first):
+        s = Student(org_id=world.org.id, first_name=first, last_name="Ученик", class_level=9, status="new")
+        world.db.add(s)
+        world.db.commit()
+        return s
+
+    s1, s2, s3 = new("Один"), new("Два"), new("Три")
+    url = lambda s: f"{API}/org/groups/{world.group.id}/students/{s.id}?mode=add"
+    r = c.post(url(s1), json={"opening_balance": {"debt_amount": 250_000, "debt_on": "2026-10-31"}})     # enrolled today, the accounting starts on 01.11
+    assert r.status_code == 200, r.text
+    assert c.get(f"{API}/org/memberships/{r.json()['membership_id']}/opening-balance").json()["debt_on"] == "2026-10-31"
+    r = c.post(url(s2), json={"opening_balance": {"paid_until": "2026-10-31"}})                          # nothing owed at the start: added without an opening
+    assert r.status_code == 200 and c.get(f"{API}/org/memberships/{r.json()['membership_id']}/opening-balance").json() is None
+    r = c.post(url(s3), json={"opening_balance": {"paid_until": "2026-10-15"}})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "OPENING_RANGE"
