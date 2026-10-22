@@ -272,7 +272,8 @@ SKIPS = [
     skipped(8, "DUPLICATE_IN_FILE", "Строка повторяется в файле", "Каримова Лола", "6-Д"),
 ]
 base_counts = {"teachers_new": 0, "teachers_existing": 0, "groups_new": 1, "groups_existing": 2, "students_new": 2,
-               "students_existing": 1, "students_enrolled": 2, "students_unchanged": 0, "students_skipped": 5}
+               "students_existing": 1, "students_enrolled": 2, "students_unchanged": 0, "students_skipped": 5,
+               "openings": 0}   # openings: LOGIC-A (opening balances written by the import; additive, 0 without columns G-I)
 # students_existing = 1 (Иванов Иван, found in the system); the two new ones are r3, r4
 put("c3_preview_teacher_not_teacher.json", "ImportPreviewResponseB", {
     "ok": False, "counts": {**base_counts, "students_new": 0, "students_enrolled": 0, "students_skipped": 0, "students_existing": 0, "groups_new": 0},

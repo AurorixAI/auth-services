@@ -42,7 +42,7 @@ def sheets_touched_by_lesson_teacher_change(
 
     from sqlalchemy import func
 
-    from .models import PayrollPayout, PayrollSheet
+    from src.models.auth import PayrollPayout, PayrollSheet
 
     teachers = [t for t in {old_teacher_id, new_teacher_id} if t]
     if not teachers:
@@ -72,22 +72,10 @@ def sheets_touched_by_lesson_teacher_change(
 
 
 def after_enrol(db, student, membership, row) -> None:
-    """Called after a student of an Excel row is enrolled (inside the row's transaction).  LOGIC-A (owner decision 1): a NEW student's
-    opening balance (``row.opening`` = ``(paid_until, debt_amount, debt_on)`` of columns G-I, validated by the plan) is written through
-    ``OpeningService`` with ``source="import"``; the row fails as a whole if the opening is refused."""
-    opening = getattr(row, "opening", None)
-    if not opening:
-        return
-    from . import payment_status as ps
-    from .logica_service import OpeningService
-    from .payments_schemas import OpeningIn
-
-    paid_until, debt_amount, debt_on = opening
-    db.flush()
-    OpeningService(db).apply(
-        str(row.org_id), membership, str(row.actor_id), row.actor_role,
-        OpeningIn(paid_until=paid_until, debt_amount=debt_amount, debt_on=debt_on), source="import",
-        today=ps.business_today(), require_reason_when_money=False)
+    """Extension point called after a student of an Excel row is enrolled.  LOGIC-A (owner decision 1): the opening balance of a NEW student ("paid
+    until" / "debt on a date", columns G-I) is NOT written here - ``import_ops._enrol`` hands it to ``AuthService.add_student_to_group(opening_balance=...,
+    opening_source="import")``, so the enrolment and the balance are one transaction (a refused balance rolls the whole row back).  Nothing left to do."""
+    return None
 
 
 # ---------------------------------------------------------------------------------------------- LOGIC-B2 <-> package A (SPEC 0 item 8 / 3.5)

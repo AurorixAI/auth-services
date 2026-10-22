@@ -1729,6 +1729,11 @@
             "title": "Groups New",
             "type": "integer"
           },
+          "openings": {
+            "default": 0,
+            "title": "Openings",
+            "type": "integer"
+          },
           "students_enrolled": {
             "default": 0,
             "title": "Students Enrolled",

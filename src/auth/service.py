@@ -2625,6 +2625,7 @@ class AuthService:
         actor_id: Optional[str] = None,
         payments_detail: bool = False,
         opening_balance: Optional[Any] = None,
+        opening_source: str = "add",
     ) -> dict:
         """Enrol a student in a group.
 
@@ -2789,7 +2790,7 @@ class AuthService:
             from .leave_service import apply_add_opening  # lazy
 
             self.db.flush()
-            apply_add_opening(self.db, org_id, membership, actor_id, opening_balance, transfer=bool(closing))
+            apply_add_opening(self.db, org_id, membership, actor_id, opening_balance, transfer=bool(closing), source=opening_source)
 
         # N13 P2.1: a transfer carries the payments in force over to the new group.  The price is not carried
         # (#105): in the new group the student follows the price of that group.

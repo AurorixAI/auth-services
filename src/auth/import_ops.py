@@ -396,7 +396,7 @@ def commit(org_id: Any, creator_id: Any, data: bytes, db: Session, *, money: boo
         skipped: List[ImportSkipped] = list(plan.skipped)
         for item in plan.students:
             try:
-                outcome = _enrol(db, svc, org_id, creator_id, item, group_ids[item["key"]], actor_role)
+                outcome = _enrol(db, svc, org_id, creator_id, item, group_ids[item["key"]])
             except Exception as exc:  # noqa: BLE001 - one bad row must not end the file with a 500
                 db.rollback()
                 logger.exception("import: row %s failed", item.get("row"))
@@ -422,18 +422,7 @@ def commit(org_id: Any, creator_id: Any, data: bytes, db: Session, *, money: boo
         return ImportCommitResponseB(ok=True, counts=result, issues=plan.issues, skipped=skipped, created_groups=created)
 
 
-class EnrolRow:
-    """The parsed row handed to ``payroll_hooks.after_enrol``: ``row`` / ``data`` as the parsed row, plus what package A needs to write
-    the opening balance of a NEW student in the same transaction."""
-
-    def __init__(self, parsed_row: Any, opening: Optional[Tuple[Any, Any, Any]], org_id: Any, actor_id: Any, actor_role: str) -> None:
-        self.row = parsed_row.row
-        self.data = parsed_row.data
-        self.opening = opening          # (paid_until, debt_amount, debt_on) or None
-        self.org_id, self.actor_id, self.actor_role = org_id, actor_id, actor_role
-
-
-def _enrol(db: Session, svc, org_id: Any, creator_id: Any, item: Dict[str, Any], group_id: UUID, actor_role: str = "admin") -> Tuple[str, ...]:
+def _enrol(db: Session, svc, org_id: Any, creator_id: Any, item: Dict[str, Any], group_id: UUID) -> Tuple[str, ...]:
     """One student row in one transaction: ``("enrolled",)`` or ``("skipped", code, message, group_name)``."""
     from .ops_rules import GroupArchivedForEnrolment
 
@@ -461,10 +450,18 @@ def _enrol(db: Session, svc, org_id: Any, creator_id: Any, item: Dict[str, Any],
             )
             db.add(student)
             db.flush()
-        svc.add_student_to_group(str(org_id), str(group_id), str(student.id), mode="transfer", actor_id=str(creator_id))
+        # LOGIC-A (owner decision 1): the opening balance of a NEW student goes INTO the enrolment (same transaction, same commit): when A refuses it the
+        # whole row is rolled back, the student does not stay behind without the balance he was imported with
+        opening = None
+        if item["existing"] is None and item.get("opening") is not None:
+            from .payments_schemas import OpeningIn
+
+            paid_until, debt_amount, debt_on = item["opening"]
+            opening = OpeningIn(paid_until=paid_until, debt_amount=debt_amount, debt_on=debt_on)
+        svc.add_student_to_group(str(org_id), str(group_id), str(student.id), mode="transfer", actor_id=str(creator_id),
+                                 opening_balance=opening, opening_source="import")
         membership = db.query(StudentGroup).filter(StudentGroup.student_id == student.id, StudentGroup.group_id == group_id).first()
-        opening = item.get("opening") if item["existing"] is None else None      # an opening is for a NEW student only
-        payroll_hooks.after_enrol(db, student, membership, EnrolRow(item["data"], opening, org_id, creator_id, actor_role))
+        payroll_hooks.after_enrol(db, student, membership, item["data"])
         db.commit()
         return ("enrolled",)
     except GroupArchivedForEnrolment:
