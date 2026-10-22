@@ -233,7 +233,8 @@ def test_a_leave_without_settle_keeps_the_debt_visible_after_the_group_is_archiv
 
 # ======================================================================================================================== 4. cancelled / moved lesson x A
 def late_joiner(w):
-    """s1 joined 14.10 (an incomplete first month): 5 of the 6 lessons of October (Mon 12, 19, 26 / Wed 14, 21, 28 from the slots' validFrom) are his."""
+    """s1 joined 14.10 (an incomplete first month): 5 of the 8 lessons of the full October by the pattern (Mon 5, 12, 19, 26 / Wed 7, 14, 21, 28; the slots' validFrom
+    does not shrink the month) are his: 14.10, 19.10, 21.10, 26.10, 28.10."""
     money(w, w.G1, 600_000)
     for s in (w.s2, w.s3):
         pay(w, member(w, s, w.G1), 600_000, date(2026, 10, 1))
@@ -244,7 +245,7 @@ def late_joiner(w):
 def test_a_lesson_cancelled_by_a_b2_decision_leaves_the_calendar_month_price_unchanged(w, clock, sync):
     """A decision 3 meets B2 ``cancel``: the cancelled row stays a lesson of the month for the proration (the price of the month is the same)."""
     debt = late_joiner(w)
-    assert debt == 500_000                                                         # 5 of 6 lessons of 600 000
+    assert debt == 375_000                                                         # 5 of 8 lessons of 600 000
     item = request_one(w, "A", w.G1, "lesson-l1", "2026-10-26")
     clock.set("2026-10-21 14:02")
     out = decide(w, "admin", item["id"], decision="cancel", reason="Преподаватель болен, замены нет")
@@ -262,7 +263,7 @@ def test_a_lesson_moved_by_a_b2_decision_is_neutral_for_the_proration(w, clock, 
     assert out.status_code == 200, out.text
     assert out.json()["result"]["newLesson"]["id"]
     assert row_of(w, w.G1, "lesson-l2", "2026-10-28").status == "cancelled"
-    assert membership_row(w, w.s1, w.G1)["debt"] == debt                            # 500 000 - not 6/7 of the month
+    assert membership_row(w, w.s1, w.G1)["debt"] == debt                            # 375 000 - not 6/9 of the month
 
 
 def test_a_lesson_cancelled_by_a_b2_decision_does_not_consume_a_package(w, clock, sync):
@@ -419,3 +420,24 @@ def test_the_linear_chain_composes_the_check_constraints_of_a_and_b(monkeypatch)
         with admin.connect() as c:
             c.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
         admin.dispose()
+
+
+# ======================================================================================================================== 8. group page x pause
+def test_the_group_page_flags_the_students_on_pause_today(w, clock):
+    """``GET /org/groups/{id}``: every student carries ``on_pause`` / ``paused_until`` (the last day of the pause that covers TODAY), so the lesson panel hides him BEFORE the
+    start; a pause of the future or of the past does not flag him; a voided pause neither."""
+    money(w, w.G1, 600_000)
+    adm = client(w, "admin")
+    now = adm.post(f"{API}/org/memberships/{member(w, w.s3, w.G1).id}/pauses", json={"first_day": "2026-10-20", "last_day": "2026-10-24"})
+    later = adm.post(f"{API}/org/memberships/{member(w, w.s2, w.G1).id}/pauses", json={"first_day": "2026-10-26", "last_day": "2026-10-31"})
+    assert now.status_code == 201 and later.status_code == 201, (now.text, later.text)
+    group = client(w, "A").get(f"{API}/org/groups/{w.G1.id}")
+    assert group.status_code == 200, group.text
+    by_id = {s["id"]: s for s in group.json()["students"]}
+    assert (by_id[str(w.s3.id)]["on_pause"], by_id[str(w.s3.id)]["paused_until"]) == (True, "2026-10-24")
+    assert (by_id[str(w.s2.id)]["on_pause"], by_id[str(w.s2.id)]["paused_until"]) == (False, None)
+    assert (by_id[str(w.s1.id)]["on_pause"], by_id[str(w.s1.id)]["paused_until"]) == (False, None)
+    voided = adm.post(f"{API}/org/pauses/{now.json()['pause']['id']}/void", json={"reason": "ошибся датой"})
+    assert voided.status_code == 200, voided.text
+    again = {s["id"]: s for s in client(w, "A").get(f"{API}/org/groups/{w.G1.id}").json()["students"]}
+    assert again[str(w.s3.id)]["on_pause"] is False

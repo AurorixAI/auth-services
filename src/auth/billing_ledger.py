@@ -147,6 +147,8 @@ class LedgerInput:
     first_billable_floor: Optional[date] = None
     # dates of the group's lessons in [start, end] (for an incomplete period of a fixed billing day); one entry per lesson
     lesson_days: Callable[[date, date], Sequence[date]] = lambda start, end: ()
+    # the lessons of the FULL schedule pattern (slots' validFrom ignored): the denominator of a partial period; ``None`` = the same as ``lesson_days``
+    pattern_days: Optional[Callable[[date, date], Sequence[date]]] = None
     counted_lessons: Sequence[CountedLesson] = ()
     expiring_days: int = ps.DEFAULT_EXPIRING_DAYS
     expiring_lessons: int = ps.DEFAULT_EXPIRING_LESSONS
@@ -471,12 +473,21 @@ class _Gen:
         self.flags = flags
         self.chain = 0
         self.unpriced_from: Optional[date] = None
-        self._lesson_days_cache: Dict[Tuple[date, date], Sequence[date]] = {}
+        self._lesson_days_cache: Dict[tuple, Sequence[date]] = {}
 
     def lesson_days(self, start: date, end: date) -> Sequence[date]:
         key = (start, end)
         if key not in self._lesson_days_cache:
             self._lesson_days_cache[key] = tuple(self.inp.lesson_days(start, end))
+        return self._lesson_days_cache[key]
+
+    def pattern_days(self, start: date, end: date) -> Sequence[date]:
+        """The lessons of a FULL period by the schedule pattern (the denominator)."""
+        if self.inp.pattern_days is None:
+            return self.lesson_days(start, end)
+        key = ("pattern", start, end)
+        if key not in self._lesson_days_cache:
+            self._lesson_days_cache[key] = tuple(self.inp.pattern_days(start, end))
         return self._lesson_days_cache[key]
 
     def segment(
@@ -500,12 +511,13 @@ class _Gen:
         if n >= nominal:
             return Segment(amount=amount, basis="full", lessons_in_part=None, lessons_in_period=None, **common)
         if by_lessons:
-            held = self.lesson_days(*cell)
-            if held:
+            held = self.lesson_days(*cell)             # REAL lessons: the numerator
+            whole = self.pattern_days(*cell)            # lessons of a full month by the schedule: the denominator
+            if whole:
                 inside = set(days)
                 in_part = sum(1 for d in held if d in inside)
-                return Segment(amount=round_1000(amount * in_part, len(held)), basis="lessons",
-                               lessons_in_part=in_part, lessons_in_period=len(held), **common)
+                return Segment(amount=round_1000(amount * in_part, len(whole)), basis="lessons",
+                               lessons_in_part=in_part, lessons_in_period=len(whole), **common)
         return Segment(amount=round_1000(amount * n, nominal), basis="days", lessons_in_part=None,
                        lessons_in_period=None, **common)
 

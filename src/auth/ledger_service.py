@@ -196,7 +196,7 @@ class LedgerLoader:
         self._indexed: Set[Tuple[UUID, str]] = set()
         self._schedule: Optional[Any] = None
         self._moved_one_offs: Dict[Any, Set[Tuple[str, str]]] = {}   # group id -> keys (loaded per group, the loader's groups grow)
-        self._lesson_days_cache: Dict[Tuple[Any, date, date], List[date]] = {}
+        self._lesson_days_cache: Dict[Tuple[Any, date, date, bool], List[date]] = {}
         self._loaded: Set[UUID] = set()
 
     # ---------------------------------------------------------------- selecting
@@ -381,8 +381,12 @@ class LedgerLoader:
 
     # ---------------------------------------------------------------- the schedule (incomplete periods)
 
-    def _lesson_days(self, group: Group, start: date, end: date) -> List[date]:
-        key = (group.id, start, end)
+    def _lesson_days(self, group: Group, start: date, end: date, *, pattern: bool = False) -> List[date]:
+        """The lessons of ``group`` in ``start .. end``.  ``pattern=True``: the group's FULL schedule pattern, ignoring the ``validFrom`` of the slots - the
+        denominator of the proration of a partial period (a partial month costs price x the student's lessons / the lessons of a full month by the schedule,
+        also for a group created mid-month).  The numerator (``pattern=False``) counts only real lessons.  Archive intervals are real absence of the group:
+        they cut both."""
+        key = (group.id, start, end, pattern)
         if key in self._lesson_days_cache:
             return self._lesson_days_cache[key]
         from .service import AuthService  # lazy: service is heavy
@@ -394,9 +398,13 @@ class LedgerLoader:
             self._schedule = AuthService(self.db)._preload_schedule_data(gids, date_from=low, date_to=high)
         # LOGIC-A (S-4, decision 3): a lesson the CENTRE cancelled still counts - the month costs the same, so the share of an incomplete
         # first period never depends on cancellations (and a late cancellation no longer rewrites a closed charge)
-        occurrences = AuthService(self.db)._resolved_occurrences_for_group(
-            group, date_from=start, date_to=end, preloaded=self._schedule
-        )
+        if pattern:
+            from . import schedule_rules
+
+            with schedule_rules.ignoring_valid_from():
+                occurrences = AuthService(self.db)._resolved_occurrences_for_group(group, date_from=start, date_to=end, preloaded=self._schedule)
+        else:
+            occurrences = AuthService(self.db)._resolved_occurrences_for_group(group, date_from=start, date_to=end, preloaded=self._schedule)
         # LOGIC-B2 (decision 3, neutral move): a lesson moved by a substitution decision = the CANCELLED original (counted above) + a one-off copy;
         # the copy is left out, so a move never changes the share of an incomplete first period
         if group.id not in self._moved_one_offs:
@@ -508,6 +516,7 @@ class LedgerLoader:
             credits=tuple(credits),
             outflows=tuple(outflows),
             lesson_days=lambda a, b, _g=group: self._lesson_days(_g, a, b),
+            pattern_days=lambda a, b, _g=group: self._lesson_days(_g, a, b, pattern=True),
             counted_lessons=tuple(self.counted.get(mid, [])),
             expiring_days=self.settings.expiring_days,
             expiring_lessons=self.settings.expiring_lessons,

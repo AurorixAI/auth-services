@@ -1,6 +1,7 @@
 """PAY-2 stream B: the payment API on PostgreSQL - golden fixtures through the endpoints, write-off, refund, replace / void,
 idempotency, transfers, reports."""
 import json
+import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -43,7 +44,8 @@ def fixed_today(monkeypatch):
 
     def moment():
         day = state["day"]
-        return real_datetime(day.year, day.month, day.day, 12, tzinfo=bc.BUSINESS_TIMEZONE)
+        hour, minute = (int(x) for x in os.environ.get("ALGO_TEST_CLOCK", "12:00").split(":"))        # Tashkent wall time; a stress run sets other values
+        return real_datetime(day.year, day.month, day.day, hour, minute, tzinfo=bc.BUSINESS_TIMEZONE)
 
     class Frozen(real_datetime):
         @classmethod
@@ -352,7 +354,8 @@ def test_e6_writeoff_flow(world, fixed_today):
     r = c.post(f"{API}/org/writeoffs/{wid}/void", json={"reason": "ошибка"})
     assert r.status_code == 200 and r.json()["row"]["advance"] == 0 and r.json()["writeoff"]["voided_at"]
     assert c.post(f"{API}/org/writeoffs/{wid}/void", json={"reason": "ещё"}).status_code == 409
-    rows = world.db.query(GroupAudit).filter(GroupAudit.action.in_(["payment_writeoff", "payment_writeoff_void"])).all()
+    # scoped to THIS world: the test database is shared by every test (a foreign row of another test used to win the dict below, depending on the heap order)
+    rows = world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action.in_(["payment_writeoff", "payment_writeoff_void"])).all()
     snaps = {a.action: a.snapshot for a in rows}
     assert snaps["payment_writeoff"]["debt_before"] == 100_000 and snaps["payment_writeoff"]["debt_after"] == 60_000
     assert snaps["payment_writeoff_void"]["amount"] == 40_000
@@ -387,7 +390,7 @@ def test_e7_refund_flow(world, fixed_today):
     # cancel the refund: the advance is back; then the payment can go
     assert c.post(f"{API}/org/refunds/{body['refund']['id']}/void", json={"reason": "ошибка"}).json()["row"]["advance"] == 344_000
     assert c.post(f"{API}/org/payments/{pid}/void", json={"reason": "ошибка"}).status_code == 200
-    assert {a.action for a in world.db.query(GroupAudit).filter(GroupAudit.action.like("payment_refund%"))} == {
+    assert {a.action for a in world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action.like("payment_refund%"))} == {
         "payment_refund", "payment_refund_void"}
 
 

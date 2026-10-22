@@ -42,7 +42,11 @@ LIVE_SLOT = "live-today"
 
 
 def business_today() -> date:
-    return datetime.now(BUSINESS_TIMEZONE).date()
+    """The business day - the SAME the code under test sees (``ps.business_today``, which ``fixed_today`` freezes): a helper that builds "yesterday's lesson" from the
+    real clock while the service runs on a frozen one makes a test depend on the date and the hour it runs at."""
+    from src.auth import payment_status as ps
+
+    return ps.business_today()
 
 
 def make_user(db, role="teacher", name="Иван"):

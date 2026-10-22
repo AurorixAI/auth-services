@@ -2277,6 +2277,8 @@ class AuthService:
         period_map = periods_by_membership(self.db, [m.id for m in memberships])
         latest_results = self._latest_diagnostic_results(student_ids)
 
+        from .membership_pauses import paused_until_map  # LOGIC-A: who is on a pause today (the lesson panel hides them before the start)
+        on_pause = paused_until_map(self.db, group_uuid, student_ids, ps.business_today())
         students_out = []
         needs_commit = False
         for m in memberships:
@@ -2306,6 +2308,8 @@ class AuthService:
                 "last_class_equivalent": lvl["class_equivalent"],
                 "last_level_provisional": lvl["level_provisional"],
                 "last_diagnosed_at": r.diagnosed_at.isoformat() if r and r.diagnosed_at else None,
+                "on_pause": str(s.id) in on_pause,
+                "paused_until": on_pause[str(s.id)].isoformat() if str(s.id) in on_pause else None,
             })
 
         if needs_commit:

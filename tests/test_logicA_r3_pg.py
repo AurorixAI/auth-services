@@ -136,7 +136,7 @@ def test_m3_a_patch_cannot_lengthen_an_old_pause_over_old_days_and_a_money_chang
     r = c.patch(f"{API}/org/pauses/{p['id']}", json={"last_day": "2026-10-22", "reason": "вернулся 23-го"})
     assert r.status_code == 200 and r.json()["pause"]["days"] == 3, r.text
     world.db.expire_all()
-    assert [a.snapshot["reason"] for a in world.db.query(GroupAudit).filter_by(action="membership_pause_set").order_by(GroupAudit.created_at)][-1] == "вернулся 23-го"
+    assert [a.snapshot["reason"] for a in world.db.query(GroupAudit).filter_by(org_id=world.org.id, action="membership_pause_set").order_by(GroupAudit.created_at)][-1] == "вернулся 23-го"
 
 
 # ---- m1: «просрочено на N дней» counts from the first charged unpaid day ----------------------------------------------------------------------

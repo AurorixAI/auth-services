@@ -9,6 +9,8 @@ Pure helpers used by ``AuthService._resolved_occurrences_for_group`` plus the cr
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -48,7 +50,24 @@ def legacy_valid_from(group: Group) -> str:
     return bc.utc_to_business_date(created).isoformat()
 
 
+_PATTERN_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("schedule_pattern_only", default=False)
+
+
+@contextlib.contextmanager
+def ignoring_valid_from():
+    """Inside the block every slot is valid from the beginning of time: the group's FULL weekly pattern, as the old code generated it.  Used for the
+    denominator of the proration of a partial period («lessons of a full month by the schedule»): ``validFrom`` only says from when a slot
+    produces REAL lessons (the numerator), it never shrinks the month."""
+    token = _PATTERN_ONLY.set(True)
+    try:
+        yield
+    finally:
+        _PATTERN_ONLY.reset(token)
+
+
 def slot_valid_from(group: Group, slot: Dict[str, Any]) -> str:
+    if _PATTERN_ONLY.get():
+        return "0001-01-01"
     value = slot.get("validFrom")
     if isinstance(value, str) and len(value) == 10:
         return value

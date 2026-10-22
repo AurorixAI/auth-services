@@ -689,8 +689,8 @@ def test_the_archiving_instant_is_taken_after_the_locks_and_is_the_same_everywhe
     stay = pack.db.query(StudentGroupPeriod).filter_by(membership_id=member.id).one()
     from src.models.auth import GroupAudit
 
-    audit = pack.db.query(GroupAudit).filter_by(action="student_archived").all()
-    audit = [a for a in audit if a.snapshot["student_id"] == str(student.id)]
+    audit = pack.db.query(GroupAudit).filter_by(org_id=pack.org.id, action="student_archived").all()          # this org only: the test DB is shared by every test
+    audit = [a for a in audit if (a.snapshot or {}).get("student_id") == str(student.id)]
     assert student.archived_at == cancelled.cancelled_at == member.left_at == stay.left_at == audit[0].created_at
     assert audit[0].snapshot["archived_at"] == student.archived_at.isoformat()
     # and so the callbacks of the session created during the wait are accepted
