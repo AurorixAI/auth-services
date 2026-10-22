@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "teacherId": null,
+  "teacherName": null,
+  "teacherConflicts": [],
+  "groupConflicts": [],
+  "warnings": [],
+  "code": "LESSON_ALREADY_STARTED",
+  "message": "Урок уже начался или прошёл: перенести его нельзя"
+}

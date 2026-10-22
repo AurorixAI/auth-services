@@ -30,7 +30,7 @@ class _Pick:
         return self._json
 
 
-def test_the_endpoints_reproduce_the_golden_fixtures(w, sync, exams):
+def test_the_endpoints_reproduce_the_golden_fixtures(w, sync, exams, clock):
     names = {str(w.ids(n)): n for n in ("org", "G1", "G2", "G3", "G4", "owner", "admin", "A", "B", "C", "D", "s1", "s2", "s3", "s7")}
     seen = {}
 
@@ -49,10 +49,11 @@ def test_the_endpoints_reproduce_the_golden_fixtures(w, sync, exams):
         return node
 
     out = {}
-    out["K01_move_check_busy"] = (check(w, newDate="2026-10-27", startTime="10:00", endTime="11:30"), 200, "MoveCheckOut")
-    out["K02_move_check_ok"] = (check(w), 200, "MoveCheckOut")
+    out["K01_move_check_busy"] = (check(w, newDate="2026-10-27", startTime="10:00", endTime="11:30"), 200, "LessonMoveCheckOut")
+    out["K02_move_check_ok"] = (check(w), 200, "LessonMoveCheckOut")
     out["K03_move_stale_sheet"] = (move(w, expectedStartTime="11:00", expectedEndTime="12:00"), 409, "-")
     out["K04_move_teacher_busy"] = (move(w, newDate="2026-10-27", startTime="10:00", endTime="11:30"), 409, "-")
+    out["K14_move_reason_too_long"] = (move(w, reason="x" * 501), 422, "-")
     out["K05_exam_binding_none"] = (binding(w), 200, "LessonExamBinding")
     exams.completion_exams = [{"examId": "e1", "title": "Контрольная №3", "status": "lobby"}]
     out["K06_exam_binding_lobby"] = (binding(w), 200, "LessonExamBinding")
@@ -69,6 +70,8 @@ def test_the_endpoints_reproduce_the_golden_fixtures(w, sync, exams):
     out["K10_move_again_other_slot"] = (move(w, newDate="2026-10-30"), 409, "-")
     occ = client(w, "admin").get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-29", "date_to": "2026-10-29"})
     out["K12_occurrence_with_moved_from"] = (_Pick(occ, "one-off-"), 200, "ScheduleOccurrenceResponseB")
+    clock.set("2026-10-26 10:30")                          # the lesson of Monday 26.10 10:00 has started: the check refuses it before the confirm (R3 #6)
+    out["K13_move_check_origin_started"] = (check(w, key="L1", day="2026-10-26", newDate="2026-10-27", startTime="10:00", endTime="11:30"), 200, "LessonMoveCheckOut")
     write = os.environ.get("LESSONMOVE_WRITE_FIXTURES") == "1"
     index = {}
     for stem, (r, status, model) in out.items():

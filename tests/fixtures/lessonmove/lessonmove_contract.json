@@ -198,6 +198,85 @@
         "title": "LessonExamBinding",
         "type": "object"
       },
+      "LessonMoveCheckOut": {
+        "description": "#124 ``lesson-move-check`` = ``MoveCheckOut`` (the frozen B2 shape of the request check) + the refusal of the ORIGIN lesson (R3 #6): ``ok = false`` with\n``code`` / ``message`` when POST ``lesson-move`` would refuse the lesson itself (started, cancelled, archived group, already decided, no teacher); both null otherwise.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "groupConflicts": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherConflict"
+            },
+            "title": "Groupconflicts",
+            "type": "array"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "teacherConflicts": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherConflict"
+            },
+            "title": "Teacherconflicts",
+            "type": "array"
+          },
+          "teacherId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacherid"
+          },
+          "teacherName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachername"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/MoveWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "LessonMoveCheckOut",
+        "type": "object"
+      },
       "LessonMoveRequest": {
         "description": "#124: the administrator moves a future lesson straight from the lesson sheet (no request of a teacher needed).  Same fields and rules as the decision\n``reschedule``; ``expectedStartTime`` / ``expectedEndTime`` are what the sheet showed (409 ``LESSON_CHANGED`` when the schedule moved meanwhile).",
         "properties": {
@@ -277,7 +356,6 @@
           "reason": {
             "anyOf": [
               {
-                "maxLength": 500,
                 "type": "string"
               },
               {
@@ -314,62 +392,6 @@
           "lessonDate"
         ],
         "title": "LessonMoveRequest",
-        "type": "object"
-      },
-      "MoveCheckOut": {
-        "properties": {
-          "groupConflicts": {
-            "items": {
-              "$ref": "#/components/schemas/TeacherConflict"
-            },
-            "title": "Groupconflicts",
-            "type": "array"
-          },
-          "ok": {
-            "title": "Ok",
-            "type": "boolean"
-          },
-          "teacherConflicts": {
-            "items": {
-              "$ref": "#/components/schemas/TeacherConflict"
-            },
-            "title": "Teacherconflicts",
-            "type": "array"
-          },
-          "teacherId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Teacherid"
-          },
-          "teacherName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Teachername"
-          },
-          "warnings": {
-            "items": {
-              "$ref": "#/components/schemas/MoveWarning"
-            },
-            "title": "Warnings",
-            "type": "array"
-          }
-        },
-        "required": [
-          "ok"
-        ],
-        "title": "MoveCheckOut",
         "type": "object"
       },
       "MoveWarning": {
@@ -1008,7 +1030,7 @@
   },
   "info": {
     "title": "ALGO auth - lesson sheet moves (#124)",
-    "version": "lessonmove-2"
+    "version": "lessonmove-3"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1321,7 +1343,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MoveCheckOut"
+                  "$ref": "#/components/schemas/LessonMoveCheckOut"
                 }
               }
             },
@@ -1368,6 +1390,28 @@
             "message": "Укажите новую дату и время урока",
             "status": 422
           }
+        ],
+        "x-ok-false-codes": [
+          {
+            "code": "LESSON_ALREADY_STARTED",
+            "message": "Урок уже начался или прошёл: перенести его нельзя"
+          },
+          {
+            "code": "LESSON_CANCELLED",
+            "message": "Урок отменён"
+          },
+          {
+            "code": "GROUP_ARCHIVED",
+            "message": "Группа в архиве: действие недоступно"
+          },
+          {
+            "code": "SUBSTITUTION_ALREADY_DECIDED",
+            "message": "Запрос уже решён (или «Запрос закрыт: <причина>» когда открытый запрос закрыт)"
+          },
+          {
+            "code": "LESSON_HAS_NO_TEACHER",
+            "message": "У урока нет действующего преподавателя: назначьте его и повторите"
+          }
         ]
       }
     }
@@ -1395,6 +1439,18 @@
       "endpoint": "GET /org/students/{id}/attendance",
       "field": "lessons[].movedFrom",
       "schema": "MovedFrom (only on a moved lesson)"
+    },
+    {
+      "audience": "manager (R3 #6: ok=false because of the origin lesson)",
+      "endpoint": "GET /org/groups/{group_id}/lesson-move-check",
+      "field": "code",
+      "schema": "string|null"
+    },
+    {
+      "audience": "manager (R3 #6: the text POST lesson-move would answer)",
+      "endpoint": "GET /org/groups/{group_id}/lesson-move-check",
+      "field": "message",
+      "schema": "string|null"
     }
   ]
 }

@@ -4,5 +4,7 @@
   "teacherName": "Иванов И.",
   "teacherConflicts": [],
   "groupConflicts": [],
-  "warnings": []
+  "warnings": [],
+  "code": null,
+  "message": null
 }

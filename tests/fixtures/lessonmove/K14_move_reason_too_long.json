@@ -1,0 +1,9 @@
+{
+  "status": 422,
+  "body": {
+    "detail": {
+      "code": "REASON_TOO_LONG",
+      "message": "Причина не длиннее 500 символов"
+    }
+  }
+}

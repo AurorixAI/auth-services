@@ -1,6 +1,6 @@
 {
-  "K01_move_check_busy.json": "MoveCheckOut",
-  "K02_move_check_ok.json": "MoveCheckOut",
+  "K01_move_check_busy.json": "LessonMoveCheckOut",
+  "K02_move_check_ok.json": "LessonMoveCheckOut",
   "K03_move_stale_sheet.json": "-",
   "K04_move_teacher_busy.json": "-",
   "K05_exam_binding_none.json": "LessonExamBinding",
@@ -10,5 +10,7 @@
   "K11_exam_binding_blocked_by_attempts.json": "LessonExamBinding",
   "K09_move_ok.json": "DecideOut",
   "K10_move_again_other_slot.json": "-",
-  "K12_occurrence_with_moved_from.json": "ScheduleOccurrenceResponseB"
+  "K12_occurrence_with_moved_from.json": "ScheduleOccurrenceResponseB",
+  "K13_move_check_origin_started.json": "LessonMoveCheckOut",
+  "K14_move_reason_too_long.json": "-"
 }

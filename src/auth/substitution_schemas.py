@@ -287,6 +287,14 @@ class MoveCheckOut(BaseModel):
     warnings: List[MoveWarning] = Field(default_factory=list)
 
 
+class LessonMoveCheckOut(MoveCheckOut):
+    """#124 ``lesson-move-check`` = ``MoveCheckOut`` (the frozen B2 shape of the request check) + the refusal of the ORIGIN lesson (R3 #6): ``ok = false`` with
+    ``code`` / ``message`` when POST ``lesson-move`` would refuse the lesson itself (started, cancelled, archived group, already decided, no teacher); both null otherwise."""
+
+    code: Optional[str] = None
+    message: Optional[str] = None
+
+
 class DecideRequest(BaseModel):
     """One body for the four decisions; the service checks the fields of the chosen decision (422 with a code)."""
 
@@ -313,7 +321,7 @@ class LessonMoveRequest(BaseModel):
     endTime: Optional[str] = None
     room: Optional[str] = None
     format: Optional[Literal["offline", "online"]] = None
-    reason: Optional[str] = Field(None, max_length=500)
+    reason: Optional[str] = None                          # 3..500 after trim: the service answers REASON_REQUIRED / REASON_TOO_LONG (M10), not a schema error
     expectedStartTime: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
     expectedEndTime: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
 

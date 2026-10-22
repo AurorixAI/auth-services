@@ -15,7 +15,7 @@ def test_fixtures_validate_and_error_bodies_carry_a_known_code():
 
     index = json.loads((FIXTURES / "index.json").read_text(encoding="utf-8"))
     assert {p.name for p in FIXTURES.glob("K*.json")} == set(index) and len(index) >= 10
-    known = {**R.ERROR_CATALOGUE, **R.DIRECT_MOVE_ERRORS, "TEACHER_BUSY": (409, "")}
+    known = {**R.ERROR_CATALOGUE, **R.DIRECT_MOVE_ERRORS, "TEACHER_BUSY": (409, ""), "REASON_TOO_LONG": (422, "")}
     for name, model in index.items():
         content = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
         if model != "-":
@@ -30,8 +30,8 @@ def test_openapi_subset_is_the_frozen_contract():
     assert r.returncode == 0, "lessonmove_contract.json differs from the API: change the spec first, then regenerate"
     data = json.loads((FIXTURES / "lessonmove_contract.json").read_text(encoding="utf-8"))
     assert set(data["paths"]) == {"/org/groups/{group_id}/lesson-move", "/org/groups/{group_id}/lesson-move-check", "/org/groups/{group_id}/lesson-exam-binding"}
-    assert {"LessonMoveRequest", "DecideOut", "MoveCheckOut", "LessonExamBinding", "MovedFrom"} <= set(data["components"]["schemas"])
-    assert {a["field"] for a in data["x-additive"]} == {"movedFrom", "lessons[].movedFrom"}
+    assert {"LessonMoveRequest", "DecideOut", "LessonMoveCheckOut", "LessonExamBinding", "MovedFrom"} <= set(data["components"]["schemas"])
+    assert {a["field"] for a in data["x-additive"]} == {"movedFrom", "lessons[].movedFrom", "code", "message"}
     codes = {e.get("code") for e in data["paths"]["/org/groups/{group_id}/lesson-move"]["post"]["x-errors"]}
     assert {"LESSON_CHANGED", "LESSON_HAS_NO_TEACHER", "SUBSTITUTION_ALREADY_DECIDED", "TEACHER_BUSY", "GROUP_BUSY"} <= codes
 
@@ -39,3 +39,26 @@ def test_openapi_subset_is_the_frozen_contract():
 def test_the_frozen_b2_contract_does_not_know_the_new_codes():
     text = (ROOT / "tests" / "fixtures" / "logicb2" / "logicb2_contract.json").read_text(encoding="utf-8")
     assert "lesson-move" not in text and "LESSON_CHANGED" not in text
+
+
+def test_the_reason_has_no_schema_length_limit_and_the_check_carries_the_origin_refusal():
+    """R3 #9 / #6: a 501-character reason reaches the service (REASON_TOO_LONG, M10), not a pydantic error; the lesson check = the request check + ``code`` / ``message``."""
+    data = json.loads((FIXTURES / "lessonmove_contract.json").read_text(encoding="utf-8"))
+    schemas = data["components"]["schemas"]
+    assert "maxLength" not in json.dumps(schemas["LessonMoveRequest"]["properties"]["reason"])
+    assert {"code", "message", "ok", "teacherConflicts", "groupConflicts", "warnings"} <= set(schemas["LessonMoveCheckOut"]["properties"])
+    check_op = data["paths"]["/org/groups/{group_id}/lesson-move-check"]["get"]
+    assert [c["code"] for c in check_op["x-ok-false-codes"]] == [
+        "LESSON_ALREADY_STARTED", "LESSON_CANCELLED", "GROUP_ARCHIVED", "SUBSTITUTION_ALREADY_DECIDED", "LESSON_HAS_NO_TEACHER"]
+
+
+def test_reschedule_locks_the_target_teacher_before_reading_his_conflicts():
+    """R3 #5 (code assertion; the behaviour is in test_lesson_move_direct_pg): group -> request -> the teacher's User row FOR UPDATE -> conflicts."""
+    import inspect
+
+    from src.auth.lesson_substitutions import Substitutions
+
+    source = inspect.getsource(Substitutions._reschedule)
+    assert "User.id == target).with_for_update()" in source
+    assert source.index("with_for_update()") < source.index("self.conflicts_for_move(")
+

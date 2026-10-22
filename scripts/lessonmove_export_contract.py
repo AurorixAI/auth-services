@@ -28,6 +28,20 @@ OPERATIONS = [
 ]
 
 
+# R3 #6: lesson-move-check answers 200 + ``ok: false`` + ``code`` / ``message`` when POST lesson-move would refuse the ORIGIN lesson itself (same code, same text, no write)
+ORIGIN_REFUSALS = [
+    ("LESSON_ALREADY_STARTED", "Урок уже начался или прошёл: перенести его нельзя"),
+    ("LESSON_CANCELLED", "Урок отменён"),
+    ("GROUP_ARCHIVED", "Группа в архиве: действие недоступно"),
+    ("SUBSTITUTION_ALREADY_DECIDED", "Запрос уже решён (или «Запрос закрыт: <причина>» когда открытый запрос закрыт)"),
+    ("LESSON_HAS_NO_TEACHER", "У урока нет действующего преподавателя: назначьте его и повторите"),
+]
+R3_ADDITIVE = [
+    {"endpoint": "GET /org/groups/{group_id}/lesson-move-check", "field": "code", "schema": "string|null", "audience": "manager (R3 #6: ok=false because of the origin lesson)"},
+    {"endpoint": "GET /org/groups/{group_id}/lesson-move-check", "field": "message", "schema": "string|null", "audience": "manager (R3 #6: the text POST lesson-move would answer)"},
+]
+
+
 def _errors():
     from src.auth import substitution_rules as R
 
@@ -76,6 +90,8 @@ def contract() -> dict:
     for method, path in OPERATIONS:
         op = {k: v for k, v in full["paths"][PREFIX + path][method].items() if k != "operationId"}
         op["x-errors"] = errors[(method, path)]
+        if path.endswith("lesson-move-check"):
+            op["x-ok-false-codes"] = [{"code": code, "message": message} for code, message in ORIGIN_REFUSALS]
         paths.setdefault(path, {})[method] = op
     needed: set = set()
     _refs(paths, needed)
@@ -91,8 +107,8 @@ def contract() -> dict:
 
     schemas["MovedFrom"] = MovedFrom.model_json_schema()          # the endpoints type ``movedFrom`` as a free object: the shape is documented here
     needed.add("MovedFrom")
-    return {"openapi": full["openapi"], "info": {"title": "ALGO auth - lesson sheet moves (#124)", "version": "lessonmove-2"}, "servers": [{"url": PREFIX}],
-            "paths": paths, "components": {"schemas": {name: schemas[name] for name in sorted(needed)}}, "x-additive": MOVED_FROM_ADDITIVE}
+    return {"openapi": full["openapi"], "info": {"title": "ALGO auth - lesson sheet moves (#124)", "version": "lessonmove-3"}, "servers": [{"url": PREFIX}],
+            "paths": paths, "components": {"schemas": {name: schemas[name] for name in sorted(needed)}}, "x-additive": [*MOVED_FROM_ADDITIVE, *R3_ADDITIVE]}
 
 
 def main() -> int:

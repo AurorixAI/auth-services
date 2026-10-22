@@ -58,6 +58,7 @@ STATUS_OF = {"substitute": "substituted", "reschedule": "rescheduled", "cancel":
 LIST_DEFAULT_DAYS = 30
 MINE_DAYS = 60
 ASSIGNED_AHEAD_DAYS = 30
+MOVE_STARTED_TEXT = "Урок уже начался или прошёл: перенести его нельзя"          # the one text of every «the lesson is no longer ahead» refusal of a move
 
 
 def _next_event_time(db, request_id: Any, now: datetime) -> datetime:
@@ -913,7 +914,7 @@ class Substitutions(SubstitutionsBase):
         reason = self._reason(body, 3, 500)
         now, today = self.now(), bc.business_today()
         if r.starts_at <= now:
-            raise R.err(409, "LESSON_ALREADY_STARTED", "Урок уже начался или прошёл: перенести его нельзя")
+            raise R.err(409, "LESSON_ALREADY_STARTED", MOVE_STARTED_TEXT)
         new_date, start, end, start_m, end_m = self._new_slot(group, r, body)
         new_start = bc.lesson_instant_utc(new_date, start_m)
         if new_start <= now:
@@ -922,6 +923,11 @@ class Substitutions(SubstitutionsBase):
             raise R.err(422, "MOVE_TOO_FAR")
         if new_date.isoformat() == r.lesson_date and start == r.start_time and end == r.end_time:
             raise R.err(422, "MOVE_SAME_SLOT")
+        target = TeacherBook(self.db).default_teacher(group, new_date.isoformat(), end_m)
+        if target is not None:
+            # R3 #5: the teacher of the NEW slot is locked (the m1 pattern of PUT lesson-teacher) before his conflicts are read, so two moves of two groups of the same
+            # teacher into one slot serialise: the second one sees the first one's lesson.  Lock order: group -> request -> User (SPEC B2, no cycle with the substitute path).
+            self.db.query(User.id).filter(User.id == target).with_for_update().first()
         teacher_id, t_conf, g_conf = self.conflicts_for_move(group, r, new_date, start_m, end_m, start, end)
         if t_conf:
             user = self.db.query(User).filter(User.id == teacher_id).first()
@@ -971,8 +977,54 @@ class Substitutions(SubstitutionsBase):
         group = self.db.query(Group).filter(Group.id == gid, Group.org_id == org_id).first() if gid else None
         if group is None:
             raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
+        refusal = self._origin_refusal(group, lesson_id, day)
+        if refusal is not None:
+            if refusal.status_code == 404:
+                raise refusal
+            return {"ok": False, "teacherId": None, "teacherName": None, "teacherConflicts": [], "groupConflicts": [], "warnings": [], "code": refusal.code,
+                    "message": refusal.message}
         ref, _ = self._lesson_ref(group, lesson_id, day)
         return self._move_check(group, ref, new_date, start, end)
+
+    def _origin_refusal(self, group: Group, lesson_id: str, day: date) -> Optional[OpsError]:
+        """R3 #6: the refusal POST ``lesson-move`` would give for the ORIGIN lesson (same checks, same order, same codes and texts), without writing or locking anything:
+        a pending request that would be closed / a lesson that has started -> the decided / started refusals; a decided move; an archived group; no such lesson (404);
+        a cancelled lesson; a journal row (the lesson has started); the planned start passed; a lesson without a teacher.  ``None`` = the lesson can be moved."""
+        iso = day.isoformat()
+        now = self.now()
+        reqs = (self.db.query(Req).filter(Req.group_id == group.id, Req.lesson_id == lesson_id, Req.lesson_date == iso)
+                .order_by(Req.created_at.desc(), Req.id).all())
+        pending = next((r for r in reqs if r.status == PENDING), None)
+        if pending is not None:             # the decision path: ``decide`` revalidates, then ``_reschedule`` refuses a lesson that has started
+            reason, occ = self.closure_reason(pending, group)
+            if reason and reason != "LESSON_OUTSIDE_WINDOW":
+                text = CLOSED_REASON_TEXT.get(reason)
+                return R.err(409, "SUBSTITUTION_ALREADY_DECIDED", f"Запрос закрыт: {text}" if text else None)
+            start = (occ or {}).get("startTime") or pending.start_time
+            if bc.lesson_instant_utc(day, hhmm_to_minutes(start)) <= now:
+                return R.err(409, "LESSON_ALREADY_STARTED", MOVE_STARTED_TEXT)
+            return None
+        done = next((r for r in reqs if r.status == "rescheduled"), None)
+        if done is not None:
+            return self.already_decided(done)
+        if group.status != "active":
+            return conflict("GROUP_ARCHIVED", "Группа в архиве: действие недоступно")
+        try:
+            ref, occ = self._lesson_ref(group, lesson_id, day)
+        except OpsError as exc:
+            return exc
+        row = self._row(ref)
+        if row is not None:
+            if row.status == "cancelled":
+                return conflict("LESSON_CANCELLED", "Урок отменён")
+            return R.err(409, "LESSON_ALREADY_STARTED", MOVE_STARTED_TEXT)
+        if ref.starts_at <= now:
+            return R.err(409, "LESSON_ALREADY_STARTED", MOVE_STARTED_TEXT)
+        teacher = TeacherBook(self.db).resolve(group, lesson_id, iso, hhmm_to_minutes(occ["endTime"])).teacher_id
+        reason, _ = self.closure_reason(SimpleNamespace(**{**ref.__dict__, "requester_id": teacher}), group)
+        if teacher is None or reason in ("TEACHER_REMOVED", "GROUP_TEACHER_CHANGED"):
+            return R.err(422, "LESSON_HAS_NO_TEACHER")
+        return None
 
     def lesson_exam_binding(self, org_id: Any, group_id: Any, lesson_id: str, day: date) -> Dict[str, Any]:
         """The precheck of «Отменить урок» for the lesson sheet: ``state`` / ``title`` as ``examBinding`` of the request detail; ``canCancel`` / ``message`` from the SAME
@@ -1014,7 +1066,10 @@ class Substitutions(SubstitutionsBase):
                     .order_by(Req.created_at.desc(), Req.id).all())
             pending = next((r for r in reqs if r.status == PENDING), None)
             if pending is not None:
-                self._check_expected(pending.start_time, pending.end_time, body)
+                # R3 #1: the sheet's expected time is judged against the CURRENT lesson of the schedule (the request keeps the old time until it is re-synced);
+                # a lesson that no longer exists is closed by ``decide`` itself (its revalidation), so the request's own times are only the fallback
+                now_occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == body.lessonId), None)
+                self._check_expected(now_occ["startTime"] if now_occ else pending.start_time, now_occ["endTime"] if now_occ else pending.end_time, body)
                 return self.decide(org_id, actor, actor_role, pending.id, one)
             done = next((r for r in reqs if r.status == "rescheduled"), None)
             if done is not None:
@@ -1031,10 +1086,10 @@ class Substitutions(SubstitutionsBase):
             if row is not None:
                 if row.status == "cancelled":
                     raise conflict("LESSON_CANCELLED", "Урок отменён")
-                raise R.err(409, "LESSON_ALREADY_STARTED", "Урок уже начался или прошёл: перенести его нельзя")
+                raise R.err(409, "LESSON_ALREADY_STARTED", MOVE_STARTED_TEXT)
             now = self.now()
             if ref.starts_at <= now:
-                raise R.err(409, "LESSON_ALREADY_STARTED", "Урок уже начался или прошёл: перенести его нельзя")
+                raise R.err(409, "LESSON_ALREADY_STARTED", MOVE_STARTED_TEXT)
             self._check_expected(ref.start_time, ref.end_time, body)
             teacher = TeacherBook(self.db).resolve(group, body.lessonId, iso, hhmm_to_minutes(occ["endTime"])).teacher_id
             reason, _ = self.closure_reason(SimpleNamespace(**{**ref.__dict__, "requester_id": teacher}), group)

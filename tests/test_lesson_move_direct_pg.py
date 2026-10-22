@@ -168,10 +168,12 @@ def test_m10_reason_and_fields(w, sync):
     """[M10] Reason < 3 / > 500; no new date or time."""
     assert move(w, reason="ab").json()["detail"]["code"] == "REASON_REQUIRED"
     assert move(w, reason=" ").json()["detail"]["code"] == "REASON_REQUIRED"
-    assert move(w, reason="x" * 501).status_code == 422
+    too_long = move(w, reason="x" * 501)                                      # R3 #9: no schema max_length: the service's own code
+    assert too_long.status_code == 422 and too_long.json()["detail"]["code"] == "REASON_TOO_LONG"
     assert move(w, newDate=None).json()["detail"]["code"] == "MOVE_FIELDS_REQUIRED"
     assert move(w, startTime=None).json()["detail"]["code"] == "MOVE_FIELDS_REQUIRED"
     nothing_written(w)
+    assert move(w, reason="x" * 500).status_code == 200                       # 500 characters are allowed
 
 
 def test_m11_archived_group_unknown_lesson_and_cancelled_lesson(w, sync):
@@ -236,7 +238,8 @@ def test_move_check_by_lesson_equals_the_check_by_request(w, sync):
         by_lesson = check(w, **params)
         by_request = client(w, "admin").get(f"{API}/org/substitutions/{item['id']}/move-check", params={"newDate": params.get("newDate", "2026-10-29"),
                                                                                                       "startTime": params.get("startTime", "16:00"), "endTime": params.get("endTime", "17:30")})
-        assert by_lesson.status_code == 200 and by_lesson.json() == by_request.json(), params
+        extra = {"code": None, "message": None}                    # the lesson check adds the refusal of the origin lesson (null here)
+        assert by_lesson.status_code == 200 and by_lesson.json() == {**by_request.json(), **extra}, params
     assert check(w, newDate="2026-10-27", startTime="10:00", endTime="11:30").json()["ok"] is False
     assert check(w).json()["ok"] is True
     assert len(requests_of(w)) == 1                       # the check writes nothing
@@ -303,3 +306,161 @@ def test_m2b_the_expected_slot_also_guards_the_pending_request_path(w, sync):
     r = move(w, expectedStartTime="11:00", expectedEndTime="12:00")
     assert r.status_code == 409 and r.json()["detail"]["code"] == "LESSON_CHANGED"
     assert [x.status for x in requests_of(w)] == ["pending"] and item
+
+
+# ------------------------------------------------------------------------------------------------------ R3 fixes
+def edit_schedule(w, group, lesson_id, start, end):
+    from sqlalchemy.orm.attributes import flag_modified
+
+    g = w.db.get(type(group), group.id)
+    slots = [dict(x) for x in g.schedule]
+    for x in slots:
+        if x["id"] == lesson_id:
+            x["startTime"], x["endTime"] = start, end
+    g.schedule = slots
+    flag_modified(g, "schedule")
+    w.db.commit()
+
+
+def test_r3_1_pending_request_expected_time_is_judged_against_the_current_schedule(w, sync):
+    """[R3 #1] A pending request keeps the OLD time until it is re-synced: a schedule edit moved the lesson 10:00 -> 11:00 after the request; the sheet (loaded after
+    the edit) expects 11:00 and must succeed; the stale 10:00 is refused with the CURRENT time."""
+    item = one(w, "A", "L1", "2026-10-26")
+    edit_schedule(w, w.G1, "lesson-l1", "11:00", "12:30")
+    kw = dict(key="L1", day="2026-10-26", newDate="2026-10-29", startTime="16:00", endTime="17:30")
+    stale = move(w, expectedStartTime="10:00", expectedEndTime="11:30", **kw)
+    assert stale.status_code == 409 and stale.json()["detail"]["code"] == "LESSON_CHANGED"
+    assert stale.json()["detail"]["current"] == {"startTime": "11:00", "endTime": "12:30"}
+    assert [x.status for x in requests_of(w)] == ["pending"]                       # nothing was decided
+    ok = move(w, expectedStartTime="11:00", expectedEndTime="12:30", **kw)
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["item"]["id"] == item["id"] and ok.json()["item"]["status"] == "rescheduled"
+
+
+def test_r3_5_two_groups_of_one_teacher_into_the_same_slot_sequentially(w, sync):
+    """[R3 #5] G1 (9-А) and G2 (7-Б) are both taught by A: after the first lesson is moved into Thu 29.10 16:00-17:30 the second one cannot go there."""
+    first = move(w, key="L2", day="2026-10-28", newDate="2026-10-29", startTime="16:00", endTime="17:30")
+    assert first.status_code == 200, first.text
+    second = move(w, key="L3", day="2026-10-27", newDate="2026-10-29", startTime="16:30", endTime="17:30")
+    assert second.status_code == 409 and second.json()["detail"]["code"] == "TEACHER_BUSY"
+    assert row_of(w, w.G2, "lesson-l3", "2026-10-27") is None and w.db.query(GroupScheduleOneOffLesson).filter_by(group_id=w.G2.id).count() == 0
+
+
+def test_r3_5_two_groups_of_one_teacher_into_the_same_slot_at_once(w, sync):
+    """[R3 #5] The same race in two transactions: exactly one wins, the loser gets TEACHER_BUSY (the target teacher's row is locked before his conflicts are read)."""
+    from src.auth.substitution_schemas import LessonMoveRequest
+
+    org, admin, g1, g2 = str(w.org.id), str(w.admin.id), str(w.G1.id), str(w.G2.id)
+
+    def go(group, lesson, day):
+        return lambda svc: Substitutions(svc).move_lesson(org, admin, "admin", group, LessonMoveRequest(
+            lessonId=lesson, lessonDate=day, newDate=date(2026, 10, 29), startTime="16:00", endTime="17:30", reason="Перенос"))
+
+    out = run_parallel(w, go(g1, "lesson-l2", date(2026, 10, 28)), go(g2, "lesson-l3", date(2026, 10, 27)))
+    assert sorted(code_of(e) or "ok" for _r, e in out) == ["TEACHER_BUSY", "ok"], out
+    w.db.expire_all()
+    assert w.db.query(GroupScheduleOneOffLesson).filter(GroupScheduleOneOffLesson.group_id.in_([w.G1.id, w.G2.id]), GroupScheduleOneOffLesson.lesson_date == "2026-10-29").count() == 1
+
+
+def test_r3_5_the_move_waits_for_the_row_lock_of_the_target_teacher(w, sync):
+    """[R3 #5] A transaction that holds the target teacher's row (a removal, another assignment) makes the move wait, as PUT lesson-teacher does (m1)."""
+    import threading
+    import time
+
+    from sqlalchemy import text
+
+    group_id, teacher_id = str(w.G1.id), str(w.A.id)
+    body = {"lessonId": "lesson-l2", "lessonDate": "2026-10-28", **BODY}
+    http = client(w, "admin")
+    holder = w.db.get_bind().connect()
+    trans = holder.begin()
+    holder.execute(text("SELECT id FROM users WHERE id = :i FOR UPDATE"), {"i": teacher_id})
+    done = {}
+
+    def call():
+        done["start"] = time.monotonic()
+        done["r"] = http.post(f"{API}/org/groups/{group_id}/lesson-move", json=body)
+        done["end"] = time.monotonic()
+
+    thread = threading.Thread(target=call)
+    thread.start()
+    time.sleep(1.0)
+    waiting = "r" not in done
+    trans.commit()
+    holder.close()
+    thread.join(timeout=20)
+    assert waiting, "the move did not wait for the lock of the target teacher"
+    assert done["r"].status_code == 200 and done["end"] - done["start"] >= 0.9
+
+
+def _same_refusal(w, key, day, **q):
+    """The check of the sheet and POST lesson-move say the same: code and message (the check as ``ok: false``, POST as the HTTP error)."""
+    post = move(w, key=key, day=day, **{k: v for k, v in q.items() if k in BODY})
+    got = check(w, key=key, day=day, **q)
+    assert got.status_code == 200, got.text
+    out = got.json()
+    assert out["ok"] is False and out["teacherConflicts"] == [] and out["groupConflicts"] == [] and out["warnings"] == [], out
+    assert (out["code"], out["message"]) == (post.json()["detail"]["code"], post.json()["detail"]["message"]), (out, post.json())
+    return out
+
+
+def test_r3_6_the_check_refuses_an_origin_lesson_that_cannot_be_moved(w, clock, sync):
+    """[R3 #6] Started today / a journal row / cancelled / archived group / already moved / no teacher: lesson-move-check answers early with the code and text of POST lesson-move;
+    an unknown lesson or group stays 404; a movable lesson has code = message = null."""
+    ok = check(w).json()
+    assert ok["ok"] is True and ok["code"] is None and ok["message"] is None
+    slot = dict(newDate="2026-10-27", startTime="10:00", endTime="11:30")
+    # a lesson that is not found stays 404 (as on POST)
+    r = check(w, lessonId="nope")
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "LESSON_NOT_FOUND"
+    # the planned start has passed (today)
+    clock.set("2026-10-26 10:30")
+    out = _same_refusal(w, "L1", "2026-10-26", **slot)
+    assert out["code"] == "LESSON_ALREADY_STARTED" and out["message"] == "Урок уже начался или прошёл: перенести его нельзя" and out["teacherId"] is None
+    clock.set("2026-10-21 14:00")
+    # a journal row: started
+    w.db.add(GroupAttendance(org_id=w.org.id, group_id=w.G1.id, teacher_id=w.A.id, lesson_date="2026-10-28", lesson_id="lesson-l2", status="in_progress",
+                             records={}, roster_snapshot=[], marked_by=w.A.id, version=1))
+    w.db.commit()
+    assert _same_refusal(w, "L2", "2026-10-28")["code"] == "LESSON_ALREADY_STARTED"
+    # a cancelled lesson
+    w.db.query(GroupAttendance).filter_by(group_id=w.G1.id, lesson_id="lesson-l2").update({"status": "cancelled", "cancellation_reason": "Праздник"})
+    w.db.commit()
+    out = _same_refusal(w, "L2", "2026-10-28")
+    assert (out["code"], out["message"]) == ("LESSON_CANCELLED", "Урок отменён")
+    nothing_written(w, "L1", "2026-10-26")
+
+
+def test_r3_6_archived_group_decided_move_and_no_teacher(w, sync):
+    """[R3 #6] GROUP_ARCHIVED / SUBSTITUTION_ALREADY_DECIDED (a lesson that was moved) / LESSON_HAS_NO_TEACHER, the same as POST; a pending request closed meanwhile too."""
+    w.G1.teacher_id = None
+    w.db.commit()
+    out = _same_refusal(w, "L2", "2026-10-28")
+    assert out["code"] == "LESSON_HAS_NO_TEACHER"
+    w.G1.teacher_id = w.A.id
+    w.G1.status = "archived"
+    w.db.commit()
+    assert _same_refusal(w, "L2", "2026-10-28")["code"] == "GROUP_ARCHIVED"
+    w.G1.status = "active"
+    w.db.commit()
+    assert move(w).status_code == 200                                                  # the lesson is moved ...
+    again = check(w, newDate="2026-10-30").json()                                      # ... the sheet of the same lesson says so
+    other = move(w, newDate="2026-10-30")
+    assert again["ok"] is False and again["code"] == other.json()["detail"]["code"] == "SUBSTITUTION_ALREADY_DECIDED"
+    assert again["message"] == other.json()["detail"]["message"] == "Запрос уже решён"
+
+
+def test_r3_6_a_pending_request_that_was_closed_or_started(w, clock, sync):
+    """[R3 #6] With a pending request the check follows the decision path: the request that would be closed -> SUBSTITUTION_ALREADY_DECIDED with the closing reason;
+    the lesson that has started -> LESSON_ALREADY_STARTED.  The check writes nothing (the request stays pending)."""
+    one(w, "A", "L1", "2026-10-26")
+    clock.set("2026-10-26 10:30")
+    started = check(w, key="L1", day="2026-10-26", newDate="2026-10-27", startTime="10:00", endTime="11:30").json()
+    assert started["ok"] is False and started["code"] == "LESSON_ALREADY_STARTED" and started["message"] == "Урок уже начался или прошёл: перенести его нельзя"
+    clock.set("2026-10-21 14:00")
+    w.G1.status = "archived"
+    w.db.commit()
+    closed = check(w, key="L1", day="2026-10-26", newDate="2026-10-27", startTime="10:00", endTime="11:30").json()
+    assert closed["ok"] is False and closed["code"] == "SUBSTITUTION_ALREADY_DECIDED" and closed["message"] == "Запрос закрыт: Группа закрыта"
+    assert [x.status for x in requests_of(w)] == ["pending"]
+

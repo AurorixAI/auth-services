@@ -28,6 +28,7 @@ from .substitution_schemas import (
     DecideRequest,
     LessonExamBinding,
     LessonAccessOut,
+    LessonMoveCheckOut,
     LessonMoveRequest,
     MineOut,
     MoveCheckOut,
@@ -183,7 +184,7 @@ def move_lesson_directly(group_id: str, request: LessonMoveRequest, user: dict =
     return _subs(db).move_lesson(user["org_id"], user["user_id"], user.get("org_role") or "admin", group_id, request)
 
 
-@router.get("/org/groups/{group_id}/lesson-move-check", response_model=MoveCheckOut)
+@router.get("/org/groups/{group_id}/lesson-move-check", response_model=LessonMoveCheckOut)
 def lesson_move_check(
     group_id: str,
     lessonId: str = Query(..., min_length=1, max_length=100),
