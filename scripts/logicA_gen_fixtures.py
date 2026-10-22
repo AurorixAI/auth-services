@@ -550,7 +550,7 @@ def tabs_and_statement(store):
         as_of="2026-10-21", due=2, ends_today=0, expired=2, expiring=1, none=0, active=5, free=1, tracked_total=9, period_mode="calendar",
         lessons_per_payment=12, students_due=2, students_expired=2, debt_total=1_063_000, advance_total=200_000, memberships_with_debt=3,
         students_with_debt=3, accounting_start_date=AS, paused=1, buckets=PaymentsBuckets(debt=3, expiring=1, active=4, paused=1),
-        price_missing=1, students_with_advance=1, debtors=3), store)
+        price_missing=1, students_with_advance=1, debtors=3, students_paused=1), store)
     seg_open = Segment(id="seg:opening", kind="opening", period_from=D(2026, 9, 30), period_to=D(2026, 9, 30), billable_days=0, days_text=None,
                        price=PriceOut(amount=None, source="none"), charge=250_000, basis="opening", paid=0, written_off=0, unpaid=250_000,
                        remaining=250_000, covered_days=0, covered_through=None, partial_credit=0, state="open", bucket="past_debt")

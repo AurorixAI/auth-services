@@ -26,5 +26,6 @@
   },
   "price_missing": 1,
   "students_with_advance": 1,
-  "debtors": 3
+  "debtors": 3,
+  "students_paused": 1
 }

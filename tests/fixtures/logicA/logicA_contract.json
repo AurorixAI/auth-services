@@ -4597,6 +4597,11 @@
             "title": "Students Expired",
             "type": "integer"
           },
+          "students_paused": {
+            "default": 0,
+            "title": "Students Paused",
+            "type": "integer"
+          },
           "students_with_advance": {
             "default": 0,
             "title": "Students With Advance",

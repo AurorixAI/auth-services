@@ -356,6 +356,7 @@ class PaymentsSummary(BaseModel):
     price_missing: int = 0
     students_with_advance: int = 0
     debtors: int = 0
+    students_paused: int = 0  # DISTINCT students with a membership on pause today (== the students of the «На паузе» tab); ``buckets.paused`` counts memberships
 
 
 class PaymentStatusPage(BaseModel):

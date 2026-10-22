@@ -730,6 +730,7 @@ class PaymentService:
         debt_total = advance_total = with_debt = with_advance = 0
         students_debt: set = set()
         students_advance: set = set()
+        students_paused: set = set()
         buckets = {pv.BUCKET_DEBT: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0}
         price_missing = 0
         for e in entries:
@@ -745,6 +746,8 @@ class PaymentService:
             bucket = pv.entry_bucket(e)
             if bucket:
                 buckets[bucket] += 1
+                if bucket == pv.BUCKET_PAUSED:
+                    students_paused.add(e.student.id)
             if e.membership.id in tracked and e.price.amount is None and l.status.status != ps.FREE and bucket != pv.BUCKET_DEBT:
                 price_missing += 1
             if e.membership.id not in tracked:
@@ -777,7 +780,7 @@ class PaymentService:
             accounting_start_date=loader.settings.accounting_start,
             paused=counts[ps.PAUSED],
             buckets=PaymentsBuckets(**buckets), price_missing=price_missing, students_with_advance=len(students_advance),
-            debtors=len(students_debt),
+            debtors=len(students_debt), students_paused=len(students_paused),
         )
         if SUMMARY_TTL_SECONDS > 0:
             _SUMMARY_CACHE[str(org_id)] = (time.monotonic() + SUMMARY_TTL_SECONDS, result)
