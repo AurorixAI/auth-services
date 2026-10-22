@@ -29,7 +29,7 @@ def scenario():
     assert DB_URL and DB_URL.endswith("/a2_auth"), "Use only the disposable a2_auth database"
     engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
     Organization.metadata.create_all(engine)
-    factory = sessionmaker(engine)
+    factory = sessionmaker(engine, autoflush=False)
     with factory() as db:
         owner = User(email=f"{uuid4()}@a2.invalid", password_hash="synthetic-only", first_name="A2", last_name="Owner", role="owner")
         org = Organization(name="A2 disposable org", status="active")

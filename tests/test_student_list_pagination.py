@@ -27,7 +27,7 @@ def world():
     assert DB_URL and DB_URL.endswith("/a2_auth"), "Use only the disposable a2_auth database"
     engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
     Organization.metadata.create_all(engine)
-    with sessionmaker(engine)() as db:
+    with sessionmaker(engine, autoflush=False)() as db:
         org = Organization(name="Org", status="active")
         other = Organization(name="Other", status="active")
         db.add_all([org, other]); db.flush()

@@ -310,7 +310,7 @@ def run_parallel(w, *calls):
     from sqlalchemy.orm import sessionmaker
 
     engine = w.db.get_bind()
-    Session = sessionmaker(engine)
+    Session = sessionmaker(engine, autoflush=False)
     results: List[Any] = [None] * len(calls)
     barrier = threading.Barrier(len(calls))
 

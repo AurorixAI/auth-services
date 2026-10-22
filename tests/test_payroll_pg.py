@@ -1239,7 +1239,7 @@ def threaded_client(world):
     from src.auth.payroll_router import router
     from src.core.database import get_db
 
-    factory = sessionmaker(world.db.get_bind())
+    factory = sessionmaker(world.db.get_bind(), autoflush=False)
 
     def own_session():
         db = factory()

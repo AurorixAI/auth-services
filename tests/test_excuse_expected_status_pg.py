@@ -168,7 +168,7 @@ def test_a_decision_waiting_for_the_row_lock_sees_what_the_other_administrator_c
     excused_lesson(world, offset_days=3)
     item_id = str(excuse_of(world).id)
     engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
-    factory = sessionmaker(engine)
+    factory = sessionmaker(engine, autoflush=False)
 
     def own_session():                                  # the request gets a session of its own, like in production
         session = factory()

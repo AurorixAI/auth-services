@@ -108,7 +108,7 @@ def test_removal_waits_for_a_substitute_who_starts_his_lesson(w, clock):
         "lessonDate": "2026-10-26", "lessonId": "lesson-l1", "teacherId": str(w.D.id), "reason": "Болезнь"}).status_code == 200
     clock.set("2026-10-26 10:00")
     w.db.commit()
-    Session = sessionmaker(w.db.get_bind())
+    Session = sessionmaker(w.db.get_bind(), autoflush=False)
     s2 = Session()
     s2.execute(__import__("sqlalchemy").text("SELECT id FROM groups WHERE id = :g FOR UPDATE"), {"g": w.G1.id})
     outcome = {}

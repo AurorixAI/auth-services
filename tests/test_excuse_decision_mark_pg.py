@@ -252,7 +252,7 @@ def test_a_decision_keeps_its_row_lock_while_the_deadline_is_worked_out(world, m
     def spying(self, pending, context, *args):
         engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
         try:
-            with sessionmaker(engine)() as other:
+            with sessionmaker(engine, autoflush=False)() as other:
                 other.execute(text("SET LOCAL lock_timeout = '300ms'"))
                 try:
                     other.execute(text("SELECT id FROM attendance_excuses WHERE id = :i FOR UPDATE"), {"i": excuse_id})

@@ -39,7 +39,7 @@ def factory():
     engine = create_engine(DB_URL, pool_size=10, connect_args=utc_connect_args(DB_URL))
     Organization.metadata.create_all(engine)
     made: list = []  # org ids to clean up
-    yield sessionmaker(engine), made
+    yield sessionmaker(engine, autoflush=False), made
     with sessionmaker(engine)() as db:
         for org_id in made:
             db.query(Student).filter(Student.org_id == org_id).delete()

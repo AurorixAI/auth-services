@@ -303,7 +303,7 @@ def test_staff_listings_show_cancelled_and_the_counters_do_not_count_it(pack):
 
 
 def _own_session(w):
-    return sessionmaker(w.db.get_bind())()
+    return sessionmaker(w.db.get_bind(), autoflush=False)()
 
 
 def test_an_invite_that_starts_during_the_archiving_is_left_in_progress(pack):
