@@ -65,6 +65,7 @@ class OpeningMembershipRow(PayModel):
     has_money_records: bool = False
     missing: bool = False
     floor: date_type
+    needs_review: bool = False  # the stored opening is outside the range after the accounting start moved («оплачено до» before L, a debt after L)
     only_debt: bool = False  # a student who left before the accounting start: only «долг на начало» (paid_until -> OPENING_RANGE)
     editable: bool = True
     reason_not_editable: Optional[ReasonNotEditable] = None
@@ -90,6 +91,7 @@ class OpeningTotals(PayModel):
     missing: int = 0
     left_available: int = 0
     shown: int = 0
+    needs_review: int = 0  # openings that the move of the accounting start made inconsistent (never changed silently)
 
 
 class OpeningsSummary(PayModel):
@@ -125,10 +127,11 @@ class OpeningBatchItem(BaseModel):
 
     * ``paid_until`` / ``debt_amount`` + ``debt_on`` (a debt without a date gets ``max(first_day, accounting_start) - 1``);
     * ``lessons_left`` (a lessons-mode centre only, instead of ``paid_until``): the server turns «осталось K уроков» into «оплачено до» = the date of
-      the K-th lesson of the group from ``max(first_day, accounting_start)`` (K = 0: nothing is left = no opening);
+      the K-th lesson of the group from ``max(first_day, accounting_start)`` (K = 0: nothing is left = «оплачено до» the day before the start, a reviewed row);
     * ``clear`` = true: remove the live opening;
     * nothing at all = error ``EMPTY_ITEM``.
-    ``paid_until`` = the day before the accounting start means «nothing owed at the start» (no row; a live one is removed)."""
+    ``paid_until`` = the day before the accounting start means «nothing owed at the start»: it is stored as a REAL opening (a reviewed row, so the
+    row leaves «не заполнено»); the ledger gives the same debt and charges with or without it.  ``lessons_left`` = 0 is the same."""
 
     membership_id: str
     version: str = Field(..., max_length=64)
@@ -169,7 +172,7 @@ class OpeningLessons(PayModel):
 
 
 class OpeningWarning(PayModel):
-    """Soft: ``PAID_UNTIL_AT_START`` (normalised to no opening), ``PAID_UNTIL_FAR`` (> today + 120), ``DEBT_LARGE`` (> 12 prices), ``NO_PRICE``,
+    """Soft: ``PAID_UNTIL_AT_START`` (a reviewed «nothing owed» row), ``PAID_UNTIL_FAR`` (> today + 120), ``DEBT_LARGE`` (> 12 prices), ``NO_PRICE``,
     ``HAS_MONEY`` (the row has money records: a reason is needed), ``CLEARS_EXISTING`` (removes a live opening)."""
 
     code: str
@@ -180,7 +183,7 @@ class OpeningItemResult(PayModel):
     """The verdict of one item.  Error codes: ``NOT_FOUND`` ``STUDENT_ARCHIVED`` ``MEMBERSHIP_CLOSED`` ``DUPLICATE_ITEM`` ``STALE_VERSION`` ``EMPTY_ITEM``
     ``CLEAR_WITH_VALUES`` ``OPENING_RANGE`` ``AMOUNT_RANGE`` ``OPENING_NOT_ALLOWED`` (a transfer) ``FREE_MEMBERSHIP`` ``VOID_BREAKS_REFUND``
     ``LESSONS_NOT_APPLICABLE`` ``LESSONS_RANGE`` ``LESSONS_AND_PAID_UNTIL``.  ``target`` = what will be stored (after the defaults, the lessons
-    conversion and the normalisation); null for an error."""
+    conversion); null for an error."""
 
     membership_id: str
     student_name: Optional[str] = None

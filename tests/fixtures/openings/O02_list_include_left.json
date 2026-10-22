@@ -18,6 +18,7 @@
           "membership_id": "00000000-0000-4000-8000-000000000110",
           "missing": false,
           "mode": "calendar",
+          "needs_review": false,
           "only_debt": true,
           "opening": {
             "debt_amount": 300000,
@@ -59,6 +60,7 @@
     "left_available": 1,
     "memberships": 9,
     "missing": 6,
+    "needs_review": 0,
     "shown": 1,
     "with_opening": 2
   }

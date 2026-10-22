@@ -1136,6 +1136,7 @@ class AccountingStartImpact(PayModel):
     memberships_with_changed_advance: int = 0
     advance_delta: int = 0
     refundable_delta: int = 0
+    openings_to_review: int = 0  # OPENING-BULK: openings whose «оплачено до» is before the day preceding the new start (kept as they are; review them)
 
 
 class PaymentSettingsChanged(PaymentSettings):

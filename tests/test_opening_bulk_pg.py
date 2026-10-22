@@ -152,7 +152,7 @@ def test_table_shape_totals_and_the_rules_of_a_row(world, fixed_today):
     assert_same_shape(data, fixture("O01_list_pending"))
     assert data["accounting_start"] == "2026-11-01" and data["state"] == "none" and data["period_mode"] == "calendar"
     assert data["paid_until_max"] == (TODAY + timedelta(days=366)).isoformat()
-    assert data["totals"] == {"memberships": 3, "with_opening": 0, "missing": 2, "left_available": 0, "shown": 3}
+    assert data["totals"] == {"memberships": 3, "with_opening": 0, "missing": 2, "left_available": 0, "shown": 3, "needs_review": 0}
     (block,) = data["groups"]
     assert block["name"] == world.group.name and block["total"] == 3 and block["missing"] == 2 and block["teacher_name"]
     by = {r["membership_id"]: r for r in block["memberships"]}
@@ -278,16 +278,16 @@ def test_preview_writes_nothing_and_says_what_will_happen(world, fixed_today):
     pv = preview(world, items)
     assert_same_shape(pv, fixture("O04_preview_ok"))
     assert pv["ok"] and len(pv["digest"]) == 64 and pv["accounting_start"] == "2026-11-01" and pv["needs_reason"] == []
-    assert pv["summary"] == {"items": 3, "changed": 2, "paid_until": 1, "debt": 1, "cleared": 0, "unchanged": 1, "errors": 0, "debt_total_added": 550_000}
+    assert pv["summary"] == {"items": 3, "changed": 3, "paid_until": 2, "debt": 1, "cleared": 0, "unchanged": 0, "errors": 0, "debt_total_added": 550_000}
     by = {r["membership_id"]: r for r in pv["items"]}
     ra, rb, rc = by[str(a.id)], by[str(b.id)], by[str(c.id)]
     assert (ra["status"], ra["kind"], ra["changed"], ra["target"]["paid_until"]) == ("ok", "paid_until", True, "2026-11-30")
     assert ra["before"]["debt"] == 0 and ra["after"]["paid_until"] == "2026-11-30" and ra["after"]["opening"]["paid_until"] == "2026-11-30"
     assert (rb["kind"], rb["after"]["debt"], rb["after"]["opening"]["debt_amount"]) == ("debt", 550_000, 550_000)
-    assert (rc["status"], rc["kind"], rc["changed"], rc["target"]) == ("noop", "unchanged", False, None)         # «оплачено до 31.10» = nothing owed
+    assert (rc["status"], rc["kind"], rc["changed"], rc["target"]["paid_until"]) == ("ok", "paid_until", True, "2026-10-31")   # «оплачено до 31.10» = reviewed, nothing owed
     assert [w["code"] for w in rc["warnings"]] == ["PAID_UNTIL_AT_START"]
     imp = pv["impact"]
-    assert imp["memberships_changed"] == 2 and imp["memberships_with_new_debt"] == 1 and imp["debt_delta"] == imp["debt_total_after"] - imp["debt_total_before"]
+    assert imp["memberships_changed"] == 3 and imp["memberships_with_new_debt"] == 1 and imp["debt_delta"] == imp["debt_total_after"] - imp["debt_total_before"]
     assert imp["debtors_after"] == imp["debtors_before"] + 1 and imp["debt_delta"] == 550_000 + (rb["after"]["debt"] - 550_000) - rb["before"]["debt"] + (ra["after"]["debt"] - ra["before"]["debt"])
     # nothing was written: no rows, no audit, no change of the settings (the ring of the keys is untouched)
     assert not live_openings(world) and not audits(world)
@@ -346,7 +346,7 @@ def test_apply_equals_the_preview_and_the_openings_equal_the_statement(world, fi
     pv = preview(world, items)
     out = apply(world, items, digest=pv["digest"])
     assert_same_shape(out, fixture("O07_applied"))
-    assert out["replayed"] is False and out["changed"] == 2 and out["summary"] == pv["summary"] and out["impact"] == pv["impact"] and out["state"] == "none"
+    assert out["replayed"] is False and out["changed"] == 3 and out["summary"] == pv["summary"] and out["impact"] == pv["impact"] and out["state"] == "done"         # the last «не заполнено» rows are gone: auto-done
     # I1: the live ledger equals the "after" of the preview
     for res in pv["items"]:
         if res["status"] == "error":
@@ -356,7 +356,7 @@ def test_apply_equals_the_preview_and_the_openings_equal_the_statement(world, fi
             res["after"]["debt"], res["after"]["advance"], res["after"]["status"], (date.fromisoformat(res["after"]["paid_until"]) if res["after"]["paid_until"] else None))
     # the openings in the base
     rows = {o.membership_id: o for o in live_openings(world)}
-    assert set(rows) == {a.id, b.id} and rows[a.id].paid_until == D(2026, 11, 30) and rows[b.id].debt_amount == 550_000 and rows[b.id].debt_on == D(2026, 10, 31)
+    assert set(rows) == {a.id, b.id, c.id} and rows[c.id].paid_until == D(2026, 10, 31) and rows[a.id].paid_until == D(2026, 11, 30) and rows[b.id].debt_amount == 550_000 and rows[b.id].debt_on == D(2026, 10, 31)
     assert rows[a.id].source == "manual" and rows[a.id].created_by == world.owner.id
     # I2: the statement shows the debt and the paid-until; the books reconcile
     st = owner(world).get(f"{API}/org/memberships/{b.id}/statement").json()
@@ -365,7 +365,7 @@ def test_apply_equals_the_preview_and_the_openings_equal_the_statement(world, fi
     assert any(r["type"] == "opening_paid_until" for r in st["rows"]) and st["summary"]["reconciles"]
     # I7: one audit row per changed membership, with the batch in the snapshot; nothing for the unchanged one
     logs = audits(world)
-    assert len(logs) == 2 and {x.action for x in logs} == {"opening_balance_set"}
+    assert len(logs) == 3 and {x.action for x in logs} == {"opening_balance_set"}
     snap = {x.snapshot["membership_id"]: x.snapshot for x in logs}
     assert snap[str(b.id)]["debt_before"] == 0 and snap[str(b.id)]["debt_after"] == 550_000
     assert {s["batch_id"] for s in snap.values()} == {out["batch_id"]} and {s["via"] for s in snap.values()} == {"batch"}
@@ -494,10 +494,10 @@ def test_clear_voids_the_live_opening_and_a_batch_equals_n_single_puts(world, fi
     ay = sorted((x.snapshot["debt_before"], x.snapshot["debt_after"], x.snapshot["paid_until"] is None) for x in audits(world) if x.snapshot["membership_id"] in {str(m.id) for m in singles})
     assert ax == ay
     # clear
-    out = apply(world, [it(world, a, clear=True), it(world, b, paid_until="2026-10-31")])             # b: «оплачено до 31.10» voids the debt (= nothing owed)
-    assert out["summary"]["cleared"] == 2
-    assert {o.membership_id for o in live_openings(world)} == {c.id} | {m.id for m in singles}
-    assert len(audits(world, "opening_balance_void")) == 2
+    out = apply(world, [it(world, a, clear=True), it(world, b, paid_until="2026-10-31")])             # b: «оплачено до 31.10» replaces the debt (reviewed, nothing owed)
+    assert out["summary"]["cleared"] == 1 and out["summary"]["paid_until"] == 1
+    assert {o.membership_id for o in live_openings(world)} == {b.id, c.id} | {m.id for m in singles}
+    assert len(audits(world, "opening_balance_void")) == 1
     assert ledger_of(world, a).debt == 0
 
 
@@ -553,7 +553,8 @@ def test_lessons_mode_lessons_left_becomes_the_day_of_the_kth_lesson(world, fixe
     # Mon 02.11, Wed 04.11, Fri 06.11, Mon 09.11, Wed 11.11, Fri 13.11, Mon 16.11, Wed 18.11
     assert ra["lessons"] == {"lessons_left": 8, "paid_until": "2026-11-18", "text": "осталось 8 уроков → оплачено до 18.11"}
     assert ra["target"]["paid_until"] == "2026-11-18" and ra["status"] == "ok" and ra["kind"] == "paid_until"
-    assert (rb["status"], rb["kind"], rb["lessons"]["paid_until"]) == ("noop", "unchanged", None)                  # nothing is left = no opening
+    assert (rb["status"], rb["kind"], rb["lessons"]["paid_until"]) == ("ok", "paid_until", "2026-10-31")           # nothing is left = reviewed, nothing owed
+    assert rb["lessons"]["text"] == "осталось 0 уроков → долга на начало нет (оплачено до 31.10)"
     assert_same_shape(pv, fixture("O06_preview_lessons"))
     out = apply(world, [it(world, a, lessons_left=8)])
     assert out["changed"] == 1
@@ -890,8 +891,10 @@ def test_excel_apply_equals_the_direct_batch_and_an_emptied_row_clears(world, fi
     ws.cell(row=row_for(ws, b), column=COL["debt_on"]).value = None
     pv = import_xlsx(world, to_bytes(wb))
     kinds = {r["membership_id"]: r["kind"] for r in pv["rows"] if r["membership_id"]}
-    assert kinds[str(c.id)] == "cleared" and kinds[str(b.id)] == "cleared" and pv["summary"]["cleared"] == 2
-    assert apply(world, pv["batch_items"], digest=pv["digest"])["summary"]["cleared"] == 2
+    assert kinds[str(c.id)] == "cleared" and kinds[str(b.id)] == "paid_until" and pv["summary"]["cleared"] == 1       # «да» = reviewed, nothing owed
+    assert apply(world, pv["batch_items"], digest=pv["digest"])["summary"]["cleared"] == 1
+    got = {o.membership_id: o for o in live_openings(world)}
+    assert c.id not in got and got[b.id].paid_until == D(2026, 10, 31) and got[b.id].debt_amount is None
 
 
 def test_excel_matching_and_the_errors_of_the_rows(world, fixed_today):
@@ -1019,3 +1022,128 @@ def test_excel_lessons_column_left_students_and_the_rights_of_the_batch_after_a_
     assert apply(world, pv["batch_items"], digest=pv["digest"])["changed"] == 1
     (o,) = live_openings(world)
     assert o.paid_until == D(2026, 11, 18)
+
+
+# ---- «оплачено до» = the day before the start is a REAL row that changes no money ---------------------------------------------------------------
+
+
+def _books(w, m):
+    """What the ledger says about a membership, without the status (that one reads «есть остаток» by design)."""
+    led = ledger_of(w, m)
+    st = owner(w).get(f"{API}/org/memberships/{m.id}/statement").json()
+    rows = [(r["type"], r["date"], r["debit"], r["credit"], r["balance_after"]) for r in st["rows"] if r["type"] != "opening_paid_until"]
+    return {
+        "money": (led.debt, led.past_debt, led.current_due, led.advance, led.charged, led.paid, led.refundable, led.reconciles),
+        "segments": [(s.kind, s.period_start, s.period_end, s.amount, s.covered_days, s.unpaid) for s in led.segments],
+        "covered_through": led.covered_through, "lessons": None if led.lessons is None else (led.lessons.covered, led.lessons.used, led.lessons.left, led.lessons.unpaid),
+        "statement": (rows, {k: st["summary"][k] for k in ("charged", "paid", "debt", "advance", "reconciles")}),
+    }
+
+
+def _same_books(a, b, today, lessons=False):
+    """Debt, advance, charges, periods and the statement are identical; BEFORE the start the row (only) shows «оплачено до 31.10»
+    (in lessons mode the calendar «paid until» is not a thing the ledger tells: it is left out)."""
+    if lessons:
+        a, b = {**a, "covered_through": None}, {**b, "covered_through": None}
+    elif today < D(2026, 11, 1):
+        assert (a["covered_through"], b["covered_through"]) == (D(2026, 10, 31), None)
+        a, b = {**a, "covered_through": None}, {**b, "covered_through": None}
+    assert a == b, (today, a, b)
+
+
+def test_the_reviewed_row_leaves_the_books_unchanged_month_mode(world, fixed_today):
+    centre(world)
+    with_row, without = (enrolled(world, D(2026, 9, 10), s) for s in world.students[:2])
+    owner(world).put(f"{API}/org/memberships/{with_row.id}/opening-balance", json={"paid_until": "2026-10-31"})
+    assert len(live_openings(world)) == 1
+    for today in (D(2026, 10, 21), D(2026, 11, 5), D(2026, 11, 20), D(2026, 12, 15)):
+        fixed_today(today)
+        if today == D(2026, 11, 20):
+            for m in (with_row, without):
+                seed_payment(world, m, 300_000, D(2026, 11, 3))
+        a, b = _books(world, with_row), _books(world, without)
+        _same_books(a, b, today)
+    # also with a debt on the same row: the debt is the only thing that adds money
+    r = owner(world).put(f"{API}/org/memberships/{with_row.id}/opening-balance",
+                         json={"paid_until": "2026-10-31", "debt_amount": 90_000, "debt_on": "2026-10-31", "reason": "долг до ALGO"})
+    assert r.status_code == 200, r.text
+    led = ledger_of(world, with_row)
+    assert led.debt == ledger_of(world, without).debt + 90_000 and led.reconciles
+
+
+def test_the_reviewed_row_leaves_the_books_unchanged_lessons_mode(world, fixed_today):
+    world.group.schedule = [{"id": f"d{d}", "dayOfWeek": d, "startTime": "10:00", "endTime": "11:00", "format": "offline"} for d in (1, 3, 5)]
+    world.db.commit()
+    settings_block(world, accounting_start_date="2026-11-01", period_mode="lessons", lessons_per_payment=8)
+    give_group_price(world.db, world.group, 1_200_000, valid_from=D(2026, 1, 1))
+    with_row, without = (enrolled(world, D(2026, 9, 10), s) for s in world.students[:2])
+    out = apply(world, [it(world, with_row, lessons_left=0)])                                                       # K = 0 = reviewed, nothing owed
+    assert out["changed"] == 1
+    (o,) = live_openings(world)
+    assert o.paid_until == D(2026, 10, 31) and o.membership_id == with_row.id
+    for today in (D(2026, 10, 21), D(2026, 11, 6), D(2026, 11, 20)):
+        fixed_today(today)
+        if today == D(2026, 11, 6):
+            for m in (with_row, without):
+                seed_payment(world, m, 1_200_000, D(2026, 11, 3))
+        a, b = _books(world, with_row), _books(world, without)
+        _same_books(a, b, today, lessons=True)
+
+
+def test_the_auto_done_when_the_last_missing_row_is_saved(world, fixed_today):
+    centre(world)
+    a, b, c = (enrolled(world, D(2026, 9, 1), s) for s in world.students)
+    settings_block(world, openings_state="pending", openings_pending_since="2026-10-20")
+    assert lst(world)["state"] == "pending" and lst(world)["totals"]["missing"] == 3
+    out = apply(world, [it(world, a, paid_until="2026-10-31"), it(world, b, paid_until="2026-11-30")])
+    assert out["state"] == "pending" and lst(world)["totals"]["missing"] == 1                       # a «reviewed» row is not «не заполнено» any more
+    out = apply(world, [it(world, c, paid_until="2026-10-31")])
+    assert out["state"] == "done" and lst(world)["state"] == "done" and lst(world)["totals"]["missing"] == 0
+    assert settings_of(world)["openings_state"] == "done"
+    # a clear brings the row back to «не заполнено», but a finished checklist is not reopened (the buttons / the script decide)
+    apply(world, [it(world, c, clear=True)])
+    assert lst(world)["totals"]["missing"] == 1 and lst(world)["state"] == "done"
+    # «skipped» stays skipped
+    owner(world).post(f"{BASE}/state", json={"state": "skipped"})
+    apply(world, [it(world, c, paid_until="2026-10-31")])
+    assert lst(world)["state"] == "skipped"
+
+
+def test_moving_the_accounting_start_warns_and_never_changes_an_opening(world, fixed_today):
+    centre(world)
+    a, b = enrolled(world, D(2026, 9, 1), world.students[0]), enrolled(world, D(2026, 9, 1), world.students[1])
+    apply(world, [it(world, a, paid_until="2026-10-31"), it(world, b, debt_amount=550_000, debt_on="2026-10-31")])
+    before = {o.membership_id: (o.id, o.paid_until, o.debt_amount, o.debt_on) for o in live_openings(world)}
+    c = owner(world)
+    # LATER: «оплачено до 31.10» is now before the day preceding the new start - a warning in the dry run, a write that changes nothing silently
+    r = c.put(f"{API}/org/settings/payments", params={"dry_run": True}, json={"accounting_start_date": "2026-11-15"})
+    assert r.status_code == 200 and r.json()["impact"]["openings_to_review"] == 1, r.text
+    assert c.put(f"{API}/org/settings/payments", json={"accounting_start_date": "2026-11-15"}).status_code == 200
+    assert {o.membership_id: (o.id, o.paid_until, o.debt_amount, o.debt_on) for o in live_openings(world)} == before
+    data = lst(world)
+    flagged = {r["membership_id"] for r in rows_of(data) if r["needs_review"]}
+    assert data["totals"]["needs_review"] == 1 and flagged == {str(a.id)}                          # a: paid_until 31.10 < 14.11; b: a debt of 31.10 is still before the start
+    # the ledger of the debt is untouched too
+    assert ledger_of(world, b).debt >= 550_000
+
+
+def test_moving_the_accounting_start_earlier_is_refused_when_a_debt_would_be_counted_twice(world, fixed_today):
+    centre(world)
+    a, b = enrolled(world, D(2026, 9, 1), world.students[0]), enrolled(world, D(2026, 9, 1), world.students[1])
+    apply(world, [it(world, a, paid_until="2026-10-31"), it(world, b, debt_amount=550_000, debt_on="2026-10-31")])
+    c = owner(world)
+    for day in ("2026-10-31", "2026-10-25"):
+        for params in ({"dry_run": True}, {}):
+            r = c.put(f"{API}/org/settings/payments", params=params, json={"accounting_start_date": day})
+            assert r.status_code == 422 and r.json()["detail"]["code"] == "ACCOUNTING_START_RANGE", r.text
+            assert "двойной счёт" in r.json()["detail"]["message"] and "1 остатков" in r.json()["detail"]["message"]
+    assert settings_of(world)["accounting_start_date"] == "2026-11-01"
+    # the debt removed: «оплачено до» alone never blocks, an earlier start is a plain change
+    apply(world, [it(world, b, clear=True)])
+    r = c.put(f"{API}/org/settings/payments", params={"dry_run": True}, json={"accounting_start_date": "2026-10-25"})
+    assert r.status_code == 200 and r.json()["impact"]["openings_to_review"] == 0
+    assert c.put(f"{API}/org/settings/payments", json={"accounting_start_date": "2026-10-25"}).status_code == 200
+    # a save of the settings that repeats the same start is never blocked by a late student's debt dated on his first day
+    late = students(world, 1, first=D(2026, 10, 25))[0]
+    apply(world, [{"membership_id": str(late.id), "version": "-", "debt_amount": 5_000, "debt_on": "2026-10-25"}])
+    assert c.put(f"{API}/org/settings/payments", json={"accounting_start_date": "2026-10-25", "expiring_days": 4}).status_code == 200

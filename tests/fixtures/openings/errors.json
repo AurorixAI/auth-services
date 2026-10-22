@@ -91,7 +91,7 @@
             "debtors_after": 1,
             "debtors_before": 0,
             "indirect_changed": 0,
-            "memberships_changed": 2,
+            "memberships_changed": 3,
             "memberships_with_changed_advance": 0,
             "memberships_with_new_debt": 1,
             "refundable_delta": 0
@@ -180,9 +180,13 @@
                 "advance": 0,
                 "debt": 0,
                 "lessons_left": null,
-                "opening": null,
-                "paid_until": null,
-                "status": "none"
+                "opening": {
+                  "debt_amount": null,
+                  "debt_on": null,
+                  "paid_until": "2026-10-31"
+                },
+                "paid_until": "2026-10-31",
+                "status": "active"
               },
               "before": {
                 "advance": 0,
@@ -192,22 +196,26 @@
                 "paid_until": null,
                 "status": "none"
               },
-              "changed": false,
+              "changed": true,
               "code": null,
               "group_name": "Физика 10Б",
               "has_money_records": false,
-              "kind": "unchanged",
+              "kind": "paid_until",
               "lessons": null,
               "membership_id": "00000000-0000-4000-8000-000000000106",
               "message": null,
               "needs_reason": false,
-              "status": "noop",
+              "status": "ok",
               "student_name": "Ахмедов Руслан",
-              "target": null,
+              "target": {
+                "debt_amount": null,
+                "debt_on": null,
+                "paid_until": "2026-10-31"
+              },
               "warnings": [
                 {
                   "code": "PAID_UNTIL_AT_START",
-                  "message": "«Оплачено до 31.10» — ничего не должен на начало: остаток не записывается"
+                  "message": "«Оплачено до 31.10»: на начало учёта долга нет (строка отмечена как проверенная)"
                 }
               ]
             }
@@ -215,14 +223,14 @@
           "needs_reason": [],
           "ok": true,
           "summary": {
-            "changed": 2,
+            "changed": 3,
             "cleared": 0,
             "debt": 1,
             "debt_total_added": 550000,
             "errors": 0,
             "items": 3,
-            "paid_until": 1,
-            "unchanged": 1
+            "paid_until": 2,
+            "unchanged": 0
           }
         }
       }

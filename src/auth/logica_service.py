@@ -233,7 +233,7 @@ class OpeningService(_Base):
         """The write inside the caller's transaction (no commit).  Returns ``(live row or None, changed)``.
 
         Nothing but paid_until / debt given = the live one is voided; the same values again = noop.  S0: «оплачено до» = the day before the
-        accounting start means "nothing is owed at the start": it is the same as no opening (no row is written, a live one is voided).
+        accounting start ("nothing is owed at the start", a reviewed row) is a REAL opening: the ledger gives the same debt and charges with or without it.
         ``facts`` (the bulk write): what the single call would read itself - read ONCE for all the rows, so the query count of a batch does
         not depend on its size; ``flush=False``: the caller flushes once (the rows get their ids here)."""
         accounting_start = facts.accounting_start if facts else self.pay._loader(org_id, today).settings.accounting_start
@@ -244,9 +244,6 @@ class OpeningService(_Base):
             self.validate(body, first_day=first_day, accounting_start=accounting_start, today=today)
             if facts.transfer_target if facts else self._transfer_target(membership.id):
                 raise OpeningNotAllowed("Остаток нельзя внести: ученик пришёл переводом")
-            if paid_until is not None and paid_until == accounting_start - timedelta(days=1):
-                paid_until = None
-                empty = debt_amount is None and debt_on is None
         existing = facts.existing if facts else self.live(membership.id)
         if existing is not None and not empty and (existing.paid_until, int(existing.debt_amount or 0) or None, existing.debt_on) == (
             paid_until, debt_amount, debt_on

@@ -161,6 +161,12 @@ class TableRow:
         return str(self.opening.id) if self.opening is not None else "-"
 
     @property
+    def needs_review(self) -> bool:
+        """The stored opening no longer fits the range (the accounting start moved after it was entered): shown, never changed silently."""
+        o = self.opening
+        return o is not None and bool((o.paid_until and o.paid_until < self.floor) or (o.debt_on and o.debt_on > self.floor))
+
+    @property
     def editable(self) -> bool:
         return not (self.transfer or self.free)
 
@@ -239,7 +245,8 @@ class OpeningsService(_Base):
     def _totals(tracked: Sequence[TableRow], left: Sequence[TableRow], shown: int) -> OpeningTotals:
         return OpeningTotals(
             memberships=len(tracked), with_opening=sum(1 for r in tracked if r.opening is not None),
-            missing=sum(1 for r in tracked if r.missing), left_available=len(left), shown=shown)
+            missing=sum(1 for r in tracked if r.missing), left_available=len(left), shown=shown,
+            needs_review=sum(1 for r in tracked if r.needs_review))
 
     def _row_out(self, r: TableRow, mode: str) -> OpeningMembershipRow:
         return OpeningMembershipRow(
@@ -247,7 +254,7 @@ class OpeningsService(_Base):
             student=OpeningStudentRef(id=str(r.s.id), name=r.student_name, display_id=r.s.display_id, class_level=r.s.class_level),
             group=OpeningGroupRef(id=str(r.g.id), name=r.g.name), mode=mode, price=PriceOut(**pricing.price_dict(r.price)),
             enrolled_on=r.first_day, status="left" if r.left else "active", left_on=r.left_on, paused=r.paused, opening=value_of(r.opening),
-            version=r.version, has_money_records=r.money, missing=r.missing, floor=r.floor, only_debt=r.left, editable=r.editable,
+            version=r.version, has_money_records=r.money, missing=r.missing, needs_review=r.needs_review, floor=r.floor, only_debt=r.left, editable=r.editable,
             reason_not_editable="transfer" if r.transfer else ("free" if r.free else None))
 
     @staticmethod
@@ -451,9 +458,8 @@ class OpeningsService(_Base):
                     OpeningService(self.db).validate(body, first_day=p.first_day, accounting_start=start, today=plan.today)
             except PaymentError as exc:
                 return p.fail(exc.code or "OPENING_RANGE", exc.message)
-            if paid_until is not None and paid_until == start - timedelta(days=1):
-                paid_until = None                                            # S0: «оплачено до» the day before the start = nothing owed
-                p.warn("PAID_UNTIL_AT_START", f"«Оплачено до {_short(start - timedelta(days=1))}» — ничего не должен на начало: остаток не записывается")
+            if paid_until is not None and paid_until == start - timedelta(days=1) and debt_amount is None:
+                p.warn("PAID_UNTIL_AT_START", f"«Оплачено до {_short(start - timedelta(days=1))}»: на начало учёта долга нет (строка отмечена как проверенная)")
         target = (paid_until, debt_amount, debt_on)
         empty = paid_until is None and debt_amount is None and debt_on is None
         if not empty:
@@ -488,11 +494,11 @@ class OpeningsService(_Base):
 
     def _lessons_to_date(self, plan: "Plan", p: "PlanItem", left: int) -> Optional[date]:
         """«Осталось K уроков» -> «оплачено до»: the day of the K-th lesson of the group from ``max(first_day, accounting_start)`` (the schedule
-        helper of the ledger).  K = 0: nothing is left = no «оплачено до»."""
+        helper of the ledger).  K = 0: nothing is left = «оплачено до» the day before the accounting start (a reviewed row, nothing owed)."""
         if not 0 <= left <= MAX_LESSONS_LEFT:
             raise PaymentInvalid(f"Осталось уроков: от 0 до {MAX_LESSONS_LEFT}", )
         if left == 0:
-            return None
+            return plan.accounting_start - timedelta(days=1)
         first = max(p.first_day, plan.accounting_start)
         days = sorted(plan.a._lesson_days(p.group, first, first + timedelta(days=LESSONS_SEARCH_DAYS)))
         if len(days) < left:
@@ -601,8 +607,14 @@ class OpeningsService(_Base):
                     "advance_before": p.before.advance, "advance_after": p.after.advance,
                     "via": "batch", "batch_id": str(batch_id), "idempotency_key": key})
             # (5) the answer is remembered under the key (the ring lives in the settings of the centre) - in the same transaction
+            state = _state_of(block)
+            if state in ("none", "pending"):        # the last «не заполнено» row is gone: the checklist is done (the buttons stay for the rest)
+                _, tracked, _, _ = self._table(org_id, today)
+                if not any(r.missing for r in tracked):
+                    state = block[STATE_KEY] = "done"
+                    block["openings_state_by"], block["openings_state_at"] = "auto", today.isoformat()
             answer = OpeningBatchApplied(batch_id=str(batch_id), replayed=False, summary=plan.summary, impact=plan.impact, changed=len(written),
-                                         state=_state_of(block))
+                                         state=state)
             ring = list(block.get(BATCHES_KEY) or [])
             ring.append({"key": key, "body": body_hash, "at": today.isoformat(), "answer": answer.model_dump(mode="json")})
             block[BATCHES_KEY] = ring[-KEEP_BATCHES:]
@@ -676,7 +688,7 @@ class PlanItem:
         if self.lessons is not None:
             k, day = self.lessons
             lessons = OpeningLessons(lessons_left=k, paid_until=day, text=(
-                f"осталось {k} {tx.lessons_word(k)} → оплачено до {_short(day)}" if day else "осталось 0 уроков → остаток не нужен"))
+                f"осталось {k} {tx.lessons_word(k)} → оплачено до {_short(day)}" if k else f"осталось 0 уроков → долга на начало нет (оплачено до {_short(day)})"))
         value = None
         if self.target is not None:
             value = OpeningValue(paid_until=self.target[0], debt_amount=self.target[1], debt_on=self.target[2])

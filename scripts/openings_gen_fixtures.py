@@ -36,7 +36,7 @@ EXCEL_COLUMNS = [
     {"col": "I", "header": "Долг на дату", "kind": "input", "note": "пусто = день перед началом учёта"},
     {"col": "J", "header": "ID ученика (не менять)", "kind": "key"},
     {"col": "K", "header": "ID членства (не менять)", "kind": "key", "note": "главный ключ сопоставления"},
-    {"col": "L", "header": "Без остатка (да)", "kind": "input", "note": "«да» = убрать остаток; вместе со значениями в G–I — ошибка строки"},
+    {"col": "L", "header": "Без остатка (да)", "kind": "input", "note": "«да» = проверено, долга на начало нет (пишется «оплачено до» = день перед началом учёта); вместе со значениями в G–I — ошибка строки"},
     {"col": "M", "header": "Осталось уроков (пакет)", "kind": "input", "note": "только центр в режиме уроков; вместо «Оплачено до»"},
     {"col": "N", "header": "Цена", "kind": "reference"},
     {"col": "O", "header": "Режим", "kind": "reference"},
@@ -64,7 +64,7 @@ def build() -> dict:
                            reason="скидка" if source == "override" else None),
             enrolled_on=enrolled, status="left" if left else "active", left_on=left, paused=paused, opening=opening,
             version=f"00000000-0000-4000-8000-0000000003{n:02d}" if opening else "-", has_money_records=money,
-            missing=(opening is None and not money and enrolled < START and not left) if missing is None else missing,
+            needs_review=False, missing=(opening is None and not money and enrolled < START and not left) if missing is None else missing,
             floor=max(enrolled, D(2026, 10, 31)), only_debt=only_debt, editable=editable, reason_not_editable=why)
 
     g1, g2 = "00000000-0000-4000-8000-0000000000a1", "00000000-0000-4000-8000-0000000000a2"
@@ -81,7 +81,7 @@ def build() -> dict:
         row(8, "s8", "Рахимов Джамшид", g2, "Физика 10Б", price=0, editable=False, why="free"),
         row(9, "s9", "Исмаилова Зарина", g2, "Физика 10Б", enrolled=D(2026, 11, 3), missing=False),
     ]
-    totals = OpeningTotals(memberships=9, with_opening=2, missing=6, left_available=1, shown=9)
+    totals = OpeningTotals(memberships=9, with_opening=2, missing=6, left_available=1, shown=9, needs_review=0)
     lst = OpeningsList(
         as_of=TODAY, accounting_start=START, state="pending", period_mode="calendar", paid_until_max=D(2027, 10, 23), totals=totals,
         groups=[OpeningGroupBlock(id=g1, name="Математика 9А", teacher_name="Иванова А.", total=5, with_opening=2, missing=2, memberships=rows1),
@@ -105,11 +105,12 @@ def build() -> dict:
         target=OpeningValue(debt_amount=550_000, debt_on=D(2026, 10, 31)), before=st(),
         after=st(debt=550_000, status="expired", opening=OpeningValue(debt_amount=550_000, debt_on=D(2026, 10, 31))))
     normalised = OpeningItemResult(
-        membership_id=rows2[0].membership_id, student_name="Ахмедов Руслан", group_name="Физика 10Б", status="noop", kind="unchanged", changed=False,
-        target=None, before=st(), after=st(),
-        warnings=[OpeningWarning(code="PAID_UNTIL_AT_START", message="«Оплачено до 31.10» — ничего не должен на начало: остаток не записывается")])
-    summary_ok = OpeningBatchSummary(items=3, changed=2, paid_until=1, debt=1, cleared=0, unchanged=1, errors=0, debt_total_added=550_000)
-    impact = OpeningBatchImpact(memberships_changed=2, memberships_with_new_debt=1, memberships_with_changed_advance=0, debt_total_before=0,
+        membership_id=rows2[0].membership_id, student_name="Ахмедов Руслан", group_name="Физика 10Б", status="ok", kind="paid_until", changed=True,
+        target=OpeningValue(paid_until=D(2026, 10, 31)), before=st(),
+        after=st(paid=D(2026, 10, 31), status="active", opening=OpeningValue(paid_until=D(2026, 10, 31))),
+        warnings=[OpeningWarning(code="PAID_UNTIL_AT_START", message="«Оплачено до 31.10»: на начало учёта долга нет (строка отмечена как проверенная)")])
+    summary_ok = OpeningBatchSummary(items=3, changed=3, paid_until=2, debt=1, cleared=0, unchanged=0, errors=0, debt_total_added=550_000)
+    impact = OpeningBatchImpact(memberships_changed=3, memberships_with_new_debt=1, memberships_with_changed_advance=0, debt_total_before=0,
                                 debt_total_after=550_000, debt_delta=550_000, debtors_before=0, debtors_after=1, advance_delta=0, refundable_delta=0,
                                 indirect_changed=0)
     preview = OpeningBatchPreview(ok=True, digest="d1" * 32, accounting_start=START, summary=summary_ok, impact=impact, needs_reason=[],
@@ -138,7 +139,7 @@ def build() -> dict:
     imp_rows = [
         OpeningsImportRow(row=2, membership_id=rows1[2].membership_id, matched_by="membership_id", student_name="Орлова Дана", group_name="Математика 9А", status="ok", kind="paid_until"),
         OpeningsImportRow(row=3, membership_id=rows1[4].membership_id, matched_by="student_group", student_name="Назарова Лола", group_name="Математика 9А", status="ok", kind="debt"),
-        OpeningsImportRow(row=4, membership_id=rows2[0].membership_id, matched_by="name", student_name="Ахмедов Руслан", group_name="Физика 10Б", status="noop", kind="unchanged"),
+        OpeningsImportRow(row=4, membership_id=rows2[0].membership_id, matched_by="name", student_name="Ахмедов Руслан", group_name="Физика 10Б", status="ok", kind="paid_until"),
         OpeningsImportRow(row=5, status="error", code="UNKNOWN", message="Ученика нет в центре: добавьте его через импорт учеников"),
         OpeningsImportRow(row=6, membership_id=rows1[1].membership_id, matched_by="membership_id", student_name="Юсупов Бек", group_name="Математика 9А", status="error",
                           code="ID_MISMATCH", message="ID членства принадлежит другому ученику: проверьте, не сдвинулись ли колонки"),
@@ -146,7 +147,7 @@ def build() -> dict:
                           code="BAD_DATE", message="Оплачено до: «31.13.2026» — не дата"),
     ]
     import_preview = OpeningsImportPreview(
-        **preview.model_dump(), file=OpeningsImportFile(rows_read=6, matched=5, changed=2, unchanged=1, errors=3, unknown=1, missing_in_file=4),
+        **preview.model_dump(), file=OpeningsImportFile(rows_read=6, matched=5, changed=3, unchanged=0, errors=3, unknown=1, missing_in_file=4),
         rows=imp_rows, batch_items=[
             OpeningBatchItem(membership_id=rows1[2].membership_id, version="-", paid_until=D(2026, 11, 30)),
             OpeningBatchItem(membership_id=rows1[4].membership_id, version="-", debt_amount=550_000, debt_on=D(2026, 10, 31)),
@@ -184,7 +185,8 @@ def build() -> dict:
                   "rules": ["сопоставление: ID членства (K) -> ID ученика (J) + группа -> фамилия + имя + класс + группа (ровно одно совпадение)",
                             "K найден, но фамилия не совпала -> ID_MISMATCH",
                             "одно членство в двух строках -> DUPLICATE (обе не применяются)",
-                            "пустые G–I у строки с остатком -> убрать остаток; пустые G–I у строки без остатка -> без изменений",
+                            "пустые G–I у строки с остатком -> убрать остаток; пустые G–I у строки без остатка -> без изменений (остаётся «не заполнено»)",
+                            "«Без остатка (да)» -> оплачено до = день перед началом учёта (проверено, долга нет); у ушедшего / перевода / бесплатного — убрать остаток",
                             "формулы не исполняются (data_only); ячейка-формула без значения -> FORMULA",
                             "при выгрузке текст, начинающийся с = + - @ TAB CR, хранится как текст"]},
     }

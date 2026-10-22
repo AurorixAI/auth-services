@@ -24,6 +24,11 @@
             "title": "Memberships With New Debt",
             "type": "integer"
           },
+          "openings_to_review": {
+            "default": 0,
+            "title": "Openings To Review",
+            "type": "integer"
+          },
           "refundable_delta": {
             "default": 0,
             "title": "Refundable Delta",
@@ -35,7 +40,8 @@
           "debt_delta",
           "memberships_with_changed_advance",
           "advance_delta",
-          "refundable_delta"
+          "refundable_delta",
+          "openings_to_review"
         ],
         "title": "AccountingStartImpact",
         "type": "object"

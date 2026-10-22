@@ -327,8 +327,6 @@ def parse_opening(d: dict, row: int, *, money: bool, accounting_start: date, enr
     if raw_paid is not None and raw_paid < floor:
         warn(SHEET_STUDENTS, row, "Оплачено до (дата)", "«Оплачено до» раньше даты зачисления или начала учёта — остаток пропущен.")
         raw_paid = None
-    elif raw_paid is not None and raw_paid == accounting_start - timedelta(days=1):
-        raw_paid = None                                          # «оплачено до» the day before the start = nothing owed at the start
     if raw_paid is not None and raw_paid > enrol_day + timedelta(days=366):
         warn(SHEET_STUDENTS, row, "Оплачено до (дата)", "«Оплачено до» дальше чем через год — остаток пропущен.")
         raw_paid = None

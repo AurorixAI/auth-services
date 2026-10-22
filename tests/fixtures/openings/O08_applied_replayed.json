@@ -9,7 +9,7 @@
     "debtors_after": 1,
     "debtors_before": 0,
     "indirect_changed": 0,
-    "memberships_changed": 2,
+    "memberships_changed": 3,
     "memberships_with_changed_advance": 0,
     "memberships_with_new_debt": 1,
     "refundable_delta": 0
@@ -17,13 +17,13 @@
   "replayed": true,
   "state": "pending",
   "summary": {
-    "changed": 2,
+    "changed": 3,
     "cleared": 0,
     "debt": 1,
     "debt_total_added": 550000,
     "errors": 0,
     "items": 3,
-    "paid_until": 1,
-    "unchanged": 1
+    "paid_until": 2,
+    "unchanged": 0
   }
 }

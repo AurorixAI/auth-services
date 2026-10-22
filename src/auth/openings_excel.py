@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 import logging
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
@@ -137,10 +137,11 @@ def build_export(svc: OpeningsService, org_id: str, *, group_id=None, missing_on
         ("Остатки на начало — как заполнять", True),
         (f"Учёт оплат в ALGO идёт с {start.strftime('%d.%m.%Y')}. Здесь — что было у ученика ДО этой даты.", False),
         ("«Оплачено до (дата)» — ученик заплатил до этого дня (не раньше " + (start - _day()).strftime("%d.%m.%Y") +
-         "). «Оплачено до» = день перед началом учёта означает «ничего не должен» — остаток не записывается.", False),
+         "). «Оплачено до» = день перед началом учёта означает «на начало долга нет»: строка считается заполненной.", False),
         ("«Долг, сум» + «Долг на дату» — сколько он был должен и на какую дату (дата не позже дня перед началом учёта; пусто = этот день).", False),
         ("«Осталось уроков (пакет)» — только для центра, где платят пакетами: вместо «Оплачено до» (дата считается по расписанию группы).", False),
-        ("«Без остатка (да)» или пустые поля у ученика с остатком — убирает внесённый остаток.", False),
+        ("«Без остатка (да)» — проверено, на начало учёта долга нет (записывается «оплачено до» " + (start - _day()).strftime("%d.%m.%Y") + ").", False),
+        ("Пустые поля у ученика, у которого остаток уже внесён, — убирают этот остаток.", False),
         ("Колонки J и K (ID) не меняйте и не сортируйте отдельно от строки: по ним ALGO находит ученика. Остальные колонки справочные.", False),
         ("После загрузки вы увидите сравнение «было → станет»; ничего не записывается, пока вы не нажмёте «Сохранить».", False),
     ]
@@ -301,7 +302,7 @@ def import_preview(svc: OpeningsService, org_id: str, data: bytes) -> OpeningsIm
         out.membership_id, out.matched_by, out.student_name, out.group_name = str(match.m.id), matched_by, match.student_name, match.g.name
         # ---- 2. what the row says
         try:
-            item = _item_of(rec, match)
+            item = _item_of(rec, match, settings.accounting_start)
         except _RowError as bad:
             out.code, out.message = bad.code, bad.message
             continue
@@ -414,8 +415,9 @@ def _int_of(cell: Optional[_Cell], title: str) -> Optional[int]:
     return value
 
 
-def _item_of(rec: Dict[str, _Cell], match: TableRow) -> Optional[OpeningBatchItem]:
-    """The batch item of a row, ``None`` when the row says nothing and the membership has no opening (no change)."""
+def _item_of(rec: Dict[str, _Cell], match: TableRow, start: date) -> Optional[OpeningBatchItem]:
+    """The batch item of a row, ``None`` when the row says nothing and the membership has no opening (no change).  «Без остатка (да)» = reviewed,
+    nothing owed: «оплачено до» the day before the accounting start (a row that cannot have an opening - left, transfer, free - just clears)."""
     paid = _date_of(rec.get("paid"), "Оплачено до")
     amount = _int_of(rec.get("debt"), "Долг")
     debt_on = _date_of(rec.get("debt_on"), "Долг на дату")
@@ -427,7 +429,11 @@ def _item_of(rec: Dict[str, _Cell], match: TableRow) -> Optional[OpeningBatchIte
     if flag and has_values:
         raise _RowError("ROW_CONFLICT", "«Без остатка» вместе с «Оплачено до» / долгом: оставьте что-то одно")
     base = {"membership_id": str(match.m.id), "version": match.version}
-    if flag or (not has_values and match.opening is not None):
+    if flag:
+        if match.left or not match.editable:
+            return OpeningBatchItem(**base, clear=True)
+        return OpeningBatchItem(**base, paid_until=start - timedelta(days=1))
+    if not has_values and match.opening is not None:
         return OpeningBatchItem(**base, clear=True)
     if not has_values:
         return None

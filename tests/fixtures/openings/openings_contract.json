@@ -137,7 +137,7 @@
         "type": "object"
       },
       "OpeningBatchItem": {
-        "description": "One membership of a batch: the item REPLACES the whole opening of the membership (the same as ``PUT .../opening-balance``).\n\n* ``paid_until`` / ``debt_amount`` + ``debt_on`` (a debt without a date gets ``max(first_day, accounting_start) - 1``);\n* ``lessons_left`` (a lessons-mode centre only, instead of ``paid_until``): the server turns «осталось K уроков» into «оплачено до» = the date of\n  the K-th lesson of the group from ``max(first_day, accounting_start)`` (K = 0: nothing is left = no opening);\n* ``clear`` = true: remove the live opening;\n* nothing at all = error ``EMPTY_ITEM``.\n``paid_until`` = the day before the accounting start means «nothing owed at the start» (no row; a live one is removed).",
+        "description": "One membership of a batch: the item REPLACES the whole opening of the membership (the same as ``PUT .../opening-balance``).\n\n* ``paid_until`` / ``debt_amount`` + ``debt_on`` (a debt without a date gets ``max(first_day, accounting_start) - 1``);\n* ``lessons_left`` (a lessons-mode centre only, instead of ``paid_until``): the server turns «осталось K уроков» into «оплачено до» = the date of\n  the K-th lesson of the group from ``max(first_day, accounting_start)`` (K = 0: nothing is left = «оплачено до» the day before the start, a reviewed row);\n* ``clear`` = true: remove the live opening;\n* nothing at all = error ``EMPTY_ITEM``.\n``paid_until`` = the day before the accounting start means «nothing owed at the start»: it is stored as a REAL opening (a reviewed row, so the\nrow leaves «не заполнено»); the ledger gives the same debt and charges with or without it.  ``lessons_left`` = 0 is the same.",
         "properties": {
           "clear": {
             "default": false,
@@ -486,7 +486,7 @@
         "type": "object"
       },
       "OpeningItemResult": {
-        "description": "The verdict of one item.  Error codes: ``NOT_FOUND`` ``STUDENT_ARCHIVED`` ``MEMBERSHIP_CLOSED`` ``DUPLICATE_ITEM`` ``STALE_VERSION`` ``EMPTY_ITEM``\n``CLEAR_WITH_VALUES`` ``OPENING_RANGE`` ``AMOUNT_RANGE`` ``OPENING_NOT_ALLOWED`` (a transfer) ``FREE_MEMBERSHIP`` ``VOID_BREAKS_REFUND``\n``LESSONS_NOT_APPLICABLE`` ``LESSONS_RANGE`` ``LESSONS_AND_PAID_UNTIL``.  ``target`` = what will be stored (after the defaults, the lessons\nconversion and the normalisation); null for an error.",
+        "description": "The verdict of one item.  Error codes: ``NOT_FOUND`` ``STUDENT_ARCHIVED`` ``MEMBERSHIP_CLOSED`` ``DUPLICATE_ITEM`` ``STALE_VERSION`` ``EMPTY_ITEM``\n``CLEAR_WITH_VALUES`` ``OPENING_RANGE`` ``AMOUNT_RANGE`` ``OPENING_NOT_ALLOWED`` (a transfer) ``FREE_MEMBERSHIP`` ``VOID_BREAKS_REFUND``\n``LESSONS_NOT_APPLICABLE`` ``LESSONS_RANGE`` ``LESSONS_AND_PAID_UNTIL``.  ``target`` = what will be stored (after the defaults, the lessons\nconversion); null for an error.",
         "properties": {
           "after": {
             "anyOf": [
@@ -791,6 +791,11 @@
             "title": "Mode",
             "type": "string"
           },
+          "needs_review": {
+            "default": false,
+            "title": "Needs Review",
+            "type": "boolean"
+          },
           "only_debt": {
             "default": false,
             "title": "Only Debt",
@@ -861,6 +866,7 @@
           "has_money_records",
           "missing",
           "floor",
+          "needs_review",
           "only_debt",
           "editable",
           "reason_not_editable"
@@ -928,6 +934,11 @@
             "title": "Missing",
             "type": "integer"
           },
+          "needs_review": {
+            "default": 0,
+            "title": "Needs Review",
+            "type": "integer"
+          },
           "shown": {
             "default": 0,
             "title": "Shown",
@@ -944,7 +955,8 @@
           "with_opening",
           "missing",
           "left_available",
-          "shown"
+          "shown",
+          "needs_review"
         ],
         "title": "OpeningTotals",
         "type": "object"
@@ -997,7 +1009,7 @@
         "type": "object"
       },
       "OpeningWarning": {
-        "description": "Soft: ``PAID_UNTIL_AT_START`` (normalised to no opening), ``PAID_UNTIL_FAR`` (> today + 120), ``DEBT_LARGE`` (> 12 prices), ``NO_PRICE``,\n``HAS_MONEY`` (the row has money records: a reason is needed), ``CLEARS_EXISTING`` (removes a live opening).",
+        "description": "Soft: ``PAID_UNTIL_AT_START`` (a reviewed «nothing owed» row), ``PAID_UNTIL_FAR`` (> today + 120), ``DEBT_LARGE`` (> 12 prices), ``NO_PRICE``,\n``HAS_MONEY`` (the row has money records: a reason is needed), ``CLEARS_EXISTING`` (removes a live opening).",
         "properties": {
           "code": {
             "title": "Code",

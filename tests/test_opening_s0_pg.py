@@ -45,22 +45,27 @@ def test_s0_debt_on_the_day_before_the_start_for_a_student_of_september(world, f
     assert r.status_code == 422 and r.json()["detail"]["code"] == "OPENING_RANGE" and "31.10.2026" in r.json()["detail"]["message"]
 
 
-def test_s0_paid_until_the_day_before_the_start_is_no_opening(world, fixed_today):
+def test_s0_paid_until_the_day_before_the_start_is_a_reviewed_row_that_changes_no_money(world, fixed_today):
     centre_nov(world)
     m = membership(world)
     stay(world, m, D(2026, 9, 1))
     out = put(world, m, {"paid_until": "2026-10-31"})
-    assert out["opening"] is None and not live(world)                       # no row, not an error
-    assert world.db.query(GroupAudit).filter_by(org_id=world.org.id, action="opening_balance_set").count() == 0
-    # with a live opening it voids it (the same as the empty body)
-    put(world, m, {"debt_amount": 100_000, "debt_on": "2026-10-31"})
-    assert len(live(world)) == 1
-    gone = put(world, m, {"paid_until": "2026-10-31"})
-    assert gone["opening"] is None and not live(world)
-    assert world.db.query(GroupAudit).filter_by(org_id=world.org.id, action="opening_balance_void").count() == 1
-    # together with a debt: only the debt is kept
+    assert out["opening"]["paid_until"] == "2026-10-31" and len(live(world)) == 1               # stored: the row is «проверено»
+    assert (out["row"]["debt"], out["row"]["advance"], out["row"]["paid_until"]) == (0, 0, "2026-10-31")
+    assert world.db.query(GroupAudit).filter_by(org_id=world.org.id, action="opening_balance_set").count() == 1
+    st = owner(world).get(f"{API}/org/memberships/{m.id}/statement").json()
+    line = next(r for r in st["rows"] if r["type"] == "opening_paid_until")
+    assert line["title"] == "На начало учёта долга нет (оплачено до 31.10)" and st["summary"]["reconciles"]
+    # another date keeps the old wording
+    put(world, m, {"paid_until": "2026-11-30"})
+    st = owner(world).get(f"{API}/org/memberships/{m.id}/statement").json()
+    assert next(r for r in st["rows"] if r["type"] == "opening_paid_until")["title"] == "Остаток на начало: оплачено до 30.11"
+    # together with a debt both are kept
     both = put(world, m, {"paid_until": "2026-10-31", "debt_amount": 70_000, "debt_on": "2026-10-31"})
-    assert both["opening"]["paid_until"] is None and both["opening"]["debt_amount"] == 70_000
+    assert both["opening"]["paid_until"] == "2026-10-31" and both["opening"]["debt_amount"] == 70_000
+    # the empty body still voids
+    assert put(world, m, {})["opening"] is None and not live(world)
+    assert world.db.query(GroupAudit).filter_by(org_id=world.org.id, action="opening_balance_void").count() == 1
 
 
 def test_s0_paid_until_in_november_pays_november(world, fixed_today):
@@ -115,7 +120,7 @@ def test_s0_import_and_add_to_group_use_the_same_floor(world, fixed_today):
     start, enrol = D(2026, 11, 1), D(2026, 10, 21)                       # enrolled today, the accounting starts on 01.11
     d = {imp.K_PAID_UNTIL: "31.10.2026", imp.K_DEBT: "", imp.K_DEBT_ON: ""}
     ok, paid, debt, on = imp.parse_opening(d, 2, money=True, accounting_start=start, enrol_day=enrol, err=err, warn=warn)
-    assert (ok, paid, debt, on) == (True, None, None, None) and not warns        # nothing owed at the start: no opening, no warning
+    assert (ok, paid, debt, on) == (True, D(2026, 10, 31), None, None) and not warns   # nothing owed at the start: a reviewed row, no warning
     d = {imp.K_PAID_UNTIL: "15.10.2026", imp.K_DEBT: "", imp.K_DEBT_ON: ""}
     ok, paid, *_ = imp.parse_opening(d, 3, money=True, accounting_start=start, enrol_day=enrol, err=err, warn=warn)
     assert paid is None and len(warns) == 1
@@ -144,7 +149,7 @@ def test_s0_add_to_group_uses_the_same_floor(world, fixed_today):
     r = c.post(url(s1), json={"opening_balance": {"debt_amount": 250_000, "debt_on": "2026-10-31"}})     # enrolled today, the accounting starts on 01.11
     assert r.status_code == 200, r.text
     assert c.get(f"{API}/org/memberships/{r.json()['membership_id']}/opening-balance").json()["debt_on"] == "2026-10-31"
-    r = c.post(url(s2), json={"opening_balance": {"paid_until": "2026-10-31"}})                          # nothing owed at the start: added without an opening
-    assert r.status_code == 200 and c.get(f"{API}/org/memberships/{r.json()['membership_id']}/opening-balance").json() is None
+    r = c.post(url(s2), json={"opening_balance": {"paid_until": "2026-10-31"}})                          # nothing owed at the start: a reviewed row
+    assert r.status_code == 200 and c.get(f"{API}/org/memberships/{r.json()['membership_id']}/opening-balance").json()["paid_until"] == "2026-10-31"
     r = c.post(url(s3), json={"opening_balance": {"paid_until": "2026-10-15"}})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "OPENING_RANGE"

@@ -113,9 +113,11 @@ class PaymentsReports:
                                          details=StatementDetails(segment=pv.segment_out(seg)), **common))
             elif e.kind == "opening_paid_until":
                 until = ledger.opening.paid_until if ledger.opening and ledger.opening.paid_until else None
-                rows.append(StatementRow(
-                    type="opening_paid_until", title=f"Остаток на начало: оплачено до {until.strftime('%d.%m')}" if until else "Остаток на начало",
-                    **common))
+                if until is not None and until == loader.settings.accounting_start - timedelta(days=1):
+                    title = f"На начало учёта долга нет (оплачено до {until.strftime('%d.%m')})"        # a reviewed «nothing owed» row
+                else:
+                    title = f"Остаток на начало: оплачено до {until.strftime('%d.%m')}" if until else "Остаток на начало"
+                rows.append(StatementRow(type="opening_paid_until", title=title, **common))
             elif e.kind == "pause":
                 first, last = (date.fromisoformat(x) for x in e.ref_id.split(":")[1:3])
                 rows.append(StatementRow(type="pause", title=f"Пауза {tx.period_text(first, last)} — начислений нет", **common))

@@ -451,6 +451,7 @@ class PaymentService:
         new_start: Optional[date] = changes.pop("accounting_start_date", None)
         if new_start is not None:
             self._check_accounting_start(org_id, new_start, today)
+            self._check_openings_for_start(org_id, new_start, self.get_settings(org_id).accounting_start_date)
         before = self.get_settings(org_id)
         block = dict(((org.settings or {}).get("payments")) or {})
         impact: Optional[AccountingStartImpact] = None
@@ -532,6 +533,25 @@ class PaymentService:
         if earliest is not None and new_start > earliest:
             raise AccountingStartRange(f"Есть оплаты до этой даты: {earliest.strftime('%d.%m.%Y')}")
 
+    def _check_openings_for_start(self, org_id: str, new_start: date, old_start: date) -> None:
+        """OPENING-BULK: an opening balance is a fact with dates.  Moving the start EARLIER makes the days from the new start chargeable: a debt dated
+        inside them (``new_start <= debt_on < old_start``) would be counted twice (the debt and the charges of those days) - refused, remove or correct
+        those openings first.  «Оплачено до» never blocks (the floor of the charges is D + 1); a later start never blocks (``openings_to_review`` warns)."""
+        if new_start >= old_start:
+            return
+        n = self.db.query(func.count(MembershipOpeningBalance.id)).filter(
+            MembershipOpeningBalance.org_id == org_id, MembershipOpeningBalance.voided_at.is_(None),
+            MembershipOpeningBalance.debt_on >= new_start, MembershipOpeningBalance.debt_on < old_start).scalar()
+        if n:
+            raise AccountingStartRange(
+                f"У {n} остатков дата долга не раньше {new_start.strftime('%d.%m.%Y')} (двойной счёт): сначала уберите или исправьте эти остатки")
+
+    def _openings_to_review(self, org_id: str, new_start: date) -> int:
+        """Openings whose «оплачено до» is before the day preceding the new start: they stay as they are (never changed silently), the owner is warned."""
+        return int(self.db.query(func.count(MembershipOpeningBalance.id)).filter(
+            MembershipOpeningBalance.org_id == org_id, MembershipOpeningBalance.voided_at.is_(None),
+            MembershipOpeningBalance.paid_until < new_start - timedelta(days=1)).scalar() or 0)
+
     def _accounting_start_impact(self, org_id: str, new_start: date) -> AccountingStartImpact:
         """How many memberships get a NEW debt (and how much debt appears) if the accounting starts on ``new_start``."""
         today = ps.business_today()
@@ -547,7 +567,8 @@ class PaymentService:
             memberships_with_new_debt=len(grew), debt_delta=sum(l.debt for l in new.values()) - sum(l.debt for l in old.values()),
             memberships_with_changed_advance=len({m for m in new if new[m].advance != (old[m].advance if m in old else 0)}),
             advance_delta=sum(l.advance for l in new.values()) - sum(l.advance for l in old.values()),
-            refundable_delta=sum(l.refundable for l in new.values()) - sum(l.refundable for l in old.values()))
+            refundable_delta=sum(l.refundable for l in new.values()) - sum(l.refundable for l in old.values()),
+            openings_to_review=self._openings_to_review(org_id, new_start))
 
     # -------------------------------------------------------------- loading
 
