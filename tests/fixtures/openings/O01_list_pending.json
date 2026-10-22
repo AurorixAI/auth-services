@@ -29,6 +29,8 @@
             "amount": 600000,
             "group_amount": null,
             "reason": null,
+            "scheduled": null,
+            "set_by_name": null,
             "source": "group",
             "valid_from": "2026-01-01"
           },
@@ -66,6 +68,8 @@
             "amount": 600000,
             "group_amount": null,
             "reason": null,
+            "scheduled": null,
+            "set_by_name": null,
             "source": "group",
             "valid_from": "2026-01-01"
           },
@@ -99,6 +103,8 @@
             "amount": 600000,
             "group_amount": null,
             "reason": null,
+            "scheduled": null,
+            "set_by_name": null,
             "source": "group",
             "valid_from": "2026-01-01"
           },
@@ -132,6 +138,8 @@
             "amount": 450000,
             "group_amount": 600000,
             "reason": "скидка",
+            "scheduled": null,
+            "set_by_name": null,
             "source": "override",
             "valid_from": "2026-01-01"
           },
@@ -165,6 +173,8 @@
             "amount": 600000,
             "group_amount": null,
             "reason": null,
+            "scheduled": null,
+            "set_by_name": null,
             "source": "group",
             "valid_from": "2026-01-01"
           },
@@ -208,6 +218,8 @@
             "amount": 1200000,
             "group_amount": null,
             "reason": null,
+            "scheduled": null,
+            "set_by_name": null,
             "source": "group",
             "valid_from": "2026-01-01"
           },
@@ -241,6 +253,8 @@
             "amount": 600000,
             "group_amount": null,
             "reason": null,
+            "scheduled": null,
+            "set_by_name": null,
             "source": "group",
             "valid_from": "2026-01-01"
           },
@@ -274,6 +288,8 @@
             "amount": 0,
             "group_amount": null,
             "reason": null,
+            "scheduled": null,
+            "set_by_name": null,
             "source": "group",
             "valid_from": "2026-01-01"
           },
@@ -307,6 +323,8 @@
             "amount": 600000,
             "group_amount": null,
             "reason": null,
+            "scheduled": null,
+            "set_by_name": null,
             "source": "group",
             "valid_from": "2026-01-01"
           },

@@ -110,7 +110,9 @@
             "source": "group",
             "valid_from": "2026-01-01",
             "group_amount": 400000,
-            "reason": null
+            "reason": null,
+            "set_by_name": null,
+            "scheduled": null
           },
           "charge": 258000,
           "basis": "days",
@@ -158,7 +160,9 @@
         "source": "group",
         "valid_from": "2026-01-01",
         "group_amount": 400000,
-        "reason": null
+        "reason": null,
+        "set_by_name": null,
+        "scheduled": null
       },
       "charge": 400000,
       "basis": "full",

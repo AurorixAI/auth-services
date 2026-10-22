@@ -229,6 +229,8 @@ class Price:
     valid_from: Optional[date] = None
     group_amount: Optional[int] = None
     reason: Optional[str] = None
+    set_by_name: Optional[str] = None  # who set the individual price in force (``source`` = override)
+    scheduled: Optional["ScheduledOverride"] = None  # the nearest FUTURE individual price of the membership (amount None = "the group price again")
 
     @property
     def is_set(self) -> bool:
@@ -236,6 +238,16 @@ class Price:
 
 
 NO_PRICE = Price(None, SOURCE_NONE)
+
+
+@dataclass(frozen=True)
+class ScheduledOverride:
+    """A future row of the individual price of a membership (``price.scheduled`` of the money rows)."""
+
+    row_id: str
+    amount: Optional[int]
+    valid_from: date
+    reason: Optional[str] = None
 
 
 class GroupBook:
@@ -265,14 +277,30 @@ class GroupBook:
 class OverrideBook:
     """The exception history of ONE membership: ``at(day)`` is the row with the greatest ``valid_from <= day``."""
 
-    __slots__ = ("_days", "_rows")
+    __slots__ = ("_days", "_rows", "_meta")
 
-    def __init__(self, rows: Iterable[Tuple[date, Optional[int], Optional[str]]] = ()) -> None:
+    def __init__(self, rows: Iterable[Tuple[date, Optional[int], Optional[str]]] = (),
+                 meta: Optional[Dict[date, Tuple[str, Optional[str]]]] = None) -> None:
         ordered = sorted(rows, key=lambda row: row[0])
         self._days: List[date] = [row[0] for row in ordered]
         self._rows: List[Tuple[date, Optional[int], Optional[str]]] = [
             (day, None if amount is None else int(amount), reason) for day, amount, reason in ordered
         ]
+        self._meta: Dict[date, Tuple[str, Optional[str]]] = meta or {}  # valid_from -> (row id, name of the author)
+
+    def meta_at(self, day: date) -> Optional[Tuple[str, Optional[str]]]:
+        """``(row id, author)`` of the row that ``at(day)`` returns."""
+        row = self.at(day)
+        return None if row is None else self._meta.get(row[0])
+
+    def next_after(self, day: date) -> Optional[ScheduledOverride]:
+        """The nearest row that starts AFTER ``day``."""
+        i = bisect_right(self._days, day)
+        if i >= len(self._rows):
+            return None
+        valid_from, amount, reason = self._rows[i]
+        found = self._meta.get(valid_from)
+        return ScheduledOverride(found[0] if found else "", amount, valid_from, reason)
 
     def at(self, day: date) -> Optional[Tuple[date, Optional[int], Optional[str]]]:
         i = bisect_right(self._days, day) - 1
@@ -303,12 +331,15 @@ class PriceBooks:
         """THE rule of the effective price (see the module docstring)."""
         group_row = self.group_book(group_id).at(day)
         group_amount = group_row[1] if group_row else None
-        override = self.override_book(membership_id).at(day)
+        book = self.override_book(membership_id)
+        override = book.at(day)
+        scheduled = book.next_after(day)
         if override is not None and override[1] is not None:
-            return Price(override[1], SOURCE_OVERRIDE, override[0], group_amount, override[2])
+            meta = book.meta_at(day)
+            return Price(override[1], SOURCE_OVERRIDE, override[0], group_amount, override[2], meta[1] if meta else None, scheduled)
         if group_row is not None:
-            return Price(group_row[1], SOURCE_GROUP, group_row[0], group_amount)
-        return NO_PRICE
+            return Price(group_row[1], SOURCE_GROUP, group_row[0], group_amount, scheduled=scheduled)
+        return NO_PRICE if scheduled is None else Price(None, SOURCE_NONE, scheduled=scheduled)
 
     def with_override_books(self, books: Dict[UUID, "OverrideBook"]) -> "PriceBooks":
         """The same books with the exception history of some memberships replaced ("what if this exception were written")."""
@@ -325,22 +356,28 @@ def load_books(db: Session, group_ids: Iterable[Any], membership_ids: Iterable[A
     mids = {_uuid(m) for m in membership_ids if m is not None}
     group_steps: Dict[UUID, List[Tuple[date, int]]] = {g: [] for g in gids}
     override_rows: Dict[UUID, List[Tuple[date, Optional[int], Optional[str]]]] = {m: [] for m in mids}
+    override_meta: Dict[UUID, Dict[date, Tuple[str, Optional[str]]]] = {m: {} for m in mids}
     if gids:
         for group_id, valid_from, amount in db.query(
             GroupPrice.group_id, GroupPrice.valid_from, GroupPrice.amount
         ).filter(GroupPrice.group_id.in_(gids)):
             group_steps[group_id].append((valid_from, int(amount)))
     if mids:
-        for membership_id, valid_from, amount, reason in db.query(
+        # ONE joined query for the rows and the names of their authors (``price.set_by_name``): no query per membership
+        for membership_id, valid_from, amount, reason, row_id, first_name, last_name in db.query(
             MembershipPriceOverride.membership_id,
             MembershipPriceOverride.valid_from,
             MembershipPriceOverride.amount,
             MembershipPriceOverride.reason,
-        ).filter(MembershipPriceOverride.membership_id.in_(mids)):
+            MembershipPriceOverride.id,
+            User.first_name,
+            User.last_name,
+        ).outerjoin(User, User.id == MembershipPriceOverride.created_by).filter(MembershipPriceOverride.membership_id.in_(mids)):
             override_rows[membership_id].append((valid_from, amount, reason))
+            override_meta[membership_id][valid_from] = (str(row_id), staff_name(first_name, last_name))
     return PriceBooks(
         {g: GroupBook(steps) for g, steps in group_steps.items()},
-        {m: OverrideBook(rows) for m, rows in override_rows.items()},
+        {m: OverrideBook(rows, override_meta[m]) for m, rows in override_rows.items()},
     )
 
 
@@ -363,6 +400,10 @@ def price_dict(price: Price) -> Dict[str, Any]:
         "valid_from": price.valid_from,
         "group_amount": price.group_amount,
         "reason": price.reason,
+        "set_by_name": price.set_by_name,
+        "scheduled": (
+            {"row_id": price.scheduled.row_id, "amount": price.scheduled.amount, "valid_from": price.scheduled.valid_from,
+             "reason": price.scheduled.reason} if price.scheduled is not None else None),
     }
 
 

@@ -6,8 +6,8 @@ archived group takes no new students or payments, so its price is not managed he
 scheduled price and how many active students carry an individual price today.  The group price is no longer edited in
 the group card.
 
-Four queries however many groups there are (no query per group): the groups with their teacher, every price row of
-those groups, the individual-price rows of their active students, the billing mode.  The business day is Tashkent
+Five queries however many groups there are (no query per group): the groups with their teacher, every price row of
+those groups, the individual-price rows of their active students (in force today; and the count of those that start later), the billing mode.  The business day is Tashkent
 (``payment_status.business_today``) like all the pricing; the price on a day is the ONE rule of ``pricing.GroupBook`` /
 ``OverrideBook`` (the row with the greatest ``valid_from <= day``).
 """
@@ -18,6 +18,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
+from sqlalchemy import distinct, func
 from sqlalchemy.orm import Session
 
 from src.models.auth import Group, GroupPrice, MembershipPriceOverride, Student, StudentGroup, User
@@ -80,6 +81,22 @@ def list_group_prices(db: Session, org_id: str, today: Optional[date] = None) ->
         if latest is not None and latest[1] is not None:  # an ended exception ("the group price again") is not counted
             with_override[group_of[membership_id]] += 1
 
+    # active students who have an individual price that starts AFTER today (#126: «и N с запланированной»); one grouped query
+    scheduled_overrides: Dict[UUID, int] = {
+        row.group_id: row.n
+        for row in db.query(StudentGroup.group_id, func.count(distinct(StudentGroup.id)).label("n"))
+        .join(Student, Student.id == StudentGroup.student_id)
+        .join(MembershipPriceOverride, MembershipPriceOverride.membership_id == StudentGroup.id)
+        .filter(
+            StudentGroup.group_id.in_(group_ids),
+            StudentGroup.is_active.is_(True),
+            Student.org_id == org_id,
+            Student.status != "archived",
+            MembershipPriceOverride.valid_from > today,
+        )
+        .group_by(StudentGroup.group_id)
+    }
+
     items = []
     for g in groups:
         rows = steps.get(g.id, [])
@@ -100,6 +117,7 @@ def list_group_prices(db: Session, org_id: str, today: Optional[date] = None) ->
                 ),
                 "scheduled_count": len(future),
                 "students_with_override": with_override.get(g.id, 0),
+                "scheduled_override_count": scheduled_overrides.get(g.id, 0),
             }
         )
     items.sort(key=lambda i: ((i["name"] or "").casefold(), i["group_id"]))

@@ -1532,6 +1532,27 @@
             ],
             "title": "Reason"
           },
+          "scheduled": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PriceScheduled"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "set_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Set By Name"
+          },
           "source": {
             "default": "none",
             "enum": [
@@ -1556,6 +1577,48 @@
           }
         },
         "title": "PriceOut",
+        "type": "object"
+      },
+      "PriceScheduled": {
+        "description": "A future row of the individual price of a membership (``DELETE /org/memberships/{id}/price-override/{row_id}`` takes it back).",
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "row_id": {
+            "title": "Row Id",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date",
+            "title": "Valid From",
+            "type": "string"
+          }
+        },
+        "required": [
+          "row_id",
+          "valid_from"
+        ],
+        "title": "PriceScheduled",
         "type": "object"
       }
     }

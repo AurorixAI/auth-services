@@ -52,7 +52,9 @@
             "source": "none",
             "valid_from": null,
             "group_amount": null,
-            "reason": null
+            "reason": null,
+            "set_by_name": null,
+            "scheduled": null
           },
           "charge": 250000,
           "basis": "opening",
@@ -111,7 +113,9 @@
             "source": "group",
             "valid_from": "2026-01-01",
             "group_amount": 600000,
-            "reason": null
+            "reason": null,
+            "set_by_name": null,
+            "scheduled": null
           },
           "charge": 213000,
           "basis": "days",

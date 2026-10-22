@@ -6,7 +6,9 @@
     "source": "group",
     "valid_from": "2026-01-01",
     "group_amount": 600000,
-    "reason": null
+    "reason": null,
+    "set_by_name": null,
+    "scheduled": null
   },
   "due": {
     "debt": 600000,
@@ -26,7 +28,9 @@
           "source": "group",
           "valid_from": "2026-01-01",
           "group_amount": 600000,
-          "reason": null
+          "reason": null,
+          "set_by_name": null,
+          "scheduled": null
         },
         "charge": 600000,
         "basis": "lessons",

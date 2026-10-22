@@ -16,6 +16,15 @@ MembershipStatus = Literal["none", "free", "expired", "ends_today", "expiring", 
 PriceSource = Literal["group", "override", "none"]
 
 
+class PriceScheduled(BaseModel):
+    """A future row of the individual price of a membership (``DELETE /org/memberships/{id}/price-override/{row_id}`` takes it back)."""
+
+    row_id: str
+    amount: Optional[int] = None
+    valid_from: date_type
+    reason: Optional[str] = None
+
+
 class PriceOut(BaseModel):
     """The effective price of a membership on a day (ROADMAP #105, ``src/auth/pricing.py``).
 
@@ -30,6 +39,9 @@ class PriceOut(BaseModel):
     valid_from: Optional[date_type] = None
     group_amount: Optional[int] = None
     reason: Optional[str] = None
+    # #126 (additive): who set the individual price in force; the nearest FUTURE individual price of the membership (``amount`` null = «цена группы снова»)
+    set_by_name: Optional[str] = None
+    scheduled: Optional["PriceScheduled"] = None
 
 
 # ---- PAY-2: money as money (design ``artifacts/partner_doc_check/pay2_tech_design.md`` §4) ---------------------------
@@ -442,6 +454,7 @@ class GroupPriceListItem(BaseModel):
     current: Optional[GroupPriceCurrentLite] = None  # null - the price is not set
     scheduled: Optional[GroupPriceListScheduled] = None  # the NEXT scheduled price (valid_from after today)
     scheduled_count: int = 0  # how many scheduled prices the group has (the next one is shown)
+    scheduled_override_count: int = 0  # #126: active students with an individual price that starts AFTER today
     students_with_override: int = 0  # active students with an individual price in force today
 
 

@@ -29,6 +29,8 @@
             "amount": 600000,
             "group_amount": null,
             "reason": null,
+            "scheduled": null,
+            "set_by_name": null,
             "source": "group",
             "valid_from": "2026-01-01"
           },

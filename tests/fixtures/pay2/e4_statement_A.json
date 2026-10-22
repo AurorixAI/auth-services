@@ -52,7 +52,9 @@
             "source": "group",
             "valid_from": "2026-01-01",
             "group_amount": 500000,
-            "reason": null
+            "reason": null,
+            "set_by_name": null,
+            "scheduled": null
           },
           "charge": 177000,
           "basis": "days",

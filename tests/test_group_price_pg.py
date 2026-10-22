@@ -194,17 +194,17 @@ def test_the_impact_counts_followers_exceptions_and_ignores_archived_and_left_st
 def test_the_row_of_a_membership_carries_the_price_object_and_the_old_field_as_a_synonym(world):
     s0 = world.students[0]
     row = row_of(world, s0)
-    assert row["price"] == {"amount": None, "source": "none", "valid_from": None, "group_amount": None, "reason": None}
+    assert row["price"] == {"amount": None, "source": "none", "valid_from": None, "group_amount": None, "reason": None, "set_by_name": None, "scheduled": None}
     assert row["monthly_fee"] is None and row["status"] == "none"
     put_price(world, 450_000, valid_from=day(-20))
     row = row_of(world, s0)
     assert row["price"] == {"amount": 450_000, "source": "group", "valid_from": day(-20).isoformat(),
-                            "group_amount": 450_000, "reason": None}
+                            "group_amount": 450_000, "reason": None, "set_by_name": None, "scheduled": None}
     assert row["monthly_fee"] == 450_000                                            # today's effective price, for the old front
     put_override(world, s0, amount=300_000, reason="многодетная семья")
     row = row_of(world, s0)
     assert row["price"] == {"amount": 300_000, "source": "override", "valid_from": business_today().isoformat(),
-                            "group_amount": 450_000, "reason": "многодетная семья"}
+                            "group_amount": 450_000, "reason": "многодетная семья", "set_by_name": "Иван Owner", "scheduled": None}
     assert row["monthly_fee"] == 300_000
     other = row_of(world, world.students[1])
     assert other["price"]["source"] == "group" and other["monthly_fee"] == 450_000    # a neighbour is not touched
@@ -213,7 +213,7 @@ def test_the_row_of_a_membership_carries_the_price_object_and_the_old_field_as_a
     assert listed["price"]["source"] == "override"
     out = put_override(world, s0, amount=None, reason=None)
     assert out["price"] == {"amount": 450_000, "source": "group", "valid_from": day(-20).isoformat(),
-                            "group_amount": 450_000, "reason": None}
+                            "group_amount": 450_000, "reason": None, "set_by_name": None, "scheduled": None}
     assert out["row"]["price"]["source"] == "group" and out["row"]["monthly_fee"] == 450_000
 
 
