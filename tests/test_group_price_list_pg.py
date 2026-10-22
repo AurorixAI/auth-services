@@ -39,7 +39,7 @@ def test_an_org_without_groups_gets_an_empty_list(world):
     world.db.commit()
     world.other_org = empty_org
     out = listing(world, client=make_client(world, user=lone_owner, org="other"))
-    assert out["items"] == [] and out["period_mode"] == "calendar" and out["price_label"] == "Оплата в месяц"
+    assert out["items"] == [] and out["period_mode"] == "calendar" and out["price_label"] == "Цена в месяц"
 
 
 def test_a_group_without_a_price(world):
@@ -130,7 +130,7 @@ def test_the_label_follows_the_billing_mode(world):
 
     set_settings(world, period_mode="lessons")
     out = listing(world)
-    assert out["period_mode"] == "lessons" and out["price_label"] == "Стоимость пакета"
+    assert out["period_mode"] == "lessons" and out["price_label"] == "Цена пакета"
 
 
 def test_admin_needs_the_right_to_money_teacher_never(world):

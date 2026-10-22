@@ -269,7 +269,7 @@ def compute_line(
     if percent is None:
         warnings.append(_warning(PERCENT_REQUIRED, "Не указан процент преподавателя"))
     if fee is None or no_price:
-        warnings.append(_warning(NO_FEE, "Не задана оплата в месяц"))
+        warnings.append(_warning(NO_FEE, "Не задана цена в месяц"))
     if pending_excused:
         warnings.append(
             _warning(EXCUSE_PENDING, f"Уважительных пропусков ожидает подтверждения: {pending_excused}")
@@ -433,12 +433,12 @@ def group_blocks(lines: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
 
 _COMPARED = ("monthly_fee", "percent", "counted", "unpaid", "pending_excused", "amount", "price_steps")
 _LABELS = {
-    "monthly_fee": "оплата",
+    "monthly_fee": "цена в месяц",
     "percent": "процент",
     "counted": "засчитано",
     "unpaid": "не оплачено",
     "pending_excused": "уважительные ожидают",
-    "amount": "начислено",
+    "amount": "заработано",
     "price_steps": "цена по дням изменилась",  # only the per-day prices differ (same last price, same total)
 }
 

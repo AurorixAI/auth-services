@@ -1014,8 +1014,8 @@ def test_excel_follows_the_partner_table_with_red_zeros_and_a_total(world):
     assert "Пётр Teacher" in values["A1"] and m.label.split("-")[0] in values["A1"]
     assert "Редакция 1" in values["A2"]
     header = [c.value for c in ws[5] if c.value is not None]
-    assert header[:6] == ["Группа", "Тип занятий", "Время", "Ученик", "Оплата в месяц", "%"]
-    assert header[6:10] == [f"{m.d(n):%d.%m}" for n in (1, 2, 3, 4)] and header[10:] == ["Засчитано", "Не оплачено", "Включено", "Начислено"]
+    assert header[:6] == ["Группа", "Тип занятий", "Время", "Ученик", "Цена в месяц", "%"]
+    assert header[6:10] == [f"{m.d(n):%d.%m}" for n in (1, 2, 3, 4)] and header[10:] == ["Засчитано", "Не оплачено", "Включено", "Заработано"]
     rows = {ws.cell(row=r_, column=4).value: r_ for r_ in range(6, ws.max_row + 1) if ws.cell(row=r_, column=4).value}
     karimova, yusupov, orlova = (rows[n] for n in ("Каримова Алия", "Юсупов Бек", "Орлова Дана"))
     # zero (a confirmed excuse) is red; the pending excuse is yellow text; the unpaid lesson is grey

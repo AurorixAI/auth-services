@@ -43,7 +43,7 @@ def list_group_prices(db: Session, org_id: str, today: Optional[date] = None) ->
     out: Dict[str, Any] = {
         "as_of": today.isoformat(),
         "period_mode": mode,
-        "price_label": "Оплата в месяц" if mode == ps.CALENDAR else "Стоимость пакета",
+        "price_label": "Цена в месяц" if mode == ps.CALENDAR else "Цена пакета",
         "items": [],
     }
     if not groups:

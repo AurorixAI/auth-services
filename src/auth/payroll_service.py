@@ -1507,7 +1507,7 @@ class PayrollService:
         for row in rows:
             old = manual.get(row["membership_id"])
             new = source.get(row["membership_id"])
-            if old is None or new is None or "оплата" not in row["changes"]:
+            if old is None or new is None or "цена в месяц" not in row["changes"]:
                 continue
             was = f"{int(old['monthly_fee'] or 0):,}".replace(",", " ")
             origin = {

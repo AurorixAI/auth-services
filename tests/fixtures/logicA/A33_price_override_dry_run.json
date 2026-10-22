@@ -3,7 +3,7 @@
   "group_id": "00000000-0000-4000-8000-000000000301",
   "as_of": "2026-10-21",
   "period_mode": "calendar",
-  "price_label": "Оплата в месяц",
+  "price_label": "Цена в месяц",
   "price": {
     "amount": 500000,
     "source": "group",

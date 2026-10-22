@@ -601,7 +601,7 @@ class StudentGroup(Base):
     initial_diagnostic_reviewed_at = Column(DateTime)
     initial_diagnostic_reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
 
-    # LEGACY (ROADMAP #105): "Оплата в месяц" of the membership before the group price.  Kept for the rollback
+    # LEGACY (ROADMAP #105): "Цена в месяц" of the membership before the group price.  Kept for the rollback
     # only; the code neither reads nor writes it - the price is ``group_prices`` + ``membership_price_overrides``
     # (``src/auth/pricing.py``); the downgrade of b8c9d0e1f2a refills it.  Drop in a later migration.
     monthly_fee = Column(BigInteger, nullable=True)
@@ -640,7 +640,7 @@ class GroupPrice(Base):
     """Цена группы (ROADMAP #105): сумма и день, с которого она действует.
 
     Цена на день *d* - строка с наибольшим ``valid_from <= d``; строки нет - «цена не задана».  Смысл суммы
-    задаёт режим оплаты центра: календарный период - «Оплата в месяц», пакет уроков - «Стоимость пакета».
+    задаёт режим оплаты центра: календарный период - «Цена в месяц», пакет уроков - «Цена пакета».
     ``valid_from`` - деловой день Ташкента (группа «Ташкент» в TIME_CONVENTIONS.md), ``created_at`` - UTC.
     Строки не удаляются: правка того же дня заменяет сумму, новая дата добавляет шаг истории.  ``created_by``
     пуст у строк, которые создала миграция (``valid_from = 2000-01-01``: «всегда так было»).

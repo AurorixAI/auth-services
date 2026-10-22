@@ -30,8 +30,8 @@ class PriceOut(BaseModel):
 
     ``source``: ``group`` - the price of the group; ``override`` - the individual price of the student (then
     ``reason`` says why and ``group_amount`` is what the group price would be); ``none`` - not set anywhere.
-    ``valid_from`` - the day the row that gave the price started.  The sum means "Оплата в месяц" (calendar
-    periods) or "Стоимость пакета" (lesson packages) as the centre's billing mode says.
+    ``valid_from`` - the day the row that gave the price started.  The sum means "Цена в месяц" (calendar
+    periods) or "Цена пакета" (lesson packages) as the centre's billing mode says.
     """
 
     amount: Optional[int] = None
@@ -428,7 +428,7 @@ class GroupPricesOut(BaseModel):
     group_name: str
     as_of: str  # the business today (Tashkent) the ``current`` is for
     period_mode: PeriodMode
-    price_label: str  # «Оплата в месяц» (calendar) | «Стоимость пакета» (lessons)
+    price_label: str  # «Цена в месяц» (calendar) | «Цена пакета» (lessons)
     current: Optional[GroupPriceCurrent] = None
     history: List[GroupPriceRow] = Field(default_factory=list)
     cancelled: List[GroupPriceCancelled] = Field(default_factory=list)  # the last 20 scheduled prices taken back, newest first
@@ -463,7 +463,7 @@ class GroupPriceList(BaseModel):
 
     as_of: str  # the business today (Tashkent)
     period_mode: PeriodMode
-    price_label: str  # «Оплата в месяц» (calendar) | «Стоимость пакета» (lessons)
+    price_label: str  # «Цена в месяц» (calendar) | «Цена пакета» (lessons)
     items: List[GroupPriceListItem] = Field(default_factory=list)  # by name
 
 

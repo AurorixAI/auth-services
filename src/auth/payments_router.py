@@ -142,7 +142,7 @@ def student_memberships(
 FEE_GONE = {
     "code": "FEE_ENDPOINT_GONE",
     "message": (
-        "«Оплата в месяц» ученика больше не задаётся. Цена задаётся у группы: "
+        "«Цена в месяц» ученика больше не задаётся. Цена задаётся у группы: "
         "PUT /api/v1/auth/org/groups/{group_id}/price. Индивидуальная цена ученика — "
         "PUT /api/v1/auth/org/memberships/{membership_id}/price-override"
     ),

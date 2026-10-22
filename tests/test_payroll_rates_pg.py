@@ -411,7 +411,7 @@ def test_a_manual_price_of_an_old_sheet_is_not_carried_to_a_recalculation_and_th
     assert diff["stale"] is True
     (changed,) = diff["lines"]
     assert changed["student_name"] == "Каримова Алия" and changed["status"] == "changed"
-    assert "оплата" in changed["changes"] and "цена из «Цен групп» вместо ручной 300 000 сум" in changed["changes"]
+    assert "цена в месяц" in changed["changes"] and "цена из «Цен групп» вместо ручной 300 000 сум" in changed["changes"]
     assert changed["saved"]["monthly_fee"] == 300_000 and changed["fresh"]["monthly_fee"] == FEE
     assert diff["stale"] is True and changed["delta_amount"] == FEE * 50 * 6 // 1200 - 300_000 * 50 * 6 // 1200
     # a recalculation does not carry the manual price: the line is the price of the group again; the ticks stay

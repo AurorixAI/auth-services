@@ -13,7 +13,7 @@ The effective price of a membership on a day is ONE rule (:meth:`PriceBooks.pric
 the last override with ``valid_from <= d`` if it exists and has an amount, else the price of the group on *d*,
 else none.  It also tells where the price came from (``group`` / ``override`` / ``none``).
 
-The meaning of the sum follows the centre's billing mode: "Оплата в месяц" for calendar periods, "Стоимость пакета"
+The meaning of the sum follows the centre's billing mode: "Цена в месяц" for calendar periods, "Цена пакета"
 for lesson packages (``payments.lessons_per_payment``).
 
 Batch loading: :func:`load_books` reads the history of any number of groups and memberships in TWO queries, after
@@ -603,7 +603,7 @@ class PricingService:
         from .payments_service import PaymentService  # lazy: pulls in the status maths
 
         mode = PaymentService(self.db).get_settings(org_id).period_mode
-        return mode, ("Оплата в месяц" if mode == ps.CALENDAR else "Стоимость пакета")
+        return mode, ("Цена в месяц" if mode == ps.CALENDAR else "Цена пакета")
 
     def _names(self, ids: Iterable[Optional[UUID]]) -> Dict[UUID, Optional[str]]:
         wanted = {i for i in ids if i}

@@ -109,7 +109,7 @@ def era_before(w, m):
 def test_a_group_without_a_price_and_the_first_price(world):
     empty = get_prices(world)
     assert empty["current"] is None and empty["history"] == [] and empty["group_name"] == "Группа"
-    assert empty["period_mode"] == "calendar" and empty["price_label"] == "Оплата в месяц"
+    assert empty["period_mode"] == "calendar" and empty["price_label"] == "Цена в месяц"
     assert empty["as_of"] == business_today().isoformat()
     out = put_price(world, 450_000, note="Сентябрь")
     assert out["dry_run"] is False
@@ -119,7 +119,7 @@ def test_a_group_without_a_price_and_the_first_price(world):
     assert row["created_by"] == str(world.owner.id) and row["created_by_name"] == "Иван Owner" and row["created_at"]
     assert get_prices(world) == {k: v for k, v in out.items() if k not in ("dry_run", "impact")}
     set_settings(world, period_mode="lessons")
-    assert get_prices(world)["price_label"] == "Стоимость пакета"                   # the meaning follows the billing mode
+    assert get_prices(world)["price_label"] == "Цена пакета"                   # the meaning follows the billing mode
 
 
 def test_the_history_keeps_every_step_and_the_price_on_a_day_is_the_last_one_not_after_it(world):

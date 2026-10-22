@@ -580,7 +580,7 @@ def tabs_and_statement(store):
                 payments=[(D(2026, 10, 20), 700_000)]).run()
     row_ = row(2, "Ахмедов Б.", "A-1", group_price(500_000), "active", res=base, today=D(2026, 10, 21))
     write("A33_price_override_dry_run.json", PriceOverrideChanged(
-        membership_id=uid(102), group_id=uid(301), as_of="2026-10-21", period_mode="calendar", price_label="Оплата в месяц",
+        membership_id=uid(102), group_id=uid(301), as_of="2026-10-21", period_mode="calendar", price_label="Цена в месяц",
         price=group_price(500_000), history=[], cancelled=[], row=row_, dry_run=True,
         impact=PriceImpact(students_following=0, students_with_override=1, stale_payroll_sheets=0, stale_sheets=[],
                            money=PriceImpactMoney(memberships_with_new_debt=0, debt_delta=0, memberships_with_less_advance=1, advance_delta=0,
