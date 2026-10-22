@@ -141,12 +141,37 @@
         "title": "DecideResult",
         "type": "object"
       },
-      "ExamBinding": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LessonExamBinding": {
+        "description": "#124: the precheck of «Отменить урок» on the lesson sheet.  ``state`` / ``title`` as ``examBinding``; ``canCancel`` / ``message`` = the answer of the SAME\n``cancellation-check`` of exam-service that refuses the cancellation itself (an exam that is launched OR has attempts blocks it).",
         "properties": {
           "canCancel": {
             "default": true,
             "title": "Cancancel",
             "type": "boolean"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
           },
           "state": {
             "default": "none",
@@ -170,20 +195,7 @@
             "title": "Title"
           }
         },
-        "title": "ExamBinding",
-        "type": "object"
-      },
-      "HTTPValidationError": {
-        "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "title": "Detail",
-            "type": "array"
-          }
-        },
-        "title": "HTTPValidationError",
+        "title": "LessonExamBinding",
         "type": "object"
       },
       "LessonMoveRequest": {
@@ -1011,7 +1023,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ExamBinding"
+                  "$ref": "#/components/schemas/LessonExamBinding"
                 }
               }
             },

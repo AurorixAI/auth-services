@@ -1,5 +1,6 @@
 {
   "state": "ok",
   "title": "Контрольная №3",
-  "canCancel": false
+  "canCancel": false,
+  "message": null
 }

@@ -26,7 +26,7 @@ from .substitution_schemas import (
     DecideBulkRequest,
     DecideOut,
     DecideRequest,
-    ExamBinding,
+    LessonExamBinding,
     LessonAccessOut,
     LessonMoveRequest,
     MineOut,
@@ -198,7 +198,7 @@ def lesson_move_check(
     return _subs(db).lesson_move_check(user["org_id"], group_id, lessonId, lessonDate, newDate, startTime, endTime)
 
 
-@router.get("/org/groups/{group_id}/lesson-exam-binding", response_model=ExamBinding)
+@router.get("/org/groups/{group_id}/lesson-exam-binding", response_model=LessonExamBinding)
 def lesson_exam_binding(
     group_id: str,
     lessonId: str = Query(..., min_length=1, max_length=100),

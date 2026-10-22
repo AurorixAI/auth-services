@@ -41,14 +41,18 @@ def test_the_endpoints_reproduce_the_golden_fixtures(w, sync, exams):
     out["K02_move_check_ok"] = (check(w), 200, "MoveCheckOut")
     out["K03_move_stale_sheet"] = (move(w, expectedStartTime="11:00", expectedEndTime="12:00"), 409, "-")
     out["K04_move_teacher_busy"] = (move(w, newDate="2026-10-27", startTime="10:00", endTime="11:30"), 409, "-")
-    out["K05_exam_binding_none"] = (binding(w), 200, "ExamBinding")
+    out["K05_exam_binding_none"] = (binding(w), 200, "LessonExamBinding")
     exams.completion_exams = [{"examId": "e1", "title": "Контрольная №3", "status": "lobby"}]
-    out["K06_exam_binding_lobby"] = (binding(w), 200, "ExamBinding")
+    out["K06_exam_binding_lobby"] = (binding(w), 200, "LessonExamBinding")
     exams.completion_exams = [{"examId": "e1", "title": "Контрольная №3", "status": "active"}]
-    out["K07_exam_binding_active"] = (binding(w), 200, "ExamBinding")
+    out["K07_exam_binding_active"] = (binding(w), 200, "LessonExamBinding")
     exams.unavailable = True
-    out["K08_exam_binding_unavailable"] = (binding(w), 200, "ExamBinding")
+    out["K08_exam_binding_unavailable"] = (binding(w), 200, "LessonExamBinding")
     exams.unavailable = False
+    sync.mode = "live"
+    exams.completion_exams = [{"examId": "e1", "title": "Контрольная №3", "status": "lobby"}]
+    out["K11_exam_binding_blocked_by_attempts"] = (binding(w), 200, "LessonExamBinding")
+    sync.mode = "ok"
     out["K09_move_ok"] = (move(w), 200, "DecideOut")
     out["K10_move_again_other_slot"] = (move(w, newDate="2026-10-30"), 409, "-")
     write = os.environ.get("LESSONMOVE_WRITE_FIXTURES") == "1"

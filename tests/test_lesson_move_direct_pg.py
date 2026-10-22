@@ -242,6 +242,47 @@ def test_move_check_by_lesson_equals_the_check_by_request(w, sync):
     assert len(requests_of(w)) == 1                       # the check writes nothing
 
 
+# ------------------------------------------------------------------------------------------------------ X
+def binding(w, who="admin", key="L2", day="2026-10-28", **q):
+    g, lesson, _ = L(w, key, day)
+    return client(w, who).get(f"{API}/org/groups/{g.id}/lesson-exam-binding", params={"lessonId": lesson, "lessonDate": day, **q})
+
+
+def test_x_the_precheck_of_cancel_follows_the_real_guard(w, exams, sync):
+    """[X1..X8] none / lobby / launched-or-attempted (the cancellation-check refuses) / exam-service down: what the precheck allows, the cancellation does not refuse."""
+    r = binding(w)
+    assert r.status_code == 200 and r.json() == {"state": "none", "title": None, "canCancel": True, "message": None}
+    exams.completion_exams = [{"examId": "e1", "title": "Контрольная №3", "status": "lobby"}]
+    assert binding(w).json() == {"state": "ok", "title": "Контрольная №3", "canCancel": True, "message": None}                             # X6
+    exams.completion_exams = [{"examId": "e1", "title": "Контрольная №3", "status": "lobby"}]
+    sync.mode = "live"                                    # lobby WITH attempts: completion-check says «not active», the real guard refuses (X7)
+    out = binding(w).json()
+    assert (out["state"], out["canCancel"]) == ("ok", False) and out["message"] == "Нельзя отменить урок с активным экзаменом"
+    exams.completion_exams = [{"examId": "e1", "title": "Контрольная №3", "status": "active"}]
+    assert binding(w).json()["canCancel"] is False                                                                                          # active: blocked by both
+    sync.mode = "down"                                    # X8
+    out = binding(w).json()
+    assert (out["state"], out["canCancel"]) == ("unavailable", False) and out["message"] == "Не удалось проверить экзамены группы. Повторите попытку."
+    sync.mode = "ok"
+    exams.unavailable = True
+    assert binding(w).json() == {"state": "unavailable", "title": None, "canCancel": False, "message": "Не удалось проверить экзамены группы. Повторите попытку."}
+    exams.unavailable = False
+    assert all(c[0] == "cancellation-check" for c in sync.calls) and sync.calls
+
+
+def test_x_the_precheck_equals_the_dialog_and_guards_access(w, exams, sync):
+    """The `examBinding` of the request detail (frozen B2) is the same state / title / canCancel when the real guard agrees; 404 / 403 for a foreign group, no lesson, a teacher."""
+    exams.completion_exams = [{"examId": "e1", "title": "Контрольная №3", "status": "lobby"}]
+    item = one(w, "A", "L2", "2026-10-28")
+    detail = client(w, "admin").get(f"{API}/org/substitutions/{item['id']}").json()["examBinding"]
+    mine = binding(w).json()
+    assert detail == {k: mine[k] for k in ("state", "title", "canCancel")}
+    assert binding(w, key="L2", day="2026-10-28", lessonId="nope").status_code == 404
+    ghost = client(w, "admin").get(f"{API}/org/groups/00000000-0000-0000-0000-000000000000/lesson-exam-binding", params={"lessonId": "lesson-l2", "lessonDate": "2026-10-28"})
+    assert ghost.json()["detail"]["code"] == "GROUP_NOT_FOUND"
+    assert binding(w, "A").status_code == 403 and binding(w, "D").status_code == 403
+
+
 def test_other_organisations_see_nothing_of_the_group(w, sync, exams):
     """[M14] An administrator of another centre: 404 GROUP_NOT_FOUND on all three endpoints, nothing written."""
     from tests.pg_world import make_client
@@ -262,31 +303,3 @@ def test_m2b_the_expected_slot_also_guards_the_pending_request_path(w, sync):
     r = move(w, expectedStartTime="11:00", expectedEndTime="12:00")
     assert r.status_code == 409 and r.json()["detail"]["code"] == "LESSON_CHANGED"
     assert [x.status for x in requests_of(w)] == ["pending"] and item
-
-
-# ------------------------------------------------------------------------------------------------------ X
-def binding(w, who="admin", key="L2", day="2026-10-28", **q):
-    g, lesson, _ = L(w, key, day)
-    return client(w, who).get(f"{API}/org/groups/{g.id}/lesson-exam-binding", params={"lessonId": lesson, "lessonDate": day, **q})
-
-
-def test_x_the_precheck_of_cancel(w, exams):
-    """[X1..X5] none / lobby / active / exam-service down / foreign group, unknown lesson, teacher; equals ``examBinding`` of the request detail."""
-    r = binding(w)
-    assert r.status_code == 200 and r.json() == {"state": "none", "title": None, "canCancel": True}
-    exams.completion_exams = [{"examId": "e1", "title": "Контрольная №3", "status": "lobby"}]
-    assert binding(w).json() == {"state": "ok", "title": "Контрольная №3", "canCancel": True}
-    exams.completion_exams = [{"examId": "e1", "title": "Контрольная №3", "status": "active"}]
-    assert binding(w).json() == {"state": "ok", "title": "Контрольная №3", "canCancel": False}
-    item = one(w, "A", "L2", "2026-10-28")
-    detail = client(w, "admin").get(f"{API}/org/substitutions/{item['id']}").json()["examBinding"]
-    assert detail == binding(w).json()
-    exams.unavailable = True
-    assert binding(w).json() == {"state": "unavailable", "title": None, "canCancel": False}
-    exams.unavailable = False
-    assert binding(w, key="L2", day="2026-10-28", lessonId="nope").status_code == 404
-    gid = L(w, "L2", "2026-10-28")[0].id
-    assert client(w, "admin").get(f"{API}/org/groups/00000000-0000-0000-0000-000000000000/lesson-exam-binding",
-                                  params={"lessonId": "lesson-l2", "lessonDate": "2026-10-28"}).json()["detail"]["code"] == "GROUP_NOT_FOUND"
-    assert binding(w, "A").status_code == 403 and binding(w, "D").status_code == 403 and gid
-    assert exams.calls and all(c[0].endswith("/completion-check") for c in exams.calls)

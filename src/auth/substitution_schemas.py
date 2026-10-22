@@ -224,6 +224,13 @@ class ExamBinding(BaseModel):
     canCancel: bool = True
 
 
+class LessonExamBinding(ExamBinding):
+    """#124: the precheck of «Отменить урок» on the lesson sheet.  ``state`` / ``title`` as ``examBinding``; ``canCancel`` / ``message`` = the answer of the SAME
+    ``cancellation-check`` of exam-service that refuses the cancellation itself (an exam that is launched OR has attempts blocks it)."""
+
+    message: Optional[str] = None
+
+
 class SubstitutionDetailOut(BaseModel):
     item: SubstitutionItem
     chain: List[SubstitutionItem] = Field(default_factory=list)

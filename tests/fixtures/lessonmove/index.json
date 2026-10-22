@@ -3,10 +3,11 @@
   "K02_move_check_ok.json": "MoveCheckOut",
   "K03_move_stale_sheet.json": "-",
   "K04_move_teacher_busy.json": "-",
-  "K05_exam_binding_none.json": "ExamBinding",
-  "K06_exam_binding_lobby.json": "ExamBinding",
-  "K07_exam_binding_active.json": "ExamBinding",
-  "K08_exam_binding_unavailable.json": "ExamBinding",
+  "K05_exam_binding_none.json": "LessonExamBinding",
+  "K06_exam_binding_lobby.json": "LessonExamBinding",
+  "K07_exam_binding_active.json": "LessonExamBinding",
+  "K08_exam_binding_unavailable.json": "LessonExamBinding",
+  "K11_exam_binding_blocked_by_attempts.json": "LessonExamBinding",
   "K09_move_ok.json": "DecideOut",
   "K10_move_again_other_slot.json": "-"
 }

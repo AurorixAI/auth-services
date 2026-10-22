@@ -1,5 +1,6 @@
 {
   "state": "unavailable",
   "title": null,
-  "canCancel": false
+  "canCancel": false,
+  "message": "Не удалось проверить экзамены группы. Повторите попытку."
 }

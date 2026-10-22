@@ -29,7 +29,7 @@ def test_openapi_subset_is_the_frozen_contract():
     assert r.returncode == 0, "lessonmove_contract.json differs from the API: change the spec first, then regenerate"
     data = json.loads((FIXTURES / "lessonmove_contract.json").read_text(encoding="utf-8"))
     assert set(data["paths"]) == {"/org/groups/{group_id}/lesson-move", "/org/groups/{group_id}/lesson-move-check", "/org/groups/{group_id}/lesson-exam-binding"}
-    assert {"LessonMoveRequest", "DecideOut", "MoveCheckOut", "ExamBinding"} <= set(data["components"]["schemas"])
+    assert {"LessonMoveRequest", "DecideOut", "MoveCheckOut", "LessonExamBinding"} <= set(data["components"]["schemas"])
     codes = {e.get("code") for e in data["paths"]["/org/groups/{group_id}/lesson-move"]["post"]["x-errors"]}
     assert {"LESSON_CHANGED", "LESSON_HAS_NO_TEACHER", "SUBSTITUTION_ALREADY_DECIDED", "TEACHER_BUSY", "GROUP_BUSY"} <= codes
 

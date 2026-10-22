@@ -1,5 +1,6 @@
 {
   "state": "none",
   "title": null,
-  "canCancel": true
+  "canCancel": true,
+  "message": null
 }

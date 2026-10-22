@@ -975,13 +975,26 @@ class Substitutions(SubstitutionsBase):
         return self._move_check(group, ref, new_date, start, end)
 
     def lesson_exam_binding(self, org_id: Any, group_id: Any, lesson_id: str, day: date) -> Dict[str, Any]:
-        """The precheck of «Отменить урок» for the lesson sheet: the same answer as ``examBinding`` of the request detail."""
+        """The precheck of «Отменить урок» for the lesson sheet: ``state`` / ``title`` as ``examBinding`` of the request detail; ``canCancel`` / ``message`` from the SAME
+        ``cancellation-check`` of exam-service that refuses the cancellation itself (an exam that is launched OR has attempts blocks it), so what is allowed here is not refused later."""
         gid = _uuid(group_id)
         group = self.db.query(Group).filter(Group.id == gid, Group.org_id == org_id).first() if gid else None
         if group is None:
             raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
         ref, _ = self._lesson_ref(group, lesson_id, day)
-        return self.exam_binding(ref)
+        out = dict(self.exam_binding(ref), message=None)
+        if out["state"] == "unavailable":
+            out["message"] = "Не удалось проверить экзамены группы. Повторите попытку."
+            return out
+        try:
+            self._exam_check(ref, "precheck")
+        except OpsError as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            out["canCancel"] = False
+            out["message"] = detail.get("message") or str(exc)
+            if detail.get("code") == "EXAM_SERVICE_UNAVAILABLE":
+                out["state"] = "unavailable"
+        return out
 
     def move_lesson(self, org_id: Any, actor_id: Any, actor_role: str, group_id: Any, body) -> Dict[str, Any]:
         """The administrator moves a future lesson without a teacher's request.  One path with the decision «Перенести урок»: a pending request of the lesson is decided
@@ -1275,6 +1288,7 @@ def annotate_occurrences(svc, user: Dict[str, Any], items: Sequence[Any]) -> Seq
 
     manager, actor = is_org_manager(user), _uuid(user.get("user_id"))
     gids = {g for g in (_uuid(i.groupId) for i in items) if g}
+
     days = [i.occurrenceDate for i in items]
     reqs = (
         svc.db.query(Req).filter(Req.group_id.in_(gids), Req.lesson_date >= min(days), Req.lesson_date <= max(days)).order_by(Req.created_at, Req.id).all()
