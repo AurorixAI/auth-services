@@ -390,6 +390,15 @@ class SubstitutionOutcome(BaseModel):
     movedTo: Optional[MovedTo] = None
 
 
+class MovedFrom(BaseModel):
+    """``movedFrom`` of the new lesson that a move created: the slot of the ORIGINAL (no reason, no comment - D-12).  Present only on such a lesson."""
+
+    lessonId: str
+    date: str
+    startTime: str
+    endTime: str
+
+
 class StudentNotice(BaseModel):
     """``notices[]`` of the student card: what a student sees (no reasons, no comments - D-12)."""
 
@@ -414,6 +423,13 @@ class LessonRosterStudent(BaseModel):
     display_id: Optional[str] = None
     class_level: Optional[int] = None
 
+
+# #124 (kept apart: the frozen ``logicB2_contract.json`` lists ``ADDITIVE_FIELDS`` only): ``movedFrom`` of the new lesson that a move created
+MOVED_FROM_ADDITIVE = [
+    {"endpoint": "GET /org/schedule/occurrences", "field": "movedFrom", "schema": "MovedFrom|null", "audience": "everybody who sees the schedule (#124)"},
+    {"endpoint": "GET /org/groups/{id}/attendance", "field": "lessons[].movedFrom", "schema": "MovedFrom (only on a moved lesson)", "audience": "everybody who reads the journal (#124)"},
+    {"endpoint": "GET /org/students/{id}/attendance", "field": "lessons[].movedFrom", "schema": "MovedFrom (only on a moved lesson)", "audience": "manager (#124)"},
+]
 
 # SPEC 4.5 + the lead's decision on the substitute's rights: the additive fields of the existing endpoints (documented in the contract as ``x-additive``)
 ADDITIVE_FIELDS = [

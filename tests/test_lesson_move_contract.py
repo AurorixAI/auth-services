@@ -9,6 +9,7 @@ FIXTURES = ROOT / "tests" / "fixtures" / "lessonmove"
 
 
 def test_fixtures_validate_and_error_bodies_carry_a_known_code():
+    from src.auth import ops_schemas as O
     from src.auth import substitution_rules as R
     from src.auth import substitution_schemas as S
 
@@ -18,7 +19,7 @@ def test_fixtures_validate_and_error_bodies_carry_a_known_code():
     for name, model in index.items():
         content = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
         if model != "-":
-            assert getattr(S, model).model_validate(content).model_dump(mode="json") == content, name
+            assert (getattr(S, model, None) or getattr(O, model)).model_validate(content).model_dump(mode="json") == content, name
         else:
             code = content["body"]["detail"]["code"]
             assert code in known and known[code][0] == content["status"], (name, code)
@@ -29,7 +30,8 @@ def test_openapi_subset_is_the_frozen_contract():
     assert r.returncode == 0, "lessonmove_contract.json differs from the API: change the spec first, then regenerate"
     data = json.loads((FIXTURES / "lessonmove_contract.json").read_text(encoding="utf-8"))
     assert set(data["paths"]) == {"/org/groups/{group_id}/lesson-move", "/org/groups/{group_id}/lesson-move-check", "/org/groups/{group_id}/lesson-exam-binding"}
-    assert {"LessonMoveRequest", "DecideOut", "MoveCheckOut", "LessonExamBinding"} <= set(data["components"]["schemas"])
+    assert {"LessonMoveRequest", "DecideOut", "MoveCheckOut", "LessonExamBinding", "MovedFrom"} <= set(data["components"]["schemas"])
+    assert {a["field"] for a in data["x-additive"]} == {"movedFrom", "lessons[].movedFrom"}
     codes = {e.get("code") for e in data["paths"]["/org/groups/{group_id}/lesson-move"]["post"]["x-errors"]}
     assert {"LESSON_CHANGED", "LESSON_HAS_NO_TEACHER", "SUBSTITUTION_ALREADY_DECIDED", "TEACHER_BUSY", "GROUP_BUSY"} <= codes
 

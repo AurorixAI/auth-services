@@ -12,6 +12,7 @@
   "isOneOff": false,
   "isRescheduled": false,
   "isSubstitution": true,
+  "movedFrom": null,
   "occurrenceDate": "2026-10-26",
   "originalEndTime": null,
   "originalRoom": null,

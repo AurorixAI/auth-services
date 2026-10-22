@@ -1280,6 +1280,16 @@ def _moved(r: Req, with_lesson: bool = False) -> Optional[Dict[str, Any]]:
     return out
 
 
+def moved_from_map(db, group_ids: Iterable[Any], lesson_ids: Iterable[str]) -> Dict[Tuple[str, str], Dict[str, str]]:
+    """``{(group_id, new lesson id): movedFrom}`` for the one-off lessons that a move created (both paths leave a ``rescheduled`` record with ``moved_to_lesson_id``)."""
+    gids = [g for g in group_ids if g is not None]
+    ids = sorted({i for i in lesson_ids if i and str(i).startswith("one-off-")})
+    if not gids or not ids:
+        return {}
+    rows = db.query(Req).filter(Req.group_id.in_(gids), Req.moved_to_lesson_id.in_(ids), Req.status == "rescheduled").order_by(Req.created_at, Req.id).all()
+    return {(str(r.group_id), r.moved_to_lesson_id): {"lessonId": r.lesson_id, "date": r.lesson_date, "startTime": r.start_time, "endTime": r.end_time} for r in rows}
+
+
 def annotate_occurrences(svc, user: Dict[str, Any], items: Sequence[Any]) -> Sequence[Any]:
     """``substitutionRequest`` (manager and the requester) and ``substitutionOutcome`` (everybody who sees the schedule) on the occurrences of ``GET /org/schedule/occurrences``."""
     if not items:
@@ -1288,7 +1298,9 @@ def annotate_occurrences(svc, user: Dict[str, Any], items: Sequence[Any]) -> Seq
 
     manager, actor = is_org_manager(user), _uuid(user.get("user_id"))
     gids = {g for g in (_uuid(i.groupId) for i in items) if g}
-
+    origin = moved_from_map(svc.db, gids, [i.id for i in items])
+    for item in items:
+        item.movedFrom = origin.get((str(item.groupId), item.id))
     days = [i.occurrenceDate for i in items]
     reqs = (
         svc.db.query(Req).filter(Req.group_id.in_(gids), Req.lesson_date >= min(days), Req.lesson_date <= max(days)).order_by(Req.created_at, Req.id).all()
@@ -1318,6 +1330,10 @@ def annotate_journal(svc, user: Dict[str, Any], group: Group, resp) -> Any:
     keys = {l.get("instanceKey"): l for l in resp.lessons if l.get("instanceKey")}
     if not keys:
         return resp
+    origin = moved_from_map(svc.db, [group.id], [l.get("id") for l in keys.values()])
+    for lesson in keys.values():
+        if (str(group.id), lesson.get("id")) in origin:
+            lesson["movedFrom"] = origin[(str(group.id), lesson.get("id"))]
     manager, actor = is_org_manager(user), _uuid(user.get("user_id"))
     dates = sorted({l["date"] for l in keys.values()})
     reqs = svc.db.query(Req).filter(Req.group_id == group.id, Req.lesson_date >= dates[0], Req.lesson_date <= dates[-1]).order_by(Req.created_at, Req.id).all()
@@ -1360,7 +1376,10 @@ def annotate_student_attendance(svc, org_id: Any, student_id: Any, summary: Dict
         book = TeacherBook(db)
         book.load_history(list(gids))
         names = LessonTeachers(svc).users_by_id([r.teacher_id for r in rows.values() if r.teacher_id])
+        origin = moved_from_map(db, gids, [l["lesson_id"] for l in lessons])
         for lesson in lessons:
+            if (lesson["group_id"], lesson["lesson_id"]) in origin:
+                lesson["movedFrom"] = origin[(lesson["group_id"], lesson["lesson_id"])]
             row = rows.get((lesson["group_id"], lesson["lesson_id"], lesson["date"]))
             group = groups.get(_uuid(lesson["group_id"]))
             teacher = row.teacher_id if row is not None else None

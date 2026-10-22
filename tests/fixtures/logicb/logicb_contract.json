@@ -3614,6 +3614,18 @@
             "title": "Issubstitution",
             "type": "boolean"
           },
+          "movedFrom": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Movedfrom"
+          },
           "occurrenceDate": {
             "title": "Occurrencedate",
             "type": "string"

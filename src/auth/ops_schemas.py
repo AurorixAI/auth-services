@@ -109,6 +109,7 @@ class ScheduleOccurrenceResponseB(ScheduleOccurrenceResponse):
     # LOGIC-B2 (additive): the pending request of the lesson (manager and the requester only) and what happened to a cancelled original (no reasons)
     substitutionRequest: Optional[Dict[str, Any]] = None
     substitutionOutcome: Optional[Dict[str, Any]] = None
+    movedFrom: Optional[Dict[str, Any]] = None             # #124: the slot of the original, on the new lesson that a move created
 
 
 # -------------------------------------------------------------------------------- 4.2 journal and marks

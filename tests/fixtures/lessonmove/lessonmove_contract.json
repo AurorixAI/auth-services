@@ -390,6 +390,35 @@
         "title": "MoveWarning",
         "type": "object"
       },
+      "MovedFrom": {
+        "description": "``movedFrom`` of the new lesson that a move created: the slot of the ORIGINAL (no reason, no comment - D-12).  Present only on such a lesson.",
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "endTime": {
+            "title": "Endtime",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "startTime": {
+            "title": "Starttime",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lessonId",
+          "date",
+          "startTime",
+          "endTime"
+        ],
+        "title": "MovedFrom",
+        "type": "object"
+      },
       "MovedTo": {
         "properties": {
           "date": {
@@ -979,7 +1008,7 @@
   },
   "info": {
     "title": "ALGO auth - lesson sheet moves (#124)",
-    "version": "lessonmove-1"
+    "version": "lessonmove-2"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1346,6 +1375,26 @@
   "servers": [
     {
       "url": "/api/v1/auth"
+    }
+  ],
+  "x-additive": [
+    {
+      "audience": "everybody who sees the schedule (#124)",
+      "endpoint": "GET /org/schedule/occurrences",
+      "field": "movedFrom",
+      "schema": "MovedFrom|null"
+    },
+    {
+      "audience": "everybody who reads the journal (#124)",
+      "endpoint": "GET /org/groups/{id}/attendance",
+      "field": "lessons[].movedFrom",
+      "schema": "MovedFrom (only on a moved lesson)"
+    },
+    {
+      "audience": "manager (#124)",
+      "endpoint": "GET /org/students/{id}/attendance",
+      "field": "lessons[].movedFrom",
+      "schema": "MovedFrom (only on a moved lesson)"
     }
   ]
 }

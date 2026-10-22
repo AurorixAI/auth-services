@@ -18,6 +18,18 @@ FIX = Path(__file__).resolve().parent / "fixtures" / "lessonmove"
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
+class _Pick:
+    """The occurrence of the new one-off lesson out of the list (a fixture holds one object)."""
+
+    def __init__(self, response, prefix):
+        self.status_code = response.status_code
+        self._json = next(o for o in response.json() if o["id"].startswith(prefix))
+        self.text = response.text
+
+    def json(self):
+        return self._json
+
+
 def test_the_endpoints_reproduce_the_golden_fixtures(w, sync, exams):
     names = {str(w.ids(n)): n for n in ("org", "G1", "G2", "G3", "G4", "owner", "admin", "A", "B", "C", "D", "s1", "s2", "s3", "s7")}
     seen = {}
@@ -55,6 +67,8 @@ def test_the_endpoints_reproduce_the_golden_fixtures(w, sync, exams):
     sync.mode = "ok"
     out["K09_move_ok"] = (move(w), 200, "DecideOut")
     out["K10_move_again_other_slot"] = (move(w, newDate="2026-10-30"), 409, "-")
+    occ = client(w, "admin").get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-29", "date_to": "2026-10-29"})
+    out["K12_occurrence_with_moved_from"] = (_Pick(occ, "one-off-"), 200, "ScheduleOccurrenceResponseB")
     write = os.environ.get("LESSONMOVE_WRITE_FIXTURES") == "1"
     index = {}
     for stem, (r, status, model) in out.items():

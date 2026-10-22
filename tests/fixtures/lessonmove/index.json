@@ -9,5 +9,6 @@
   "K08_exam_binding_unavailable.json": "LessonExamBinding",
   "K11_exam_binding_blocked_by_attempts.json": "LessonExamBinding",
   "K09_move_ok.json": "DecideOut",
-  "K10_move_again_other_slot.json": "-"
+  "K10_move_again_other_slot.json": "-",
+  "K12_occurrence_with_moved_from.json": "ScheduleOccurrenceResponseB"
 }

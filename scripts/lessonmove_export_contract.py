@@ -4,7 +4,7 @@
     python scripts/lessonmove_export_contract.py [out.json]     # default: tests/fixtures/lessonmove/lessonmove_contract.json
     python scripts/lessonmove_export_contract.py --check        # exit 1 when the file on disk differs
 
-Three operations of ``substitution_router`` and the schemas they reference; ``x-errors`` = the codes with their texts.  The frozen ``logicB2_contract.json`` is not touched.
+Three operations (+ the additive ``movedFrom`` fields, ``MovedFrom``) of ``substitution_router`` and the schemas they reference; ``x-errors`` = the codes with their texts.  The frozen ``logicB2_contract.json`` is not touched.
 """
 from __future__ import annotations
 
@@ -87,8 +87,12 @@ def contract() -> dict:
         for n in inner - needed:
             needed.add(n)
             todo.append(n)
-    return {"openapi": full["openapi"], "info": {"title": "ALGO auth - lesson sheet moves (#124)", "version": "lessonmove-1"}, "servers": [{"url": PREFIX}],
-            "paths": paths, "components": {"schemas": {name: schemas[name] for name in sorted(needed)}}}
+    from src.auth.substitution_schemas import MOVED_FROM_ADDITIVE, MovedFrom
+
+    schemas["MovedFrom"] = MovedFrom.model_json_schema()          # the endpoints type ``movedFrom`` as a free object: the shape is documented here
+    needed.add("MovedFrom")
+    return {"openapi": full["openapi"], "info": {"title": "ALGO auth - lesson sheet moves (#124)", "version": "lessonmove-2"}, "servers": [{"url": PREFIX}],
+            "paths": paths, "components": {"schemas": {name: schemas[name] for name in sorted(needed)}}, "x-additive": MOVED_FROM_ADDITIVE}
 
 
 def main() -> int:
