@@ -95,7 +95,7 @@ def _tashkent_date(moment) -> "str | None":
 
 
 def _backfill_schedule(bind) -> None:
-    """``validFrom`` of a legacy slot = the business date the group was created (see the module docstring); idempotent (a slot that has it is kept)."""
+    """``validFrom`` of a legacy slot = the earliest of the creation day, the first attendance row and the first membership (see the module docstring); idempotent (a slot that has it is kept)."""
     rows = bind.execute(
         sa.text(
             "SELECT id, schedule, created_at FROM groups "
@@ -110,11 +110,11 @@ def _backfill_schedule(bind) -> None:
                 continue
             if not slot.get("validFrom"):
                 if fallback is None:
-                    fallback = _tashkent_date(created_at)
-                    if fallback is None:          # no creation date: the earliest evidence that the group existed
-                        first_row = bind.execute(sa.text("SELECT min(lesson_date) FROM group_attendance WHERE group_id = :g"), {"g": group_id}).scalar()
-                        joined = _tashkent_date(bind.execute(sa.text("SELECT min(joined_at) FROM student_groups WHERE group_id = :g"), {"g": group_id}).scalar())
-                        fallback = min([d for d in (first_row, joined) if d] or ["0001-01-01"])
+                    # the EARLIEST evidence that the group existed: its creation day, its first attendance row, its first membership (an import /
+                    # a backdated membership can start before the creation day: its lessons must stay)
+                    first_row = bind.execute(sa.text("SELECT min(lesson_date) FROM group_attendance WHERE group_id = :g"), {"g": group_id}).scalar()
+                    joined = _tashkent_date(bind.execute(sa.text("SELECT min(joined_at) FROM student_groups WHERE group_id = :g"), {"g": group_id}).scalar())
+                    fallback = min([d for d in (_tashkent_date(created_at), first_row, joined) if d] or ["0001-01-01"])
                 slot["validFrom"] = fallback
                 changed = True
             if slot.get("room") == PLACEHOLDER_ROOM:

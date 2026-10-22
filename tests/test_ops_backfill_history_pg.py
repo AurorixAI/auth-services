@@ -108,6 +108,23 @@ def test_control_the_first_rule_would_have_changed_the_money_and_dropped_missed_
     assert len(open_actions(w)) < len(before_open)
 
 
+def test_a_membership_backdated_before_the_creation_of_the_group_keeps_its_lessons(w):
+    """An import / a backdated membership starts BEFORE the group's creation day (01.08): validFrom is the earliest of the three, so his lessons stay and the
+    ledger and «Незакрытые» are identical before / after."""
+    from src.models.auth import StudentGroup
+
+    m = _membership(w.db, w.early, w.G)
+    m.joined_at = datetime(2026, 7, 10, 5, 0)
+    for period in m.periods:
+        period.joined_at = m.joined_at
+    w.db.commit()
+    before_ledger, before_open = ledger(w), open_actions(w)
+    run_backfill(w)
+    schedule = w.db.execute(text("SELECT schedule FROM groups WHERE id=:g"), {"g": w.G.id}).scalar_one()
+    assert {s["validFrom"] for s in schedule} == {"2026-07-10"}                           # earlier than the creation day 01.08
+    assert ledger(w) == before_ledger and open_actions(w) == before_open
+
+
 def test_a_group_without_a_creation_date_falls_back_to_the_earliest_evidence(w):
     """``created_at`` missing: the earliest of the first attendance row and the first membership ``joined_at`` (never the migration day)."""
     w.db.execute(text("UPDATE groups SET created_at = NULL WHERE id=:g"), {"g": w.G.id})
