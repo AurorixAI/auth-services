@@ -64,7 +64,8 @@ def test_october_overview_hand_calculated(world, seeded):
         ("click", 1_250_000, 1), ("cash", 950_000, 4), ("bank_transfer", 900_000, 1), ("card", 350_000, 1)]
     assert [m["label"] for m in o["by_method"]] == ["Click", "Наличные", "Перевод", "Карта"]
     assert o["position"] == {"debt_total": 500_000, "past_debt_total": 0, "advance_total": 450_000, "memberships_with_debt": 3,
-                             "students_with_debt": 3, "memberships_with_advance": 2}
+                             "students_with_debt": 3, "memberships_with_advance": 2, "students_with_advance": 2}
+    assert (o["delta_direction"], o["delta_text"]) == ("up", "130% к 1–21 сентября")
     assert o["cash"] is None and o["ok"] and all(c["diff"] == 0 for c in o["checks"])
 
 
@@ -80,6 +81,7 @@ def test_collection_hand_calculated_and_identities(world, seeded):
     assert (c["charged"], c["paid"], c["debt"], c["pct"]) == (400_000, 350_000, 50_000, 87)
     assert (a["teacher_name"], b["teacher_name"]) == ("Пётр Иванов", "Мария Ким")
     t = col["total"]
+    assert col["text"] == "Оплачено 1 900 000 из 2 500 000 сум (76%)"
     assert (t["charged"], t["paid"], t["forgiven"], t["debt"], t["students"], t["students_with_debt"], t["pct"]) == (
         2_500_000, 1_900_000, 100_000, 500_000, 6, 3, 76)
     for key in ("charged", "paid", "forgiven", "debt", "students", "students_with_debt"):
@@ -134,7 +136,7 @@ def test_filters_follow_the_receipts_report(world, seeded):
         new = income(world, "2026-10-01", "2026-10-31", **params)
         assert new["current"]["received"] == old["totals"]["received"], params
         assert new["current"]["to_current"] == old["totals"]["to_current"], params
-        assert new["position"] == old["position"], params
+        assert {k: new["position"][k] for k in old["position"]} == old["position"], params
         assert new["ok"], params
     only_b = income(world, "2026-10-01", "2026-10-31", group_id=str(gb.id))
     assert only_b["current"]["received"] == 1_050_000 and [g["group_name"] for g in only_b["collection"]["groups"]] == ["Английский 7Б"]
@@ -150,7 +152,7 @@ def test_day_today_with_the_cash_hint(world, seeded):
     assert o["period"]["kind"] == "day" and o["period"]["label"] == "сегодня" and o["previous_period"]["label"] == "вчера"
     assert (o["current"]["received"], o["current"]["payments_count"]) == (250_000, 2)       # a2 100 000 + b2 150 000, both cash
     assert o["previous"]["received"] == 0                                          # 20.10: only a voided payment
-    assert o["summary_text"] == "Сегодня пришло 250 000 сум; вчера оплат не было."
+    assert o["summary_text"] == "Сегодня пришло 250 000 сум; вчера оплат не было." and o["delta_direction"] is None and o["delta_text"] is None
     assert o["collection"] is None and [d["bucket"] for d in o["series"]] == ["2026-10-21"]
     assert o["cash"] == {
         "date": "2026-10-21", "label": "Наличные в кассе за сегодня", "cash_received": 250_000, "cash_refunded": 100_000,
@@ -169,7 +171,7 @@ def test_week_and_custom_ranges(world, seeded):
     o = income(world, "2026-10-12", "2026-10-18")
     assert o["period"]["kind"] == "week" and o["previous_period"]["from"] == "2026-10-05" and o["previous_period"]["to"] == "2026-10-11"
     assert o["current"]["received"] == 550_000 and o["previous"]["received"] == 1_750_000     # 200+350 vs 500+1250
-    assert o["delta_pct"] == -69
+    assert o["delta_pct"] == -69 and (o["delta_direction"], o["delta_text"]) == ("down", "69% к прошлой неделе")
     assert o["summary_text"] == "За неделю 12–18 октября пришло 550 000 сум — на 69% меньше, чем за предыдущую неделю."
     assert o["cash"] is None and o["collection"] is None and len(o["series"]) == 7
     c = income(world, "2026-10-02", "2026-10-08")                                        # a Friday to a Thursday: custom, 7 days
@@ -254,6 +256,7 @@ def test_lessons_mode_collects_by_the_package_that_began_in_the_month(world, fix
     assert (sept["total"]["students_with_debt"], sept["total"]["students"]) == (1, 1)
     octo = income(world, "2026-10-01", "2026-10-31")
     assert octo["collection"]["groups"] == [] and octo["collection"]["total"]["pct"] is None
+    assert octo["collection"]["text"] == "За этот месяц ничего не начислено"
     assert "Собрано" not in octo["summary_text"] and octo["current"]["received"] == 300_000 and octo["ok"]
 
 

@@ -42,6 +42,8 @@
   },
   "delta_amount": 750000,
   "delta_pct": 250,
+  "delta_direction": "up",
+  "delta_text": "250% к 1–21 сентября",
   "summary_text": "За октябрь пришло 1 050 000 сум — на 250% больше, чем за 1–21 сентября. Собрано 75% стоимости месяца.",
   "by_method": [
     {
@@ -221,6 +223,7 @@
     "month_label": "октябрь 2026",
     "from": "2026-10-01",
     "to": "2026-10-31",
+    "text": "Оплачено 450 000 из 600 000 сум (75%)",
     "total": {
       "group_id": null,
       "group_name": null,
@@ -256,7 +259,8 @@
     "advance_total": 300000,
     "memberships_with_debt": 1,
     "students_with_debt": 1,
-    "memberships_with_advance": 1
+    "memberships_with_advance": 1,
+    "students_with_advance": 1
   },
   "checks": [
     {

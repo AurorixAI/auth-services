@@ -92,10 +92,17 @@ class MonthCollection(PayModel):
     month_label: str  # «октябрь 2026»
     from_: date_type = Field(..., alias="from")
     to: date_type
+    text: str  # «Оплачено 1 900 000 из 2 500 000 сум (76%)» - the line of the card
     total: CollectionRow
     groups: List[CollectionRow] = Field(default_factory=list)  # worst «Собрано %» first; a group with nothing charged is not listed
 
     model_config = ConfigDict(populate_by_name=True, json_schema_serialization_defaults_required=True)
+
+
+class IncomePosition(ReceiptsPosition):
+    """Where the centre stands TODAY (the two cards «Долг на сегодня» and «Аванс»): the receipts position plus the students with an advance."""
+
+    students_with_advance: int = 0  # DISTINCT students (a student with an advance in two groups counts once)
 
 
 class IncomeCheck(PayModel):
@@ -117,13 +124,15 @@ class IncomeOverview(PayModel):
     previous: IncomeTotals  # the totals of ``previous_period``
     delta_amount: int = 0  # current.received - previous.received
     delta_pct: Optional[int] = None  # null when the previous period received nothing
+    delta_direction: Optional[Literal["up", "down", "same"]] = None  # null when there is nothing to compare with
+    delta_text: Optional[str] = None  # «12% к сентябрю» (the front adds ▲ / ▼ and the colour by ``delta_direction``)
     summary_text: str
     by_method: List[IncomeMethod] = Field(default_factory=list)  # only the methods that were used
     series: List[IncomeDay] = Field(default_factory=list)
     series_by: Literal["day", "month"] = "day"
     cash: Optional[IncomeCash] = None
     collection: Optional[MonthCollection] = None  # only for a month period
-    position: ReceiptsPosition
+    position: IncomePosition
     checks: List[IncomeCheck] = Field(default_factory=list)
     ok: bool = True  # every check has diff 0 («Сходится»)
 

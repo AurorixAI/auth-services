@@ -4,7 +4,7 @@ from datetime import date
 import pytest
 
 from src.auth import payments_texts as tx
-from src.auth.payments_income import month_end, previous_period, resolve_period
+from src.auth.payments_income import _previous_dative, month_end, previous_period, resolve_period
 from src.auth.payments_service import PaymentInvalid
 
 D = date
@@ -107,3 +107,15 @@ def test_dates_and_method_words():
     assert tx.span_text(D(2026, 10, 5), D(2026, 10, 5)) == "5 октября"
     assert [tx.method_label(m) for m in ("cash", "card", "bank_transfer", "click", "payme", "other", "unknown", None)] == [
         "Наличные", "Карта", "Перевод", "Click", "Payme", "Другое", "Способ не указан", "Способ не указан"]
+
+
+def test_the_short_comparison_phrase():
+    cases = [((D(2026, 9, 1), D(2026, 9, 30)), "к августу"), ((D(2026, 10, 1), D(2026, 10, 31)), "к 1–21 сентября"),
+             ((D(2026, 10, 21), D(2026, 10, 21)), "ко вчерашнему дню"), ((D(2026, 10, 15), D(2026, 10, 15)), "к 14 октября"),
+             ((D(2026, 10, 5), D(2026, 10, 11)), "к прошлой неделе"), ((D(2026, 10, 19), D(2026, 10, 25)), "к 12–14 октября"),
+             ((D(2026, 9, 3), D(2026, 9, 20)), "к предыдущему периоду"), ((D(2026, 9, 1), D(2026, 9, 21)), "к предыдущему периоду")]
+    for (first, last), want in cases:
+        cur = resolve_period(first, last, TODAY, "custom" if (first, last) == (D(2026, 9, 1), D(2026, 9, 21)) else None)
+        assert _previous_dative(cur, previous_period(cur, TODAY), TODAY) == want, (first, last)
+    assert tx.delta_text(-12, "к сентябрю") == "12% к сентябрю"
+    assert tx.collection_text(1_900_000, 2_500_000, 76) == "Оплачено 1 900 000 из 2 500 000 сум (76%)"

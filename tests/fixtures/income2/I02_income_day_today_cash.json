@@ -42,6 +42,8 @@
   },
   "delta_amount": 250000,
   "delta_pct": null,
+  "delta_direction": null,
+  "delta_text": null,
   "summary_text": "Сегодня пришло 250 000 сум; вчера оплат не было.",
   "by_method": [
     {
@@ -75,7 +77,8 @@
     "advance_total": 450000,
     "memberships_with_debt": 3,
     "students_with_debt": 3,
-    "memberships_with_advance": 2
+    "memberships_with_advance": 2,
+    "students_with_advance": 2
   },
   "checks": [
     {

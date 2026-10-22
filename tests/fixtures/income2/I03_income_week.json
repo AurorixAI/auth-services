@@ -42,6 +42,8 @@
   },
   "delta_amount": -1200000,
   "delta_pct": -69,
+  "delta_direction": "down",
+  "delta_text": "69% к прошлой неделе",
   "summary_text": "За неделю 12–18 октября пришло 550 000 сум — на 69% меньше, чем за предыдущую неделю.",
   "by_method": [
     {
@@ -103,7 +105,8 @@
     "advance_total": 450000,
     "memberships_with_debt": 3,
     "students_with_debt": 3,
-    "memberships_with_advance": 2
+    "memberships_with_advance": 2,
+    "students_with_advance": 2
   },
   "checks": [
     {

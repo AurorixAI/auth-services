@@ -42,6 +42,8 @@
   },
   "delta_amount": 1500000,
   "delta_pct": null,
+  "delta_direction": null,
+  "delta_text": null,
   "summary_text": "За сентябрь пришло 1 500 000 сум; за август оплат не было. Собрано 100% стоимости месяца.",
   "by_method": [
     {
@@ -216,6 +218,7 @@
     "month_label": "сентябрь 2026",
     "from": "2026-09-01",
     "to": "2026-09-30",
+    "text": "Оплачено 2 500 000 из 2 500 000 сум (100%)",
     "total": {
       "group_id": null,
       "group_name": null,
@@ -277,7 +280,8 @@
     "advance_total": 450000,
     "memberships_with_debt": 3,
     "students_with_debt": 3,
-    "memberships_with_advance": 2
+    "memberships_with_advance": 2,
+    "students_with_advance": 2
   },
   "checks": [
     {

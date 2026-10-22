@@ -385,6 +385,22 @@
             "title": "Delta Amount",
             "type": "integer"
           },
+          "delta_direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "up",
+                  "down",
+                  "same"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Direction"
+          },
           "delta_pct": {
             "anyOf": [
               {
@@ -396,6 +412,17 @@
             ],
             "title": "Delta Pct"
           },
+          "delta_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Text"
+          },
           "ok": {
             "default": true,
             "title": "Ok",
@@ -405,7 +432,7 @@
             "$ref": "#/components/schemas/IncomePeriod"
           },
           "position": {
-            "$ref": "#/components/schemas/ReceiptsPosition"
+            "$ref": "#/components/schemas/IncomePosition"
           },
           "previous": {
             "$ref": "#/components/schemas/IncomeTotals"
@@ -442,6 +469,8 @@
           "previous",
           "delta_amount",
           "delta_pct",
+          "delta_direction",
+          "delta_text",
           "summary_text",
           "by_method",
           "series",
@@ -501,6 +530,57 @@
           "in_progress"
         ],
         "title": "IncomePeriod",
+        "type": "object"
+      },
+      "IncomePosition": {
+        "description": "Where the centre stands TODAY (the two cards «Долг на сегодня» and «Аванс»): the receipts position plus the students with an advance.",
+        "properties": {
+          "advance_total": {
+            "default": 0,
+            "title": "Advance Total",
+            "type": "integer"
+          },
+          "debt_total": {
+            "default": 0,
+            "title": "Debt Total",
+            "type": "integer"
+          },
+          "memberships_with_advance": {
+            "default": 0,
+            "title": "Memberships With Advance",
+            "type": "integer"
+          },
+          "memberships_with_debt": {
+            "default": 0,
+            "title": "Memberships With Debt",
+            "type": "integer"
+          },
+          "past_debt_total": {
+            "default": 0,
+            "title": "Past Debt Total",
+            "type": "integer"
+          },
+          "students_with_advance": {
+            "default": 0,
+            "title": "Students With Advance",
+            "type": "integer"
+          },
+          "students_with_debt": {
+            "default": 0,
+            "title": "Students With Debt",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "debt_total",
+          "past_debt_total",
+          "advance_total",
+          "memberships_with_debt",
+          "students_with_debt",
+          "memberships_with_advance",
+          "students_with_advance"
+        ],
+        "title": "IncomePosition",
         "type": "object"
       },
       "IncomeTotals": {
@@ -931,6 +1011,10 @@
             "title": "Month Label",
             "type": "string"
           },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
           "to": {
             "format": "date",
             "title": "To",
@@ -945,6 +1029,7 @@
           "month_label",
           "from",
           "to",
+          "text",
           "total",
           "groups"
         ],
@@ -1094,51 +1179,6 @@
           "authors"
         ],
         "title": "PaymentsJournal",
-        "type": "object"
-      },
-      "ReceiptsPosition": {
-        "description": "Where the whole centre stands TODAY (not limited to the range; includes students who left and archived ones).",
-        "properties": {
-          "advance_total": {
-            "default": 0,
-            "title": "Advance Total",
-            "type": "integer"
-          },
-          "debt_total": {
-            "default": 0,
-            "title": "Debt Total",
-            "type": "integer"
-          },
-          "memberships_with_advance": {
-            "default": 0,
-            "title": "Memberships With Advance",
-            "type": "integer"
-          },
-          "memberships_with_debt": {
-            "default": 0,
-            "title": "Memberships With Debt",
-            "type": "integer"
-          },
-          "past_debt_total": {
-            "default": 0,
-            "title": "Past Debt Total",
-            "type": "integer"
-          },
-          "students_with_debt": {
-            "default": 0,
-            "title": "Students With Debt",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "debt_total",
-          "past_debt_total",
-          "advance_total",
-          "memberships_with_debt",
-          "students_with_debt",
-          "memberships_with_advance"
-        ],
-        "title": "ReceiptsPosition",
         "type": "object"
       }
     }

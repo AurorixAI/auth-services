@@ -195,6 +195,7 @@ MONTHS_NOMINATIVE = ("январь", "февраль", "март", "апрель
                      "декабрь")
 MONTHS_GENITIVE = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября",
                    "декабря")
+MONTHS_DATIVE = ("январю", "февралю", "марту", "апрелю", "маю", "июню", "июлю", "августу", "сентябрю", "октябрю", "ноябрю", "декабрю")
 METHOD_LABELS = {
     "cash": "Наличные", "card": "Карта", "bank_transfer": "Перевод", "click": "Click", "payme": "Payme", "other": "Другое",
     "unknown": "Способ не указан",
@@ -262,3 +263,15 @@ def income_summary_text(*, lead: str, received: int, previous_received: int, pre
     if collected_pct is not None:
         text += f" Собрано {collected_pct}% стоимости месяца."
     return text
+
+
+def collection_text(paid: int, charged: int, pct: Optional[int]) -> str:
+    """The line of the card «Собрано за месяц»."""
+    if charged <= 0:
+        return "За этот месяц ничего не начислено"
+    return f"Оплачено {num(paid)} из {num(charged)} сум ({pct}%)"
+
+
+def delta_text(pct: int, previous_ref: str) -> str:
+    """``12% к сентябрю`` (the arrow and the colour are the front's)."""
+    return f"{abs(pct)}% {previous_ref}"

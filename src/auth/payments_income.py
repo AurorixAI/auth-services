@@ -37,6 +37,7 @@ from .payments_income_schemas import (
     IncomeMethod,
     IncomeOverview,
     IncomePeriod,
+    IncomePosition,
     IncomeTotals,
     JournalAuthor,
     JournalRow,
@@ -45,7 +46,6 @@ from .payments_income_schemas import (
     PaymentsJournal,
 )
 from .payments_reports import MAX_RANGE_DAYS, PaymentsReports
-from .payments_schemas import ReceiptsPosition
 from .payments_service import PaymentInvalid, PaymentService, RangeTooLong
 
 MAX_DAY_SERIES_DAYS = 92
@@ -183,6 +183,19 @@ def _previous_ref(cur: Period, prev: Period, today: date) -> str:
     return f"за предыдущие {n} {tx.days_word(n)}"
 
 
+def _previous_dative(cur: Period, prev: Period, today: date) -> str:
+    """«к сентябрю» / «к 1–21 сентября» / «к вчерашнему дню» / «к прошлой неделе» / «к предыдущему периоду»."""
+    if cur.kind == "day":
+        return "ко вчерашнему дню" if prev.first == today - timedelta(days=1) else "к " + tx.day_genitive(prev.first)
+    if cur.kind != "custom" and (cur.in_progress or (cur.kind == "month" and prev.last != month_end(prev.first))):
+        return "к " + tx.span_text(prev.first, prev.last)
+    if cur.kind == "week":
+        return "к прошлой неделе"
+    if cur.kind == "month":
+        return "к " + tx.MONTHS_DATIVE[prev.first.month - 1]
+    return "к предыдущему периоду"
+
+
 def _period_out(p: Period) -> IncomePeriod:
     return IncomePeriod(kind=p.kind, **{"from": p.first}, to=p.last, label=p.label, days=p.days, in_progress=p.in_progress)
 
@@ -238,18 +251,22 @@ class IncomeReports:
         if cur.kind == "month":
             collection = self._collection(self._shown(entries, group_id, teacher_id), cur.first, month_end(cur.first))
         pct = tx.percent_change(current.received, previous.received)
+        direction = None if pct is None else ("same" if current.received == previous.received else ("up" if pct > 0 else "down"))
+        if pct == 0 and direction != "same":
+            direction = "same"          # rounds to 0%: shown as «0%», neither up nor down
         collected = collection.total.pct if collection and collection.total.charged > 0 else None
         text = tx.income_summary_text(
             lead=_lead(cur, today), received=current.received, previous_received=previous.received,
             previous_ref=_previous_ref(cur, prev, today), collected_pct=collected)
 
         shown = self._shown(entries, group_id, teacher_id)
-        position = ReceiptsPosition(
+        position = IncomePosition(
             debt_total=sum(e.ledger.debt for e in shown), past_debt_total=sum(e.ledger.past_debt for e in shown),
             advance_total=sum(e.ledger.advance for e in shown),
             memberships_with_debt=sum(1 for e in shown if e.ledger.debt > 0),
             students_with_debt=len({e.student.id for e in shown if e.ledger.debt > 0}),
-            memberships_with_advance=sum(1 for e in shown if e.ledger.advance > 0))
+            memberships_with_advance=sum(1 for e in shown if e.ledger.advance > 0),
+            students_with_advance=len({e.student.id for e in shown if e.ledger.advance > 0}))
 
         series, series_by = self._series(cur, daily)
         journal_sum = self._journal_totals(org_id, cur.first, cur.last, method, group_id, teacher_id, None, None)[1]
@@ -269,7 +286,8 @@ class IncomeReports:
             c.diff = c.left - c.right
         return IncomeOverview(
             as_of=today, period=_period_out(cur), previous_period=_period_out(prev), current=current, previous=previous,
-            delta_amount=current.received - previous.received, delta_pct=pct, summary_text=text, by_method=by_method,
+            delta_amount=current.received - previous.received, delta_pct=pct, delta_direction=direction,
+            delta_text=tx.delta_text(pct, _previous_dative(cur, prev, today)) if pct is not None else None, summary_text=text, by_method=by_method,
             series=series, series_by=series_by, cash=self._cash(cur, today, pay_rows, refund_rows), collection=collection,
             position=position, checks=checks, ok=all(c.diff == 0 for c in checks))
 
@@ -412,6 +430,7 @@ class IncomeReports:
         name = tx.MONTHS_NOMINATIVE[first.month - 1]
         return MonthCollection(
             month=first.strftime("%Y-%m"), month_label=f"{name} {first.year}", **{"from": first}, to=month_end(first),
+            text=tx.collection_text(total["paid"], total["charged"], pct(total["paid"], total["charged"])),
             total=CollectionRow(charged=total["charged"], paid=total["paid"], forgiven=total["forgiven"], debt=total["debt"],
                                 students=len(all_students), students_with_debt=len(debtors),
                                 pct=pct(total["paid"], total["charged"])),
