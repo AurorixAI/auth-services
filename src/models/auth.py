@@ -506,6 +506,27 @@ class Group(Base):
         }
 
 
+class StudentAudit(Base):
+    """IA fix pack: the journal of the profile of a student (name, class, phone, note): who changed what and when.  ``changes`` =
+    ``{field: {"old": ..., "new": ...}}``.  Written in the transaction of ``PUT /org/students/{id}`` (``src/auth/student_edit.py``)."""
+
+    __tablename__ = "student_audit"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    actor_role = Column(String(20), nullable=False)
+    action = Column(String(30), nullable=False, default="profile_updated")
+    changes = Column(JSONB, nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("actor_role IN ('owner', 'admin', 'teacher', 'superadmin')", name="ck_student_audit_actor_role"),
+        Index("idx_student_audit_student", "student_id", "created_at"),
+    )
+
+
 class GroupAudit(Base):
     """Immutable provenance for group creation and lifecycle events.
 

@@ -880,7 +880,7 @@ def update_student(
 ):
     """Обновить ученика"""
     try:
-        return _svc(db).update_student(user["org_id"], student_id, request)
+        return _svc(db).update_student(user["org_id"], student_id, request, actor_id=user["user_id"], actor_role=user.get("org_role"))
     except ArchiveError as e:  # the status goes through «В архив» / «Вернуть из архива» (422)
         raise HTTPException(e.http_status, str(e))
     except ValueError as e:

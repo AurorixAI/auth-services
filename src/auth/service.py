@@ -796,7 +796,8 @@ class AuthService:
         return self._build_student_response(student)
 
     def update_student(
-        self, org_id: str, student_id: str, request: StudentUpdateRequest
+        self, org_id: str, student_id: str, request: StudentUpdateRequest,
+        *, actor_id: Optional[str] = None, actor_role: Optional[str] = None,
     ) -> StudentResponse:
         student = (
             self.db.query(Student)
@@ -809,7 +810,8 @@ class AuthService:
             raise ValueError("Ученик не найден")
         guard_generic_status_update(student, request.status)
 
-        update_data = request.model_dump(exclude_none=True)
+        from . import student_edit  # lazy
+        update_data = student_edit.update_data(request)  # an omitted field stays; an explicit null / "" clears the phone and the note
         requested_group_id = update_data.pop("group_id", None)
         if (
             requested_group_id is not None
@@ -821,9 +823,11 @@ class AuthService:
             raise ValueError(
                 "Для перевода используйте действие «Перевести в другую группу»"
             )
+        before = student_edit.snapshot(student)
         for key, value in update_data.items():
             if hasattr(student, key):
                 setattr(student, key, value)
+        student_edit.journal(self.db, student, before, actor_id, actor_role)  # name / class / phone / note changed = one journal row
 
         if student.group_id or student.status == "active":
             if not student.display_id:

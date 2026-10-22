@@ -27,6 +27,7 @@ PAY2 = "e1f2a3b4c5d"
 B1 = "lb1a2b3c4d5"
 B2 = "lb2b3c4d5e6"
 B3 = "lb3c4d5e6f7"
+HEAD = "sa1b2c3d4e5"   # the head of the chain (IA fix pack: student profile journal); B3 is the LOGIC-B2 revision before it
 DB_NAME = "a5_auth_logb_migrations"
 
 
@@ -118,7 +119,7 @@ def test_logicb_migrations_on_stage_like_data(engine):
 
     command.upgrade(config, "head")
     with eng.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == B3
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == HEAD
         # O7: every existing row is at version 1
         assert {r[0] for r in c.execute(text("SELECT version FROM group_attendance")).fetchall()} == {1}
         # O1: validFrom of every slot
@@ -239,7 +240,7 @@ def test_logicb_migrations_on_stage_like_data(engine):
     command.downgrade(config, PAY2)  # repeating is harmless
     command.upgrade(config, "head")
     with eng.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == B3
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == HEAD
         # a slot keeps the validFrom the first upgrade wrote (the data steps are not reverted)
         schedule = c.execute(text("SELECT schedule FROM groups WHERE id=:g"), {"g": ids["g_slots"]}).scalar_one()
         assert {s.get("id"): s["validFrom"] for s in schedule if "id" in s}["slot-a"] == "2026-09-01"
