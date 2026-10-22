@@ -196,6 +196,7 @@ MONTHS_NOMINATIVE = ("январь", "февраль", "март", "апрель
 MONTHS_GENITIVE = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября",
                    "декабря")
 MONTHS_DATIVE = ("январю", "февралю", "марту", "апрелю", "маю", "июню", "июлю", "августу", "сентябрю", "октябрю", "ноябрю", "декабрю")
+MONTHS_SHORT = ("янв.", "февр.", "мар.", "апр.", "мая", "июн.", "июл.", "авг.", "сент.", "окт.", "нояб.", "дек.")
 METHOD_LABELS = {
     "cash": "Наличные", "card": "Карта", "bank_transfer": "Перевод", "click": "Click", "payme": "Payme", "other": "Другое",
     "unknown": "Способ не указан",
@@ -275,3 +276,13 @@ def collection_text(paid: int, charged: int, pct: Optional[int]) -> str:
 def delta_text(pct: int, previous_ref: str) -> str:
     """``12% к сентябрю`` (the arrow and the colour are the front's)."""
     return f"{abs(pct)}% {previous_ref}"
+
+
+def short_span_text(first: date, last: date) -> str:
+    """``12–18 окт.`` / ``30 сент. – 6 окт.`` / ``20 окт.`` (the label of a comparison period)."""
+    mon = lambda d: MONTHS_SHORT[d.month - 1]  # noqa: E731
+    if first == last:
+        return f"{first.day} {mon(first)}"
+    if (first.year, first.month) == (last.year, last.month):
+        return f"{first.day}–{last.day} {mon(last)}"
+    return f"{first.day} {mon(first)} – {last.day} {mon(last)}"

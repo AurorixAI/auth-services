@@ -437,6 +437,10 @@
           "previous": {
             "$ref": "#/components/schemas/IncomeTotals"
           },
+          "previous_label": {
+            "title": "Previous Label",
+            "type": "string"
+          },
           "previous_period": {
             "$ref": "#/components/schemas/IncomePeriod"
           },
@@ -465,6 +469,7 @@
           "as_of",
           "period",
           "previous_period",
+          "previous_label",
           "current",
           "previous",
           "delta_amount",
@@ -1119,6 +1124,7 @@
             "type": "string"
           },
           "authors": {
+            "description": "Who entered payments (for the «Кто внёс» filter): counted over the period and ALL the other filters (method, group, teacher, q) but IGNORING ``created_by`` (and ``status``), so choosing a person does not collapse the options to that person.",
             "items": {
               "$ref": "#/components/schemas/JournalAuthor"
             },

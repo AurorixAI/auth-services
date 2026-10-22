@@ -16,6 +16,7 @@
     "days": 21,
     "in_progress": false
   },
+  "previous_label": "1–21 сент.",
   "current": {
     "received": 1050000,
     "payments_count": 2,

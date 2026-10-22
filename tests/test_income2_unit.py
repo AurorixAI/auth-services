@@ -119,3 +119,9 @@ def test_the_short_comparison_phrase():
         assert _previous_dative(cur, previous_period(cur, TODAY), TODAY) == want, (first, last)
     assert tx.delta_text(-12, "к сентябрю") == "12% к сентябрю"
     assert tx.collection_text(1_900_000, 2_500_000, 76) == "Оплачено 1 900 000 из 2 500 000 сум (76%)"
+
+
+def test_short_span_labels():
+    assert tx.short_span_text(D(2026, 10, 12), D(2026, 10, 18)) == "12–18 окт."
+    assert tx.short_span_text(D(2026, 9, 30), D(2026, 10, 6)) == "30 сент. – 6 окт."
+    assert tx.short_span_text(D(2026, 5, 3), D(2026, 5, 3)) == "3 мая"

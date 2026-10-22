@@ -260,6 +260,60 @@ def test_lessons_mode_collects_by_the_package_that_began_in_the_month(world, fix
     assert "Собрано" not in octo["summary_text"] and octo["current"]["received"] == 300_000 and octo["ok"]
 
 
+def test_previous_label_is_always_there_and_human(world, seeded, fixed_today):
+    assert income(world, "2026-10-01", "2026-10-31")["previous_label"] == "1–21 сент."
+    assert income(world, "2026-10-21", "2026-10-21")["previous_label"] == "вчера"
+    assert income(world, "2026-10-15", "2026-10-15")["previous_label"] == "14 окт."
+    assert income(world, "2026-10-12", "2026-10-18")["previous_label"] == "5–11 окт."
+    assert income(world, "2026-10-02", "2026-10-08")["previous_label"] == "25 сент. – 1 окт."
+    sept = income(world, "2026-09-01", "2026-09-30")
+    assert sept["previous"]["received"] == 0 and sept["previous_label"] == "август"            # there was nothing in August: the label is still there
+    assert income(world, "2026-08-01", "2026-08-31")["previous_label"] == "июль"
+    assert income(world, "2026-01-01", "2026-01-31")["previous_label"] == "декабрь 2025"
+    fixed_today(D(2026, 10, 25))                                                               # Sunday: the week 19-25.10 is over, the one before is «прошлая»
+    assert income(world, "2026-10-19", "2026-10-25")["previous_label"] == "прошлая неделя"
+
+
+def test_method_unknown_is_the_same_everywhere(world, seeded):
+    """«Способ не указан» (method=unknown, also a missing method): Σ journal = the till line of the overview = the filtered overview = the file."""
+    from sqlalchemy.dialects import postgresql
+
+    from src.auth.payments_reports import method_clause
+    from src.models.auth import StudentPayment as SP
+
+    assert "IS NULL" in str(method_clause(SP.method, "unknown").compile(dialect=postgresql.dialect()))
+    assert str(method_clause(SP.method, "cash").compile(dialect=postgresql.dialect())).count("IS NULL") == 0
+    m = seeded["memberships"]["a1"]
+    seed_payment(world, m, 40_000, D(2026, 10, 8), receipt_no=21, method="unknown")
+    seed_payment(world, m, 60_000, D(2026, 10, 9), receipt_no=22, method="unknown")
+    o = income(world, "2026-10-01", "2026-10-31")
+    till = next(x for x in o["by_method"] if x["method"] == "unknown")
+    assert (till["amount"], till["count"], till["label"]) == (100_000, 2, "Способ не указан")
+    j = journal(world, method="unknown")
+    assert (j["totals"]["count"], j["totals"]["sum"]) == (till["count"], till["amount"]) and {r["method"] for r in j["rows"]} == {"unknown"}
+    only = income(world, "2026-10-01", "2026-10-31", method="unknown")
+    assert only["current"]["received"] == till["amount"] and [x["method"] for x in only["by_method"]] == ["unknown"] and only["ok"]
+    old = receipts(world, "2026-10-01", "2026-10-31", method="unknown")["totals"]
+    assert (old["received"], old["payments_count"]) == (100_000, 2)
+    r = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "method": "unknown"})
+    rows = [[c.value for c in row] for row in load_workbook(io.BytesIO(r.content)).active.iter_rows()]
+    assert rows[1][:4] == ["Оплат", 2, "На сумму", 100_000]
+    assert sum(1 for row in rows if len(row) > 8 and row[8] == "Способ не указан") == 2
+
+
+def test_journal_authors_ignore_created_by_but_follow_the_other_filters(world, seeded):
+    """«Кто внёс» keeps all its options after one is chosen; the other filters narrow them."""
+    both = {a["name"]: a["count"] for a in journal(world)["authors"]}
+    assert both == {"Азиз Хакимов": 4, "Нодира Саидова": 3}
+    chosen = journal(world, created_by=str(world.admin.id))
+    assert {a["name"]: a["count"] for a in chosen["authors"]} == both and len(chosen["rows"]) == 4        # the rows are narrowed, the options are not
+    assert {a["name"]: a["count"] for a in journal(world, method="cash")["authors"]} == {"Нодира Саидова": 3, "Азиз Хакимов": 1}
+    assert {a["name"]: a["count"] for a in journal(world, method="click", created_by=str(world.admin.id))["authors"]} == {"Азиз Хакимов": 1}
+    assert {a["name"]: a["count"] for a in journal(world, q="алиев")["authors"]} == {"Азиз Хакимов": 1}
+    assert {a["name"]: a["count"] for a in journal(world, group_id=str(seeded["groups"]["A"].id))["authors"]} == {"Нодира Саидова": 3, "Азиз Хакимов": 1}
+    assert {a["name"]: a["count"] for a in journal(world, status="voided")["authors"]} == both              # the status does not narrow them either
+
+
 # ---- the journal ------------------------------------------------------------------------------------------------
 
 

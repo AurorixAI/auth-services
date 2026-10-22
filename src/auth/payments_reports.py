@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from src.models.auth import Group, Student, StudentGroup, StudentPayment, StudentRefund, StudentWriteoff, User
@@ -58,6 +59,13 @@ def _person(user: Optional[User]) -> Optional[str]:
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() if value else None
+
+
+def method_clause(column, method: str):
+    """``method=unknown`` means «not stated»: the value ``unknown`` AND a missing (NULL) method - the same in the receipts report, the income overview, the journal and its file."""
+    if method == "unknown":
+        return or_(column == "unknown", column.is_(None))
+    return column == method
 
 
 class PaymentsReports:
@@ -326,13 +334,13 @@ class PaymentsReports:
         payments = scoped(StudentPayment, self.db.query(StudentPayment, Group)).filter(
             StudentPayment.kind == "payment", StudentPayment.paid_on >= date_from, StudentPayment.paid_on <= date_to)
         if method:
-            payments = payments.filter(StudentPayment.method == method)
+            payments = payments.filter(method_clause(StudentPayment.method, method))
         writeoffs = scoped(StudentWriteoff, self.db.query(StudentWriteoff, Group)).filter(
             StudentWriteoff.effective_on >= date_from, StudentWriteoff.effective_on <= date_to)
         refunds = scoped(StudentRefund, self.db.query(StudentRefund, Group)).filter(
             StudentRefund.effective_on >= date_from, StudentRefund.effective_on <= date_to)
         if method:
-            refunds = refunds.filter(StudentRefund.method == method)
+            refunds = refunds.filter(method_clause(StudentRefund.method, method))
         return payments.all(), writeoffs.all(), refunds.all()
 
     @staticmethod

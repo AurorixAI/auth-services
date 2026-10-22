@@ -120,6 +120,7 @@ class IncomeOverview(PayModel):
     as_of: date_type
     period: IncomePeriod
     previous_period: IncomePeriod  # the same kind of period before it (a running one is cut to the same number of days)
+    previous_label: str  # the human name of that period, ALWAYS present (also when it had no payments): «сентябрь» | «вчера» | «прошлая неделя» | «12–18 окт.»
     current: IncomeTotals
     previous: IncomeTotals  # the totals of ``previous_period``
     delta_amount: int = 0  # current.received - previous.received
@@ -195,6 +196,9 @@ class PaymentsJournal(PayModel):
     pages: int = 0
     totals: JournalTotals
     rows: List[JournalRow] = Field(default_factory=list)
-    authors: List[JournalAuthor] = Field(default_factory=list)  # who entered payments in the period (for the «Кто внёс» filter)
+    authors: List[JournalAuthor] = Field(
+        default_factory=list,
+        description="Who entered payments (for the «Кто внёс» filter): counted over the period and ALL the other filters (method, group, teacher, q) "
+                    "but IGNORING ``created_by`` (and ``status``), so choosing a person does not collapse the options to that person.")
 
     model_config = ConfigDict(populate_by_name=True, json_schema_serialization_defaults_required=True)

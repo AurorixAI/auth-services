@@ -45,7 +45,7 @@ from .payments_income_schemas import (
     MonthCollection,
     PaymentsJournal,
 )
-from .payments_reports import MAX_RANGE_DAYS, PaymentsReports
+from .payments_reports import MAX_RANGE_DAYS, PaymentsReports, method_clause
 from .payments_service import PaymentInvalid, PaymentService, RangeTooLong
 
 MAX_DAY_SERIES_DAYS = 92
@@ -196,6 +196,20 @@ def _previous_dative(cur: Period, prev: Period, today: date) -> str:
     return "к предыдущему периоду"
 
 
+def _previous_label(cur: Period, prev: Period, today: date) -> str:
+    """The name of the compared period: «вчера» / «20 окт.» / «прошлая неделя» / «12–18 окт.» / «сентябрь» (a month that is cut: «1–21 сент.»)."""
+    if cur.kind == "day":
+        return "вчера" if prev.first == today - timedelta(days=1) else tx.short_span_text(prev.first, prev.last)
+    if cur.kind == "week" and not cur.in_progress:
+        this_monday = today - timedelta(days=today.isoweekday() - 1)
+        if prev.first == this_monday - timedelta(days=7):
+            return "прошлая неделя"
+    if cur.kind == "month" and prev.last == month_end(prev.first) and prev.first.day == 1:
+        name = tx.MONTHS_NOMINATIVE[prev.first.month - 1]
+        return name if prev.first.year == today.year else f"{name} {prev.first.year}"
+    return tx.short_span_text(prev.first, prev.last)
+
+
 def _period_out(p: Period) -> IncomePeriod:
     return IncomePeriod(kind=p.kind, **{"from": p.first}, to=p.last, label=p.label, days=p.days, in_progress=p.in_progress)
 
@@ -285,7 +299,7 @@ class IncomeReports:
         for c in checks:
             c.diff = c.left - c.right
         return IncomeOverview(
-            as_of=today, period=_period_out(cur), previous_period=_period_out(prev), current=current, previous=previous,
+            as_of=today, period=_period_out(cur), previous_period=_period_out(prev), previous_label=_previous_label(cur, prev, today), current=current, previous=previous,
             delta_amount=current.received - previous.received, delta_pct=pct, delta_direction=direction,
             delta_text=tx.delta_text(pct, _previous_dative(cur, prev, today)) if pct is not None else None, summary_text=text, by_method=by_method,
             series=series, series_by=series_by, cash=self._cash(cur, today, pay_rows, refund_rows), collection=collection,
@@ -338,7 +352,7 @@ class IncomeReports:
             daily[paid_on][0] += amount
             daily[paid_on][1] += 1
         for day, amount, refund_method in refund_rows:
-            if p.first <= day <= p.last and (not method or refund_method == method):
+            if p.first <= day <= p.last and (not method or (refund_method or "unknown") == method):
                 t["refunded"] += int(amount)
         for day, amount in writeoff_rows:
             if p.first <= day <= p.last:
@@ -443,7 +457,7 @@ class IncomeReports:
             StudentPayment.org_id == org_id, Student.org_id == org_id, Group.org_id == org_id,
             StudentPayment.kind == "payment", StudentPayment.paid_on >= first, StudentPayment.paid_on <= last)
         if method:
-            query = query.filter(StudentPayment.method == method)
+            query = query.filter(method_clause(StudentPayment.method, method))
         if group_id:
             query = query.filter(StudentPayment.group_id == group_id)
         if teacher_id:
@@ -490,7 +504,7 @@ class IncomeReports:
         query = self._status_filter(query, status)
         query = self._journal_order(query).offset((page - 1) * size).limit(size)
         rows = self._rows(org_id, query.all())
-        authors = self._authors(org_id, first, last)
+        authors = self._authors(org_id, first, last, method, group_id, teacher_id, q)
         return PaymentsJournal(
             as_of=ps.business_today(), **{"from": first}, to=last, page=page, size=size, total=rows_total,
             pages=(rows_total + size - 1) // size, totals=JournalTotals(count=count, sum=total_sum, voided_count=voided),
@@ -509,11 +523,11 @@ class IncomeReports:
         return query.order_by(StudentPayment.paid_on.desc(), StudentPayment.created_at.desc(),
                               StudentPayment.receipt_no.desc().nullslast(), StudentPayment.id.desc())
 
-    def _authors(self, org_id: str, first: date, last: date) -> List[JournalAuthor]:
-        found = (self.db.query(StudentPayment.created_by, func.count(StudentPayment.id))
-                 .filter(StudentPayment.org_id == org_id, StudentPayment.kind == "payment", StudentPayment.voided_at.is_(None),
-                         StudentPayment.paid_on >= first, StudentPayment.paid_on <= last)
-                 .group_by(StudentPayment.created_by).all())
+    def _authors(self, org_id: str, first: date, last: date, method, group_id, teacher_id, q) -> List[JournalAuthor]:
+        """Who entered payments: over the period and the filters of the journal EXCEPT ``created_by`` (and ``status``): the options of «Кто внёс» stay whole."""
+        query = self._journal_filters(
+            self._journal_base(StudentPayment.created_by, func.count(StudentPayment.id)), org_id, first, last, method, group_id, teacher_id, None, q)
+        found = query.filter(StudentPayment.voided_at.is_(None)).group_by(StudentPayment.created_by).all()
         users = self.service._users(uid for uid, _ in found)
         out = [JournalAuthor(user_id=str(uid), name=_staff(users.get(uid)), count=int(n)) for uid, n in found]
         out.sort(key=lambda a: (-a.count, a.name or ""))

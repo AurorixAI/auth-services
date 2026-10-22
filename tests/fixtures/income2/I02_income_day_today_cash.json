@@ -16,6 +16,7 @@
     "days": 1,
     "in_progress": false
   },
+  "previous_label": "вчера",
   "current": {
     "received": 250000,
     "payments_count": 2,

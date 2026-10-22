@@ -92,12 +92,7 @@
     {
       "user_id": "user:owner",
       "name": "Азиз Хакимов",
-      "count": 4
-    },
-    {
-      "user_id": "user:admin",
-      "name": "Нодира Саидова",
-      "count": 3
+      "count": 1
     }
   ]
 }

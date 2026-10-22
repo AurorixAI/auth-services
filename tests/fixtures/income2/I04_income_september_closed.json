@@ -16,6 +16,7 @@
     "days": 31,
     "in_progress": false
   },
+  "previous_label": "август",
   "current": {
     "received": 1500000,
     "payments_count": 4,
