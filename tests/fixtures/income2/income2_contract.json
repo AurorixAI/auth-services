@@ -801,6 +801,28 @@
             "title": "Amount",
             "type": "integer"
           },
+          "corrected_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected At"
+          },
+          "corrected_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected By Name"
+          },
           "created_at": {
             "anyOf": [
               {
@@ -954,6 +976,48 @@
             ],
             "title": "Replaces Amount"
           },
+          "replaces_method": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cash",
+                  "card",
+                  "bank_transfer",
+                  "click",
+                  "payme",
+                  "other",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Method"
+          },
+          "replaces_method_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Method Label"
+          },
+          "replaces_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Reason"
+          },
           "replaces_receipt_no": {
             "anyOf": [
               {
@@ -1068,6 +1132,11 @@
           "status",
           "replaces_receipt_no",
           "replaces_amount",
+          "replaces_reason",
+          "replaces_method",
+          "replaces_method_label",
+          "corrected_by_name",
+          "corrected_at",
           "replaced_by_receipt_no",
           "void_reason",
           "voided_at",
@@ -1077,11 +1146,27 @@
         "type": "object"
       },
       "JournalTotals": {
-        "description": "Of the ACTIVE payments of the filtered set; equals the period's «Поступило» for the same filters.",
+        "description": "Of the ACTIVE payments of the filtered set; ``sum`` equals the period's «Поступило» for the same filters (with ``kind``: of the rows that have the kind, whole amounts).",
         "properties": {
           "count": {
             "default": 0,
             "title": "Count",
+            "type": "integer"
+          },
+          "kind_sum": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind Sum"
+          },
+          "replaced_count": {
+            "default": 0,
+            "title": "Replaced Count",
             "type": "integer"
           },
           "sum": {
@@ -1098,7 +1183,9 @@
         "required": [
           "count",
           "sum",
-          "voided_count"
+          "voided_count",
+          "replaced_count",
+          "kind_sum"
         ],
         "title": "JournalTotals",
         "type": "object"
@@ -1610,6 +1697,32 @@
               "title": "Status",
               "type": "string"
             }
+          },
+          {
+            "description": "Только оплаты, в «куда пошли» которых есть этот вид (old_debt | current | forward | advance | refunded | transferred); в строке остаётся весь split, totals.kind_sum = сумма этого вида по отобранным строкам = цифра плашки «Куда ушли деньги» за тот же период и фильтры. Отменённые и исправленные строки вида не имеют и не показываются.",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "old_debt",
+                    "current",
+                    "forward",
+                    "advance",
+                    "refunded",
+                    "transferred"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Только оплаты, в «куда пошли» которых есть этот вид (old_debt | current | forward | advance | refunded | transferred); в строке остаётся весь split, totals.kind_sum = сумма этого вида по отобранным строкам = цифра плашки «Куда ушли деньги» за тот же период и фильтры. Отменённые и исправленные строки вида не имеют и не показываются.",
+              "title": "Kind"
+            }
           }
         ],
         "responses": {
@@ -1807,6 +1920,32 @@
               ],
               "title": "Status",
               "type": "string"
+            }
+          },
+          {
+            "description": "Только оплаты, в «куда пошли» которых есть этот вид (old_debt | current | forward | advance | refunded | transferred); в строке остаётся весь split, totals.kind_sum = сумма этого вида по отобранным строкам = цифра плашки «Куда ушли деньги» за тот же период и фильтры. Отменённые и исправленные строки вида не имеют и не показываются.",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "old_debt",
+                    "current",
+                    "forward",
+                    "advance",
+                    "refunded",
+                    "transferred"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Только оплаты, в «куда пошли» которых есть этот вид (old_debt | current | forward | advance | refunded | transferred); в строке остаётся весь split, totals.kind_sum = сумма этого вида по отобранным строкам = цифра плашки «Куда ушли деньги» за тот же период и фильтры. Отменённые и исправленные строки вида не имеют и не показываются.",
+              "title": "Kind"
             }
           }
         ],

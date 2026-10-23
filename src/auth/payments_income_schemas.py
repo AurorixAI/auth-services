@@ -14,6 +14,7 @@ from .payments_schemas import Allocation, PayModel, PaymentMethod, ReceiptsPosit
 
 IncomePeriodKind = Literal["day", "week", "month", "custom"]
 JournalStatus = Literal["active", "voided", "replaced"]
+JournalKind = Literal["old_debt", "current", "forward", "advance", "refunded", "transferred"]  # the kinds of ``split`` / of the strip
 
 
 class IncomePeriod(PayModel):
@@ -191,6 +192,11 @@ class JournalRow(PayModel):
     status: JournalStatus = "active"
     replaces_receipt_no: Optional[int] = None  # this payment corrects that one
     replaces_amount: Optional[int] = None
+    replaces_reason: Optional[str] = None  # the reason of the correction (the old payment's void reason; «Исправлено» when none was typed)
+    replaces_method: Optional[PaymentMethod] = None  # the method of the corrected payment - ONLY when it differs from this one's, else null
+    replaces_method_label: Optional[str] = None
+    corrected_by_name: Optional[str] = None  # who corrected (voided the old payment and entered this one)
+    corrected_at: Optional[str] = None  # naive UTC, ISO: when
     replaced_by_receipt_no: Optional[int] = None  # this payment was corrected by that one (status replaced)
     void_reason: Optional[str] = None
     voided_at: Optional[str] = None
@@ -198,11 +204,13 @@ class JournalRow(PayModel):
 
 
 class JournalTotals(PayModel):
-    """Of the ACTIVE payments of the filtered set; equals the period's «Поступило» for the same filters."""
+    """Of the ACTIVE payments of the filtered set; ``sum`` equals the period's «Поступило» for the same filters (with ``kind``: of the rows that have the kind, whole amounts)."""
 
     count: int = 0
     sum: int = 0
-    voided_count: int = 0  # cancelled / replaced rows of the same set (they are in ``rows`` but not in count / sum)
+    voided_count: int = 0  # cancelled + replaced rows of the same set (they are in ``rows`` for status all / voided, but not in count / sum); NOT affected by ``status``; with ``kind`` 0 (such rows have no split)
+    replaced_count: int = 0  # of them: the ones that were corrected by a new payment (status replaced); cancelled alone = voided_count - replaced_count
+    kind_sum: Optional[int] = None  # only with ``kind``: the sum of THAT kind's part over the filtered active rows == the strip's amount of the kind (same period and filters); else null
 
 
 class PaymentsJournal(PayModel):

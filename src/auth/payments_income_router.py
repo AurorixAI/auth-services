@@ -17,7 +17,7 @@ from src.core.database import get_db
 
 from .dependencies import require_payments_access
 from .payments_income import IncomeReports
-from .payments_income_schemas import IncomeOverview, PaymentsJournal
+from .payments_income_schemas import IncomeOverview, JournalKind, PaymentsJournal
 from .payments_schemas import PayError
 from .payments_service import PaymentError
 
@@ -63,6 +63,10 @@ def payments_journal(
     created_by: Optional[UUID] = None,
     q: Optional[str] = Query(None, max_length=100, description="Имя / фамилия / ID ученика (или № квитанции)"),
     status: Literal["all", "active", "voided"] = "all",
+    kind: Optional[JournalKind] = Query(
+        None, description="Только оплаты, в «куда пошли» которых есть этот вид (old_debt | current | forward | advance | refunded | transferred); "
+                          "в строке остаётся весь split, totals.kind_sum = сумма этого вида по отобранным строкам = цифра плашки «Куда ушли деньги» "
+                          "за тот же период и фильтры. Отменённые и исправленные строки вида не имеют и не показываются."),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
@@ -70,7 +74,7 @@ def payments_journal(
     try:
         return IncomeReports(db).journal(
             user["org_id"], from_, to, page=page, size=size, method=method, group_id=group_id, teacher_id=teacher_id,
-            created_by=created_by, q=q, status=status)
+            created_by=created_by, q=q, status=status, kind=kind)
     except PaymentError as exc:
         raise _http(exc)
 
@@ -93,6 +97,10 @@ def payments_journal_export(
     created_by: Optional[UUID] = None,
     q: Optional[str] = Query(None, max_length=100),
     status: Literal["all", "active", "voided"] = "all",
+    kind: Optional[JournalKind] = Query(
+        None, description="Только оплаты, в «куда пошли» которых есть этот вид (old_debt | current | forward | advance | refunded | transferred); "
+                          "в строке остаётся весь split, totals.kind_sum = сумма этого вида по отобранным строкам = цифра плашки «Куда ушли деньги» "
+                          "за тот же период и фильтры. Отменённые и исправленные строки вида не имеют и не показываются."),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ) -> Response:
@@ -100,7 +108,7 @@ def payments_journal_export(
     try:
         data, content_type, filename = IncomeReports(db).journal_file(
             user["org_id"], from_, to, fmt=format, method=method, group_id=group_id, teacher_id=teacher_id,
-            created_by=created_by, q=q, status=status)
+            created_by=created_by, q=q, status=status, kind=kind)
     except PaymentError as exc:
         raise _http(exc)
     return Response(

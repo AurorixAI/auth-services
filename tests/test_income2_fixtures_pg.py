@@ -30,6 +30,10 @@ CASES = {
     "J03_journal_cash": ("PaymentsJournal", "journal", {**OCT, "method": "cash"}),
     "J04_journal_voided_and_replaced": ("PaymentsJournal", "journal", {**OCT, "status": "voided"}),
     "J05_journal_search": ("PaymentsJournal", "journal", {**OCT, "q": "алиев"}),
+    "J06_journal_kind_advance": ("PaymentsJournal", "journal", {**OCT, "kind": "advance"}),
+    "J07_journal_kind_current_cash_day": ("PaymentsJournal", "journal", {"from": "2026-10-21", "to": "2026-10-21", "kind": "current", "method": "cash"}),
+    "J08_journal_kind_current_page2": ("PaymentsJournal", "journal", {**OCT, "kind": "current", "size": 3, "page": 2}),
+    "J09_journal_status_active": ("PaymentsJournal", "journal", {**OCT, "status": "active", "size": 5}),
 }
 ERRORS = {
     "RANGE_TOO_LONG": ("income", {"from": "2025-10-01", "to": "2026-10-21"}),

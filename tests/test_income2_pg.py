@@ -340,7 +340,7 @@ def test_journal_authors_ignore_created_by_but_follow_the_other_filters(world, s
 def test_journal_rows_order_and_texts(world, seeded):
     j = journal(world, size=50)
     assert (j["total"], j["pages"], j["page"], j["size"]) == (9, 1, 1, 50)
-    assert j["totals"] == {"count": 7, "sum": 3_450_000, "voided_count": 2}
+    assert j["totals"] == {"count": 7, "sum": 3_450_000, "voided_count": 2, "replaced_count": 1, "kind_sum": None}
     assert [r["receipt_no"] for r in j["rows"]] == [13, 12, 10, 11, 9, 8, 7, 6, 5]                  # date desc, then time desc
     by = {r["receipt_no"]: r for r in j["rows"]}
     top = j["rows"][0]
@@ -397,10 +397,10 @@ def test_journal_filters_and_the_total_equals_the_period_received(world, seeded)
         o = income(world, "2026-10-01", "2026-10-31", **params)
         assert o["current"]["received"] == j["totals"]["sum"] and o["ok"], params
     # the status filter does not change the totals (they are the active money of the set)
-    assert journal(world, status="voided")["totals"] == {"count": 7, "sum": 3_450_000, "voided_count": 2}
+    assert journal(world, status="voided")["totals"] == {"count": 7, "sum": 3_450_000, "voided_count": 2, "replaced_count": 1, "kind_sum": None}
     only_day = journal(world, "2026-10-21", "2026-10-21")
     assert [r["receipt_no"] for r in only_day["rows"]] == [13, 12] and only_day["totals"]["sum"] == 250_000
-    assert journal(world, "2026-09-01", "2026-09-30")["totals"] == {"count": 4, "sum": 1_500_000, "voided_count": 0}
+    assert journal(world, "2026-09-01", "2026-09-30")["totals"] == {"count": 4, "sum": 1_500_000, "voided_count": 0, "replaced_count": 0, "kind_sum": None}
 
 
 def test_journal_is_limited_to_the_callers_organisation_and_to_money_access(world, seeded):
@@ -705,3 +705,227 @@ def test_a_running_week_is_worded_and_compared_day_for_day(world, seeded):
     closed = income(world, "2026-09-01", "2026-09-30")
     assert closed["previous_hint"] == "августу" and income(world, "2026-10-21", "2026-10-21")["previous_hint"] == "вчерашнему дню"
     assert o["delta_text"] == "25% к тем же дням прошлой недели (12–14 окт.)"
+
+
+# ---- S3: the journal by kind, the correction details, status=active -----------------------------------------------------------
+
+KINDS = ("old_debt", "current", "forward", "advance", "refunded", "transferred")
+PERIODS = (("2026-10-01", "2026-10-31"), ("2026-09-01", "2026-09-30"), ("2026-09-01", "2026-10-31"), ("2026-10-12", "2026-10-18"), ("2026-10-21", "2026-10-21"))
+
+
+def kind_part(row, kind):
+    return sum(x["amount"] for x in row["split"] if x["kind"] == kind)
+
+
+def check_kind(world, first, last, **filters):
+    """One kind at a time: the rows are the ACTIVE payments that have the kind (their whole split stays), ``kind_sum`` is the kind's part of those rows and equals the
+    strip's amount of the same period and filters; the kinds add up to the period's «Поступило»."""
+    o = income(world, first, last, **{k: v for k, v in filters.items() if k not in ("q", "created_by")})      # the overview has no search / author filter
+    strip = {x["kind"]: x["amount"] for x in o["strip"]}
+    active = journal(world, first, last, size=100, status="active", **filters)
+    if not ({"q", "created_by"} & set(filters)):
+        assert active["totals"]["sum"] == o["current"]["received"], (first, last, filters)
+    total_kinds = 0
+    for kind in KINDS:
+        j = journal(world, first, last, size=100, kind=kind, **filters)
+        rows = j["rows"]
+        assert j["totals"]["kind_sum"] == sum(kind_part(r, kind) for r in rows), (first, last, filters, kind)
+        if not ({"q", "created_by"} & set(filters)):
+            assert j["totals"]["kind_sum"] == strip[kind], (first, last, filters, kind)
+        assert {r["id"] for r in rows} == {r["id"] for r in active["rows"] if kind_part(r, kind) > 0}, (first, last, filters, kind)
+        assert all(r["status"] == "active" and r["split"] for r in rows)                                    # the row keeps its whole split
+        assert (j["total"], j["totals"]["count"], j["pages"] == (1 if rows else 0)) == (len(rows), len(rows), True), (kind, j["total"])
+        assert j["totals"]["sum"] == sum(r["amount"] for r in rows)                                          # whole amounts of the shown rows
+        assert (j["totals"]["voided_count"], j["totals"]["replaced_count"]) == (0, 0)
+        total_kinds += j["totals"]["kind_sum"]
+    assert total_kinds == active["totals"]["sum"], (first, last, filters)                                    # every split adds up to its payment
+    return strip
+
+
+def test_journal_kind_filter_adds_up_to_the_strip_over_periods_and_filters(world, seeded):
+    ga, gb = seeded["groups"]["A"], seeded["groups"]["B"]
+    seen = set()
+    for first, last in PERIODS:
+        for filters in ({}, {"method": "cash"}, {"group_id": str(ga.id)}, {"group_id": str(gb.id), "method": "card"}, {"teacher_id": str(world.teacher2.id)},
+                        {"method": "cash", "q": "алиев"}, {"created_by": str(world.admin.id)}):
+            strip = check_kind(world, first, last, **filters)
+            seen |= {k for k, v in strip.items() if v}
+    assert {"old_debt", "current", "advance", "refunded"} <= seen, seen                                        # the world really exercises the kinds
+
+
+def test_journal_kind_hand_calculated_october(world, seeded):
+    """October: a3 paid 1 250 000 on 07.10 (500k Sep + 500k Oct + 150k advance, 100k of it refunded); the kind filter shows the payment and its whole split."""
+    j = journal(world, kind="advance", size=100)
+    by = {r["receipt_no"]: r for r in j["rows"]}
+    assert 7 in by and j["totals"]["kind_sum"] == sum(kind_part(r, "advance") for r in j["rows"]) > 0
+    assert [(x["kind"], x["amount"]) for x in by[7]["split"]] == [(x["kind"], x["amount"]) for x in
+                                                                    journal(world, size=100)["rows"][[r["receipt_no"] for r in journal(world, size=100)["rows"]].index(7)]["split"]]
+    assert kind_part(by[7], "refunded") == 100_000
+    r = journal(world, kind="refunded", size=100)
+    assert [x["receipt_no"] for x in r["rows"]] == [7] and r["totals"] == {"count": 1, "sum": 1_250_000, "voided_count": 0, "replaced_count": 0, "kind_sum": 100_000}
+    # the cancelled / replaced payments have no split: a kind never shows them, whatever the status
+    for status in ("all", "active", "voided"):
+        rows = journal(world, kind="current", size=100, status=status)["rows"]
+        assert {r["status"] for r in rows} <= {"active"} and not ({9, 10} & {r["receipt_no"] for r in rows}), status
+    voided = journal(world, kind="current", status="voided")
+    assert (voided["rows"], voided["total"], voided["pages"], voided["totals"]["kind_sum"], voided["totals"]["count"]) == ([], 0, 0, 0, 0)
+
+
+def test_journal_kind_with_method_and_a_day(world, seeded):
+    day = journal(world, "2026-10-21", "2026-10-21", kind="current", method="cash", size=100)
+    assert sorted(r["receipt_no"] for r in day["rows"]) == [12, 13] and day["totals"]["kind_sum"] == 250_000 == day["totals"]["sum"]
+    strip = {x["kind"]: x["amount"] for x in income(world, "2026-10-21", "2026-10-21", method="cash")["strip"]}
+    assert strip["current"] == 250_000
+    assert journal(world, "2026-10-21", "2026-10-21", kind="current", method="card", size=100)["rows"] == []
+    assert journal(world, "2026-10-21", "2026-10-21", kind="old_debt", method="cash", size=100)["totals"]["kind_sum"] == strip["old_debt"] == 0
+    both = journal(world, kind="current", method="cash", group_id=str(seeded["groups"]["A"].id), size=100)
+    assert both["totals"]["kind_sum"] == {x["kind"]: x["amount"] for x in income(
+        world, "2026-10-01", "2026-10-31", method="cash", group_id=str(seeded["groups"]["A"].id))["strip"]}["current"]
+    assert all(r["method"] == "cash" and r["group_name"] == "Математика 9А" for r in both["rows"])
+
+
+def test_journal_kind_pagination_walks_every_matching_row_once(world, seeded):
+    for kind in ("current", "advance", "old_debt"):
+        whole = journal(world, kind=kind, size=100)
+        n = whole["total"]
+        assert n >= 2, kind
+        for size in (1, 2, 3):
+            seen, kind_sum, order = [], 0, []
+            pages = (n + size - 1) // size
+            for page in range(1, pages + 1):
+                j = journal(world, kind=kind, size=size, page=page)
+                assert (j["total"], j["pages"], j["page"], j["size"]) == (n, pages, page, size)
+                assert j["totals"] == whole["totals"]                                                 # the totals are the set's, not the page's
+                assert 1 <= len(j["rows"]) <= size
+                seen += [r["id"] for r in j["rows"]]
+                kind_sum += sum(kind_part(r, kind) for r in j["rows"])
+            assert seen == [r["id"] for r in whole["rows"]] and len(set(seen)) == n, (kind, size)         # journal order, each row once
+            assert kind_sum == whole["totals"]["kind_sum"]
+            assert journal(world, kind=kind, size=size, page=pages + 1)["rows"] == []
+
+
+def test_journal_export_honours_the_kind(world, seeded):
+    import csv as csv_module
+
+    for kind in ("advance", "current", "refunded"):
+        j = journal(world, kind=kind, size=100)
+        want = sorted(str(r["receipt_no"]) for r in j["rows"])
+        r = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "format": "csv", "kind": kind})
+        assert r.status_code == 200
+        sheet = list(csv_module.reader(io.StringIO(r.text.lstrip("﻿")), delimiter=";"))
+        head = next(i for i, row in enumerate(sheet) if row and row[0] == "№ квитанции")
+        assert sorted(row[0] for row in sheet[head + 1:] if row) == want, kind
+        assert any(row[:1] == ["Только оплаты, где есть:"] and row[3] == str(j["totals"]["kind_sum"]) for row in sheet[:head]), kind
+        x = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "kind": kind})
+        xs = [[c.value for c in row] for row in load_workbook(io.BytesIO(x.content)).active.iter_rows()]
+        xh = next(i for i, row in enumerate(xs) if row and row[0] == "№ квитанции")
+        assert sorted(str(row[0]) for row in xs[xh + 1:] if row[0] is not None) == want, kind
+    # the cap counts the rows of the kind
+    from src.auth import payments_income
+
+    cap = journal(world, kind="refunded")["total"]
+    old = payments_income.MAX_EXPORT_ROWS
+    try:
+        payments_income.MAX_EXPORT_ROWS = cap
+        assert owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "kind": "refunded"}).status_code == 200
+        payments_income.MAX_EXPORT_ROWS = cap - 1
+        assert owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "kind": "refunded"}).status_code == 422
+    finally:
+        payments_income.MAX_EXPORT_ROWS = old
+
+
+def test_journal_rejects_an_unknown_kind(world, seeded):
+    r = owner(world).get(f"{API}/org/payments/journal", params={"from": "2026-10-01", "to": "2026-10-31", "kind": "bogus"})
+    assert r.status_code == 422
+
+
+def test_journal_rows_carry_the_correction_and_void_details(world, seeded):
+    by = {r["receipt_no"]: r for r in journal(world, size=100)["rows"]}
+    new, old, voided, plain = by[11], by[9], by[10], by[13]
+    assert (new["replaces_receipt_no"], new["replaces_amount"], new["replaces_reason"], new["corrected_by_name"], new["corrected_at"], new["replaces_method"],
+            new["replaces_method_label"]) == (9, 400_000, "Исправлено", "Азиз Хакимов", "2026-10-15T06:30:00", None, None)           # same method card -> null
+    assert (old["status"], old["replaced_by_receipt_no"], old["void_reason"], old["voided_by_name"], old["voided_at"]) == (
+        "replaced", 11, "Исправлено", "Азиз Хакимов", "2026-10-15T06:30:00")
+    assert (voided["status"], voided["void_reason"], voided["voided_by_name"], voided["voided_at"], voided["replaced_by_receipt_no"]) == (
+        "voided", "Ошибочный ввод", "Нодира Саидова", "2026-10-20T09:00:00", None)
+    for key in ("replaces_receipt_no", "replaces_amount", "replaces_reason", "replaces_method", "replaces_method_label", "corrected_by_name", "corrected_at",
+                "void_reason", "voided_by_name", "voided_at", "replaced_by_receipt_no"):
+        assert plain[key] is None, key
+    # a correction that changed the method says so; the typed reason is kept
+    m = seeded["memberships"]["a1"]
+    base = dict(org_id=world.org.id, membership_id=m.id, student_id=m.student_id, group_id=m.group_id, paid_on=D(2026, 10, 14))
+    wrong = StudentPayment(id=uid(world.org, "s3:wrong"), amount=100_000, method="cash", receipt_no=950, created_by=world.owner.id, created_at=datetime(2026, 10, 14, 5, 0),
+                           voided_at=datetime(2026, 10, 14, 7, 0), voided_by=world.admin.id, void_reason="Не тот способ: был перевод", **base)
+    world.db.add(wrong)
+    world.db.flush()
+    world.db.add(StudentPayment(id=uid(world.org, "s3:right"), amount=100_000, method="bank_transfer", receipt_no=951, created_by=world.admin.id,
+                                created_at=datetime(2026, 10, 14, 7, 0), replaces_payment_id=wrong.id, **base))
+    world.db.commit()
+    got = {r["receipt_no"]: r for r in journal(world, size=100)["rows"]}
+    right = got[951]
+    assert (right["replaces_receipt_no"], right["replaces_reason"], right["replaces_method"], right["replaces_method_label"], right["corrected_by_name"],
+            right["corrected_at"], right["method"]) == (950, "Не тот способ: был перевод", "cash", "Наличные", "Нодира Саидова", "2026-10-14T07:00:00", "bank_transfer")
+    assert (got[950]["status"], got[950]["replaced_by_receipt_no"]) == ("replaced", 951)
+
+
+def test_status_active_is_only_active_rows_and_the_counts_ignore_the_status(world, seeded):
+    ga = seeded["groups"]["A"]
+    for first, last in PERIODS:
+        for filters in ({}, {"method": "cash"}, {"group_id": str(ga.id)}):
+            act = journal(world, first, last, size=100, status="active", **filters)
+            allj = journal(world, first, last, size=100, **filters)                          # the server default stays «all»
+            gone = journal(world, first, last, size=100, status="voided", **filters)
+            assert {r["status"] for r in act["rows"]} <= {"active"} and act["total"] == len(act["rows"]) == act["totals"]["count"], (first, last, filters)
+            assert act["totals"]["sum"] == sum(r["amount"] for r in act["rows"]) == income(world, first, last, **filters)["current"]["received"]
+            assert {r["status"] for r in gone["rows"]} <= {"voided", "replaced"} and gone["total"] == len(gone["rows"]) == gone["totals"]["voided_count"]
+            assert allj["total"] == act["total"] + gone["total"]
+            for key in ("count", "sum", "voided_count", "replaced_count"):
+                assert act["totals"][key] == allj["totals"][key] == gone["totals"][key], (key, first, last, filters)
+            assert gone["totals"]["replaced_count"] == sum(1 for r in gone["rows"] if r["status"] == "replaced") <= gone["totals"]["voided_count"]
+    full = journal(world, size=100)["totals"]
+    assert (full["voided_count"], full["replaced_count"]) == (2, 1)                          # «Показать отменённые и исправленные (2)»: one cancelled, one corrected
+    assert journal(world, "2026-09-01", "2026-09-30")["totals"]["replaced_count"] == 0
+
+
+def test_the_correction_details_cost_no_extra_queries(world, seeded):
+    """The names of the correctors / voiders ride the one names query: the budget of the journal does not grow with the number of corrections."""
+    ms = list(seeded["memberships"].values())
+    counter = {"n": 0}
+
+    def more(count):
+        for _ in range(count):
+            counter["n"] += 1
+            n = counter["n"]
+            m = ms[n % len(ms)]
+            base = dict(org_id=world.org.id, membership_id=m.id, student_id=m.student_id, group_id=m.group_id, paid_on=D(2026, 10, 1 + n % 20))
+            who = (world.owner, world.admin, world.teacher, world.teacher2)[n % 4]
+            old = StudentPayment(id=uid(world.org, f"q:old{n}"), amount=10_000 + n, method=("cash", "card")[n % 2], receipt_no=2000 + 2 * n, created_by=who.id,
+                                 created_at=datetime(2026, 10, 1 + n % 20, 5, 0), voided_at=datetime(2026, 10, 1 + n % 20, 6, 0), voided_by=who.id,
+                                 void_reason=f"причина {n}", **base)
+            world.db.add(old)
+            world.db.flush()
+            world.db.add(StudentPayment(id=uid(world.org, f"q:new{n}"), amount=10_000 + n, method="click", receipt_no=2001 + 2 * n, created_by=who.id,
+                                        created_at=datetime(2026, 10, 1 + n % 20, 6, 0), replaces_payment_id=old.id, **base))
+        world.db.commit()
+
+    c = owner(world)
+    probes = {
+        "journal": lambda: c.get(f"{API}/org/payments/journal", params={"from": "2026-10-01", "to": "2026-10-31", "size": 100}).json(),
+        "journal_active": lambda: c.get(f"{API}/org/payments/journal", params={"from": "2026-10-01", "to": "2026-10-31", "size": 100, "status": "active"}).json(),
+        "journal_voided": lambda: c.get(f"{API}/org/payments/journal", params={"from": "2026-10-01", "to": "2026-10-31", "size": 100, "status": "voided"}).json(),
+        "journal_kind": lambda: c.get(f"{API}/org/payments/journal", params={"from": "2026-10-01", "to": "2026-10-31", "size": 100, "kind": "current"}).json(),
+        "journal_kind_p2": lambda: c.get(f"{API}/org/payments/journal", params={"from": "2026-10-01", "to": "2026-10-31", "size": 5, "page": 2, "kind": "current"}).json(),
+        "export_kind": lambda: c.get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "kind": "current"}).content,
+        "export_all": lambda: c.get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31"}).content,
+    }
+    more(3)
+    small = {name: count_statements(world, fn)[1] for name, fn in probes.items()}
+    more(45)
+    big = {name: count_statements(world, fn)[1] for name, fn in probes.items()}
+    print("QUERIES S3 small/big:", small, big)
+    assert all(n <= 24 for n in big.values()), big
+    for name in big:
+        assert big[name] <= small[name] + 2, (name, small, big)                              # 15x the corrections: only the optional lookups (the correction chain) may appear
+    full = probes["journal"]()
+    assert full["totals"]["replaced_count"] >= 48 and sum(1 for r in full["rows"] if r["replaces_reason"]) >= 45
+    assert {r["corrected_by_name"] for r in full["rows"] if r["replaces_reason"]} >= {"Азиз Хакимов", "Нодира Саидова", "Мария Ким"}

@@ -1,0 +1,144 @@
+{
+  "as_of": "2026-10-21",
+  "from": "2026-10-21",
+  "to": "2026-10-21",
+  "page": 1,
+  "size": 25,
+  "total": 2,
+  "pages": 1,
+  "totals": {
+    "count": 2,
+    "sum": 250000,
+    "voided_count": 0,
+    "replaced_count": 0,
+    "kind_sum": 250000
+  },
+  "rows": [
+    {
+      "id": "payment:b2-oct21",
+      "receipt_no": 13,
+      "paid_on": "2026-10-21",
+      "paid_time": "11:40",
+      "entered_at_text": null,
+      "created_at": "2026-10-21T06:40:00",
+      "student_id": "student:b2",
+      "student_name": "Алиев Тимур",
+      "display_id": "INC-005",
+      "membership_id": "membership:b2",
+      "group_id": "group:B",
+      "group_name": "Английский 7Б",
+      "teacher_name": "Мария Ким",
+      "amount": 150000,
+      "method": "cash",
+      "method_label": "Наличные",
+      "created_by_id": "user:owner",
+      "created_by_name": "Азиз Хакимов",
+      "note": "=SUM(A1)",
+      "allocation_text": "за октябрь — 150 000 сум",
+      "allocations": [
+        {
+          "segment_id": "seg:0:2026-10-01",
+          "period_from": "2026-10-01",
+          "period_to": "2026-10-31",
+          "amount": 150000,
+          "days": 15,
+          "bucket": "current",
+          "closes": false,
+          "label": "На текущий период 01.10–31.10",
+          "price": 300000,
+          "segment_remaining_after": 150000
+        }
+      ],
+      "split": [
+        {
+          "kind": "current",
+          "label": "за текущий период",
+          "amount": 150000
+        }
+      ],
+      "refunded": 0,
+      "transferred": 0,
+      "status": "active",
+      "replaces_receipt_no": null,
+      "replaces_amount": null,
+      "replaces_reason": null,
+      "replaces_method": null,
+      "replaces_method_label": null,
+      "corrected_by_name": null,
+      "corrected_at": null,
+      "replaced_by_receipt_no": null,
+      "void_reason": null,
+      "voided_at": null,
+      "voided_by_name": null
+    },
+    {
+      "id": "payment:a2-oct21",
+      "receipt_no": 12,
+      "paid_on": "2026-10-21",
+      "paid_time": "08:10",
+      "entered_at_text": null,
+      "created_at": "2026-10-21T03:10:00",
+      "student_id": "student:a2",
+      "student_name": "Юсупов Бек",
+      "display_id": "N13-002",
+      "membership_id": "membership:a2",
+      "group_id": "group:A",
+      "group_name": "Математика 9А",
+      "teacher_name": "Пётр Иванов",
+      "amount": 100000,
+      "method": "cash",
+      "method_label": "Наличные",
+      "created_by_id": "user:admin",
+      "created_by_name": "Нодира Саидова",
+      "note": null,
+      "allocation_text": "за октябрь — 100 000 сум",
+      "allocations": [
+        {
+          "segment_id": "seg:0:2026-10-01",
+          "period_from": "2026-10-01",
+          "period_to": "2026-10-31",
+          "amount": 100000,
+          "days": 6,
+          "bucket": "current",
+          "closes": false,
+          "label": "На текущий период 01.10–31.10",
+          "price": 500000,
+          "segment_remaining_after": 300000
+        }
+      ],
+      "split": [
+        {
+          "kind": "current",
+          "label": "за текущий период",
+          "amount": 100000
+        }
+      ],
+      "refunded": 0,
+      "transferred": 0,
+      "status": "active",
+      "replaces_receipt_no": null,
+      "replaces_amount": null,
+      "replaces_reason": null,
+      "replaces_method": null,
+      "replaces_method_label": null,
+      "corrected_by_name": null,
+      "corrected_at": null,
+      "replaced_by_receipt_no": null,
+      "void_reason": null,
+      "voided_at": null,
+      "voided_by_name": null
+    }
+  ],
+  "authors": [
+    {
+      "user_id": "user:owner",
+      "name": "Азиз Хакимов",
+      "count": 1
+    },
+    {
+      "user_id": "user:admin",
+      "name": "Нодира Саидова",
+      "count": 1
+    }
+  ]
+}

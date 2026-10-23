@@ -17,8 +17,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, exists, func, or_
+from sqlalchemy.orm import Session, aliased
 
 from src.models.auth import Group, Student, StudentPayment, StudentRefund, StudentWriteoff
 
@@ -582,36 +582,75 @@ class IncomeReports:
         return (self.db.query(*columns).select_from(StudentPayment)
                 .join(Student, Student.id == StudentPayment.student_id).join(Group, Group.id == StudentPayment.group_id))
 
-    def _journal_totals(self, org_id, first, last, method, group_id, teacher_id, created_by, q) -> Tuple[int, int, int]:
-        """``(active count, active sum, voided count)`` of the filtered set: one aggregate query."""
+    def _journal_totals(self, org_id, first, last, method, group_id, teacher_id, created_by, q) -> Tuple[int, int, int, int]:
+        """``(active count, active sum, voided count, replaced count)`` of the filtered set (``status`` / ``kind`` do not enter): one aggregate query.
+        ``voided`` = every row with ``voided_at`` (cancelled + replaced); ``replaced`` = of them, the ones a newer payment corrects."""
+        newer = aliased(StudentPayment)
+        corrected = exists().where(and_(newer.replaces_payment_id == StudentPayment.id, newer.org_id == StudentPayment.org_id))
         query = self._journal_filters(
             self._journal_base(
                 func.count(StudentPayment.id).filter(StudentPayment.voided_at.is_(None)),
                 func.coalesce(func.sum(StudentPayment.amount).filter(StudentPayment.voided_at.is_(None)), 0),
-                func.count(StudentPayment.id).filter(StudentPayment.voided_at.isnot(None))),
+                func.count(StudentPayment.id).filter(StudentPayment.voided_at.isnot(None)),
+                func.count(StudentPayment.id).filter(and_(StudentPayment.voided_at.isnot(None), corrected))),
             org_id, first, last, method, group_id, teacher_id, created_by, q)
-        count, total, voided = query.one()
-        return int(count), int(total), int(voided)
+        count, total, voided, replaced = query.one()
+        return int(count), int(total), int(voided), int(replaced)
+
+    def _kind_set(self, org_id: str, first: date, last: date, method, group_id, teacher_id, created_by, q, status: str, kind: str):
+        """The journal rows that have ``kind`` in their split, in journal order: ``(ids, ledgers, whole amounts, kind part)``.  Only the ACTIVE payments have a
+        split (a cancelled / replaced one has no allocation), so ``status=voided`` is empty.  One query for the set + one batch of ledgers (the same as the strip's)."""
+        if status == "voided":
+            return [], {}, 0, 0
+        query = self._journal_filters(
+            self._journal_base(StudentPayment.id, StudentPayment.membership_id, StudentPayment.amount),
+            org_id, first, last, method, group_id, teacher_id, created_by, q).filter(StudentPayment.voided_at.is_(None))
+        found = self._journal_order(query).all()
+        members = list(dict.fromkeys(mid for _pid, mid, _amount in found))
+        ledgers: Dict[UUID, bl.Ledger] = {}
+        if members:
+            loader = ls.LedgerLoader(self.db, str(org_id), ps.business_today())
+            ledgers = {e.membership.id: e.ledger for e in loader.run(members)}
+        ids: List[UUID] = []
+        whole = part_sum = 0
+        for pid, mid, amount in found:
+            ledger = ledgers.get(mid)
+            part = split_kinds(ledger, str(pid)).get(kind, 0) if ledger else 0
+            if part > 0:
+                ids.append(pid)
+                whole += int(amount)
+                part_sum += part
+        return ids, ledgers, whole, part_sum
 
     def journal(
         self, org_id: str, first: date, last: date, *, page: int = 1, size: int = 25, method: Optional[str] = None,
         group_id: Optional[UUID] = None, teacher_id: Optional[UUID] = None, created_by: Optional[UUID] = None,
-        q: Optional[str] = None, status: str = "all",
+        q: Optional[str] = None, status: str = "all", kind: Optional[str] = None,
     ) -> PaymentsJournal:
         validate_range(first, last)
         size = max(1, min(size, MAX_JOURNAL_PAGE))
         page = max(1, page)
-        count, total_sum, voided = self._journal_totals(org_id, first, last, method, group_id, teacher_id, created_by, q)
-        rows_total = {"active": count, "voided": voided}.get(status, count + voided)
-        query = self._journal_filters(
-            self._journal_base(StudentPayment, Student, Group), org_id, first, last, method, group_id, teacher_id, created_by, q)
-        query = self._status_filter(query, status)
-        query = self._journal_order(query).offset((page - 1) * size).limit(size)
-        rows = self._rows(org_id, query.all())
+        count, total_sum, voided, replaced = self._journal_totals(org_id, first, last, method, group_id, teacher_id, created_by, q)
+        if kind:
+            ids, ledgers, total_sum, kind_sum = self._kind_set(org_id, first, last, method, group_id, teacher_id, created_by, q, status, kind)
+            count, voided, replaced = len(ids), 0, 0           # cancelled / replaced payments have no split: with a kind they are not part of the set
+            rows_total = count
+            page_ids = ids[(page - 1) * size:page * size]
+            query = self._journal_base(StudentPayment, Student, Group).filter(StudentPayment.id.in_(page_ids)) if page_ids else None
+            rows = self._rows(org_id, self._journal_order(query).all(), ledgers) if query is not None else []
+        else:
+            kind_sum = None
+            rows_total = {"active": count, "voided": voided}.get(status, count + voided)
+            query = self._journal_filters(
+                self._journal_base(StudentPayment, Student, Group), org_id, first, last, method, group_id, teacher_id, created_by, q)
+            query = self._status_filter(query, status)
+            query = self._journal_order(query).offset((page - 1) * size).limit(size)
+            rows = self._rows(org_id, query.all())
         authors = self._authors(org_id, first, last, method, group_id, teacher_id, q)
         return PaymentsJournal(
             as_of=ps.business_today(), **{"from": first}, to=last, page=page, size=size, total=rows_total,
-            pages=(rows_total + size - 1) // size, totals=JournalTotals(count=count, sum=total_sum, voided_count=voided),
+            pages=(rows_total + size - 1) // size,
+            totals=JournalTotals(count=count, sum=total_sum, voided_count=voided, replaced_count=replaced, kind_sum=kind_sum),
             rows=rows, authors=authors)
 
     @staticmethod
@@ -637,14 +676,16 @@ class IncomeReports:
         out.sort(key=lambda a: (-a.count, a.name or ""))
         return out
 
-    def _rows(self, org_id: str, triples: Sequence[Tuple[StudentPayment, Student, Group]]) -> List[JournalRow]:
-        """Journal rows of a set of payments: the ledgers of their memberships (one batch), the correction chain (two queries), the names."""
+    def _rows(self, org_id: str, triples: Sequence[Tuple[StudentPayment, Student, Group]], ledgers: Optional[Dict[UUID, bl.Ledger]] = None) -> List[JournalRow]:
+        """Journal rows of a set of payments: the ledgers of their memberships (one batch, or the ones the caller already ran), the correction chain (two queries),
+        the names (one query: authors, voiders, correctors, teachers)."""
         payments = [p for p, _s, _g in triples]
         live_members = list(dict.fromkeys(p.membership_id for p in payments if p.voided_at is None))
-        ledgers: Dict[UUID, bl.Ledger] = {}
-        if live_members:
-            loader = ls.LedgerLoader(self.db, str(org_id), ps.business_today())
-            ledgers = {e.membership.id: e.ledger for e in loader.run(live_members)}
+        if ledgers is None:
+            ledgers = {}
+            if live_members:
+                loader = ls.LedgerLoader(self.db, str(org_id), ps.business_today())
+                ledgers = {e.membership.id: e.ledger for e in loader.run(live_members)}
         ids = [p.id for p in payments]
         was: Dict[Any, StudentPayment] = {}
         replaced_ids = [p.replaces_payment_id for p in payments if p.replaces_payment_id]
@@ -656,7 +697,8 @@ class IncomeReports:
             for new in self.db.query(StudentPayment).filter(
                     StudentPayment.org_id == org_id, StudentPayment.replaces_payment_id.in_(ids)).order_by(StudentPayment.created_at):
                 becomes[new.replaces_payment_id] = new.receipt_no
-        users = self.service._users(x for p, _s, g in triples for x in (p.created_by, p.voided_by, g.teacher_id))
+        users = self.service._users(
+            [x for p, _s, g in triples for x in (p.created_by, p.voided_by, g.teacher_id)] + [o.voided_by for o in was.values()])
         out: List[JournalRow] = []
         for p, student, group in triples:
             ledger = ledgers.get(p.membership_id) if p.voided_at is None else None
@@ -677,6 +719,10 @@ class IncomeReports:
                 refunded=ledger.refunded_from.get(str(p.id), 0) if ledger else 0,
                 transferred=ledger.transferred_from.get(str(p.id), 0) if ledger else 0, status=status,
                 replaces_receipt_no=old.receipt_no if old else None, replaces_amount=int(old.amount) if old else None,
+                replaces_reason=old.void_reason if old else None,
+                replaces_method=(old.method or "unknown") if old and (old.method or "unknown") != (p.method or "unknown") else None,
+                replaces_method_label=tx.method_label(old.method) if old and (old.method or "unknown") != (p.method or "unknown") else None,
+                corrected_by_name=_staff(users.get(old.voided_by)) if old else None, corrected_at=_iso(old.voided_at) if old else None,
                 replaced_by_receipt_no=replaced_by, void_reason=p.void_reason if p.voided_at else None,
                 voided_at=_iso(p.voided_at), voided_by_name=_staff(users.get(p.voided_by))))
         return out
@@ -686,22 +732,34 @@ class IncomeReports:
     def journal_file(
         self, org_id: str, first: date, last: date, *, fmt: str = "xlsx", method: Optional[str] = None,
         group_id: Optional[UUID] = None, teacher_id: Optional[UUID] = None, created_by: Optional[UUID] = None,
-        q: Optional[str] = None, status: str = "all",
+        q: Optional[str] = None, status: str = "all", kind: Optional[str] = None,
     ) -> Tuple[bytes, str, str]:
-        """``(bytes, content type, filename)`` of the whole filtered journal (xlsx / csv); a cell that starts with = + - @ TAB CR never runs."""
+        """``(bytes, content type, filename)`` of the whole filtered journal (xlsx / csv); a cell that starts with = + - @ TAB CR never runs.  ``kind`` keeps the rows
+        that have the kind in their split (the same set as the page)."""
         validate_range(first, last)
-        count, total_sum, voided = self._journal_totals(org_id, first, last, method, group_id, teacher_id, created_by, q)
-        if {"active": count, "voided": voided}.get(status, count + voided) > MAX_EXPORT_ROWS:
-            raise ExportTooLong("Слишком много оплат для файла — сузьте период или фильтры")
-        query = self._journal_filters(
-            self._journal_base(StudentPayment, Student, Group), org_id, first, last, method, group_id, teacher_id, created_by, q)
-        rows = self._rows(org_id, self._journal_order(self._status_filter(query, status)).all())
+        count, total_sum, voided, _replaced = self._journal_totals(org_id, first, last, method, group_id, teacher_id, created_by, q)
+        kind_sum = None
+        if kind:
+            ids, ledgers, total_sum, kind_sum = self._kind_set(org_id, first, last, method, group_id, teacher_id, created_by, q, status, kind)
+            count, voided = len(ids), 0
+            if count > MAX_EXPORT_ROWS:
+                raise ExportTooLong("Слишком много оплат для файла — сузьте период или фильтры")
+            rows = self._rows(org_id, self._journal_order(self._journal_base(StudentPayment, Student, Group).filter(
+                StudentPayment.id.in_(ids))).all(), ledgers) if ids else []
+        else:
+            if {"active": count, "voided": voided}.get(status, count + voided) > MAX_EXPORT_ROWS:
+                raise ExportTooLong("Слишком много оплат для файла — сузьте период или фильтры")
+            query = self._journal_filters(
+                self._journal_base(StudentPayment, Student, Group), org_id, first, last, method, group_id, teacher_id, created_by, q)
+            rows = self._rows(org_id, self._journal_order(self._status_filter(query, status)).all())
         header = ["№ квитанции", "Дата", "Время", "Ученик", "ID ученика", "Группа", "Преподаватель", "Сумма", "Способ", "Кто внёс",
                   "Куда пошли", "Статус", "Примечание", "Внесена"]
         top = [
             ["Журнал оплат", f"с {first.strftime('%d.%m.%Y')} по {last.strftime('%d.%m.%Y')}"],
             ["Оплат", count, "На сумму", total_sum] + (["Отменённых / исправленных", voided] if voided else []),
         ]
+        if kind:
+            top.append(["Только оплаты, где есть:", tx.INCOME_KIND_LABELS[kind], "Сумма этой части", kind_sum])
         def entered_cell(r) -> str:
             """Only for a back-dated payment (the «Время» cell is empty then): «21.10 11:40»."""
             return r.entered_at_text.replace("внесена ", "", 1).replace(" в ", " ", 1) if r.entered_at_text else ""

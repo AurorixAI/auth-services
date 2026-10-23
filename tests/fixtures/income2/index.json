@@ -10,6 +10,10 @@
     "J02_journal_page2": "PaymentsJournal",
     "J03_journal_cash": "PaymentsJournal",
     "J04_journal_voided_and_replaced": "PaymentsJournal",
-    "J05_journal_search": "PaymentsJournal"
+    "J05_journal_search": "PaymentsJournal",
+    "J06_journal_kind_advance": "PaymentsJournal",
+    "J07_journal_kind_current_cash_day": "PaymentsJournal",
+    "J08_journal_kind_current_page2": "PaymentsJournal",
+    "J09_journal_status_active": "PaymentsJournal"
   }
 }

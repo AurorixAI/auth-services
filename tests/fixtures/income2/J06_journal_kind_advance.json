@@ -1,0 +1,217 @@
+{
+  "as_of": "2026-10-21",
+  "from": "2026-10-01",
+  "to": "2026-10-31",
+  "page": 1,
+  "size": 25,
+  "total": 2,
+  "pages": 1,
+  "totals": {
+    "count": 2,
+    "sum": 2150000,
+    "voided_count": 0,
+    "replaced_count": 0,
+    "kind_sum": 450000
+  },
+  "rows": [
+    {
+      "id": "payment:a3-oct7",
+      "receipt_no": 7,
+      "paid_on": "2026-10-07",
+      "paid_time": "15:25",
+      "entered_at_text": null,
+      "created_at": "2026-10-07T10:25:00",
+      "student_id": "student:a3",
+      "student_name": "Орлова Дана",
+      "display_id": "N13-003",
+      "membership_id": "membership:a3",
+      "group_id": "group:A",
+      "group_name": "Математика 9А",
+      "teacher_name": "Пётр Иванов",
+      "amount": 1250000,
+      "method": "click",
+      "method_label": "Click",
+      "created_by_id": "user:owner",
+      "created_by_name": "Азиз Хакимов",
+      "note": null,
+      "allocation_text": "за сентябрь — 500 000 сум · за октябрь — 500 000 сум · аванс — 150 000 сум · возвращено — 100 000 сум",
+      "allocations": [
+        {
+          "segment_id": "seg:0:2026-09-01",
+          "period_from": "2026-09-01",
+          "period_to": "2026-09-30",
+          "amount": 500000,
+          "days": 30,
+          "bucket": "past_debt",
+          "closes": true,
+          "label": "Закрыла долг 01.09–30.09",
+          "price": 500000,
+          "segment_remaining_after": 0
+        },
+        {
+          "segment_id": "seg:0:2026-10-01",
+          "period_from": "2026-10-01",
+          "period_to": "2026-10-31",
+          "amount": 500000,
+          "days": 31,
+          "bucket": "current",
+          "closes": true,
+          "label": "На текущий период 01.10–31.10",
+          "price": 500000,
+          "segment_remaining_after": 0
+        },
+        {
+          "segment_id": "seg:0:2026-11-01",
+          "period_from": "2026-11-01",
+          "period_to": "2026-11-30",
+          "amount": 150000,
+          "days": 9,
+          "bucket": "advance",
+          "closes": false,
+          "label": "Аванс на 01.11–30.11",
+          "price": 500000,
+          "segment_remaining_after": 350000
+        }
+      ],
+      "split": [
+        {
+          "kind": "old_debt",
+          "label": "на старые долги",
+          "amount": 500000
+        },
+        {
+          "kind": "current",
+          "label": "за текущий период",
+          "amount": 500000
+        },
+        {
+          "kind": "advance",
+          "label": "пока не потрачено (аванс)",
+          "amount": 150000
+        },
+        {
+          "kind": "refunded",
+          "label": "возвращено",
+          "amount": 100000
+        }
+      ],
+      "refunded": 100000,
+      "transferred": 0,
+      "status": "active",
+      "replaces_receipt_no": null,
+      "replaces_amount": null,
+      "replaces_reason": null,
+      "replaces_method": null,
+      "replaces_method_label": null,
+      "corrected_by_name": null,
+      "corrected_at": null,
+      "replaced_by_receipt_no": null,
+      "void_reason": null,
+      "voided_at": null,
+      "voided_by_name": null
+    },
+    {
+      "id": "payment:b1-oct2",
+      "receipt_no": 5,
+      "paid_on": "2026-10-02",
+      "paid_time": "09:15",
+      "entered_at_text": null,
+      "created_at": "2026-10-02T04:15:00",
+      "student_id": "student:b1",
+      "student_name": "Рахимова Мадина",
+      "display_id": "INC-004",
+      "membership_id": "membership:b1",
+      "group_id": "group:B",
+      "group_name": "Английский 7Б",
+      "teacher_name": "Мария Ким",
+      "amount": 900000,
+      "method": "bank_transfer",
+      "method_label": "Перевод",
+      "created_by_id": "user:owner",
+      "created_by_name": "Азиз Хакимов",
+      "note": null,
+      "allocation_text": "за сентябрь — 300 000 сум · за октябрь — 300 000 сум · аванс — 300 000 сум",
+      "allocations": [
+        {
+          "segment_id": "seg:0:2026-09-01",
+          "period_from": "2026-09-01",
+          "period_to": "2026-09-30",
+          "amount": 300000,
+          "days": 30,
+          "bucket": "past_debt",
+          "closes": true,
+          "label": "Закрыла долг 01.09–30.09",
+          "price": 300000,
+          "segment_remaining_after": 0
+        },
+        {
+          "segment_id": "seg:0:2026-10-01",
+          "period_from": "2026-10-01",
+          "period_to": "2026-10-31",
+          "amount": 300000,
+          "days": 31,
+          "bucket": "current",
+          "closes": true,
+          "label": "На текущий период 01.10–31.10",
+          "price": 300000,
+          "segment_remaining_after": 0
+        },
+        {
+          "segment_id": "seg:0:2026-11-01",
+          "period_from": "2026-11-01",
+          "period_to": "2026-11-30",
+          "amount": 300000,
+          "days": 30,
+          "bucket": "advance",
+          "closes": true,
+          "label": "Аванс на 01.11–30.11",
+          "price": 300000,
+          "segment_remaining_after": 0
+        }
+      ],
+      "split": [
+        {
+          "kind": "old_debt",
+          "label": "на старые долги",
+          "amount": 300000
+        },
+        {
+          "kind": "current",
+          "label": "за текущий период",
+          "amount": 300000
+        },
+        {
+          "kind": "advance",
+          "label": "пока не потрачено (аванс)",
+          "amount": 300000
+        }
+      ],
+      "refunded": 0,
+      "transferred": 0,
+      "status": "active",
+      "replaces_receipt_no": null,
+      "replaces_amount": null,
+      "replaces_reason": null,
+      "replaces_method": null,
+      "replaces_method_label": null,
+      "corrected_by_name": null,
+      "corrected_at": null,
+      "replaced_by_receipt_no": null,
+      "void_reason": null,
+      "voided_at": null,
+      "voided_by_name": null
+    }
+  ],
+  "authors": [
+    {
+      "user_id": "user:owner",
+      "name": "Азиз Хакимов",
+      "count": 4
+    },
+    {
+      "user_id": "user:admin",
+      "name": "Нодира Саидова",
+      "count": 3
+    }
+  ]
+}
