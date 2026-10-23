@@ -1008,34 +1008,86 @@ def test_excel_follows_the_partner_table_with_red_zeros_and_a_total(world):
     saved = save(world, m)
     r = owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}/export.xlsx")
     wb = workbook(r)
-    assert wb.sheetnames == ["Пётр Teacher"]
+    assert wb.sheetnames == ["Пётр Teacher"]                                       # one sheet: no «Итого» sheet in a single-sheet export
     ws = wb.active
     values = {c.coordinate: c.value for c in cells(ws)}
-    assert "Пётр Teacher" in values["A1"] and m.label.split("-")[0] in values["A1"]
+    assert values["A1"].startswith("Зарплата — Пётр Teacher · ") and m.label.split("-")[0] in values["A1"]
+    assert ws["A1"].font.bold and ws["A1"].font.size == 14 and {str(x) for x in ws.merged_cells.ranges} >= {"A1:M1", "A2:M2", "A3:M3"}
     assert "Редакция 1" in values["A2"]
+    assert values["A3"] == f"Заработано {saved['total_amount']:,} · Выплачено 0 · К выплате {saved['total_amount']:,}".replace(",", " ")
+    # the full words; the lesson days are REAL dates; «Включено в расчёт» is absent while nobody used it
     header = [c.value for c in ws[5] if c.value is not None]
-    assert header[:6] == ["Группа", "Тип занятий", "Время", "Ученик", "Цена в месяц", "%"]
-    assert header[6:10] == [f"{m.d(n):%d.%m}" for n in (1, 2, 3, 4)] and header[10:] == ["Засчитано", "Не оплачено", "Включено", "Заработано"]
-    rows = {ws.cell(row=r_, column=4).value: r_ for r_ in range(6, ws.max_row + 1) if ws.cell(row=r_, column=4).value}
+    import datetime as dtm
+
+    assert header[:6] == ["Группа", "Тип занятий", "Время урока", "Ученик", "Цена в месяц", "Процент"]
+    assert header[6:10] == [dtm.datetime(m.d(n).year, m.d(n).month, m.d(n).day) for n in (1, 2, 3, 4)]
+    assert all(ws.cell(5, c).is_date and ws.cell(5, c).number_format == "DD.MM" for c in range(7, 11))
+    assert header[10:] == ["Засчитано уроков", "Не оплачено уроков", "Заработано"] and "Включено в расчёт" not in header
+    assert all(ws.cell(5, c).fill.fgColor.rgb.endswith("D9E2F3") and ws.cell(5, c).font.bold for c in range(1, 14))
+    assert ws.freeze_panes == "E6" and ws.page_setup.orientation == "landscape" and ws.print_title_rows == "$5:$5"
+    # a band of the group, then the lines
+    assert ws["A6"].value.startswith("Группа · ") and ws["A6"].fill.fgColor.rgb.endswith("EDF1F7") and "A6:M6" in {str(x) for x in ws.merged_cells.ranges}
+    rows = {ws.cell(row=r_, column=4).value: r_ for r_ in range(7, ws.max_row + 1) if ws.cell(row=r_, column=4).value}
     karimova, yusupov, orlova = (rows[n] for n in ("Каримова Алия", "Юсупов Бек", "Орлова Дана"))
-    # zero (a confirmed excuse) is red; the pending excuse is yellow text; the unpaid lesson is grey
+    # zero (a confirmed excuse) is red; the pending excuse is yellow; the unpaid lesson is grey
     zero = ws.cell(row=karimova, column=7)
-    assert zero.value == 0 and zero.font.color.rgb.endswith("C00000")
+    assert zero.value == 0 and zero.font.color.rgb.endswith("C00000") and zero.fill.fgColor.rgb.endswith("FDE2E1")
     pending = ws.cell(row=yusupov, column=7)
     assert pending.value == "Ув.?" and pending.fill.start_color.rgb.endswith("FFF2B3")
     unpaid = ws.cell(row=orlova, column=10)
-    assert unpaid.value == 1 and unpaid.fill.start_color.rgb.endswith("E5E7EB")
+    assert unpaid.value == 1 and unpaid.fill.start_color.rgb.endswith("E7E6E6") and unpaid.font.color.rgb.endswith("808080")
     assert ws.cell(row=orlova, column=7).value == 1
-    assert ws.cell(row=orlova, column=5).value == FEE and ws.cell(row=orlova, column=6).value == 50
-    # only the zero in the date columns is red
+    assert ws.cell(row=orlova, column=5).value == FEE and ws.cell(row=orlova, column=5).number_format == "#,##0"
+    assert ws.cell(row=orlova, column=6).value == 50 and ws.cell(row=orlova, column=6).number_format == '0"%"'
     reds = [c for c in cells(ws) if c.value == 0 and c.font.color is not None and c.font.color.rgb.endswith("C00000")]
-    assert len(reds) == 1
-    # the totals: counted / unpaid / amount; the sheet's total
-    total_row = max(r_ for r_ in range(6, ws.max_row + 1) if ws.cell(row=r_, column=1).value == "ИТОГО")
-    assert ws.cell(row=total_row, column=14).value == saved["total_amount"]
+    assert len(reds) == 1                                                         # only the zero in the date columns is red
+    # the blue «Итого» of the table: counted / unpaid / earned (one group: no group subtotal)
+    total_row = next(r_ for r_ in range(7, ws.max_row + 1) if ws.cell(row=r_, column=1).value == "Итого")
+    assert ws.cell(row=total_row, column=13).value == saved["total_amount"] and ws.cell(row=total_row, column=13).number_format == "#,##0"
     assert ws.cell(row=total_row, column=11).value == saved["counted_total"] and ws.cell(row=total_row, column=12).value == 3
-    assert ws.cell(row=orlova, column=14).value == line_of(saved, s2)["amount"]
-    assert any(ws.cell(row=r_, column=1).value == "Итого: Группа" for r_ in range(6, ws.max_row + 1))
+    assert all(ws.cell(total_row, c).fill.fgColor.rgb.endswith("D9E2F3") and ws.cell(total_row, c).border.top.style == "medium" for c in range(1, 14))
+    assert ws.cell(row=orlova, column=13).value == line_of(saved, s2)["amount"]
+    assert not any(str(ws.cell(row=r_, column=1).value).startswith("Итого: ") for r_ in range(7, ws.max_row + 1))
+    # the blue block «Заработано / Выплачено / К выплате»
+    block = total_row + 2
+    assert [ws.cell(block, c).value for c in (1, 2, 3)] == ["Заработано", "Выплачено", "К выплате"]
+    assert [ws.cell(block + 1, c).value for c in (1, 2, 3)] == [saved["total_amount"], 0, saved["total_amount"]]
+    assert all(ws.cell(block + k, c).fill.fgColor.rgb.endswith("D9E2F3") for k in (0, 1) for c in (1, 2, 3)) and ws.cell(block + 1, 1).font.bold
+    # the legend of the codes: one quiet line under everything
+    legend = next(c for row in ws.iter_rows(min_row=block) for c in row if isinstance(c.value, str) and c.value.startswith("Обозначения:"))
+    assert "1 — урок засчитан" in legend.value and "0 — не засчитан" in legend.value and "Ув.?" in legend.value and legend.font.italic
+    # nothing of the old look
+    flat = [str(c.value) for c in cells(ws)]
+    assert "ИТОГО" not in flat and "Остаток к выплате" not in flat and not any(x in ("DCE6F1", "F3F4F6", "E5E7EB") for x in
+                                                                              [c.fill.fgColor.rgb[-6:] for row in ws.iter_rows() for c in row])
+
+
+def test_the_included_column_exists_only_when_the_owner_used_it_and_the_payouts_are_listed(world):
+    m = previous_month()
+    s0 = world.students[0]
+    for n in range(1, 11):
+        lesson(world, m.d(n), {s0: "present"})
+    pay_calendar(world, s0, m.first, m.d(6))
+    saved = save(world, m)
+    ws = workbook(owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}/export.xlsx")).active
+    assert "Включено в расчёт" not in [c.value for c in ws[5]]
+    line = line_of(saved, s0)
+    ticked = patch(world, saved, line_overrides=[{"membership_id": line["membership_id"], "include_unpaid": True}])
+    r = owner(world).post(f"{API}/org/payroll/sheets/{ticked['id']}/payouts", json={"amount": 5_000, "method": "bank_transfer", "note": "аванс"})
+    assert r.status_code == 201, r.text
+    ws = workbook(owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}/export.xlsx")).active
+    head = [c.value for c in ws[5] if c.value is not None]
+    assert head[-4:] == ["Засчитано уроков", "Не оплачено уроков", "Включено в расчёт", "Заработано"]
+    row = next(r_ for r_ in range(7, ws.max_row + 1) if ws.cell(r_, 4).value)
+    col = {c.value: c.column for c in ws[5] if isinstance(c.value, str)}
+    assert ws.cell(row, col["Включено в расчёт"]).value == "да" and ws.cell(row, col["Заработано"]).value == ticked["total_amount"]
+    # the block and the payout list: the date and the method of the payout
+    block = next(r_ for r_ in range(6, ws.max_row + 1) if ws.cell(r_, 1).value == "Заработано")
+    assert [ws.cell(block + 1, c).value for c in (1, 2, 3)] == [ticked["total_amount"], 5_000, ticked["total_amount"] - 5_000]
+    listing = block + 3
+    assert [ws.cell(listing, c).value for c in (1, 2, 3, 4)] == ["Дата выплаты", "Способ", "Сумма", "Примечание"]
+    paid = [ws.cell(listing + 1, c).value for c in (1, 2, 3, 4)]
+    assert paid[1:] == ["Перевод", 5_000, "аванс"] and ws.cell(listing + 1, 1).is_date and ws.cell(listing + 1, 1).number_format == "DD.MM.YYYY"
 
 
 def test_excel_of_a_month_has_a_sheet_per_saved_teacher(world):
@@ -1046,12 +1098,48 @@ def test_excel_of_a_month_has_a_sheet_per_saved_teacher(world):
     lesson(world, m.d(2), {s0: "present"}, teacher=world.teacher2)
     save(world, m)
     only = workbook(owner(world).get(f"{API}/org/payroll/months/{m.label}/export.xlsx"))
-    assert only.sheetnames == ["Пётр Teacher"]
+    assert only.sheetnames == ["Итого", "Пётр Teacher"]
+    summary = only["Итого"]
+    # the teacher who has lessons but no saved sheet is told on the first sheet, never left out silently
+    rows = [[summary.cell(r_, c).value for c in range(1, 8)] for r_ in range(6, summary.max_row + 1) if summary.cell(r_, 1).value]
+    assert [r_[0] for r_ in rows[:2]] == ["Пётр Teacher", "Мария Teacher"] and rows[1][1:6] == [None] * 5 and "не сохранена" in rows[1][6]
+    assert summary.cell(7, 1).fill.fgColor.rgb.endswith("FFF2B3")
     save(world, m, teacher=world.teacher2, percents=[pct(world, "40", teacher=world.teacher2)])
     both = owner(world).get(f"{API}/org/payroll/months/{m.label}/export.xlsx")
     wb = workbook(both)
-    assert wb.sheetnames == ["Мария Teacher", "Пётр Teacher"]                      # by the name of the teacher
-    assert "filename*=UTF-8''" in both.headers["content-disposition"] and ".xlsx" in both.headers["content-disposition"]
+    assert wb.sheetnames == ["Итого", "Мария Teacher", "Пётр Teacher"]            # «Итого» first, then by the name of the teacher
+    assert "filename*=UTF-8''" in both.headers["content-disposition"] and 'filename="Zarplata_' in both.headers["content-disposition"]
+    from urllib.parse import unquote
+
+    assert unquote(both.headers["content-disposition"].split("filename*=UTF-8''")[1]) == f"Зарплата_{__import__('src.auth.xlsx_style', fromlist=['x']).month_slug(m.first)}.xlsx"
+    ws = wb["Итого"]
+    assert ws.freeze_panes == "A6" and ws["A1"].value.startswith("Зарплата — ") and ws["A1"].font.size == 14
+    assert [ws.cell(5, c).value for c in range(1, 8)] == ["Учитель", "Групп", "Уроков проведено", "Заработано", "Выплачено", "К выплате", "Примечание"]
+    assert all(ws.cell(5, c).fill.fgColor.rgb.endswith("D9E2F3") for c in range(1, 8))
+    body = [[ws.cell(r_, c).value for c in range(1, 7)] for r_ in (6, 7)]
+    assert [b[0] for b in body] == ["Мария Teacher", "Пётр Teacher"] and all(b[1] == 1 and b[2] == 1 for b in body)
+    assert all(isinstance(b[3], int) and b[4] == 0 and b[5] == b[3] for b in body)
+    total = next(r_ for r_ in range(6, ws.max_row + 1) if ws.cell(r_, 1).value == "Итого")
+    assert [ws.cell(total, c).value for c in (2, 3, 4, 5, 6)] == [2, 2, body[0][3] + body[1][3], 0, body[0][3] + body[1][3]]
+    assert all(ws.cell(total, c).fill.fgColor.rgb.endswith("D9E2F3") and ws.cell(total, c).border.top.style == "medium" for c in range(1, 8))
+    assert ws.cell(total, 4).number_format == "#,##0" and ws.cell(total + 2, 1).value.startswith("Листы по учителям")
+    assert ws["A3"].value == f"Заработано {body[0][3] + body[1][3]:,} · Выплачено 0 · К выплате {body[0][3] + body[1][3]:,}".replace(",", " ")
+
+
+def test_namesake_teachers_get_unique_sheet_names(world):
+    m = previous_month()
+    s0 = world.students[0]
+    pay_calendar(world, s0, m.first, m.last)
+    lesson(world, m.d(1), {s0: "present"})
+    lesson(world, m.d(2), {s0: "present"}, teacher=world.teacher2)
+    world.teacher2.first_name, world.teacher2.last_name = world.teacher.first_name, world.teacher.last_name
+    world.db.commit()
+    save(world, m)
+    save(world, m, teacher=world.teacher2, percents=[pct(world, "40", teacher=world.teacher2)])
+    wb = workbook(owner(world).get(f"{API}/org/payroll/months/{m.label}/export.xlsx"))
+    assert len(set(n.casefold() for n in wb.sheetnames)) == 3 and wb.sheetnames[0] == "Итого" and wb.sheetnames[1:] == ["Пётр Teacher", "Пётр Teacher (2)"]
+    names = [wb["Итого"].cell(r_, 1).value for r_ in (6, 7)]
+    assert names == ["Пётр Teacher", "Пётр Teacher"]                               # the same name in the table, two different sheets behind it
 
 
 def test_excel_cells_from_names_are_never_formulas(world):
@@ -1075,7 +1163,7 @@ def test_excel_cells_from_names_are_never_formulas(world):
     assert all(c.data_type == "s" for c in dangerous)
     assert ws.title == "=1+1 x"                                                   # a worksheet name is not evaluated
     note = [c.value for c in cells(ws) if isinstance(c.value, str) and "2+2" in c.value]
-    assert note == ["Примечание: =2+2"]
+    assert len(note) == 1 and note[0].startswith("Редакция 1") and note[0].endswith("Примечание: =2+2")
 
 
 def test_excel_helpers():
@@ -1088,7 +1176,8 @@ def test_excel_helpers():
     assert px.sheet_title("x" * 50, []) == "x" * 31
     assert px.sheet_title("Иван", ["иван"]) == "Иван (2)" and px.sheet_title("'quoted'", []) == "quoted"
     assert px.sheet_title(None, []) == "Преподаватель" and px.sheet_title("", ["Преподаватель"]) == "Преподаватель (2)"
-    assert px.export_filename("2026-09", 'Иван "Эй"/\\') == "Зарплата 2026-09 Иван Эй.xlsx"
+    assert px.export_filename("2026-09", 'Иван "Эй"/\\') == "Зарплата_Иван_Эй_сентябрь-2026.xlsx"
+    assert px.export_filename("2026-10") == "Зарплата_октябрь-2026.xlsx" and px.export_filename("junk") == "Зарплата_junk.xlsx"
 
 
 # ============================================================================================
@@ -1324,8 +1413,8 @@ def test_text_xml_cannot_hold_never_breaks_the_workbook(world):
         pay_calendar(world, s, m.first, m.last)
     save(world, m, note="При\x0bмечание\n2")
     wb = workbook(owner(world).get(f"{API}/org/payroll/months/{m.label}/export.xlsx"))
-    assert wb.sheetnames == ["Пётр Te ach er"]                                   # \x0b, U+FFFE / U+FFFF dropped, tab / LF -> space
-    ws = wb.active
+    assert wb.sheetnames == ["Итого", "Пётр Te ach er"]                         # \x0b, U+FFFE / U+FFFF dropped, tab / LF -> space
+    ws = wb["Пётр Te ach er"]
     texts = [c.value for c in cells(ws) if isinstance(c.value, str)]
     assert "Группа  A" in texts                                                    # \x0c dropped, CR LF -> two spaces
     assert not any(ch in t for t in texts for ch in "\x00\x0b\x0c\x01\x1f\ufffe\uffff")
@@ -1484,7 +1573,7 @@ def test_revisions_and_the_month_export_use_a_fixed_number_of_queries(world):
     assert revisions.status_code == 200 and [h["line_count"] for h in revisions.json()] == [1, 1]
     assert any("jsonb_array_length" in q for q in statements_revisions)                       # counted by the database
     assert not any("payroll_sheet_revisions.lines AS" in q for q in statements_revisions)      # the lines are not loaded
-    assert workbook(exported).sheetnames == ["Мария Teacher", "Пётр Teacher"]
+    assert workbook(exported).sheetnames == ["Итого", "Мария Teacher", "Пётр Teacher"]
     assert len([q for q in statements if "FROM payroll_sheet_revisions" in q]) == 1            # the notes of all sheets: one query
 
 

@@ -1635,8 +1635,10 @@ class PayrollService:
 
     # --------------------------------------------------------------- export
 
-    def sheets_for_export(self, org_id: str, sheet_id: Optional[UUID], month: Optional[str]) -> Tuple[List[SheetOut], str]:
-        """The saved sheets to put into a workbook and its month label (one sheet, or every sheet of a month)."""
+    def sheets_for_export(self, org_id: str, sheet_id: Optional[UUID], month: Optional[str], *, unsaved: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[SheetOut], str]:
+        """The saved sheets to put into a workbook and its month label (one sheet, or every sheet of a month).  ``unsaved`` (a month only; a list the caller passes
+        in) is filled with ``{"teacher_id", "teacher_name"}`` of the teachers who held lessons in the month but have no saved sheet - from the SAME single collection of
+        the month, so the export still reads the month once."""
         if sheet_id is not None:
             sheet = self._lock_sheet(org_id, sheet_id, lock=False)
             return [self._saved_out(sheet, stale=None, payout=self.payout_state(org_id, sheet))], month_label(sheet.period_month)
@@ -1654,8 +1656,14 @@ class PayrollService:
         notes = self._notes(rows)
         # m8: ONE collection of the month (all the teachers) and one book of rates serve every sheet
         seed = self._collect(org_id, first, date(first.year, first.month, calendar.monthrange(first.year, first.month)[1]),
-                             teacher_ids={r.teacher_id for r in rows})
+                             teacher_ids=None if unsaved is not None else {r.teacher_id for r in rows})
         book = payroll_rates.load_book(self.db, org_id, {r.teacher_id for r in rows})
         outs = [self._saved_out(r, stale=None, names=names, notes=notes, payout=self.payout_state(org_id, r, seed, book)) for r in rows]
         outs.sort(key=lambda o: ((o.teacher_name or "").casefold(), o.teacher_id))
+        if unsaved is not None:
+            saved_ids = {r.teacher_id for r in rows}
+            missing = [tid for tid, t in seed.teachers.items() if tid not in saved_ids and t.lessons_count > 0]
+            names_missing = self._names(missing)
+            unsaved.extend(sorted(({"teacher_id": str(tid), "teacher_name": names_missing.get(tid)} for tid in missing),
+                                  key=lambda x: ((x["teacher_name"] or "").casefold(), x["teacher_id"])))
         return outs, month_label(first)

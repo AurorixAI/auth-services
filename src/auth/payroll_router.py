@@ -6,7 +6,6 @@ Mounted under /api/v1/auth.  Every handler is tenant-scoped by the org of the to
 the administrator the right to payments, a teacher too; a sheet of another centre is a 404.
 """
 from typing import Optional
-from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -14,9 +13,11 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from src.core.database import get_db
+from src.models.auth import Organization
 
 from .dependencies import require_payroll_owner
-from .payroll_export import XLSX_MIME, build_workbook, export_filename
+from . import payment_status, xlsx_style
+from .payroll_export import UNSAVED_NOTE, XLSX_MIME, build_workbook, export_filename
 from .payroll_schemas import (
     CalculateRequest,
     CalculateResponse,
@@ -53,17 +54,11 @@ def _http(exc: PayrollError) -> HTTPException:
 
 
 def _xlsx(content: bytes, filename: str) -> Response:
-    ascii_name = "".join(ch for ch in filename.encode("ascii", "ignore").decode() if ch not in '"\\;').strip()
-    if not ascii_name.lower().endswith(".xlsx"):
-        ascii_name = "payroll.xlsx"
     return Response(
         content=content,
         media_type=XLSX_MIME,
-        headers={
-            "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename, safe='')}",
-            "Cache-Control": "private, no-store",
-            "X-Content-Type-Options": "nosniff",
-        },
+        headers=xlsx_style.attachment_headers(
+            filename, **{"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}),
     )
 
 
@@ -155,12 +150,18 @@ def calculate_month(
 
 @router.get("/org/payroll/months/{month}/export.xlsx")
 def export_month(month: str, user: dict = Depends(require_payroll_owner), db: Session = Depends(get_db)):
-    """Excel: лист на каждого преподавателя с сохранённой ведомостью месяца."""
+    """Excel: первый лист «Итого» (учитель · заработано · выплачено · к выплате) и лист на каждого преподавателя с сохранённой ведомостью месяца."""
+    missing: list = []
     try:
-        sheets, label = PayrollService(db).sheets_for_export(user["org_id"], None, month)
+        sheets, label = PayrollService(db).sheets_for_export(user["org_id"], None, month, unsaved=missing)
     except PayrollError as exc:
         raise _http(exc)
-    return _xlsx(build_workbook([s.model_dump() for s in sheets]), export_filename(label))
+    # the teachers who held lessons in the month but have no saved sheet: told on the first sheet «Итого», never silently left out
+    unsaved = [{"teacher_name": t["teacher_name"], "note": UNSAVED_NOTE} for t in missing]
+    org = db.get(Organization, user["org_id"])
+    summary = {"month": label, "month_open": sheets[0].month_open, "unsaved": unsaved, "org_name": org.name if org else None,
+               "as_of": payment_status.business_today()}
+    return _xlsx(build_workbook([s.model_dump() for s in sheets], summary=summary), export_filename(label))
 
 
 # ---- sheets -----------------------------------------------------------------------
