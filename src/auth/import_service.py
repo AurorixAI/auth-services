@@ -412,7 +412,7 @@ def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session, *, money: bool 
         teacher_email = d.get(K_TEACHER_EMAIL, "").lower()
         if teacher_email:
             if teacher_email not in org_member_emails:
-                err(SHEET_GROUPS, r.row, "Email учителя",
+                err(SHEET_GROUPS, r.row, "Почта учителя",
                     f"Учитель {teacher_email} не найден в системе. Добавьте его через интерфейс.")
                 continue
 

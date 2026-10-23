@@ -28,7 +28,7 @@
   "issues": [
     {
       "code": "TEACHER_NOT_FOUND",
-      "field": "Email учителя",
+      "field": "Почта учителя",
       "level": "error",
       "message": "Преподаватель nobody@algo.test не найден в системе. Добавьте его через интерфейс.",
       "row": 4,

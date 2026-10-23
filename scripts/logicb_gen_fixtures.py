@@ -277,7 +277,7 @@ base_counts = {"teachers_new": 0, "teachers_existing": 0, "groups_new": 1, "grou
 # students_existing = 1 (Иванов Иван, found in the system); the two new ones are r3, r4
 put("c3_preview_teacher_not_teacher.json", "ImportPreviewResponseB", {
     "ok": False, "counts": {**base_counts, "students_new": 0, "students_enrolled": 0, "students_skipped": 0, "students_existing": 0, "groups_new": 0},
-    "issues": [{"sheet": "Группы", "row": 4, "field": "Email учителя", "level": "error", "code": "TEACHER_NOT_FOUND",
+    "issues": [{"sheet": "Группы", "row": 4, "field": "Почта учителя", "level": "error", "code": "TEACHER_NOT_FOUND",
                 "message": "Преподаватель nobody@algo.test не найден в системе. Добавьте его через интерфейс."}],
     "teachers_preview": [], "skipped": [], "students_preview": [],
     "groups_preview": [{"name": "9-А", "class_level": 9, "teacher_email": "", "action": "existing"},

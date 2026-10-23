@@ -165,16 +165,16 @@ def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, mon
         if email:
             entry = staff.get(email)
             if entry is None:
-                plan.err(legacy.SHEET_GROUPS, r.row, "Email учителя",
+                plan.err(legacy.SHEET_GROUPS, r.row, "Почта учителя",
                          f"Преподаватель {email} не найден в системе. Добавьте его через интерфейс.", "TEACHER_NOT_FOUND")
                 continue
             user, member = entry
             if member.org_role not in TEACHING_ROLES:
-                plan.err(legacy.SHEET_GROUPS, r.row, "Email учителя",
+                plan.err(legacy.SHEET_GROUPS, r.row, "Почта учителя",
                          f"{email} — не преподаватель (роль: {ROLE_RU.get(member.org_role, member.org_role)})", "TEACHER_NOT_TEACHER")
                 continue
             if not member.is_active or user.is_active is False:
-                plan.err(legacy.SHEET_GROUPS, r.row, "Email учителя", f"{email} больше не работает в центре", "TEACHER_INACTIVE")
+                plan.err(legacy.SHEET_GROUPS, r.row, "Почта учителя", f"{email} больше не работает в центре", "TEACHER_INACTIVE")
                 continue
             teacher_id = user.id
         existing = db.query(Group).filter(Group.org_id == org_id, func.lower(Group.name) == key).first()
@@ -186,7 +186,7 @@ def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, mon
         if existing is not None:
             plan.counts.groups_existing += 1
             if teacher_id is not None and existing.teacher_id != teacher_id:
-                plan.warn(legacy.SHEET_GROUPS, r.row, "Email учителя",
+                plan.warn(legacy.SHEET_GROUPS, r.row, "Почта учителя",
                           f"Преподаватель группы «{existing.name}» в файле отличается от текущего — изменений нет.", "TEACHER_DIFFERS")
         else:
             plan.counts.groups_new += 1
