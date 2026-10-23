@@ -756,6 +756,13 @@ COL = {"last": 1, "first": 2, "class": 3, "phone": 4, "group": 5, "comment": 6, 
        "lessons": 13, "price": 14, "mode": 15, "note": 16}
 
 
+# the layout of the file BEFORE the house style (header in row 1, 16 columns, the ids in the middle): a file somebody saved earlier must still be read
+OLD_HEADERS = [
+    "Фамилия*", "Имя*", "Класс (1-11)*", "Телефон", "Группа*", "Комментарий", "Оплачено до (дата)", "Долг, сум", "Долг на дату",
+    "ID ученика (не менять)", "ID членства (не менять)", "Без остатка (да)", "Осталось уроков (пакет)", "Цена", "Режим", "Статус",
+]
+
+
 def export_xlsx(w, expect=200, **params):
     r = owner(w).get(f"{BASE}/export", params=params)
     assert r.status_code == expect, r.text[:200]
@@ -763,12 +770,21 @@ def export_xlsx(w, expect=200, **params):
 
 
 def sheet_of(data):
+    """``(workbook, «Остатки»)``; the sheet carries ``ws.COL`` = {key: column} read from the HEADER TEXTS of the export (never by position) and ``ws.FIRST`` = its first row."""
     import io
 
     from openpyxl import load_workbook
 
+    from src.auth.openings_excel import COLUMN_HEADERS
+
     wb = load_workbook(io.BytesIO(data))
-    return wb, wb["Остатки"]
+    ws = wb["Остатки"]
+    head = next(r for r in range(1, 30) if ws.cell(r, 1).value == "Фамилия*")
+    names = {v: k for k, v in COLUMN_HEADERS.items()}
+    names["Цена пакета"] = "price"
+    ws.COL = {names[ws.cell(head, c).value]: c for c in range(1, ws.max_column + 1) if ws.cell(head, c).value in names}
+    ws.HEAD, ws.FIRST = head, head + 1
+    return wb, ws
 
 
 def to_bytes(wb):
@@ -780,8 +796,8 @@ def to_bytes(wb):
 
 
 def row_for(ws, m):
-    for r in range(2, ws.max_row + 1):
-        if ws.cell(row=r, column=COL["membership"]).value == str(m.id):
+    for r in range(ws.FIRST, ws.max_row + 1):
+        if ws.cell(row=r, column=ws.COL["membership"]).value == str(m.id):
             return r
     raise AssertionError("no such row")
 
@@ -796,12 +812,10 @@ def build_file(rows, header=None):
     """A file as a user could have made it: the header of ours and ``rows`` = dicts by COL keys."""
     from openpyxl import Workbook
 
-    from src.auth.openings_excel import HEADERS
-
     wb = Workbook()
     ws = wb.active
     ws.title = "Остатки"
-    ws.append(header or HEADERS)
+    ws.append(header or OLD_HEADERS)
     for row in rows:
         line = [None] * 16
         for key, value in row.items():
@@ -817,23 +831,54 @@ def test_export_prefilled_columns_types_filters_and_text_cells(world, fixed_toda
     world.db.commit()
     apply(world, [it(world, a, paid_until="2026-11-30"), it(world, b, debt_amount=550_000, debt_on="2026-10-31")])
     r = export_xlsx(world)
-    assert r.headers["content-type"].startswith(XLSX) and "ostatki_na_nachalo_2026-10-21.xlsx" in r.headers["content-disposition"]
+    assert r.headers["content-type"].startswith(XLSX)
+    assert r.headers["content-disposition"] == ("attachment; filename=\"Ostatki_na_nachalo.xlsx\"; filename*=UTF-8''"
+                                                "%D0%9E%D1%81%D1%82%D0%B0%D1%82%D0%BA%D0%B8_%D0%BD%D0%B0_%D0%BD%D0%B0%D1%87%D0%B0%D0%BB%D0%BE.xlsx")
     wb, ws = sheet_of(r.content)
-    assert wb.sheetnames == ["Остатки", "Инструкция"]
-    assert [c.value for c in ws[1]] == [x["header"] for x in fixture("excel")["columns"]]
+    assert wb.sheetnames == ["Инструкция", "Остатки"]                                                 # the instruction FIRST
+    # the title block: centre, accounting start, mode, the counters
+    assert ws["A1"].value.startswith("Остатки на начало — ") and ws["A1"].font.bold and ws["A1"].font.size == 14
+    assert ws["A2"].value == "Учёт ведётся с 01.11.2026 · По состоянию на 21.10.2026 · Режим: по месяцам"
+    assert ws["A3"].value.startswith("Учеников в списке 3 · Остаток внесён 2 · Не заполнено 1")
+    assert ws.HEAD == 5 and ws.freeze_panes == "C6" and {f"A{n}:{chr(64 + ws.max_column)}{n}" for n in (1, 2, 3)} <= {str(x) for x in ws.merged_cells.ranges}
+    # the header: the columns of the import by their names, the reference ones, the ids LAST and hidden; the house colour, not the old blue
+    head = [ws.cell(5, c).value for c in range(1, ws.max_column + 1)]
+    expected = [x["header"] for x in fixture("excel")["columns"] if x.get("when") is None]
+    assert head[-2:] == ["ID ученика (не менять)", "ID членства (не менять)"]
+    assert head == [h for h in expected if h in head] and "Осталось уроков (пакет)" not in head and "Режим" not in head and "Цена" not in head
+    assert {"Фамилия*", "Имя*", "Класс (1-11)*", "Группа*", "Оплачено до (дата)", "Долг, сум", "Долг на дату", "Без остатка (да)", "Цена в месяц"} <= set(head)
+    for cidx in range(1, ws.max_column + 1):
+        cell = ws.cell(5, cidx)
+        assert cell.fill.fgColor.rgb.endswith("D9E2F3") and cell.font.bold and cell.font.color is None or not cell.font.color.rgb.endswith("FFFFFF")
+    assert ws.column_dimensions[chr(64 + ws.COL["student"])].hidden and ws.column_dimensions[chr(64 + ws.COL["membership"])].hidden
+    assert not any(ws.column_dimensions[chr(64 + k)].hidden for k in range(1, ws.max_column - 1))
+    assert ws.auto_filter.ref and ws.page_setup.orientation == "landscape" and ws.print_title_rows == "$5:$5"
     ra, rb, rc = row_for(ws, a), row_for(ws, b), row_for(ws, c)
-    assert ws.cell(row=ra, column=COL["paid"]).value == datetime(2026, 11, 30) and ws.cell(row=ra, column=COL["paid"]).number_format == "DD.MM.YYYY"
-    assert ws.cell(row=rb, column=COL["debt"]).value == 550_000 and ws.cell(row=rb, column=COL["debt_on"]).value == datetime(2026, 10, 31)
-    assert ws.cell(row=rc, column=COL["paid"]).value is None and ws.cell(row=rc, column=COL["debt"]).value is None
-    assert ws.cell(row=ra, column=COL["student"]).value == str(a.student_id) and ws.cell(row=ra, column=COL["price"]).value == 600_000
+    assert ws.cell(row=ra, column=ws.COL["paid"]).value == datetime(2026, 11, 30) and ws.cell(row=ra, column=ws.COL["paid"]).number_format == "DD.MM.YYYY"
+    assert ws.cell(row=rb, column=ws.COL["debt"]).value == 550_000 and ws.cell(row=rb, column=ws.COL["debt_on"]).value == datetime(2026, 10, 31)
+    assert ws.cell(row=rb, column=ws.COL["debt"]).number_format == "#,##0" and ws.cell(row=ra, column=ws.COL["price"]).number_format == "#,##0"
+    assert ws.cell(row=rc, column=ws.COL["paid"]).value is None and ws.cell(row=rc, column=ws.COL["debt"]).value is None
+    assert ws.cell(row=ra, column=ws.COL["student"]).value == str(a.student_id) and ws.cell(row=ra, column=ws.COL["price"]).value == 600_000
+    assert ws.cell(row=ra, column=ws.COL["price"]).font.color.rgb.endswith("808080")                    # a reference column is grey
+    assert ws.cell(5, ws.COL["price"]).value == "Цена в месяц"
     # a surname that looks like a formula stays text (data_type "s"), in the file and when read back
-    cell = ws.cell(row=ra, column=COL["last"])
+    cell = ws.cell(row=ra, column=ws.COL["last"])
     assert cell.data_type == "s" and cell.value.startswith("=HYPERLINK")
+    # the blue «Итого»: the number of students and the sum of the debts
+    total = ws.FIRST + 3
+    assert ws.cell(total, 1).value == "Итого" and ws.cell(total, ws.COL["first"]).value == "Учеников: 3" and ws.cell(total, ws.COL["debt"]).value == 550_000
+    assert all(ws.cell(total, k).fill.fgColor.rgb.endswith("D9E2F3") and ws.cell(total, k).border.top.style == "medium" for k in range(1, ws.max_column + 1))
+    # the instruction sheet: ordinary text, one paragraph per cell, no manual line breaks
+    info = wb["Инструкция"]
+    texts = [info.cell(r_, 1).value for r_ in range(1, info.max_row + 1) if info.cell(r_, 1).value]
+    assert texts[0] == "Остатки на начало — как заполнять" and len(texts) >= 8 and not any("\n" in t for t in texts)
+    assert any(t.startswith("Учёт оплат в ALGO идёт с 01.11.2026") for t in texts) and not any("Колонки J и K" in t for t in texts)
+    assert all(info.cell(r_, 1).alignment.wrap_text for r_ in range(3, 3 + len(texts) - 1)) and info.column_dimensions["A"].width == 110
     # the filters
     _, ws2 = sheet_of(export_xlsx(world, missing_only=True).content)
-    assert ws2.max_row == 2 and ws2.cell(row=2, column=COL["membership"]).value == str(c.id)
+    assert ws2.max_row == ws2.FIRST + 1 and ws2.cell(row=ws2.FIRST, column=ws2.COL["membership"]).value == str(c.id)
     _, ws3 = sheet_of(export_xlsx(world, group_id=str(world.group.id), q=world.students[1].last_name[:4]).content)
-    assert ws3.max_row == 2
+    assert ws3.max_row == ws3.FIRST + 1 and "Группа: " in ws3["A2"].value and "Поиск:" in ws3["A2"].value
     assert export_xlsx(world, group_id=str(world.foreign_group.id), expect=404)
     assert make_client(world, user=world.teacher).get(f"{BASE}/export").status_code == 403
 
@@ -849,12 +894,13 @@ def test_round_trip_unchanged_is_zero_changes_and_one_edit_is_one_change(world, 
     assert {r["status"] for r in pv["rows"]} == {"noop"} and {r["matched_by"] for r in pv["rows"]} == {"membership_id"}
     # a sorted file (the rows in another order) matches the same
     wb, ws = sheet_of(data)
-    lines = [[ws.cell(row=r, column=k).value for k in range(1, 17)] for r in range(2, ws.max_row + 1)][::-1]
-    shuffled = build_file([dict(zip(COL, line)) for line in lines])
+    keys = ("last", "first", "class", "group", "paid", "debt", "debt_on", "none", "student", "membership")
+    lines = [{k: ws.cell(row=r, column=ws.COL[k]).value for k in keys} for r in range(ws.FIRST, ws.FIRST + 3)][::-1]    # the three students, the rows reversed
+    shuffled = build_file(lines)                                                                      # ... in the OLD layout: still read by the header names
     assert import_xlsx(world, to_bytes(shuffled))["file"]["changed"] == 0
     # one edit = exactly one change
     wb, ws = sheet_of(data)
-    ws.cell(row=row_for(ws, c), column=COL["paid"]).value = datetime(2026, 12, 20)
+    ws.cell(row=row_for(ws, c), column=ws.COL["paid"]).value = datetime(2026, 12, 20)
     pv = import_xlsx(world, to_bytes(wb))
     assert pv["file"]["changed"] == 1 and [i["membership_id"] for i in pv["batch_items"]] == [str(c.id)] and pv["summary"]["changed"] == 1
     assert_same_shape(pv, fixture("O09_import_preview"))
@@ -863,16 +909,50 @@ def test_round_trip_unchanged_is_zero_changes_and_one_edit_is_one_change(world, 
     assert len(live_openings(world)) == 2                                                                      # the preview wrote nothing
 
 
+def test_the_file_is_read_by_the_header_names_not_by_positions(world, fixed_today):
+    """Columns in the reverse order, a title block of any height above the header, the blue «Итого» and the hidden ids in the middle: the same «no changes»; an edit still lands on its row."""
+    from openpyxl import Workbook
+
+    centre(world)
+    a, b, c = (enrolled(world, D(2026, 9, 1), s) for s in world.students)
+    apply(world, [it(world, a, paid_until="2026-11-30"), it(world, b, debt_amount=550_000, debt_on="2026-10-31")])
+    _, ws = sheet_of(export_xlsx(world).content)
+    table = [[ws.cell(r, k).value for k in range(1, ws.max_column + 1)][::-1] for r in range(ws.HEAD, ws.max_row + 1)]      # the header, the rows and «Итого»: every row reversed
+    wb = Workbook()
+    out = wb.active
+    out.title = "Остатки"
+    for n in range(7):
+        out.cell(n + 1, 1, f"строка заголовка {n}")                                                    # seven lines above the header
+    for r, line in enumerate(table, start=8):
+        for k, v in enumerate(line, start=1):
+            out.cell(r, k, v)
+    pv = import_xlsx(world, to_bytes(wb))
+    assert pv["ok"] and pv["file"]["rows_read"] == 3 and pv["file"]["changed"] == 0 and pv["file"]["errors"] == 0, pv["file"]
+    assert min(r["row"] for r in pv["rows"]) == 9                                                      # the Excel row numbers of the file as it is
+    names = {out.cell(8, k).value: k for k in range(1, out.max_column + 1)}
+    out.cell(next(r for r in range(9, 12) if out.cell(r, names["ID членства (не менять)"]).value == str(c.id)), names["Оплачено до (дата)"]).value = datetime(2026, 12, 20)
+    pv = import_xlsx(world, to_bytes(wb))
+    assert pv["file"]["changed"] == 1 and [i["membership_id"] for i in pv["batch_items"]] == [str(c.id)]
+    # the total row alone never becomes a student
+    total_only = Workbook()
+    only = total_only.active
+    only.title = "Остатки"
+    only.append(["Фамилия*", "Имя*", "Группа*", "Оплачено до (дата)", "Долг, сум"])
+    only.append(["Итого", "Учеников: 3", None, None, 550_000])
+    pv = import_xlsx(world, to_bytes(total_only))
+    assert pv["file"]["rows_read"] == 0 and pv["rows"] == []
+
+
 def test_excel_apply_equals_the_direct_batch_and_an_emptied_row_clears(world, fixed_today):
     centre(world)
     a, b, c = (enrolled(world, D(2026, 9, 1), s) for s in world.students)
     twins = students(world, 3)
     wb, ws = sheet_of(export_xlsx(world).content)
-    ws.cell(row=row_for(ws, a), column=COL["paid"]).value = "30.11.2026"                              # a text date is read too
-    ws.cell(row=row_for(ws, b), column=COL["debt"]).value = "550 000"
-    ws.cell(row=row_for(ws, c), column=COL["paid"]).value = datetime(2026, 12, 15)
-    ws.cell(row=row_for(ws, c), column=COL["debt"]).value = 80_000
-    ws.cell(row=row_for(ws, c), column=COL["debt_on"]).value = datetime(2026, 10, 31)
+    ws.cell(row=row_for(ws, a), column=ws.COL["paid"]).value = "30.11.2026"                              # a text date is read too
+    ws.cell(row=row_for(ws, b), column=ws.COL["debt"]).value = "550 000"
+    ws.cell(row=row_for(ws, c), column=ws.COL["paid"]).value = datetime(2026, 12, 15)
+    ws.cell(row=row_for(ws, c), column=ws.COL["debt"]).value = 80_000
+    ws.cell(row=row_for(ws, c), column=ws.COL["debt_on"]).value = datetime(2026, 10, 31)
     pv = import_xlsx(world, to_bytes(wb))
     assert pv["ok"] and pv["file"]["changed"] == 3
     out = apply(world, pv["batch_items"], digest=pv["digest"])                                         # the Excel apply = the atomic batch, no re-upload
@@ -885,10 +965,10 @@ def test_excel_apply_equals_the_direct_batch_and_an_emptied_row_clears(world, fi
     # emptied cells of a row that has an opening = remove it («уберёт остаток»); «да» in the column does the same
     wb, ws = sheet_of(export_xlsx(world).content)
     for k in ("paid", "debt", "debt_on"):
-        ws.cell(row=row_for(ws, c), column=COL[k]).value = None
-    ws.cell(row=row_for(ws, b), column=COL["none"]).value = "да"
-    ws.cell(row=row_for(ws, b), column=COL["debt"]).value = None
-    ws.cell(row=row_for(ws, b), column=COL["debt_on"]).value = None
+        ws.cell(row=row_for(ws, c), column=ws.COL[k]).value = None
+    ws.cell(row=row_for(ws, b), column=ws.COL["none"]).value = "да"
+    ws.cell(row=row_for(ws, b), column=ws.COL["debt"]).value = None
+    ws.cell(row=row_for(ws, b), column=ws.COL["debt_on"]).value = None
     pv = import_xlsx(world, to_bytes(wb))
     kinds = {r["membership_id"]: r["kind"] for r in pv["rows"] if r["membership_id"]}
     assert kinds[str(c.id)] == "cleared" and kinds[str(b.id)] == "paid_until" and pv["summary"]["cleared"] == 1       # «да» = reviewed, nothing owed
@@ -1011,9 +1091,10 @@ def test_excel_lessons_column_left_students_and_the_rights_of_the_batch_after_a_
     gone = membership(world, world.students[1])
     stay(world, gone, D(2026, 3, 1), D(2026, 6, 30))
     wb, ws = sheet_of(export_xlsx(world, include_left=1).content)
-    assert ws.cell(row=row_for(ws, a), column=COL["mode"]).value == "уроки" and ws.cell(row=row_for(ws, gone), column=COL["note"]).value == "ушёл: только долг"
-    ws.cell(row=row_for(ws, a), column=COL["lessons"]).value = 8
-    ws.cell(row=row_for(ws, gone), column=COL["paid"]).value = datetime(2026, 11, 30)
+    assert ws.cell(5, ws.COL["price"]).value == "Цена пакета" and "Режим: по урокам" in ws["A2"].value                       # the mode is told once, in the title
+    assert ws.cell(row=row_for(ws, gone), column=ws.COL["note"]).value == "ушёл: только долг" and "lessons" in ws.COL        # the lessons column exists in this mode only
+    ws.cell(row=row_for(ws, a), column=ws.COL["lessons"]).value = 8
+    ws.cell(row=row_for(ws, gone), column=ws.COL["paid"]).value = datetime(2026, 11, 30)
     pv = import_xlsx(world, to_bytes(wb))
     by = {r["membership_id"]: r for r in pv["rows"]}
     assert by[str(a.id)]["status"] == "ok" and by[str(gone.id)]["code"] == "OPENING_RANGE" and "только долг" in by[str(gone.id)]["message"]

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from src.core.database import get_db
 
+from . import xlsx_style
 from .dependencies import require_payments_access
 from .openings_schemas import (
     OpeningBatchApplied,
@@ -110,15 +111,12 @@ def export_openings(
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ) -> Response:
-    """Остатки файлом .xlsx, заполненным текущими значениями: колонки A–I как в импорте, ID ученика, ID членства, «Без остатка», справочные."""
-    from urllib.parse import quote
-
+    """Остатки файлом .xlsx, заполненным текущими значениями: первый лист «Инструкция», лист «Остатки» (заголовок, колонки импорта, справочные серые, «Итого», скрытые ID в конце); читается по названиям колонок."""
     try:
         data, filename = OpeningsService(db).export(user["org_id"], group_id=group_id, missing_only=missing_only, q=q, include_left=include_left)
     except PaymentError as exc:
         raise _http(exc)
-    return Response(content=data, media_type=_XLSX,
-                    headers={"Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"})
+    return Response(content=data, media_type=_XLSX, headers=xlsx_style.attachment_headers(filename))
 
 
 @router.post("/org/opening-balances/import/preview", response_model=OpeningsImportPreview, responses=_ERRORS)

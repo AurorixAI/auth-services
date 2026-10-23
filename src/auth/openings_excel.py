@@ -1,10 +1,12 @@
 """
 ALGO - OPENING-BULK: the Excel round trip of «Остатки на начало».
 
-``build_export``: the table as .xlsx (sheet «Остатки»: columns A-I as the import, then the ids, «Без остатка», «Осталось уроков», the reference columns),
-prefilled with the current openings.  ``import_preview``: the file back -> the SAME preview as ``batch/preview`` (+ what happened to every row, the items
+``build_export``: the file as .xlsx in the house style (``xlsx_style``): the sheet «Инструкция» FIRST (ordinary text), then «Остатки» - a title block (centre,
+accounting start), the table (the columns of the import: surname, name, class, group, «Оплачено до», «Долг», «Долг на дату», «Без остатка», in lessons mode «Осталось
+уроков»; grey reference columns: phone, price, comment, status), a blue «Итого» row and, hidden at the very end, the two ids - prefilled with the current openings.  ``import_preview``: the file back -> the SAME preview as ``batch/preview`` (+ what happened to every row, the items
 ready for ``POST /org/opening-balances/batch``).  The file is never executed (``data_only``), never stored, never uploaded twice: the apply is the
-atomic batch.  Formats of the cells: ``import_service._parse_date`` / ``_parse_money`` (the same as the import of students).
+atomic batch.  The file is read BY THE HEADER TEXTS (the header row is found among the first rows: after the title block it is row 5; a file of the old layout has it in row 1), never by
+positions, so a column that moved or is hidden changes nothing.  Formats of the cells: ``import_service._parse_date`` / ``_parse_money`` (the same as the import of students).
 """
 from __future__ import annotations
 
@@ -14,6 +16,8 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
+
+from src.models.auth import Group, Organization
 
 from . import import_service as imp
 from . import payment_status as ps
@@ -25,6 +29,7 @@ from .openings_schemas import (
     OpeningsImportRow,
 )
 from .openings_service import MAX_IMPORT_BYTES, OpeningsService, TableRow
+from . import xlsx_style as xs
 from .payments_income import FORMULA_STARTS
 from .payments_schemas import MAX_MONEY
 from .payments_service import PaymentInvalid
@@ -37,17 +42,27 @@ MAX_EXPORT_ROWS = 20_000
 MAX_FILE_ROWS = 5_000
 MAX_FILE_SHEETS = 5
 MAX_CHANGES = 2_000
+HEADER_SEARCH_ROWS = 30                   # the header row is looked for among the first rows (a title block stands above it)
 YES = {"да", "yes", "y", "x", "1", "+"}
 
-HEADERS = [
-    "Фамилия*", "Имя*", "Класс (1-11)*", "Телефон", "Группа*", "Комментарий", "Оплачено до (дата)", "Долг, сум", "Долг на дату",
-    "ID ученика (не менять)", "ID членства (не менять)", "Без остатка (да)", "Осталось уроков (пакет)", "Цена", "Режим", "Статус",
-]
+# the columns of the file by their KEY (the importer reads them by the header text, never by the position); ``HEADERS`` is the full list in the order of the
+# export for a centre that pays by the month and has every optional column
+COLUMN_HEADERS = {
+    "last": "Фамилия*", "first": "Имя*", "class": "Класс (1-11)*", "phone": "Телефон", "group": "Группа*", "price": "Цена в месяц",
+    "paid": "Оплачено до (дата)", "debt": "Долг, сум", "debt_on": "Долг на дату", "none": "Без остатка (да)", "lessons": "Осталось уроков (пакет)",
+    "comment": "Комментарий", "note": "Статус", "student": "ID ученика (не менять)", "membership": "ID членства (не менять)",
+}
+INPUT_KEYS = ("paid", "debt", "debt_on", "none", "lessons")           # what the owner types
+REFERENCE_KEYS = ("phone", "price", "comment", "note")                # shown in grey: ALGO does not read them back
+HIDDEN_KEYS = ("student", "membership")                               # the technical keys: hidden columns at the very end
+HEADERS = [COLUMN_HEADERS[k] for k in ("last", "first", "class", "phone", "group", "price", "paid", "debt", "debt_on", "none", "lessons", "comment", "note",
+                                       "student", "membership")]
 KEYS = {
     "last": "фамилия", "first": "имя", "class": "класс (1-11)", "group": "группа", "paid": "оплачено до (дата)", "debt": "долг, сум",
     "debt_on": "долг на дату", "student": "id ученика (не менять)", "membership": "id членства (не менять)", "none": "без остатка (да)",
     "lessons": "осталось уроков (пакет)",
 }
+TOTAL_LABEL = "Итого"
 
 
 class FileError(PaymentInvalid):
@@ -71,16 +86,53 @@ def _norm(h: Any) -> str:
 
 def _put_text(ws, row: int, col: int, value: Any):
     """A text cell stays text: a surname that starts with = + - @ is never a formula (OWASP)."""
-    cell = ws.cell(row=row, column=col, value=value)
+    cell = ws.cell(row=row, column=col, value=xs.clean(value))
     if isinstance(value, str):
         cell.data_type = "s"
     return cell
 
 
+def _filter_words(svc: OpeningsService, org_id: str, group_id, missing_only: bool, q: Optional[str], include_left: bool) -> List[str]:
+    words: List[str] = []
+    if group_id is not None:
+        group = svc.db.query(Group.name).filter(Group.id == group_id, Group.org_id == org_id).first()
+        if group:
+            words.append(f"Группа: {group[0]}")
+    if missing_only:
+        words.append("Только незаполненные")
+    if q and q.strip():
+        words.append(f"Поиск: «{q.strip()}»")
+    if include_left:
+        words.append("Вместе с ушедшими")
+    return words
+
+
+def instruction_paragraphs(start: date, *, lessons: bool) -> List[str]:
+    """The text of the sheet «Инструкция»: one paragraph = one cell, no manual line breaks (the cell wraps)."""
+    before = (start - _day()).strftime("%d.%m.%Y")
+    paragraphs = [
+        f"Учёт оплат в ALGO идёт с {start.strftime('%d.%m.%Y')}. Здесь — что было у ученика ДО этой даты.",
+        f"«Оплачено до (дата)» — ученик заплатил до этого дня (не раньше {before}). «Оплачено до» = день перед началом учёта означает «на начало долга нет»: "
+        "строка считается заполненной.",
+        "«Долг, сум» и «Долг на дату» — сколько он был должен и на какую дату (дата не позже дня перед началом учёта; пусто = этот день).",
+    ]
+    if lessons:
+        paragraphs.append("«Осталось уроков (пакет)» — только для центра, где платят пакетами: вместо «Оплачено до» (дата считается по расписанию группы).")
+    paragraphs += [
+        f"«Без остатка (да)» — проверено, на начало учёта долга нет (записывается «оплачено до» {before}). Ученику, пришедшему уже после начала учёта, "
+        "остаток не нужен: «да» ничего не меняет.",
+        "Пустые поля у ученика, у которого остаток уже внесён, — убирают этот остаток.",
+        "Серые колонки (телефон, цена, комментарий, статус) справочные: ALGO не читает их при загрузке, менять их бесполезно. Колонки с кодами "
+        "«ID ученика» и «ID членства» скрыты в конце таблицы: не удаляйте их и не сортируйте отдельно от строки — по ним ALGO находит ученика.",
+        "Строку «Итого» внизу не трогайте: при загрузке она пропускается.",
+        "После загрузки вы увидите сравнение «было → станет»; ничего не записывается, пока вы не нажмёте «Сохранить».",
+    ]
+    return paragraphs
+
+
 def build_export(svc: OpeningsService, org_id: str, *, group_id=None, missing_only: bool = False, q: Optional[str] = None,
                  include_left: bool = False) -> Tuple[bytes, str]:
     from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
     from openpyxl.worksheet.datavalidation import DataValidation
 
@@ -88,71 +140,96 @@ def build_export(svc: OpeningsService, org_id: str, *, group_id=None, missing_on
         org_id, group_id=group_id, missing_only=missing_only, q=q, include_left=include_left, limit=MAX_EXPORT_ROWS,
         too_many="Слишком много учеников для файла — выберите группу")
     start = settings.accounting_start
-    wb = Workbook()
-    ws = wb.active
-    ws.title = SHEET
-    head_font, head_fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="2F6FED")
-    for i, title in enumerate(HEADERS, start=1):
-        c = ws.cell(row=1, column=i, value=title)
-        c.font, c.fill, c.alignment = head_font, head_fill, Alignment(horizontal="center", vertical="center", wrap_text=True)
-    for i, width in enumerate((18, 16, 10, 16, 20, 20, 16, 14, 14, 38, 38, 12, 14, 14, 10, 22), start=1):
-        ws.column_dimensions[get_column_letter(i)].width = width
-    ws.freeze_panes = "A2"
     mode = settings.current.mode
-    for n, r in enumerate(rows, start=2):
+    lessons_mode = mode == ps.LESSONS
+    org = svc.db.get(Organization, org_id)
+    wb = Workbook()
+
+    # ---- «Инструкция» comes FIRST: ordinary text, one paragraph per cell
+    info = wb.active
+    info.title = SHEET_INSTRUCTIONS
+    info.column_dimensions["A"].width = 110
+    xs.put(info, 1, 1, "Остатки на начало — как заполнять", font=xs.FONT_TITLE, alignment=xs.ALIGN_LEFT)
+    info.row_dimensions[1].height = 21
+    for i, text in enumerate(instruction_paragraphs(start, lessons=lessons_mode), start=3):
+        xs.put(info, i, 1, text, font=xs.FONT_BODY, alignment=xs.ALIGN_LEFT_TOP)
+        lines = xs.lines_needed(text, 110)
+        if lines > 1:
+            info.row_dimensions[i].height = xs.LINE_HEIGHT * lines
+    xs.print_setup(info, header=None)
+
+    # ---- «Остатки»
+    ws = wb.create_sheet(SHEET)
+    keys = ["last", "first", "class", "phone", "group", "price", "paid", "debt", "debt_on", "none"]
+    if lessons_mode:
+        keys.append("lessons")
+    comments = any(r.s.comment for r in rows)
+    notes = {id(r): ("ушёл: только долг" if r.left else "перевод: остаток нельзя" if r.transfer else "бесплатно" if r.free else "пауза" if r.paused
+                     else "есть оплаты" if r.money else "") for r in rows}
+    if comments:
+        keys.append("comment")
+    if any(notes.values()):
+        keys.append("note")
+    keys += list(HIDDEN_KEYS)
+    col = {key: i for i, key in enumerate(keys, start=1)}
+    last_col = len(keys)
+    headers = {**COLUMN_HEADERS, "price": "Цена пакета" if lessons_mode else "Цена в месяц"}
+    words = [f"Учёт ведётся с {xs.date_ru(start)}", f"По состоянию на {xs.date_ru(today)}",
+             "Режим: по урокам (пакеты)" if lessons_mode else "Режим: по месяцам", *_filter_words(svc, org_id, group_id, missing_only, q, include_left)]
+    row3 = [f"Учеников в списке {totals.memberships}", f"Остаток внесён {totals.with_opening}", f"Не заполнено {totals.missing}"]
+    if totals.needs_review:
+        row3.append(f"Требуют пересмотра {totals.needs_review}")
+    header_at = xs.title_block(ws, [f"Остатки на начало — {org.name}" if org else "Остатки на начало", xs.words_join(words), xs.words_join(row3)],
+                               last_col)
+    xs.header_row(ws, header_at, [headers[k] for k in keys], left=(col["last"], col["first"], col["group"]))
+    ws.freeze_panes = ws.cell(row=header_at + 1, column=col["first"] + 1)
+    first_row = header_at + 1
+    n = header_at
+    debt_total = 0
+    for r in rows:
+        n += 1
         o = r.opening
-        _put_text(ws, n, 1, r.s.last_name)
-        _put_text(ws, n, 2, r.s.first_name)
-        ws.cell(row=n, column=3, value=r.s.class_level)
-        _put_text(ws, n, 4, r.s.student_phone)
-        _put_text(ws, n, 5, r.g.name)
-        _put_text(ws, n, 6, r.s.comment)
-        if o is not None and o.paid_until:
-            ws.cell(row=n, column=7, value=o.paid_until).number_format = "DD.MM.YYYY"
-        if o is not None and o.debt_amount:
-            ws.cell(row=n, column=8, value=int(o.debt_amount)).number_format = "# ##0"
-            ws.cell(row=n, column=9, value=o.debt_on).number_format = "DD.MM.YYYY"
-        _put_text(ws, n, 10, str(r.s.id))
-        _put_text(ws, n, 11, str(r.m.id))
-        if r.price.amount is not None:
-            ws.cell(row=n, column=14, value=int(r.price.amount)).number_format = "# ##0"
-        _put_text(ws, n, 15, "уроки" if mode == ps.LESSONS else "месяц")
-        note = "ушёл: только долг" if r.left else ("перевод: остаток нельзя" if r.transfer else ("бесплатно" if r.free else (
-            "пауза" if r.paused else ("есть оплаты" if r.money else ""))))
-        _put_text(ws, n, 16, note)
-    last = max(len(rows) + 1, 2)
+        grey = lambda key: xs.FONT_REFERENCE if key in REFERENCE_KEYS or key in HIDDEN_KEYS else xs.FONT_BODY
+        values = {
+            "last": r.s.last_name, "first": r.s.first_name, "class": r.s.class_level, "phone": r.s.student_phone, "group": r.g.name,
+            "price": int(r.price.amount) if r.price.amount is not None else None, "comment": r.s.comment, "note": notes[id(r)] or None,
+            "student": str(r.s.id), "membership": str(r.m.id),
+            "paid": o.paid_until if o is not None and o.paid_until else None,
+            "debt": int(o.debt_amount) if o is not None and o.debt_amount else None,
+        }
+        values["debt_on"] = o.debt_on if values["debt"] is not None else None
+        debt_total += values["debt"] or 0
+        for key in keys:
+            value = values.get(key)
+            fmt = xs.DATE if key in ("paid", "debt_on") else xs.MONEY if key in ("price", "debt") else None
+            xs.put(ws, n, col[key], value, number_format=fmt, font=grey(key), border=xs.BORDER,
+                   alignment=xs.ALIGN_CENTER_TOP if key in ("class", "price", "paid", "debt", "debt_on", "none", "lessons") else xs.ALIGN_LEFT_TOP)
+    last = max(n, first_row)
+    if rows:
+        total_values = {col["first"]: f"Учеников: {len(rows)}", col["debt"]: debt_total}
+        xs.total_row(ws, n + 1, TOTAL_LABEL, total_values, last_col, formats={col["debt"]: xs.MONEY})
+    else:
+        xs.section_row(ws, n + 1, "Учеников нет", last_col, font_=xs.FONT_NOTE)
     only_date = DataValidation(type="date", operator="greaterThanOrEqual", formula1="DATE(2020,1,1)", allow_blank=True,
                                showErrorMessage=True, errorTitle="Дата", error="Нужна дата не раньше 01.01.2020")
     whole = DataValidation(type="whole", operator="greaterThanOrEqual", formula1="1", allow_blank=True, showErrorMessage=True,
                            errorTitle="Сумма", error="Целое число сум, не меньше 1")
     lessons = DataValidation(type="whole", operator="between", formula1="0", formula2="400", allow_blank=True, showErrorMessage=True,
                              errorTitle="Уроки", error="Целое число от 0 до 400")
-    for dv, cols in ((only_date, ("G", "I")), (whole, ("H",)), (lessons, ("M",))):
+    for dv, names in ((only_date, ("paid", "debt_on")), (whole, ("debt",)), (lessons, ("lessons",))):
         ws.add_data_validation(dv)
-        for col in cols:
-            dv.add(f"{col}2:{col}{last}")
-    info = wb.create_sheet(SHEET_INSTRUCTIONS)
-    info.column_dimensions["A"].width = 110
-    lines = [
-        ("Остатки на начало — как заполнять", True),
-        (f"Учёт оплат в ALGO идёт с {start.strftime('%d.%m.%Y')}. Здесь — что было у ученика ДО этой даты.", False),
-        ("«Оплачено до (дата)» — ученик заплатил до этого дня (не раньше " + (start - _day()).strftime("%d.%m.%Y") +
-         "). «Оплачено до» = день перед началом учёта означает «на начало долга нет»: строка считается заполненной.", False),
-        ("«Долг, сум» + «Долг на дату» — сколько он был должен и на какую дату (дата не позже дня перед началом учёта; пусто = этот день).", False),
-        ("«Осталось уроков (пакет)» — только для центра, где платят пакетами: вместо «Оплачено до» (дата считается по расписанию группы).", False),
-        ("«Без остатка (да)» — проверено, на начало учёта долга нет (записывается «оплачено до» " + (start - _day()).strftime("%d.%m.%Y") + "). Ученику, пришедшему уже после начала учёта, остаток не нужен: «да» ничего не меняет.", False),
-        ("Пустые поля у ученика, у которого остаток уже внесён, — убирают этот остаток.", False),
-        ("Колонки J и K (ID) не меняйте и не сортируйте отдельно от строки: по ним ALGO находит ученика. Остальные колонки справочные.", False),
-        ("После загрузки вы увидите сравнение «было → станет»; ничего не записывается, пока вы не нажмёте «Сохранить».", False),
-    ]
-    for i, (text, bold) in enumerate(lines, start=1):
-        c = info.cell(row=i, column=1, value=text)
-        c.alignment = Alignment(wrap_text=True)
-        if bold:
-            c.font = Font(bold=True, size=14)
+        for name in names:
+            if name in col:
+                letter = get_column_letter(col[name])
+                dv.add(f"{letter}{first_row}:{letter}{last}")
+    xs.autosize(ws, header_row_number=header_at, last_col=last_col, min_width=12, wrap_cols=())
+    for key in HIDDEN_KEYS:
+        ws.column_dimensions[get_column_letter(col[key])].hidden = True
+    ws.auto_filter.ref = f"A{header_at}:{get_column_letter(last_col)}{last}"
+    xs.print_setup(ws, header=header_at)
     out = io.BytesIO()
     wb.save(out)
-    return out.getvalue(), f"ostatki_na_nachalo_{today.isoformat()}.xlsx"
+    return out.getvalue(), xs.file_name("Остатки на начало")
 
 
 def _day():
@@ -212,28 +289,50 @@ def _read(data: bytes) -> Tuple[Dict[str, int], List[Tuple[int, Dict[str, _Cell]
         formulas = set()
     if not grid:
         raise _err("SHEET_MISSING", "Лист «Остатки» пуст")
-    columns: Dict[str, int] = {}
     wanted = {v: k for k, v in KEYS.items()}
-    for i, title in enumerate(grid[0][1]):
-        key = _norm(title)
-        for known, name in wanted.items():
-            if key == known or (name in ("student", "membership", "none", "lessons") and key.startswith(known.split(" (")[0])):
-                columns.setdefault(name, i)
+
+    def columns_of(titles) -> Dict[str, int]:
+        found: Dict[str, int] = {}
+        for i, title in enumerate(titles):
+            key = _norm(title)
+            for known, name in wanted.items():
+                if key == known or (name in ("student", "membership", "none", "lessons") and key.startswith(known.split(" (")[0])):
+                    found.setdefault(name, i)
+        return found
+
+    # the header row: the first of the first rows that names at least two of the key columns (a title block may stand above it)
+    head_at, columns = 0, columns_of(grid[0][1])
+    for at, (_n, cells) in enumerate(grid[:HEADER_SEARCH_ROWS]):
+        found = columns_of(cells)
+        if len(set(found) & {"last", "first", "group", "paid", "debt", "student", "membership"}) >= 2:
+            head_at, columns = at, found
+            break
     if "paid" not in columns and "debt" not in columns and "none" not in columns and "lessons" not in columns:
         raise _err("FILE_UNREADABLE", "В файле нет колонок «Оплачено до (дата)» и «Долг, сум». Скачайте актуальный файл")
     if "membership" not in columns and "student" not in columns and not ("last" in columns and "first" in columns and "group" in columns):
         raise _err("FILE_UNREADABLE", "В файле нет колонок для поиска ученика (ID членства или фамилия, имя, группа)")
     rows: List[Tuple[int, Dict[str, _Cell]]] = []
-    for n, cells in grid[1:]:
+    for n, cells in grid[head_at + 1:]:
         record = {}
         for key, i in columns.items():
             record[key] = _Cell(cells[i] if i < len(cells) else None, (n, i) in formulas)
         if all((c.value is None or str(c.value).strip() == "") and not c.formula for c in record.values()):
             continue
+        if _is_total_row(record):
+            continue
         rows.append((n, record))
     if len(rows) > MAX_FILE_ROWS:
         raise _err("TOO_MANY_ROWS", f"В файле больше {MAX_FILE_ROWS} строк")
     return columns, rows
+
+
+def _is_total_row(record: Dict[str, "_Cell"]) -> bool:
+    """The blue «Итого» row at the bottom of our own file: it names no student (no id) and says «Итого» in the first column."""
+    def text(key: str) -> str:
+        cell = record.get(key)
+        return "" if cell is None or cell.value is None else str(cell.value).strip()
+
+    return text("last").casefold() == TOTAL_LABEL.casefold() and not text("membership") and not text("student")
 
 
 def _text(cell: Optional[_Cell]) -> str:

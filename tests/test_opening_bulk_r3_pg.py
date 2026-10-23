@@ -170,9 +170,9 @@ def test_excel_no_opening_flag_on_a_student_who_joined_after_the_start_changes_n
     assert out["changed"] == 1
     wb, ws = sheet_of(export_xlsx(world).content)
     for m in (early, late_plain, late_with):
-        ws.cell(row=row_for(ws, m), column=COL["none"]).value = "да"
+        ws.cell(row=row_for(ws, m), column=ws.COL["none"]).value = "да"
         for k in ("paid", "debt", "debt_on"):
-            ws.cell(row=row_for(ws, m), column=COL[k]).value = None
+            ws.cell(row=row_for(ws, m), column=ws.COL[k]).value = None
     pv = import_xlsx(world, to_bytes(wb))
     rows = {r["membership_id"]: r for r in pv["rows"] if r["membership_id"]}
     assert pv["ok"] and pv["file"]["errors"] == 0, [r for r in pv["rows"] if r["status"] == "error"]
@@ -188,7 +188,7 @@ def test_excel_no_opening_flag_on_a_student_who_joined_after_the_start_changes_n
     # a student who joined on 31.10 (the day before the start) is still «reviewed» by the flag
     border = students(world, 1, first=D(2026, 10, 31), prefix="Гр")[0]
     wb, ws = sheet_of(export_xlsx(world).content)
-    ws.cell(row=row_for(ws, border), column=COL["none"]).value = "да"
+    ws.cell(row=row_for(ws, border), column=ws.COL["none"]).value = "да"
     pv = import_xlsx(world, to_bytes(wb))
     assert pv["ok"] and {i["membership_id"]: i for i in pv["batch_items"]}[str(border.id)]["paid_until"] == "2026-10-31"
 
@@ -470,10 +470,10 @@ def test_excel_export_and_import_of_5000_rows_stay_within_a_time_and_memory_boun
     export_s, export_mb, r = _timed(lambda: c.get(f"{BASE}/export"))
     assert r.status_code == 200 and len(r.content) < 5 * 1024 * 1024, "the export of the biggest allowed table is itself importable (< 5 MB)"
     wb, ws = sheet_of(r.content)
-    assert ws.max_row - 1 == n
+    assert ws.max_row == ws.FIRST + n                                                              # n rows and the blue «Итого»
     # a re-uploaded export is «no changes»; 1 999 rows get a value (below the limit of 2 000 changes)
-    for row in range(2, 2 + 1999):
-        ws.cell(row=row, column=COL["paid"]).value = datetime(2026, 11, 30)
+    for row in range(ws.FIRST, ws.FIRST + 1999):
+        ws.cell(row=row, column=ws.COL["paid"]).value = datetime(2026, 11, 30)
     data = to_bytes(wb)
     assert len(data) < 5 * 1024 * 1024
     import_s, import_mb, r = _timed(lambda: c.post(f"{BASE}/import/preview", files={"file": ("ostatki.xlsx", data, XLSX)}))
