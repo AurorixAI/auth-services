@@ -25,6 +25,7 @@ from . import payment_status as ps
 from . import payments_texts as tx
 from . import payments_views as pv
 from .payments_files import person_name, staff_name
+from .payments_statement_xlsx import build_statement_xlsx
 from .payments_schemas import (
     BalanceRow,
     BalancesPage,
@@ -237,7 +238,16 @@ class PaymentsReports:
         self, org_id: str, membership_id: UUID, *, fmt: str, date_from: Optional[date] = None,
         date_to: Optional[date] = None, include_voided: bool = False,
     ) -> Tuple[bytes, str, str]:
-        """``(bytes, content type, filename)`` of the statement as xlsx / csv."""
+        """``(bytes, content type, filename)`` of the statement as xlsx / csv.
+
+        xlsx: the page's statement (``payments_statement_xlsx``): it takes the WHOLE ledger and applies the range itself (the carry
+        line of a month needs the balance before it).  csv keeps its flat shape: rows already cut by the range."""
+        if fmt != "csv":
+            st = self.statement(org_id, membership_id, include_voided=include_voided)
+            who = st.membership.display_id or str(membership_id)[:8]
+            data = build_statement_xlsx(st, date_from=date_from, date_to=date_to, include_voided=include_voided)
+            return (data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    f"statement-{who}-{st.as_of.isoformat()}.xlsx")
         st = self.statement(org_id, membership_id, date_from=date_from, date_to=date_to, include_voided=include_voided)
         header = ["№", "Дата", "Операция", "Стоимость", "Оплачено / прощено", "Возвращено / перенесено", "Баланс", "Подробности"]
 
@@ -264,46 +274,20 @@ class PaymentsReports:
                  r.balance_after if r.balance_after is not None else "", detail(r)] for r in [*st.rows, *st.voided]]
         who = st.membership.display_id or str(membership_id)[:8]
         base = f"statement-{who}-{st.as_of.isoformat()}"
-        if fmt == "csv":
-            buf = io.StringIO()
-            writer = csv.writer(buf, delimiter=";")
+        buf = io.StringIO()
+        writer = csv.writer(buf, delimiter=";")
 
-            def safe(row):
-                # a spreadsheet would run a cell that starts with = + - @ : prefix it with an apostrophe
-                return [("'" + v) if isinstance(v, str) and v[:1] in ("=", "+", "-", "@") else v for v in row]
-
-            for line in top:
-                writer.writerow(safe(line))
-            writer.writerow([])
-            writer.writerow(header)
-            for line in body:
-                writer.writerow(safe(line))
-            return ("﻿" + buf.getvalue()).encode("utf-8"), "text/csv; charset=utf-8", base + ".csv"
-        from openpyxl import Workbook
-        from openpyxl.styles import Font
-
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Выписка"
-        def put(line):
-            ws.append(line)
-            for cell in ws[ws.max_row]:
-                if isinstance(cell.value, str):
-                    cell.data_type = "s"          # text stays text: a student's note starting with "=" is never a formula
+        def safe(row):
+            # a spreadsheet would run a cell that starts with = + - @ : prefix it with an apostrophe
+            return [("'" + v) if isinstance(v, str) and v[:1] in ("=", "+", "-", "@") else v for v in row]
 
         for line in top:
-            put(line)
-        ws.append([])
-        put(header)
-        for cell in ws[ws.max_row]:
-            cell.font = Font(bold=True)
+            writer.writerow(safe(line))
+        writer.writerow([])
+        writer.writerow(header)
         for line in body:
-            put(line)
-        for col, width in zip("ABCDEFGH", (6, 12, 34, 14, 18, 22, 14, 70)):
-            ws.column_dimensions[col].width = width
-        out = io.BytesIO()
-        wb.save(out)
-        return out.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", base + ".xlsx"
+            writer.writerow(safe(line))
+        return ("\ufeff" + buf.getvalue()).encode("utf-8"), "text/csv; charset=utf-8", base + ".csv"
 
     # ============================================================== the centre
 

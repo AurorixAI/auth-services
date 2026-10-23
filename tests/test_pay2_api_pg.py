@@ -443,7 +443,10 @@ def test_statement_export_filename(world, fixed_today):
     r = owner(world).get(f"{API}/org/memberships/{m.id}/statement/export", params={"format": "xlsx"})
     ws = load_workbook(io.BytesIO(r.content)).active
     flat = [c.value for row in ws.iter_rows() for c in row if c.value is not None]
-    assert 500000 in flat and "Выписка" in flat
+    assert 231000 in flat and "Выписка" in flat and "Оплата № 17 · наличные" in " ".join(str(x) for x in flat)
+    head = next(r for r in range(1, 30) if ws.cell(r, 1).value == "Дата")
+    assert [ws.cell(head, c).value for c in range(1, 7)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]
+    assert ws.freeze_panes == f"A{head + 1}"
 
 
 # ---- transfers ---------------------------------------------------------------------------------------------------
@@ -716,7 +719,107 @@ def test_the_statement_export_never_makes_a_formula(world, fixed_today):
     post_payment(world, m, amount=1000, note="=HYPERLINK(\"http://evil\")")
     r = owner(world).get(f"{API}/org/memberships/{m.id}/statement/export", params={"format": "xlsx"})
     ws = load_workbook(io.BytesIO(r.content)).active
-    cells = [c for row in ws.iter_rows() for c in row if isinstance(c.value, str) and c.value.startswith("=")]
-    assert all(c.data_type == "s" for c in cells)
+    cells = [c for row in ws.iter_rows() for c in row if isinstance(c.value, str) and "=HYPERLINK" in c.value]
+    assert cells and all(c.data_type == "s" for c in cells)             # the note travels into «Подробности» and stays a text
+    assert not any(c.data_type == "f" for row in ws.iter_rows() for c in row)
     r = owner(world).get(f"{API}/org/memberships/{m.id}/statement/export", params={"format": "csv"})
     assert not any(part.strip().startswith("=") for line in r.text.splitlines() for part in line.split(";"))
+
+
+def export_sheet(w, m, **params):
+    import io
+    from openpyxl import load_workbook
+    r = owner(w).get(f"{API}/org/memberships/{m.id}/statement/export", params={"format": "xlsx", **params})
+    assert r.status_code == 200, r.text
+    return load_workbook(io.BytesIO(r.content)).active
+
+
+def statement_xlsx_world(w):
+    """Calendar months, the student joins on 18.08 (a partial month) with an individual price; three months, payments with
+    allocation lines, a write-off, a refund, a cancelled payment; today 21.10."""
+    settings_block(w, accounting_start_date="2026-08-01", billing_anchor="fixed_day", billing_day=1)
+    give_group_price(w.db, w.group, 500_000, valid_from=D(2026, 1, 1))
+    w.group.schedule = []
+    w.students[0].display_id = "A-0042"
+    w.db.commit()
+    m = membership(w)
+    stay(w, m, D(2026, 8, 18))
+    c = owner(w)
+    r = c.put(f"{API}/org/memberships/{m.id}/price-override", json={"amount": 450_000, "valid_from": "2026-08-18", "reason": "скидка"})
+    assert r.status_code == 200, r.text
+    post_payment(w, m, amount=200_000, paid_on="2026-08-20", note="первый взнос")
+    post_payment(w, m, amount=700_000, paid_on="2026-09-05", method="card")
+    post_payment(w, m, amount=153_000, paid_on="2026-10-15", method="click")
+    r = c.post(f"{API}/org/memberships/{m.id}/writeoffs", json={"amount": 50_000, "reason": "болел"})
+    assert r.status_code == 201, r.text
+    post_payment(w, m, amount=100_000, method="payme")                       # an advance for November
+    r = c.post(f"{API}/org/memberships/{m.id}/refunds", json={"amount": 40_000, "method": "card", "reason": "переехал"})
+    assert r.status_code == 201, r.text
+    wrong = post_payment(w, m, amount=10_000, paid_on="2026-10-19")["payment"]["id"]
+    assert c.post(f"{API}/org/payments/{wrong}/void", json={"reason": "ошибка ввода"}).status_code == 200
+    return m
+
+
+def sheet_grid(ws, first):
+    return [[c.value for c in row] for row in ws.iter_rows(min_row=first, max_col=6)]
+
+
+def test_the_statement_xlsx_reads_like_the_page(world, fixed_today):
+    """Golden: the file of a real ledger - a partial month with an individual price, three months, an allocation over three
+    periods, a write-off, a refund, a cancelled payment; all months, then a single month with the carry line."""
+    from datetime import datetime as dt
+    m = statement_xlsx_world(world)
+    ws = export_sheet(world, m, include_voided=True)
+    head = next(r for r in range(1, 30) if ws.cell(r, 1).value == "Дата")
+    block = {ws.cell(r, 1).value: ws.cell(r, 2) for r in range(2, head - 1) if ws.cell(r, 1).value}
+    assert {k: v.value for k, v in block.items() if k not in ("По состоянию на", "Учёт ведётся с")} == {
+        "Ученик": "Каримова Алия", "ID": "A-0042", "Группа": world.group.name, "Преподаватель": "Пётр Teacher", "Период": "Все месяцы",
+        "Стоимость обучения": 1_103_000, "Оплачено": 1_153_000, "Прощено": 50_000, "Возвращено": 40_000, "Баланс": "Аванс 60 000"}
+    assert block["По состоянию на"].value == dt(2026, 10, 21) and block["Учёт ведётся с"].value == dt(2026, 8, 1)
+    assert {block["По состоянию на"].number_format, block["Учёт ведётся с"].number_format} == {"DD.MM.YYYY"}
+    assert [ws.cell(head, c).value for c in range(1, 7)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]
+    assert all(ws.cell(head, c).font.bold for c in range(1, 7)) and ws.freeze_panes == f"A{head + 1}"
+    who = "Иван Owner"
+    assert sheet_grid(ws, head + 1) == [
+        ["Август 2026", None, None, None, None, None],
+        [dt(2026, 8, 18), "Август 2026 — неполный месяц (14 дней из 31)", 203_000, None, "Долг 203 000", "цена 450 000 сум в месяц · индивидуальная цена"],
+        [dt(2026, 8, 20), f"Оплата № 1 · наличные · внёс {who}", None, 200_000, "Долг 3 000", "комментарий: первый взнос\nза август — 200 000 (осталось 3 000)"],
+        ["Сентябрь 2026", None, None, None, None, None],
+        [dt(2026, 9, 1), "Сентябрь 2026", 450_000, None, "Долг 453 000", "цена 450 000 сум в месяц · индивидуальная цена"],
+        [dt(2026, 9, 5), f"Оплата № 2 · карта · внёс {who}", None, 700_000, "Аванс 247 000",
+         "за август — 3 000 (август закрыт)\nза сентябрь — 450 000 (сентябрь закрыт)\nаванс на октябрь — 247 000"],
+        ["Октябрь 2026", None, None, None, None, None],
+        [dt(2026, 10, 1), "Октябрь 2026", 450_000, None, "Долг 203 000", "цена 450 000 сум в месяц · индивидуальная цена"],
+        [dt(2026, 10, 15), f"Оплата № 3 · click · внёс {who}", None, 153_000, "Долг 50 000", "за октябрь — 153 000 (осталось 50 000)"],
+        [dt(2026, 10, 21), f"Оплата № 4 · payme · внёс {who}", None, 100_000, "Аванс 50 000", "за октябрь — 50 000 (октябрь закрыт)\nаванс на ноябрь — 10 000"],
+        [dt(2026, 10, 21), f"Долг прощён — причина: болел · {who}", None, 50_000, "Аванс 100 000", None],
+        [dt(2026, 10, 21), f"Возврат аванса — карта · {who}", None, -40_000, "Аванс 60 000", "причина: переехал"],
+        [None] * 6,
+        ["Отменённые записи", None, None, None, None, None],
+        [dt(2026, 10, 19), "Оплата № 5", None, 10_000, None, f"Отменено: ошибка ввода · {who}"],
+    ]
+    # types and formats: a real date, whole sums with a thousands format, texts stay texts, month bands are merged
+    first = head + 2
+    assert ws.cell(first, 1).is_date and ws.cell(first, 1).number_format == "DD.MM.YYYY"
+    assert isinstance(ws.cell(first, 3).value, int) and ws.cell(first, 3).number_format == "#,##0" and ws.cell(first + 1, 4).number_format == "#,##0"
+    assert all(ws.cell(r, c).data_type == "s" for r in range(first, ws.max_row + 1) for c in (2, 5, 6) if ws.cell(r, c).value)
+    merged = {str(x) for x in ws.merged_cells.ranges}
+    assert {f"A{head + 1}:F{head + 1}", f"A{head + 4}:F{head + 4}", f"A{head + 7}:F{head + 7}"} <= merged
+    assert ws.cell(head + 1, 1).font.bold and ws.cell(head + 1, 1).fill.fgColor.rgb not in (None, "00000000")
+    flat = [str(c.value) for row in ws.iter_rows() for c in row if c.value is not None]
+    assert not any("Начисл" in x for x in flat) and not any(x in flat for x in ("cash", "card", "click", "payme", "bank_transfer"))
+    assert ws.cell(ws.max_row, 2).font.strike and ws.cell(ws.max_row, 6).value.startswith("Отменено:")
+
+    # one month: the carry line comes from the WHOLE ledger (the balance before October), the title says the month
+    ws = export_sheet(world, m, **{"from": "2026-10-01", "to": "2026-10-31"})
+    head = next(r for r in range(1, 30) if ws.cell(r, 1).value == "Дата")
+    assert {ws.cell(r, 1).value: ws.cell(r, 2).value for r in range(1, head)}["Период"] == "Октябрь 2026"
+    got = sheet_grid(ws, head + 1)
+    assert got[0][0] == "Октябрь 2026" and got[1][0] == "С сентября перенесён аванс 247 000"
+    assert [g[1] for g in got[2:]] == ["Октябрь 2026", f"Оплата № 3 · click · внёс {who}", f"Оплата № 4 · payme · внёс {who}",
+                                         f"Долг прощён — причина: болел · {who}", f"Возврат аванса — карта · {who}"]
+    assert got[2][4] == "Долг 203 000"                                       # the ledger's balance, not a sum over the cut rows
+    assert any(str(x) == f"A{head + 2}:F{head + 2}" for x in ws.merged_cells.ranges)
+    # all months: no carry line anywhere
+    ws = export_sheet(world, m)
+    assert not any(str(ws.cell(r, 1).value).startswith("С ") and "перенесён" in str(ws.cell(r, 1).value) for r in range(1, ws.max_row + 1))
