@@ -1,8 +1,8 @@
 """
 ALGO - the statement as an Excel file: it reads like the page (Выписка).
 
-Title block (label / value), then the table «Дата | Операция | Стоимость | Оплачено | Баланс | Подробности» with a band per month,
-the carry line of a single month and, below, the cancelled records.  The words come from ``payments_statement_texts`` (the mirror
+Title block (three lines: who, as-of / period, totals), then the table «Дата | Операция | Стоимость | Оплачено | Баланс | Подробности» with a band per month,
+the carry line of a single month and, below, the periods to come and the cancelled records.  The words come from ``payments_statement_texts`` (the mirror
 of the page's rules); this module only draws them: real dates, whole-number money cells with a thousands format, the balance as
 text («Долг 92 000»), widths from the content, frozen header.
 """
@@ -78,35 +78,25 @@ def build_statement_xlsx(
     cancelled_note_font = Font(color="808080")
     left_top = Alignment(horizontal="left", vertical="top", wrap_text=True)
     centre_top = Alignment(horizontal="center", vertical="top")
-    left = Alignment(horizontal="left", vertical="center")
 
     month = st_tx.single_month(date_from, date_to)
 
-    # ---- title block: label / value
-    row = 1
-    _put(ws, row, 1, SHEET_TITLE, font=Font(bold=True, size=14))
-    title_rows: List[tuple] = [("Ученик", m.student_name, None)]
-    if m.display_id:
-        title_rows.append(("ID", m.display_id, None))
-    title_rows.append(("Группа", m.group_name, None))
-    if m.teacher_name:
-        title_rows.append(("Преподаватель", m.teacher_name, None))
-    title_rows += [
-        ("По состоянию на", statement.as_of, DATE_FORMAT),
-        ("Учёт ведётся с", statement.accounting_start, DATE_FORMAT),
-        ("Период", st_tx.period_label(date_from, date_to), None),
+    # ---- title block: three lines (the frozen area stays small), an empty row, then the header
+    merged_text: List[tuple] = []                                 # (row, text) of the lines spanning the whole width
+    title = [
+        (st_tx.title_line(m), Font(bold=True, size=12)),
+        (st_tx.asof_line(statement.as_of, statement.accounting_start, date_from, date_to), None),
+        (st_tx.totals_line(statement.summary), None),
     ]
-    for label, value in st_tx.total_lines(statement.summary):
-        title_rows.append((label, value, MONEY_FORMAT if isinstance(value, int) else None))
-    label_width = 0
-    for label, value, fmt in title_rows:
-        row += 1
-        _put(ws, row, 1, label, font=bold, alignment=left)
-        _put(ws, row, 2, value, number_format=fmt, alignment=left)
-        label_width = max(label_width, len(label))
+    for row, (text, font) in enumerate(title, 1):
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=LAST_COL)
+        _put(ws, row, 1, text, alignment=Alignment(horizontal="left", vertical="center", wrap_text=True),
+             **({"font": font} if font else {}))
+        merged_text.append((row, text))
+    row = len(title) + 1                                          # the empty row
 
     # ---- the table
-    row += 2
+    row += 1
     header_row = row
     for col, text in enumerate(HEADER, 1):
         _put(ws, row, col, text, font=bold, fill=head_fill,
@@ -114,7 +104,6 @@ def build_statement_xlsx(
     ws.freeze_panes = f"A{header_row + 1}"
 
     measured: List[List[Any]] = [[text] for text in HEADER]       # what each column has to hold (for the widths)
-    measured[0].append("0" * label_width)                         # the title block's labels sit in column A
     wrapped: List[tuple] = []                                     # (row, [(col, text)]) for the row heights
 
     def money(col: int, value: Optional[int]):
@@ -153,7 +142,7 @@ def build_statement_xlsx(
         nonlocal row
         row += 1
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=LAST_COL)
-        style = {"font": font or bold, "alignment": Alignment(horizontal="left", vertical="center")}
+        style = {"font": font if font is not None else bold, "alignment": Alignment(horizontal="left", vertical="center")}
         if fill is not None:
             style["fill"] = fill
         _put(ws, row, 1, text, **style)
@@ -169,6 +158,14 @@ def build_statement_xlsx(
             spanning(item.text, font=quiet)
         else:
             data_row(item.date, item.title, item.charged, item.paid, item.balance, item.details)
+
+    # ---- the periods to come (as the page: only for the whole statement, never for a month or a range)
+    if statement.upcoming and date_from is None and date_to is None:
+        row += 1
+        spanning(st_tx.UPCOMING_TITLE, fill=grey_fill)
+        for segment in statement.upcoming:
+            spanning(st_tx.upcoming_line(segment), font=Font())
+            merged_text.append((row, st_tx.upcoming_line(segment)))
 
     # ---- the cancelled records (below, in grey)
     if include_voided:
@@ -192,6 +189,12 @@ def build_statement_xlsx(
         ws.column_dimensions[chr(64 + col)].width = width
     for r, cells in wrapped:
         lines = max(_lines_needed(text, widths[col - 1]) for col, text in cells)
+        if lines > 1:
+            ws.row_dimensions[r].height = 15 * lines
+
+    whole = sum(widths)
+    for r, text in merged_text:
+        lines = _lines_needed(text, whole)
         if lines > 1:
             ws.row_dimensions[r].height = 15 * lines
 

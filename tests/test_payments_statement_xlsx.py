@@ -13,9 +13,9 @@ from src.auth.payments_statement_xlsx import HEADER, build_statement_xlsx
 D = date
 
 
-def seg(start, end, charge, *, days_text=None, basis="full", written_off=0):
+def seg(start, end, charge, *, days_text=None, basis="full", written_off=0, paid=0):
     return Segment(id=f"seg:{start}", kind="period", period_from=start, period_to=end, billable_days=1, days_text=days_text,
-                   price=PriceOut(amount=500_000, source="override"), charge=charge, basis=basis, written_off=written_off)
+                   price=PriceOut(amount=500_000, source="override"), charge=charge, basis=basis, written_off=written_off, paid=paid)
 
 
 def alloc(start, end, amount, *, bucket="current", closes=False, after=None):
@@ -30,7 +30,7 @@ def golden(*, note=None, voided=True) -> StatementOut:
     """Aug (a joiner on the 18th, individual price) - Sep - Oct - the advance for Nov; a payment with three lines, a write-off,
     a refund; a voided payment and a voided refund.  The balance before October is an advance of 74 194."""
     aug = seg(D(2026, 8, 18), AUG[1], 225_806, days_text="14 дней из 31", basis="days")
-    sep, oct_, nov = seg(*SEP, 500_000), seg(*OCT, 500_000, written_off=100_000), seg(*NOV, 500_000)
+    sep, oct_, nov = seg(*SEP, 500_000), seg(*OCT, 500_000, written_off=100_000), seg(*NOV, 500_000, paid=100_000)
     rows = [
         StatementRow(seq=1, date=D(2026, 8, 18), type="charge", title="s", debit=225_806, balance_after=-225_806, details=StatementDetails(segment=aug)),
         StatementRow(seq=2, date=D(2026, 8, 20), type="payment", title="s", credit=200_000, balance_after=-25_806, details=StatementDetails(
@@ -72,14 +72,9 @@ def sheet(statement, **kw):
 
 
 def title_block(ws):
-    out = {}
-    for r in range(1, 40):
-        label = ws.cell(r, 1).value
-        if label == HEADER[0]:
-            return out, r
-        if label and ws.cell(r, 2).value is not None:
-            out[label] = ws.cell(r, 2)
-    raise AssertionError("no header row")
+    """``(the three title lines, the header row)``: the title block is rows 1-3, an empty row 4, the header on row 5."""
+    head = next(r for r in range(1, 12) if ws.cell(r, 1).value == HEADER[0])
+    return [ws.cell(r, 1).value for r in (1, 2, 3)], head
 
 
 def grid(ws, first):
@@ -88,17 +83,16 @@ def grid(ws, first):
 
 def test_title_block_header_freeze_and_widths():
     ws = sheet(golden())
-    block, head = title_block(ws)
-    assert ws.title == "Выписка" and ws["A1"].value == "Выписка" and ws["A1"].font.bold
-    assert {k: v.value for k, v in block.items() if k not in ("По состоянию на", "Учёт ведётся с")} == {
-        "Ученик": "Иванов Иван", "ID": "A-0042", "Группа": "Математика 9", "Преподаватель": "Петрова Анна", "Период": "Все месяцы",
-        "Стоимость обучения": 1_225_806, "Оплачено": 1_225_806, "Прощено": 100_000, "Возвращено": 40_000, "Баланс": "Аванс 60 000"}
-    for label, day in (("По состоянию на", D(2026, 10, 21)), ("Учёт ведётся с", D(2026, 8, 1))):
-        assert block[label].value.date() == day and block[label].number_format == "DD.MM.YYYY"
-    assert block["Стоимость обучения"].number_format == "#,##0" and block["Баланс"].data_type == "s"
+    lines, head = title_block(ws)
+    assert ws.title == "Выписка" and head == 5 and ws.freeze_panes == "A6" and ws.cell(4, 1).value is None
+    assert lines == [
+        "Выписка — Иванов Иван · ID A-0042 · Математика 9 · Петрова Анна",
+        "По состоянию на 21.10.2026 · Учёт ведётся с 01.08.2026 · Период: Все месяцы",
+        "Стоимость обучения 1 225 806 · Оплачено 1 225 806 · Прощено 100 000 · Возвращено 40 000 · Баланс: Аванс 60 000"]
+    assert ws["A1"].font.bold and {str(r) for r in ws.merged_cells.ranges} >= {"A1:F1", "A2:F2", "A3:F3"}
+    assert all(ws.cell(r, 1).data_type == "s" for r in (1, 2, 3))
     assert [ws.cell(head, c).value for c in range(1, 7)] == HEADER == ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]
     assert all(ws.cell(head, c).font.bold and ws.cell(head, c).fill.fgColor.rgb not in (None, "00000000") for c in range(1, 7))
-    assert ws.freeze_panes == f"A{head + 1}"
     widths = [ws.column_dimensions[c].width for c in "ABCDEF"]
     assert all(w >= 12 for w in widths) and widths[1] <= 60 and widths[5] <= 60
     # no #### : a date needs 10, the biggest sum 9 characters with the separators, the balance text 13
@@ -125,9 +119,12 @@ def test_golden_all_months():
         ["Октябрь 2026", None, None, None, None, None],
         [d(2026, 10, 1), "Октябрь 2026", 500_000, None, "Долг 425 806", "цена 500 000 сум в месяц · индивидуальная цена"],
         [d(2026, 10, 5), "Долг прощён — причина: болел · Директор", None, 100_000, "Долг 325 806", None],
-        [d(2026, 10, 10), "Оплата № 3 · click", None, 325_806, "0", "за октябрь — 325 806 (октябрь закрыт)"],
+        [d(2026, 10, 10), "Оплата № 3 · Click", None, 325_806, "0", "за октябрь — 325 806 (октябрь закрыт)"],
         [d(2026, 10, 15), "Оплата № 4 · перевод · внёс Айбек О.", None, 100_000, "Аванс 100 000", "аванс на ноябрь — 100 000"],
         [d(2026, 10, 18), "Возврат аванса — карта · Айбек О.", None, -40_000, "Аванс 60 000", "причина: переехал"],
+        [None] * 6,
+        ["Следующие периоды (ещё не начались)", None, None, None, None, None],
+        ["01.11–30.11: оплачено 100 000 сум из 500 000 сум", None, None, None, None, None],
         [None] * 6,
         ["Отменённые записи", None, None, None, None, None],
         [d(2026, 9, 3), "Оплата № 99", None, 50_000, None, "Отменено: ошибка ввода · Директор · заменена оплатой № 100"],
@@ -163,7 +160,7 @@ def test_cell_types_formats_alignment_and_merges():
     assert not any("Начисл" in x for x in flat)
     assert not any(x in flat for x in ("cash", "card", "bank_transfer", "click", "payme", "№", "Возвращено / перенесено", "Оплачено / прощено"))
     assert not any(x.startswith("Итого") for x in flat)
-    assert "ID" in {ws.cell(rr, 1).value for rr in range(1, head)}
+    assert "ID A-0042" in ws.cell(1, 1).value
 
 
 def test_the_cancelled_block_is_below_in_grey_and_struck():
@@ -189,16 +186,18 @@ def test_the_cancelled_block_is_below_in_grey_and_struck():
 
 def test_a_single_month_has_its_carry_line_and_the_period_in_the_title():
     ws = sheet(golden(), date_from=D(2026, 10, 1), date_to=D(2026, 10, 31), include_voided=True)
-    block, head = title_block(ws)
-    assert block["Период"].value == "Октябрь 2026"
+    lines, head = title_block(ws)
+    assert lines[1].endswith("Период: Октябрь 2026")
     # the title totals stay for the whole membership
-    assert block["Стоимость обучения"].value == 1_225_806 and block["Баланс"].value == "Аванс 60 000"
+    assert lines[2] == "Стоимость обучения 1 225 806 · Оплачено 1 225 806 · Прощено 100 000 · Возвращено 40 000 · Баланс: Аванс 60 000"
     got = grid(ws, head + 1)
     assert got[0][0] == "Октябрь 2026" and got[1][0] == "С сентября перенесён аванс 74 194"
     assert [x for x in ws.merged_cells.ranges if x.min_row == head + 2] and ws.cell(head + 2, 1).font.italic
     body = [g for g in got[2:] if g[1] and not str(g[0]).startswith("Отменённые")]
-    assert [g[1] for g in body[:6]] == ["Октябрь 2026", "Долг прощён — причина: болел · Директор", "Оплата № 3 · click",
+    assert [g[1] for g in body[:6]] == ["Октябрь 2026", "Долг прощён — причина: болел · Директор", "Оплата № 3 · Click",
                                          "Оплата № 4 · перевод · внёс Айбек О.", "Возврат аванса — карта · Айбек О.", "Возврат аванса"]
+    # the periods to come belong to the whole statement only (as on the page)
+    assert not any("Следующие периоды" in str(c.value) for row in ws.iter_rows() for c in row)
     # months outside the range are gone, also from the cancelled block (the September payment)
     assert not any(isinstance(g[0], str) and g[0] in ("Август 2026", "Сентябрь 2026") for g in got)
     assert not any(g[1] == "Оплата № 99" for g in got)
@@ -208,8 +207,8 @@ def test_a_single_month_has_its_carry_line_and_the_period_in_the_title():
 
 def test_range_label_and_a_month_without_records_or_carry():
     ws = sheet(golden(), date_from=D(2026, 10, 1), date_to=D(2026, 10, 15))
-    block, head = title_block(ws)
-    assert block["Период"].value == "01.10.2026–15.10.2026"
+    lines, head = title_block(ws)
+    assert lines[1].endswith("Период: 01.10.2026–15.10.2026")
     assert ws.cell(head + 1, 1).value == "Октябрь 2026" and not str(ws.cell(head + 2, 1).value).startswith("С сентября")   # not a month: no carry
     # a month before the first record: no carry line; an empty month after: carry and a quiet «Записей нет»
     ws = sheet(golden(), date_from=D(2026, 8, 1), date_to=D(2026, 8, 31))
@@ -240,5 +239,5 @@ def test_an_empty_statement():
     st.rows, st.voided, st.upcoming = [], [], []
     st.summary = StatementSummary()
     ws = sheet(st)
-    block, head = title_block(ws)
-    assert block["Баланс"].value == "0" and ws.cell(head + 1, 1).value == "В выписке пока нет записей"
+    lines, head = title_block(ws)
+    assert lines[2] == "Стоимость обучения 0 · Оплачено 0 · Баланс: 0" and ws.cell(head + 1, 1).value == "В выписке пока нет записей"

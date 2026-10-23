@@ -28,8 +28,14 @@ def method_label(method: Optional[str]) -> str:
     return METHOD_LABEL.get(method or "", UNKNOWN_METHOD)
 
 
+BRAND_METHODS = ("click", "payme")
+
+
 def lower_method(method: Optional[str]) -> str:
-    return method_label(method).lower()
+    """The method in the middle of a line: «наличные», «карта», «перевод», «другое», «способ не указан»; the brands keep their capitals
+    («Click», «Payme»)."""
+    label = method_label(method)
+    return label if method in BRAND_METHODS else label.lower()
 
 
 # ----------------------------------------------------------------------------------------------------------- months
@@ -346,6 +352,40 @@ def cancel_note(row) -> str:
 
 def in_range(day: date, date_from: Optional[date], date_to: Optional[date]) -> bool:
     return (date_from is None or day >= date_from) and (date_to is None or day <= date_to)
+
+
+def title_line(membership) -> str:
+    """Row 1: «Выписка — Иванов Иван · ID A-0042 · Математика 9 · Петрова Анна» (what is missing is left out)."""
+    parts = [membership.student_name + (f" · ID {membership.display_id}" if membership.display_id else ""), membership.group_name]
+    if membership.teacher_name:
+        parts.append(membership.teacher_name)
+    return "Выписка — " + " · ".join(p for p in parts if p)
+
+
+def asof_line(as_of: date, accounting_start: date, date_from: Optional[date], date_to: Optional[date]) -> str:
+    """Row 2: «По состоянию на 21.10.2026 · Учёт ведётся с 01.08.2026 · Период: Октябрь 2026»."""
+    return (f"По состоянию на {date_ru(as_of)} · Учёт ведётся с {date_ru(accounting_start)} · "
+            f"Период: {period_label(date_from, date_to)}")
+
+
+def totals_line(summary) -> str:
+    """Row 3: «Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Баланс: Аванс 60 000» (the non-zero extras only)."""
+    parts = []
+    for label, value in total_lines(summary):
+        parts.append(f"{label}: {value}" if label == "Баланс" else f"{label} {tx.num(value)}")
+    return " · ".join(parts)
+
+
+UPCOMING_TITLE = "Следующие периоды (ещё не начались)"
+
+
+def upcoming_line(segment) -> str:
+    """«01.11–30.11: оплачено 274 000 сум из 500 000 сум» / «Пакет 25.09–21.10: к оплате 500 000 сум» (``upcomingLine``)."""
+    span = f"{tx.ddmm(segment.period_from)}–{tx.ddmm(segment.period_to)}"
+    period = f"Пакет {span}" if segment.kind == "package" else span
+    paid = (f"оплачено {tx.money(int(segment.paid))} из {tx.money(int(segment.charge))}" if int(segment.paid) > 0
+            else f"к оплате {tx.money(int(segment.charge))}")
+    return f"{period}: {paid}"
 
 
 def total_lines(summary) -> List[Tuple[str, object]]:

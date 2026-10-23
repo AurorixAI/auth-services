@@ -6,17 +6,17 @@ import pytest
 
 from src.auth import payments_statement_texts as t
 from src.auth.payments_schemas import (
-    Allocation, PriceOut, Segment, SegmentLessons, StatementDetails, StatementRow, StatementSummary,
+    Allocation, PriceOut, Segment, SegmentLessons, StatementDetails, StatementMembership, StatementRow, StatementSummary,
 )
 
 D = date
 
 
 def seg(start, end, *, kind="period", days_text=None, basis="full", amount=500_000, source="group", price=500_000,
-        lessons=None, charge=None, written_off=0, sid=None):
+        lessons=None, charge=None, written_off=0, sid=None, paid=0):
     return Segment(
         id=sid or f"seg:{start}", kind=kind, period_from=start, period_to=end, billable_days=1, days_text=days_text,
-        price=PriceOut(amount=price, source=source), charge=amount if charge is None else charge, basis=basis,
+        price=PriceOut(amount=price, source=source), charge=amount if charge is None else charge, basis=basis, paid=paid,
         lessons=SegmentLessons(in_part=lessons[0], in_period=lessons[1]) if lessons else None, written_off=written_off)
 
 
@@ -37,6 +37,9 @@ def test_methods_are_russian_and_an_unknown_one_says_so():
         "Наличные", "Карта", "Перевод", "Click", "Payme", "Другое"]
     assert t.method_label("unknown") == t.method_label(None) == t.method_label("what") == "Способ не указан"
     assert t.lower_method("cash") == "наличные" and t.lower_method(None) == "способ не указан"
+    # in the middle of a line the generic names are lowercase, the brands keep their capitals
+    assert [t.lower_method(m) for m in ("cash", "card", "bank_transfer", "other", "unknown", "click", "payme")] == [
+        "наличные", "карта", "перевод", "другое", "способ не указан", "Click", "Payme"]
 
 
 # ---- months -------------------------------------------------------------------------------------------------------
@@ -234,3 +237,22 @@ def test_cancel_note_and_totals():
                                                  "Перенесено в группы", "Баланс"]
     assert t.total_lines(StatementSummary(debt=92_000))[-1] == ("Баланс", "Долг 92 000")
     assert t.total_lines(StatementSummary(advance=508_000))[-1] == ("Баланс", "Аванс 508 000")
+
+
+def test_title_lines_and_the_periods_to_come():
+    m = StatementMembership(membership_id="m", student_id="s", student_name="Иванов Иван", display_id="A-1", group_id="g",
+                            group_name="Математика 9", teacher_name="Петрова Анна")
+    assert t.title_line(m) == "Выписка — Иванов Иван · ID A-1 · Математика 9 · Петрова Анна"
+    m.display_id, m.teacher_name = None, None
+    assert t.title_line(m) == "Выписка — Иванов Иван · Математика 9"
+    assert t.asof_line(D(2026, 10, 21), D(2026, 8, 1), None, None) == "По состоянию на 21.10.2026 · Учёт ведётся с 01.08.2026 · Период: Все месяцы"
+    assert t.asof_line(D(2026, 10, 21), D(2026, 8, 1), D(2026, 10, 1), D(2026, 10, 31)).endswith("Период: Октябрь 2026")
+    s = StatementSummary(charged=1_103_000, paid=1_153_000, written_off=50_000, refunded=40_000, advance=60_000)
+    assert t.totals_line(s) == "Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Возвращено 40 000 · Баланс: Аванс 60 000"
+    assert t.totals_line(StatementSummary(charged=5, paid=5)) == "Стоимость обучения 5 · Оплачено 5 · Баланс: 0"
+    nov = seg(D(2026, 11, 1), D(2026, 11, 30), charge=500_000)
+    assert t.upcoming_line(nov) == "01.11–30.11: к оплате 500 000 сум"
+    nov.paid = 274_000
+    assert t.upcoming_line(nov) == "01.11–30.11: оплачено 274 000 сум из 500 000 сум"
+    pack = seg(D(2026, 9, 25), D(2026, 10, 21), kind="package", charge=600_000, lessons=(12, 12))
+    assert t.upcoming_line(pack) == "Пакет 25.09–21.10: к оплате 600 000 сум"
