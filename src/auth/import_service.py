@@ -51,7 +51,7 @@ SHEET_STUDENTS = "Ученики"
 SHEET_INSTRUCTIONS = "Инструкция"
 
 # Column headers per sheet. "*" marks required — stripped when matching.
-COLS_GROUPS = ["Название группы*", "Класс (1-11)", "Email учителя", "Макс. учеников"]
+COLS_GROUPS = ["Название группы*", "Класс (1-11)", "Почта учителя", "Макс. учеников"]
 COLS_STUDENTS = ["Фамилия*", "Имя*", "Класс (1-11)*", "Телефон", "Группа*", "Комментарий",
                  "Оплачено до (дата)", "Долг, сум", "Долг на дату"]   # LOGIC-A (decision 1): the opening balance of the student in the group
 
@@ -134,8 +134,23 @@ def _cell(v) -> str:
     return str(v).strip()
 
 
+# Older templates called the column «Email учителя»: both headers are accepted (normalised header -> the normalised header of the current template)
+HEADER_ALIASES = {"email учителя": "почта учителя", "e-mail учителя": "почта учителя"}
+EXAMPLE_MARK = "пример — удалите"      # the grey example row of the template carries this text in its last column; the importer ignores that row
+NOTE_HEADER = "Пометка"                  # the header of that last column (it holds nothing else and is never read as data)
+
+
+def _is_example(cells) -> bool:
+    """A row that carries the mark «пример — удалите» (any dash, any case) in any cell is the example of the template, never data."""
+    for cell in cells:
+        value = getattr(cell, "value", cell)
+        if isinstance(value, str) and EXAMPLE_MARK in re.sub(r"\s*[-–—]\s*", " — ", value.casefold()):
+            return True
+    return False
+
+
 def _read_sheet(ws, expected_cols: list[str]) -> list[ParsedRow]:
-    """Map columns by header name (order-independent, tolerant of extras)."""
+    """Map columns by header name (order-independent, tolerant of extras); the example row of the template is skipped."""
     rows_iter = ws.iter_rows(values_only=False)
     try:
         header_cells = next(rows_iter)
@@ -147,11 +162,14 @@ def _read_sheet(ws, expected_cols: list[str]) -> list[ParsedRow]:
     col_map: dict[int, str] = {}
     for idx, cell in enumerate(header_cells):
         key = _norm_header(cell.value)
+        key = HEADER_ALIASES.get(key, key)
         if key in wanted:
             col_map[idx] = key
 
     out: list[ParsedRow] = []
     for cells in rows_iter:
+        if _is_example(cells):
+            continue  # the grey example row of the template
         values = {}
         any_value = False
         for idx, key in col_map.items():
@@ -199,7 +217,7 @@ K_LAST = "фамилия"
 K_FIRST = "имя"
 K_GROUP_NAME = "название группы"
 K_CLASS = "класс (1-11)"
-K_TEACHER_EMAIL = "email учителя"
+K_TEACHER_EMAIL = "почта учителя"
 K_MAX_STUDENTS = "макс. учеников"
 K_STUDENT_CLASS = "класс (1-11)"
 K_PHONE = "телефон"
@@ -650,91 +668,111 @@ def commit(org_id: str, creator_id: str, data: bytes, db: Session, *, money: boo
 # ════════════════════════════════════════════════════════════════════════════
 # Template generation
 # ════════════════════════════════════════════════════════════════════════════
+TEMPLATE_FILE_NAME = "Шаблон_импорта.xlsx"
+DATE_HINT = "Формат даты: ДД.ММ.ГГГГ, например 31.10.2026"
+PHONE_HINT = "Телефон с кодом страны: +998901234567"
+INSTRUCTION_PARAGRAPHS = (
+    "Заполните две вкладки: «Группы» и «Ученики». Колонки со звёздочкой (*) обязательные. Серая строка в каждой вкладке — пример заполнения: её можно "
+    "удалить, а если оставить, ALGO её пропустит (в последней колонке у неё написано «пример — удалите»).",
+    "1) Группы — «Название группы» обязательно. «Почта учителя» необязательна; если указана, учитель должен уже существовать в системе (добавьте его "
+    "через интерфейс). Класс — число от 1 до 11. Старый шаблон с колонкой «Email учителя» тоже принимается.",
+    "2) Ученики — Фамилия, Имя и Класс (1–11) обязательны. Телефон — по желанию, с кодом страны: +998901234567. «Группа» — название из вкладки «Группы» "
+    "(ученик попадёт в эту группу).",
+    "«Оплачено до (дата)», «Долг, сум», «Долг на дату» — необязательно: что было ДО запуска в ALGO. Даты пишите так: ДД.ММ.ГГГГ, например 31.10.2026. "
+    "«Оплачено до» — ученик уже заплатил до этой даты (эти дни не считаются и не превращаются в аванс). «Долг» — сколько он был должен; дата долга по "
+    "умолчанию — день перед зачислением. Остатки вносят владелец и администратор с доступом к оплатам.",
+    "Повторная загрузка безопасна: группы сверяются по названию, ученики — по ФИО и телефону; существующие не дублируются.",
+)
+
+
 def build_template_xlsx() -> bytes:
+    """The template of the import in the house style (``xlsx_style``): «Инструкция» FIRST as ordinary text, then «Группы» and «Ученики», each with the header on
+    row 1 (the importer reads the headers by their text), one grey example row marked «пример — удалите» (the importer ignores it) and format hints for the dates
+    and the phones (a comment on the header, a prompt on the cell, the number format of the column)."""
     from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.comments import Comment
     from openpyxl.utils import get_column_letter
     from openpyxl.workbook.defined_name import DefinedName
     from openpyxl.worksheet.datavalidation import DataValidation
 
+    from . import xlsx_style as xs
+
     wb = Workbook()
-
-    header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill("solid", fgColor="2F6FED")
-    req_note = Font(italic=True, size=9, color="8A8A8A")
-
-    def style_headers(ws, cols):
-        for i, title in enumerate(cols, start=1):
-            c = ws.cell(row=1, column=i, value=title)
-            c.font = header_font
-            c.fill = header_fill
-            c.alignment = Alignment(horizontal="center", vertical="center")
-            ws.column_dimensions[get_column_letter(i)].width = max(16, len(title) + 4)
-        ws.freeze_panes = "A2"
 
     # ── Инструкция ───────────────────────────────────────────────────────────
     ws_info = wb.active
     ws_info.title = SHEET_INSTRUCTIONS
-    ws_info.column_dimensions["A"].width = 100
-    lines = [
-        ("Импорт данных в ALGO — как заполнять", True),
-        ("", False),
-        ("Заполните две вкладки внизу: «Группы», «Ученики».", False),
-        ("Колонки со звёздочкой (*) — обязательные.", False),
-        ("", False),
-        ("1) Группы — Название обязательно. «Email учителя» — необязательно; если указан,", False),
-        ("   учитель должен уже существовать в системе (добавьте через интерфейс). Класс — число 1–11.", False),
-        ("", False),
-        ("2) Ученики — Фамилия, Имя и Класс (1–11) обязательны. Телефон — по желанию.", False),
-        ("   «Группа» — название из вкладки «Группы» (ученик попадёт в эту группу).", False),
-        ("", False),
-        ("   «Оплачено до (дата)», «Долг, сум», «Долг на дату» — необязательно: что было ДО запуска в ALGO. «Оплачено до» — ученик уже", False),
-        ("   заплатил до этой даты (эти дни не считаются и не превращаются в аванс). «Долг» — сколько он был должен; дата долга по умолчанию", False),
-        ("   день перед зачислением. Остатки вносят владелец и администратор с доступом к оплатам.", False),
-        ("", False),
-        ("Повторная загрузка безопасна: группы сверяются по названию,", False),
-        ("ученики по ФИО+телефону — существующие не дублируются.", False),
-        ("", False),
-        ("── Пример заполнения ──", True),
-        ("Группы:   Алгебра-9А | 9 | a.karimov@example.com | 25", False),
-        ("Ученики:  Усмонова | Малика | 9 | +998901234567 | Алгебра-9А |", False),
-    ]
-    for idx, (text, bold) in enumerate(lines, start=1):
-        c = ws_info.cell(row=idx, column=1, value=text)
-        if bold:
-            c.font = Font(bold=True, size=14)
-        elif text == "":
-            pass
-        else:
-            c.alignment = Alignment(wrap_text=True)
+    ws_info.column_dimensions["A"].width = 110
+    xs.put(ws_info, 1, 1, "Импорт данных в ALGO — как заполнять", font=xs.FONT_TITLE, alignment=xs.ALIGN_LEFT)
+    ws_info.row_dimensions[1].height = 21
+    for i, text in enumerate(INSTRUCTION_PARAGRAPHS, start=3):
+        xs.put(ws_info, i, 1, text, font=xs.FONT_BODY, alignment=xs.ALIGN_LEFT_TOP)
+        lines = xs.lines_needed(text, 110)
+        if lines > 1:
+            ws_info.row_dimensions[i].height = xs.LINE_HEIGHT * lines
+    xs.print_setup(ws_info, header=None)
 
-    # NOTE: data sheets are left EMPTY (headers only). Example values live only
-    # in the Инструкция sheet — otherwise a user who forgets to delete the
-    # sample rows would import "Каримов"/"Усмонова" as real records.
+    example_date = date.today().replace(day=1) - timedelta(days=1)          # the last day of the previous month: a date that is always «before»
+
+    def data_sheet(title: str, cols: list[str], example: list, date_cols: tuple[str, ...] = (), phone_col: Optional[str] = None):
+        ws = wb.create_sheet(title)
+        headers = [*cols, NOTE_HEADER]
+        xs.header_row(ws, 1, headers)
+        xs.example_row(ws, 2, [*example, EXAMPLE_MARK])
+        for i, name in enumerate(headers, start=1):
+            plain = name.replace("*", "").strip()
+            letter = get_column_letter(i)
+            if plain in date_cols:
+                ws.column_dimensions[letter].number_format = xs.DATE
+                ws.cell(row=2, column=i).number_format = xs.DATE
+                ws.cell(row=1, column=i).comment = Comment(DATE_HINT, "ALGO", width=260, height=60)
+            if plain == phone_col:
+                ws.column_dimensions[letter].number_format = "@"
+                ws.cell(row=2, column=i).number_format = "@"
+                ws.cell(row=1, column=i).comment = Comment(PHONE_HINT, "ALGO", width=260, height=60)
+        ws.freeze_panes = "A2"
+        return ws, headers
+
+    def prompt(ws, headers: list[str], names: tuple[str, ...], dv: "DataValidation") -> None:
+        ws.add_data_validation(dv)
+        for i, name in enumerate(headers, start=1):
+            if name.replace("*", "").strip() in names:
+                letter = get_column_letter(i)
+                dv.add(f"{letter}3:{letter}1000")
 
     # ── Группы ───────────────────────────────────────────────────────────────
-    ws_g = wb.create_sheet(SHEET_GROUPS)
-    style_headers(ws_g, COLS_GROUPS)
-    dv_class_g = DataValidation(
-        type="whole", operator="between", formula1=1, formula2=11, allow_blank=True)
+    ws_g, head_g = data_sheet(SHEET_GROUPS, COLS_GROUPS, ["Алгебра-9А", 9, "a.karimov@example.com", 25])
+    dv_class_g = DataValidation(type="whole", operator="between", formula1=1, formula2=11, allow_blank=True)
     ws_g.add_data_validation(dv_class_g)
-    dv_class_g.add("B2:B1000")
+    dv_class_g.add("B3:B1000")
 
     # ── Ученики ──────────────────────────────────────────────────────────────
-    ws_s = wb.create_sheet(SHEET_STUDENTS)
-    style_headers(ws_s, COLS_STUDENTS)
-    dv_class_s = DataValidation(
-        type="whole", operator="between", formula1=1, formula2=11, allow_blank=False)
+    ws_s, head_s = data_sheet(
+        SHEET_STUDENTS, COLS_STUDENTS,
+        ["Усмонова", "Малика", 9, "+998901234567", "Алгебра-9А", None, example_date, None, None],
+        date_cols=("Оплачено до (дата)", "Долг на дату"), phone_col="Телефон")
+    dv_class_s = DataValidation(type="whole", operator="between", formula1=1, formula2=11, allow_blank=False)
     ws_s.add_data_validation(dv_class_s)
-    dv_class_s.add("C2:C1000")
+    dv_class_s.add("C3:C1000")
+    prompt(ws_s, head_s, ("Оплачено до (дата)", "Долг на дату"), DataValidation(
+        type="date", operator="greaterThanOrEqual", formula1="DATE(2000,1,1)", allow_blank=True, showInputMessage=True, promptTitle="Дата",
+        prompt="ДД.ММ.ГГГГ, например 31.10.2026", showErrorMessage=True, errorTitle="Дата", error="Нужна дата в формате ДД.ММ.ГГГГ"))
+    prompt(ws_s, head_s, ("Телефон",), DataValidation(
+        type="textLength", operator="lessThanOrEqual", formula1=20, allow_blank=True, showInputMessage=True, promptTitle="Телефон",
+        prompt="+998901234567 (с кодом страны)"))
 
-    # Group-name dropdown in Ученики, sourced from Группы!A (via defined name).
+    # Group-name dropdown in Ученики, sourced from Группы!A (via defined name); the example group of the first row is part of the list - harmless.
     wb.defined_names.add(
         DefinedName("group_names", attr_text=f"'{SHEET_GROUPS}'!$A$2:$A$1000")
     )
     dv_group = DataValidation(type="list", formula1="group_names", allow_blank=True)
     ws_s.add_data_validation(dv_group)
-    dv_group.add("E2:E1000")
+    dv_group.add("E3:E1000")
+
+    for ws in (ws_g, ws_s):
+        xs.autosize(ws, header_row_number=1, last_col=ws.max_column, min_width=14)
+        ws.column_dimensions[get_column_letter(ws.max_column)].width = max(ws.column_dimensions[get_column_letter(ws.max_column)].width or 0, len(EXAMPLE_MARK) + 2)
+        xs.print_setup(ws, header=1)
 
     buf = BytesIO()
     wb.save(buf)

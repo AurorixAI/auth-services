@@ -162,3 +162,25 @@ def test_r9_new_students_are_active_at_once_and_a_student_without_a_group_is_enr
     assert w.db.query(StudentGroup).filter_by(student_id=loose.id, group_id=w.G2.id, is_active=True).count() == 1
     fresh = w.db.query(Student).filter_by(org_id=w.org.id, last_name="Свежий").one()
     assert fresh.status == "active" and fresh.display_id and fresh.group_id == w.G2.id
+
+
+def test_the_downloaded_template_is_a_valid_empty_import_and_its_example_rows_are_ignored(w):
+    """The template as the owner downloads it (Russian name, ASCII fallback), uploaded as it is: nothing to import, no errors - the grey example rows are not data."""
+    r = client(w, "admin").get(f"{IMP}/template")
+    assert r.status_code == 200 and "Shablon_importa.xlsx" in r.headers["content-disposition"] and "filename*=UTF-8''%D0%A8" in r.headers["content-disposition"]
+    pv = post(w, "preview", r.content).json()
+    assert pv["ok"] and pv["issues"] == [] and pv["counts"]["groups_new"] == 0 and pv["counts"]["students_new"] == 0
+    # the same file with one real row under the example row: only the real row is previewed (the Excel row number is 3)
+    from openpyxl import load_workbook
+
+    wb = load_workbook(BytesIO(r.content))
+    wb["Группы"].append(["Новая-7А", 7, None, 15])
+    wb["Ученики"].append(["Новиков", "Олег", 7, None, "Новая-7А", None, None, None, None])
+    out = BytesIO()
+    wb.save(out)
+    pv = post(w, "preview", out.getvalue()).json()
+    assert pv["ok"] and pv["counts"]["groups_new"] == 1 and pv["counts"]["students_new"] == 1
+    assert [g["name"] if "name" in g else g for g in pv["groups_preview"]] and not any("Алгебра-9А" in str(x) for x in pv["groups_preview"] + pv["students_preview"])
+    # an old file with the header «Email учителя» still works
+    pv = post(w, "preview", chain3(w)).json()
+    assert pv["counts"]["groups_new"] >= 1

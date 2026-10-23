@@ -32,7 +32,7 @@ from .student_archive import (
     StudentArchiveService,
     actor_role_for_audit,
 )
-from . import import_ops, import_service
+from . import import_ops, import_service, xlsx_style
 from .ops_router import router as ops_router
 from .ops_rules import GroupArchivedForEnrolment, OpsError
 from .ops_schemas import (
@@ -1276,7 +1276,7 @@ def download_import_template(user: dict = Depends(require_org_admin)):
     return Response(
         content=data,
         media_type=_XLSX_MIME,
-        headers={"Content-Disposition": 'attachment; filename="algo_import_template.xlsx"'},
+        headers=xlsx_style.attachment_headers(import_service.TEMPLATE_FILE_NAME),
     )
 
 
