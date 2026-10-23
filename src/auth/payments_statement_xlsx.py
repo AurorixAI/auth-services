@@ -1,59 +1,47 @@
 """
-ALGO - the statement as an Excel file: it reads like the page (Выписка).
+ALGO - the statement as an Excel file: it reads like the page (Выписка), in the house style (``xlsx_style``).
 
-Title block (three lines: who, as-of / period, totals), then the table «Дата | Операция | Стоимость | Оплачено | Баланс | Подробности» with a band per month,
-the carry line of a single month and, below, the periods to come and the cancelled records.  The words come from ``payments_statement_texts`` (the mirror
-of the page's rules); this module only draws them: real dates, whole-number money cells with a thousands format, the balance as
-text («Долг 92 000»), widths from the content, frozen header.
+Title block (three lines: who, as-of / period, totals), then the table «Дата | Операция | Стоимость | Оплачено | [Прощено] | [Возвращено] | [Переведено] |
+Баланс | Подробности» with a band per month, the carry line of a single month, a blue «Итого» row and, below, the periods to come and the cancelled
+records.  The words come from ``payments_statement_texts`` (the mirror of the page's rules); this module only draws them.
+
+The rules of the file (owner, 23.10.2026):
+
+* no signed numbers: a payment is in «Оплачено», a forgiven debt in «Прощено», a refund in «Возвращено», a transfer to another group in «Переведено»
+  (the last three columns exist only when the file has such an operation; money that came in from another group stays in «Оплачено», as on the page);
+* ONE balance rule everywhere (the table, the «Итого» row, the title line): the balance is the words of the screen - «Долг 92 000» / «Аванс 21 000» / «0»;
+* real dates, whole-number money cells with ``#,##0``, widths from the content, frozen header under the title block, print setup.
 """
 from __future__ import annotations
 
 import io
-import math
 from datetime import date
-from typing import Any, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import payments_statement_texts as st_tx
+from . import xlsx_style as xs
 
 SHEET_TITLE = "Выписка"
-HEADER = ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]
-LAST_COL = len(HEADER)
-DATE_FORMAT = "DD.MM.YYYY"
-MONEY_FORMAT = "#,##0"
-MIN_WIDTH = 12
-WRAP_CAP = 60                    # «Операция» and «Подробности» wrap from here
-WRAP_COLS = (2, 6)               # B, F
+HEADER = ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]       # the columns every statement has (the optional ones go after «Оплачено»)
+OPTIONAL = (("forgiven", "Прощено"), ("refunded", "Возвращено"), ("transferred", "Переведено"))
+DATE_FORMAT = xs.DATE
+MONEY_FORMAT = xs.MONEY
 CANCELLED_TITLE = "Отменённые записи"
 CANCELLED_EMPTY = "Отменённых записей нет"
+TOTAL_LABEL = "Итого"
+# the type of a record -> the column of its money (anything else: «Оплачено»)
+_COLUMN_OF = {"writeoff": "forgiven", "refund": "refunded", "transfer_out": "transferred"}
 
 
-def _put(ws, row: int, col: int, value: Any, *, number_format: Optional[str] = None, **style: Any):
-    """Write a cell.  A text stays text (``data_type`` "s"): a student's note starting with "=" is never a formula."""
-    cell = ws.cell(row=row, column=col, value=value)
-    if isinstance(value, str):
-        cell.data_type = "s"
-    if number_format:
-        cell.number_format = number_format
-    for key, item in style.items():
-        setattr(cell, key, item)
-    return cell
+def money_column(entry_type: str) -> str:
+    return _COLUMN_OF.get(entry_type, "paid")
 
 
-def _lines_needed(text: Any, width: float) -> int:
-    if not isinstance(text, str) or not text:
-        return 1
-    usable = max(1, int(width) - 2)
-    return sum(max(1, math.ceil(len(part) / usable)) for part in text.split("\n"))
-
-
-def _shown_length(value: Any) -> int:
-    if isinstance(value, bool) or value is None:
-        return 0
-    if isinstance(value, date):
-        return len("00.00.0000")
-    if isinstance(value, int):
-        return len(f"{value:,}")
-    return max((len(part) for part in str(value).split("\n")), default=0)
+def columns_of(kinds) -> List[Tuple[str, str]]:
+    """``[(key, header)]`` of the table: the fixed columns and the optional money columns that the file really uses."""
+    out = [("date", "Дата"), ("title", "Операция"), ("charged", "Стоимость"), ("paid", "Оплачено")]
+    out += [(key, label) for key, label in OPTIONAL if key in kinds]
+    return out + [("balance", "Баланс"), ("details", "Подробности")]
 
 
 def build_statement_xlsx(
@@ -62,142 +50,108 @@ def build_statement_xlsx(
     """``statement`` is the WHOLE ledger (``PaymentsReports.statement`` without a range): the carry line of a month needs what came
     before it; the range is applied here."""
     from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
 
     wb = Workbook()
     ws = wb.active
     ws.title = SHEET_TITLE
     m = statement.membership
-
-    bold = Font(bold=True)
-    head_fill = PatternFill("solid", start_color="D9E2F3", end_color="D9E2F3")
-    band_fill = PatternFill("solid", start_color="EDF1F7", end_color="EDF1F7")
-    grey_fill = PatternFill("solid", start_color="E7E6E6", end_color="E7E6E6")
-    quiet = Font(italic=True, color="595959")
-    cancelled_font = Font(color="808080", strike=True)
-    cancelled_note_font = Font(color="808080")
-    left_top = Alignment(horizontal="left", vertical="top", wrap_text=True)
-    centre_top = Alignment(horizontal="center", vertical="top")
-
     month = st_tx.single_month(date_from, date_to)
 
-    # ---- title block: three lines (the frozen area stays small), an empty row, then the header
-    merged_text: List[tuple] = []                                 # (row, text) of the lines spanning the whole width
-    title = [
-        (st_tx.title_line(m), Font(bold=True, size=12)),
-        (st_tx.asof_line(statement.as_of, statement.accounting_start, date_from, date_to), None),
-        (st_tx.totals_line(statement.summary), None),
-    ]
-    for row, (text, font) in enumerate(title, 1):
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=LAST_COL)
-        _put(ws, row, 1, text, alignment=Alignment(horizontal="left", vertical="center", wrap_text=True),
-             **({"font": font} if font else {}))
-        merged_text.append((row, text))
-    row = len(title) + 1                                          # the empty row
-
-    # ---- the table
-    row += 1
-    header_row = row
-    for col, text in enumerate(HEADER, 1):
-        _put(ws, row, col, text, font=bold, fill=head_fill,
-             alignment=Alignment(horizontal="left" if col in WRAP_COLS else "center", vertical="center"))
-    ws.freeze_panes = f"A{header_row + 1}"
-
-    measured: List[List[Any]] = [[text] for text in HEADER]       # what each column has to hold (for the widths)
-    wrapped: List[tuple] = []                                     # (row, [(col, text)]) for the row heights
-
-    def money(col: int, value: Optional[int]):
-        if value is None:
-            return
-        cell = _put(ws, row, col, int(value), number_format=MONEY_FORMAT, alignment=centre_top)
-        measured[col - 1].append(int(value))
-        return cell
-
-    def data_row(entry_date: date, title: str, charged: Optional[int], paid: Optional[int], balance: str, details: str,
-                 *, fonts: Optional[tuple] = None):
-        nonlocal row
-        row += 1
-        a = _put(ws, row, 1, entry_date, number_format=DATE_FORMAT, alignment=centre_top)
-        b = _put(ws, row, 2, title, alignment=left_top)
-        c = money(3, charged)
-        d = money(4, paid)
-        e = _put(ws, row, 5, balance, alignment=centre_top) if balance else None
-        f = _put(ws, row, 6, details, alignment=left_top) if details else None
-        measured[0].append(entry_date)
-        measured[1].append(title)
-        if balance:
-            measured[4].append(balance)
-        if details:
-            measured[5].append(details)
-        wrapped.append((row, [(2, title), (6, details)]))
-        if fonts:
-            grey, note = fonts
-            for cell in (a, b, c, d, e):
-                if cell is not None:
-                    cell.font = grey
-            if f is not None:
-                f.font = note
-
-    def spanning(text: str, *, font=None, fill=None):
-        nonlocal row
-        row += 1
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=LAST_COL)
-        style = {"font": font if font is not None else bold, "alignment": Alignment(horizontal="left", vertical="center")}
-        if fill is not None:
-            style["fill"] = fill
-        _put(ws, row, 1, text, **style)
-
     entries = [e for e in st_tx.build_entries(statement.rows, statement.upcoming) if st_tx.in_range(e.date, date_from, date_to)]
-    items = st_tx.group_by_month(entries, statement.rows, month)
-    if not items:
-        spanning("В выписке пока нет записей" if not statement.rows else "Записей за период нет", font=quiet)
-    for item in items:
+    voided = [r for r in statement.voided if st_tx.in_range(r.date, date_from, date_to)] if include_voided else []
+    used = {money_column(e.type) for e in entries if e.paid} | {money_column(r.type) for r in voided if (r.credit or r.outflow)}
+    cols = columns_of(used)
+    pos = {key: i for i, (key, _) in enumerate(cols, start=1)}
+    last_col = len(cols)
+    wrap_cols = (pos["title"], pos["details"])
+
+    # ---- title block: three lines (the frozen area stays small), an empty row, then the header
+    header_at = xs.title_block(ws, [
+        st_tx.title_line(m),
+        st_tx.asof_line(statement.as_of, statement.accounting_start, date_from, date_to),
+        st_tx.totals_line(statement.summary),
+    ], last_col)
+    xs.header_row(ws, header_at, [h for _, h in cols], left=(pos["title"], pos["details"]))
+    ws.freeze_panes = f"A{header_at + 1}"
+    row = header_at
+
+    def next_row() -> int:
+        nonlocal row
+        row += 1
+        return row
+
+    def data_row(entry_date: date, title: str, charged: Optional[int], money: Dict[str, int], balance: str, details: str, *, cancelled: bool = False):
+        r = next_row()
+        body = xs.FONT_CANCELLED if cancelled else xs.FONT_BODY
+        note = xs.FONT_CANCELLED_NOTE if cancelled else xs.FONT_BODY
+        xs.put(ws, r, pos["date"], entry_date, number_format=xs.DATE, font=body, border=xs.BORDER, alignment=xs.ALIGN_CENTER_TOP)
+        xs.put(ws, r, pos["title"], title, font=body, border=xs.BORDER, alignment=xs.ALIGN_LEFT_TOP)
+        for key in ("charged", "paid", *[k for k, _ in OPTIONAL]):
+            if key not in pos:
+                continue
+            value = charged if key == "charged" else money.get(key)
+            xs.put(ws, r, pos[key], int(value) if value is not None else None, number_format=xs.MONEY if value is not None else None, font=body,
+                   border=xs.BORDER, alignment=xs.ALIGN_CENTER_TOP)
+        xs.put(ws, r, pos["balance"], balance or None, font=body, border=xs.BORDER, alignment=xs.ALIGN_CENTER_TOP)
+        xs.put(ws, r, pos["details"], details or None, font=note, border=xs.BORDER, alignment=xs.ALIGN_LEFT_TOP)
+
+    def band(text: str, *, font=None, fill_rgb: str = xs.SECTION_FILL):
+        xs.section_row(ws, next_row(), text, last_col, fill_rgb=fill_rgb, font_=font)
+
+    shown = st_tx.group_by_month(entries, statement.rows, month)
+    if not shown:
+        band("В выписке пока нет записей" if not statement.rows else "Записей за период нет", font=xs.FONT_NOTE)
+    for item in shown:
         if isinstance(item, st_tx.Band):
-            spanning(item.title, fill=band_fill)
+            band(item.title)
         elif isinstance(item, (st_tx.Carry, st_tx.Quiet)):
-            spanning(item.text, font=quiet)
+            band(item.text, font=xs.FONT_NOTE)
         else:
-            data_row(item.date, item.title, item.charged, item.paid, item.balance, item.details)
+            amount = abs(int(item.paid)) if item.paid else None
+            data_row(item.date, item.title, item.charged, {money_column(item.type): amount} if amount is not None else {}, item.balance, item.details)
+
+    # ---- the blue total row: the sums of the columns of the rows above and the balance after the last of them
+    if entries:
+        sums: Dict[int, Any] = {pos["charged"]: sum(int(e.charged or 0) for e in entries)}
+        for key in ("paid", *[k for k, _ in OPTIONAL]):
+            if key in pos:
+                sums[pos[key]] = sum(abs(int(e.paid)) for e in entries if e.paid and money_column(e.type) == key)
+        closing = next((e.balance for e in reversed(entries) if e.balance), "")
+        if closing:
+            sums[pos["balance"]] = closing
+        xs.total_row(ws, next_row(), TOTAL_LABEL, sums, last_col)
 
     # ---- the periods to come (as the page: only for the whole statement, never for a month or a range)
     if statement.upcoming and date_from is None and date_to is None:
-        row += 1
-        spanning(st_tx.UPCOMING_TITLE, fill=grey_fill)
-        for segment in statement.upcoming:
-            spanning(st_tx.upcoming_line(segment), font=Font())
-            merged_text.append((row, st_tx.upcoming_line(segment)))
-
-    # ---- the cancelled records (below, in grey)
-    if include_voided:
-        voided = [r for r in statement.voided if st_tx.in_range(r.date, date_from, date_to)]
         row += 1                                               # an empty line before the block
-        spanning(CANCELLED_TITLE, fill=grey_fill)
+        band(st_tx.UPCOMING_TITLE, fill_rgb=xs.SERVICE_FILL)
+        for segment in statement.upcoming:
+            band(st_tx.upcoming_line(segment), font=xs.FONT_BODY, fill_rgb="FFFFFF")
+
+    # ---- the cancelled records (below, in grey): never in the total
+    if include_voided:
+        row += 1
+        band(CANCELLED_TITLE, fill_rgb=xs.SERVICE_FILL)
         if not voided:
-            spanning(CANCELLED_EMPTY, font=quiet)
+            band(CANCELLED_EMPTY, font=xs.FONT_NOTE, fill_rgb="FFFFFF")
         for r in voided:
-            amount = int(r.credit) - int(r.outflow)
-            data_row(r.date, r.title, None, amount if (r.credit or r.outflow) else None, "", st_tx.cancel_note(r),
-                     fonts=(cancelled_font, cancelled_note_font))
+            amount = int(r.credit or 0) or int(r.outflow or 0)
+            data_row(r.date, r.title, None, {money_column(r.type): amount} if amount else {}, "", st_tx.cancel_note(r), cancelled=True)
 
-    # ---- widths from the content, heights of the wrapped rows
-    widths = []
-    for col, values in enumerate(measured, 1):
-        width = max(MIN_WIDTH, max(_shown_length(v) for v in values) + 2)
-        if col in WRAP_COLS:
-            width = min(width, WRAP_CAP)
-        widths.append(width)
-        ws.column_dimensions[chr(64 + col)].width = width
-    for r, cells in wrapped:
-        lines = max(_lines_needed(text, widths[col - 1]) for col, text in cells)
-        if lines > 1:
-            ws.row_dimensions[r].height = 15 * lines
-
-    whole = sum(widths)
-    for r, text in merged_text:
-        lines = _lines_needed(text, whole)
-        if lines > 1:
-            ws.row_dimensions[r].height = 15 * lines
-
+    xs.autosize(ws, header_row_number=header_at, last_col=last_col, min_width=12, wrap_cols=wrap_cols)
+    xs.print_setup(ws, header=header_at)
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
+
+
+def statement_file_name(statement, date_from: Optional[date] = None, date_to: Optional[date] = None) -> str:
+    """«Выписка_Алиев_Анвар_октябрь-2026.xlsx» / «…_с-01.10.2026_по-15.11.2026» / «…_на-21.10.2026» (all months): no technical ids."""
+    key = st_tx.single_month(date_from, date_to)
+    if key:
+        when = f"{xs.MONTH_NAMES[int(key[5:7]) - 1]}-{key[:4]}"
+    elif date_from or date_to:
+        when = "_".join(x for x in (f"с-{xs.date_ru(date_from)}" if date_from else "", f"по-{xs.date_ru(date_to)}" if date_to else "") if x)
+    else:
+        when = f"на-{xs.date_ru(statement.as_of)}"
+    return xs.file_name("Выписка", statement.membership.student_name, when)

@@ -8,7 +8,6 @@ design and of the schemas first.  Same guard as every money endpoint: ``require_
 """
 from datetime import date
 from typing import Literal, Optional
-from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +17,7 @@ from sqlalchemy.orm import Session
 from src.core.database import get_db
 
 from .dependencies import require_payments_access
+from . import xlsx_style
 from .payments_reports import PaymentsReports
 from .payments_service import PaymentError, PaymentService
 from .payments_schemas import (
@@ -183,7 +183,7 @@ def membership_statement_export(
         raise _http(exc)
     return Response(
         content=data, media_type=content_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"; filename*=UTF-8\'\'{quote(filename)}'})
+        headers=xlsx_style.attachment_headers(filename))
 
 
 @router.get("/org/payments/receipts", response_model=ReceiptsReport, responses=_ERRORS)

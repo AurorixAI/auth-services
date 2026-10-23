@@ -25,7 +25,7 @@ from . import payment_status as ps
 from . import payments_texts as tx
 from . import payments_views as pv
 from .payments_files import person_name, staff_name
-from .payments_statement_xlsx import build_statement_xlsx
+from .payments_statement_xlsx import build_statement_xlsx, statement_file_name
 from .payments_schemas import (
     BalanceRow,
     BalancesPage,
@@ -244,10 +244,9 @@ class PaymentsReports:
         line of a month needs the balance before it).  csv keeps its flat shape: rows already cut by the range."""
         if fmt != "csv":
             st = self.statement(org_id, membership_id, include_voided=include_voided)
-            who = st.membership.display_id or str(membership_id)[:8]
             data = build_statement_xlsx(st, date_from=date_from, date_to=date_to, include_voided=include_voided)
             return (data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    f"statement-{who}-{st.as_of.isoformat()}.xlsx")
+                    statement_file_name(st, date_from, date_to))
         st = self.statement(org_id, membership_id, date_from=date_from, date_to=date_to, include_voided=include_voided)
         header = ["№", "Дата", "Операция", "Стоимость", "Оплачено / прощено", "Возвращено / перенесено", "Баланс", "Подробности"]
 

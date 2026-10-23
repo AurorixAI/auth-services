@@ -8,7 +8,8 @@ from openpyxl import load_workbook
 from src.auth.payments_schemas import (
     Allocation, PriceOut, Segment, StatementDetails, StatementMembership, StatementOut, StatementRow, StatementSummary,
 )
-from src.auth.payments_statement_xlsx import HEADER, build_statement_xlsx
+from src.auth import xlsx_style as xs
+from src.auth.payments_statement_xlsx import HEADER, build_statement_xlsx, statement_file_name
 
 D = date
 
@@ -77,8 +78,16 @@ def title_block(ws):
     return [ws.cell(r, 1).value for r in (1, 2, 3)], head
 
 
+def columns(ws, head):
+    """{header: column} - the optional columns («Прощено», «Возвращено», «Переведено») shift the others, so every check goes by the header text."""
+    return {ws.cell(head, c).value: c for c in range(1, ws.max_column + 1) if ws.cell(head, c).value}
+
+
 def grid(ws, first):
-    return [[ws.cell(r, c).value for c in range(1, 7)] for r in range(first, ws.max_row + 1)]
+    return [[ws.cell(r, c).value for c in range(1, ws.max_column + 1)] for r in range(first, ws.max_row + 1)]
+
+
+GOLDEN_HEADER = ["Дата", "Операция", "Стоимость", "Оплачено", "Прощено", "Возвращено", "Баланс", "Подробности"]
 
 
 def test_title_block_header_freeze_and_widths():
@@ -89,16 +98,22 @@ def test_title_block_header_freeze_and_widths():
         "Выписка — Иванов Иван · ID A-0042 · Математика 9 · Петрова Анна",
         "По состоянию на 21.10.2026 · Учёт ведётся с 01.08.2026 · Период: Все месяцы",
         "Стоимость обучения 1 225 806 · Оплачено 1 225 806 · Прощено 100 000 · Возвращено 40 000 · Баланс: Аванс 60 000"]
-    assert ws["A1"].font.bold and {str(r) for r in ws.merged_cells.ranges} >= {"A1:F1", "A2:F2", "A3:F3"}
+    assert ws["A1"].font.bold and ws["A1"].font.size == 14 and {str(r) for r in ws.merged_cells.ranges} >= {"A1:H1", "A2:H2", "A3:H3"}
     assert all(ws.cell(r, 1).data_type == "s" for r in (1, 2, 3))
-    assert [ws.cell(head, c).value for c in range(1, 7)] == HEADER == ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]
-    assert all(ws.cell(head, c).font.bold and ws.cell(head, c).fill.fgColor.rgb not in (None, "00000000") for c in range(1, 7))
-    widths = [ws.column_dimensions[c].width for c in "ABCDEF"]
-    assert all(w >= 12 for w in widths) and widths[1] <= 60 and widths[5] <= 60
+    assert [ws.cell(head, c).value for c in range(1, 9)] == GOLDEN_HEADER
+    for c in range(1, 9):                                       # the header: D9E2F3, bold, wrapped, Calibri
+        cell = ws.cell(head, c)
+        assert cell.fill.fgColor.rgb.endswith("D9E2F3") and cell.font.bold and cell.font.name == "Calibri" and cell.alignment.wrap_text
+    col = columns(ws, head)
+    widths = {name: ws.column_dimensions[chr(64 + c)].width for name, c in col.items()}
+    assert all(w >= 12 for w in widths.values()) and widths["Операция"] <= 60 and widths["Подробности"] <= 60
     # no #### : a date needs 10, the biggest sum 9 characters with the separators, the balance text 13
-    assert widths[0] >= 12 and widths[2] >= 12 and widths[3] >= 12 and widths[4] >= len("Долг 425 806") + 2
-    assert ws.column_dimensions["B"].width >= len("Оплата № 4 · перевод · внёс Айбек О.")
-    assert ws.cell(head, 1).alignment.horizontal == "center" and ws.cell(head, 4).alignment.horizontal == "center"
+    assert widths["Дата"] >= 12 and widths["Стоимость"] >= 12 and widths["Оплачено"] >= 12 and widths["Баланс"] >= len("Долг 425 806") + 2
+    assert widths["Операция"] >= len("Оплата № 4 · перевод · внёс Айбек О.")
+    assert ws.cell(head, 1).alignment.horizontal == "center" and ws.cell(head, col["Оплачено"]).alignment.horizontal == "center"
+    # print: landscape, fit to the width, the header repeated on every page
+    assert ws.page_setup.orientation == "landscape" and ws.page_setup.fitToWidth == 1 and ws.page_setup.fitToHeight == 0
+    assert ws.sheet_properties.pageSetUpPr.fitToPage and ws.print_title_rows == "$5:$5"
 
 
 def test_golden_all_months():
@@ -106,60 +121,113 @@ def test_golden_all_months():
     _, head = title_block(ws)
     got = grid(ws, head + 1)
     d = lambda y, m, dd: __import__("datetime").datetime(y, m, dd)
+    n = None
     assert got == [
-        ["Август 2026", None, None, None, None, None],
-        [d(2026, 8, 18), "Август 2026 — неполный месяц (14 дней из 31)", 225_806, None, "Долг 225 806",
+        ["Август 2026", n, n, n, n, n, n, n],
+        [d(2026, 8, 18), "Август 2026 — неполный месяц (14 дней из 31)", 225_806, n, n, n, "Долг 225 806",
          "цена 500 000 сум в месяц · индивидуальная цена"],
-        [d(2026, 8, 20), "Оплата № 1 · наличные · внёс Айбек О.", None, 200_000, "Долг 25 806",
+        [d(2026, 8, 20), "Оплата № 1 · наличные · внёс Айбек О.", n, 200_000, n, n, "Долг 25 806",
          "комментарий: за двоих\nза август — 200 000 (осталось 25 806)"],
-        ["Сентябрь 2026", None, None, None, None, None],
-        [d(2026, 9, 1), "Сентябрь 2026", 500_000, None, "Долг 525 806", "цена 500 000 сум в месяц · индивидуальная цена"],
-        [d(2026, 9, 5), "Оплата № 2 · карта · внёс Айбек О.", None, 600_000, "Аванс 74 194",
+        ["Сентябрь 2026", n, n, n, n, n, n, n],
+        [d(2026, 9, 1), "Сентябрь 2026", 500_000, n, n, n, "Долг 525 806", "цена 500 000 сум в месяц · индивидуальная цена"],
+        [d(2026, 9, 5), "Оплата № 2 · карта · внёс Айбек О.", n, 600_000, n, n, "Аванс 74 194",
          "за август — 25 806 (август закрыт)\nза сентябрь — 500 000 (сентябрь закрыт)\nаванс на октябрь — 74 194"],
-        ["Октябрь 2026", None, None, None, None, None],
-        [d(2026, 10, 1), "Октябрь 2026", 500_000, None, "Долг 425 806", "цена 500 000 сум в месяц · индивидуальная цена"],
-        [d(2026, 10, 5), "Долг прощён — причина: болел · Директор", None, 100_000, "Долг 325 806", None],
-        [d(2026, 10, 10), "Оплата № 3 · Click", None, 325_806, "0", "за октябрь — 325 806 (октябрь закрыт)"],
-        [d(2026, 10, 15), "Оплата № 4 · перевод · внёс Айбек О.", None, 100_000, "Аванс 100 000", "аванс на ноябрь — 100 000"],
-        [d(2026, 10, 18), "Возврат аванса — карта · Айбек О.", None, -40_000, "Аванс 60 000", "причина: переехал"],
-        [None] * 6,
-        ["Следующие периоды (ещё не начались)", None, None, None, None, None],
-        ["01.11–30.11: оплачено 100 000 сум из 500 000 сум", None, None, None, None, None],
-        [None] * 6,
-        ["Отменённые записи", None, None, None, None, None],
-        [d(2026, 9, 3), "Оплата № 99", None, 50_000, None, "Отменено: ошибка ввода · Директор · заменена оплатой № 100"],
-        [d(2026, 10, 20), "Возврат аванса", None, -5_000, None, "Отменено: передумали"],
+        ["Октябрь 2026", n, n, n, n, n, n, n],
+        [d(2026, 10, 1), "Октябрь 2026", 500_000, n, n, n, "Долг 425 806", "цена 500 000 сум в месяц · индивидуальная цена"],
+        [d(2026, 10, 5), "Долг прощён — причина: болел · Директор", n, n, 100_000, n, "Долг 325 806", n],
+        [d(2026, 10, 10), "Оплата № 3 · Click", n, 325_806, n, n, "0", "за октябрь — 325 806 (октябрь закрыт)"],
+        [d(2026, 10, 15), "Оплата № 4 · перевод · внёс Айбек О.", n, 100_000, n, n, "Аванс 100 000", "аванс на ноябрь — 100 000"],
+        [d(2026, 10, 18), "Возврат аванса — карта · Айбек О.", n, n, n, 40_000, "Аванс 60 000", "причина: переехал"],
+        ["Итого", n, 1_225_806, 1_225_806, 100_000, 40_000, "Аванс 60 000", n],
+        [n] * 8,
+        ["Следующие периоды (ещё не начались)", n, n, n, n, n, n, n],
+        ["01.11–30.11: оплачено 100 000 сум из 500 000 сум", n, n, n, n, n, n, n],
+        [n] * 8,
+        ["Отменённые записи", n, n, n, n, n, n, n],
+        [d(2026, 9, 3), "Оплата № 99", n, 50_000, n, n, n, "Отменено: ошибка ввода · Директор · заменена оплатой № 100"],
+        [d(2026, 10, 20), "Возврат аванса", n, n, n, 5_000, n, "Отменено: передумали"],
     ]
+    # no signed number anywhere: a refund and a forgiven debt are words of their own columns, never a «-40 000» in «Оплачено»
+    assert all(c.value >= 0 for row in ws.iter_rows() for c in row if isinstance(c.value, int))
+
+
+def test_the_blue_total_row_and_the_one_balance_rule():
+    ws = sheet(golden())
+    _, head = title_block(ws)
+    col = columns(ws, head)
+    total = next(r for r in range(head + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Итого")
+    for c in range(1, ws.max_column + 1):                       # blue over the whole width, bold, a medium line above
+        cell = ws.cell(total, c)
+        assert cell.fill.fgColor.rgb.endswith("D9E2F3") and cell.font.bold and cell.border.top.style == "medium" and cell.border.top.color.rgb.endswith("8EA9DB")
+    assert [ws.cell(total, col[h]).value for h in ("Стоимость", "Оплачено", "Прощено", "Возвращено")] == [1_225_806, 1_225_806, 100_000, 40_000]
+    assert ws.cell(total, col["Стоимость"]).number_format == "#,##0"
+    # ONE rule: the balance is the words of the screen - in the rows, in the total and in the title line alike
+    assert ws.cell(total, col["Баланс"]).value == "Аванс 60 000" and ws.cell(total, col["Баланс"]).data_type == "s"
+    assert ws.cell(1, 1).font.size == 14 and ws.cell(3, 1).value.endswith("Баланс: Аванс 60 000")
+    balances = [ws.cell(r, col["Баланс"]).value for r in range(head + 1, total) if ws.cell(r, col["Баланс"]).value]
+    assert all(isinstance(b, str) and (b.startswith(("Долг ", "Аванс ")) or b == "0") for b in balances)
+    # a month: the total is of the month, the balance is the balance after its last record
+    ws = sheet(golden(), date_from=D(2026, 10, 1), date_to=D(2026, 10, 31))
+    _, head = title_block(ws)
+    col = columns(ws, head)
+    total = next(r for r in range(head + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Итого")
+    assert [ws.cell(total, col[h]).value for h in ("Стоимость", "Оплачено", "Прощено", "Возвращено", "Баланс")] == [500_000, 425_806, 100_000, 40_000, "Аванс 60 000"]
+
+
+def test_the_optional_columns_exist_only_when_the_file_has_such_operations():
+    st = golden(voided=False)
+    st.rows = [r for r in st.rows if r.type not in ("writeoff", "refund")]
+    ws = sheet(st)
+    _, head = title_block(ws)
+    assert [ws.cell(head, c).value for c in range(1, ws.max_column + 1)] == HEADER == ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]
+    assert {str(r) for r in ws.merged_cells.ranges} >= {"A1:F1", "A3:F3"}
+    # a transfer to another group has «Переведено» (positive); money that came in stays in «Оплачено» as on the page
+    st = golden(voided=False)
+    st.rows.append(StatementRow(seq=10, date=D(2026, 10, 19), type="transfer_out", title="Перенос в группу Физика", outflow=30_000, balance_after=30_000,
+                                details=StatementDetails()))
+    st.rows.append(StatementRow(seq=11, date=D(2026, 10, 20), type="transfer_in", title="Перенос из группы Химия", credit=10_000, balance_after=40_000,
+                                details=StatementDetails()))
+    ws = sheet(st)
+    _, head = title_block(ws)
+    col = columns(ws, head)
+    assert [ws.cell(head, c).value for c in range(1, ws.max_column + 1)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Прощено", "Возвращено", "Переведено", "Баланс", "Подробности"]
+    out = next(r for r in range(head, ws.max_row + 1) if ws.cell(r, 2).value == "Перенос в группу Физика")
+    inn = next(r for r in range(head, ws.max_row + 1) if ws.cell(r, 2).value == "Перенос из группы Химия")
+    assert (ws.cell(out, col["Переведено"]).value, ws.cell(out, col["Оплачено"]).value) == (30_000, None)
+    assert (ws.cell(inn, col["Оплачено"]).value, ws.cell(inn, col["Переведено"]).value) == (10_000, None)
+    total = next(r for r in range(head + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Итого")
+    assert ws.cell(total, col["Переведено"]).value == 30_000 and ws.cell(total, col["Оплачено"]).value == 1_225_806 + 10_000 and ws.cell(total, col["Баланс"]).value == "Аванс 40 000"
 
 
 def test_cell_types_formats_alignment_and_merges():
     ws = sheet(golden())
     _, head = title_block(ws)
+    col = columns(ws, head)
     first = head + 1
     merged = {str(r) for r in ws.merged_cells.ranges}
-    assert {f"A{first}:F{first}", f"A{first + 3}:F{first + 3}", f"A{first + 6}:F{first + 6}"} <= merged     # a band per month
+    assert {f"A{first}:H{first}", f"A{first + 3}:H{first + 3}", f"A{first + 6}:H{first + 6}"} <= merged     # a band per month
     band = ws.cell(first, 1)
-    assert band.font.bold and band.fill.fgColor.rgb not in (None, "00000000") and band.alignment.horizontal == "left"
+    assert band.font.bold and band.fill.fgColor.rgb.endswith("EDF1F7") and band.alignment.horizontal == "left"
     # rows: the second row of the table is the August charge
     r = first + 1
-    date_cell, op, charged, paid, balance, details = (ws.cell(r, c) for c in range(1, 7))
+    date_cell, op = ws.cell(r, col["Дата"]), ws.cell(r, col["Операция"])
+    charged, paid, balance, details = (ws.cell(r, col[h]) for h in ("Стоимость", "Оплачено", "Баланс", "Подробности"))
     assert date_cell.is_date and date_cell.number_format == "DD.MM.YYYY" and date_cell.alignment.horizontal == "center"
     assert isinstance(charged.value, int) and charged.number_format == "#,##0" and charged.alignment.horizontal == "center"
     assert paid.value is None and balance.data_type == "s" and balance.value == "Долг 225 806" and balance.alignment.horizontal == "center"
     assert op.data_type == "s" and op.alignment.wrap_text and op.alignment.vertical == "top"
     assert details.alignment.wrap_text and details.alignment.vertical == "top"
+    assert all(ws.cell(r, c).font.name == "Calibri" for c in range(1, ws.max_column + 1))
     pay = first + 2
-    assert isinstance(ws.cell(pay, 4).value, int) and ws.cell(pay, 4).number_format == "#,##0" and ws.cell(pay, 3).value is None
+    assert isinstance(ws.cell(pay, col["Оплачено"]).value, int) and ws.cell(pay, col["Оплачено"]).number_format == "#,##0" and ws.cell(pay, col["Стоимость"]).value is None
     refund = next(rr for rr in range(first, ws.max_row + 1) if str(ws.cell(rr, 2).value).startswith("Возврат аванса —"))
-    assert ws.cell(refund, 4).value == -40_000 and ws.cell(refund, 4).number_format == "#,##0"
+    assert ws.cell(refund, col["Возвращено"]).value == 40_000 and ws.cell(refund, col["Возвращено"]).number_format == "#,##0" and ws.cell(refund, col["Оплачено"]).value is None
     # the multi-line details are one cell with a taller row
     alloc_row = next(rr for rr in range(first, ws.max_row + 1) if str(ws.cell(rr, 2).value).startswith("Оплата № 2"))
-    assert ws.cell(alloc_row, 6).value.count("\n") == 2 and ws.row_dimensions[alloc_row].height >= 45
-    # no per-month totals, no old words
+    assert ws.cell(alloc_row, col["Подробности"]).value.count("\n") == 2 and ws.row_dimensions[alloc_row].height >= 45
     flat = [str(c.value) for row in ws.iter_rows() for c in row if c.value is not None]
     assert not any("Начисл" in x for x in flat)
     assert not any(x in flat for x in ("cash", "card", "bank_transfer", "click", "payme", "№", "Возвращено / перенесено", "Оплачено / прощено"))
-    assert not any(x.startswith("Итого") for x in flat)
     assert "ID A-0042" in ws.cell(1, 1).value
 
 
@@ -168,15 +236,17 @@ def test_the_cancelled_block_is_below_in_grey_and_struck():
     rows = list(range(1, ws.max_row + 1))
     head = next(r for r in rows if ws.cell(r, 1).value == "Отменённые записи")
     assert head > max(r for r in rows if ws.cell(r, 2).value == "Возврат аванса — карта · Айбек О.")
-    assert any(str(rg) == f"A{head}:F{head}" for rg in ws.merged_cells.ranges) and ws.cell(head, 1).font.bold
+    assert any(str(rg) == f"A{head}:H{head}" for rg in ws.merged_cells.ranges) and ws.cell(head, 1).font.bold
     for r in (head + 1, head + 2):
-        for c in range(1, 5):
+        for c in range(1, 7):
             cell = ws.cell(r, c)
             if cell.value is not None:
                 assert cell.font.strike and cell.font.color.rgb.endswith("808080")
-        assert ws.cell(r, 6).font.color.rgb.endswith("808080") and ws.cell(r, 6).value.startswith("Отменено:")
-    # the cancelled rows are never mixed into the months: the month bands carry no «Отменено» text
-    assert not any("Отменено" in str(ws.cell(r, 6).value) for r in range(1, head))
+        assert ws.cell(r, 8).font.color.rgb.endswith("808080") and not ws.cell(r, 8).font.strike and ws.cell(r, 8).value.startswith("Отменено:")
+    # the cancelled rows are never mixed into the months or into the total: the month bands carry no «Отменено» text
+    assert not any("Отменено" in str(ws.cell(r, 8).value) for r in range(1, head))
+    total = next(r for r in rows if ws.cell(r, 1).value == "Итого")
+    assert ws.cell(total, 4).value == 1_225_806 and total < head
     # without include_voided there is no block at all
     ws2 = sheet(golden(voided=False), include_voided=False)
     assert not any(ws2.cell(r, 1).value == "Отменённые записи" for r in range(1, ws2.max_row + 1))
@@ -187,6 +257,7 @@ def test_the_cancelled_block_is_below_in_grey_and_struck():
 def test_a_single_month_has_its_carry_line_and_the_period_in_the_title():
     ws = sheet(golden(), date_from=D(2026, 10, 1), date_to=D(2026, 10, 31), include_voided=True)
     lines, head = title_block(ws)
+    col = columns(ws, head)
     assert lines[1].endswith("Период: Октябрь 2026")
     # the title totals stay for the whole membership
     assert lines[2] == "Стоимость обучения 1 225 806 · Оплачено 1 225 806 · Прощено 100 000 · Возвращено 40 000 · Баланс: Аванс 60 000"
@@ -202,7 +273,7 @@ def test_a_single_month_has_its_carry_line_and_the_period_in_the_title():
     assert not any(isinstance(g[0], str) and g[0] in ("Август 2026", "Сентябрь 2026") for g in got)
     assert not any(g[1] == "Оплата № 99" for g in got)
     # the balance is the ledger's, not recomputed over the cut rows: a charge row keeps its running debt
-    assert got[2][4] == "Долг 425 806"
+    assert got[2][col["Баланс"] - 1] == "Долг 425 806"
 
 
 def test_range_label_and_a_month_without_records_or_carry():
@@ -217,6 +288,7 @@ def test_range_label_and_a_month_without_records_or_carry():
     ws = sheet(golden(), date_from=D(2026, 12, 1), date_to=D(2026, 12, 31))
     _, head = title_block(ws)
     assert [ws.cell(r, 1).value for r in (head + 1, head + 2, head + 3)] == ["Декабрь 2026", "С ноября перенесён аванс 60 000", "Записей нет"]
+    assert not any(ws.cell(r, 1).value == "Итого" for r in range(head, ws.max_row + 1))      # nothing to total
     ws = sheet(golden(), date_from=D(2026, 7, 1), date_to=D(2026, 7, 31))
     _, head = title_block(ws)
     assert [ws.cell(r, 1).value for r in (head + 1, head + 2)] == ["Июль 2026", "Записей нет"]
@@ -241,3 +313,15 @@ def test_an_empty_statement():
     ws = sheet(st)
     lines, head = title_block(ws)
     assert lines[2] == "Стоимость обучения 0 · Оплачено 0 · Баланс: 0" and ws.cell(head + 1, 1).value == "В выписке пока нет записей"
+
+
+def test_the_russian_file_name_without_technical_ids():
+    st = golden()
+    assert statement_file_name(st) == "Выписка_Иванов_Иван_на-21.10.2026.xlsx"
+    assert statement_file_name(st, D(2026, 10, 1), D(2026, 10, 31)) == "Выписка_Иванов_Иван_октябрь-2026.xlsx"
+    assert statement_file_name(st, D(2026, 10, 1), D(2026, 10, 15)) == "Выписка_Иванов_Иван_с-01.10.2026_по-15.10.2026.xlsx"
+    assert "A-0042" not in statement_file_name(st)
+    st.membership.student_name = 'Иван/"<x>"\\Петров'
+    assert not set('/"<>\\') & set(statement_file_name(st))
+    header = xs.content_disposition(statement_file_name(golden(), D(2026, 10, 1), D(2026, 10, 31)))
+    assert header.startswith('attachment; filename="Vypiska_Ivanov_Ivan_oktyabr-2026.xlsx"') and "filename*=UTF-8''%D0%92%D1%8B%D0%BF" in header
