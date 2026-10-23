@@ -777,6 +777,73 @@
         "title": "JournalAuthor",
         "type": "object"
       },
+      "JournalHistoryItem": {
+        "description": "One earlier version of a corrected payment (the payment that was replaced), for the «Подробности» of the screen and of the file.",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "method_label": {
+            "title": "Method Label",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt No"
+          },
+          "replaced_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced At"
+          },
+          "replaced_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced By Name"
+          }
+        },
+        "required": [
+          "receipt_no",
+          "amount",
+          "method_label",
+          "replaced_at",
+          "replaced_by_name",
+          "reason"
+        ],
+        "title": "JournalHistoryItem",
+        "type": "object"
+      },
       "JournalRow": {
         "properties": {
           "allocation_text": {
@@ -885,6 +952,13 @@
           "group_name": {
             "title": "Group Name",
             "type": "string"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/JournalHistoryItem"
+            },
+            "title": "History",
+            "type": "array"
           },
           "id": {
             "title": "Id",
@@ -1138,6 +1212,7 @@
           "corrected_by_name",
           "corrected_at",
           "replaced_by_receipt_no",
+          "history",
           "void_reason",
           "voided_at",
           "voided_by_name"
@@ -1552,7 +1627,7 @@
     },
     "/org/payments/journal": {
       "get": {
-        "description": "Журнал оплат периода: новые сверху, отменённые и исправленные видны (status), итог = сумма действующих оплат набора.",
+        "description": "Журнал оплат периода: новые сверху, отменённые и исправленные видны (status: all | active | voided = отменённые и исправленные | cancelled = только отменённые | replaced = только исправленные), итог = сумма действующих оплат набора.",
         "parameters": [
           {
             "in": "query",
@@ -1692,7 +1767,9 @@
               "enum": [
                 "all",
                 "active",
-                "voided"
+                "voided",
+                "cancelled",
+                "replaced"
               ],
               "title": "Status",
               "type": "string"
@@ -1787,7 +1864,7 @@
     },
     "/org/payments/journal/export": {
       "get": {
-        "description": "Журнал оплат файлом (xlsx / csv) с теми же фильтрами; ячейка, начинающаяся с = + - @, формулой не становится.",
+        "description": "Журнал оплат файлом (xlsx / csv) с теми же фильтрами; ячейка, начинающаяся с = + - @, формулой не становится. Исправленные (заменённые) оплаты в файл не попадают никогда: их история — в «Подробности» исправленной оплаты; status=replaced даёт пустой файл.",
         "parameters": [
           {
             "in": "query",
@@ -1916,7 +1993,9 @@
               "enum": [
                 "all",
                 "active",
-                "voided"
+                "voided",
+                "cancelled",
+                "replaced"
               ],
               "title": "Status",
               "type": "string"

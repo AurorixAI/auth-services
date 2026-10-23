@@ -34,6 +34,8 @@ CASES = {
     "J07_journal_kind_current_cash_day": ("PaymentsJournal", "journal", {"from": "2026-10-21", "to": "2026-10-21", "kind": "current", "method": "cash"}),
     "J08_journal_kind_current_page2": ("PaymentsJournal", "journal", {**OCT, "kind": "current", "size": 3, "page": 2}),
     "J09_journal_status_active": ("PaymentsJournal", "journal", {**OCT, "status": "active", "size": 5}),
+    "J10_journal_status_cancelled": ("PaymentsJournal", "journal", {**OCT, "status": "cancelled"}),
+    "J11_journal_status_replaced": ("PaymentsJournal", "journal", {**OCT, "status": "replaced"}),
 }
 ERRORS = {
     "RANGE_TOO_LONG": ("income", {"from": "2025-10-01", "to": "2026-10-21"}),

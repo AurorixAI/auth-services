@@ -106,6 +106,7 @@
       "corrected_by_name": null,
       "corrected_at": null,
       "replaced_by_receipt_no": null,
+      "history": [],
       "void_reason": null,
       "voided_at": null,
       "voided_by_name": null
@@ -163,6 +164,7 @@
       "corrected_by_name": null,
       "corrected_at": null,
       "replaced_by_receipt_no": null,
+      "history": [],
       "void_reason": null,
       "voided_at": null,
       "voided_by_name": null
@@ -254,6 +256,7 @@
       "corrected_by_name": null,
       "corrected_at": null,
       "replaced_by_receipt_no": null,
+      "history": [],
       "void_reason": null,
       "voided_at": null,
       "voided_by_name": null

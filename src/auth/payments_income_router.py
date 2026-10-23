@@ -6,7 +6,6 @@ money endpoint: ``require_payments_access`` (owner / admin with payments access)
 """
 from datetime import date
 from typing import Literal, Optional
-from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from src.core.database import get_db
 
+from . import xlsx_style
 from .dependencies import require_payments_access
 from .payments_income import IncomeReports
 from .payments_income_schemas import IncomeOverview, JournalKind, PaymentsJournal
@@ -62,7 +62,7 @@ def payments_journal(
     teacher_id: Optional[UUID] = None,
     created_by: Optional[UUID] = None,
     q: Optional[str] = Query(None, max_length=100, description="Имя / фамилия / ID ученика (или № квитанции)"),
-    status: Literal["all", "active", "voided"] = "all",
+    status: Literal["all", "active", "voided", "cancelled", "replaced"] = "all",
     kind: Optional[JournalKind] = Query(
         None, description="Только оплаты, в «куда пошли» которых есть этот вид (old_debt | current | forward | advance | refunded | transferred); "
                           "в строке остаётся весь split, totals.kind_sum = сумма этого вида по отобранным строкам = цифра плашки «Куда ушли деньги» "
@@ -70,7 +70,7 @@ def payments_journal(
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Журнал оплат периода: новые сверху, отменённые и исправленные видны (status), итог = сумма действующих оплат набора."""
+    """Журнал оплат периода: новые сверху, отменённые и исправленные видны (status: all | active | voided = отменённые и исправленные | cancelled = только отменённые | replaced = только исправленные), итог = сумма действующих оплат набора."""
     try:
         return IncomeReports(db).journal(
             user["org_id"], from_, to, page=page, size=size, method=method, group_id=group_id, teacher_id=teacher_id,
@@ -96,7 +96,7 @@ def payments_journal_export(
     teacher_id: Optional[UUID] = None,
     created_by: Optional[UUID] = None,
     q: Optional[str] = Query(None, max_length=100),
-    status: Literal["all", "active", "voided"] = "all",
+    status: Literal["all", "active", "voided", "cancelled", "replaced"] = "all",
     kind: Optional[JournalKind] = Query(
         None, description="Только оплаты, в «куда пошли» которых есть этот вид (old_debt | current | forward | advance | refunded | transferred); "
                           "в строке остаётся весь split, totals.kind_sum = сумма этого вида по отобранным строкам = цифра плашки «Куда ушли деньги» "
@@ -104,7 +104,7 @@ def payments_journal_export(
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ) -> Response:
-    """Журнал оплат файлом (xlsx / csv) с теми же фильтрами; ячейка, начинающаяся с = + - @, формулой не становится."""
+    """Журнал оплат файлом (xlsx / csv) с теми же фильтрами; ячейка, начинающаяся с = + - @, формулой не становится. Исправленные (заменённые) оплаты в файл не попадают никогда: их история — в «Подробности» исправленной оплаты; status=replaced даёт пустой файл."""
     try:
         data, content_type, filename = IncomeReports(db).journal_file(
             user["org_id"], from_, to, fmt=format, method=method, group_id=group_id, teacher_id=teacher_id,
@@ -113,4 +113,4 @@ def payments_journal_export(
         raise _http(exc)
     return Response(
         content=data, media_type=content_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"; filename*=UTF-8\'\'{quote(filename)}'})
+        headers=xlsx_style.attachment_headers(filename))

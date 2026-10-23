@@ -20,12 +20,13 @@ from uuid import UUID
 from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session, aliased
 
-from src.models.auth import Group, Student, StudentPayment, StudentRefund, StudentWriteoff
+from src.models.auth import Group, Organization, Student, StudentPayment, StudentRefund, StudentWriteoff
 
 from . import billing_ledger as bl
 from . import ledger_service as ls
 from . import payment_status as ps
 from . import payments_texts as tx
+from . import payments_journal_xlsx as jx
 from . import payments_views as pv
 from .business_clock import BUSINESS_TIMEZONE
 from .payments_files import person_name, staff_name
@@ -41,6 +42,7 @@ from .payments_income_schemas import (
     IncomeStripPart,
     IncomeTotals,
     JournalAuthor,
+    JournalHistoryItem,
     JournalRow,
     JournalTotals,
     MonthCollection,
@@ -52,8 +54,8 @@ from .payments_service import PaymentInvalid, PaymentService, RangeTooLong
 MAX_DAY_SERIES_DAYS = 92
 MAX_JOURNAL_PAGE = 100
 MAX_EXPORT_ROWS = 20_000
+MAX_CHAIN_DEPTH = 8                                       # corrections of a correction of a correction ...: the history goes this far back
 FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")          # OWASP: a cell that starts with one of these is never a formula
-STATUS_TEXT = {"active": "Действует", "voided": "Отменена", "replaced": "Исправлена"}
 
 
 class InvalidPeriod(PaymentInvalid):
@@ -585,8 +587,7 @@ class IncomeReports:
     def _journal_totals(self, org_id, first, last, method, group_id, teacher_id, created_by, q) -> Tuple[int, int, int, int]:
         """``(active count, active sum, voided count, replaced count)`` of the filtered set (``status`` / ``kind`` do not enter): one aggregate query.
         ``voided`` = every row with ``voided_at`` (cancelled + replaced); ``replaced`` = of them, the ones a newer payment corrects."""
-        newer = aliased(StudentPayment)
-        corrected = exists().where(and_(newer.replaces_payment_id == StudentPayment.id, newer.org_id == StudentPayment.org_id))
+        corrected = self._corrected()
         query = self._journal_filters(
             self._journal_base(
                 func.count(StudentPayment.id).filter(StudentPayment.voided_at.is_(None)),
@@ -597,10 +598,16 @@ class IncomeReports:
         count, total, voided, replaced = query.one()
         return int(count), int(total), int(voided), int(replaced)
 
+    @staticmethod
+    def _corrected():
+        """SQL: a newer payment corrects this one (it was replaced, not cancelled alone)."""
+        newer = aliased(StudentPayment)
+        return exists().where(and_(newer.replaces_payment_id == StudentPayment.id, newer.org_id == StudentPayment.org_id))
+
     def _kind_set(self, org_id: str, first: date, last: date, method, group_id, teacher_id, created_by, q, status: str, kind: str):
         """The journal rows that have ``kind`` in their split, in journal order: ``(ids, ledgers, whole amounts, kind part)``.  Only the ACTIVE payments have a
-        split (a cancelled / replaced one has no allocation), so ``status=voided`` is empty.  One query for the set + one batch of ledgers (the same as the strip's)."""
-        if status == "voided":
+        split (a cancelled / replaced one has no allocation), so ``status=voided`` / ``cancelled`` / ``replaced`` is empty.  One query for the set + one batch of ledgers (the same as the strip's)."""
+        if status in ("voided", "cancelled", "replaced"):
             return [], {}, 0, 0
         query = self._journal_filters(
             self._journal_base(StudentPayment.id, StudentPayment.membership_id, StudentPayment.amount),
@@ -640,7 +647,7 @@ class IncomeReports:
             rows = self._rows(org_id, self._journal_order(query).all(), ledgers) if query is not None else []
         else:
             kind_sum = None
-            rows_total = {"active": count, "voided": voided}.get(status, count + voided)
+            rows_total = {"active": count, "voided": voided, "cancelled": voided - replaced, "replaced": replaced}.get(status, count + voided)
             query = self._journal_filters(
                 self._journal_base(StudentPayment, Student, Group), org_id, first, last, method, group_id, teacher_id, created_by, q)
             query = self._status_filter(query, status)
@@ -653,12 +660,17 @@ class IncomeReports:
             totals=JournalTotals(count=count, sum=total_sum, voided_count=voided, replaced_count=replaced, kind_sum=kind_sum),
             rows=rows, authors=authors)
 
-    @staticmethod
-    def _status_filter(query, status: str):
+    @classmethod
+    def _status_filter(cls, query, status: str):
+        """``active`` / ``voided`` (cancelled + replaced) / ``cancelled`` (cancelled alone: nothing replaced it) / ``replaced`` (a newer payment corrects it) / all."""
         if status == "active":
             return query.filter(StudentPayment.voided_at.is_(None))
         if status == "voided":
             return query.filter(StudentPayment.voided_at.isnot(None))
+        if status == "cancelled":
+            return query.filter(StudentPayment.voided_at.isnot(None), ~cls._corrected())
+        if status == "replaced":
+            return query.filter(StudentPayment.voided_at.isnot(None), cls._corrected())
         return query
 
     @staticmethod
@@ -688,10 +700,13 @@ class IncomeReports:
                 ledgers = {e.membership.id: e.ledger for e in loader.run(live_members)}
         ids = [p.id for p in payments]
         was: Dict[Any, StudentPayment] = {}
-        replaced_ids = [p.replaces_payment_id for p in payments if p.replaces_payment_id]
-        if replaced_ids:
-            was = {o.id: o for o in self.db.query(StudentPayment).filter(
-                StudentPayment.org_id == org_id, StudentPayment.id.in_(replaced_ids))}
+        frontier = [p.replaces_payment_id for p in payments if p.replaces_payment_id]
+        for _depth in range(MAX_CHAIN_DEPTH):                         # the earlier versions of a corrected payment: one query per STEP of the chain, not per row
+            if not frontier:
+                break
+            found = self.db.query(StudentPayment).filter(StudentPayment.org_id == org_id, StudentPayment.id.in_(frontier)).all()
+            was.update({o.id: o for o in found})
+            frontier = [o.replaces_payment_id for o in found if o.replaces_payment_id and o.replaces_payment_id not in was]
         becomes: Dict[Any, Optional[int]] = {}
         if ids:
             for new in self.db.query(StudentPayment).filter(
@@ -699,6 +714,19 @@ class IncomeReports:
                 becomes[new.replaces_payment_id] = new.receipt_no
         users = self.service._users(
             [x for p, _s, g in triples for x in (p.created_by, p.voided_by, g.teacher_id)] + [o.voided_by for o in was.values()])
+        def history_of(p: StudentPayment) -> List[JournalHistoryItem]:
+            """The earlier versions of an ACTIVE corrected payment, the OLDEST first."""
+            items: List[JournalHistoryItem] = []
+            seen = set()
+            cur = was.get(p.replaces_payment_id) if p.replaces_payment_id else None
+            while cur is not None and cur.id not in seen:
+                seen.add(cur.id)
+                items.append(JournalHistoryItem(
+                    receipt_no=cur.receipt_no, amount=int(cur.amount), method_label=tx.method_label(cur.method), replaced_at=_iso(cur.voided_at),
+                    replaced_by_name=_staff(users.get(cur.voided_by)), reason=cur.void_reason))
+                cur = was.get(cur.replaces_payment_id) if cur.replaces_payment_id else None
+            return items[::-1]
+
         out: List[JournalRow] = []
         for p, student, group in triples:
             ledger = ledgers.get(p.membership_id) if p.voided_at is None else None
@@ -723,7 +751,7 @@ class IncomeReports:
                 replaces_method=(old.method or "unknown") if old and (old.method or "unknown") != (p.method or "unknown") else None,
                 replaces_method_label=tx.method_label(old.method) if old and (old.method or "unknown") != (p.method or "unknown") else None,
                 corrected_by_name=_staff(users.get(old.voided_by)) if old else None, corrected_at=_iso(old.voided_at) if old else None,
-                replaced_by_receipt_no=replaced_by, void_reason=p.void_reason if p.voided_at else None,
+                replaced_by_receipt_no=replaced_by, history=history_of(p) if p.voided_at is None else [], void_reason=p.void_reason if p.voided_at else None,
                 voided_at=_iso(p.voided_at), voided_by_name=_staff(users.get(p.voided_by))))
         return out
 
@@ -735,79 +763,72 @@ class IncomeReports:
         q: Optional[str] = None, status: str = "all", kind: Optional[str] = None,
     ) -> Tuple[bytes, str, str]:
         """``(bytes, content type, filename)`` of the whole filtered journal (xlsx / csv); a cell that starts with = + - @ TAB CR never runs.  ``kind`` keeps the rows
-        that have the kind in their split (the same set as the page)."""
+        that have the kind in their split (the same set as the page).
+
+        The file NEVER holds a replaced payment (a newer one corrects it; its story is in the «Подробности» of the corrected row): ``status`` all = active +
+        cancelled, ``voided`` / ``cancelled`` = the cancelled ones, ``replaced`` = an empty file."""
         validate_range(first, last)
-        count, total_sum, voided, _replaced = self._journal_totals(org_id, first, last, method, group_id, teacher_id, created_by, q)
+        count, _total_sum, voided, replaced = self._journal_totals(org_id, first, last, method, group_id, teacher_id, created_by, q)
         kind_sum = None
+        cancelled = voided - replaced
         if kind:
-            ids, ledgers, total_sum, kind_sum = self._kind_set(org_id, first, last, method, group_id, teacher_id, created_by, q, status, kind)
-            count, voided = len(ids), 0
-            if count > MAX_EXPORT_ROWS:
+            ids, ledgers, _total, kind_sum = self._kind_set(org_id, first, last, method, group_id, teacher_id, created_by, q, status, kind)
+            if len(ids) > MAX_EXPORT_ROWS:
                 raise ExportTooLong("Слишком много оплат для файла — сузьте период или фильтры")
             rows = self._rows(org_id, self._journal_order(self._journal_base(StudentPayment, Student, Group).filter(
                 StudentPayment.id.in_(ids))).all(), ledgers) if ids else []
         else:
-            if {"active": count, "voided": voided}.get(status, count + voided) > MAX_EXPORT_ROWS:
+            if {"active": count, "voided": cancelled, "cancelled": cancelled, "replaced": 0}.get(status, count + cancelled) > MAX_EXPORT_ROWS:
                 raise ExportTooLong("Слишком много оплат для файла — сузьте период или фильтры")
-            query = self._journal_filters(
-                self._journal_base(StudentPayment, Student, Group), org_id, first, last, method, group_id, teacher_id, created_by, q)
-            rows = self._rows(org_id, self._journal_order(self._status_filter(query, status)).all())
-        header = ["№ квитанции", "Дата", "Время", "Ученик", "ID ученика", "Группа", "Преподаватель", "Сумма", "Способ", "Кто внёс",
-                  "Куда пошли", "Статус", "Примечание", "Внесена"]
-        top = [
-            ["Журнал оплат", f"с {first.strftime('%d.%m.%Y')} по {last.strftime('%d.%m.%Y')}"],
-            ["Оплат", count, "На сумму", total_sum] + (["Отменённых / исправленных", voided] if voided else []),
-        ]
-        if kind:
-            top.append(["Только оплаты, где есть:", tx.INCOME_KIND_LABELS[kind], "Сумма этой части", kind_sum])
-        def entered_cell(r) -> str:
-            """Only for a back-dated payment (the «Время» cell is empty then): «21.10 11:40»."""
-            return r.entered_at_text.replace("внесена ", "", 1).replace(" в ", " ", 1) if r.entered_at_text else ""
-
-        body = []
-        for r in rows:
-            status_text = STATUS_TEXT[r.status]
-            if r.status == "replaced" and r.replaced_by_receipt_no:
-                status_text += f" (№ {r.replaced_by_receipt_no})"
-            elif r.status == "active" and r.replaces_receipt_no:
-                status_text += f" (исправляет № {r.replaces_receipt_no})"
-            body.append([r.receipt_no if r.receipt_no is not None else "", r.paid_on.strftime("%d.%m.%Y"), r.paid_time or "",
-                         r.student_name, r.display_id or "", r.group_name, r.teacher_name or "", r.amount, r.method_label,
-                         r.created_by_name or "", r.allocation_text or "", status_text, r.note or "", entered_cell(r)])
-        base = f"payments-{first.isoformat()}-{last.isoformat()}"
+            rows = []
+            if status != "replaced":
+                query = self._journal_filters(
+                    self._journal_base(StudentPayment, Student, Group), org_id, first, last, method, group_id, teacher_id, created_by, q)
+                query = query.filter(or_(StudentPayment.voided_at.is_(None), ~self._corrected())) if status == "all" else self._status_filter(
+                    query, "active" if status == "active" else "cancelled")
+                rows = self._rows(org_id, self._journal_order(query).all())
+        rows = jx.emitted(rows)
+        as_of = ps.business_today()
+        org = self.db.get(Organization, org_id)
+        filters = self._filter_words(org_id, method, group_id, teacher_id, created_by, q, status, kind)
+        kind_label = tx.INCOME_KIND_LABELS[kind] if kind else None
         if fmt == "csv":
             buf = io.StringIO()
             writer = csv.writer(buf, delimiter=";")
-            for line in top:
-                writer.writerow(csv_safe_row(line))
+            for line in jx.title_lines(rows, org_name=org.name if org else None, as_of=as_of, first=first, last=last, filters=filters,
+                                       kind_label=f"Сумма «{kind_label}»" if kind else None, kind_sum=kind_sum):
+                writer.writerow(csv_safe_row([line]))
             writer.writerow([])
-            writer.writerow(header)
-            for line in body:
-                writer.writerow(csv_safe_row(line))
-            return ("﻿" + buf.getvalue()).encode("utf-8"), "text/csv; charset=utf-8", base + ".csv"
-        from openpyxl import Workbook
-        from openpyxl.styles import Font
+            writer.writerow(jx.HEADER)
+            for r in rows:
+                values = jx.table_values(r)
+                values[jx.COL["date"] - 1] = r.paid_on.strftime("%d.%m.%Y")
+                entered = values[jx.COL["entered"] - 1]
+                values[jx.COL["entered"] - 1] = entered.strftime("%d.%m.%Y %H:%M") if entered else ""
+                values[jx.COL["details"] - 1] = (values[jx.COL["details"] - 1] or "").replace("\n", " | ")
+                writer.writerow(csv_safe_row(["" if v is None else v for v in values]))
+            return ("﻿" + buf.getvalue()).encode("utf-8"), "text/csv; charset=utf-8", f"payments-{first.isoformat()}-{last.isoformat()}.csv"
+        data = jx.build_journal_xlsx(rows, org_name=org.name if org else None, as_of=as_of, first=first, last=last, filters=filters,
+                                     kind_label=f"Сумма «{kind_label}»" if kind else None, kind_sum=kind_sum)
+        return data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", jx.journal_file_name(first, last)
 
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Журнал оплат"
-
-        def put(line):
-            ws.append(line)
-            for cell in ws[ws.max_row]:
-                if isinstance(cell.value, str):
-                    cell.data_type = "s"          # text stays text: a note starting with "=" is never a formula
-
-        for line in top:
-            put(line)
-        ws.append([])
-        put(header)
-        for cell in ws[ws.max_row]:
-            cell.font = Font(bold=True)
-        for line in body:
-            put(line)
-        for col, width in zip("ABCDEFGHIJKLMN", (12, 12, 8, 28, 14, 22, 22, 14, 16, 22, 52, 22, 36, 14)):
-            ws.column_dimensions[col].width = width
-        out = io.BytesIO()
-        wb.save(out)
-        return out.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", base + ".xlsx"
+    def _filter_words(self, org_id: str, method, group_id, teacher_id, created_by, q, status: str, kind) -> List[str]:
+        """The filters of the file in words (the second line of the title block); what is not filtered is not mentioned."""
+        words: List[str] = []
+        if method:
+            words.append(f"Способ: {tx.method_label(method)}")
+        if group_id:
+            group = self.db.query(Group.name).filter(Group.id == group_id, Group.org_id == org_id).first()
+            words.append(f"Группа: {group[0]}" if group else "")
+        people = self.service._users([x for x in (teacher_id, created_by) if x])
+        if teacher_id:
+            words.append(f"Преподаватель: {_staff(people.get(teacher_id)) or ''}")
+        if created_by:
+            words.append(f"Кто внёс: {_staff(people.get(created_by)) or ''}")
+        if q and q.strip():
+            words.append(f"Поиск: «{q.strip()}»")
+        if status in jx.STATUS_WORDS:
+            words.append(jx.STATUS_WORDS[status].capitalize())
+        if kind:
+            words.append(f"Только оплаты, где есть: {tx.INCOME_KIND_LABELS[kind]}")
+        return [w for w in words if w and not w.endswith(": ")]

@@ -37,6 +37,36 @@ def receipts(w, first, last, **params):
     return r.json()
 
 
+def journal_xlsx(w, client=None, **params):
+    """``(response, worksheet)`` of the journal file of October (or of the given range)."""
+    params = {"from": "2026-10-01", "to": "2026-10-31", **params}
+    r = (client or owner(w)).get(f"{API}/org/payments/journal/export", params=params)
+    assert r.status_code == 200, r.text
+    return r, load_workbook(io.BytesIO(r.content)).active
+
+
+def table_of(ws):
+    """``(header row, {header: column}, [row as {header: value}])``: the table ends at the blue «Итого» row (or the note «Оплат за период нет»)."""
+    head = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 1).value == "№ квитанции")
+    cols = {ws.cell(head, c).value: c for c in range(1, ws.max_column + 1) if ws.cell(head, c).value}
+    body = []
+    for r in range(head + 1, ws.max_row + 1):
+        if not isinstance(ws.cell(r, 1).value, int):
+            break
+        body.append({h: ws.cell(r, c).value for h, c in cols.items()})
+    return head, cols, body
+
+
+def journal_csv(w, **params):
+    import csv as csv_module
+
+    r = owner(w).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "format": "csv", **params})
+    assert r.status_code == 200, r.text
+    rows = list(csv_module.reader(io.StringIO(r.text.lstrip("\ufeff")), delimiter=";"))
+    head = next(i for i, row in enumerate(rows) if row and row[0] == "№ квитанции")
+    return rows[:head], rows[head], [row for row in rows[head + 1:] if row]
+
+
 @pytest.fixture
 def seeded(world, fixed_today):
     return income2_world(world)
@@ -315,10 +345,10 @@ def test_method_unknown_is_the_same_everywhere(world, seeded):
     assert only["current"]["received"] == till["amount"] and [x["method"] for x in only["by_method"]] == ["unknown"] and only["ok"]
     old = receipts(world, "2026-10-01", "2026-10-31", method="unknown")["totals"]
     assert (old["received"], old["payments_count"]) == (100_000, 2)
-    r = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "method": "unknown"})
-    rows = [[c.value for c in row] for row in load_workbook(io.BytesIO(r.content)).active.iter_rows()]
-    assert rows[1][:4] == ["Оплат", 2, "На сумму", 100_000]
-    assert sum(1 for row in rows if len(row) > 8 and row[8] == "Способ не указан") == 2
+    _, ws = journal_xlsx(world, method="unknown")
+    _, _, body = table_of(ws)
+    assert ws["A3"].value == "Оплат 2 · Оплачено 100 000" and "Способ: Способ не указан" in ws["A2"].value
+    assert [row["Способ"] for row in body] == ["Способ не указан"] * 2
 
 
 def test_journal_authors_ignore_created_by_but_follow_the_other_filters(world, seeded):
@@ -423,35 +453,173 @@ def test_journal_is_limited_to_the_callers_organisation_and_to_money_access(worl
     o = income(world, "2026-10-01", "2026-10-31", client=foreign)
     assert o["current"]["received"] == 0 and o["collection"]["groups"] == [] and o["position"]["debt_total"] == 0
     assert o["cash"] is None and o["summary_text"].startswith("За октябрь (по 21-е) оплат не было")
-    r = foreign.get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31"})
-    assert r.status_code == 200 and len([row for row in load_workbook(io.BytesIO(r.content)).active.iter_rows()]) <= 4
+    _, ws = journal_xlsx(world, client=foreign)                                       # nothing of the other centre in the file
+    assert table_of(ws)[2] == [] and ws["A3"].value == "Оплат 0 · Оплачено 0" and any(
+        ws.cell(r, 1).value == "Оплат за период нет" for r in range(1, ws.max_row + 1))
 
 
 # ---- Excel ------------------------------------------------------------------------------------------------------
 
 
-def test_journal_excel_is_complete_and_formula_safe(world, seeded):
-    r = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31"})
-    assert r.status_code == 200 and r.headers["content-type"].startswith("application/vnd.openxmlformats")
-    assert 'filename="payments-2026-10-01-2026-10-31.xlsx"' in r.headers["content-disposition"]
-    ws = load_workbook(io.BytesIO(r.content)).active
-    rows = [[c.value for c in row] for row in ws.iter_rows()]
-    assert rows[0][:2] == ["Журнал оплат", "с 01.10.2026 по 31.10.2026"]
-    assert rows[1][:4] == ["Оплат", 7, "На сумму", 3_450_000]
-    head = rows.index(["№ квитанции", "Дата", "Время", "Ученик", "ID ученика", "Группа", "Преподаватель", "Сумма", "Способ", "Кто внёс",
-                       "Куда пошли", "Статус", "Примечание", "Внесена"])
-    body = rows[head + 1:]
-    assert len(body) == 9 and [r[0] for r in body] == [13, 12, 10, 11, 9, 8, 7, 6, 5]
-    assert body[0][1:] == ["21.10.2026", "11:40", "Алиев Тимур", "INC-005", "Английский 7Б", "Мария Ким", 150_000, "Наличные",
-                           "Азиз Хакимов", "за октябрь — 150 000 сум", "Действует", "=SUM(A1)", None]       # an empty cell reads back as None
-    assert body[2][11] == "Отменена" and body[3][11] == "Действует (исправляет № 9)" and body[4][11] == "Исправлена (№ 11)"
-    cells = [c for row in ws.iter_rows() for c in row if isinstance(c.value, str) and c.value.startswith("=")]
-    assert cells and all(c.data_type == "s" for c in cells)                       # the note starts with "=": text, never a formula
-    csv = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "format": "csv"})
-    assert "'=SUM(A1)" in csv.text and not any(p.strip().startswith("=") for line in csv.text.splitlines() for p in line.split(";"))
-    filtered = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "method": "click"})
-    ws = load_workbook(io.BytesIO(filtered.content)).active
-    assert [c.value for c in ws[2]][:4] == ["Оплат", 1, "На сумму", 1_250_000]
+JOURNAL_HEADER = ["№ квитанции", "Дата", "Ученик", "ID ученика", "Группа", "Преподаватель", "Оплачено", "Способ", "Кто внёс", "Внесена", "Статус",
+                  "Примечание", "Подробности"]
+
+
+def test_journal_excel_golden_cells_types_formats_and_fills(world, seeded):
+    r, ws = journal_xlsx(world)
+    assert r.headers["content-type"].startswith("application/vnd.openxmlformats")
+    assert r.headers["content-disposition"] == ("attachment; filename=\"Zhurnal_oplat_oktyabr-2026.xlsx\"; "
+                                                "filename*=UTF-8''%D0%96%D1%83%D1%80%D0%BD%D0%B0%D0%BB_%D0%BE%D0%BF%D0%BB%D0%B0%D1%82_%D0%BE%D0%BA%D1%82%D1%8F%D0%B1%D1%80%D1%8C-2026.xlsx")
+    assert ws.title == "Журнал оплат"
+    # the title block: three merged rows over the whole width, the as-of / period line, the totals in the words of the screen
+    assert ws["A1"].value == "Журнал оплат — N13 org" and ws["A1"].font.bold and ws["A1"].font.size == 14
+    assert ws["A2"].value == "По состоянию на 21.10.2026 · Период: Октябрь 2026"
+    assert ws["A3"].value == "Оплат 7 · Оплачено 3 450 000 · Отменённых 1"                  # voided 2 - replaced 1
+    assert {str(x) for x in ws.merged_cells.ranges} >= {"A1:M1", "A2:M2", "A3:M3"} and ws.cell(4, 1).value is None
+    head, cols, body = table_of(ws)
+    assert head == 5 and list(cols) == JOURNAL_HEADER and ws.freeze_panes == "D6" and ws.auto_filter.ref == "A5:M13"
+    for c in range(1, 14):
+        cell = ws.cell(5, c)
+        assert cell.fill.fgColor.rgb.endswith("D9E2F3") and cell.font.bold and cell.font.name == "Calibri" and cell.alignment.wrap_text
+    # ONE payment = ONE row; a replaced payment (№ 9) is never a row
+    assert [row["№ квитанции"] for row in body] == [13, 12, 10, 11, 8, 7, 6, 5]
+    from datetime import datetime as dt
+
+    assert body[0] == {
+        "№ квитанции": 13, "Дата": dt(2026, 10, 21), "Ученик": "Алиев Тимур", "ID ученика": "INC-005", "Группа": "Английский 7Б", "Преподаватель": "Мария Ким",
+        "Оплачено": 150_000, "Способ": "Наличные", "Кто внёс": "Азиз Хакимов", "Внесена": dt(2026, 10, 21, 11, 40), "Статус": "Действует",
+        "Примечание": "=SUM(A1)", "Подробности": "за октябрь — 150 000 сум"}
+    # the types and formats of a row
+    n = 6
+    assert ws.cell(n, 1).data_type == "n" and ws.cell(n, 2).is_date and ws.cell(n, 2).number_format == "DD.MM.YYYY"
+    assert ws.cell(n, 7).data_type == "n" and ws.cell(n, 7).number_format == "#,##0"
+    assert ws.cell(n, 10).is_date and ws.cell(n, 10).number_format == "DD.MM.YYYY HH:MM"
+    assert ws.cell(n, 12).data_type == "s" and ws.cell(n, 12).value.startswith("=")          # the note starts with "=": text, never a formula
+    assert all(c.data_type != "f" for row in ws.iter_rows() for c in row)
+    # a cancelled payment: grey, struck through, the reason in «Подробности» (grey, not struck); its amount is not in the totals
+    by = {row["№ квитанции"]: i for i, row in enumerate(body, start=6)}
+    gone = by[10]
+    assert body[by[10] - 6]["Статус"] == "Отменена" and body[by[10] - 6]["Оплачено"] == 777_000
+    assert body[by[10] - 6]["Подробности"] == "отменена 20.10 · Нодира Саидова · причина: Ошибочный ввод"
+    assert ws.cell(gone, 7).font.strike and ws.cell(gone, 7).font.color.rgb.endswith("808080") and ws.cell(gone, 3).font.strike
+    assert not ws.cell(gone, 13).font.strike and ws.cell(gone, 13).font.color.rgb.endswith("808080")
+    # a corrected payment: the final amount, the version history under the allocation (the default reason «Исправлено» is not repeated)
+    fixed = body[by[11] - 6]
+    assert fixed["Оплачено"] == 350_000 and fixed["Статус"] == "Действует (исправлена)"
+    assert fixed["Подробности"] == "за октябрь — 350 000 сум\nисправлена 15.10: было 400 000 сум (№ 9), способ: Карта · исправил Азиз Хакимов"
+    assert ws.cell(by[11], 13).alignment.wrap_text and ws.row_dimensions[by[11]].height >= 30
+    # the blue «Итого»: the active payments only
+    total = 14
+    assert ws.cell(total, 1).value == "Итого" and ws.cell(total, 3).value == "Оплат: 7" and ws.cell(total, 7).value == 3_450_000
+    assert ws.cell(total, 7).number_format == "#,##0"
+    assert all(ws.cell(total, c).fill.fgColor.rgb.endswith("D9E2F3") and ws.cell(total, c).font.bold for c in range(1, 14))
+    assert ws.cell(total, 1).border.top.style == "medium"
+    # «Итого по способам»: a small block under the table, the biggest first
+    assert ws.cell(16, 1).value == "Итого по способам" and ws.cell(16, 1).fill.fgColor.rgb.endswith("EDF1F7") and "A16:M16" in {str(x) for x in ws.merged_cells.ranges}
+    assert [ws.cell(17, c).value for c in (3, 4, 5)] == ["Способ", "Оплат", "Оплачено"] and ws.cell(17, 3).fill.fgColor.rgb.endswith("D9E2F3")
+    assert [[ws.cell(r, c).value for c in (3, 4, 5)] for r in range(18, 22)] == [
+        ["Click", 1, 1_250_000], ["Наличные", 4, 950_000], ["Перевод", 1, 900_000], ["Карта", 1, 350_000]]
+    assert sum(ws.cell(r, 5).value for r in range(18, 22)) == ws.cell(total, 7).value
+    # widths from the content: the date, the moment and the biggest sum fit; the long texts wrap
+    width = {name: ws.column_dimensions[chr(64 + c)].width for name, c in cols.items()}
+    assert width["Дата"] >= 12 and width["Внесена"] >= 18 and width["Оплачено"] >= len("1,250,000") + 2 and width["№ квитанции"] >= len("№ квитанции") - 1
+    assert width["Статус"] >= len("Действует (исправлена)") and width["Подробности"] == 60
+    assert ws.page_setup.orientation == "landscape" and ws.page_setup.fitToWidth == 1 and ws.print_title_rows == "$5:$5"
+    # the old words and the old blue are gone
+    flat = [str(c.value) for row in ws.iter_rows() for c in row if c.value is not None]
+    assert not any(x in flat for x in ("Сумма", "Куда пошли", "Время", "На сумму", "Исправлена (№ 11)")) and not any("Начисл" in x for x in flat)
+    assert all("2F6FED" not in str(c.fill.fgColor.rgb) for row in ws.iter_rows() for c in row)
+
+
+def test_journal_file_never_holds_a_replaced_payment_whatever_the_status(world, seeded):
+    want = {"all": [13, 12, 10, 11, 8, 7, 6, 5], "active": [13, 12, 11, 8, 7, 6, 5], "voided": [10], "cancelled": [10], "replaced": []}
+    for status, receipts_ in want.items():
+        _, ws = journal_xlsx(world, status=status)
+        assert [row["№ квитанции"] for row in table_of(ws)[2]] == receipts_, status
+        _, _, body = journal_csv(world, status=status)
+        assert [int(row[0]) for row in body] == receipts_, status
+    _, ws = journal_xlsx(world, status="replaced")
+    assert "заменённые версии в файл не выводятся" in ws["A2"].value and any(ws.cell(r, 1).value == "Оплат за период нет" for r in range(1, ws.max_row + 1))
+    _, ws = journal_xlsx(world, status="cancelled")
+    assert ws["A3"].value == "Отменённых 1" and "Только отменённые" in ws["A2"].value and table_of(ws)[2][0]["Статус"] == "Отменена"
+    assert not any(ws.cell(r, 1).value == "Итого по способам" for r in range(1, ws.max_row + 1))          # no active payment: no block
+    assert not any(c.value == 9 for row in journal_xlsx(world)[1].iter_rows(min_col=1, max_col=1) for c in row)
+
+
+def test_journal_csv_has_the_same_table_without_a_replaced_row(world, seeded):
+    top, header, body = journal_csv(world)
+    assert header == JOURNAL_HEADER and [int(row[0]) for row in body] == [13, 12, 10, 11, 8, 7, 6, 5]
+    assert top[0] == ["Журнал оплат — N13 org"] and top[2] == ["Оплат 7 · Оплачено 3 450 000 · Отменённых 1"]
+    assert body[0][:2] == ["13", "21.10.2026"] and body[0][9] == "21.10.2026 11:40" and body[0][11] == "'=SUM(A1)"
+    assert body[3][12] == "за октябрь — 350 000 сум | исправлена 15.10: было 400 000 сум (№ 9), способ: Карта · исправил Азиз Хакимов"
+    rows_, _, _ = journal_csv(world)
+    assert not any(p.strip().startswith("=") for r_ in (rows_, body) for line in r_ for p in line)
+
+
+def test_a_filtered_file_says_its_filters_in_words_and_totals_what_it_shows(world, seeded):
+    _, ws = journal_xlsx(world, method="click")
+    assert ws["A2"].value == "По состоянию на 21.10.2026 · Период: Октябрь 2026 · Способ: Click" and ws["A3"].value == "Оплат 1 · Оплачено 1 250 000"
+    assert [row["№ квитанции"] for row in table_of(ws)[2]] == [7]
+    _, ws = journal_xlsx(world, group_id=str(seeded["groups"]["B"].id), created_by=str(world.owner.id), q="алиев")
+    assert ws["A2"].value == "По состоянию на 21.10.2026 · Период: Октябрь 2026 · Группа: Английский 7Б · Кто внёс: Азиз Хакимов · Поиск: «алиев»"
+    assert [row["№ квитанции"] for row in table_of(ws)[2]] == [13]
+    _, ws = journal_xlsx(world, **{"from": "2026-10-21", "to": "2026-10-21"})
+    assert ws["A2"].value == "По состоянию на 21.10.2026 · Период: 21.10.2026–21.10.2026"
+
+
+def test_the_journal_file_name_is_russian_for_a_month_a_day_and_a_range(world, seeded):
+    def name(**params):
+        r = owner(world).get(f"{API}/org/payments/journal/export", params=params)
+        from urllib.parse import unquote
+
+        return unquote(r.headers["content-disposition"].split("filename*=UTF-8''")[1])
+
+    assert name(**{"from": "2026-10-01", "to": "2026-10-31"}) == "Журнал_оплат_октябрь-2026.xlsx"
+    assert name(**{"from": "2026-10-21", "to": "2026-10-21"}) == "Журнал_оплат_21.10.2026.xlsx"
+    assert name(**{"from": "2026-10-05", "to": "2026-10-21"}) == "Журнал_оплат_05.10-21.10.2026.xlsx"
+    assert name(**{"from": "2026-09-20", "to": "2026-10-21"}) == "Журнал_оплат_20.09-21.10.2026.xlsx"
+    assert name(**{"from": "2025-12-20", "to": "2026-01-10"}) == "Журнал_оплат_20.12.2025-10.01.2026.xlsx"
+
+
+# ---- history[] and the new status values of the API --------------------------------------------------------------
+
+
+def test_the_journal_api_has_history_on_an_active_corrected_row_oldest_first(world, seeded):
+    rows = {r["receipt_no"]: r for r in journal(world, size=100)["rows"]}
+    assert rows[11]["history"] == [{"receipt_no": 9, "amount": 400_000, "method_label": "Карта", "replaced_at": "2026-10-15T06:30:00",
+                                    "replaced_by_name": "Азиз Хакимов", "reason": "Исправлено"}]
+    assert all(r["history"] == [] for n, r in rows.items() if n != 11)                          # never corrected, replaced (9) or cancelled (10): empty
+    assert (rows[11]["replaces_receipt_no"], rows[11]["replaces_amount"]) == (9, 400_000)         # the older fields stay
+    # a correction of a correction: the OLDEST version first
+    db, o = world.db, world.owner
+    p11, c1 = seeded["payments"]["c1-oct15"], seeded["memberships"]["c1"]
+    p11.voided_at, p11.voided_by, p11.void_reason = datetime(2026, 10, 16, 8, 0), world.admin.id, "Сумма не та"
+    db.add(StudentPayment(id=uid(world.org, "pay:c1-oct15-again"), org_id=world.org.id, membership_id=c1.id, student_id=c1.student_id, group_id=c1.group_id,
+                          amount=360_000, paid_on=D(2026, 10, 15), method="cash", receipt_no=14, created_by=o.id, created_at=datetime(2026, 10, 16, 8, 0),
+                          replaces_payment_id=p11.id))
+    db.commit()
+    rows = {r["receipt_no"]: r for r in journal(world, size=100)["rows"]}
+    assert [(h["receipt_no"], h["amount"], h["method_label"], h["reason"]) for h in rows[14]["history"]] == [
+        (9, 400_000, "Карта", "Исправлено"), (11, 350_000, "Карта", "Сумма не та")]
+    assert rows[14]["history"][1]["replaced_by_name"] == "Нодира Саидова" and rows[11]["history"] == [] and rows[11]["status"] == "replaced"
+    _, ws = journal_xlsx(world)
+    text = next(row["Подробности"] for row in table_of(ws)[2] if row["№ квитанции"] == 14)
+    assert text.splitlines()[1:] == ["исправлена 15.10: было 400 000 сум (№ 9), способ: Карта · исправил Азиз Хакимов",
+                                     "исправлена 16.10: было 350 000 сум (№ 11), способ: Карта · исправил Нодира Саидова · причина: Сумма не та"]
+    assert [row["№ квитанции"] for row in table_of(ws)[2]] == [13, 12, 10, 14, 8, 7, 6, 5]      # neither 9 nor 11 is a row any more
+
+
+def test_journal_status_cancelled_and_replaced(world, seeded):
+    cancelled, replaced, voided = (journal(world, status=s) for s in ("cancelled", "replaced", "voided"))
+    assert [r["receipt_no"] for r in cancelled["rows"]] == [10] and [r["status"] for r in cancelled["rows"]] == ["voided"]
+    assert [r["receipt_no"] for r in replaced["rows"]] == [9] and [r["status"] for r in replaced["rows"]] == ["replaced"]
+    assert sorted(r["receipt_no"] for r in voided["rows"]) == [9, 10]                                # «voided» is both, as before
+    assert (cancelled["total"], replaced["total"], voided["total"]) == (1, 1, 2) and (cancelled["pages"], replaced["pages"]) == (1, 1)
+    for j in (cancelled, replaced, voided):                                                          # the counters do not depend on the status
+        assert (j["totals"]["voided_count"], j["totals"]["replaced_count"], j["totals"]["count"], j["totals"]["sum"]) == (2, 1, 7, 3_450_000)
+    assert journal(world, status="cancelled", size=1, page=2)["rows"] == []
+    assert journal(world, status="cancelled", kind="advance")["rows"] == [] and journal(world, status="replaced", kind="advance")["total"] == 0
+    assert owner(world).get(f"{API}/org/payments/journal", params={"from": "2026-10-01", "to": "2026-10-31", "status": "bogus"}).status_code == 422
 
 
 # ---- the budget of queries --------------------------------------------------------------------------------------
@@ -571,16 +739,19 @@ def test_paid_time_is_the_entry_time_only_for_a_payment_entered_on_its_own_day(w
     assert (own["paid_time"], own["entered_at_text"]) == ("00:30", None)
     utc_day = rows[ids["after-midnight-utc-day"]]
     assert (utc_day["paid_time"], utc_day["entered_at_text"], utc_day["created_at"]) == (None, "внесена 21.10 в 00:30", "2026-10-20T19:30:00")
-    # Excel / CSV: the «Время» cell follows the same rule; «Внесена» is filled only for a back-dated payment
-    r = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31"})
-    sheet = [[c.value for c in row] for row in load_workbook(io.BytesIO(r.content)).active.iter_rows()]
-    head = next(i for i, row in enumerate(sheet) if row[0] == "№ квитанции")
-    assert sheet[head][2] == "Время" and sheet[head][13] == "Внесена"
-    by_receipt = {row[0]: [c if c is not None else "" for c in row] for row in sheet[head + 1:]}      # an empty cell reads back as None
-    assert (by_receipt[900][1], by_receipt[900][2], by_receipt[900][13]) == ("15.10.2026", "", "21.10 11:40")
-    assert (by_receipt[901][1], by_receipt[901][2], by_receipt[901][13]) == ("21.10.2026", "00:30", "")
-    assert (by_receipt[902][1], by_receipt[902][2], by_receipt[902][13]) == ("20.10.2026", "", "21.10 00:30")
-    assert by_receipt[13][2] == "11:40" and by_receipt[13][13] == ""
+    # Excel / CSV: «Внесена» is the real moment of entry (Tashkent) of EVERY payment - one column, no gaps: the old «Время» / «Внесена» pair is gone
+    _, ws = journal_xlsx(world)
+    _, _, body = table_of(ws)
+    assert "Время" not in [ws.cell(5, c).value for c in range(1, 14)]
+    by_receipt = {row["№ квитанции"]: row for row in body}
+    from datetime import datetime as dt
+
+    assert (by_receipt[900]["Дата"], by_receipt[900]["Внесена"]) == (dt(2026, 10, 15), dt(2026, 10, 21, 11, 40))
+    assert (by_receipt[901]["Дата"], by_receipt[901]["Внесена"]) == (dt(2026, 10, 21), dt(2026, 10, 21, 0, 30))
+    assert (by_receipt[902]["Дата"], by_receipt[902]["Внесена"]) == (dt(2026, 10, 20), dt(2026, 10, 21, 0, 30))
+    assert by_receipt[13]["Внесена"] == dt(2026, 10, 21, 11, 40) and all(row["Внесена"] is not None for row in body)
+    _, _, csv_body = journal_csv(world)
+    assert {int(row[0]): row[9] for row in csv_body}[900] == "21.10.2026 11:40"
 
 
 def test_a_non_ascii_digit_in_the_search_is_text_not_a_receipt_number(world, seeded):
@@ -614,28 +785,23 @@ def test_export_too_long_cap_and_the_voided_export(world, seeded, monkeypatch):
         r = owner(world).get(f"{API}/org/payments/journal/export", params={**params, "format": fmt})
         assert r.status_code == 422 and r.json()["detail"]["code"] == "EXPORT_TOO_LONG" and "Слишком много оплат" in r.json()["detail"]["message"], fmt
     assert owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "active"}).status_code == 422      # 7 live rows > 3
-    ok = owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "voided"})                       # 2 voided rows <= 3
+    ok = owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "voided"})                       # 1 emitted row (the cancelled one) <= 3
     assert ok.status_code == 200
-    monkeypatch.setattr(payments_income, "MAX_EXPORT_ROWS", 2)
-    assert owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "voided"}).status_code == 200       # exactly the cap passes
     monkeypatch.setattr(payments_income, "MAX_EXPORT_ROWS", 1)
+    assert owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "voided"}).status_code == 200       # exactly the cap passes: a replaced row is no row
+    assert owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "all"}).status_code == 422          # 8 rows
+    monkeypatch.setattr(payments_income, "MAX_EXPORT_ROWS", 0)
     assert owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "voided"}).status_code == 422
+    assert owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "replaced"}).status_code == 200      # an empty file is always fine
     monkeypatch.setattr(payments_income, "MAX_EXPORT_ROWS", 20_000)
     voided = journal(world, status="voided", size=100)
-    assert voided["total"] == 2 and sorted(r["receipt_no"] for r in voided["rows"]) == [9, 10]
+    assert voided["total"] == 2 and sorted(r["receipt_no"] for r in voided["rows"]) == [9, 10]                                      # the page still shows both
     for fmt in ("xlsx", "csv"):
-        r = owner(world).get(f"{API}/org/payments/journal/export", params={**params, "status": "voided", "format": fmt})
-        assert r.status_code == 200
         if fmt == "xlsx":
-            sheet = [[c.value for c in row] for row in load_workbook(io.BytesIO(r.content)).active.iter_rows()]
+            body = [(row["№ квитанции"], row["Статус"]) for row in table_of(journal_xlsx(world, status="voided")[1])[2]]
         else:
-            import csv as csv_module
-
-            sheet = [line for line in csv_module.reader(io.StringIO(r.text.lstrip("\ufeff")), delimiter=";")]
-        head = next(i for i, row in enumerate(sheet) if row and row[0] == "№ квитанции")
-        body = [row for row in sheet[head + 1:] if row]
-        assert sorted(str(row[0]) for row in body) == ["10", "9"], fmt
-        assert {str(row[0]): row[11] for row in body} == {"9": "Исправлена (№ 11)", "10": "Отменена"}, fmt
+            body = [(int(row[0]), row[10]) for row in journal_csv(world, status="voided")[2]]
+        assert body == [(10, "Отменена")], fmt                                                                                      # the file never holds the replaced № 9
 
 
 
@@ -805,21 +971,18 @@ def test_journal_kind_pagination_walks_every_matching_row_once(world, seeded):
 
 
 def test_journal_export_honours_the_kind(world, seeded):
-    import csv as csv_module
-
     for kind in ("advance", "current", "refunded"):
         j = journal(world, kind=kind, size=100)
-        want = sorted(str(r["receipt_no"]) for r in j["rows"])
-        r = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "format": "csv", "kind": kind})
-        assert r.status_code == 200
-        sheet = list(csv_module.reader(io.StringIO(r.text.lstrip("﻿")), delimiter=";"))
-        head = next(i for i, row in enumerate(sheet) if row and row[0] == "№ квитанции")
-        assert sorted(row[0] for row in sheet[head + 1:] if row) == want, kind
-        assert any(row[:1] == ["Только оплаты, где есть:"] and row[3] == str(j["totals"]["kind_sum"]) for row in sheet[:head]), kind
-        x = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "kind": kind})
-        xs = [[c.value for c in row] for row in load_workbook(io.BytesIO(x.content)).active.iter_rows()]
-        xh = next(i for i, row in enumerate(xs) if row and row[0] == "№ квитанции")
-        assert sorted(str(row[0]) for row in xs[xh + 1:] if row[0] is not None) == want, kind
+        want = sorted(r["receipt_no"] for r in j["rows"])
+        top, header, body = journal_csv(world, kind=kind)
+        assert sorted(int(row[0]) for row in body) == want, kind
+        label = {"advance": "пока не потрачено (аванс)", "current": "за текущий период", "refunded": "возвращено"}[kind]
+        assert any(line == [f"Оплат {len(want)} · Оплачено {sum(r['amount'] for r in j['rows']):,} · Сумма «{label}»: {j['totals']['kind_sum']:,}".replace(",", " ")]
+                   for line in top), kind
+        assert any(f"Только оплаты, где есть: {label}" in line[0] for line in top), kind
+        _, ws = journal_xlsx(world, kind=kind)
+        assert sorted(row["№ квитанции"] for row in table_of(ws)[2]) == want, kind
+        assert f"Сумма «{label}»: {j['totals']['kind_sum']:,}".replace(",", " ") in ws["A3"].value and "Отменённых" not in ws["A3"].value, kind
     # the cap counts the rows of the kind
     from src.auth import payments_income
 

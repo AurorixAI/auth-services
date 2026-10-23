@@ -164,6 +164,17 @@ class JournalAuthor(PayModel):
     count: int = 0
 
 
+class JournalHistoryItem(PayModel):
+    """One earlier version of a corrected payment (the payment that was replaced), for the «Подробности» of the screen and of the file."""
+
+    receipt_no: Optional[int] = None  # the receipt of that version
+    amount: int  # what it was, sum
+    method_label: str  # «Наличные» / «Click» ... (the method of THAT version)
+    replaced_at: Optional[str] = None  # naive UTC, ISO: when that version was replaced (cancelled by the correction)
+    replaced_by_name: Optional[str] = None  # who corrected it
+    reason: Optional[str] = None  # the reason typed for the correction
+
+
 class JournalRow(PayModel):
     id: str
     receipt_no: Optional[int] = None
@@ -198,6 +209,7 @@ class JournalRow(PayModel):
     corrected_by_name: Optional[str] = None  # who corrected (voided the old payment and entered this one)
     corrected_at: Optional[str] = None  # naive UTC, ISO: when
     replaced_by_receipt_no: Optional[int] = None  # this payment was corrected by that one (status replaced)
+    history: List[JournalHistoryItem] = Field(default_factory=list)  # ACTIVE corrected payment only: the earlier versions, OLDEST FIRST (empty for a payment that was never corrected)
     void_reason: Optional[str] = None
     voided_at: Optional[str] = None
     voided_by_name: Optional[str] = None

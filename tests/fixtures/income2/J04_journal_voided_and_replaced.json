@@ -48,6 +48,7 @@
       "corrected_by_name": null,
       "corrected_at": null,
       "replaced_by_receipt_no": null,
+      "history": [],
       "void_reason": "Ошибочный ввод",
       "voided_at": "2026-10-20T09:00:00",
       "voided_by_name": "Нодира Саидова"
@@ -86,6 +87,7 @@
       "corrected_by_name": null,
       "corrected_at": null,
       "replaced_by_receipt_no": 11,
+      "history": [],
       "void_reason": "Исправлено",
       "voided_at": "2026-10-15T06:30:00",
       "voided_by_name": "Азиз Хакимов"

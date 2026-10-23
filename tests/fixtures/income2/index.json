@@ -14,6 +14,8 @@
     "J06_journal_kind_advance": "PaymentsJournal",
     "J07_journal_kind_current_cash_day": "PaymentsJournal",
     "J08_journal_kind_current_page2": "PaymentsJournal",
-    "J09_journal_status_active": "PaymentsJournal"
+    "J09_journal_status_active": "PaymentsJournal",
+    "J10_journal_status_cancelled": "PaymentsJournal",
+    "J11_journal_status_replaced": "PaymentsJournal"
   }
 }

@@ -67,6 +67,7 @@
       "corrected_by_name": null,
       "corrected_at": null,
       "replaced_by_receipt_no": null,
+      "history": [],
       "void_reason": null,
       "voided_at": null,
       "voided_by_name": null
@@ -124,6 +125,7 @@
       "corrected_by_name": null,
       "corrected_at": null,
       "replaced_by_receipt_no": null,
+      "history": [],
       "void_reason": null,
       "voided_at": null,
       "voided_by_name": null
@@ -181,6 +183,16 @@
       "corrected_by_name": "Азиз Хакимов",
       "corrected_at": "2026-10-15T06:30:00",
       "replaced_by_receipt_no": null,
+      "history": [
+        {
+          "receipt_no": 9,
+          "amount": 400000,
+          "method_label": "Карта",
+          "replaced_at": "2026-10-15T06:30:00",
+          "replaced_by_name": "Азиз Хакимов",
+          "reason": "Исправлено"
+        }
+      ],
       "void_reason": null,
       "voided_at": null,
       "voided_by_name": null
@@ -238,6 +250,7 @@
       "corrected_by_name": null,
       "corrected_at": null,
       "replaced_by_receipt_no": null,
+      "history": [],
       "void_reason": null,
       "voided_at": null,
       "voided_by_name": null
@@ -334,6 +347,7 @@
       "corrected_by_name": null,
       "corrected_at": null,
       "replaced_by_receipt_no": null,
+      "history": [],
       "void_reason": null,
       "voided_at": null,
       "voided_by_name": null
