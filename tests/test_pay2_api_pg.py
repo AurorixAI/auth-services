@@ -437,7 +437,12 @@ def test_statement_export_filename(world, fixed_today):
         r = owner(world).get(f"{API}/org/memberships/{m.id}/statement/export", params={"format": fmt})
         assert r.status_code == 200 and ctype in r.headers["content-type"]
         cd = r.headers["content-disposition"]
-        assert cd.startswith("attachment;") and f".{fmt}" in cd and "statement-" in cd
+        assert cd.startswith("attachment;") and f".{fmt}" in cd
+        if fmt == "csv":
+            assert "statement-" in cd
+        else:                                                                # the house style: a Russian name without technical ids, an ASCII fallback beside it
+            from urllib.parse import unquote
+            assert unquote(cd.split("filename*=UTF-8''")[1]).startswith("Выписка_") and 'filename="Vypiska_' in cd
     import io
     from openpyxl import load_workbook
     r = owner(world).get(f"{API}/org/memberships/{m.id}/statement/export", params={"format": "xlsx"})
@@ -445,7 +450,7 @@ def test_statement_export_filename(world, fixed_today):
     flat = [c.value for row in ws.iter_rows() for c in row if c.value is not None]
     assert 231000 in flat and ws["A1"].value.startswith("Выписка — ") and "Оплата № 17 · наличные" in " ".join(str(x) for x in flat)
     head = next(r for r in range(1, 30) if ws.cell(r, 1).value == "Дата")
-    assert [ws.cell(head, c).value for c in range(1, 7)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]
+    assert [ws.cell(head, c).value for c in range(1, 7)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]   # no «Прощено» / «Возвращено» without such operations
     assert ws.freeze_panes == f"A{head + 1}"
 
 
@@ -764,7 +769,7 @@ def statement_xlsx_world(w, fix):
 
 
 def sheet_grid(ws, first):
-    return [[c.value for c in row] for row in ws.iter_rows(min_row=first, max_col=6)]
+    return [[c.value for c in row] for row in ws.iter_rows(min_row=first, max_col=8)]
 
 
 def test_the_statement_xlsx_reads_like_the_page(world, fixed_today):
@@ -779,41 +784,42 @@ def test_the_statement_xlsx_reads_like_the_page(world, fixed_today):
         "По состоянию на 21.10.2026 · Учёт ведётся с 01.08.2026 · Период: Все месяцы",
         "Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Возвращено 40 000 · Баланс: Аванс 60 000", None]
     assert ws["A1"].font.bold and all(ws.cell(r, 1).data_type == "s" for r in (1, 2, 3))
-    assert [ws.cell(head, c).value for c in range(1, 7)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]
-    assert all(ws.cell(head, c).font.bold for c in range(1, 7)) and ws.freeze_panes == "A6"
+    assert [ws.cell(head, c).value for c in range(1, 9)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Прощено", "Возвращено", "Баланс", "Подробности"]
+    assert all(ws.cell(head, c).font.bold for c in range(1, 9)) and ws.freeze_panes == "A6"
     who = "Иван Owner"
     assert sheet_grid(ws, head + 1) == [
-        ["Август 2026", None, None, None, None, None],
-        [dt(2026, 8, 18), "Август 2026 — неполный месяц (14 дней из 31)", 203_000, None, "Долг 203 000", "цена 450 000 сум в месяц · индивидуальная цена"],
-        [dt(2026, 8, 20), f"Оплата № 1 · наличные · внёс {who}", None, 200_000, "Долг 3 000", "комментарий: первый взнос\nза август — 200 000 (осталось 3 000)"],
-        ["Сентябрь 2026", None, None, None, None, None],
-        [dt(2026, 9, 1), "Сентябрь 2026", 450_000, None, "Долг 453 000", "цена 450 000 сум в месяц · индивидуальная цена"],
-        [dt(2026, 9, 5), f"Оплата № 2 · карта · внёс {who}", None, 700_000, "Аванс 247 000",
+        ["Август 2026"] + [None] * 7,
+        [dt(2026, 8, 18), "Август 2026 — неполный месяц (14 дней из 31)", 203_000, None, None, None, "Долг 203 000", "цена 450 000 сум в месяц · индивидуальная цена"],
+        [dt(2026, 8, 20), f"Оплата № 1 · наличные · внёс {who}", None, 200_000, None, None, "Долг 3 000", "комментарий: первый взнос\nза август — 200 000 (осталось 3 000)"],
+        ["Сентябрь 2026"] + [None] * 7,
+        [dt(2026, 9, 1), "Сентябрь 2026", 450_000, None, None, None, "Долг 453 000", "цена 450 000 сум в месяц · индивидуальная цена"],
+        [dt(2026, 9, 5), f"Оплата № 2 · карта · внёс {who}", None, 700_000, None, None, "Аванс 247 000",
          "за август — 3 000 (август закрыт)\nза сентябрь — 450 000 (сентябрь закрыт)\nаванс на октябрь — 247 000"],
-        ["Октябрь 2026", None, None, None, None, None],
-        [dt(2026, 10, 1), "Октябрь 2026", 450_000, None, "Долг 203 000", "цена 450 000 сум в месяц · индивидуальная цена"],
-        [dt(2026, 10, 15), f"Оплата № 3 · Click · внёс {who}", None, 153_000, "Долг 50 000", "за октябрь — 153 000 (осталось 50 000)"],
-        [dt(2026, 10, 19), f"Долг прощён — причина: болел · {who}", None, 50_000, "0", None],
-        [dt(2026, 10, 20), f"Оплата № 4 · Payme · внёс {who}", None, 100_000, "Аванс 100 000", "аванс на ноябрь — 60 000"],
-        [dt(2026, 10, 21), f"Возврат аванса — карта · {who}", None, -40_000, "Аванс 60 000", "причина: переехал"],
-        [None] * 6,
-        ["Следующие периоды (ещё не начались)", None, None, None, None, None],
-        ["01.11–30.11: оплачено 60 000 сум из 450 000 сум", None, None, None, None, None],
-        [None] * 6,
-        ["Отменённые записи", None, None, None, None, None],
-        [dt(2026, 10, 19), "Оплата № 5", None, 10_000, None, f"Отменено: ошибка ввода · {who}"],
+        ["Октябрь 2026"] + [None] * 7,
+        [dt(2026, 10, 1), "Октябрь 2026", 450_000, None, None, None, "Долг 203 000", "цена 450 000 сум в месяц · индивидуальная цена"],
+        [dt(2026, 10, 15), f"Оплата № 3 · Click · внёс {who}", None, 153_000, None, None, "Долг 50 000", "за октябрь — 153 000 (осталось 50 000)"],
+        [dt(2026, 10, 19), f"Долг прощён — причина: болел · {who}", None, None, 50_000, None, "0", None],
+        [dt(2026, 10, 20), f"Оплата № 4 · Payme · внёс {who}", None, 100_000, None, None, "Аванс 100 000", "аванс на ноябрь — 60 000"],
+        [dt(2026, 10, 21), f"Возврат аванса — карта · {who}", None, None, None, 40_000, "Аванс 60 000", "причина: переехал"],
+        ["Итого", None, 1_103_000, 1_153_000, 50_000, 40_000, "Аванс 60 000", None],               # the blue total row of the flat table: sums of the money columns
+        [None] * 8,
+        ["Следующие периоды (ещё не начались)"] + [None] * 7,
+        ["01.11–30.11: оплачено 60 000 сум из 450 000 сум"] + [None] * 7,
+        [None] * 8,
+        ["Отменённые записи"] + [None] * 7,
+        [dt(2026, 10, 19), "Оплата № 5", None, 10_000, None, None, None, f"Отменено: ошибка ввода · {who}"],
     ]
     # types and formats: a real date, whole sums with a thousands format, texts stay texts, month bands are merged
     first = head + 2
     assert ws.cell(first, 1).is_date and ws.cell(first, 1).number_format == "DD.MM.YYYY"
     assert isinstance(ws.cell(first, 3).value, int) and ws.cell(first, 3).number_format == "#,##0" and ws.cell(first + 1, 4).number_format == "#,##0"
-    assert all(ws.cell(r, c).data_type == "s" for r in range(first, ws.max_row + 1) for c in (2, 5, 6) if ws.cell(r, c).value)
+    assert all(ws.cell(r, c).data_type == "s" for r in range(first, ws.max_row + 1) for c in (2, 7, 8) if ws.cell(r, c).value)
     merged = {str(x) for x in ws.merged_cells.ranges}
-    assert {f"A{head + 1}:F{head + 1}", f"A{head + 4}:F{head + 4}", f"A{head + 7}:F{head + 7}"} <= merged
+    assert {f"A{head + 1}:H{head + 1}", f"A{head + 4}:H{head + 4}", f"A{head + 7}:H{head + 7}"} <= merged
     assert ws.cell(head + 1, 1).font.bold and ws.cell(head + 1, 1).fill.fgColor.rgb not in (None, "00000000")
     flat = [str(c.value) for row in ws.iter_rows() for c in row if c.value is not None]
     assert not any("Начисл" in x for x in flat) and not any(x in flat for x in ("cash", "card", "click", "payme", "bank_transfer"))
-    assert ws.cell(ws.max_row, 2).font.strike and ws.cell(ws.max_row, 6).value.startswith("Отменено:")
+    assert ws.cell(ws.max_row, 2).font.strike and ws.cell(ws.max_row, 8).value.startswith("Отменено:")
 
     # one month: the carry line comes from the WHOLE ledger (the balance before October), the title says the month
     ws = export_sheet(world, m, **{"from": "2026-10-01", "to": "2026-10-31"})
@@ -822,10 +828,11 @@ def test_the_statement_xlsx_reads_like_the_page(world, fixed_today):
     got = sheet_grid(ws, head + 1)
     assert got[0][0] == "Октябрь 2026" and got[1][0] == "С сентября перенесён аванс 247 000"
     assert [g[1] for g in got[2:]] == ["Октябрь 2026", f"Оплата № 3 · Click · внёс {who}", f"Долг прощён — причина: болел · {who}",
-                                         f"Оплата № 4 · Payme · внёс {who}", f"Возврат аванса — карта · {who}"]
-    assert ws.max_row == head + 7                                            # a month: no «Следующие периоды», no cancelled block
-    assert got[2][4] == "Долг 203 000"                                       # the ledger's balance, not a sum over the cut rows
-    assert any(str(x) == f"A{head + 2}:F{head + 2}" for x in ws.merged_cells.ranges)
+                                         f"Оплата № 4 · Payme · внёс {who}", f"Возврат аванса — карта · {who}", None]
+    assert got[-1][0] == "Итого" and got[-1][2:7] == [450_000, 253_000, 50_000, 40_000, "Аванс 60 000"]
+    assert ws.max_row == head + 8                                            # a month: the total row, no «Следующие периоды», no cancelled block
+    assert got[2][6] == "Долг 203 000"                                       # the ledger's balance, not a sum over the cut rows
+    assert any(str(x) == f"A{head + 2}:H{head + 2}" for x in ws.merged_cells.ranges)
     # all months: no carry line anywhere
     ws = export_sheet(world, m)
     assert not any(str(ws.cell(r, 1).value).startswith("С ") and "перенесён" in str(ws.cell(r, 1).value) for r in range(1, ws.max_row + 1))

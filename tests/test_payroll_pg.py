@@ -1418,7 +1418,7 @@ def test_text_xml_cannot_hold_never_breaks_the_workbook(world):
     texts = [c.value for c in cells(ws) if isinstance(c.value, str)]
     assert "Группа  A" in texts                                                    # \x0c dropped, CR LF -> two spaces
     assert not any(ch in t for t in texts for ch in "\x00\x0b\x0c\x01\x1f\ufffe\uffff")
-    assert any(t == "Примечание: Примечание 2" for t in texts)
+    assert any(t.endswith(" · Примечание: Примечание 2") for t in texts)           # the note rides on the status line of the title block
     # the single-sheet export and the file name survive the same names
     one = owner(world).get(f"{API}/org/payroll/sheets/{world.db.query(PayrollSheet).filter_by(org_id=world.org.id).one().id}/export.xlsx")
     assert workbook(one).sheetnames == ["Пётр Te ach er"] and "\x0b" not in one.headers["content-disposition"]
