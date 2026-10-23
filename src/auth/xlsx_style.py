@@ -260,7 +260,7 @@ def autosize(ws, *, header_row_number: int = HEADER_ROW, last_col: Optional[int]
             if cell.value is None or (cell.row, cell.column) in inside_merged:
                 continue
             n = shown_length(cell.value, cell.number_format)
-            if cell.font is not None and cell.font.bold:
+            if cell.font is not None and (cell.font.bold or cell.font.italic):      # bold and italic letters are wider: the example row of a template must not be cut
                 n = math.ceil(n * 1.1)
             if cell.row == header_row_number and isinstance(cell.value, str) and n > 18:
                 n = max(18, max(len(w) for w in cell.value.split()) + 1)

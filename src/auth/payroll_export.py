@@ -44,8 +44,18 @@ UNSAVED_NOTE = "ведомость не сохранена — в расчёт �
 HEADERS_LEFT = ["Группа", "Тип занятий", "Время урока", "Ученик", "Цена в месяц", "Процент"]
 HEADER_COUNTED, HEADER_UNPAID, HEADER_INCLUDED, HEADER_EARNED = "Засчитано уроков", "Не оплачено уроков", "Включено в расчёт", "Заработано"
 BLOCK_HEADERS = ("Заработано", "Выплачено", "К выплате")
-LEGEND_LINE = ("Обозначения: 1 — урок засчитан · 0 — не засчитан (уважительная причина подтверждена) · Ув.? — уважительная причина, ждёт решения владельца · "
-               "серая 1 — засчитан, но ученик не заплатил (в «Заработано» входит только с «да» в колонке «Включено в расчёт») · пусто — ученика в группе не было")
+LEGEND_HEAD = "Обозначения: 1 — урок засчитан · 0 — не засчитан (уважительная причина подтверждена) · Ув.? — уважительная причина, ждёт решения владельца · "
+LEGEND_TAIL = " · пусто — ученика в группе не было"
+LEGEND_GREY = "серая 1 — засчитан, но ученик не заплатил (в «Заработано» не входит)"          # the column «Включено в расчёт» is not in the file
+LEGEND_GREY_INCLUDED = "серая 1 — засчитан, но ученик не заплатил (в «Заработано» входит только с «да» в колонке «Включено в расчёт»)"
+
+
+def legend_line(show_included: bool) -> str:
+    """The legend names the column «Включено в расчёт» only when the file has it."""
+    return LEGEND_HEAD + (LEGEND_GREY_INCLUDED if show_included else LEGEND_GREY) + LEGEND_TAIL
+
+
+LEGEND_LINE = legend_line(True)
 SUMMARY_NOTE = "Листы по учителям — дальше в этом файле. «К выплате» = заработано − выплачено."
 FREEZE_COL = 5                   # the group, the type, the time and the student stay on the screen
 
@@ -294,7 +304,7 @@ def write_sheet(ws, sheet: Mapping[str, Any]) -> None:
     # ---- the legend of the codes of the date columns: one quiet line
     row += 2
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=width)
-    _put(ws, row, 1, LEGEND_LINE, font=xs.FONT_NOTE, alignment=xs.ALIGN_LEFT_TOP)
+    _put(ws, row, 1, legend_line(show_included), font=xs.FONT_NOTE, alignment=xs.ALIGN_LEFT_TOP)
 
     # ---- widths: from the content; a lesson day is as narrow as its date
     xs.autosize(ws, header_row_number=header_row, last_col=width, min_width=10, wrap_cols=(1, 4),

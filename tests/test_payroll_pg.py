@@ -1071,6 +1071,8 @@ def test_the_included_column_exists_only_when_the_owner_used_it_and_the_payouts_
     saved = save(world, m)
     ws = workbook(owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}/export.xlsx")).active
     assert "Включено в расчёт" not in [c.value for c in ws[5]]
+    legend = next(c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str) and c.value.startswith("Обозначения:"))
+    assert "Включено в расчёт" not in legend                                  # the legend names only the columns the file has
     line = line_of(saved, s0)
     ticked = patch(world, saved, line_overrides=[{"membership_id": line["membership_id"], "include_unpaid": True}])
     r = owner(world).post(f"{API}/org/payroll/sheets/{ticked['id']}/payouts", json={"amount": 5_000, "method": "bank_transfer", "note": "аванс"})
@@ -1081,6 +1083,7 @@ def test_the_included_column_exists_only_when_the_owner_used_it_and_the_payouts_
     row = next(r_ for r_ in range(7, ws.max_row + 1) if ws.cell(r_, 4).value)
     col = {c.value: c.column for c in ws[5] if isinstance(c.value, str)}
     assert ws.cell(row, col["Включено в расчёт"]).value == "да" and ws.cell(row, col["Заработано"]).value == ticked["total_amount"]
+    assert any("«Включено в расчёт»" in c.value for r_ in ws.iter_rows() for c in r_ if isinstance(c.value, str) and c.value.startswith("Обозначения:"))
     # the block and the payout list: the date and the method of the payout
     block = next(r_ for r_ in range(6, ws.max_row + 1) if ws.cell(r_, 1).value == "Заработано")
     assert [ws.cell(block + 1, c).value for c in (1, 2, 3)] == [ticked["total_amount"], 5_000, ticked["total_amount"] - 5_000]
