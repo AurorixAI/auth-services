@@ -30,7 +30,6 @@ from .openings_schemas import (
 )
 from .openings_service import MAX_IMPORT_BYTES, OpeningsService, TableRow
 from . import xlsx_style as xs
-from .payments_income import FORMULA_STARTS
 from .payments_schemas import MAX_MONEY
 from .payments_service import PaymentInvalid
 
@@ -82,14 +81,6 @@ def _norm(h: Any) -> str:
 # ============================================================================================================
 # Export
 # ============================================================================================================
-
-
-def _put_text(ws, row: int, col: int, value: Any):
-    """A text cell stays text: a surname that starts with = + - @ is never a formula (OWASP)."""
-    cell = ws.cell(row=row, column=col, value=xs.clean(value))
-    if isinstance(value, str):
-        cell.data_type = "s"
-    return cell
 
 
 def _filter_words(svc: OpeningsService, org_id: str, group_id, missing_only: bool, q: Optional[str], include_left: bool) -> List[str]:

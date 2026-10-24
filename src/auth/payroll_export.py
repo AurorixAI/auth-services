@@ -32,7 +32,6 @@ MONTHS = (
     "январь", "февраль", "март", "апрель", "май", "июнь",
     "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
 )
-_FORMULA_START = ("=", "+", "-", "@")
 _BAD_SHEET_CHARS = re.compile(r"[\\/?*\[\]:]")
 
 MONEY = xs.MONEY
@@ -70,12 +69,6 @@ def clean_text(value: Any) -> str:
     return _CONTROL.sub("", _WHITESPACE.sub(" ", "" if value is None else str(value)))
 
 
-def safe_text(value: Any) -> str:
-    """A string that no spreadsheet program will read as a formula and that a worksheet accepts."""
-    text = clean_text(value)
-    return "'" + text if text.lstrip().startswith(_FORMULA_START) else text
-
-
 def local_time(moment: Optional[str]) -> str:
     """``2026-09-30T20:30:00`` (naive UTC, as stored) -> ``01.10.2026 01:30`` (Tashkent)."""
     if not moment:
@@ -89,9 +82,9 @@ def local_time(moment: Optional[str]) -> str:
 
 
 def _put(ws, row: int, column: int, value: Any, **style: Any):
-    """Write a cell; text goes through ``safe_text`` and is stored as a string."""
+    """Write a cell; text is cleaned (tab / CR / LF -> space) and stored as a string; ``xs.put`` marks one that starts with = + - @ (no apostrophe in the text)."""
     if isinstance(value, str):
-        value = safe_text(value)
+        value = clean_text(value)
     return xs.put(ws, row, column, value, **style)
 
 
@@ -188,8 +181,8 @@ def write_sheet(ws, sheet: Mapping[str, Any]) -> None:
     if sheet.get("note"):
         status += f" · Примечание: {sheet['note']}"
     header_row = xs.title_block(ws, [
-        safe_text(f"Зарплата — {sheet.get('teacher_name') or 'преподаватель'} · {xs.month_title(sheet['month'])}"),
-        safe_text(status), _earned_words(sheet)], width)
+        clean_text(f"Зарплата — {sheet.get('teacher_name') or 'преподаватель'} · {xs.month_title(sheet['month'])}"),
+        clean_text(status), _earned_words(sheet)], width)
 
     # ---- the header: full words, the lesson days as real dates
     for i, text in enumerate(HEADERS_LEFT, start=1):
@@ -336,7 +329,7 @@ def write_month_summary(ws, month: str, sheets: Sequence[Mapping[str, Any]], tit
     status = xs.words_join([f"По состоянию на {xs.date_ru(as_of)}" if as_of else None, f"Учителей: {len(rows)}",
                             f"Не сохранено ведомостей: {len(unsaved)}" if unsaved else None, "месяц ещё не закончился" if month_open else None])
     title = f"Зарплата — {xs.month_title(month)}" + (f" · {org_name}" if org_name else "")
-    header_row = xs.title_block(ws, [safe_text(title), status,
+    header_row = xs.title_block(ws, [clean_text(title), status,
                                      f"Заработано {totals[2]:,} · Выплачено {totals[3]:,} · К выплате {totals[4]:,}".replace(",", " ")], width)
     xs.header_row(ws, header_row, headers, left=(1, 7))
     ws.freeze_panes = f"A{header_row + 1}"

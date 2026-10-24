@@ -28,6 +28,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.properties import PageSetupProperties
 
+from .export_safety import formula_like
+
 # ------------------------------------------------------------------------------------------------------------ palette
 
 FONT_NAME = "Calibri"
@@ -112,6 +114,10 @@ def put(ws, row: int, col: int, value: Any, *, number_format: Optional[str] = No
     cell.value = clean(value)
     if isinstance(value, str):
         cell.data_type = "s"
+        if formula_like(value):
+            # MN-10 / MN-43: a text that starts with = + - @ (TAB, CR) is a string cell with Excel's own "quote prefix" flag: it shows as typed
+            # («=Тест», «-Анвар»), with no apostrophe in the text, and does not become a formula when the cell is edited
+            cell.quotePrefix = True
     if number_format:
         cell.number_format = number_format
     if font is not None:

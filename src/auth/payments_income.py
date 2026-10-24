@@ -48,6 +48,7 @@ from .payments_income_schemas import (
     MonthCollection,
     PaymentsJournal,
 )
+from .export_safety import FORMULA_STARTS, csv_safe_row  # noqa: F401  (one rule for every export; re-exported for the callers of this module)
 from .payments_reports import MAX_RANGE_DAYS, PaymentsReports, method_clause
 from .payments_service import PaymentInvalid, PaymentService, RangeTooLong
 
@@ -55,7 +56,6 @@ MAX_DAY_SERIES_DAYS = 92
 MAX_JOURNAL_PAGE = 100
 MAX_EXPORT_ROWS = 20_000
 MAX_CHAIN_DEPTH = 8                                       # corrections of a correction of a correction ...: the history goes this far back
-FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")          # OWASP: a cell that starts with one of these is never a formula
 
 
 class InvalidPeriod(PaymentInvalid):
@@ -97,10 +97,6 @@ def strip_parts(amounts: Dict[str, int], *, only_nonzero: bool) -> List[IncomeSt
     return [IncomeStripPart(kind=k, label=tx.INCOME_KIND_LABELS[k], amount=amounts.get(k, 0))
             for k in _KIND_ORDER if amounts.get(k, 0) or not only_nonzero]
 
-
-def csv_safe_row(row: Sequence[Any]) -> List[Any]:
-    """A text cell that starts with = + - @ TAB CR gets a leading apostrophe: a spreadsheet never runs it as a formula (OWASP CSV injection)."""
-    return [("'" + v) if isinstance(v, str) and v[:1] in FORMULA_STARTS else v for v in row]
 
 
 def validate_range(first: date, last: date) -> None:

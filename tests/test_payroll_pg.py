@@ -1161,9 +1161,10 @@ def test_excel_cells_from_names_are_never_formulas(world):
     ws = workbook(owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}/export.xlsx")).active
     for cell in cells(ws):
         assert cell.data_type != "f", (cell.coordinate, cell.value)
-    dangerous = [c for c in cells(ws) if isinstance(c.value, str) and c.value.startswith("'") and c.value[1:2] in "=+-@"]
-    assert {c.value[:8] for c in dangerous} >= {"'=HYPERL", "'@SUM(1+", "'=cmd|' "}, [c.value for c in dangerous]
-    assert all(c.data_type == "s" for c in dangerous)
+    dangerous = [c for c in cells(ws) if isinstance(c.value, str) and c.value.lstrip()[:1] in ("=", "+", "-", "@")]
+    assert {c.value[:7] for c in dangerous} >= {"=HYPERL", "@SUM(1+", "=cmd|' "}, [c.value for c in dangerous]
+    # MN-43: a string cell with Excel's quote-prefix flag, and NO apostrophe in the text (it used to show as '=HYPERLINK...)
+    assert all(c.data_type == "s" and c.quotePrefix is True and not c.value.startswith("'") for c in dangerous)
     assert ws.title == "=1+1 x"                                                   # a worksheet name is not evaluated
     note = [c.value for c in cells(ws) if isinstance(c.value, str) and "2+2" in c.value]
     assert len(note) == 1 and note[0].startswith("Редакция 1") and note[0].endswith("Примечание: =2+2")
@@ -1172,9 +1173,9 @@ def test_excel_cells_from_names_are_never_formulas(world):
 def test_excel_helpers():
     from src.auth import payroll_export as px
 
-    assert px.safe_text("=A1") == "'=A1" and px.safe_text("+1") == "'+1" and px.safe_text("-1") == "'-1"
-    assert px.safe_text("a\x00b\x1fc\x0bd") == "abcd" and px.safe_text("\x00=1") == "'=1"            # control characters are dropped
-    assert px.safe_text("@x") == "'@x" and px.safe_text("\t=1") == "' =1" and px.safe_text(" +1") == "' +1" and px.safe_text("Алия") == "Алия" and px.safe_text(None) == ""
+    assert px.clean_text("=A1") == "=A1" and px.clean_text("-1") == "-1"                                # the formula guard is the cell's quote prefix, not text
+    assert px.clean_text("a\x00b\x1fc\x0bd") == "abcd" and px.clean_text("\x00=1") == "=1"            # control characters are dropped
+    assert px.clean_text("\t=1") == " =1" and px.clean_text("Алия") == "Алия" and px.clean_text(None) == ""
     assert px.sheet_title("a/b:c*d?e[f]g\\h", []) == "a b c d e f g h"
     assert px.sheet_title("x" * 50, []) == "x" * 31
     assert px.sheet_title("Иван", ["иван"]) == "Иван (2)" and px.sheet_title("'quoted'", []) == "quoted"

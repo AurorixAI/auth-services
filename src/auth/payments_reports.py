@@ -23,6 +23,7 @@ from . import billing_ledger as bl
 from . import ledger_service as ls
 from . import payment_status as ps
 from . import payments_texts as tx
+from .export_safety import csv_safe_row
 from . import payments_views as pv
 from .payments_files import person_name, staff_name
 from .payments_statement_xlsx import build_statement_xlsx, statement_file_name
@@ -276,16 +277,12 @@ class PaymentsReports:
         buf = io.StringIO()
         writer = csv.writer(buf, delimiter=";")
 
-        def safe(row):
-            # a spreadsheet would run a cell that starts with = + - @ : prefix it with an apostrophe
-            return [("'" + v) if isinstance(v, str) and v[:1] in ("=", "+", "-", "@") else v for v in row]
-
         for line in top:
-            writer.writerow(safe(line))
+            writer.writerow(csv_safe_row(line))
         writer.writerow([])
         writer.writerow(header)
         for line in body:
-            writer.writerow(safe(line))
+            writer.writerow(csv_safe_row(line))
         return ("\ufeff" + buf.getvalue()).encode("utf-8"), "text/csv; charset=utf-8", base + ".csv"
 
     # ============================================================== the centre
