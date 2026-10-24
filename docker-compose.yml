@@ -15,7 +15,7 @@ services:
       target: production
     container_name: algo-auth
     ports:
-      - "${PORT:-8000}:8000"
+      - "127.0.0.1:${PORT:-8000}:8000"   # LD-09: reachable from this machine only
     environment:
       - DATABASE_URL=postgresql+psycopg2://algo:algo_password@postgres:5432/algo_auth
       - REDIS_URL=redis://algo-redis:6379/0
@@ -28,7 +28,7 @@ services:
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - SENTRY_DSN=${SENTRY_DSN}
       - EXAM_SERVICE_URL=http://exam-service:8003/api/v1
-      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-local-internal-service-token-change-in-production}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN (a long random value) in .env}
       - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3000","http://localhost:5173"]}
     depends_on:
       postgres:
@@ -55,7 +55,7 @@ services:
       POSTGRES_PASSWORD: algo_password
       POSTGRES_DB: algo_auth
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database:/docker-entrypoint-initdb.d:ro
@@ -77,7 +77,7 @@ services:
     profiles:
       - monitoring
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -95,9 +95,9 @@ services:
     profiles:
       - monitoring
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana

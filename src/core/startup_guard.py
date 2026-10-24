@@ -74,14 +74,15 @@ def diagnostic_base_url(environ: Optional[Mapping[str, str]] = None) -> str:
     """
     env = os.environ if environ is None else environ
     configured = (env.get("DIAGNOSTIC_BASE_URL") or "").strip()
-    if configured:
+    local = any(host in configured for host in ("localhost", "127.0.0.1", "[::1]"))
+    if configured and not (local and is_strict_env(env)):
         return configured
     if is_strict_env(env):
         message = (
-            f"DIAGNOSTIC_BASE_URL не задан при APP_ENV={app_env(env)}: ссылки-приглашения ученикам будут вести на "
-            f"{DEFAULT_DIAGNOSTIC_URL}."
+            f"DIAGNOSTIC_BASE_URL не задан (или указывает на localhost) при APP_ENV={app_env(env)}: ссылки-приглашения "
+            f"ученикам будут вести на {configured or DEFAULT_DIAGNOSTIC_URL}."
         )
         if (env.get("REQUIRE_DIAGNOSTIC_BASE_URL") or "").strip().lower() in ("1", "true", "yes"):
             raise RuntimeError("CRITICAL: " + message)
         logger.error(message)
-    return DEFAULT_DIAGNOSTIC_URL
+    return configured or DEFAULT_DIAGNOSTIC_URL

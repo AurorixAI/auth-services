@@ -74,5 +74,7 @@ def test_invite_link_base_sv27():
     assert r.returncode != 0 and "DIAGNOSTIC_BASE_URL" in r.stderr
     r = child(APP_ENV="staging", SECRET_KEY=GOOD, REQUIRE_DIAGNOSTIC_BASE_URL="true", DIAGNOSTIC_BASE_URL="https://algo.example/d")
     assert r.returncode == 0 and "https://algo.example/d" in r.stdout
+    r = child(APP_ENV="staging", SECRET_KEY=GOOD, DIAGNOSTIC_BASE_URL="http://localhost:3000/d")        # the .env.example value copied to a server
+    assert r.returncode == 0 and "указывает на localhost" in r.stderr
     r = child(APP_ENV="development")
     assert r.returncode == 0 and "DIAGNOSTIC_BASE_URL не задан" not in r.stderr

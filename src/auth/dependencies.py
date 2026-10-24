@@ -195,6 +195,12 @@ class RoleChecker:
         # but only after ``get_current_active_user_payload`` has checked that
         # the account is currently active in the database.
         if role == "superadmin":
+            # LD-30: a platform account has no tenant; a tenant route (check_org) says so instead of answering 404/empty or failing on a write
+            if self.check_org and not payload.get("org_id"):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Нужна организация: этот раздел доступен только сотрудникам центра",
+                )
             return self._extract(payload)
 
         # Tenant permissions come solely from the fresh membership role.
