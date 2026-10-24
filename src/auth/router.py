@@ -3,6 +3,7 @@ ALGO V1 - Auth Router
 REST API: org application, login, invitations, students, diagnostics, groups
 """
 
+import hashlib
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, UploadFile, File
@@ -32,7 +33,7 @@ from .student_archive import (
     StudentArchiveService,
     actor_role_for_audit,
 )
-from . import import_ops, import_service, xlsx_style
+from . import import_limits, import_ops, import_service, xlsx_style
 from .ops_router import router as ops_router
 from .ops_rules import GroupArchivedForEnrolment, OpsError
 from .ops_schemas import (
@@ -128,7 +129,7 @@ from .dependencies import (
     has_payments_access,
 )
 
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from .attendance_excuses import ExcusePauseRefused
 from .payments_service import CONCURRENT_EDIT_MESSAGE, PaymentError, is_deadlock
@@ -196,9 +197,28 @@ def _svc(db: Session, request: Optional[Request] = None) -> AuthService:
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 
+APPLY_PER_IP = 5      # LD-01: registrations of a centre per hour from one address (IPv6: per /64) ...
+APPLY_PER_EMAIL = 3   # ... and per e-mail address (a typo-ridden retry is fine, a flood is not)
+APPLY_WINDOW = 3600
+
+
+def _throttle_apply(http_request: Request, email: str) -> None:
+    """429 with Retry-After once the address or the e-mail has spent its hourly budget of ``POST /auth/apply`` (counted before any work is done)."""
+    digest = hashlib.sha256((email or "").strip().lower().encode("utf-8")).hexdigest()[:32]  # no e-mail in a Redis key
+    for key, limit in ((f"rl:auth_apply_ip:{client_bucket(http_request)}", APPLY_PER_IP), (f"rl:auth_apply_email:{digest}", APPLY_PER_EMAIL)):
+        count, left = hit_window(key, APPLY_WINDOW)
+        if count > limit:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Слишком много заявок на регистрацию. Повторите попытку позже или напишите в поддержку.",
+                headers={"Retry-After": str(left)},
+            )
+
+
 @router.post("/apply", response_model=OrgApplicationPendingResponse, status_code=201)
 def apply_organization(
     request: OrgApplicationRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
 ):
     """
@@ -209,11 +229,16 @@ def apply_organization(
     Ручной режим одобрения (approve_organization / approve_org.sh) остаётся
     рабочим — если флаг выключить, поведение вернётся к статусу pending.
     """
+    _throttle_apply(http_request, request.email)
     try:
         result = _svc(db).apply_organization(request)
         return JSONResponse(content=result.model_dump(mode="json"), status_code=201)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+    except IntegrityError:
+        # SV-26: two registrations of one e-mail at once both pass the pre-check; the unique index refuses the second one
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Пользователь с таким email уже существует")
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -1275,7 +1300,7 @@ def remove_student_from_group(
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-_MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5 MB is plenty for a roster
+_MAX_IMPORT_BYTES = import_limits.MAX_IMPORT_BYTES  # 5 MB is plenty for a roster; main_v2 also refuses a larger Content-Length before the body is read
 
 
 @router.get("/org/import/template")
@@ -1297,7 +1322,10 @@ async def import_preview(
 ):
     """Разобрать и проверить файл (dry-run) — ничего не записывается."""
     data = await _read_import_upload(file)
-    return import_ops.preview(user["org_id"], data, db, money=has_payments_access(user, db))
+    try:
+        return import_ops.preview(user["org_id"], data, db, money=has_payments_access(user, db))
+    except import_limits.ImportFileRejected as e:
+        raise HTTPException(422, str(e))
 
 
 @router.post("/org/import/commit", response_model=ImportCommitResponseB)
@@ -1308,13 +1336,16 @@ async def import_commit(
 ):
     """Записать данные из файла в базу транзакционно (всё или ничего)."""
     data = await _read_import_upload(file)
-    return import_ops.commit(user["org_id"], user["user_id"], data, db, money=has_payments_access(user, db))
+    try:
+        return import_ops.commit(user["org_id"], user["user_id"], data, db, money=has_payments_access(user, db))
+    except import_limits.ImportFileRejected as e:
+        raise HTTPException(422, str(e))
 
 
 async def _read_import_upload(file: UploadFile) -> bytes:
     if file is None:
         raise HTTPException(400, "Файл не передан.")
-    data = await file.read()
+    data = await file.read(_MAX_IMPORT_BYTES + 1)  # never more than one byte past the limit into memory
     if not data:
         raise HTTPException(400, "Файл пустой.")
     if len(data) > _MAX_IMPORT_BYTES:

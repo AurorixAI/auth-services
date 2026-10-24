@@ -119,6 +119,37 @@ def _occupancy(db: Session, group_id: Any) -> int:
     )
 
 
+def _groups_by_lower_name(db: Session, org_id: Any) -> Dict[str, Group]:
+    """The groups of the centre by ``lower(name)`` (as the database lowers it); when two groups share a name the active, then the older one wins."""
+    out: Dict[str, Group] = {}
+    rows = (
+        db.query(func.lower(Group.name), Group)
+        .filter(Group.org_id == org_id)
+        .order_by((Group.status != "active"), Group.created_at, Group.id)
+        .all()
+    )
+    for key, group in rows:
+        out.setdefault(key, group)
+    return out
+
+
+def _students_by_lower_name(db: Session, org_id: Any, lower_last_names: set) -> Dict[Tuple[str, str], List[Student]]:
+    """The students of the centre whose surname is in the file, by ``(lower(last), lower(first))`` (as the database lowers them)."""
+    out: Dict[Tuple[str, str], List[Student]] = {}
+    if not lower_last_names:
+        return out
+    names = sorted(lower_last_names)
+    for start in range(0, len(names), 500):
+        rows = (
+            db.query(func.lower(Student.last_name), func.lower(Student.first_name), Student)
+            .filter(Student.org_id == org_id, func.lower(Student.last_name).in_(names[start:start + 500]))
+            .all()
+        )
+        for last, first, student in rows:
+            out.setdefault((last, first), []).append(student)
+    return out
+
+
 def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, money: bool = True) -> _Plan:
     """``money``: the caller may enter money (owner / an admin with the switch).  LOGIC-A: without it the opening-balance columns G-I are
     ignored with a warning."""
@@ -128,6 +159,10 @@ def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, mon
     staff = _org_staff(db, org_id)
     accounting_start = PaymentService(db)._loader(org_id).settings.accounting_start
     enrol_day = legacy._today()
+
+    # DM-001: the lookups of the plan are dictionaries filled by a few queries, not a query per row (a 2000-row file used to cost thousands)
+    org_groups = _groups_by_lower_name(db, org_id)
+    occupancy_cache: Dict[Any, int] = {}
 
     # ---- groups
     known_names: set = set()
@@ -177,7 +212,7 @@ def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, mon
                 plan.err(legacy.SHEET_GROUPS, r.row, "Почта учителя", f"{email} больше не работает в центре", "TEACHER_INACTIVE")
                 continue
             teacher_id = user.id
-        existing = db.query(Group).filter(Group.org_id == org_id, func.lower(Group.name) == key).first()
+        existing = org_groups.get(key)
         entry_plan = {
             "row": r.row, "name": name, "class_level": class_level, "teacher_id": teacher_id, "teacher_email": email,
             "max": max_students, "action": "existing" if existing else "create", "id": str(existing.id) if existing else None,
@@ -215,7 +250,7 @@ def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, mon
             plan.err(legacy.SHEET_STUDENTS, r.row, "Группа", "Группа обязательна")
             continue
         gk = group_name.lower()
-        in_db = db.query(Group).filter(Group.org_id == org_id, func.lower(Group.name) == gk).first()
+        in_db = org_groups.get(gk)
         if gk not in known_names and in_db is None:
             plan.err(legacy.SHEET_STUDENTS, r.row, "Группа", f"Группа '{group_name}' не найдена во вкладке «Группы» и не существует.")
             continue
@@ -230,7 +265,7 @@ def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, mon
         return plan  # the enrolment is simulated only for a file that can be written
 
     # ---- students: what happens to each row (state refusals)
-    people_cache: Dict[Tuple[str, str, Optional[str]], Any] = {}
+    people = _students_by_lower_name(db, org_id, {item["last"].lower() for item in rows})
     planned_seats: Dict[str, int] = {}
     pending: List[Tuple[Dict[str, Any], Optional[Student]]] = []
     for item in rows:
@@ -241,9 +276,7 @@ def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, mon
             plan.counts.students_skipped += 1
             continue
         seen_students.add(dedup)
-        q = db.query(Student).filter(Student.org_id == org_id, func.lower(Student.last_name) == item["last"].lower(),
-                                     func.lower(Student.first_name) == item["first"].lower())
-        matches = q.all()
+        matches = people.get((item["last"].lower(), item["first"].lower()), [])
         found: Optional[Student] = None
         if item["phone"]:
             found = next((s for s in matches if s.student_phone == item["phone"]), None)
@@ -258,7 +291,7 @@ def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, mon
     for item, found in pending:
         full = f"{item['last']} {item['first']}"
         target = group_by_key.get(item["key"])
-        group = target["group"] if target else db.query(Group).filter(Group.org_id == org_id, func.lower(Group.name) == item["key"]).first()
+        group = target["group"] if target else org_groups.get(item["key"])
         name = group.name if group is not None else item["group_name"]
         if group is not None and group.status != "active":
             plan.skip(item["row"], "GROUP_ARCHIVED", SKIP_TEXT["GROUP_ARCHIVED"].format(group=name), full, name)
@@ -283,7 +316,9 @@ def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, mon
                 continue
         # an existing group has its own limit (the file's "max" only applies to a group the file creates)
         limit = (group.max_students or 30) if group is not None else (target["max"] if target else 30)
-        taken = (_occupancy(db, group.id) if group is not None else 0) + planned_seats.get(item["key"], 0)
+        if group is not None and group.id not in occupancy_cache:
+            occupancy_cache[group.id] = _occupancy(db, group.id)
+        taken = (occupancy_cache[group.id] if group is not None else 0) + planned_seats.get(item["key"], 0)
         if taken >= limit:
             plan.skip(item["row"], "GROUP_FULL", SKIP_TEXT["GROUP_FULL"].format(group=name, limit=limit, taken=taken), full, name)
             plan.counts.students_skipped += 1
@@ -387,8 +422,11 @@ def commit(org_id: Any, creator_id: Any, data: bytes, db: Session, *, money: boo
                 created.append(CreatedGroup(id=response.id, name=response.name))
         except Exception as exc:  # noqa: BLE001 - a group that cannot be created stops the file before any student is touched
             db.rollback()
+            logger.exception("import: creating the groups failed")
+            # DM-050: a refusal with its own Russian text (ValueError / PermissionError of the group service) is shown; anything else (SQL/ORM) only to the log
+            reason = str(exc) if isinstance(exc, (ValueError, PermissionError)) and str(exc) else "внутренняя ошибка"
             return ImportCommitResponseB(
-                ok=False, counts=ImportCountsB(), issues=[ImportIssueB(sheet="-", row=0, level="error", message=f"Импорт не выполнен: {exc}")],
+                ok=False, counts=ImportCountsB(), issues=[ImportIssueB(sheet="-", row=0, level="error", message=f"Импорт не выполнен: {reason}")],
                 created_groups=created,
             )
         result = ImportCountsB(**plan.counts.model_dump())

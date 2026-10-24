@@ -47,11 +47,26 @@ class DiagnosticCapabilityLogFilter(logging.Filter):
         return True
 
 
+_REQUEST_ID_RE = re.compile(r"[A-Za-z0-9-]{1,64}")
+
+
+def safe_request_id(candidate: str | None) -> str:
+    """The client's X-Request-ID when it is 1-64 characters of [A-Za-z0-9-] (LD-22), otherwise a fresh one.
+
+    The value goes into JSON logs and the response header: a newline, a multi-megabyte string or any other free text from the
+    client must never get there.
+    """
+    if candidate and _REQUEST_ID_RE.fullmatch(candidate):
+        return candidate
+    return str(uuid.uuid4())
+
+
 class RequestIDMiddleware(BaseHTTPMiddleware):
-    """Propagate or generate X-Request-ID and bind it to structlog context."""
+    """Propagate (a well-formed one) or generate X-Request-ID and bind it to structlog context."""
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request_id = safe_request_id(request.headers.get("X-Request-ID"))
+        request.state.request_id = request_id  # the 500 handler (outside this middleware) reports it to the client
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=request_id)
         response = await call_next(request)

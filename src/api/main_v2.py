@@ -10,6 +10,7 @@ load_dotenv()  # Загрузить .env до чтения os.getenv()
 import logging
 import os
 import traceback
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -119,6 +120,16 @@ app = FastAPI(
 from src.core.config import get_settings as _get_settings
 _allowed_origins = _get_settings().cors_origins
 app.add_middleware(RequestIDMiddleware)
+# DM-001: an import file declared larger than the limit is refused (413) before its body is read; no Content-Length at all -> 411
+from src.auth.import_limits import MAX_IMPORT_BYTES as _MAX_IMPORT_BYTES
+from src.core.upload_limit import UploadSizeLimitMiddleware
+app.add_middleware(
+    UploadSizeLimitMiddleware,
+    limits={
+        "/org/import/preview": (_MAX_IMPORT_BYTES, "5 МБ"),
+        "/org/import/commit": (_MAX_IMPORT_BYTES, "5 МБ"),
+    },
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -170,15 +181,21 @@ async def algo_exception_handler(request, exc: AlgoException):
     )
 
 
-# Global exception handler — show traceback in dev only
+# Global exception handler. The client gets a fixed text and the request id; everything else (the exception text, which can carry
+# SQL, parameters and hosts, and the traceback) goes to the log only, in every environment (LD-18).
+INTERNAL_ERROR_TEXT = "Внутренняя ошибка сервера"
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
+    request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())
     tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
-    logger.error(f"Unhandled error: {''.join(tb)}")
-    detail = {"detail": str(exc)}
-    if settings.DEBUG:
-        detail["traceback"] = tb[-3:]
-    return JSONResponse(status_code=500, content=detail, headers=_cors_headers(request))
+    logger.error("Unhandled error [request_id=%s] %s %s: %s", request_id, request.method, request.url.path, "".join(tb))
+    return JSONResponse(
+        status_code=500,
+        content={"detail": INTERNAL_ERROR_TEXT, "request_id": request_id},
+        headers={**_cors_headers(request), "X-Request-ID": request_id},
+    )
 
 
 # ─── Routers ───
@@ -262,7 +279,8 @@ async def health_check(db: Session = Depends(get_db)):
         db.execute(text("SELECT 1"))
         db_status = "connected"
     except Exception as e:
-        db_status = f"error: {str(e)}"
+        logger.warning("Health check: database unreachable: %s", e)
+        db_status = "error"  # the text of the failure (host, DSN, SQL) is for the log, not for an anonymous caller
 
     return HealthResponse(
         status="healthy" if db_status == "connected" else "degraded",

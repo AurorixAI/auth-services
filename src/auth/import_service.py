@@ -23,11 +23,14 @@ Key data-model facts this module respects (see src/models/auth.py):
 """
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+import zipfile
 from io import BytesIO
+from xml.etree import ElementTree
 from typing import Optional
 
 from pydantic import BaseModel
@@ -42,8 +45,11 @@ from src.models.auth import (
     User,
 )
 
+from . import import_limits as limits
 from .membership_periods import open_period
 from .student_id_service import DisplayIdAllocator
+
+logger = logging.getLogger(__name__)
 
 # ── Sheet + column names (the template we dictate) ──────────────────────────
 SHEET_GROUPS = "Группы"
@@ -150,8 +156,12 @@ def _is_example(cells) -> bool:
 
 
 def _read_sheet(ws, expected_cols: list[str]) -> list[ParsedRow]:
-    """Map columns by header name (order-independent, tolerant of extras); the example row of the template is skipped."""
-    rows_iter = ws.iter_rows(values_only=False)
+    """Map columns by header name (order-independent, tolerant of extras); the example row of the template is skipped.
+
+    The sheet is streamed (read-only workbook): at most ``MAX_IMPORT_ROWS`` data rows are kept; a longer sheet is refused (422).
+    ``ws.iter_rows`` pads skipped rows, so the position in the iteration is the Excel row (the header is row 1).
+    """
+    rows_iter = ws.iter_rows(values_only=True)
     try:
         header_cells = next(rows_iter)
     except StopIteration:
@@ -161,52 +171,65 @@ def _read_sheet(ws, expected_cols: list[str]) -> list[ParsedRow]:
     wanted = {_norm_header(c): c for c in expected_cols}
     col_map: dict[int, str] = {}
     for idx, cell in enumerate(header_cells):
-        key = _norm_header(cell.value)
+        key = _norm_header(cell)
         key = HEADER_ALIASES.get(key, key)
         if key in wanted:
             col_map[idx] = key
 
     out: list[ParsedRow] = []
-    for cells in rows_iter:
+    for excel_row, cells in enumerate(rows_iter, start=2):
+        if excel_row > limits.MAX_SCANNED_ROWS:
+            raise limits.ImportFileRejected(limits.TOO_MANY_ROWS.format(sheet=ws.title))
         if _is_example(cells):
             continue  # the grey example row of the template
         values = {}
         any_value = False
         for idx, key in col_map.items():
-            val = _cell(cells[idx].value if idx < len(cells) else None)
+            val = _cell(cells[idx] if idx < len(cells) else None)
             if val:
                 any_value = True
             values[key] = val
         if not any_value:
             continue  # skip fully-blank rows
-        excel_row = cells[0].row if cells else 0
+        if len(out) >= limits.MAX_IMPORT_ROWS:
+            raise limits.ImportFileRejected(limits.TOO_MANY_ROWS.format(sheet=ws.title))
         out.append(ParsedRow(row=excel_row, data=values))
     return out
 
 
 def parse_workbook(data: bytes) -> ParsedWorkbook:
+    """Read the two sheets of the template. A file that cannot be an import at all (not an xlsx, a zip bomb, too many sheets / rows)
+    raises ``ImportFileRejected`` (the route answers 422); a readable file without the sheets comes back with ``fatal`` set."""
     from openpyxl import load_workbook
 
+    limits.check_zip(data)
     result = ParsedWorkbook()
     try:
-        wb = load_workbook(BytesIO(data), data_only=True)
+        wb = load_workbook(BytesIO(data), data_only=True, read_only=True)
     except Exception:
-        result.fatal = "Не удалось прочитать файл. Загрузите .xlsx по нашему шаблону."
-        return result
+        raise limits.ImportFileRejected(limits.UNREADABLE) from None
+    try:
+        if len(wb.sheetnames) > limits.MAX_IMPORT_SHEETS:
+            raise limits.ImportFileRejected(limits.TOO_MANY_SHEETS)
+        names = set(wb.sheetnames)
+        missing = [s for s in (SHEET_GROUPS, SHEET_STUDENTS) if s not in names]
+        if missing:
+            result.fatal = (
+                "В файле нет обязательных вкладок: "
+                + ", ".join(missing)
+                + ". Скачайте актуальный шаблон."
+            )
+            return result
 
-    names = set(wb.sheetnames)
-    missing = [s for s in (SHEET_GROUPS, SHEET_STUDENTS) if s not in names]
-    if missing:
-        result.fatal = (
-            "В файле нет обязательных вкладок: "
-            + ", ".join(missing)
-            + ". Скачайте актуальный шаблон."
-        )
+        result.groups = _read_sheet(wb[SHEET_GROUPS], COLS_GROUPS)
+        result.students = _read_sheet(wb[SHEET_STUDENTS], COLS_STUDENTS)
         return result
-
-    result.groups = _read_sheet(wb[SHEET_GROUPS], COLS_GROUPS)
-    result.students = _read_sheet(wb[SHEET_STUDENTS], COLS_STUDENTS)
-    return result
+    except limits.ImportFileRejected:
+        raise
+    except (zipfile.BadZipFile, KeyError, ValueError, OSError, EOFError, ElementTree.ParseError):
+        raise limits.ImportFileRejected(limits.UNREADABLE) from None
+    finally:
+        wb.close()
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -651,13 +674,14 @@ def commit(org_id: str, creator_id: str, data: bytes, db: Session, *, money: boo
                         today=_today(), require_reason_when_money=False)
 
         db.commit()
-    except Exception as exc:  # noqa: BLE001 — surface as a single import failure
+    except Exception:  # noqa: BLE001 — surface as a single import failure
         db.rollback()
+        logger.exception("import: commit rolled back")  # DM-050: the text of an internal error (SQL/ORM) is for the log, not the client
         return ImportCommitResponse(
             ok=False,
             counts=ImportCounts(),
             issues=[ImportIssue(sheet="-", row=0, level="error",
-                                message=f"Импорт не выполнен (откат): {exc}")],
+                                message="Импорт не выполнен (откат): внутренняя ошибка. Данные не изменены — попробуйте ещё раз или обратитесь в поддержку.")],
         )
 
     return ImportCommitResponse(
