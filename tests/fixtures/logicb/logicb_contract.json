@@ -4531,6 +4531,17 @@
             ],
             "title": "Org Role"
           },
+          "payments_access": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payments Access"
+          },
           "role": {
             "title": "Role",
             "type": "string"
