@@ -174,24 +174,15 @@ def membership_covers_instant(
 # ============================================================================
 
 _DEFAULT_SECRET = "algo-v1-dev-secret-key-change-in-prod"
-SECRET_KEY = os.getenv("SECRET_KEY", _DEFAULT_SECRET)
-JWT_SECRET = os.getenv("JWT_SECRET_KEY", SECRET_KEY)
-
-if SECRET_KEY == _DEFAULT_SECRET and os.getenv("ENV", "dev").lower() not in (
-    "dev",
-    "development",
-    "test",
-):
-    raise RuntimeError(
-        "CRITICAL: SECRET_KEY env var not set in production! "
-        "Set SECRET_KEY to a strong random string."
-    )
+# SV-01: APP_ENV production/staging refuses an empty, default or short (<32) signing key (src/core/startup_guard.py)
+from src.core.startup_guard import diagnostic_base_url, load_signing_secrets
+SECRET_KEY, JWT_SECRET = load_signing_secrets()
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TTL_MINUTES", "60"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TTL_DAYS", "30"))
 DIAGNOSTIC_CODE_LENGTH = 8
 INVITE_CODE_LENGTH = 8
-BASE_DIAGNOSTIC_URL = os.getenv("DIAGNOSTIC_BASE_URL", "http://localhost:3000/d")
+BASE_DIAGNOSTIC_URL = diagnostic_base_url()  # SV-27: logs an error in production/staging when DIAGNOSTIC_BASE_URL is missing
 # "cancelled" is deliberately absent: a cancelled invite never turns into "expired" when its time passes.
 _EXPIRABLE_DIAGNOSTIC_STATUSES = ("pending", "confirmed", "in_progress")
 
