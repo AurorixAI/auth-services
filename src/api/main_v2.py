@@ -119,7 +119,6 @@ app = FastAPI(
 # CORS — use core settings (handles JSON list from .env correctly)
 from src.core.config import get_settings as _get_settings
 _allowed_origins = _get_settings().cors_origins
-app.add_middleware(RequestIDMiddleware)
 # DM-001: an import file declared larger than the limit is refused (413) before its body is read; no Content-Length at all -> 411
 from src.auth.import_limits import MAX_IMPORT_BYTES as _MAX_IMPORT_BYTES
 from src.core.upload_limit import UploadSizeLimitMiddleware
@@ -130,6 +129,7 @@ app.add_middleware(
         "/org/import/commit": (_MAX_IMPORT_BYTES, "5 МБ"),
     },
 )
+app.add_middleware(RequestIDMiddleware)  # wraps the upload limit: its 411/413 carry X-Request-ID too
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,

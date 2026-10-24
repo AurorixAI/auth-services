@@ -888,6 +888,8 @@ def get_student_profile(
         raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(404, str(e))
+    except RuntimeError as e:  # e.g. the display-id prefix could not be claimed under contention: try again
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
 
 
 @router.get("/org/students/{student_id}/attendance")
@@ -921,6 +923,8 @@ def update_student(
         raise HTTPException(e.http_status, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except RuntimeError as e:  # e.g. the display-id prefix could not be claimed under contention: try again
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
 
 
 @router.post("/org/students/{student_id}/archive", response_model=ArchiveStudentResponse)
@@ -1158,6 +1162,8 @@ def get_group(
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(e))
     except ValueError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+    except RuntimeError as e:  # e.g. the display-id prefix could not be claimed under contention: try again
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
 
 
 @router.get("/org/groups/{group_id}/stats")
@@ -1238,6 +1244,8 @@ def bulk_add_students(
         raise _concurrent_edit_or_raise(e, db)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except RuntimeError as e:  # e.g. the display-id prefix could not be claimed under contention: try again
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
 
 
 @router.post("/org/groups/{group_id}/students/{student_id}")
@@ -1270,6 +1278,8 @@ def add_student_to_group(
         raise OpsError(409, "GROUP_ARCHIVED", str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except RuntimeError as e:  # e.g. the display-id prefix could not be claimed under contention: try again
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
 
 
 @router.delete(
@@ -1532,6 +1542,8 @@ def reschedule_lesson_occurrence(
         raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except RuntimeError as e:  # e.g. the display-id prefix could not be claimed under contention: try again
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
 
 
 @router.put("/org/schedule/lessons/{lesson_id}/recurrence", response_model=ScheduleLessonResponseB)

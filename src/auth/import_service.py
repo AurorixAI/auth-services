@@ -161,6 +161,8 @@ def _read_sheet(ws, expected_cols: list[str]) -> list[ParsedRow]:
     The sheet is streamed (read-only workbook): at most ``MAX_IMPORT_ROWS`` data rows are kept; a longer sheet is refused (422).
     ``ws.iter_rows`` pads skipped rows, so the position in the iteration is the Excel row (the header is row 1).
     """
+    if hasattr(ws, "reset_dimensions"):
+        ws.reset_dimensions()  # a read-only sheet trusts the <dimension> tag of the file; a wrong one silently drops rows and columns
     rows_iter = ws.iter_rows(values_only=True)
     try:
         header_cells = next(rows_iter)
