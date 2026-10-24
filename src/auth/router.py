@@ -469,6 +469,15 @@ def verify_group_student(
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 
+def _with_payments_access(profile: UserResponse, payload: dict, db: Session) -> UserResponse:
+    """The profile says whether the user may see money, so the client does not have to probe /org/payments/summary
+    (a 403 per page load for an administrator without the right).  The same rule as every payments endpoint, from the
+    fresh membership of the token's organisation; no organisation (a student, a platform account) means no."""
+    who = {"org_id": payload.get("org_id"), "org_role": payload.get("org_role")}
+    profile.payments_access = has_payments_access(who, db)
+    return profile
+
+
 @router.get("/me", response_model=UserResponse)
 def get_profile(
     payload: dict = Depends(get_current_active_user_payload), db: Session = Depends(get_db)
@@ -478,7 +487,7 @@ def get_profile(
     user = svc.get_user_by_id(payload["sub"])
     if not user:
         raise HTTPException(404, "Пользователь не найден")
-    return svc._build_user_response(user)
+    return _with_payments_access(svc._build_user_response(user), payload, db)
 
 
 @router.put("/me", response_model=UserResponse)
@@ -493,7 +502,7 @@ def update_profile(
         user = svc.update_profile(
             payload["sub"], **request.model_dump(exclude_none=True)
         )
-        return svc._build_user_response(user)
+        return _with_payments_access(svc._build_user_response(user), payload, db)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

@@ -146,7 +146,8 @@ MONEY_WORDS = ("fee", "amount", "payment", "paid", "price", "salary", "currency"
 
 @pytest.mark.parametrize("model", [StudentResponse, GroupResponse, UserResponse])
 def test_response_schemas_have_no_money_fields(model):
-    leaked = [name for name in model.model_fields if any(word in name.lower() for word in MONEY_WORDS)]
+    # ``payments_access`` (UserResponse) is a yes/no permission flag for the menu, not an amount: it carries no money
+    leaked = [name for name in model.model_fields if any(word in name.lower() for word in MONEY_WORDS) and name != "payments_access"]
     assert leaked == []
 
 

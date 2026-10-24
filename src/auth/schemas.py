@@ -665,6 +665,8 @@ class UserResponse(BaseModel):
     is_verified: bool = False
     must_change_password: bool = False
     created_at: Optional[str] = None
+    # May this user see money (owner; an administrator only if the owner allowed it)?  Filled by GET/PUT /auth/me; absent elsewhere.
+    payments_access: Optional[bool] = None
 
 
 class OrgResponse(BaseModel):
