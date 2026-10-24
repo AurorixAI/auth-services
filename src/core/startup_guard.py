@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 STRICT_ENVS = frozenset({"production", "prod", "staging", "stage", "preview"})
 MIN_SECRET_LENGTH = 32
 DEFAULT_SECRET = "algo-v1-dev-secret-key-change-in-prod"
-_PLACEHOLDER_PREFIXES = ("change-me", "changeme", "your-secret", "replace-me")
+_PLACEHOLDER_PREFIXES = ("change-me", "changeme", "your-secret", "replace-me", "replace-with")  # replace-with…: infra compose/.env.example
+MIN_DISTINCT_CHARS = 8
 DEFAULT_DIAGNOSTIC_URL = "http://localhost:3000/d"
 
 
@@ -39,6 +40,8 @@ def secret_problem(value: str) -> Optional[str]:
         return "значение по умолчанию / пример из документации"
     if len(value) < MIN_SECRET_LENGTH:
         return f"короче {MIN_SECRET_LENGTH} символов"
+    if len(set(value)) < MIN_DISTINCT_CHARS:
+        return f"слишком простой (меньше {MIN_DISTINCT_CHARS} разных символов)"
     return None
 
 

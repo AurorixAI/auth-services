@@ -13,7 +13,7 @@ import pytest
 from src.core import startup_guard as guard
 
 ROOT = Path(__file__).resolve().parents[1]
-GOOD = "k" * 64
+GOOD = "9f2c7ab41de05b68" * 4
 
 
 def child(**env):
@@ -63,7 +63,10 @@ def test_the_old_ENV_variable_no_longer_decides():
 def test_unit_secret_problem_rules():
     assert guard.secret_problem("") and guard.secret_problem("   ") and guard.secret_problem("x" * 31)
     assert guard.secret_problem(guard.DEFAULT_SECRET) and guard.secret_problem("Change-Me-" + "x" * 40)
-    assert guard.secret_problem("x" * 32) is None
+    assert guard.secret_problem("replace-with-a-random-secret-at-least-32-characters")          # the value of algo-infrastructure/compose/.env.example
+    assert guard.secret_problem("k" * 64) and guard.secret_problem("ab" * 32) and guard.secret_problem("abcdefg" * 9)    # fewer than 8 distinct characters
+    assert guard.secret_problem("x" * 32) and "простой" in guard.secret_problem("x" * 32)
+    assert guard.secret_problem("9f2c7ab41de05b68" * 4) is None and guard.secret_problem("Zq8!mT3#vR6@pL1$wN9%xC5^yB2&uH7*") is None
 
 
 def test_invite_link_base_sv27():
@@ -78,3 +81,9 @@ def test_invite_link_base_sv27():
     assert r.returncode == 0 and "указывает на localhost" in r.stderr
     r = child(APP_ENV="development")
     assert r.returncode == 0 and "DIAGNOSTIC_BASE_URL не задан" not in r.stderr
+
+
+@pytest.mark.parametrize("key", ["replace-with-a-random-secret-at-least-32-characters", "k" * 64, "ab" * 32])
+def test_staging_refuses_the_infra_placeholder_and_a_low_entropy_key(key):
+    r = child(APP_ENV="staging", SECRET_KEY=key)
+    assert r.returncode != 0 and "CRITICAL: SECRET_KEY" in r.stderr
