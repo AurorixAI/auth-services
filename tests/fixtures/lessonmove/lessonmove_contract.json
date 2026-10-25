@@ -797,6 +797,48 @@
             "title": "Batchid",
             "type": "string"
           },
+          "clearedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clearedat"
+          },
+          "clearedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clearedTo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clearedTrigger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clearedtrigger"
+          },
           "comment": {
             "anyOf": [
               {
@@ -898,6 +940,17 @@
           },
           "teacher": {
             "$ref": "#/components/schemas/PersonRef"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger"
           },
           "urgent": {
             "default": false,

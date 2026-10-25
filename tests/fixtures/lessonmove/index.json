@@ -3,6 +3,7 @@
   "K02_move_check_ok.json": "LessonMoveCheckOut",
   "K03_move_stale_sheet.json": "-",
   "K04_move_teacher_busy.json": "-",
+  "K14_move_reason_too_long.json": "-",
   "K05_exam_binding_none.json": "LessonExamBinding",
   "K06_exam_binding_lobby.json": "LessonExamBinding",
   "K07_exam_binding_active.json": "LessonExamBinding",
@@ -11,6 +12,5 @@
   "K09_move_ok.json": "DecideOut",
   "K10_move_again_other_slot.json": "-",
   "K12_occurrence_with_moved_from.json": "ScheduleOccurrenceResponseB",
-  "K13_move_check_origin_started.json": "LessonMoveCheckOut",
-  "K14_move_reason_too_long.json": "-"
+  "K13_move_check_origin_started.json": "LessonMoveCheckOut"
 }

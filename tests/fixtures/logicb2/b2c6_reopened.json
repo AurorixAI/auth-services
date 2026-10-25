@@ -1,5 +1,9 @@
 {
   "batchId": "202a06d1-99e4-5c8c-8438-45802ece9d4b",
+  "clearedAt": null,
+  "clearedBy": null,
+  "clearedTo": null,
+  "clearedTrigger": null,
   "comment": "Заменяющий Рахимов Т. больше не работает в центре. Нужно новое решение.",
   "createdAt": "2026-10-25T05:00:00",
   "decision": null,
@@ -36,5 +40,6 @@
     "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
     "name": "Иванов И."
   },
+  "trigger": null,
   "urgent": false
 }

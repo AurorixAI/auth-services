@@ -345,7 +345,7 @@ class LessonTeachers:
                     **occ,
                     "teacherId": _s(teacher),
                     "teacherName": short_name(names.get(_s(teacher))) if teacher else None,
-                    "isSubstitution": bool(teacher is not None and teacher != default),
+                    "isSubstitution": bool(teacher is not None and default is not None and teacher != default),
                     "defaultTeacherId": _s(default),
                     "defaultTeacherName": short_name(names.get(_s(default))) if default else None,
                 }
@@ -616,13 +616,13 @@ class LessonTeachers:
                 self.raise_if_busy(conflicts, short_name(user))
 
     # ----------------------------------------------------------------------------- substitution cleaning
-    def cancel_assignment(self, asg: LessonTeacherAssignment, actor_id: Any, *, group: Group, reason: str) -> None:
+    def cancel_assignment(self, asg: LessonTeacherAssignment, actor_id: Any, *, group: Group, reason: str, trigger: str = "release") -> None:
         asg.cancelled_at = bc.utc_now()
         asg.cancelled_by = _uuid(actor_id)
         self.db.flush()
         from . import lesson_substitutions  # lazy: it imports this module
 
-        lesson_substitutions.on_assignment_cancelled(self.svc, asg, actor_id)  # LOGIC-B2: a request substituted through it gets ``assignment_cleared``
+        lesson_substitutions.on_assignment_cancelled(self.svc, asg, actor_id, trigger)  # LOGIC-B2: a request substituted through it gets ``assignment_cleared``
         self.db.add(
             GroupAudit(
                 org_id=group.org_id,
@@ -652,7 +652,8 @@ class LessonTeachers:
             .all()
         )
         for asg in rows:
-            self.cancel_assignment(asg, actor_id, group=group, reason="Преподаватель группы сменён: замена совпала с ним")
+            self.cancel_assignment(asg, actor_id, group=group, reason="Преподаватель группы сменён: замена совпала с ним",
+                                   trigger="group_teacher_changed")
         return len(rows)
 
     def release_substitutions_of(self, org_id: Any, teacher_id: UUID, actor_id: Any) -> int:
@@ -671,7 +672,7 @@ class LessonTeachers:
         )
         self.last_released = list(rows)
         for asg, group in rows:
-            self.cancel_assignment(asg, actor_id, group=group, reason="Сотрудник удалён: замена снята")
+            self.cancel_assignment(asg, actor_id, group=group, reason="Сотрудник удалён: замена снята", trigger="member_removed")
         return len(rows)
 
     def count_future_substitutions(self, org_id: Any, teacher_id: UUID) -> int:
@@ -754,7 +755,9 @@ class LessonTeachers:
             return self._out(group, req.lessonId, lesson_date, current if row is None else row.teacher_id, default, row, version_changed=False,
                              sheets=[])
         if not clearing:
-            self.db.query(User.id).filter(User.id == target).with_for_update().first()      # the target's row first: a removal of him serialises with this assignment
+            # the target's row first: a removal of him serialises with this assignment.  FOR NO KEY UPDATE (as the move does): the record of the journal that follows takes
+            # FOR KEY SHARE on the MAIN teacher's row, and two crossed assignments (X takes D's lesson, D takes X's) must not wait for each other
+            self.db.query(User.id).filter(User.id == target).with_for_update(key_share=True).first()
             member = self.teaching_member(org_id, target)
             if member is None:
                 raise unprocessable("TARGET_NOT_TEACHER", "Выберите преподавателя центра")
@@ -833,7 +836,7 @@ class LessonTeachers:
             "lessonDate": lesson_date,
             "teacherId": _s(shown),
             "teacherName": short_name(names.get(_s(shown))) if shown else None,
-            "isSubstitution": bool(shown is not None and shown != default),
+            "isSubstitution": bool(shown is not None and default is not None and shown != default),          # a group without a main teacher has nobody to replace
             "defaultTeacherId": _s(default),
             "defaultTeacherName": short_name(names.get(_s(default))) if default else None,
             "attendanceUpdated": bool(version_changed),

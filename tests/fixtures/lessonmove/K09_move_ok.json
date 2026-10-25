@@ -50,7 +50,12 @@
       "closedReason": null,
       "closedReasonText": null
     },
-    "previous": null
+    "previous": null,
+    "trigger": "manager_move",
+    "clearedAt": null,
+    "clearedBy": null,
+    "clearedTo": null,
+    "clearedTrigger": null
   },
   "result": {
     "kind": "reschedule",

@@ -1,6 +1,10 @@
 {
   "item": {
     "batchId": "0815c358-23af-5667-aa07-1a21fee1c6bc",
+    "clearedAt": null,
+    "clearedBy": null,
+    "clearedTo": null,
+    "clearedTrigger": null,
     "comment": null,
     "createdAt": "2026-10-21T09:00:00",
     "decision": {
@@ -45,6 +49,7 @@
       "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
       "name": "Иванов И."
     },
+    "trigger": null,
     "urgent": false
   },
   "result": {

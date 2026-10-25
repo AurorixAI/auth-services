@@ -106,6 +106,11 @@ class SubstitutionItem(BaseModel):
     overdue: bool = False
     decision: Optional[SubDecision] = None
     previous: Optional[SubPrevious] = None
+    trigger: Optional[str] = None  # P1.2: how a record the system made came to be: manager_assign | manager_move | teacher_move (null for a request of a teacher / a reopened one)
+    clearedAt: Optional[str] = None  # P1.2: the substitution of the record stopped later (taken off, replaced, released, the lesson cancelled / moved); the status does not change
+    clearedBy: Optional[PersonRef] = None
+    clearedTo: Optional[PersonRef] = None  # the teacher who took the lesson over; null = the main teacher leads again
+    clearedTrigger: Optional[str] = None  # put | member_removed | group_teacher_changed | cancel | move | release
 
 
 # ---------------------------------------------------------------------------------------- teacher (4.2)

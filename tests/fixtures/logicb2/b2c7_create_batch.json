@@ -4,6 +4,10 @@
   "created": [
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "clearedAt": null,
+      "clearedBy": null,
+      "clearedTo": null,
+      "clearedTrigger": null,
       "comment": "Конференция",
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
@@ -35,10 +39,15 @@
         "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
         "name": "Иванов И."
       },
+      "trigger": null,
       "urgent": true
     },
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "clearedAt": null,
+      "clearedBy": null,
+      "clearedTo": null,
+      "clearedTrigger": null,
       "comment": "Конференция",
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
@@ -70,10 +79,15 @@
         "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
         "name": "Иванов И."
       },
+      "trigger": null,
       "urgent": false
     },
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "clearedAt": null,
+      "clearedBy": null,
+      "clearedTo": null,
+      "clearedTrigger": null,
       "comment": "Конференция",
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
@@ -105,10 +119,15 @@
         "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
         "name": "Иванов И."
       },
+      "trigger": null,
       "urgent": false
     },
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "clearedAt": null,
+      "clearedBy": null,
+      "clearedTo": null,
+      "clearedTrigger": null,
       "comment": "Конференция",
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
@@ -140,10 +159,15 @@
         "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
         "name": "Иванов И."
       },
+      "trigger": null,
       "urgent": false
     },
     {
       "batchId": "362d293e-5a4a-5548-875b-fc333863ef36",
+      "clearedAt": null,
+      "clearedBy": null,
+      "clearedTo": null,
+      "clearedTrigger": null,
       "comment": "Конференция",
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
@@ -175,6 +199,7 @@
         "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
         "name": "Иванов И."
       },
+      "trigger": null,
       "urgent": false
     }
   ],

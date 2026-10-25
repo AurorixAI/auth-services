@@ -1,5 +1,9 @@
 {
   "batchId": "95f7e549-d119-5b9d-9fe1-ca16dc320616",
+  "clearedAt": null,
+  "clearedBy": null,
+  "clearedTo": null,
+  "clearedTrigger": null,
   "comment": null,
   "createdAt": "2026-10-21T09:00:00",
   "decision": {
@@ -41,5 +45,6 @@
     "id": "dfa29678-0238-53bf-841f-f7b02e776e91",
     "name": "Петров П."
   },
+  "trigger": null,
   "urgent": false
 }

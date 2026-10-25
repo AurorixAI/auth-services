@@ -4,6 +4,10 @@
   "created": [
     {
       "batchId": "19ffb739-8f2c-50f8-805d-020599e2fa4e",
+      "clearedAt": null,
+      "clearedBy": null,
+      "clearedTo": null,
+      "clearedTrigger": null,
       "comment": "Сам заболел",
       "createdAt": "2026-10-21T09:20:00",
       "decision": null,
@@ -40,6 +44,7 @@
         "id": "5fd041ac-c0cc-5b16-8903-db2bbc1e9333",
         "name": "Рахимов Т."
       },
+      "trigger": null,
       "urgent": false
     }
   ],

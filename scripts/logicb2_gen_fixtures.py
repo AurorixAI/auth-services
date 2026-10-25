@@ -79,6 +79,7 @@ def item(name: str, lesson: str, day: str, requester: str, now_local: datetime, 
         "suggestedTeacher": ({"id": IDS[suggested], "name": short(suggested), "active": suggested_active} if suggested else None),
         "createdAt": iso(utc(now_local)), "minutesToStart": minutes, "urgent": bool(pending and 0 < minutes < 1440),
         "overdue": bool(pending and minutes <= 0), "decision": decision, "previous": previous,
+        "trigger": None, "clearedAt": None, "clearedBy": None, "clearedTo": None, "clearedTrigger": None,
     }
 
 

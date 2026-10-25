@@ -11,6 +11,7 @@ from src.models.auth import LessonTeacherAssignment, PayrollRate
 from tests.b2_helpers import API, client, clock, code_of, decide, events_of, needs_pg, pg_session, requests_of, row_of  # noqa: F401  (fixtures)
 from tests.ops_helpers import run_parallel
 from tests.test_integration_ab_pg import money, pay, member, sheet_of
+from tests.test_lesson_move_direct_pg import move
 from tests.test_ops_b2_decide_pg import L, Sync, one, sync, w  # noqa: F401
 
 pytestmark = needs_pg
@@ -265,3 +266,152 @@ def test_s8_another_centre_and_a_teacher_are_refused_as_before_and_write_nothing
     assert requests_of(w) == [] and active(w) == [] and events_of(w) == []
     assert journal(w) == []
     assert journal(w, status="pending") == []
+
+
+# ------------------------------------------------------------------------------------------------------ R3 fix round
+def one_get(w, request_id):
+    return next(i for i in journal(w) if i["id"] == str(request_id))
+
+
+def test_r3_two_crossed_assignments_do_not_wait_for_each_other(w):
+    """[R3 #1] X takes the lesson of D's group while D takes the lesson of X's group, at the same moment: each put locks its target's row and then the record of the journal takes
+    FOR KEY SHARE on the MAIN teacher's row - with FOR UPDATE on the target that is a cycle (40P01); with FOR NO KEY UPDATE it is none.  Four rounds, both succeed every time."""
+    def call(group, teacher, lesson, day):
+        def go(svc):
+            body = LessonTeacherPut(lessonDate=date.fromisoformat(day), lessonId=lesson, teacherId=str(getattr(w, teacher).id), reason=REASON)
+            return LessonTeachers(svc).put(str(w.org.id), group.id, body, actor_id=str(w.admin.id))
+        return go
+
+    for monday, thursday in (("2026-10-26", "2026-10-22"), ("2026-11-02", "2026-10-29"), ("2026-11-09", "2026-11-05"), ("2026-11-16", "2026-11-12")):
+        results = run_parallel(w, call(w.G1, "C", "lesson-l1", monday), call(w.G4, "A", "lesson-l5", thursday))         # A leads G1, C leads G4
+        assert all(err is None for _r, err in results), (monday, results)
+    recs = requests_of(w)
+    assert len(recs) == 8 and {(r.requester_id, r.substitute_id) for r in recs} == {(w.A.id, w.C.id), (w.C.id, w.A.id)}
+
+
+def test_r3_the_removal_of_a_member_still_serialises_with_an_assignment_to_him(w, sync):
+    """[R3 #1] The row of the target is locked FOR NO KEY UPDATE; the removal takes FOR UPDATE: the two still exclude each other (so a substitute is never set on a man who is being
+    removed).  Held by one connection, the other cannot lock - and, run at the same moment, the two end in one of the two consistent states."""
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError
+    from src.models.auth import OrganizationMember
+
+    engine = w.db.get_bind()
+    with engine.connect() as holder, engine.connect() as other:
+        holder.execute(text("select id from users where id = :i for no key update"), {"i": w.D.id})
+        with pytest.raises(OperationalError):
+            other.execute(text("set lock_timeout = '300ms'"))
+            other.execute(text("select id from users where id = :i for update"), {"i": w.D.id})
+        holder.rollback()
+    member_id = w.db.query(OrganizationMember.id).filter_by(org_id=w.org.id, user_id=w.D.id).scalar()
+
+    def assign(svc):
+        body = LessonTeacherPut(lessonDate=date(2026, 10, 26), lessonId="lesson-l1", teacherId=str(w.D.id), reason=REASON)
+        return LessonTeachers(svc).put(str(w.org.id), w.G1.id, body, actor_id=str(w.admin.id))
+
+    results = run_parallel(w, assign, lambda svc: svc.remove_member(str(w.org.id), str(member_id), str(w.owner.id)))
+    assert results[1][1] is None, results
+    assert active(w) == []                                                  # nobody is left substituting as a removed man
+    if results[0][1] is None:                                               # the assignment won: removal released it and the lesson waits for a new decision
+        assert sorted(r.status for r in requests_of(w)) == ["pending", "substituted"]
+    else:                                                                   # the removal won: the man is no longer a teacher of the centre
+        assert code_of(results[0][1]) == "TARGET_NOT_TEACHER" and requests_of(w) == []
+
+
+def test_r3_a_teachers_request_then_the_sheet_on_top_of_it_then_the_removal_says_it_in_the_item(w, sync):
+    """[R3 #2/#6] The request is decided by the PUT on top of the pending one; later the sheet takes the substitution off: the request keeps ``substituted`` (B2) and the item says
+    when, by whom, to whom (nobody: the main teacher) and why."""
+    ask = one(w, "A", "L1", MON)
+    assert put(w, "admin", "D").json()["requestClosed"]["id"] == ask["id"]
+    fresh = one_get(w, ask["id"])
+    assert fresh["status"] == "substituted" and fresh["clearedAt"] is None and fresh["clearedBy"] is None and fresh["clearedTo"] is None and fresh["clearedTrigger"] is None
+    assert put(w, "owner", None, reason="Основной преподаватель вернулся").status_code == 200
+    item = one_get(w, ask["id"])
+    assert (item["status"], item["origin"], item["trigger"]) == ("substituted", "teacher", None)
+    assert (item["clearedBy"]["id"], item["clearedTo"], item["clearedTrigger"]) == (str(w.owner.id), None, "put") and item["clearedAt"]
+    assert item["decision"]["substitute"]["id"] == str(w.D.id)
+
+
+def test_r3_a_request_decided_on_the_page_then_replaced_by_the_sheet_names_the_new_teacher(w, sync):
+    """[R3 #2] A -> D on the page, then C from the sheet: the first request is ``substituted`` still, ``clearedTo`` is C; the second (system) record is the one in force."""
+    ask = one(w, "A", "L1", MON)
+    assert decide(w, "admin", ask["id"], decision="substitute", teacherId=str(w.D.id)).status_code == 200
+    assert put(w, "owner", "C").status_code == 200
+    item = one_get(w, ask["id"])
+    assert (item["status"], item["clearedBy"]["id"], item["clearedTo"]["id"], item["clearedTrigger"]) == ("substituted", str(w.owner.id), str(w.C.id), "put")
+    second = next(i for i in journal(w) if i["id"] != ask["id"])
+    assert (second["trigger"], second["clearedAt"], second["previous"]["id"]) == ("manager_assign", None, ask["id"])
+
+
+def test_r3_a_replaced_substitute_is_found_by_his_name_and_says_who_took_over(w, sync):
+    """[R3 #6] D, then C: a search for D finds the first record (D is its substitute), and it says C took over."""
+    assert put(w, "admin", "D").status_code == 200
+    assert put(w, "admin", "C").status_code == 200
+    found = journal(w, search=w.D.last_name)
+    assert len(found) == 1 and found[0]["decision"]["substitute"]["id"] == str(w.D.id)
+    assert (found[0]["clearedTo"]["id"], found[0]["clearedTrigger"], found[0]["clearedBy"]["id"]) == (str(w.C.id), "put", str(w.admin.id))
+    both = journal(w, search=w.C.last_name)
+    assert len(both) == 1 and both[0]["clearedAt"] is None and both[0]["decision"]["substitute"]["id"] == str(w.C.id)
+
+
+def test_r3_a_direct_record_whose_lesson_is_moved_or_cancelled_says_so(w, sync):
+    """[R3 #2/#6] D is set on Wed 28.10 without a request.  The administrator moves the lesson -> the record stays ``substituted`` and says ``move``; D asks for a replacement of the
+    next lesson, the administrator cancels it -> ``cancel``.  Nobody took the lesson over (``clearedTo`` null)."""
+    assert put(w, "admin", "D", lesson="lesson-l2", day="2026-10-28").status_code == 200
+    (direct,) = requests_of(w)
+    assert move(w, "admin", key="L2", day="2026-10-28").status_code == 200
+    item = one_get(w, direct.id)
+    assert (item["status"], item["trigger"], item["clearedTrigger"], item["clearedTo"], item["clearedBy"]["id"]) == ("substituted", "manager_assign", "move", None, str(w.admin.id))
+    assert put(w, "admin", "D", lesson="lesson-l2", day="2026-11-04").status_code == 200
+    ask = req_by(w, "D", "2026-11-04")
+    assert decide(w, "admin", ask, decision="cancel", reason="Праздник").status_code == 200
+    second = next(r for r in requests_of(w) if r.lesson_date == "2026-11-04" and r.origin == "system")
+    assert one_get(w, second.id)["clearedTrigger"] == "cancel"
+
+
+def req_by(w, who, day):
+    """The id of the request that teacher ``who`` makes for lesson-l2 of ``day``."""
+    from tests.b2_helpers import req
+
+    r = req(w, who, [(w.G1, "lesson-l2", day)])
+    assert r.status_code == 201, r.text
+    return r.json()["created"][0]["id"]
+
+
+def test_r3_a_released_substitute_says_why(w, sync):
+    """[R3 #2] The substitute leaves the centre: his record stays ``substituted`` and says ``member_removed`` with nobody in his place."""
+    assert put(w, "admin", "D").status_code == 200
+    (direct,) = requests_of(w)
+    assert client(w, "owner").delete(f"{API}/org/members/{w.ids('member_D')}").status_code == 200
+    item = one_get(w, direct.id)
+    assert (item["status"], item["clearedTrigger"], item["clearedTo"], item["clearedBy"]["id"]) == ("substituted", "member_removed", None, str(w.owner.id))
+
+
+def test_r3_a_group_without_a_main_teacher_has_nobody_to_replace(w, sync):
+    """[R3 #3] The group has no teacher: setting D is «Ведёт: Петров Б.», not «Замена»: ``isSubstitution`` false in the answer and in the schedule, no record in the journal."""
+    w.G1.teacher_id = None
+    w.db.commit()
+    r = put(w, "admin", "D")
+    assert r.status_code == 200, r.text
+    assert (r.json()["isSubstitution"], r.json()["teacherId"], r.json()["defaultTeacherId"]) == (False, str(w.D.id), None)
+    assert requests_of(w) == [] and events_of(w) == [] and journal(w) == []
+    mine = client(w, "admin").get(f"{API}/org/schedule/occurrences", params={"date_from": MON, "date_to": MON}).json()
+    lesson = next(o for o in mine if o["id"] == "lesson-l1")
+    assert (lesson["teacherId"], lesson["isSubstitution"]) == (str(w.D.id), False)
+
+
+def test_r3_a_record_the_system_reopened_and_the_sheet_decided_is_not_taken_for_a_direct_one(w, sync):
+    """[R3 #4] Chain 6: A asks, D is set on the page, D leaves -> the system reopens the request; the administrator decides it from the sheet (C) - origin ``system`` and
+    ``decided_via`` ``lesson_teacher_put``, just like a record the sheet made - and later takes C off: the record keeps ``substituted`` (only the ``manager_assign`` trigger of the
+    ``requested`` event marks a direct one)."""
+    ask = one(w, "A", "L1", MON)
+    assert decide(w, "admin", ask["id"], decision="substitute", teacherId=str(w.D.id)).status_code == 200
+    assert client(w, "owner").delete(f"{API}/org/members/{w.ids('member_D')}").status_code == 200
+    (reopened,) = [r for r in requests_of(w) if r.status == "pending"]
+    assert put(w, "admin", "C").json()["requestClosed"]["id"] == str(reopened.id)
+    assert put(w, "admin", None).status_code == 200
+    w.db.expire_all()
+    r = w.db.get(type(reopened), reopened.id)
+    assert (r.origin, r.decided_via, r.status, r.closed_reason) == ("system", "lesson_teacher_put", "substituted", None)
+    item = one_get(w, r.id)
+    assert (item["trigger"], item["clearedTrigger"], item["clearedTo"]) == (None, "put", None)
