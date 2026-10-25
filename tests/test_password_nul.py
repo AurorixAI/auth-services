@@ -46,6 +46,9 @@ def client(monkeypatch):
     monkeypatch.setattr(AuthService, "apply_organization", lambda self, request: (_ for _ in ()).throw(refused))
     monkeypatch.setattr(AuthService, "accept_invitation", lambda self, request: (_ for _ in ()).throw(refused))
     monkeypatch.setattr(AuthService, "change_password", lambda self, uid, old, new: True)
+    from src.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "self_registration_closed", False)  # the old route is closed by default (console pack)
     app = FastAPI()
     app.include_router(auth_router_module.router, prefix="/api/v1")
     app.dependency_overrides[get_db] = lambda: MagicMock()

@@ -192,6 +192,11 @@ def _other_active_owners(db: Session, except_user_id) -> int:
     )
 
 
+def _lock_owners(db: Session) -> None:
+    """Lock every owner row (always in the same order): concurrent owner changes wait for each other, no deadlock."""
+    db.query(PlatformStaff.id).filter(PlatformStaff.is_owner.is_(True)).order_by(PlatformStaff.id).with_for_update().all()
+
+
 @router.get("/staff")
 def list_staff(p: Principal = Depends(require_platform(perms.TEAM_MANAGE)), db: Session = Depends(get_db)):
     rows = (
@@ -262,8 +267,16 @@ def update_staff(
     if all(v is None for v in (role_id, first, last, active, owner_flag)) and not form.errors:
         form.fail("role_id", "Нечего менять")
     form.done()
+    _lock_owners(db)  # two owners changing each other at once are served one after the other (the last-owner rule needs it)
     staff, user, role = _load_staff(db, uid, lock=True)
     is_self = uid == p.user.id
+    touches = (
+        (role_id is not None and role_id != role.id)
+        or (owner_flag is not None and owner_flag != bool(staff.is_owner))
+        or (active is not None and active != bool(staff.is_active))
+    )
+    if is_self and touches:
+        raise PlatformError(409, "Нельзя менять собственную роль или отключать себя", "self_change")
 
     new_role, new_owner = role, bool(staff.is_owner)
     if role_id is not None and role_id != role.id:
@@ -279,14 +292,10 @@ def update_staff(
         new_owner = False
     changes = {}
     if new_role.id != role.id or new_owner != bool(staff.is_owner):
-        if is_self:
-            raise PlatformError(409, "Нельзя менять собственную роль или отключать себя", "self_change")
         if staff.is_owner and not new_owner and _other_active_owners(db, uid) == 0:
             raise PlatformError(409, "Нельзя лишить прав или отключить последнего владельца", "last_owner")
         changes["role"] = {"from": role.name, "to": new_role.name}
     if active is not None and active != bool(staff.is_active):
-        if is_self and active is False:
-            raise PlatformError(409, "Нельзя менять собственную роль или отключать себя", "self_change")
         if active is False and staff.is_owner and _other_active_owners(db, uid) == 0:
             raise PlatformError(409, "Нельзя лишить прав или отключить последнего владельца", "last_owner")
         changes["is_active"] = {"from": bool(staff.is_active), "to": active}

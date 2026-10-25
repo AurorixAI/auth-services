@@ -11,4 +11,4 @@ from .letters import (  # noqa: F401
     send_password_reset,
     send_welcome,
 )
-from .render import LETTERS, Rendered, render  # noqa: F401
+from .render import LETTERS, Rendered  # noqa: F401

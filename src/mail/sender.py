@@ -68,5 +68,5 @@ def send(to: str, rendered: Rendered) -> bool:
     try:
         return deliver(build_message(to, rendered))
     except Exception:  # noqa: BLE001
-        logger.exception("Failed to build a letter to %s", to)
+        logger.exception("Failed to send a letter to %s", to)
         return False

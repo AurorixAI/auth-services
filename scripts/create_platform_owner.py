@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def main() -> int:
+    import src.api.main_v2  # noqa: F401  (loads the application first: the console modules import from src.api, which imports them back)
     from src.auth.platform_bootstrap import OwnerError, create_owner
     from src.core.database import db_session
 

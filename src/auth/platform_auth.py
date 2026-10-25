@@ -30,7 +30,7 @@ from . import platform_audit as audit
 from . import platform_permissions as perms
 from .platform_common import client_meta, iso, utcnow
 from .platform_errors import PlatformError, validation_error
-from .platform_security import Principal, issue_token, session_expiry
+from .platform_security import SESSION_HOURS, Principal, issue_token
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,7 @@ def login(db: Session, request: Request, email_raw: str, password: str) -> tuple
     staff.locked_until = None
     staff.last_login_at = now
     ip, agent = client_meta(request)
-    session = PlatformSession(user_id=user.id, created_at=now, expires_at=session_expiry(), ip=ip, user_agent=agent)
+    session = PlatformSession(user_id=user.id, created_at=now, expires_at=now + timedelta(hours=SESSION_HOURS), ip=ip, user_agent=agent)
     db.add(session)
     db.flush()
     _sweep_sessions(db, now)

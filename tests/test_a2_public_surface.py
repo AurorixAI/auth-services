@@ -37,7 +37,12 @@ SECRET_TEXT = "password=hunter2 host=db.internal.example SELECT secret_column FR
 
 
 @pytest.fixture
-def http():
+def http(monkeypatch):
+    # These tests are about the old self-registration route (throttle, 409, 500 text): it is closed by default since the console pack
+    # (410, tests/test_console_registration_closed.py), so they reopen it with the setting.
+    from src.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "self_registration_closed", False)
     return TestClient(APP, raise_server_exceptions=False)
 
 
