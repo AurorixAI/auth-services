@@ -24,7 +24,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import event, func, or_
 from sqlalchemy.orm import Session, aliased
 
-from src.models.auth import PayrollRate
+from src.models.auth import OrgDayOff, PayrollRate
 
 from . import business_clock as bc
 from . import exam_bridge, payroll_hooks, substitution_rules as R
@@ -49,7 +49,9 @@ from .models import (
     User,
 )
 from .ops_rules import OpsError, conflict, forbidden, hhmm_to_minutes, normalize_room, not_found, short_name, unprocessable
+from .membership_periods import periods_by_membership
 from .student_archive import student_not_archived
+from .schemas import DEFAULT_CANCELLATION_KIND
 from .substitution_schemas import CLOSED_REASON_TEXT, REASON_LABELS
 
 logger = logging.getLogger(__name__)
@@ -855,7 +857,8 @@ class Substitutions(SubstitutionsBase):
         except ValueError as exc:
             raise conflict("LESSON_HAS_LIVE_EXAM", str(exc)) from exc
 
-    def _cancelled_row(self, group: Group, r: Req, actor: UUID, text: str, details: Dict[str, Any], trigger: str) -> GroupAttendance:
+    def _cancelled_row(self, group: Group, r: Req, actor: UUID, text: str, details: Dict[str, Any], trigger: str,
+                       kind: Optional[str] = None) -> GroupAttendance:
         day = date.fromisoformat(r.lesson_date)
         occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == r.lesson_id), None)
         start = hhmm_to_minutes(r.start_time)
@@ -868,7 +871,7 @@ class Substitutions(SubstitutionsBase):
                 org_id=group.org_id, group_id=group.id, teacher_id=self.svc._attendance_teacher_snapshot(group, r.lesson_id, day, occ),
                 lesson_date=r.lesson_date, lesson_id=r.lesson_id, topic=(occ.get("topic") or occ.get("subject")) if occ else None, status="cancelled",
                 records={}, roster_snapshot=self.svc._attendance_roster_at(group.id, bc.lesson_instant_utc(day, start)), marked_by=actor,
-                started_at=None, cancellation_reason=text, version=1,
+                started_at=None, cancellation_reason=text, version=1, cancellation_kind=kind,
             )
             self.db.add(row)
             self.db.flush()
@@ -894,7 +897,7 @@ class Substitutions(SubstitutionsBase):
         if r.starts_at <= self.now() and date.fromisoformat(r.lesson_date) < bc.month_window_start(bc.business_today()):
             raise R.err(422, "LESSON_OUTSIDE_WINDOW", "Урок старше окна незакрытых уроков: отменить его нельзя — можно только отклонить запрос")
         self._exam_check(r, reason)
-        row = self._cancelled_row(group, r, actor, reason, {}, "cancel")
+        row = self._cancelled_row(group, r, actor, reason, {}, "cancel", kind=DEFAULT_CANCELLATION_KIND)     # PAY-F: a lesson the centre cancels (a sick teacher); a MOVE below has no kind: neutral for the money
         self._exam_release(r, reason)
         self._finish(r, "cancelled", actor, reason)
         self.event(r, "cancelled", actor, {"reason": reason, "version": row.version})
@@ -1597,5 +1600,23 @@ def annotate_student_attendance(svc, org_id: Any, student_id: Any, summary: Dict
             group = group_of.get(r.group_id)
             notices.append({"lessonId": r.lesson_id, "date": r.lesson_date, "groupId": str(r.group_id), "groupName": group.name if group else "",
                             "kind": "rescheduled" if r.status == "rescheduled" else "cancelled", "movedTo": _moved(r, True)})
+    # PAY-F: the lessons a DAY OFF of the centre cancelled carry its reason («Урок отменён: выходной (Хайит)»); the reason of any other cancellation is never sent (D-12).
+    # A cancelled lesson has no frozen roster: the student belongs to it when one of his stays in the group covers its day.
+    if own_groups:
+        stays: Dict[Any, List[Tuple[date, Optional[date]]]] = {}
+        member_group = {m.id: m.group_id for m in db.query(StudentGroup).filter(StudentGroup.student_id == student_id, StudentGroup.group_id.in_(own_groups))}
+        for mid, periods in periods_by_membership(db, member_group).items():
+            stays.setdefault(member_group[mid], []).extend(
+                (bc.utc_to_business_wall(p.joined_at).date(), bc.utc_to_business_wall(p.left_at).date() if p.left_at else None) for p in periods)
+        for row, day_off in (db.query(GroupAttendance, OrgDayOff).join(OrgDayOff, OrgDayOff.id == GroupAttendance.day_off_id)
+                             .filter(GroupAttendance.group_id.in_(own_groups), GroupAttendance.status == "cancelled",
+                                     GroupAttendance.lesson_date >= d_from, GroupAttendance.lesson_date <= d_to)
+                             .order_by(GroupAttendance.lesson_date, GroupAttendance.lesson_id).all()):
+            day = date.fromisoformat(row.lesson_date)
+            if not any(first <= day and (last is None or day <= last) for first, last in stays.get(row.group_id, [])):
+                continue
+            group = db.query(Group).filter(Group.id == row.group_id).first()
+            notices.append({"lessonId": row.lesson_id, "date": row.lesson_date, "groupId": str(row.group_id), "groupName": group.name if group else "",
+                            "kind": "cancelled", "movedTo": None, "holiday": day_off.reason})
     summary["notices"] = notices
     return summary

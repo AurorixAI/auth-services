@@ -51,6 +51,44 @@ def lessons_word(count: int) -> str:
     return plural(count, "урок", "урока", "уроков")
 
 
+# ---- PAY-F: the names of the ways to count a payment - ONE dictionary for the settings, the hints, the statements and the letters.
+# Keys are the stored values (``payment_date`` / ``fixed_day`` are the calendar anchors, ``lessons`` the package); the front mirrors this table in ``src/lib/payments.ts``.
+MODE_NAMES = {
+    "payment_date": ("Свой месяц у каждого ученика", "Месяц считается с первого занятия ученика: 05.10 → 04.11"),
+    "fixed_day": ("Общий месяц для всех", "У всех один период, например с 1-го по последнее число; первый неполный месяц — по урокам"),
+    "lessons": ("Пакет уроков", "Оплата закрывает заданное число проведённых уроков; отменённые уроки не списываются"),
+}
+
+
+def mode_title(key: str) -> str:
+    return MODE_NAMES[key][0]
+
+
+def mode_hint(key: str) -> str:
+    return MODE_NAMES[key][1]
+
+
+# ---- PAY-F: the recalculation for the lessons the centre cancelled and the forecast of a package
+def recalc_title(day: date) -> str:
+    """The row of the statement: ``Перерасчёт: урок 21.10 отменён центром``."""
+    return f"Перерасчёт: урок {ddmm(day)} отменён центром"
+
+
+def recalc_text(amount: int, day: date) -> str:
+    """The line of the receipt / of the payment dialog: ``−46 000 сум: урок 21.10 отменён центром`` (a real minus sign)."""
+    return f"\u2212{money(amount)}: урок {ddmm(day)} отменён центром"
+
+
+def recalc_amount_text(amount: int) -> str:
+    """The quiet line under the title of the statement row (the title already names the lesson): ``−46 000 сум``."""
+    return f"\u2212{money(amount)}"
+
+
+def forecast_text(day: Optional[date]) -> str:
+    """``хватит до ~30.10 (по расписанию)``; no day = the package is over."""
+    return f"хватит до ~{ddmm(day)} (по расписанию)" if day else "пакет закончился"
+
+
 def balance_text(balance: int) -> str:
     """«Баланс» of a statement (the personal account): negative = ``Долг N``, positive = ``Аванс N``, zero = ``0``."""
     if balance < 0:

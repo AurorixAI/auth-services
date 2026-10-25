@@ -270,6 +270,7 @@ class AttendanceRules:
 
         resp.lessons = [lesson for lesson in resp.lessons if lesson.get("instanceKey") in allowed]
         resp.records, resp.statuses, resp.cancellationReasons = only(resp.records), only(resp.statuses), only(resp.cancellationReasons)
+        resp.cancellationKinds = only(resp.cancellationKinds)
         resp.rosterStudentIds = {k: v for k, v in roster_ids.items() if k in resp.rosterStudentIds or True}
         resp.excuses, resp.corrections = only(resp.excuses), only(resp.corrections)
         resp.versions, resp.lessonTeachers = only(resp.versions), only(resp.lessonTeachers)

@@ -37,6 +37,7 @@
         "lessons": null,
         "paid": 231000,
         "written_off": 0,
+        "recalculated": 0,
         "unpaid": 269000,
         "remaining": 269000,
         "covered_days": 13,
@@ -66,6 +67,7 @@
         "lessons": null,
         "paid": 0,
         "written_off": 0,
+        "recalculated": 0,
         "unpaid": 500000,
         "remaining": 500000,
         "covered_days": 0,
@@ -120,5 +122,6 @@
     "summary_text": "Закроет долг 269 000 · на текущий период 31 000 → оплачено до 15.10 · останется 469 000",
     "price_ahead": []
   },
-  "warnings": []
+  "warnings": [],
+  "recalc": []
 }

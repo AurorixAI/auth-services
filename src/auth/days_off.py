@@ -1,0 +1,418 @@
+"""PAY-F, part 2: «Выходной день центра» - a date or a range of up to 14 days with a reason.
+
+The owner / admin gives the day off; every lesson of the range that can still be cancelled is cancelled by THE usual cancellation
+(``AuthService.save_group_attendance``, kind ``holiday``): one road, one set of rules (rights, the exam-service check, the audit row).  Lessons that cannot be
+cancelled (started, held, an exam of it is running or has attempts) are listed apart and stay as they are.  A manual cancellation of the centre's fault that is
+already there on a date of the day off is turned into a holiday (audited): the day is a holiday whoever cancelled the lesson.  «Отменить выходной» gives back exactly
+the lessons that THIS day off cancelled and that nobody has touched since, unless another live day off covers the date; the others are listed.  What was given back
+stays on record (``org_days_off.restored`` and one ``group_audit`` row per group): the cancellation rows themselves are deleted.
+
+``org_days_off`` is the journal; the lessons point to their day off by ``group_attendance.day_off_id``.  The apply is idempotent: the same range and reason among the live
+days off continues that day off, and ``apply`` finishes a day off whose exam-service was unavailable.  Nothing here touches money: a ``holiday`` cancellation is never
+recalculated (part 3).
+"""
+from __future__ import annotations
+
+import logging
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional
+from uuid import UUID
+
+from fastapi import HTTPException
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from src.models.auth import Group, GroupAttendance, GroupAttendanceAudit, GroupAudit, OrgDayOff, User
+
+from . import business_clock as bc
+from . import payments_texts as tx
+from .ops_rules import conflict, not_found, unprocessable
+from .schemas import LessonAttendanceStatus, SaveAttendanceRequest
+
+logger = logging.getLogger(__name__)
+
+MAX_DAYS = 14
+MAX_AHEAD_DAYS = 366
+HOLIDAY = "holiday"
+CENTRE = "centre"
+EXAM_DOWN = "сервис экзаменов недоступен, повторите"
+EXAMS_NOTE = "Экзамены, снятые с уроков, при отмене выходного не вернутся — назначьте заново"
+
+
+# ================================================================================================================
+# Models
+# ================================================================================================================
+
+
+class DayOffDates(BaseModel):
+    dateFrom: date
+    dateTo: date
+
+    @model_validator(mode="after")
+    def _range(self):
+        if self.dateTo < self.dateFrom:
+            raise ValueError("Конец выходного раньше его начала")
+        if (self.dateTo - self.dateFrom).days + 1 > MAX_DAYS:
+            raise ValueError(f"Выходной — не больше {MAX_DAYS} дней подряд")
+        return self
+
+
+class DayOffRequest(DayOffDates):
+    reason: str = Field(..., max_length=200)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if len(value) < 3:
+            raise ValueError("Укажите причину: не короче 3 символов")
+        return value
+
+
+class DayOffLesson(BaseModel):
+    groupId: str
+    groupName: str
+    lessonId: str
+    date: date
+    startTime: Optional[str] = None
+    endTime: Optional[str] = None
+    reason: Optional[str] = None      # why it is not cancelled / not given back (blocked and kept lessons only)
+
+
+class DayOffPlan(BaseModel):
+    """Dry run of «создать выходной»: what would be cancelled and what would stay."""
+
+    dateFrom: date
+    dateTo: date
+    cancellable: List[DayOffLesson] = Field(default_factory=list)
+    blocked: List[DayOffLesson] = Field(default_factory=list)
+    convertible: List[DayOffLesson] = Field(default_factory=list)       # cancelled by hand «по вине центра»: would be turned into a holiday
+    alreadyCancelled: int = 0
+    groups: int = 0
+    examServiceDown: bool = False
+    text: str = ""
+    examsNote: str = EXAMS_NOTE
+
+
+class DayOffOut(BaseModel):
+    id: str
+    dateFrom: date
+    dateTo: date
+    reason: str
+    createdAt: Optional[str] = None
+    createdByName: Optional[str] = None
+    voidedAt: Optional[str] = None
+    active: bool = True
+
+
+class DayOffApplied(BaseModel):
+    dayOff: DayOffOut
+    cancelled: List[DayOffLesson] = Field(default_factory=list)
+    blocked: List[DayOffLesson] = Field(default_factory=list)
+    converted: List[DayOffLesson] = Field(default_factory=list)       # «отмена переведена в праздник»
+    alreadyCancelled: int = 0
+    complete: bool = True                                             # False: the exam-service stopped the loop - ``apply`` finishes it
+
+
+class DayOffVoided(BaseModel):
+    dayOff: DayOffOut
+    restored: List[DayOffLesson] = Field(default_factory=list)
+    kept: List[DayOffLesson] = Field(default_factory=list)
+    dryRun: bool = False
+    examsNote: str = EXAMS_NOTE
+
+
+class DayOffForDate(BaseModel):
+    dayOff: Optional[DayOffOut] = None
+
+
+# ================================================================================================================
+# Texts (the words of the screen are written here, like the other payment texts)
+# ================================================================================================================
+
+
+def lesson_reason_text(reason: str) -> str:
+    """The reason the lessons carry (the students read it): ``Выходной (Хайит)``."""
+    return f"Выходной ({reason})"
+
+
+def _one(count: int) -> bool:
+    return count % 10 == 1 and count % 100 != 11
+
+
+def plan_text(cancellable: List[DayOffLesson]) -> str:
+    """«Будет отменён 1 урок в 1 группе: …» / «Будут отменены 5 уроков в 2 группах: …» (one place for the plurals)."""
+    if not cancellable:
+        return "Уроков для отмены нет"
+    names = list(dict.fromkeys(l.groupName for l in cancellable))
+    n, m = len(cancellable), len(names)
+    verb = "Будет отменён" if _one(n) else "Будут отменены"
+    return f"{verb} {n} {tx.lessons_word(n)} в {m} {tx.plural(m, 'группе', 'группах', 'группах')}: " + ", ".join(names)
+
+
+# ================================================================================================================
+# Service
+# ================================================================================================================
+
+
+class DaysOffService:
+    def __init__(self, svc) -> None:
+        self.svc = svc
+        self.db = svc.db
+
+    # ---------------------------------------------------------------------------------------------- reading
+
+    def _out(self, row: OrgDayOff, names: Optional[Dict[Any, str]] = None) -> DayOffOut:
+        names = names if names is not None else self._names([row.created_by])
+        return DayOffOut(id=str(row.id), dateFrom=row.date_from, dateTo=row.date_to, reason=row.reason,
+                         createdAt=row.created_at.isoformat() if row.created_at else None,
+                         createdByName=names.get(row.created_by), voidedAt=row.voided_at.isoformat() if row.voided_at else None,
+                         active=row.voided_at is None)
+
+    def _names(self, ids) -> Dict[Any, str]:
+        wanted = {i for i in ids if i}
+        if not wanted:
+            return {}
+        return {u.id: " ".join(x for x in (u.last_name, u.first_name) if x) for u in self.db.query(User).filter(User.id.in_(wanted))}
+
+    def list(self, org_id: str, limit: int = 100) -> List[DayOffOut]:
+        rows = (self.db.query(OrgDayOff).filter(OrgDayOff.org_id == org_id)
+                .order_by(OrgDayOff.date_from.desc(), OrgDayOff.created_at.desc()).limit(limit).all())
+        names = self._names(r.created_by for r in rows)
+        return [self._out(r, names) for r in rows]
+
+    def for_date(self, org_id: str, day: date) -> DayOffForDate:
+        """The live day off that holds ``day`` (the hint when a lesson is created on that date: a warning, never a block)."""
+        row = (self.db.query(OrgDayOff).filter(OrgDayOff.org_id == org_id, OrgDayOff.voided_at.is_(None),
+                                               OrgDayOff.date_from <= day, OrgDayOff.date_to >= day)
+               .order_by(OrgDayOff.created_at.desc()).first())
+        return DayOffForDate(dayOff=self._out(row) if row else None)
+
+    # ---------------------------------------------------------------------------------------------- the lessons of a range
+
+    def _lessons(self, org_id: str, date_from: date, date_to: date):
+        """``[(group, occurrence)]`` of the lessons of the active groups in the range, with the journal rows that already exist."""
+        groups = self.db.query(Group).filter(Group.org_id == org_id, Group.status == "active").order_by(Group.name, Group.id).all()
+        preload = self.svc._preload_schedule_data([g.id for g in groups], date_from=date_from, date_to=date_to)
+        found = [(g, o) for g in groups for o in self.svc._resolved_occurrences_for_group(g, date_from=date_from, date_to=date_to, preloaded=preload)]
+        rows = {}
+        if groups:
+            for row in self.db.query(GroupAttendance).filter(
+                GroupAttendance.org_id == org_id, GroupAttendance.group_id.in_([g.id for g in groups]),
+                GroupAttendance.lesson_date >= date_from.isoformat(), GroupAttendance.lesson_date <= date_to.isoformat(),
+            ):
+                rows[(row.group_id, row.lesson_id, row.lesson_date)] = row
+        return found, rows
+
+    @staticmethod
+    def _item(group: Group, occurrence: Dict[str, Any], reason: Optional[str] = None) -> DayOffLesson:
+        return DayOffLesson(groupId=str(group.id), groupName=group.name, lessonId=occurrence["id"], date=date.fromisoformat(occurrence["occurrenceDate"]),
+                            startTime=occurrence.get("startTime"), endTime=occurrence.get("endTime"), reason=reason)
+
+    @staticmethod
+    def _convertible(row: Optional[GroupAttendance]) -> bool:
+        """A lesson cancelled by hand «по вине центра» (not by a day off): the day off turns it into a holiday."""
+        return row is not None and row.status == LessonAttendanceStatus.CANCELLED.value and row.cancellation_kind == CENTRE and row.day_off_id is None
+
+    def _blocker(self, org_id: str, group: Group, occurrence: Dict[str, Any], row: Optional[GroupAttendance], *, ask_exams: bool = True) -> Optional[str]:
+        """Why the lesson cannot be cancelled by a day off (``None``: it can; ``EXAM_DOWN``: exam-service did not answer).  The same checks the usual cancellation makes,
+        asked before anything is written.  ``ask_exams=False``: leave the exam-service to the cancellation itself (it asks it anyway; the apply must not ask twice)."""
+        day = date.fromisoformat(occurrence["occurrenceDate"])
+        if row is not None:
+            return "Урок уже начат" if row.status == LessonAttendanceStatus.IN_PROGRESS.value else "Урок уже проведён"
+        if day < bc.month_window_start(bc.business_today()):
+            return "Урок старше окна незакрытых уроков"
+        if not ask_exams:
+            return None
+        try:
+            self.svc._sync_exam_lesson_cancellation(phase="cancellation-check", org_id=org_id, group_id=str(group.id), lesson_id=occurrence["id"],
+                                                    lesson_date=occurrence["occurrenceDate"], reason=None)
+        except ValueError as exc:
+            return str(exc)
+        except RuntimeError:
+            return EXAM_DOWN
+        return None
+
+    # ---------------------------------------------------------------------------------------------- the plan
+
+    def plan(self, org_id: str, req: DayOffDates) -> DayOffPlan:
+        """Dry run.  The first time exam-service does not answer the loop stops asking: the rest is listed as «сервис экзаменов недоступен» at once (not N waits)."""
+        self._check_range(req)
+        found, rows = self._lessons(org_id, req.dateFrom, req.dateTo)
+        cancellable: List[DayOffLesson] = []
+        blocked: List[DayOffLesson] = []
+        convertible: List[DayOffLesson] = []
+        already = 0
+        down = False
+        for group, occurrence in found:
+            row = rows.get((group.id, occurrence["id"], occurrence["occurrenceDate"]))
+            if row is not None and row.status == LessonAttendanceStatus.CANCELLED.value:
+                if self._convertible(row):
+                    convertible.append(self._item(group, occurrence))
+                else:
+                    already += 1
+                continue
+            why = EXAM_DOWN if (down and row is None) else self._blocker(org_id, group, occurrence, row)
+            down = down or why == EXAM_DOWN
+            (blocked if why else cancellable).append(self._item(group, occurrence, why))
+        return DayOffPlan(dateFrom=req.dateFrom, dateTo=req.dateTo, cancellable=cancellable, blocked=blocked, convertible=convertible,
+                          alreadyCancelled=already, groups=len({l.groupId for l in cancellable}), examServiceDown=down, text=plan_text(cancellable))
+
+    @staticmethod
+    def _check_range(req: DayOffDates) -> None:
+        if req.dateTo > bc.business_today() + timedelta(days=MAX_AHEAD_DAYS):
+            raise unprocessable("DAY_OFF_TOO_FAR", "Выходной можно назначить не дальше чем на год вперёд")
+
+    # ---------------------------------------------------------------------------------------------- create / apply
+
+    def create(self, org_id: str, actor_id: str, req: DayOffRequest) -> DayOffApplied:
+        """The day off + the cancellation of every lesson that can be cancelled.  The same range and reason among the LIVE days off is that day off (it is continued, not
+        duplicated).  Each lesson is its own (usual) cancellation and commit: a lesson that was started a second ago, or one an exam is attached to, lands in ``blocked``
+        and the others go on; when exam-service does not answer the loop stops and the rest waits in ``blocked`` for ``apply``."""
+        self._check_range(req)
+        row = (self.db.query(OrgDayOff).filter(OrgDayOff.org_id == org_id, OrgDayOff.voided_at.is_(None), OrgDayOff.date_from == req.dateFrom,
+                                               OrgDayOff.date_to == req.dateTo, OrgDayOff.reason == req.reason).order_by(OrgDayOff.created_at).first())
+        if row is None:
+            row = OrgDayOff(org_id=UUID(str(org_id)), date_from=req.dateFrom, date_to=req.dateTo, reason=req.reason, created_by=UUID(str(actor_id)))
+            self.db.add(row)
+            self.db.commit()
+        return self._apply(org_id, actor_id, row.id)
+
+    def apply(self, org_id: str, actor_id: str, day_off_id: UUID) -> DayOffApplied:
+        """Finish a day off (idempotent): what is cancelled stays, the rest is tried again."""
+        row = self.db.query(OrgDayOff).filter(OrgDayOff.id == day_off_id, OrgDayOff.org_id == org_id).first()
+        if row is None:
+            raise not_found("DAY_OFF_NOT_FOUND", "Выходной не найден")
+        if row.voided_at is not None:
+            raise conflict("DAY_OFF_VOIDED", "Этот выходной отменён: назначьте его заново")
+        return self._apply(org_id, actor_id, row.id)
+
+    def _apply(self, org_id: str, actor_id: str, day_off_id: UUID) -> DayOffApplied:
+        row = self.db.query(OrgDayOff).filter(OrgDayOff.id == day_off_id).one()
+        date_from, date_to, reason = row.date_from, row.date_to, row.reason
+        found, rows = self._lessons(org_id, date_from, date_to)
+        cancelled: List[DayOffLesson] = []
+        blocked: List[DayOffLesson] = []
+        converted: List[DayOffLesson] = []
+        already = 0
+        down = False
+        for group, occurrence in found:
+            existing = rows.get((group.id, occurrence["id"], occurrence["occurrenceDate"]))
+            if self._convertible(existing):
+                self._convert(existing, group, day_off_id, reason, actor_id)
+                converted.append(self._item(group, occurrence))
+                continue
+            if existing is not None and existing.status == LessonAttendanceStatus.CANCELLED.value:
+                already += 1
+                continue
+            why = self._blocker(org_id, group, occurrence, existing, ask_exams=False)
+            if why is None and down:
+                why = EXAM_DOWN
+            if why is None:
+                why = self._cancel(org_id, actor_id, group, occurrence, reason, day_off_id)
+                down = down or why == EXAM_DOWN
+            (blocked if why else cancelled).append(self._item(group, occurrence, why))
+        logger.info("day off applied org=%s id=%s %s..%s cancelled=%d blocked=%d converted=%d", org_id, day_off_id, date_from, date_to, len(cancelled), len(blocked), len(converted))
+        row = self.db.query(OrgDayOff).filter(OrgDayOff.id == day_off_id).one()
+        return DayOffApplied(dayOff=self._out(row), cancelled=cancelled, blocked=blocked, converted=converted, alreadyCancelled=already, complete=not down)
+
+    def _convert(self, row: GroupAttendance, group: Group, day_off_id: UUID, reason: str, actor_id: str) -> None:
+        """A lesson cancelled by hand «по вине центра» on a date of the day off: the day is a holiday whoever cancelled it (audited, no recalculation from now on)."""
+        row.cancellation_kind = HOLIDAY
+        row.version = int(row.version or 1) + 1
+        self.db.add(GroupAttendanceAudit(
+            attendance_id=row.id, org_id=row.org_id, group_id=row.group_id, actor_id=UUID(str(actor_id)), action="corrected", before_status="cancelled",
+            after_status="cancelled", before_records={}, after_records={}, correction_reason=lesson_reason_text(reason)[:500],
+            cancellation_reason=row.cancellation_reason, details={"cancellation_kind": {"from": CENTRE, "to": HOLIDAY}, "day_off_id": str(day_off_id)}))
+        self.db.commit()
+
+    def _cancel(self, org_id: str, actor_id: str, group: Group, occurrence: Dict[str, Any], reason: str, day_off_id: UUID) -> Optional[str]:
+        """The usual cancellation, kind ``holiday``.  ``None`` = done, else the reason it was refused (``EXAM_DOWN``: stop asking)."""
+        request = SaveAttendanceRequest(lessonDate=date.fromisoformat(occurrence["occurrenceDate"]), lessonId=occurrence["id"],
+                                        status=LessonAttendanceStatus.CANCELLED, cancellationReason=lesson_reason_text(reason),
+                                        cancellationKind=HOLIDAY)
+        try:
+            self.svc.save_group_attendance(org_id, str(group.id), request, marked_by=actor_id, is_org_admin=True, is_org_manager=True, day_off_id=day_off_id)
+        except RuntimeError:
+            self.db.rollback()
+            return EXAM_DOWN
+        except (ValueError, PermissionError) as exc:
+            self.db.rollback()
+            return str(exc)
+        except HTTPException as exc:
+            self.db.rollback()
+            detail = exc.detail
+            return detail.get("message") if isinstance(detail, dict) else str(detail)
+        except Exception:     # one lesson must not stop the others
+            self.db.rollback()
+            logger.exception("day off: lesson %s of group %s was not cancelled", occurrence.get("id"), group.id)
+            return "Не удалось отменить урок"
+        return None
+
+    # ---------------------------------------------------------------------------------------------- void
+
+    def void(self, org_id: str, actor_id: str, actor_role: str, day_off_id: UUID, *, dry_run: bool = False) -> DayOffVoided:
+        """«Отменить выходной»: the lessons THIS day off cancelled come back when they are still in the future and unchanged since (the row is as the cancellation made
+        it: version 1, kind ``holiday``) and no other live day off covers the date; every other one is listed with the reason and stays cancelled.  What comes back is
+        recorded (``restored`` of the day off + a ``group_audit`` row per group) BEFORE the cancellation rows are deleted."""
+        row = self.db.query(OrgDayOff).filter(OrgDayOff.id == day_off_id, OrgDayOff.org_id == org_id).with_for_update().first()
+        if row is None:
+            raise not_found("DAY_OFF_NOT_FOUND", "Выходной не найден")
+        if row.voided_at is not None:
+            raise conflict("DAY_OFF_VOIDED", "Этот выходной уже отменён")
+        today = bc.business_today()
+        others = (self.db.query(OrgDayOff).filter(OrgDayOff.org_id == org_id, OrgDayOff.voided_at.is_(None), OrgDayOff.id != row.id).all())
+        groups = {g.id: g for g in self.db.query(Group).filter(Group.org_id == org_id)}
+        atts = (self.db.query(GroupAttendance).filter(GroupAttendance.org_id == org_id, GroupAttendance.day_off_id == row.id)
+                .order_by(GroupAttendance.lesson_date, GroupAttendance.group_id).with_for_update().all())
+        names = self._names(a.marked_by for a in atts)
+        restored: List[DayOffLesson] = []
+        kept: List[DayOffLesson] = []
+        trace: List[Dict[str, Any]] = []
+        doomed: List[GroupAttendance] = []
+        for att in atts:
+            group = groups.get(att.group_id)
+            day = date.fromisoformat(att.lesson_date)
+            item = DayOffLesson(groupId=str(att.group_id), groupName=group.name if group else "", lessonId=att.lesson_id or "", date=day)
+            why = self._not_restorable(att, today, group)
+            if why is None and any(o.date_from <= day <= o.date_to for o in others):
+                why = "Дата входит в другой выходной"
+            if why:
+                item.reason = why
+                kept.append(item)
+                continue
+            restored.append(item)
+            doomed.append(att)
+            trace.append({"groupId": item.groupId, "groupName": item.groupName, "lessonId": item.lessonId, "date": att.lesson_date,
+                          "cancelledBy": names.get(att.marked_by), "cancelledAt": att.created_at.isoformat() if att.created_at else None,
+                          "reason": att.cancellation_reason})
+        if not dry_run:
+            row.restored = trace
+            row.voided_at = datetime.utcnow()
+            row.voided_by = UUID(str(actor_id))
+            by_group: Dict[Any, List[Dict[str, Any]]] = {}
+            for entry, att in zip(trace, doomed):
+                by_group.setdefault(att.group_id, []).append(entry)
+            for group_id, entries in by_group.items():
+                self.db.add(GroupAudit(
+                    org_id=UUID(str(org_id)), group_id=group_id, actor_id=UUID(str(actor_id)),
+                    actor_role=actor_role if actor_role in ("owner", "admin", "teacher", "superadmin") else "admin", action="day_off_voided",
+                    snapshot={"day_off_id": str(row.id), "reason": row.reason, "dateFrom": row.date_from.isoformat(), "dateTo": row.date_to.isoformat(), "restored": entries}))
+            self.db.flush()
+            for att in doomed:
+                self.db.delete(att)
+            self.db.commit()
+            logger.info("day off voided org=%s id=%s restored=%d kept=%d", org_id, row.id, len(restored), len(kept))
+            row = self.db.query(OrgDayOff).filter(OrgDayOff.id == day_off_id).one()
+        return DayOffVoided(dayOff=self._out(row), restored=restored, kept=kept, dryRun=dry_run)
+
+    @staticmethod
+    def _not_restorable(att: GroupAttendance, today: date, group: Optional[Group]) -> Optional[str]:
+        if att.status != LessonAttendanceStatus.CANCELLED.value or att.cancellation_kind != HOLIDAY:
+            return "Урок уже изменён после выходного"
+        if int(att.version or 1) != 1:
+            return "Урок изменён после выходного"
+        if date.fromisoformat(att.lesson_date) < today:
+            return "Урок уже в прошлом"
+        if group is None or group.status != "active":
+            return "Группа закрыта"
+        return None

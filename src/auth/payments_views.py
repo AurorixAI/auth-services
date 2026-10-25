@@ -22,6 +22,7 @@ from .payments_schemas import (
     PreviewResult,
     PriceAhead,
     PriceOut,
+    RecalcOut,
     Segment,
     SegmentLessons,
 )
@@ -38,9 +39,13 @@ def segment_out(seg: bl.Segment) -> Segment:
         days_text=seg.days_text, price=price_out(seg.price), charge=seg.amount, basis=seg.basis,
         lessons=SegmentLessons(in_part=seg.lessons_in_part, in_period=seg.lessons_in_period)
         if seg.kind == "package" or seg.basis == "lessons" else None,
-        paid=seg.money, written_off=seg.forgiven, unpaid=seg.unpaid, remaining=seg.unpaid, covered_days=seg.covered_days,
+        paid=seg.money, written_off=seg.forgiven, recalculated=seg.recalculated, unpaid=seg.unpaid, remaining=seg.unpaid, covered_days=seg.covered_days,
         covered_through=seg.covered_through, partial_credit=seg.partial_credit, state=seg.state, bucket=seg.bucket,
     )
+
+
+def recalc_out(line: bl.RecalcLine) -> RecalcOut:
+    return RecalcOut(lesson_date=line.day, lesson_id=line.lesson_id, amount=line.amount, text=tx.recalc_text(line.amount, line.day))
 
 
 def allocation_out(a: bl.Allocation) -> Allocation:

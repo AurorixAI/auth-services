@@ -7,7 +7,7 @@ records.  The words come from ``payments_statement_texts`` (the mirror of the pa
 
 The rules of the file (owner, 23.10.2026):
 
-* no signed numbers: a payment is in «Оплачено», a forgiven debt in «Прощено», a refund in «Возвращено», a transfer to another group in «Переведено»
+* no signed numbers: a payment is in «Оплачено», a forgiven debt in «Прощено», a recalculation for a lesson the centre cancelled in «Перерасчёт», a refund in «Возвращено», a transfer to another group in «Переведено»
   (the last three columns exist only when the file has such an operation; money that came in from another group stays in «Оплачено», as on the page);
 * ONE balance rule everywhere (the table, the «Итого» row, the title line): the balance is the words of the screen - «Долг 92 000» / «Аванс 21 000» / «0»;
 * real dates, whole-number money cells with ``#,##0``, widths from the content, frozen header under the title block, print setup.
@@ -23,14 +23,14 @@ from . import xlsx_style as xs
 
 SHEET_TITLE = "Выписка"
 HEADER = ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]       # the columns every statement has (the optional ones go after «Оплачено»)
-OPTIONAL = (("forgiven", "Прощено"), ("refunded", "Возвращено"), ("transferred", "Переведено"))
+OPTIONAL = (("forgiven", "Прощено"), ("recalc", "Перерасчёт"), ("refunded", "Возвращено"), ("transferred", "Переведено"))
 DATE_FORMAT = xs.DATE
 MONEY_FORMAT = xs.MONEY
 CANCELLED_TITLE = "Отменённые записи"
 CANCELLED_EMPTY = "Отменённых записей нет"
 TOTAL_LABEL = "Итого"
 # the type of a record -> the column of its money (anything else: «Оплачено»)
-_COLUMN_OF = {"writeoff": "forgiven", "refund": "refunded", "transfer_out": "transferred"}
+_COLUMN_OF = {"writeoff": "forgiven", "recalc": "recalc", "refund": "refunded", "transfer_out": "transferred"}
 
 
 def money_column(entry_type: str) -> str:

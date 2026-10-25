@@ -513,9 +513,12 @@ class IncomeReports:
                 charged += seg.amount
                 forgiven += forg
                 debt += unpaid
-                paid += seg.amount - forg - unpaid
+                paid += seg.amount - seg.recalculated - forg - unpaid       # the money only: a deduction is not «paid»
             if charged == 0:
                 continue
+            # PAY-F: a lesson the centre cancelled is not to be collected: the target of the month of THE LESSON shrinks (not the month of the period where the
+            # deduction settled), and it is not «paid»
+            charged = max(0, charged - sum(line.amount for line in e.ledger.recalcs if first <= line.day <= last))
             row = groups.setdefault(e.group.id, {
                 "group": e.group, "teacher": e.teacher, "charged": 0, "paid": 0, "forgiven": 0, "debt": 0, "students": set(),
                 "debtors": set()})

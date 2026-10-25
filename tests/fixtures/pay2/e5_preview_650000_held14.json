@@ -40,6 +40,7 @@
         },
         "paid": 0,
         "written_off": 0,
+        "recalculated": 0,
         "unpaid": 600000,
         "remaining": 600000,
         "covered_days": 0,
@@ -72,6 +73,7 @@
         },
         "paid": 0,
         "written_off": 0,
+        "recalculated": 0,
         "unpaid": 100000,
         "remaining": 100000,
         "covered_days": 0,
@@ -131,5 +133,6 @@
     "summary_text": "Закроет долг 600 000 · на текущий период 50 000 → оплачено уроков 13, осталось 0 · останется 50 000",
     "price_ahead": []
   },
-  "warnings": []
+  "warnings": [],
+  "recalc": []
 }

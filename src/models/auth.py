@@ -572,7 +572,7 @@ class GroupAudit(Base):
             "'payment_writeoff', 'payment_writeoff_void', 'payment_refund', 'payment_refund_void', "
             "'membership_pause_set', 'membership_pause_void', 'opening_balance_set', 'opening_balance_void', "
             "'group_lesson_type_set', 'student_left_group', "
-            "'group_archived', 'group_restored', 'lesson_teacher_set', 'lesson_teacher_cleared')",
+            "'group_archived', 'group_restored', 'lesson_teacher_set', 'lesson_teacher_cleared', 'day_off_voided')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(
@@ -965,6 +965,11 @@ class GroupAttendance(Base):
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     cancellation_reason = Column(String(500), nullable=True)
+    # PAY-F: why the CENTRE cancelled the lesson - ``centre`` (its own fault: a sick teacher; may be deducted from the next payment) | ``holiday``
+    # (a holiday / a day off: never deducted).  NULL = an old cancellation or a move: neutral for the money, never recalculated.
+    cancellation_kind = Column(String(20), nullable=True)
+    # PAY-F: the day off of the centre that cancelled the lesson (so that «Отменить выходной» gives back exactly its own lessons).
+    day_off_id = Column(UUID(as_uuid=True), ForeignKey("org_days_off.id", ondelete="SET NULL"), nullable=True)
     # LOGIC-B O7: optimistic lock of the marks.  Grows by 1 on every successful write of the row (start / reconcile = 1,
     # save, cancel, admin correction, change of the lesson teacher); the resolutions of excuses do not touch it.
     version = Column(Integer, nullable=False, default=1, server_default="1")
@@ -982,9 +987,14 @@ class GroupAttendance(Base):
             "status IN ('in_progress', 'completed', 'cancelled')",
             name="ck_group_attendance_status",
         ),
+        CheckConstraint(
+            "cancellation_kind IS NULL OR cancellation_kind IN ('centre', 'holiday')",
+            name="ck_group_attendance_cancellation_kind",
+        ),
         Index("idx_attendance_group", "group_id"),
         Index("idx_attendance_org", "org_id"),
         Index("idx_attendance_teacher", "org_id", "teacher_id", "lesson_date"),
+        Index("idx_group_attendance_day_off", "day_off_id", postgresql_where=text("day_off_id IS NOT NULL")),
     )
 
     def to_dict(self) -> dict:
@@ -1003,9 +1013,34 @@ class GroupAttendance(Base):
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "cancellation_reason": self.cancellation_reason,
+            "cancellation_kind": self.cancellation_kind,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class OrgDayOff(Base):
+    """PAY-F: «Выходной день центра» - a date or a range (<= 14 days) with a reason; the lessons of the range are cancelled by the usual cancellation (kind ``holiday``)."""
+
+    __tablename__ = "org_days_off"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    date_from = Column(Date, nullable=False)
+    date_to = Column(Date, nullable=False)
+    reason = Column(String(200), nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    voided_at = Column(DateTime, nullable=True)
+    voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # What voiding the day off gave back (the cancellation rows are deleted): [{groupId, groupName, lessonId, date, cancelledBy, cancelledAt, reason}]
+    restored = Column(JSONB, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("date_to >= date_from AND date_to - date_from <= 13", name="ck_org_days_off_range"),
+        CheckConstraint("char_length(btrim(reason)) >= 3", name="ck_org_days_off_reason"),
+        Index("idx_org_days_off_org_dates", "org_id", "date_from", "date_to"),
+    )
 
 
 class GroupAttendanceAudit(Base):

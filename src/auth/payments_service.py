@@ -97,6 +97,7 @@ from .payments_schemas import (
     PaymentWarningOut,
     PriceOut,
     ReceiptOut,
+    RecalcOut,
     ReceiptSnapshot,
     RefundCreated,
     RefundOut,
@@ -427,6 +428,7 @@ class PaymentService:
             logger.warning("Invalid payment settings stored for org %s; using defaults", org_id)
             settings = PaymentSettings()
         settings.accounting_start_date = ls.accounting_start_of(block, created)
+        settings.centre_cancel_recalc = bl.recalc_on(ls.parse_recalc(block), date.max)       # the value of the last version
         return settings
 
     @staticmethod
@@ -449,6 +451,7 @@ class PaymentService:
         changes = patch.model_dump(exclude_none=True)
         today = ps.business_today()
         new_start: Optional[date] = changes.pop("accounting_start_date", None)
+        recalc: Optional[bool] = changes.pop("centre_cancel_recalc", None)      # PAY-F: its own history (``recalc_history``), never a billing regime
         if new_start is not None:
             self._check_accounting_start(org_id, new_start, today)
             self._check_openings_for_start(org_id, new_start, self.get_settings(org_id).accounting_start_date)
@@ -483,6 +486,15 @@ class PaymentService:
             else:
                 history.append(entry)
             block["billing_history"] = history
+        if recalc is not None and recalc != before.centre_cancel_recalc:
+            # PAY-F: acts for the lessons dated from today; what was cancelled before is never recalculated
+            history = [dict(h) for h in (block.get("recalc_history") or []) if isinstance(h, dict)]
+            entry = {"from": today.isoformat(), "on": recalc}
+            if history and history[-1].get("from") == today.isoformat():
+                history[-1] = entry
+            else:
+                history.append(entry)
+            block["recalc_history"] = history
         block["updated_by"] = str(actor_id)
         block["updated_at"] = _utcnow().isoformat()
         org.settings = {**(org.settings or {}), "payments": block}
@@ -492,7 +504,7 @@ class PaymentService:
         # The organisation has no audit table; the log line is the trail (no sums here anyway).
         logger.info(
             "payment settings updated org=%s actor=%s fields=%s",
-            org_id, actor_id, sorted(list(changes) + (["accounting_start_date"] if new_start is not None else [])),
+            org_id, actor_id, sorted(list(changes) + (["accounting_start_date"] if new_start is not None else []) + (["centre_cancel_recalc"] if recalc is not None else [])),
         )
         return PaymentSettingsChanged(**self.get_settings(org_id).model_dump())
 
@@ -572,8 +584,8 @@ class PaymentService:
 
     # -------------------------------------------------------------- loading
 
-    def _loader(self, org_id: str, today: Optional[date] = None) -> ls.LedgerLoader:
-        return ls.LedgerLoader(self.db, str(org_id), today or ps.business_today())
+    def _loader(self, org_id: str, today: Optional[date] = None, *, recalc: bool = True) -> ls.LedgerLoader:
+        return ls.LedgerLoader(self.db, str(org_id), today or ps.business_today(), recalc=recalc)
 
     @staticmethod
     def _status_settings(settings: PaymentSettings) -> ps.StatusSettings:
@@ -670,6 +682,7 @@ class PaymentService:
         last = {e.membership.id: (e.payments[-1] if e.payments else None) for e in entries}
         users = self._users(x for p in last.values() if p for x in (p.created_by, p.voided_by))
         files = load_files(self.db, [p.id for p in last.values() if p])
+        forecast = entries[0].loader.forecasts(entries) if entries and entries[0].loader is not None else {}     # PAY-F: «хватит до» of the packages
         rows = []
         for e in entries:
             l, payment = e.ledger, last[e.membership.id]
@@ -696,7 +709,7 @@ class PaymentService:
                     days_left=r.days_left,
                     lessons_total=r.lessons_total,
                     lessons_used=r.lessons_used,
-                    lessons_left=r.lessons_left,
+                    lessons_left=r.lessons_left, paid_through_forecast=forecast.get(e.membership.id),
                     last_payment=self._payment_out(payment, users, None, files, l) if payment else None,
                     debt=l.debt, past_debt=l.past_debt, current_due=l.current_due, advance=l.advance,
                     partial_credit=l.partial_credit, price_missing=bl.F_PRICE_MISSING in l.flags,
@@ -1109,6 +1122,23 @@ class PaymentService:
             out.append(PaymentWarningOut(code="paid_over_60_days_ago", message=ps.WARNING_MESSAGES["paid_over_60_days_ago"]))
         return out
 
+    def _recalc_news(self, membership_id: UUID, ledger: bl.Ledger, *, exclude_payment: Optional[UUID] = None) -> List[RecalcOut]:
+        """PAY-F: the deductions for cancelled lessons that this payment is the first to take into account (the ones the previous receipt of the membership did not
+        show yet): ``−46 000 сум: урок 21.10 отменён центром``.  The statement shows all of them."""
+        if not ledger.recalcs:
+            return []
+        query = (
+            self.db.query(PaymentReceiptSnapshot.snapshot)
+            .join(StudentPayment, StudentPayment.id == PaymentReceiptSnapshot.payment_id)
+            .filter(StudentPayment.membership_id == membership_id, StudentPayment.voided_at.is_(None))
+            .order_by(StudentPayment.created_at.desc(), StudentPayment.id.desc())
+        )
+        if exclude_payment is not None:
+            query = query.filter(StudentPayment.id != exclude_payment)
+        previous = query.limit(1).scalar()
+        seen = {(x.get("lesson_date"), x.get("lesson_id")) for x in (previous or {}).get("recalc") or [] if isinstance(x, dict)}
+        return [pv.recalc_out(line) for line in ledger.recalcs if (line.day.isoformat(), line.lesson_id) not in seen]
+
     def _save_snapshot(
         self, org_id: str, payment: StudentPayment, before: bl.Ledger, after: bl.Ledger, price: pricing.Price,
         today: date, method: str,
@@ -1119,6 +1149,7 @@ class PaymentService:
             allocations=pv.allocations_of(after, str(payment.id)), debt_before=before.debt, debt_after=after.debt,
             advance_after=after.advance, paid_until_before=before.status.paid_until, paid_until_after=after.status.paid_until,
             price=SnapshotPrice(amount=price.amount, source=price.source), mode=after.mode,
+            recalc=self._recalc_news(payment.membership_id, after, exclude_payment=payment.id),
         )
         self.db.add(PaymentReceiptSnapshot(payment_id=payment.id, org_id=UUID(str(org_id)),
                                            snapshot=snap.model_dump(mode="json")))
@@ -1558,7 +1589,7 @@ class PaymentService:
         preview = PaymentPreview(
             as_of=today, mode=before.mode, price=PriceOut(**pricing.price_dict(price)), due=pv.due_block(before),
             suggested_amount=before.debt if archived else pv.suggested_amount(before, price.amount), amount=amount, result=None,
-            warnings=[],
+            warnings=[], recalc=self._recalc_news(membership_id, before, exclude_payment=exclude),
         )
         warnings: List[PaymentWarningOut] = []
         if bl.F_PRICE_MISSING in before.flags:
@@ -1639,7 +1670,7 @@ class PaymentService:
                 mode=parsed.mode, allocations=parsed.allocations, debt_before=parsed.debt_before,
                 debt_after=parsed.debt_after, advance_after=parsed.advance_after,
                 paid_until_before=parsed.paid_until_before, paid_until_after=parsed.paid_until_after,
-                price_snapshot=parsed.price)
+                price_snapshot=parsed.price, recalc=parsed.recalc)
         return ReceiptOut(
             receipt_no=payment.receipt_no,
             org_name=org.name,
@@ -1695,7 +1726,7 @@ class PaymentService:
         if not rows:
             return {}
         detail: Dict[UUID, List[tuple]] = {}
-        loader = self._loader(org_id)
+        loader = self._loader(org_id, recalc=False)       # PAY-F: payroll reads the money of the students as they paid it (the deduction for cancelled lessons is not a payment)
         entries = {e.membership.id: e for e in loader.run([m.id for m, _, _ in rows])}
         # a lesson held on a day of a live pause is nobody's lesson (S-3): the student was not in its class
         skip = {mid: {d for p in e.pauses for d in ls._days(p.first_day, p.last_day)} for mid, e in entries.items() if e.pauses}

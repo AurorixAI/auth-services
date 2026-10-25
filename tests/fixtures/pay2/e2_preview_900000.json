@@ -40,6 +40,7 @@
         },
         "paid": 0,
         "written_off": 0,
+        "recalculated": 0,
         "unpaid": 323000,
         "remaining": 323000,
         "covered_days": 0,
@@ -94,5 +95,6 @@
     "summary_text": "На текущий период 323 000 · Переплата 577 000 → аванс на следующий период (01.11–30.11), оплачено до 28.11",
     "price_ahead": []
   },
-  "warnings": []
+  "warnings": [],
+  "recalc": []
 }
