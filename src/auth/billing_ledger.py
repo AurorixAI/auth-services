@@ -72,6 +72,7 @@ class Stay:
 
     first: date
     last: Optional[date] = None
+    joined_at: Optional[datetime] = None  # the moment he joined (naive UTC): told apart from a student who joined EARLIER the same day (see ``_window_starts``)
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,8 @@ class Regime:
     # LOGIC-A (F12): the version acts for a run from the START OF ITS NEXT PERIOD under the previous regime (see ``_window_starts``)
     # instead of from ``effective_from``; a version without the flag acts from its date as before.
     defer: bool = False
+    # the moment the deferred version was saved (naive UTC): a student who JOINS after it, even on the same day, has no running period and goes by the new mode at once
+    at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
@@ -861,14 +864,22 @@ def _lessons_switch(size: int, priced_days: List[date], start: date, c: date) ->
     return held[end - 1] + timedelta(days=1) if len(held) >= end else date.max
 
 
-def _window_starts(windows, piece_first: date, priced_days: List[date], pauses: Optional[List[Tuple[date, date]]] = None) -> List[date]:
+def _fresh_stay_check(stays: Sequence[Stay], first: date):
+    """``joined_after(at)`` for the piece that begins on ``first``: he joined (a stay of his began on ``first``, no earlier stay runs into it) after the moment ``at``."""
+    own = [s for s in stays if s.first == first and s.joined_at is not None]
+    earlier = any(s.first < first and (s.last is None or s.last >= first - timedelta(days=1)) for s in stays)
+    return lambda at: not earlier and any(s.joined_at > at for s in own)
+
+
+def _window_starts(windows, piece_first: date, priced_days: List[date], pauses: Optional[List[Tuple[date, date]]] = None, joined_after=None) -> List[date]:
     """The first day of every regime version FOR ONE PIECE of the stay (spec §1.5).
 
     A version without ``defer`` starts on its date.  A deferred one starts at the first day of the NEXT PERIOD of the regime that
     was in force for the piece on that date (the later decision wins: a deferred version that has not begun yet is not "the
     previous regime"): ``fixed_day`` - the next cell of the grid; ``payment_date`` - the next month of the piece's chain;
-    ``lessons`` - after the package in progress is finished.  A piece whose first billable day is the day of the change or later (a new student)
-    switches at once: he has no running period.
+    ``lessons`` - after the package in progress is finished.  A piece that had nothing charged by then switches at once; so does a student
+    who came after the version was saved (``joined_after(at)``, batch 25.10: he has no running period, his first period goes by the mode in
+    force when he came - a student who came EARLIER the same day keeps the running period).
     """
     starts = [date.min]
     for k in range(1, len(windows)):
@@ -879,8 +890,9 @@ def _window_starts(windows, piece_first: date, priced_days: List[date], pauses: 
         j = max(i for i in range(k) if starts[i] <= c)
         prev = windows[j][0]
         begin = max(piece_first, starts[j])
-        if piece_first >= c:
-            # a student whose first billable day is the day of the change (or later) has no running period to protect: his first period goes by the mode in force on that day
+        if begin > c:
+            starts.append(c)
+        elif regime.at is not None and joined_after is not None and piece_first == c and begin == c and joined_after(regime.at):
             starts.append(c)
         elif prev.mode == LESSONS:
             starts.append(_lessons_switch(max(1, prev.package_size), priced_days, begin, c))
@@ -927,14 +939,14 @@ def _pieces_of(inp: LedgerInput):
     return opening, floor, runs, pause_days, spans
 
 
-def regime_switch_days(inp: LedgerInput, new: Regime) -> List[date]:
+def regime_switch_days(inp: LedgerInput, new: Regime, at: Optional[datetime] = None) -> List[date]:
     """F12 «who switches when»: the first day under ``new`` (a version that begins today, ``defer``) of every piece of the stay that is still
     open - ``max`` / ``min`` of the list are the last / first switch.  Closed stays do not switch."""
-    regimes = list(inp.regimes) + [replace(new, defer=True, effective_from=inp.today)]
+    regimes = list(inp.regimes) + [replace(new, defer=True, effective_from=inp.today, at=at)]
     windows = regime_windows(regimes)
     _, _, _, pause_days, spans = _pieces_of(inp)
     priced = sorted(c.day for c in inp.counted_lessons if inp.price_at(c.day).amount is not None)
-    return [_window_starts(windows, first, priced, pause_days)[-1] for first, last in spans if last is None]
+    return [_window_starts(windows, first, priced, pause_days, _fresh_stay_check(inp.stays, first))[-1] for first, last in spans if last is None]
 
 
 def recalc_on(versions: Sequence[RecalcVersion], day: date) -> bool:
@@ -1020,7 +1032,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     windows = regime_windows(inp.regimes)
     deferred = any(w[0].defer for w in windows[1:])
     priced_days = sorted(c.day for c in inp.counted_lessons if inp.price_at(c.day).amount is not None) if deferred else []
-    bounds = [_window_bounds(_window_starts(windows, first, priced_days, pause_days) if deferred else [w[1] for w in windows])
+    bounds = [_window_bounds(_window_starts(windows, first, priced_days, pause_days, _fresh_stay_check(inp.stays, first)) if deferred else [w[1] for w in windows])
               for first, _ in spans_of_stay]
     # the piece that tells which version is in force today (the one that holds today, else the last before it)
     ref = next((i for i, (f, l) in enumerate(spans_of_stay) if f <= today and (l is None or l >= today)), None)

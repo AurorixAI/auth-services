@@ -58,6 +58,7 @@ from src.models.auth import (
 )
 
 from . import billing_ledger as bl
+from . import business_clock as bc
 from . import ledger_service as ls
 from . import payment_status as ps
 from . import payments_texts as tx
@@ -480,7 +481,7 @@ class PaymentService:
             if not history:
                 history = [{"from": "min", **self._regime_fields(before)}]
             # LOGIC-A (F12): the new regime acts for every student from the start of HIS next period - a running period is never cut
-            entry = {"from": today.isoformat(), "defer": True, **self._regime_fields(after)}
+            entry = {"from": today.isoformat(), "defer": True, "at": bc.utc_now().isoformat(), **self._regime_fields(after)}
             if history[-1].get("from") == today.isoformat():
                 history[-1] = entry
             else:
@@ -515,7 +516,7 @@ class PaymentService:
         days: List[date] = []
         students: set = set()
         for e in loader.load(scope="tracked"):
-            switch = bl.regime_switch_days(e.inp, new)
+            switch = bl.regime_switch_days(e.inp, new, bc.utc_now())
             if switch:
                 students.add(e.student.id)
                 days.extend(switch)

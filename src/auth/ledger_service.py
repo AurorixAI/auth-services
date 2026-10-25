@@ -68,6 +68,16 @@ class LedgerSettings:
 
 
 
+def _moment(raw: Any) -> Optional[datetime]:
+    """A naive UTC timestamp from the settings (ISO text), else None (an entry of an older version has none)."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
 def regime_from_block(block: Dict[str, Any], effective_from: date) -> bl.Regime:
     """One regime from a settings dict (``period_mode`` / ``billing_anchor`` / ``billing_day`` / ``lessons_per_payment``)."""
     mode = block.get("period_mode") or ps.CALENDAR
@@ -81,6 +91,7 @@ def regime_from_block(block: Dict[str, Any], effective_from: date) -> bl.Regime:
         billing_day=day if isinstance(day, int) and 1 <= day <= 28 else 1,
         package_size=size if isinstance(size, int) and 1 <= size <= 60 else ps.DEFAULT_LESSONS_PER_PAYMENT,
         defer=block.get("defer") is True and effective_from != date.min,   # LOGIC-A (F12): from the start of the next period
+        at=_moment(block.get("at")),   # batch 25.10: when it was saved - a student who joins after it has no running period
     )
 
 
@@ -337,12 +348,12 @@ class LedgerLoader:
         for mid in found:
             membership = self.members[mid][0]
             spans = [
-                bl.Stay(ps.business_date(p.joined_at), ps.business_date(p.left_at) if p.left_at else None)
+                bl.Stay(ps.business_date(p.joined_at), ps.business_date(p.left_at) if p.left_at else None, p.joined_at)
                 for p in periods.get(mid, [])
             ]
             if not spans and membership.joined_at:  # a legacy row without periods
                 spans = [bl.Stay(ps.business_date(membership.joined_at),
-                                 None if membership.is_active or not membership.left_at else ps.business_date(membership.left_at))]
+                                 None if membership.is_active or not membership.left_at else ps.business_date(membership.left_at), membership.joined_at)]
             self.stays[mid] = spans
         for payment in self.db.query(StudentPayment).filter(
             StudentPayment.org_id == self.org_id, StudentPayment.membership_id.in_(found),

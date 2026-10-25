@@ -8,6 +8,14 @@ from tests.test_pay2_api_pg import API, D, fixed_today, membership, owner, seed_
 pytestmark = pytest.mark.skipif(not __import__("os").environ.get("A2_AUTH_TEST_DATABASE_URL"), reason="Requires disposable A2 auth PostgreSQL")
 
 
+def join_at(w, m, hour_utc):
+    """The moment he joined, on the day of the stay (the helper `stay` puts 06:00 UTC)."""
+    m.joined_at = m.joined_at.replace(hour=hour_utc)
+    (period,) = m.periods
+    period.joined_at = m.joined_at
+    w.db.commit()
+
+
 def row_of(w, student):
     r = owner(w).get(f"{API}/org/students/{student.id}/memberships")
     assert r.status_code == 200, r.text
@@ -21,9 +29,10 @@ def test_switch_then_enrol_the_same_day_gives_a_package_and_a_running_month_stay
     stay(world, running, D(2026, 10, 15))
     seed_payment(world, running, 600_000, D(2026, 10, 15))                                 # a paid running month 15.10-14.11
     stay(world, yesterday, D(2026, 10, 20))                                                # came yesterday, nothing paid: his month is running (a debt)
-    stay(world, new, D(2026, 10, 21))                                                      # comes on the day of the switch
+    stay(world, new, D(2026, 10, 21))                                                      # comes on the day of the switch...
     c = owner(world)
-    assert c.put(f"{API}/org/settings/payments", json={"period_mode": "lessons", "lessons_per_payment": 12}).status_code == 200
+    assert c.put(f"{API}/org/settings/payments", json={"period_mode": "lessons", "lessons_per_payment": 12}).status_code == 200     # the clock stands at 12:00 Tashkent = 07:00 UTC
+    join_at(world, new, 8)                                                                  # ...AFTER the switch
     world.db.expire_all()
     a, b, n = (row_of(world, s) for s in world.students)
     assert (a["period_mode"], a["paid_until"], a["debt"]) == ("calendar", "2026-11-14", 0)           # the running period is not cut
@@ -34,6 +43,11 @@ def test_switch_then_enrol_the_same_day_gives_a_package_and_a_running_month_stay
     stay(world, new, D(2026, 10, 22))
     world.db.expire_all()
     assert row_of(world, world.students[2])["period_mode"] == "lessons"
+    # a student who came the same morning BEFORE the switch keeps his running period
+    stay(world, new, D(2026, 10, 21))
+    join_at(world, new, 5)
+    world.db.expire_all()
+    assert row_of(world, world.students[2])["period_mode"] == "calendar"
 
 
 def test_the_dry_run_counts_only_the_students_with_a_running_period(world, fixed_today):
@@ -41,7 +55,8 @@ def test_the_dry_run_counts_only_the_students_with_a_running_period(world, fixed
     give_group_price(world.db, world.group, 600_000, valid_from=D(2026, 1, 1))
     a, b, n = (membership(world, s) for s in world.students)
     stay(world, a, D(2026, 10, 15)); stay(world, b, D(2026, 10, 20)); stay(world, n, D(2026, 10, 21))
+    join_at(world, n, 5)                                                                    # came the same morning: a running period
     r = owner(world).put(f"{API}/org/settings/payments", params={"dry_run": True}, json={"period_mode": "lessons", "lessons_per_payment": 12})
     assert r.status_code == 200, r.text
     ri = r.json()["regime_impact"]
-    assert ri["students_affected"] == 3 and ri["first_switch"] == "2026-10-21" and ri["latest_switch"] == "2026-11-20"
+    assert ri["students_affected"] == 3 and ri["first_switch"] == "2026-11-15" and ri["latest_switch"] == "2026-11-21"
