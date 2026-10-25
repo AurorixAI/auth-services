@@ -31,6 +31,11 @@ from . import payments_texts as tx
 
 CALENDAR = ps.CALENDAR
 LESSONS = ps.LESSONS
+# PAY-F (owner, 25.10): from this day a PARTIAL period of the «Общий месяц» (fixed billing day) is counted by the REGULAR schedule only - the numerator and the
+# denominator alike: an extra one-off lesson is in neither (a copy of a move stays neutral, a lesson the centre cancelled stays in the numerator).  A period that STARTS
+# before the day is computed the old way (nothing that has begun is recomputed).  It is a constant, not a setting: one decision of the owner for every centre, and a
+# month can never be counted two ways by two centres; moving the day is a reviewed commit like any other rule of the money.
+REGULAR_SCHEDULE_FROM = date(2026, 11, 1)
 MAX_FUTURE_PERIODS = 24
 MAX_VIRTUAL_LESSONS = 5000
 
@@ -171,6 +176,10 @@ class LedgerInput:
     lesson_days: Callable[[date, date], Sequence[date]] = lambda start, end: ()
     # the lessons of the FULL schedule pattern (slots' validFrom ignored): the denominator of a partial period; ``None`` = the same as ``lesson_days``
     pattern_days: Optional[Callable[[date, date], Sequence[date]]] = None
+    # PAY-F: the same two without the extra one-off lessons, for a cell of the fixed billing day that starts on or after ``regular_only_from`` (``None`` = never: the old way)
+    regular_lesson_days: Optional[Callable[[date, date], Sequence[date]]] = None
+    regular_pattern_days: Optional[Callable[[date, date], Sequence[date]]] = None
+    regular_only_from: Optional[date] = None
     counted_lessons: Sequence[CountedLesson] = ()
     expiring_days: int = ps.DEFAULT_EXPIRING_DAYS
     expiring_lessons: int = ps.DEFAULT_EXPIRING_LESSONS
@@ -203,6 +212,7 @@ class Segment:
     begun: bool
     ended: bool
     unpriced: bool = False
+    by_cell: bool = False       # PAY-F: a cell of the fixed billing day (the lessons of its month are counted)
     package_no: Optional[int] = None
     complete_package: bool = False
     # after the money is laid
@@ -228,7 +238,7 @@ class Segment:
             return "closed"
         if not self.begun:
             return "future"
-        return "partial" if self.money + self.forgiven > 0 else "open"
+        return "partial" if self.money + self.forgiven + self.recalculated > 0 else "open"
 
     @property
     def bucket(self) -> str:
@@ -516,19 +526,30 @@ class _Gen:
         self.unpriced_from: Optional[date] = None
         self._lesson_days_cache: Dict[tuple, Sequence[date]] = {}
 
-    def lesson_days(self, start: date, end: date) -> Sequence[date]:
-        key = (start, end)
+    def regular(self, cell_start: date) -> bool:
+        """Whether a cell of the fixed billing day that starts on ``cell_start`` is counted by the regular schedule only (PAY-F)."""
+        return self.inp.regular_only_from is not None and cell_start >= self.inp.regular_only_from
+
+    def lesson_days(self, start: date, end: date, *, regular: bool = False) -> Sequence[date]:
+        fn = (self.inp.regular_lesson_days or self.inp.lesson_days) if regular else self.inp.lesson_days
+        key = ("regular", start, end) if regular else (start, end)
         if key not in self._lesson_days_cache:
-            self._lesson_days_cache[key] = tuple(self.inp.lesson_days(start, end))
+            self._lesson_days_cache[key] = tuple(fn(start, end))
         return self._lesson_days_cache[key]
 
-    def pattern_days(self, start: date, end: date) -> Sequence[date]:
+    def pattern_days(self, start: date, end: date, *, regular: bool = False) -> Sequence[date]:
         """The lessons of a FULL period by the schedule pattern (the denominator)."""
-        if self.inp.pattern_days is None:
-            return self.lesson_days(start, end)
-        key = ("pattern", start, end)
+        if regular:
+            fn = self.inp.regular_pattern_days or self.inp.regular_lesson_days
+            if fn is None:
+                return self.pattern_days(start, end)
+            key = ("regular-pattern", start, end)
+        else:
+            if self.inp.pattern_days is None:
+                return self.lesson_days(start, end)
+            fn, key = self.inp.pattern_days, ("pattern", start, end)
         if key not in self._lesson_days_cache:
-            self._lesson_days_cache[key] = tuple(self.inp.pattern_days(start, end))
+            self._lesson_days_cache[key] = tuple(fn(start, end))
         return self._lesson_days_cache[key]
 
     def segment(
@@ -543,7 +564,7 @@ class _Gen:
         seg_id = f"seg:{chain}:{start.isoformat()}"
         n = len(days)
         common = dict(id=seg_id, kind="period", period_start=start, period_end=end, days=tuple(days),
-                      price=price, nominal_days=nominal, begun=begun, ended=end < self.today)
+                      price=price, nominal_days=nominal, begun=begun, ended=end < self.today, by_cell=by_lessons)
         if price.amount is None:
             return Segment(amount=0, basis="zero", lessons_in_part=None, lessons_in_period=None, unpriced=True, **common)
         amount = price.amount
@@ -552,8 +573,9 @@ class _Gen:
         if n >= nominal:
             return Segment(amount=amount, basis="full", lessons_in_part=None, lessons_in_period=None, **common)
         if by_lessons:
-            held = self.lesson_days(*cell)             # REAL lessons: the numerator
-            whole = self.pattern_days(*cell)            # lessons of a full month by the schedule: the denominator
+            regular = self.regular(cell[0])             # PAY-F: from the cut-over day only the regular schedule is counted, in both
+            held = self.lesson_days(*cell, regular=regular)             # REAL lessons: the numerator
+            whole = self.pattern_days(*cell, regular=regular)            # lessons of a full month by the schedule: the denominator
             if whole:
                 inside = set(days)
                 in_part = sum(1 for d in held if d in inside)
@@ -922,30 +944,50 @@ def recalc_on(versions: Sequence[RecalcVersion], day: date) -> bool:
     return on
 
 
-def _recalc_lines(inp: LedgerInput, gen: "_Gen", segments: Sequence[Segment]) -> List[RecalcLine]:
+def _forgiven_on(segments: Sequence[Segment], credits: Sequence[Credit], net: Dict[str, int]) -> Dict[str, int]:
+    """What the write-offs cover on every segment when the credits are laid WITHOUT the recalculation (the same line as the money line below)."""
+    spans: Dict[str, Tuple[int, int]] = {}
+    pos = 0
+    for c in credits:
+        spans[c.id] = (pos, pos + net[c.id])
+        pos += net[c.id]
+    out: Dict[str, int] = {}
+    cur = 0
+    for s in segments:
+        lo, hi = cur, cur + s.amount
+        cur = hi
+        out[s.id] = sum(max(0, min(spans[c.id][1], hi) - max(spans[c.id][0], lo)) for c in credits if c.kind == WRITEOFF)
+    return out
+
+
+def _recalc_lines(inp: LedgerInput, gen: "_Gen", segments: Sequence[Segment], forgiven: Dict[str, int]) -> List[RecalcLine]:
     """PAY-F: one deduction per lesson that the centre cancelled inside a charged period of a calendar mode.
 
     A lesson counts when the student was charged for its day (the day is one of the days of a period that has begun: not on a pause, not before he
-    came or after he left, not in the lessons mode) and the setting was on that day.  It costs ``round_1000(period charge / lessons of the period
-    by the schedule)``; a partial first period of a fixed billing day costs the same price of a lesson (``price / lessons of the full month``), so
-    the total is the price x the lessons that were held / the lessons of the month.  The deductions of a period never exceed its charge."""
+    came or after he left, not in the lessons mode) and the setting was on that day.  It costs ``round_1000(what the period costs the student /
+    lessons of the period by the schedule)``: the charge minus what the centre forgave on that period (a forgiven period gives no second discount, and
+    what is paid back never exceeds what the student really bore).  A partial first period of a fixed billing day costs the same price of a lesson
+    (``price / lessons of the full month``, scaled by the same share), so the total is the price x the lessons that were held / the lessons of the month.
+    The deductions of a period never exceed that sum."""
     if not inp.centre_cancels or not any(v.on for v in inp.recalc_versions):
         return []
     owner = {d: s for s in segments if s.kind == "period" and s.begun and not s.unpriced and s.amount > 0 for d in s.days}
-    left = {s.id: s.amount for s in owner.values()}
+    bearable = {s.id: max(0, s.amount - forgiven.get(s.id, 0)) for s in owner.values()}
+    left = dict(bearable)
     unit: Dict[str, int] = {}
     lines: List[RecalcLine] = []
     for cancel in sorted(inp.centre_cancels, key=lambda c: (c.day, c.lesson_id)):
         seg = owner.get(cancel.day)
-        if seg is None or not recalc_on(inp.recalc_versions, cancel.day):
+        if seg is None or not recalc_on(inp.recalc_versions, cancel.day) or bearable[seg.id] <= 0:
             continue
         if seg.id not in unit:
             inside = set(seg.days)
             if seg.basis == "lessons" and seg.lessons_in_period:
-                unit[seg.id] = round_1000(seg.price.amount, seg.lessons_in_period)        # the full month by the schedule is the divisor
+                # the full month by the schedule is the divisor
+                unit[seg.id] = round_1000(seg.price.amount * bearable[seg.id], seg.lessons_in_period * seg.amount)
             else:
-                count = sum(1 for d in gen.pattern_days(seg.period_start, seg.period_end) if d in inside)
-                unit[seg.id] = round_1000(seg.amount, count) if count else 0
+                count = sum(1 for d in gen.pattern_days(seg.period_start, seg.period_end, regular=seg.by_cell and gen.regular(seg.period_start)) if d in inside)
+                unit[seg.id] = round_1000(bearable[seg.id], count) if count else 0
         amount = min(unit[seg.id], left[seg.id])
         if amount <= 0:
             continue
@@ -955,6 +997,13 @@ def _recalc_lines(inp: LedgerInput, gen: "_Gen", segments: Sequence[Segment]) ->
 
 
 def run_ledger(inp: LedgerInput) -> Ledger:
+    """The account.  The recalculation is a credit too, so the future periods are generated for the money PLUS the deductions (a second pass, only when
+    there is a deduction): otherwise the credit that settles beyond the running period would not find its period (``suggested_amount`` of the next one)."""
+    ledger = _run_ledger(inp, 0)
+    return _run_ledger(inp, ledger.recalculated) if ledger.recalculated else ledger
+
+
+def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     today = inp.today
     flags: set = set()
     opening, floor, runs, pause_days, spans_of_stay = _pieces_of(inp)
@@ -963,7 +1012,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     if exceeds:
         flags.add(F_OUTFLOW_EXCEEDS)
     total_credit = sum(net.values())
-    gen = _Gen(inp, total_credit, flags)
+    gen = _Gen(inp, total_credit + horizon_extra, flags)
     windows = regime_windows(inp.regimes)
     deferred = any(w[0].defer for w in windows[1:])
     priced_days = sorted(c.day for c in inp.counted_lessons if inp.price_at(c.day).amount is not None) if deferred else []
@@ -1052,7 +1101,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     segments.sort(key=lambda s: (s.kind != "opening", (s.days[0] if s.days else s.period_start), s.period_start, s.id))
 
     # ---- PAY-F: the recalculation for the lessons the centre cancelled is one more credit on the money line (derived here, never stored)
-    recalcs = _recalc_lines(inp, gen, segments)
+    recalcs = _recalc_lines(inp, gen, segments, _forgiven_on(segments, credits, net))
     if recalcs:
         credits = sorted([*credits, *(line.credit() for line in recalcs)], key=_credit_key)
         net, refunded_from, transferred_from, _ = apply_outflows(credits, inp.outflows)

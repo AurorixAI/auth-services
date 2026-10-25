@@ -572,7 +572,7 @@ class GroupAudit(Base):
             "'payment_writeoff', 'payment_writeoff_void', 'payment_refund', 'payment_refund_void', "
             "'membership_pause_set', 'membership_pause_void', 'opening_balance_set', 'opening_balance_void', "
             "'group_lesson_type_set', 'student_left_group', "
-            "'group_archived', 'group_restored', 'lesson_teacher_set', 'lesson_teacher_cleared')",
+            "'group_archived', 'group_restored', 'lesson_teacher_set', 'lesson_teacher_cleared', 'day_off_voided')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(
@@ -994,6 +994,7 @@ class GroupAttendance(Base):
         Index("idx_attendance_group", "group_id"),
         Index("idx_attendance_org", "org_id"),
         Index("idx_attendance_teacher", "org_id", "teacher_id", "lesson_date"),
+        Index("idx_group_attendance_day_off", "day_off_id", postgresql_where=text("day_off_id IS NOT NULL")),
     )
 
     def to_dict(self) -> dict:
@@ -1028,10 +1029,12 @@ class OrgDayOff(Base):
     date_from = Column(Date, nullable=False)
     date_to = Column(Date, nullable=False)
     reason = Column(String(200), nullable=False)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     voided_at = Column(DateTime, nullable=True)
-    voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # What voiding the day off gave back (the cancellation rows are deleted): [{groupId, groupName, lessonId, date, cancelledBy, cancelledAt, reason}]
+    restored = Column(JSONB, nullable=True)
 
     __table_args__ = (
         CheckConstraint("date_to >= date_from AND date_to - date_from <= 13", name="ck_org_days_off_range"),

@@ -219,3 +219,43 @@ def test_random_accounts_keep_the_invariants():
         assert len({l.id for l in led.recalcs}) == len(led.recalcs), case
         # the account is never worse for the student: less debt or more advance, by exactly what was deducted (up to the part that fell beyond the charged periods)
         assert (led.advance - led.debt) - (base.advance - base.debt) == led.recalculated, case
+
+
+# ---- fix round (R3): the horizon, the forgiven part, the state of a segment ------------------------------------------------------------------------
+
+
+def test_r3_4_the_deduction_reaches_the_next_period_before_it_begins():
+    """Paid in full, a lesson cancelled: the 46 000 settles on the NEXT period, which is generated for the money plus the deductions."""
+    led = bl.run_ledger(own_month(cancels=(D(2026, 10, 21),), paid=600_000))
+    nxt = [s for s in led.segments if not s.begun]
+    assert len(nxt) == 1 and nxt[0].recalculated == 46_000 and nxt[0].unpaid == 554_000 and nxt[0].state == "future"
+    assert led.debt == 0 and led.advance == 46_000 and led.reconciles
+    from src.auth import payments_views as pv
+
+    assert pv.suggested_amount(led, 600_000) == 554_000          # not 600 000
+
+
+def test_r3_5_a_forgiven_period_gives_no_second_discount():
+    forgive = replace(own_month(cancels=(D(2026, 10, 21),), paid=0), credits=(credit("w", D(2026, 10, 22), 600_000, kind=bl.WRITEOFF),))
+    led = bl.run_ledger(forgive)
+    assert led.recalcs == () and led.debt == 0 and led.advance == 0 and led.refundable == 0 and led.reconciles
+
+
+def test_r3_5_half_paid_half_forgiven_gets_half_the_lesson_back():
+    inp = replace(own_month(cancels=(D(2026, 10, 21),), paid=0),
+                  credits=(credit("p", D(2026, 10, 6), 300_000), credit("w", D(2026, 10, 22), 300_000, kind=bl.WRITEOFF, minutes=5)))
+    led = bl.run_ledger(inp)
+    assert [l.amount for l in led.recalcs] == [bl.round_1000(300_000, 13)] == [23_000]       # the share the student really bore: (600 000 - 300 000) / 13
+    assert led.debt == 0 and led.advance == 23_000 and led.refundable == 23_000 and led.reconciles
+    # the forgiveness made AFTER the lesson was cancelled lands on the same segment: the same answer
+    late = replace(inp, credits=(credit("p", D(2026, 10, 6), 300_000), credit("w", D(2026, 10, 26), 300_000, kind=bl.WRITEOFF, minutes=5)))
+    assert bl.run_ledger(late).recalculated == 23_000
+
+
+def test_r3_15_a_segment_covered_by_the_deduction_counts_as_covered():
+    led = bl.run_ledger(own_month(cancels=(D(2026, 10, 21),), paid=600_000, today=D(2026, 11, 6)))
+    first, second = [s for s in led.segments if s.kind == "period"][:2]
+    assert first.state == "closed" and second.state == "partial" and second.covered_days == 2          # 46 000 of 600 000 on 31 days
+    assert led.covered_through == second.days[1]
+    records = bl.coverage_records(led)
+    assert records and records[-1].valid_to == second.days[1]

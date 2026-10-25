@@ -564,6 +564,8 @@ class GroupAttendanceResponse(BaseModel):
     records: Dict[str, Dict[str, str]] = Field(default_factory=dict)
     statuses: Dict[str, str] = Field(default_factory=dict)  # { instance_key: status }
     cancellationReasons: Dict[str, str] = Field(default_factory=dict)
+    # PAY-F: instance_key -> `centre` | `holiday` | `day_off` (cancelled by a day off of the centre); a cancellation with no kind (old / a move) is absent
+    cancellationKinds: Dict[str, str] = Field(default_factory=dict)
     # The students who belonged to each actual lesson, frozen when the lesson
     # started. This keeps a transfer from altering the historical journal.
     rosterStudentIds: Dict[str, List[str]] = Field(default_factory=dict)

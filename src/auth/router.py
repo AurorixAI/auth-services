@@ -1800,6 +1800,7 @@ def cancel_missed_group_attendance(
             request,
             cancelled_by=user["user_id"],
             is_org_admin=is_org_admin(user),
+            is_org_manager=is_org_manager(user),
         )
         return {"ok": True, "cancelled": True, "version": version}
     except PermissionError as e:

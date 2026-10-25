@@ -79,6 +79,11 @@ def recalc_text(amount: int, day: date) -> str:
     return f"\u2212{money(amount)}: урок {ddmm(day)} отменён центром"
 
 
+def recalc_amount_text(amount: int) -> str:
+    """The quiet line under the title of the statement row (the title already names the lesson): ``−46 000 сум``."""
+    return f"\u2212{money(amount)}"
+
+
 def forecast_text(day: Optional[date]) -> str:
     """``хватит до ~30.10 (по расписанию)``; no day = the package is over."""
     return f"хватит до ~{ddmm(day)} (по расписанию)" if day else "пакет закончился"

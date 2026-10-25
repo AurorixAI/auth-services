@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 from src.core.database import get_db
 
 from .dependencies import require_org_member
-from .days_off import DayOffApplied, DayOffForDate, DayOffOut, DayOffPlan, DayOffRequest, DaysOffService, DayOffVoided
+from .cancellation_kind import ChangeCancellationKind, change_cancellation_kind
+from .days_off import DayOffApplied, DayOffDates, DayOffForDate, DayOffOut, DayOffPlan, DayOffRequest, DaysOffService, DayOffVoided
 from .ops_router import _manager
 
 router = APIRouter(tags=["PAY-F days off"])
@@ -38,7 +39,7 @@ def day_off_for_date(day: date = Query(..., alias="date"), user: dict = Depends(
 
 
 @router.post("/org/days-off/preview", response_model=DayOffPlan)
-def preview_day_off(request: DayOffRequest, user: dict = Depends(_manager), db: Session = Depends(get_db)):
+def preview_day_off(request: DayOffDates, user: dict = Depends(_manager), db: Session = Depends(get_db)):
     """Dry run: how many lessons in how many groups would be cancelled, and which cannot be cancelled (nothing is written)."""
     return _service(db).plan(user["org_id"], request)
 
@@ -49,7 +50,19 @@ def create_day_off(request: DayOffRequest, user: dict = Depends(_manager), db: S
     return _service(db).create(user["org_id"], user["user_id"], request)
 
 
+@router.post("/org/days-off/{day_off_id}/apply", response_model=DayOffApplied)
+def apply_day_off(day_off_id: UUID, user: dict = Depends(_manager), db: Session = Depends(get_db)):
+    """Finish a day off (idempotent): the lessons already cancelled stay, the rest is tried again (the exam-service did not answer, a lesson was busy)."""
+    return _service(db).apply(user["org_id"], user["user_id"], day_off_id)
+
+
 @router.post("/org/days-off/{day_off_id}/void", response_model=DayOffVoided)
 def void_day_off(day_off_id: UUID, dry_run: bool = Query(False), user: dict = Depends(_manager), db: Session = Depends(get_db)):
     """«Отменить выходной»: its own, untouched, future lessons come back; the others are listed (``dry_run``: only the lists)."""
-    return _service(db).void(user["org_id"], user["user_id"], day_off_id, dry_run=dry_run)
+    return _service(db).void(user["org_id"], user["user_id"], user.get("org_role") or "admin", day_off_id, dry_run=dry_run)
+
+
+@router.put("/org/groups/{group_id}/attendance/cancellation-kind")
+def put_cancellation_kind(group_id: UUID, request: ChangeCancellationKind, user: dict = Depends(_manager), db: Session = Depends(get_db)):
+    """«Изменить причину отмены»: the kind of a lesson that is already cancelled (``centre`` / ``holiday``), owner / admin, with a reason; the recalculation follows by itself."""
+    return change_cancellation_kind(db, user["org_id"], str(group_id), request, actor_id=user["user_id"])

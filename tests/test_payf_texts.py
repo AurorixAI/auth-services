@@ -41,8 +41,36 @@ def test_3_the_statement_file_knows_the_recalc_row_and_its_tile():
     rows = [StatementRow(seq=1, date=D(2026, 10, 21), type="recalc", title=tx.recalc_title(D(2026, 10, 21)), credit=46_000, balance_after=-554_000,
                          details=StatementDetails(recalc=line))]
     (entry,) = st.build_entries(rows)
-    assert (entry.title, entry.sub, entry.paid, entry.charged, entry.balance) == ("Перерасчёт: урок 21.10 отменён центром", line.text, 46_000, None, "Долг 554 000")
+    # the title names the lesson, the quiet line carries the amount only (no repeat)
+    assert (entry.title, entry.sub, entry.paid, entry.charged, entry.balance) == ("Перерасчёт: урок 21.10 отменён центром", "\u221246 000 сум", 46_000, None, "Долг 554 000")
     summary = StatementSummary(charged=600_000, paid=0, recalculated=46_000, debt=554_000)
     assert ("Перерасчёт", 46_000) in st.total_lines(summary)
     assert "Перерасчёт" not in [label for label, _ in st.total_lines(StatementSummary(charged=600_000, debt=600_000))]
     assert st.STATEMENT_TYPE_LABEL["recalc"] == "Перерасчёт"
+
+
+def test_4_the_names_are_the_frozen_contract_with_the_front():
+    """The front keeps a copy of ``tests/fixtures/payf/mode_names.json`` and a test that ``PAYMENT_MODELS`` says the same: change both together (``scripts/payf_export_modes.py``)."""
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("payf_export_modes", root / "scripts" / "payf_export_modes.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.OUT.read_text(encoding="utf-8") == module.document(), "mode_names.json differs from MODE_NAMES: run scripts/payf_export_modes.py and copy it to the front"
+
+
+def test_14_the_plurals_of_the_plan_agree_with_the_numbers():
+    from src.auth.days_off import DayOffLesson, plan_text
+
+    def lessons(n, groups):
+        return [DayOffLesson(groupId=str(i % groups), groupName=f"Г{i % groups}", lessonId="l", date=D(2026, 10, 21)) for i in range(n)]
+
+    assert plan_text(lessons(1, 1)) == "Будет отменён 1 урок в 1 группе: Г0"
+    assert plan_text(lessons(2, 2)) == "Будут отменены 2 урока в 2 группах: Г0, Г1"
+    assert plan_text(lessons(5, 2)) == "Будут отменены 5 уроков в 2 группах: Г0, Г1"
+    assert plan_text(lessons(11, 1)).startswith("Будут отменены 11 уроков в 1 группе")
+    assert plan_text(lessons(21, 1)).startswith("Будет отменён 21 урок в 1 группе")
+    assert plan_text(lessons(22, 21)).startswith("Будут отменены 22 урока в 21 группе")
+    assert plan_text([]) == "Уроков для отмены нет"

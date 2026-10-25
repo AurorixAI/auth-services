@@ -155,7 +155,8 @@ def test_4_rights_and_input(five_groups):
     assert client(w, "A").post(f"{API}/org/days-off", json=DAY_OFF).status_code == 403
     assert client(w, "admin").post(f"{API}/org/days-off/preview", json=DAY_OFF).status_code == 200      # an admin: yes
     c = client(w, "owner")
-    assert c.post(f"{API}/org/days-off/preview", json={**DAY_OFF, "reason": "ab"}).status_code == 422     # >= 3 characters
+    assert c.post(f"{API}/org/days-off", json={**DAY_OFF, "reason": "ab"}).status_code == 422             # >= 3 characters (the dry run asks no reason)
+    assert c.post(f"{API}/org/days-off/preview", json={k: v for k, v in DAY_OFF.items() if k != "reason"}).status_code == 200
     assert c.post(f"{API}/org/days-off/preview", json={**DAY_OFF, "dateTo": "2026-11-04"}).status_code == 422       # 15 days
     assert c.post(f"{API}/org/days-off/preview", json={**DAY_OFF, "dateTo": "2026-10-20"}).status_code == 422
     assert c.post(f"{API}/org/days-off/preview", json={**DAY_OFF, "dateTo": "2026-11-03"}).status_code == 200       # 14 days

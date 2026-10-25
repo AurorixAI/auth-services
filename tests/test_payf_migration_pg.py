@@ -116,3 +116,16 @@ def test_the_migration_and_the_models_agree_on_the_new_columns(engine):
         assert {c.name for c in model.__table__.columns} == columns(engine, model.__tablename__), model.__tablename__
     checks = {c["name"] for c in insp.get_check_constraints("org_days_off")} | {c["name"] for c in insp.get_check_constraints("group_attendance")}
     assert {"ck_org_days_off_range", "ck_org_days_off_reason", "ck_group_attendance_cancellation_kind"} <= checks
+    with engine.connect() as c:
+        # added NOT VALID and validated in a separate statement: both end up validated
+        assert c.execute(text("SELECT bool_and(convalidated) FROM pg_constraint WHERE conname IN ('ck_group_attendance_cancellation_kind', 'group_attendance_day_off_id_fkey')")).scalar() is True
+        assert c.execute(text("SELECT indexdef FROM pg_indexes WHERE indexname='idx_group_attendance_day_off'")).scalar().endswith("WHERE (day_off_id IS NOT NULL)")
+        assert "SET NULL" in c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='group_attendance_day_off_id_fkey'")).scalar()
+        # the users of the journal may go: the day off keeps its record
+        assert c.execute(text("SELECT count(*) FROM pg_constraint WHERE conrelid='org_days_off'::regclass AND contype='f' AND confdeltype='n'")).scalar() == 2
+        assert "'day_off_voided'" in c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='ck_group_audit_action'")).scalar()
+    command.downgrade(config(), BEFORE)
+    with engine.connect() as c:
+        assert "'day_off_voided'" not in c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='ck_group_audit_action'")).scalar()
+        assert c.execute(text("SELECT count(*) FROM pg_indexes WHERE indexname='idx_group_attendance_day_off'")).scalar() == 0
+    command.downgrade(config(), BEFORE)                   # repeated: DROP ... IF EXISTS, harmless

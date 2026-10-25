@@ -1055,6 +1055,13 @@
       },
       "GroupAttendanceResponseB": {
         "properties": {
+          "cancellationKinds": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Cancellationkinds",
+            "type": "object"
+          },
           "cancellationReasons": {
             "additionalProperties": {
               "type": "string"

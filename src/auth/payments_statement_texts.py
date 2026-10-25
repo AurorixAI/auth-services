@@ -307,7 +307,7 @@ def build_entries(rows: Sequence, upcoming: Iterable = ()) -> List[Entry]:
             out.append(Entry(title=title, sub=f"причина: {d.reason}" if d.reason else None, charged=None,
                              paid=-int(row.outflow), **base))
         elif row.type == "recalc":     # PAY-F: «Перерасчёт: урок 21.10 отменён центром» - money off the next payment, like a write-off
-            out.append(Entry(title=row.title, sub=d.recalc.text if d.recalc else None, charged=None, paid=int(row.credit), **base))
+            out.append(Entry(title=row.title, sub=tx.recalc_amount_text(d.recalc.amount) if d.recalc else None, charged=None, paid=int(row.credit), **base))
         elif row.type == "transfer_in":
             out.append(Entry(title=row.title, sub=None, charged=None, paid=int(row.credit), **base))
         elif row.type == "transfer_out":
