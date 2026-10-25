@@ -27,12 +27,15 @@ class DiagnosticCapabilityLogFilter(logging.Filter):
     """Keep route/status evidence while removing public invite capabilities."""
     _path = re.compile(r'(/(?:api/v1/)?(?:auth/|internal/)?diagnostic/)(?!sessions(?:/|\b))[^/?\s\"\x27]+')
     _query = re.compile(r'([?&]invite_code=)[^&\s\"\x27]+')
+    # «Задать пароль» / «Сброс пароля»: the token in the path IS the credential (one-time, but valid for 72 h / 1 h) - never in a log line
+    _links = re.compile(r'(/(?:api/v1/)?(?:auth/password-links|set-password)/)[^/?\s\"\x27]+')
 
     @classmethod
     def _redact(cls, value):
         if not isinstance(value, (str, httpx.URL)):
             return value
-        return cls._query.sub(r'\1[redacted]', cls._path.sub(r'\1[redacted]', str(value)))
+        text = cls._links.sub(r'\1[redacted]', str(value))
+        return cls._query.sub(r'\1[redacted]', cls._path.sub(r'\1[redacted]', text))
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.msg, str):
@@ -45,6 +48,31 @@ class DiagnosticCapabilityLogFilter(logging.Filter):
             elif isinstance(record.args, dict):
                 record.args = {key: self._redact(value) for key, value in record.args.items()}
         return True
+
+
+def sentry_before_send(event, hint=None):
+    """``before_send`` for sentry_sdk (Sentry is not initialised in this service yet; when it is, pass this function): the request URL,
+    the breadcrumbs and the exception text of an event never carry a link token or an invite code."""
+    redact = DiagnosticCapabilityLogFilter._redact
+    request = event.get("request") or {}
+    if isinstance(request.get("url"), str):
+        request["url"] = redact(request["url"])
+    if isinstance(request.get("query_string"), str):
+        request["query_string"] = redact("?" + request["query_string"])[1:]
+    for crumb in (event.get("breadcrumbs") or {}).get("values", []) if isinstance(event.get("breadcrumbs"), dict) else event.get("breadcrumbs") or []:
+        for key in ("message",):
+            if isinstance(crumb.get(key), str):
+                crumb[key] = redact(crumb[key])
+        data = crumb.get("data")
+        if isinstance(data, dict):
+            for k, v in list(data.items()):
+                data[k] = redact(v)
+    if isinstance(event.get("transaction"), str):
+        event["transaction"] = redact(event["transaction"])
+    for value in (event.get("exception") or {}).get("values", []):
+        if isinstance(value.get("value"), str):
+            value["value"] = redact(value["value"])
+    return event
 
 
 _REQUEST_ID_RE = re.compile(r"[A-Za-z0-9-]{1,64}")
