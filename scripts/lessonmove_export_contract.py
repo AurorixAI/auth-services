@@ -35,6 +35,7 @@ ORIGIN_REFUSALS = [
     ("GROUP_ARCHIVED", "Группа в архиве: действие недоступно"),
     ("SUBSTITUTION_ALREADY_DECIDED", "Запрос уже решён (или «Запрос закрыт: <причина>» когда открытый запрос закрыт)"),
     ("LESSON_HAS_NO_TEACHER", "У урока нет действующего преподавателя: назначьте его и повторите"),
+    ("MOVE_TOO_LATE", "Перенести урок можно не позднее чем за 60 минут до начала. Нажмите «Не смогу провести» — решит администратор"),       # P1.1: only for a teacher
 ]
 R3_ADDITIVE = [
     {"endpoint": "GET /org/groups/{group_id}/lesson-move-check", "field": "code", "schema": "string|null", "audience": "manager (R3 #6: ok=false because of the origin lesson)"},
@@ -50,7 +51,7 @@ def _errors():
         return {"status": status, "code": code, "message": message}
 
     shared = [
-        {"status": 403, "message": "Нет доступа (только владелец и администратор центра)"},
+        {"status": 403, "message": "Нет доступа (владелец, администратор или преподаватель центра)"},
         {"status": 404, "code": "GROUP_NOT_FOUND", "message": "Группа не найдена"},
         {"status": 404, "code": "LESSON_NOT_FOUND", "message": "Урок не найден"},
     ]
@@ -62,10 +63,10 @@ def _errors():
         {"status": 409, "code": "LESSON_HAS_LIVE_EXAM", "message": "Нельзя перенести урок с активным экзаменом (текст exam-service)"},
         {"status": 503, "code": "EXAM_SERVICE_UNAVAILABLE", "message": "Не удалось проверить экзамены группы. Повторите попытку."},
         known("REASON_REQUIRED"), known("MOVE_FIELDS_REQUIRED"), known("MOVE_IN_PAST"), known("MOVE_TOO_FAR"), known("MOVE_SAME_SLOT"),
-        known("LESSON_HAS_NO_TEACHER"),
+        known("LESSON_HAS_NO_TEACHER"), known("NOT_LESSON_TEACHER"), known("MOVE_TOO_LATE"), known("FOREIGN_REQUEST_PENDING"),
         {"status": 422, "code": "REASON_TOO_LONG", "message": "Причина не длиннее 500 символов"},
     ]
-    return {("post", "/org/groups/{group_id}/lesson-move"): move, ("get", "/org/groups/{group_id}/lesson-move-check"): [*shared, known("MOVE_FIELDS_REQUIRED")],
+    return {("post", "/org/groups/{group_id}/lesson-move"): move, ("get", "/org/groups/{group_id}/lesson-move-check"): [*shared, known("MOVE_FIELDS_REQUIRED"), known("NOT_LESSON_TEACHER")],
             ("get", "/org/groups/{group_id}/lesson-exam-binding"): shared}
 
 
@@ -107,7 +108,7 @@ def contract() -> dict:
 
     schemas["MovedFrom"] = MovedFrom.model_json_schema()          # the endpoints type ``movedFrom`` as a free object: the shape is documented here
     needed.add("MovedFrom")
-    return {"openapi": full["openapi"], "info": {"title": "ALGO auth - lesson sheet moves (#124)", "version": "lessonmove-3"}, "servers": [{"url": PREFIX}],
+    return {"openapi": full["openapi"], "info": {"title": "ALGO auth - lesson sheet moves (#124)", "version": "lessonmove-4"}, "servers": [{"url": PREFIX}],
             "paths": paths, "components": {"schemas": {name: schemas[name] for name in sorted(needed)}}, "x-additive": [*MOVED_FROM_ADDITIVE, *R3_ADDITIVE]}
 
 

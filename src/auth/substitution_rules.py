@@ -10,6 +10,7 @@ URGENT_MINUTES = 1440          # < 24 h before the start
 CREATE_MAX_LESSONS = 60
 CREATE_MAX_DAYS_AHEAD = 90
 MOVE_MAX_DAYS_AHEAD = 60
+TEACHER_MOVE_LEAD_MINUTES = 60                  # P1.1: a teacher moves his own lesson only while more than this is left before it starts
 MY_LESSONS_MAX_DAYS = 62
 DECIDE_BULK_MAX = 50
 
@@ -39,6 +40,10 @@ ERROR_CATALOGUE: Dict[str, tuple[int, str]] = {
 DIRECT_MOVE_ERRORS: Dict[str, tuple[int, str]] = {
     "LESSON_CHANGED": (409, "Расписание урока изменилось: обновите страницу и повторите"),
     "LESSON_HAS_NO_TEACHER": (422, "У урока нет действующего преподавателя: назначьте его и повторите"),
+    # P1.1: the teacher moves his own lesson (the same path); the administrator is not bound by the first two
+    "NOT_LESSON_TEACHER": (403, "Перенести урок может преподаватель группы или администратор"),
+    "MOVE_TOO_LATE": (409, "Перенести урок можно не позднее чем за 60 минут до начала. Нажмите «Не смогу провести» — решит администратор"),
+    "FOREIGN_REQUEST_PENDING": (409, "По этому уроку есть запрос другого преподавателя: решит администратор"),
 }
 
 

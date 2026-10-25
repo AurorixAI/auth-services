@@ -214,9 +214,9 @@ def test_m13_a_lesson_with_a_substitute_moves_and_the_substitution_is_released(w
     assert last.origin == "system" and last.requester_id == w.B.id and last.status == "rescheduled" and str(last.previous_request_id) == item["id"]
 
 
-def test_m14_only_the_owner_and_the_admin(w, sync):
-    """[M14]"""
-    for who in ("A", "B", "D"):
+def test_m14_only_the_owner_the_admin_and_the_teacher_of_the_lesson(w, sync):
+    """[M14] P1.1: a teacher who does not lead the lesson is refused (the teacher of the lesson: tests/test_p11_teacher_move_pg.py)."""
+    for who in ("B", "D"):
         assert move(w, who).status_code == 403, who
         assert check(w, who).status_code == 403, who
     assert move(w, "owner").status_code == 200

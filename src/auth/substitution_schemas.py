@@ -71,7 +71,7 @@ class SubDecision(BaseModel):
     kind: DecisionKind
     by: Optional[PersonRef] = None
     at: str
-    via: Optional[Literal["request", "lesson_teacher_put", "system", "withdraw"]] = None
+    via: Optional[Literal["request", "teacher_move", "lesson_teacher_put", "system", "withdraw"]] = None
     note: Optional[str] = None
     substitute: Optional[PersonRef] = None
     movedTo: Optional[MovedTo] = None

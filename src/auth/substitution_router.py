@@ -73,6 +73,13 @@ def _member(user: dict = Depends(require_org_member)) -> dict:
     return user
 
 
+def _mover(user: dict = Depends(_member)) -> dict:
+    """The move of a lesson (P1.1): an owner / admin of this centre or a teacher; whether the lesson is HIS is decided by the service, which holds the schedule."""
+    if not (is_org_manager(user) or user.get("org_role") == "teacher"):
+        raise HTTPException(403, "Недостаточно прав. Требуется: owner, admin, teacher")
+    return user
+
+
 # ------------------------------------------------------------------------------------------------ teacher
 @router.get("/org/substitutions/my-lessons", response_model=MyLessonsOut)
 def my_lessons(
@@ -179,9 +186,10 @@ def decide_substitution(request_id: str, request: DecideRequest, user: dict = De
 
 # ------------------------------------------------------------------------------ #124: the lesson sheet (no request needed)
 @router.post("/org/groups/{group_id}/lesson-move", response_model=DecideOut)
-def move_lesson_directly(group_id: str, request: LessonMoveRequest, user: dict = Depends(_manager), db: Session = Depends(get_db)):
-    """Администратор переносит будущий урок прямо из листа урока: правила и проверки решения «Перенести урок»; открытый запрос урока решается тем же путём."""
-    return _subs(db).move_lesson(user["org_id"], user["user_id"], user.get("org_role") or "admin", group_id, request)
+def move_lesson_directly(group_id: str, request: LessonMoveRequest, user: dict = Depends(_mover), db: Session = Depends(get_db)):
+    """Администратор - или преподаватель, который ведёт этот урок (не позднее чем за 60 минут до начала) - переносит будущий урок прямо из листа урока: правила и
+    проверки решения «Перенести урок»; открытый запрос урока решается тем же путём."""
+    return _subs(db).move_lesson(user["org_id"], user["user_id"], user["org_role"], group_id, request)
 
 
 @router.get("/org/groups/{group_id}/lesson-move-check", response_model=LessonMoveCheckOut)
@@ -192,11 +200,11 @@ def lesson_move_check(
     newDate: date = Query(...),
     startTime: str = Query(..., pattern=r"^\d{2}:\d{2}$"),
     endTime: str = Query(..., pattern=r"^\d{2}:\d{2}$"),
-    user: dict = Depends(_manager),
+    user: dict = Depends(_mover),
     db: Session = Depends(get_db),
 ):
-    """Живая проверка переноса урока без запроса: пересечения учителя нового урока и группы."""
-    return _subs(db).lesson_move_check(user["org_id"], group_id, lessonId, lessonDate, newDate, startTime, endTime)
+    """Живая проверка переноса урока без запроса: пересечения учителя нового урока и группы (преподаватель - только для своего урока)."""
+    return _subs(db).lesson_move_check(user["org_id"], user["user_id"], user["org_role"], group_id, lessonId, lessonDate, newDate, startTime, endTime)
 
 
 @router.get("/org/groups/{group_id}/lesson-exam-binding", response_model=LessonExamBinding)

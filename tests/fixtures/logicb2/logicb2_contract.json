@@ -1440,6 +1440,7 @@
               {
                 "enum": [
                   "request",
+                  "teacher_move",
                   "lesson_teacher_put",
                   "system",
                   "withdraw"

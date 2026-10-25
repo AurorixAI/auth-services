@@ -58,6 +58,7 @@ STATUS_OF = {"substitute": "substituted", "reschedule": "rescheduled", "cancel":
 LIST_DEFAULT_DAYS = 30
 MINE_DAYS = 60
 ASSIGNED_AHEAD_DAYS = 30
+TEACHER_MOVE = "teacher_move"                # ``decided_via`` of a lesson moved by the teacher of the lesson himself (P1.1); the administrator's decision is ``request``
 MOVE_STARTED_TEXT = "Урок уже начался или прошёл: перенести его нельзя"          # the one text of every «the lesson is no longer ahead» refusal of a move
 
 
@@ -690,7 +691,7 @@ class Substitutions(SubstitutionsBase):
 
     # ------------------------------------------------------------------------------------------- dispatch
     def decide(self, org_id: Any, actor_id: Any, actor_role: str, request_id: Any, body) -> Dict[str, Any]:
-        actor = _uuid(actor_id)
+        actor, via = _uuid(actor_id), self._via(actor_role)
         group, r = self._lock_request(org_id, request_id)
         if r.status == PENDING:
             reason, occ = self.closure_reason(r, group)
@@ -701,7 +702,7 @@ class Substitutions(SubstitutionsBase):
             if occ and (occ.get("startTime") != r.start_time or occ.get("endTime") != r.end_time):
                 self._sync_times(r, occ)           # the lesson was moved in the schedule: reschedule / cancel judge the CURRENT time, not the one of the request
         if r.status != PENDING:
-            if self._same_decision(r, actor, body):
+            if self._same_decision(r, actor, via, body):
                 item = self.one(r)
                 self.db.commit()
                 return {"item": item, "result": self._result_of(r)}
@@ -716,7 +717,7 @@ class Substitutions(SubstitutionsBase):
             elif body.decision == "cancel":
                 result = self._cancel(group, r, actor, body)
             else:
-                result = self._reschedule(group, r, actor, body)
+                result = self._reschedule(group, r, actor, body, via)
             self.db.commit()
         except BaseException:
             self.db.rollback()
@@ -737,8 +738,13 @@ class Substitutions(SubstitutionsBase):
             raise unprocessable("REASON_TOO_LONG", f"Причина не длиннее {high} символов")
         return reason
 
-    def _same_decision(self, r: Req, actor: UUID, body) -> bool:
-        if STATUS_OF.get(body.decision) != r.status or r.decided_by != actor or r.decided_via != "request":
+    @staticmethod
+    def _via(actor_role: str) -> str:
+        """Only a teacher's own move is decided by a teacher (``move_lesson``); every other decision is an administrator's."""
+        return TEACHER_MOVE if actor_role == "teacher" else "request"
+
+    def _same_decision(self, r: Req, actor: UUID, via: str, body) -> bool:
+        if STATUS_OF.get(body.decision) != r.status or r.decided_by != actor or r.decided_via != via:
             return False
         if body.decision == "substitute":
             return _uuid(body.teacherId) == r.substitute_id
@@ -910,11 +916,13 @@ class Substitutions(SubstitutionsBase):
         return {"ok": not t_conf and not g_conf, "teacherId": _s(teacher_id), "teacherName": short_name(user), "teacherConflicts": t_conf[:20],
                 "groupConflicts": g_conf[:20], "warnings": warnings}
 
-    def _reschedule(self, group: Group, r: Req, actor: UUID, body) -> Dict[str, Any]:
+    def _reschedule(self, group: Group, r: Req, actor: UUID, body, via: str) -> Dict[str, Any]:
         reason = self._reason(body, 3, 500)
         now, today = self.now(), bc.business_today()
         if r.starts_at <= now:
             raise R.err(409, "LESSON_ALREADY_STARTED", MOVE_STARTED_TEXT)
+        if via == TEACHER_MOVE and self._teacher_too_late(r.starts_at, now):
+            raise R.err(409, "MOVE_TOO_LATE")
         new_date, start, end, start_m, end_m = self._new_slot(group, r, body)
         new_start = bc.lesson_instant_utc(new_date, start_m)
         if new_start <= now:
@@ -955,8 +963,8 @@ class Substitutions(SubstitutionsBase):
 
         warnings = ScheduleRules(self.svc).warnings_for(group, new_id, [new_date], payload)
         r.moved_to_lesson_id, r.moved_to_date, r.moved_to_start, r.moved_to_end = new_id, new_date.isoformat(), start, end
-        self._finish(r, "rescheduled", actor, reason)
-        self.event(r, "rescheduled", actor, {"reason": reason, "movedTo": {"lessonId": new_id, "date": new_date.isoformat(), "startTime": start, "endTime": end},
+        self._finish(r, "rescheduled", actor, reason, via)
+        self.event(r, "rescheduled", actor, {"reason": reason, "via": via, "movedTo": {"lessonId": new_id, "date": new_date.isoformat(), "startTime": start, "endTime": end},
                                               "cancelledVersion": row.version})
         return {"kind": "reschedule", "cancelledVersion": row.version, "warnings": warnings,
                 "newLesson": {"id": new_id, "groupId": str(group.id), "date": new_date.isoformat(), "startTime": start, "endTime": end, "room": room, "format": fmt}}
@@ -972,19 +980,37 @@ class Substitutions(SubstitutionsBase):
                               end_time=occ["endTime"], starts_at=bc.lesson_instant_utc(day, start_m))
         return ref, occ
 
-    def lesson_move_check(self, org_id: Any, group_id: Any, lesson_id: str, day: date, new_date: date, start: str, end: str) -> Dict[str, Any]:
+    def lesson_move_check(self, org_id: Any, actor_id: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, new_date: date, start: str, end: str) -> Dict[str, Any]:
         gid = _uuid(group_id)
         group = self.db.query(Group).filter(Group.id == gid, Group.org_id == org_id).first() if gid else None
         if group is None:
             raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
+        teacher_move = self._via(actor_role) == TEACHER_MOVE
+        if teacher_move:
+            self._teacher_gate(group, lesson_id, day, _uuid(actor_id))
         refusal = self._origin_refusal(group, lesson_id, day)
-        if refusal is not None:
-            if refusal.status_code == 404:
-                raise refusal
-            return {"ok": False, "teacherId": None, "teacherName": None, "teacherConflicts": [], "groupConflicts": [], "warnings": [], "code": refusal.code,
-                    "message": refusal.message}
-        ref, _ = self._lesson_ref(group, lesson_id, day)
-        return self._move_check(group, ref, new_date, start, end)
+        ref = None
+        if refusal is None:
+            ref, _ = self._lesson_ref(group, lesson_id, day)
+            if teacher_move and self._teacher_too_late(ref.starts_at, self.now()):
+                refusal = R.err(409, "MOVE_TOO_LATE")
+        if refusal is None:
+            return self._move_check(group, ref, new_date, start, end)
+        if refusal.status_code == 404:
+            raise refusal
+        return {"ok": False, "teacherId": None, "teacherName": None, "teacherConflicts": [], "groupConflicts": [], "warnings": [], "code": refusal.code,
+                "message": refusal.message}
+
+    def _teacher_gate(self, group: Group, lesson_id: str, day: date, actor: Optional[UUID]) -> None:
+        """P1.1: a teacher moves only the lesson he leads by the schedule; the substitute of one lesson does not (403 ``NOT_LESSON_TEACHER``; 404 ``LESSON_NOT_FOUND``)."""
+        _, occ = self._lesson_ref(group, lesson_id, day)
+        resolved = TeacherBook(self.db).resolve(group, lesson_id, day.isoformat(), hhmm_to_minutes(occ["endTime"]))
+        if actor is None or resolved.teacher_id != actor or resolved.substitution:
+            raise R.err(403, "NOT_LESSON_TEACHER")
+
+    @staticmethod
+    def _teacher_too_late(starts_at: datetime, now: datetime) -> bool:
+        return starts_at - now <= timedelta(minutes=R.TEACHER_MOVE_LEAD_MINUTES)
 
     def _origin_refusal(self, group: Group, lesson_id: str, day: date) -> Optional[OpsError]:
         """R3 #6: the refusal POST ``lesson-move`` would give for the ORIGIN lesson (same checks, same order, same codes and texts), without writing or locking anything:
@@ -1049,9 +1075,10 @@ class Substitutions(SubstitutionsBase):
         return out
 
     def move_lesson(self, org_id: Any, actor_id: Any, actor_role: str, group_id: Any, body) -> Dict[str, Any]:
-        """The administrator moves a future lesson without a teacher's request.  One path with the decision «Перенести урок»: a pending request of the lesson is decided
-        by ``decide``; without a request a system record of the move is made (origin ``system``, the teacher of the lesson as requester) and decided in the SAME
-        transaction, so the audit, the label of the student, the neutrality of package A and the payroll follow without a second code path."""
+        """The administrator - or, P1.1, the teacher who leads the lesson (a lesson more than 60 minutes ahead) - moves a future lesson without a request.  One path with
+        the decision «Перенести урок»: a pending request of the lesson is decided by ``decide``; without a request a system record of the move is made (origin ``system``,
+        the teacher of the lesson as requester) and decided in the SAME transaction, so the audit, the label of the student, the neutrality of package A and the payroll
+        follow without a second code path.  The author is the decider (``decided_by``) and ``decided_via`` says whether he moved it as the teacher."""
         actor, gid = _uuid(actor_id), _uuid(group_id)
         group = self._group_locked(org_id, gid) if gid else None
         if group is None:
@@ -1059,13 +1086,18 @@ class Substitutions(SubstitutionsBase):
             raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
         day = body.lessonDate
         iso = day.isoformat()
+        via = self._via(actor_role)
         one = SimpleNamespace(decision="reschedule", reason=body.reason, newDate=body.newDate, startTime=body.startTime, endTime=body.endTime, room=body.room,
                               format=body.format, teacherId=None, note=None, expectedStatus=None)
         try:
+            if via == TEACHER_MOVE:
+                self._teacher_gate(group, body.lessonId, day, actor)
             reqs = (self.db.query(Req).filter(Req.group_id == group.id, Req.lesson_id == body.lessonId, Req.lesson_date == iso)
                     .order_by(Req.created_at.desc(), Req.id).all())
             pending = next((r for r in reqs if r.status == PENDING), None)
             if pending is not None:
+                if via == TEACHER_MOVE and pending.requester_id != actor:
+                    raise R.err(409, "FOREIGN_REQUEST_PENDING")
                 # R3 #1: the sheet's expected time is judged against the CURRENT lesson of the schedule (the request keeps the old time until it is re-synced);
                 # a lesson that no longer exists is closed by ``decide`` itself (its revalidation), so the request's own times are only the fallback
                 now_occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == body.lessonId), None)
@@ -1073,7 +1105,7 @@ class Substitutions(SubstitutionsBase):
                 return self.decide(org_id, actor, actor_role, pending.id, one)
             done = next((r for r in reqs if r.status == "rescheduled"), None)
             if done is not None:
-                if self._same_decision(done, actor, one):
+                if self._same_decision(done, actor, via, one):
                     item = self.one(done)
                     self.db.commit()
                     return {"item": item, "result": self._result_of(done)}
@@ -1101,7 +1133,7 @@ class Substitutions(SubstitutionsBase):
                     previous_request_id=prev.id if prev is not None else None, created_at=now, updated_at=now)
             self.db.add(r)
             self.db.flush()
-            self.event(r, "requested", actor, {"reasonCode": "other", "trigger": "manager_move", "batchId": str(r.batch_id)})
+            self.event(r, "requested", actor, {"reasonCode": "other", "trigger": "teacher_move" if via == TEACHER_MOVE else "manager_move", "batchId": str(r.batch_id)})
         except BaseException:
             self.db.rollback()
             raise
