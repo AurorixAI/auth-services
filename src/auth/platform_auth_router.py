@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from src.api.rate_limit import client_bucket, hit_window
 from src.core.database import get_db
 
 from . import platform_audit as audit
@@ -12,7 +13,7 @@ from . import platform_auth
 from .platform_common import utcnow
 from .platform_errors import PlatformError
 from .platform_security import (
-    COOKIE_NAME,
+    cookie_name,
     Principal,
     clear_session_cookie,
     decode_token,
@@ -24,7 +25,17 @@ from .platform_validation import Form
 router = APIRouter(prefix="/auth")
 
 
-@router.post("/login")
+LOGIN_PER_MINUTE = 30
+
+
+def login_rate_limit(request: Request) -> None:
+    """30 sign-in requests a minute per client address, counted before anything touches the database (a flood is dropped here)."""
+    count, left = hit_window(f"rl:console_login_ip:{client_bucket(request)}", 60)
+    if count > LOGIN_PER_MINUTE:
+        raise PlatformError(429, "Слишком много запросов. Повторите позже.", "rate_limited", retry_after=left)
+
+
+@router.post("/login", dependencies=[Depends(login_rate_limit)])
 def console_login(request: Request, body: dict = Body(default=None), db: Session = Depends(get_db)):
     form = Form(body)
     email = form.text("email", "Почта", max_len=255)
@@ -43,7 +54,7 @@ def console_login(request: Request, body: dict = Body(default=None), db: Session
 @router.post("/logout")
 def console_logout(request: Request, db: Session = Depends(get_db)):
     """Always 200: revokes the session named by the cookie (if it is a valid one) and clears the cookie."""
-    token = request.cookies.get(COOKIE_NAME)
+    token = request.cookies.get(cookie_name())
     payload = decode_token(token) if token else None
     if payload:
         from uuid import UUID

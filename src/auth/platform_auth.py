@@ -3,10 +3,14 @@
 * No second factor yet (``platform_staff.totp_enabled`` is kept for it, always false).
 * An unknown e-mail, a wrong password and a deactivated account look the same, cost the same (bcrypt against a dummy hash) and
   are counted the same, so neither the answer nor the lock says whether the address is a staff member.
-* The lock: the 5th failure inside 15 minutes (counted per e-mail and per client address) locks that e-mail / that address for 15
-  minutes from that moment; while it lasts even the right password is refused (429 + Retry-After). A staff member's lock is also
-  written to ``platform_staff.locked_until`` (it survives a restart and is shown to the owner).
-* Every attempt (success, failure, locked, forbidden) is a ``platform_audit`` row; the password is never written anywhere.
+* The lock: the 5th failure inside 15 minutes locks, for 15 minutes from that moment, (1) that e-mail from THAT address (the primary
+  key), (2) that address for any e-mail, (3) that e-mail from anywhere - except from an address the person has signed in from
+  during the last 30 days (so a stranger's guesses cannot lock the owner out of his own office). While it lasts even the right
+  password is refused (429 + Retry-After). A staff member's lock is also written to ``platform_staff.locked_until`` and his failures are
+  counted in the same 15-minute window as everybody's (``failed_at``).
+* A row for every sign-in attempt that was checked (success, failure, forbidden) and ONE ``console.login.locked`` row when a lock starts;
+  an attempt refused because of a lock writes nothing. The password is never written anywhere; a typed login that is not an e-mail
+  address is journaled as «[не почта]» and its length only.
 """
 from __future__ import annotations
 
@@ -31,35 +35,35 @@ from . import platform_permissions as perms
 from .platform_common import client_meta, iso, utcnow
 from .platform_errors import PlatformError, validation_error
 from .platform_security import SESSION_HOURS, Principal, issue_token
+from .platform_validation import EMAIL_RE
 
 logger = logging.getLogger(__name__)
 
 LOCK_FAILURES = 5
 LOCK_SECONDS = 15 * 60
+TRUSTED_IP_DAYS = 30
 MIN_PASSWORD_LENGTH = 12
 MAX_PASSWORD_LENGTH = 128
+MAX_PASSWORD_BYTES = 72  # bcrypt reads no more than 72 bytes: a longer password would be silently cut, so it is refused out loud
 LOCKED_TEXT = "Слишком много попыток входа. Повторите через 15 минут."
 INVALID_TEXT = "Неверная почта или пароль"
-_dummy_hash: Optional[str] = None
+BYTES_TEXT = "Пароль слишком длинный: не более 72 байт (латиница — 72 символа, кириллица — 36)"
+_DUMMY_HASH = hash_password("console-dummy-password-for-timing")  # built at import: the first sign-in costs the same as every other
 
 
-def _dummy() -> str:
-    global _dummy_hash
-    if _dummy_hash is None:
-        _dummy_hash = hash_password("console-dummy-password-for-timing")
-    return _dummy_hash
-
-
-def _digest(email: str) -> str:
-    return hashlib.sha256(email.encode("utf-8")).hexdigest()[:32]  # no e-mail in a Redis key
+def _digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]  # no e-mail / address in a Redis key
 
 
 def _keys(email: str, bucket: str) -> dict:
+    mail, where = _digest(email), _digest(bucket)
     return {
         "ip_fail": f"rl:console_fail_ip:{bucket}",
         "ip_lock": f"rl:console_lock_ip:{bucket}",
-        "mail_fail": f"rl:console_fail_mail:{_digest(email)}",
-        "mail_lock": f"rl:console_lock_mail:{_digest(email)}",
+        "mail_fail": f"rl:console_fail_mail:{mail}",
+        "mail_lock": f"rl:console_lock_mail:{mail}",
+        "pair_fail": f"rl:console_fail_pair:{mail}:{where}",
+        "pair_lock": f"rl:console_lock_pair:{mail}:{where}",
     }
 
 
@@ -71,6 +75,23 @@ def _forget(key: str) -> None:
             r.delete(key)
         except Exception as exc:  # noqa: BLE001 - a counter store must never break a sign-in
             redis_client.mark_down(exc)
+
+
+def unlock_email(email: str) -> None:
+    """Forget every failure count and lock of an e-mail address, from any address (the owner's reset script)."""
+    mail = _digest((email or "").strip().lower())
+    for prefix in ("rl:console_fail_mail:", "rl:console_lock_mail:"):
+        _forget(prefix + mail)
+    for prefix in ("rl:console_fail_pair:", "rl:console_lock_pair:"):
+        for key in [k for k in list(rate_limit._window_store) if k.startswith(f"{prefix}{mail}:")]:
+            rate_limit._window_store.pop(key, None)
+        r = redis_client.get_redis()
+        if r is not None:
+            try:
+                for key in r.scan_iter(match=f"{prefix}{mail}:*"):
+                    r.delete(key)
+            except Exception as exc:  # noqa: BLE001
+                redis_client.mark_down(exc)
 
 
 def _lock_left(key: str) -> int:
@@ -85,27 +106,41 @@ def verify_password_safely(plain: str, hashed: str) -> bool:
         return False
 
 
-def validate_new_password(password: object, email: str = "") -> Optional[str]:
-    """None when acceptable, else the Russian reason."""
+def password_problem(password: object, *, min_length: int, email: str = "") -> Optional[str]:
+    """None when acceptable, else the Russian reason (one rule for every flow that sets a password through the console)."""
     if not isinstance(password, str) or not password:
         return "Укажите пароль"
     if "\x00" in password:
         return "Пароль содержит недопустимые символы"
-    if len(password) < MIN_PASSWORD_LENGTH:
-        return f"Пароль не короче {MIN_PASSWORD_LENGTH} символов"
+    if len(password) < min_length:
+        return f"Пароль не короче {min_length} символов"
     if len(password) > MAX_PASSWORD_LENGTH:
         return f"Пароль не длиннее {MAX_PASSWORD_LENGTH} символов"
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        return BYTES_TEXT
     if email and password.strip().lower() == email.strip().lower():
         return "Пароль не должен совпадать с почтой"
     return None
+
+
+def validate_new_password(password: object, email: str = "") -> Optional[str]:
+    """The console's rule: at least 12 characters (and the common limits above)."""
+    return password_problem(password, min_length=MIN_PASSWORD_LENGTH, email=email)
 
 
 def _locked_error(left: int) -> PlatformError:
     return PlatformError(429, LOCKED_TEXT, "login_locked", retry_after=max(int(left), 1))
 
 
+def _email_detail(email: str) -> dict:
+    """What the journal keeps of the typed login: the address when it is one, else only its length (people paste passwords into the login box)."""
+    if EMAIL_RE.match(email or "") and len(email) <= 255:
+        return {"email": email}
+    return {"email": "[не почта]", "email_length": len(email or "")}
+
+
 def _log(db: Session, request: Request, action: str, user: Optional[User], email: str, extra: Optional[dict] = None) -> None:
-    details = {"email": email[:255]}
+    details = _email_detail(email)
     if extra:
         details.update(extra)
     audit.record(
@@ -115,27 +150,47 @@ def _log(db: Session, request: Request, action: str, user: Optional[User], email
     db.commit()  # the caller may be about to raise (the request transaction would roll back)
 
 
+def _trusted_address(db: Session, user: Optional[User], ip: Optional[str]) -> bool:
+    """An address this person has signed in to the console from within the last 30 days (his own office / phone)."""
+    if user is None or not ip:
+        return False
+    since = utcnow() - timedelta(days=TRUSTED_IP_DAYS)
+    return (
+        db.query(PlatformSession.id).filter(PlatformSession.user_id == user.id, PlatformSession.ip == ip, PlatformSession.created_at >= since).first()
+        is not None
+    )
+
+
 def login(db: Session, request: Request, email_raw: str, password: str) -> tuple[Principal, str]:
     email = (email_raw or "").strip().lower()
     bucket = client_bucket(request)
     keys = _keys(email, bucket)
     now = utcnow()
+    ip, _agent = client_meta(request)
 
     user = db.query(User).filter(func.lower(User.email) == email).first() if email else None
     staff = db.query(PlatformStaff).filter(PlatformStaff.user_id == user.id).first() if user else None
 
-    left = max(_lock_left(keys["ip_lock"]), _lock_left(keys["mail_lock"]))
+    # Locks, from the narrowest: this e-mail from this address (primary), this address, this e-mail from anywhere.  The last one is the
+    # backstop against a spread-out guess; it does not shut a person out of his own known address (an attacker could otherwise lock the
+    # owner out of the console from anywhere), while the first two still apply to that address.
+    left = max(_lock_left(keys["pair_lock"]), _lock_left(keys["ip_lock"]))
+    email_left = _lock_left(keys["mail_lock"])
     if staff is not None and staff.locked_until is not None and staff.locked_until > now:
-        left = max(left, int((staff.locked_until - now).total_seconds()) + 1)
+        email_left = max(email_left, int((staff.locked_until - now).total_seconds()) + 1)
+    if email_left > 0 and not _trusted_address(db, user, ip):
+        left = max(left, email_left)
     if left > 0:
-        _log(db, request, "console.login.locked", user, email, {"retry_after": left})
+        # no row per refused attempt: the lock was journaled once, when it started
+        logger.info("console sign-in refused: locked for %s more seconds", left)
         raise _locked_error(left)
 
-    password_ok = verify_password_safely(password or "", user.password_hash if user else _dummy())
+    password_ok = verify_password_safely(password or "", user.password_hash if user else _DUMMY_HASH)
     if user is None or not password_ok or not user.is_active:
-        locked = _register_failure(db, staff, keys)
+        scopes = _register_failure(staff, keys, now)
         _log(db, request, "console.login.failed", user, email)
-        if locked:
+        if scopes:
+            _log(db, request, "console.login.locked", user, email, {"scopes": scopes, "minutes": LOCK_SECONDS // 60})
             raise _locked_error(LOCK_SECONDS)
         raise PlatformError(401, INVALID_TEXT, "invalid_credentials")
 
@@ -147,11 +202,12 @@ def login(db: Session, request: Request, email_raw: str, password: str) -> tuple
         raise PlatformError(403, "Доступ к консоли отключён", "staff_inactive")
 
     _forget(keys["mail_fail"])
+    _forget(keys["pair_fail"])
     staff.failed_logins = 0
+    staff.failed_at = None
     staff.locked_until = None
     staff.last_login_at = now
-    ip, agent = client_meta(request)
-    session = PlatformSession(user_id=user.id, created_at=now, expires_at=now + timedelta(hours=SESSION_HOURS), ip=ip, user_agent=agent)
+    session = PlatformSession(user_id=user.id, created_at=now, expires_at=now + timedelta(hours=SESSION_HOURS), ip=ip, user_agent=_agent)
     db.add(session)
     db.flush()
     _sweep_sessions(db, now)
@@ -163,20 +219,25 @@ def login(db: Session, request: Request, email_raw: str, password: str) -> tuple
     return principal, token
 
 
-def _register_failure(db: Session, staff: Optional[PlatformStaff], keys: dict) -> bool:
-    """Count one failure; True when this one locked the address / the e-mail / the account."""
-    locked = False
-    for fail, lock in (("ip_fail", "ip_lock"), ("mail_fail", "mail_lock")):
+def _register_failure(staff: Optional[PlatformStaff], keys: dict, now) -> list:
+    """Count one failure; the list of the scopes (``pair`` / ``ip`` / ``email``) that this failure locked, empty when none."""
+    locked = []
+    for fail, lock, scope in (("pair_fail", "pair_lock", "pair"), ("ip_fail", "ip_lock", "ip"), ("mail_fail", "mail_lock", "email")):
         count, _ = hit_window(keys[fail], LOCK_SECONDS)
         if count == LOCK_FAILURES:
             hit_window(keys[lock], LOCK_SECONDS)
-            locked = True
+            locked.append(scope)
     if staff is not None:
+        # the same 15-minute window as the counters above, so a staff member and an unknown address behave alike
+        if staff.failed_at is None or now - staff.failed_at > timedelta(seconds=LOCK_SECONDS):
+            staff.failed_logins = 0
         staff.failed_logins = (staff.failed_logins or 0) + 1
+        staff.failed_at = now
         if staff.failed_logins >= LOCK_FAILURES:
             staff.failed_logins = 0
-            staff.locked_until = utcnow() + timedelta(seconds=LOCK_SECONDS)
-            locked = True
+            staff.locked_until = now + timedelta(seconds=LOCK_SECONDS)
+            if "email" not in locked:
+                locked.append("email")
     return locked
 
 
@@ -219,6 +280,8 @@ def change_password(db: Session, request: Request, p: Principal, current: str, n
     if count > 10:
         raise PlatformError(429, "Слишком много попыток. Повторите позже.", "rate_limited", retry_after=left)
     if not verify_password_safely(current or "", p.user.password_hash):
+        audit.record(db, actor_id=p.user.id, action="console.password.change_failed", target_type="staff", target_id=p.user.id, request=request)
+        db.commit()  # the request is about to fail: the row must survive the rollback
         raise PlatformError(403, "Текущий пароль неверный", "wrong_password")
     reason = validate_new_password(new, p.user.email)
     if reason is None and new == current:

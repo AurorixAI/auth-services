@@ -16,6 +16,8 @@ from src.models.auth import Organization, User
 from . import password_links as links
 from . import user_sessions
 from .cookies import set_auth_cookies
+from .platform_audit import record as audit_record
+from .platform_auth import password_problem
 from .platform_blocks import ORG_BLOCKED_TEXT, ensure_login_allowed
 from .platform_common import iso, utcnow
 from .platform_errors import PlatformError, validation_error
@@ -30,7 +32,6 @@ router = APIRouter(prefix="/auth/password-links", tags=["Authentication"])
 LINK_LIMIT = "60/minute"
 LINK_RATE_ENDPOINT = "auth-password-link"
 MIN_PASSWORD = 8
-MAX_PASSWORD = 128
 
 NOT_FOUND = PlatformError(404, "Ссылка недействительна. Запросите новую.", "link_not_found")
 
@@ -76,14 +77,9 @@ def set_password(token: str, request: Request, body: dict = Body(default=None), 
     form = Form(body)
     password = form.data.get("password")
     confirm = form.data.get("password_confirm")
-    if not isinstance(password, str) or not password:
-        form.fail("password", "Укажите пароль")
-    elif "\x00" in password:
-        form.fail("password", "Пароль содержит недопустимые символы")
-    elif len(password) < MIN_PASSWORD:
-        form.fail("password", f"Пароль не короче {MIN_PASSWORD} символов")
-    elif len(password) > MAX_PASSWORD:
-        form.fail("password", f"Пароль не длиннее {MAX_PASSWORD} символов")
+    problem = password_problem(password, min_length=MIN_PASSWORD)
+    if problem:
+        form.fail("password", problem)
     if "password" not in form.errors and confirm != password:
         form.fail("password_confirm", "Пароли не совпадают")
     status, link = links.lookup(db, token, for_update=True)
@@ -112,6 +108,8 @@ def set_password(token: str, request: Request, body: dict = Body(default=None), 
         links.PasswordLink.revoked_at.is_(None),
     ).update({"revoked_at": now}, synchronize_session=False)
     user_sessions.revoke_all(db, user.id, user_sessions.REVOKE_PASSWORD_CHANGED)  # every earlier sign-in ends with the old password
+    audit_record(db, actor_id=None, action="user.password_set_by_link", target_type="user", target_id=user.id,
+                 details={"purpose": link.purpose}, request=request)
     db.commit()
 
     result = _svc(db, request).login(LoginRequest(email=user.email, password=password))

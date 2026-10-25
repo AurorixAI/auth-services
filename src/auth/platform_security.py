@@ -6,8 +6,9 @@ and the dependencies every ``/api/v1/platform`` route is built on.
 * **Token**: a JWT with ``aud=algo-console``, ``type=console`` and its OWN signing key (derived from the secret key) - a cabinet token
   does not even verify here, and a console token does not verify in the cabinets. The JWT only names a row of ``platform_sessions``
   (``sid``); the row decides (revoked / expired / staff disabled close the session at once).
-* **Cookie** ``algo_console_session``: host-only, ``HttpOnly``, ``SameSite=Strict``, ``Secure`` on staging/production, 12 h.
-* **Origin**: an unsafe request that carries ``Origin`` must come from a console host.
+* **Cookie** ``__Host-algo_console_session`` (``algo_console_session`` on plain-http dev): host-only, ``HttpOnly``, ``SameSite=Strict``,
+  ``Secure`` on staging/production, 12 h.
+* **Origin**: a request that carries ``Origin`` (any method) must come from a console origin (https, console host, default port).
 
 «Войти как» (pack K4) plugs in here without touching this module's contract: ``Principal`` carries the staff member, his role, his permissions
 (``impersonate.view`` / ``impersonate.write`` are already in the catalogue) and the ``platform_sessions`` row; K4 adds a table of one-time codes
@@ -37,12 +38,12 @@ from .cookies import cookies_are_secure
 from .platform_common import utcnow
 from .platform_errors import PlatformError
 
-COOKIE_NAME = "algo_console_session"
+COOKIE_PLAIN = "algo_console_session"
+COOKIE_SECURE = "__Host-algo_console_session"  # the __Host- prefix: the browser itself insists on Secure, Path=/ and no Domain
 TOKEN_AUDIENCE = "algo-console"
 TOKEN_TYPE = "console"
 SESSION_HOURS = 12
 DEFAULT_CONSOLE_HOSTS = "console.algolab.me,console.stage.algolab.me"
-UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 # ── host ──────────────────────────────────────────────────────────────────────────────────────
@@ -73,18 +74,38 @@ def is_console_host(request: Request) -> bool:
     return True
 
 
+def cookie_name() -> str:
+    """``__Host-algo_console_session`` wherever the cookie is Secure (staging, production); the plain name only on http (dev, tests)."""
+    return COOKIE_SECURE if cookies_are_secure() else COOKIE_PLAIN
+
+
+def is_console_origin(origin: str) -> bool:
+    """scheme + host + port of an ``Origin`` header is a console origin: https on a console host, the default port.  (On plain-http
+    development stacks http and any port of a console host are accepted.)"""
+    from urllib.parse import urlsplit
+
+    if not origin or origin == "null":
+        return False
+    try:
+        parts = urlsplit(origin)
+        host, port = (parts.hostname or "").lower(), parts.port
+    except ValueError:
+        return False
+    if host not in console_hosts() or parts.path not in ("", "/") or parts.query or parts.fragment or parts.username:
+        return False
+    if cookies_are_secure():
+        return parts.scheme == "https" and port in (None, 443)
+    return parts.scheme in ("http", "https")
+
+
 def console_guard(request: Request) -> None:
-    """Router-level dependency: wrong host -> 404 (the section does not exist there); a foreign Origin on a write -> 403."""
+    """Router-level dependency: wrong host -> 404 (the section does not exist there); an Origin that is not a console origin -> 403
+    for EVERY method (a cross-origin read is as unwelcome as a cross-origin write)."""
     if not is_console_host(request):
         raise PlatformError(404, "Not Found", "not_found")
-    if request.method in UNSAFE_METHODS:
-        origin = request.headers.get("origin")
-        if origin is not None:
-            from urllib.parse import urlsplit
-
-            host = urlsplit(origin).hostname if origin != "null" else None
-            if host is None or host.lower() not in console_hosts():
-                raise PlatformError(403, "Запрос отклонён", "bad_origin")
+    origin = request.headers.get("origin")
+    if origin is not None and not is_console_origin(origin):
+        raise PlatformError(403, "Запрос отклонён", "bad_origin")
 
 
 # ── token and cookie ──────────────────────────────────────────────────────────────────────────
@@ -120,7 +141,7 @@ def decode_token(token: str) -> Optional[dict]:
 
 def set_session_cookie(response, token: str) -> None:
     response.set_cookie(
-        key=COOKIE_NAME,
+        key=cookie_name(),
         value=token,
         max_age=SESSION_HOURS * 3600,
         path="/",
@@ -132,7 +153,7 @@ def set_session_cookie(response, token: str) -> None:
 
 
 def clear_session_cookie(response) -> None:
-    response.delete_cookie(COOKIE_NAME, path="/", httponly=True, secure=cookies_are_secure(), samesite="strict")
+    response.delete_cookie(cookie_name(), path="/", httponly=True, secure=cookies_are_secure(), samesite="strict")
 
 
 # ── the principal ─────────────────────────────────────────────────────────────────────────────
@@ -161,7 +182,7 @@ class Principal:
 def load_principal(db: Session, request: Request, *, allow_must_change: bool = False) -> Principal:
     from uuid import UUID
 
-    token = request.cookies.get(COOKIE_NAME)
+    token = request.cookies.get(cookie_name())
     if not token:
         raise PlatformError(401, "Войдите в консоль", "not_authenticated")
     payload = decode_token(token)

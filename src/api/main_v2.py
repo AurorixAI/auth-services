@@ -81,6 +81,15 @@ async def lifespan(app: FastAPI):
 
     verify_database_timezone(_engine)
 
+    # Letters carry links built from FRONTEND_URL / CONSOLE_URL: on a deployed stack they must not point at localhost.
+    from src.mail.config import localhost_urls
+
+    if os.getenv("APP_ENV", "production") in ("staging", "production") and (bad_urls := localhost_urls()):
+        logger.warning(
+            "MAIL LINKS POINT AT LOCALHOST: %s is not set to the public address. The letters 'Задать пароль' / 'Сброс пароля' / 'Новая заявка' "
+            "would carry useless links.", ", ".join(bad_urls),
+        )
+
     # Применяем миграции Alembic (только новые, идемпотентно)
     from alembic.config import Config
     from alembic import command
@@ -143,6 +152,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from src.auth.platform_http import PlatformResponseHeaders
+app.add_middleware(PlatformResponseHeaders)  # after CORS = outside it: /api/v1/platform answers carry no CORS headers and no cache
 
 # Prometheus metrics
 from prometheus_fastapi_instrumentator import Instrumentator

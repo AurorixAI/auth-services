@@ -24,6 +24,8 @@ ACTION_LABELS: Dict[str, str] = {
     "console.logout": "Выход из консоли",
     "console.logout_all": "Выход со всех устройств",
     "console.password.changed": "Смена пароля консоли",
+    "console.password.change_failed": "Неудачная смена пароля консоли (неверный текущий)",
+    "user.password_set_by_link": "Пароль задан по ссылке",
     "demo_request.received": "Заявка получена",
     "demo_request.status_changed": "Статус заявки изменён",
     "demo_request.note_added": "Заметка к заявке",

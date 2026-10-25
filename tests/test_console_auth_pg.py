@@ -28,8 +28,8 @@ def test_login_gives_a_12_hour_host_only_strict_httponly_cookie(cw, monkeypatch)
     staff = cw.make_staff(["requests.view"])
     r = cw.login(cw.new_client(), staff)
     assert r.status_code == 200
-    m = morsel(r)
-    assert m is not None and int(m["max-age"]) == 12 * 3600
+    m = morsel(r, "__Host-algo_console_session")                                         # the __Host- name on a secure stack
+    assert m is not None and morsel(r) is None and int(m["max-age"]) == 12 * 3600
     assert m["httponly"] and m["samesite"].lower() == "strict" and m["secure"] and m["path"] == "/" and not m["domain"]
     body = r.json()
     assert body["user"]["email"] == staff.email and body["is_owner"] is False and body["permissions"] == ["requests.view"]
