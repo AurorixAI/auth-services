@@ -446,18 +446,6 @@ class ScheduleOccurrenceResponse(ScheduleLessonResponse):
     isOneOff: bool = False
 
 
-class RescheduleLessonRequest(BaseModel):
-    """Перенос только одного экземпляра урока на его текущую дату."""
-
-    lessonDate: date
-    startTime: Optional[str] = None
-    endTime: Optional[str] = None
-    room: Optional[str] = Field(None, max_length=200)
-    format: Optional[str] = None
-    topic: Optional[str] = Field(None, max_length=300)
-    reason: str = Field(..., min_length=3, max_length=500)
-
-
 class ReviseRecurringLessonRequest(BaseModel):
     """Изменение постоянного расписания, действующее с будущей даты."""
 

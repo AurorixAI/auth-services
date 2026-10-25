@@ -76,7 +76,7 @@ def _member(user: dict = Depends(require_org_member)) -> dict:
 def _mover(user: dict = Depends(_member)) -> dict:
     """The move of a lesson (P1.1): an owner / admin of this centre or a teacher; whether the lesson is HIS is decided by the service, which holds the schedule."""
     if not (is_org_manager(user) or user.get("org_role") == "teacher"):
-        raise HTTPException(403, "Недостаточно прав. Требуется: owner, admin, teacher")
+        raise HTTPException(403, err(403, "NOT_LESSON_TEACHER").message)
     return user
 
 

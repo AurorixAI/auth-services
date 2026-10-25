@@ -107,7 +107,6 @@ from .schemas import (
     CreateLessonRequest,
     CreateOneOffLessonRequest,
     UpdateLessonRequest,
-    RescheduleLessonRequest,
     ReviseRecurringLessonRequest,
     EndRecurringLessonRequest,
     RecurringLessonEndImpactResponse,
@@ -1534,28 +1533,10 @@ def update_lesson(
     )
 
 
-@router.post("/org/schedule/lessons/{lesson_id}/reschedule", response_model=ScheduleOccurrenceResponseB)
-def reschedule_lesson_occurrence(
-    lesson_id: str,
-    request: RescheduleLessonRequest,
-    user: dict = Depends(require_org_member),
-    db: Session = Depends(get_db),
-):
-    """Перенести сегодняшний экземпляр урока без изменения постоянного расписания."""
-    try:
-        return _svc(db).reschedule_lesson_occurrence(
-            user["org_id"],
-            lesson_id,
-            request,
-            actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
-        )
-    except PermissionError as e:
-        raise HTTPException(403, str(e))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except RuntimeError as e:  # e.g. the display-id prefix could not be claimed under contention: try again
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
+@router.post("/org/schedule/lessons/{lesson_id}/reschedule", status_code=410, include_in_schema=False)
+def reschedule_lesson_occurrence_gone(lesson_id: str, user: dict = Depends(require_org_member)):
+    """P1.1: the move «только на сегодня» is gone - one move of one lesson for the administrator and for the teacher: POST /org/groups/{id}/lesson-move."""
+    raise HTTPException(status.HTTP_410_GONE, "Перенос урока: используйте «Перенести урок» в листе урока")
 
 
 @router.put("/org/schedule/lessons/{lesson_id}/recurrence", response_model=ScheduleLessonResponseB)

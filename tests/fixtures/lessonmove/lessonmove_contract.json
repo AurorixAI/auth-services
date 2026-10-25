@@ -1104,7 +1104,7 @@
         ],
         "x-errors": [
           {
-            "message": "Нет доступа (владелец, администратор или преподаватель центра)",
+            "message": "Недостаточно прав. Требуется: owner, admin",
             "status": 403
           },
           {
@@ -1178,7 +1178,7 @@
         ],
         "x-errors": [
           {
-            "message": "Нет доступа (владелец, администратор или преподаватель центра)",
+            "message": "Перенести урок может преподаватель группы или администратор",
             "status": 403
           },
           {
@@ -1388,7 +1388,7 @@
         ],
         "x-errors": [
           {
-            "message": "Нет доступа (владелец, администратор или преподаватель центра)",
+            "message": "Перенести урок может преподаватель группы или администратор",
             "status": 403
           },
           {
@@ -1434,6 +1434,26 @@
             "message": "У урока нет действующего преподавателя: назначьте его и повторите"
           },
           {
+            "code": "MOVE_IN_PAST",
+            "message": "Новое время урока уже прошло"
+          },
+          {
+            "code": "MOVE_TOO_FAR",
+            "message": "Перенести можно не дальше чем на 60 дней"
+          },
+          {
+            "code": "MOVE_SAME_SLOT",
+            "message": "Выберите другую дату или время"
+          },
+          {
+            "code": "FOREIGN_REQUEST_PENDING",
+            "message": "По этому уроку есть запрос другого преподавателя: решит администратор"
+          },
+          {
+            "code": "NOT_LESSON_TEACHER",
+            "message": "Перенести урок может преподаватель группы или администратор (teacher: день, когда группу ведёт другой преподаватель)"
+          },
+          {
             "code": "MOVE_TOO_LATE",
             "message": "Перенести урок можно не позднее чем за 60 минут до начала. Нажмите «Не смогу провести» — решит администратор"
           }
@@ -1476,6 +1496,30 @@
       "endpoint": "GET /org/groups/{group_id}/lesson-move-check",
       "field": "message",
       "schema": "string|null"
+    },
+    {
+      "audience": "everybody who reads the decision: the teacher moved HIS lesson (P1.1)",
+      "endpoint": "POST /org/groups/{group_id}/lesson-move",
+      "field": "item.decision.via",
+      "schema": "'teacher_move' (a new value of the enum)"
+    },
+    {
+      "audience": "manager (P1.1)",
+      "endpoint": "GET /org/substitutions/{id}",
+      "field": "events[].snapshot.trigger",
+      "schema": "'teacher_move' (the record of a teacher's move; 'manager_move' for the administrator's)"
+    },
+    {
+      "audience": "manager (P1.1)",
+      "endpoint": "GET /org/substitutions/{id}",
+      "field": "events[].snapshot.via",
+      "schema": "'request' | 'teacher_move' (event 'rescheduled')"
+    },
+    {
+      "audience": "teacher (P1.1)",
+      "endpoint": "GET /org/groups/{group_id}/lesson-move-check",
+      "field": "(access)",
+      "schema": "teacher of THIS lesson (403 NOT_LESSON_TEACHER otherwise)"
     }
   ]
 }

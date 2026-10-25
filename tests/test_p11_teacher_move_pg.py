@@ -4,12 +4,15 @@ B leads G3, C leads G4, D is a free colleague."""
 import pytest
 from sqlalchemy import func, text
 
+from datetime import date, datetime
+
 from src.auth.lesson_substitutions import moved_one_off_keys
-from src.models.auth import GroupAttendance, GroupScheduleOneOffLesson
+from src.models.auth import GroupAttendance, GroupAudit, GroupScheduleOneOffLesson
 
 from tests.b2_helpers import API, client, clock, code_of, decide, events_of, needs_pg, pg_session, requests_of, row_of  # noqa: F401  (fixtures)
 from tests.ops_helpers import history_row
 from tests.test_lesson_move_direct_pg import BODY, check, move, nothing_written  # noqa: F401
+from tests.test_integration_ab_pg import member, money, pay, sheet_of
 from tests.test_ops_b2_decide_pg import L, Sync, one, sync, w  # noqa: F401
 
 pytestmark = needs_pg
@@ -60,19 +63,46 @@ def test_t1_the_teacher_moves_his_lesson_to_another_day(w, sync):
     assert any(n["kind"] == "rescheduled" and n["date"] == "2026-10-26" and n["movedTo"]["date"] == "2026-10-28" for n in notices)
 
 
-def test_t14_a_move_neither_charges_nor_pays_twice(w, sync):
-    """[14] No money row appears; the cancelled original is never ``completed``; the new lesson is the one package A leaves out of the counted days; the journal keeps one copy."""
-    before = money_rows(w)
-    assert before, "the money tables are found"
+def test_t14_a_move_neither_charges_nor_pays_twice(w, clock, sync):
+    """[14] Computed, not assumed: packages of 12 (600 000), 30 % of the lesson to the teacher.  The move itself changes neither the package nor the payroll sheet; once the MOVED
+    lesson is held, exactly ONE lesson is added to the package of each student and to the sheet of the teacher (15 000 x 3), on the NEW date; the original date counts nothing."""
+    money(w, w.G1, 600_000, block={"period_mode": "lessons", "lessons_per_payment": 12, "billing_history": [{"from": "min", "period_mode": "lessons", "lessons_per_payment": 12}]})
+    for student in (w.s1, w.s2, w.s3):
+        pay(w, member(w, student, w.G1), 600_000, date(2026, 10, 1))
+    before_money = money_rows(w)
+
+    def package():
+        r = client(w, "owner").get(f"{API}/org/payments/status", params={"limit": 100})
+        assert r.status_code == 200, r.text
+        return {i["student_id"]: (i["lessons_used"], i["lessons_left"], i["debt"]) for i in r.json()["items"] if i["student_id"] in {str(x.id) for x in (w.s1, w.s2, w.s3)}}
+
+    def payroll():
+        sheet = sheet_of(w, w.A)
+        return sheet["total_amount"], sorted((m["date"], line["student_id"]) for line in sheet["lines"] for m in line["marks"])
+
+    package_0, payroll_0 = package(), payroll()
     new = move(w, "A", **MON).json()["result"]["newLesson"]["id"]
-    assert money_rows(w) == before
+    assert (package(), payroll()) == (package_0, payroll_0)                    # the move alone: neutral
+    assert money_rows(w) == before_money
     row = row_of(w, w.G1, "lesson-l1", "2026-10-26")
     assert row.status == "cancelled" and row.teacher_id == w.A.id and row.marked_by == w.A.id
     assert moved_one_off_keys(w.db, [w.G1.id]) == {(str(w.G1.id), new)}
-    history_row(w.db, w.org, w.G1, new, "2026-10-28", w.A, [w.s1, w.s2, w.s3], start="14:00", end="15:30")      # the lesson was held: the attendance belongs to the NEW lesson
-    w.db.commit()
-    lessons = {x["id"]: x for x in client(w, "admin").get(f"{API}/org/groups/{w.G1.id}/attendance", params={"month": "2026-10"}).json()["lessons"]}
-    assert lessons[new]["movedFrom"]["lessonId"] == "lesson-l1"
+
+    clock.set("2026-10-28 14:05")
+    package_1, payroll_1 = package(), payroll()                                # the day came, nobody has held the lesson yet
+    teacher, base = client(w, "A"), f"{API}/org/groups/{w.G1.id}/attendance"
+    assert teacher.post(base + "/start", json={"lessonDate": "2026-10-28", "lessonId": new}).status_code == 200
+    clock.set("2026-10-28 15:25")
+    marks = {str(x.id): "present" for x in (w.s1, w.s2, w.s3)}
+    done = teacher.post(base, json={"lessonDate": "2026-10-28", "lessonId": new, "status": "completed", "records": marks, "expectedVersion": 1})
+    assert done.status_code == 200, done.text
+    package_2, (total_2, marks_2) = package(), payroll()
+    for sid, used in package_1.items():
+        assert package_2[sid][0] == used[0] + 1 and package_2[sid][1] == used[1] - 1 and package_2[sid][2] == used[2], sid          # one lesson of the package, no debt
+    assert total_2 - payroll_1[0] == 3 * 15_000
+    new_marks = sorted(set(marks_2) - set(payroll_1[1]))
+    assert new_marks == sorted(("2026-10-28", str(x.id)) for x in (w.s1, w.s2, w.s3)) and not [m for m in marks_2 if m[0] == "2026-10-26"]
+    assert money_rows(w) == before_money                                       # still no row of a ledger / payment / payroll table of its own
     assert w.db.query(GroupScheduleOneOffLesson).filter_by(group_id=w.G1.id).count() == 1
     assert w.db.query(func.count(GroupAttendance.id)).filter(GroupAttendance.group_id == w.G1.id, GroupAttendance.lesson_id == "lesson-l1",
                                                               GroupAttendance.lesson_date == "2026-10-26").scalar() == 1
@@ -104,6 +134,10 @@ def test_t3_sixty_minutes_before_the_start_the_teacher_is_late_the_administrator
     by_admin = move(w, "admin", **target)
     assert by_admin.status_code == 200, by_admin.text
     assert by_admin.json()["item"]["decision"]["via"] == "request" and by_admin.json()["item"]["decision"]["by"]["id"] == str(w.admin.id)
+    clock.set("2026-10-27 08:59")                                              # 61 minutes before lesson-l3 (Tue 10:00): the teacher's own move goes through
+    ok = move(w, "A", key="L3", day="2026-10-27", newDate="2026-10-27", startTime="14:00", endTime="15:00", reason="Приём у врача")
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["item"]["decision"]["via"] == "teacher_move" and ok.json()["item"]["decision"]["by"]["id"] == str(w.A.id)
 
 
 # ------------------------------------------------------------------------------------------------ T4 / T5
@@ -271,9 +305,67 @@ def test_only_staff_may_ask(w, sync):
     nothing_written(w)
 
 
-def test_the_old_one_day_endpoint_stays_until_wave_b_and_the_manager_path_is_unchanged(w, sync):
-    """The administrator's journal keeps ``via = request`` for his own moves, and an administrator who is also in the schedule is not treated as a teacher."""
+def test_the_old_one_day_endpoint_is_gone(w):
+    """P1.1: «только на сегодня» is the same move with today's date; the old endpoint answers 410 for everybody and changes nothing."""
+    for who in ("A", "admin"):
+        r = client(w, who).post(f"{API}/org/schedule/lessons/lesson-l1/reschedule", json={"lessonDate": "2026-10-21", "reason": "Болезнь"})
+        assert r.status_code == 410 and "Перенести урок" in r.json()["detail"], who
+    nothing_written(w)
+
+
+def test_the_administrators_move_keeps_its_own_via_and_trigger(w, sync):
+    """The administrator's journal keeps ``via = request`` / ``manager_move`` for his own moves."""
     r = move(w, "admin", **MON)
     assert r.status_code == 200 and r.json()["item"]["decision"]["via"] == "request" and r.json()["item"]["decision"]["by"]["id"] == str(w.admin.id)
     (rec,) = requests_of(w)
     assert events_of(w, rec.id)[0].snapshot["trigger"] == "manager_move" and events_of(w, rec.id)[1].snapshot["via"] == "request"
+
+
+# ------------------------------------------------------------------------------------------------ the live check says no more than the move would
+EMPTY = dict(teacherId=None, teacherName=None, teacherConflicts=[], groupConflicts=[])
+
+
+def refused(r, code):
+    body = r.json()
+    assert r.status_code == 200 and body["ok"] is False and body["code"] == code, body
+    assert {k: body[k] for k in EMPTY} == EMPTY, body
+
+
+def test_the_check_of_a_bad_slot_is_answered_before_anything_of_anybody_is_looked_up(w, sync):
+    """A date in the past / a time that has passed today / too far ahead: ok=false + the code + EMPTY lists (the busy time of a day nobody may plan for is not told)."""
+    refused(check(w, "A", newDate="2026-10-19", startTime="10:00", endTime="11:30"), "MOVE_IN_PAST")             # the past: the lessons of that Monday are not told
+    refused(check(w, "A", newDate="2026-10-21", startTime="10:00", endTime="11:30"), "MOVE_IN_PAST")             # today, the time has passed
+    refused(check(w, "A", newDate="2026-12-31", startTime="10:00", endTime="11:30"), "MOVE_TOO_FAR")
+    refused(check(w, "A", newDate="2026-10-28", startTime="16:00", endTime="17:30"), "MOVE_SAME_SLOT")
+    refused(check(w, "admin", newDate="2026-10-19", startTime="10:00", endTime="11:30"), "MOVE_IN_PAST")           # one list for the manager too: what the move would refuse
+    assert check(w, "A", newDate="2026-10-29", startTime="16:00", endTime="17:30").json()["ok"] is True
+    assert check(w, "A", newDate="2026-10-28", startTime="1", endTime="2").status_code == 422
+    nothing_written(w)
+
+
+def test_the_check_of_a_day_led_by_somebody_else_tells_nothing_of_him(w, sync):
+    """The group changes its teacher on 01.11 (A -> C) and C is busy on Mon 09.11 10:00: A moving his lesson to that day is refused (NOT_LESSON_TEACHER, the same as the move),
+    and the check carries neither the name of C nor his lessons."""
+    w.db.add(GroupAudit(org_id=w.org.id, group_id=w.G1.id, actor_id=w.owner.id, actor_role="owner", action="teacher_changed", snapshot={"teacher_id": [str(w.A.id), str(w.C.id)]},
+                        created_at=datetime(2026, 11, 1, 5, 0)))
+    w.G1.teacher_id = w.C.id
+    w.db.add(GroupScheduleOneOffLesson(id=f"one-off-c-{w.salt}", org_id=w.org.id, group_id=w.G4.id, lesson_date="2026-11-09",
+                                       payload={"dayOfWeek": 1, "startTime": "10:00", "endTime": "11:30", "subject": "Математика", "room": None, "format": "offline", "color": "blue"},
+                                       created_by=w.admin.id))
+    w.db.commit()
+    refused(check(w, "A", newDate="2026-11-09", startTime="10:00", endTime="11:30"), "NOT_LESSON_TEACHER")
+    r = move(w, "A", newDate="2026-11-09", startTime="10:00", endTime="11:30")
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "NOT_LESSON_TEACHER" and "conflicts" not in r.text
+    nothing_written(w)
+    seen = check(w, "admin", newDate="2026-11-09", startTime="10:00", endTime="11:30").json()           # the manager sees whose time it is
+    assert seen["teacherId"] == str(w.C.id) and seen["teacherConflicts"]
+
+
+def test_the_check_refuses_a_foreign_pending_request_like_the_move(w, sync):
+    """A request of somebody else waits on the lesson (not reachable by the rules, forced here): the check says FOREIGN_REQUEST_PENDING, as POST does."""
+    item = one(w, "A", "L2", "2026-10-28")
+    rec = next(x for x in requests_of(w, "pending") if str(x.id) == item["id"])
+    rec.requester_id = w.B.id
+    w.db.commit()
+    refused(check(w, "A"), "FOREIGN_REQUEST_PENDING")
+    assert move(w, "A").json()["detail"]["code"] == "FOREIGN_REQUEST_PENDING"

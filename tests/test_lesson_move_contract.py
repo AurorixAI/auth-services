@@ -31,7 +31,7 @@ def test_openapi_subset_is_the_frozen_contract():
     data = json.loads((FIXTURES / "lessonmove_contract.json").read_text(encoding="utf-8"))
     assert set(data["paths"]) == {"/org/groups/{group_id}/lesson-move", "/org/groups/{group_id}/lesson-move-check", "/org/groups/{group_id}/lesson-exam-binding"}
     assert {"LessonMoveRequest", "DecideOut", "LessonMoveCheckOut", "LessonExamBinding", "MovedFrom"} <= set(data["components"]["schemas"])
-    assert {a["field"] for a in data["x-additive"]} == {"movedFrom", "lessons[].movedFrom", "code", "message"}
+    assert {a["field"] for a in data["x-additive"]} == {"movedFrom", "lessons[].movedFrom", "code", "message", "item.decision.via", "events[].snapshot.trigger", "events[].snapshot.via", "(access)"}
     codes = {e.get("code") for e in data["paths"]["/org/groups/{group_id}/lesson-move"]["post"]["x-errors"]}
     assert {"LESSON_CHANGED", "LESSON_HAS_NO_TEACHER", "SUBSTITUTION_ALREADY_DECIDED", "TEACHER_BUSY", "GROUP_BUSY", "NOT_LESSON_TEACHER", "MOVE_TOO_LATE"} <= codes
 
@@ -49,7 +49,7 @@ def test_the_reason_has_no_schema_length_limit_and_the_check_carries_the_origin_
     assert {"code", "message", "ok", "teacherConflicts", "groupConflicts", "warnings"} <= set(schemas["LessonMoveCheckOut"]["properties"])
     check_op = data["paths"]["/org/groups/{group_id}/lesson-move-check"]["get"]
     assert [c["code"] for c in check_op["x-ok-false-codes"]] == [
-        "LESSON_ALREADY_STARTED", "LESSON_CANCELLED", "GROUP_ARCHIVED", "SUBSTITUTION_ALREADY_DECIDED", "LESSON_HAS_NO_TEACHER", "MOVE_TOO_LATE"]
+        "LESSON_ALREADY_STARTED", "LESSON_CANCELLED", "GROUP_ARCHIVED", "SUBSTITUTION_ALREADY_DECIDED", "LESSON_HAS_NO_TEACHER", "MOVE_IN_PAST", "MOVE_TOO_FAR", "MOVE_SAME_SLOT", "FOREIGN_REQUEST_PENDING", "NOT_LESSON_TEACHER", "MOVE_TOO_LATE"]
 
 
 def test_reschedule_locks_the_target_teacher_before_reading_his_conflicts():

@@ -35,7 +35,18 @@ ORIGIN_REFUSALS = [
     ("GROUP_ARCHIVED", "Группа в архиве: действие недоступно"),
     ("SUBSTITUTION_ALREADY_DECIDED", "Запрос уже решён (или «Запрос закрыт: <причина>» когда открытый запрос закрыт)"),
     ("LESSON_HAS_NO_TEACHER", "У урока нет действующего преподавателя: назначьте его и повторите"),
+    ("MOVE_IN_PAST", "Новое время урока уже прошло"),
+    ("MOVE_TOO_FAR", "Перенести можно не дальше чем на 60 дней"),
+    ("MOVE_SAME_SLOT", "Выберите другую дату или время"),
+    ("FOREIGN_REQUEST_PENDING", "По этому уроку есть запрос другого преподавателя: решит администратор"),
+    ("NOT_LESSON_TEACHER", "Перенести урок может преподаватель группы или администратор (teacher: день, когда группу ведёт другой преподаватель)"),
     ("MOVE_TOO_LATE", "Перенести урок можно не позднее чем за 60 минут до начала. Нажмите «Не смогу провести» — решит администратор"),       # P1.1: only for a teacher
+]
+P11_ADDITIVE = [
+    {"endpoint": "POST /org/groups/{group_id}/lesson-move", "field": "item.decision.via", "schema": "'teacher_move' (a new value of the enum)", "audience": "everybody who reads the decision: the teacher moved HIS lesson (P1.1)"},
+    {"endpoint": "GET /org/substitutions/{id}", "field": "events[].snapshot.trigger", "schema": "'teacher_move' (the record of a teacher's move; 'manager_move' for the administrator's)", "audience": "manager (P1.1)"},
+    {"endpoint": "GET /org/substitutions/{id}", "field": "events[].snapshot.via", "schema": "'request' | 'teacher_move' (event 'rescheduled')", "audience": "manager (P1.1)"},
+    {"endpoint": "GET /org/groups/{group_id}/lesson-move-check", "field": "(access)", "schema": "teacher of THIS lesson (403 NOT_LESSON_TEACHER otherwise)", "audience": "teacher (P1.1)"},
 ]
 R3_ADDITIVE = [
     {"endpoint": "GET /org/groups/{group_id}/lesson-move-check", "field": "code", "schema": "string|null", "audience": "manager (R3 #6: ok=false because of the origin lesson)"},
@@ -51,12 +62,13 @@ def _errors():
         return {"status": status, "code": code, "message": message}
 
     shared = [
-        {"status": 403, "message": "Нет доступа (владелец, администратор или преподаватель центра)"},
         {"status": 404, "code": "GROUP_NOT_FOUND", "message": "Группа не найдена"},
         {"status": 404, "code": "LESSON_NOT_FOUND", "message": "Урок не найден"},
     ]
+    manager_only = {"status": 403, "message": "Недостаточно прав. Требуется: owner, admin"}
+    mover = {"status": 403, "message": R.DIRECT_MOVE_ERRORS["NOT_LESSON_TEACHER"][1]}          # not staff of the centre / not the teacher of this lesson (P1.1)
     move = [
-        *shared, {"status": 409, "code": "GROUP_ARCHIVED", "message": "Группа в архиве: действие недоступно"},
+        mover, *shared, {"status": 409, "code": "GROUP_ARCHIVED", "message": "Группа в архиве: действие недоступно"},
         {"status": 409, "code": "LESSON_CANCELLED", "message": "Урок отменён"},
         known("LESSON_ALREADY_STARTED"), known("LESSON_CHANGED"), known("SUBSTITUTION_ALREADY_DECIDED"), known("GROUP_BUSY"),
         {"status": 409, "code": "TEACHER_BUSY", "message": "У преподавателя в это время другой урок (conflicts, total)"},
@@ -66,8 +78,8 @@ def _errors():
         known("LESSON_HAS_NO_TEACHER"), known("NOT_LESSON_TEACHER"), known("MOVE_TOO_LATE"), known("FOREIGN_REQUEST_PENDING"),
         {"status": 422, "code": "REASON_TOO_LONG", "message": "Причина не длиннее 500 символов"},
     ]
-    return {("post", "/org/groups/{group_id}/lesson-move"): move, ("get", "/org/groups/{group_id}/lesson-move-check"): [*shared, known("MOVE_FIELDS_REQUIRED"), known("NOT_LESSON_TEACHER")],
-            ("get", "/org/groups/{group_id}/lesson-exam-binding"): shared}
+    return {("post", "/org/groups/{group_id}/lesson-move"): move, ("get", "/org/groups/{group_id}/lesson-move-check"): [mover, *shared, known("MOVE_FIELDS_REQUIRED"), known("NOT_LESSON_TEACHER")],
+            ("get", "/org/groups/{group_id}/lesson-exam-binding"): [manager_only, *shared]}
 
 
 def _refs(node, found):
@@ -109,7 +121,7 @@ def contract() -> dict:
     schemas["MovedFrom"] = MovedFrom.model_json_schema()          # the endpoints type ``movedFrom`` as a free object: the shape is documented here
     needed.add("MovedFrom")
     return {"openapi": full["openapi"], "info": {"title": "ALGO auth - lesson sheet moves (#124)", "version": "lessonmove-4"}, "servers": [{"url": PREFIX}],
-            "paths": paths, "components": {"schemas": {name: schemas[name] for name in sorted(needed)}}, "x-additive": [*MOVED_FROM_ADDITIVE, *R3_ADDITIVE]}
+            "paths": paths, "components": {"schemas": {name: schemas[name] for name in sorted(needed)}}, "x-additive": [*MOVED_FROM_ADDITIVE, *R3_ADDITIVE, *P11_ADDITIVE]}
 
 
 def main() -> int:

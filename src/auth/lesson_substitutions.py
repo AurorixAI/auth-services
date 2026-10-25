@@ -918,20 +918,18 @@ class Substitutions(SubstitutionsBase):
 
     def _reschedule(self, group: Group, r: Req, actor: UUID, body, via: str) -> Dict[str, Any]:
         reason = self._reason(body, 3, 500)
-        now, today = self.now(), bc.business_today()
+        now = self.now()
         if r.starts_at <= now:
             raise R.err(409, "LESSON_ALREADY_STARTED", MOVE_STARTED_TEXT)
         if via == TEACHER_MOVE and self._teacher_too_late(r.starts_at, now):
             raise R.err(409, "MOVE_TOO_LATE")
         new_date, start, end, start_m, end_m = self._new_slot(group, r, body)
-        new_start = bc.lesson_instant_utc(new_date, start_m)
-        if new_start <= now:
-            raise R.err(422, "MOVE_IN_PAST")
-        if new_date > today + timedelta(days=R.MOVE_MAX_DAYS_AHEAD):
-            raise R.err(422, "MOVE_TOO_FAR")
-        if new_date.isoformat() == r.lesson_date and start == r.start_time and end == r.end_time:
-            raise R.err(422, "MOVE_SAME_SLOT")
+        refusal = self._slot_refusal(r, new_date, start, end, start_m, now)
+        if refusal is not None:
+            raise refusal
         target = TeacherBook(self.db).default_teacher(group, new_date.isoformat(), end_m)
+        if via == TEACHER_MOVE and target != actor:
+            raise R.err(403, "NOT_LESSON_TEACHER")          # a teacher moves his lesson only to a day he still leads the group; another person's busy time is none of his business
         if target is not None:
             # R3 #5: the teacher of the NEW slot is locked (the m1 pattern of PUT lesson-teacher) before his conflicts are read, so two moves of two groups of the same
             # teacher into one slot serialise: the second one sees the first one's lesson.  Lock order: group -> request -> User (SPEC B2, no cycle with the substitute path).
@@ -985,21 +983,47 @@ class Substitutions(SubstitutionsBase):
         group = self.db.query(Group).filter(Group.id == gid, Group.org_id == org_id).first() if gid else None
         if group is None:
             raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
-        teacher_move = self._via(actor_role) == TEACHER_MOVE
-        if teacher_move:
-            self._teacher_gate(group, lesson_id, day, _uuid(actor_id))
-        refusal = self._origin_refusal(group, lesson_id, day)
+        actor = _uuid(actor_id)
+        teacher = actor if self._via(actor_role) == TEACHER_MOVE else None
+        if teacher is not None:
+            self._teacher_gate(group, lesson_id, day, actor)
+        refusal = self._origin_refusal(group, lesson_id, day, teacher)
         ref = None
         if refusal is None:
             ref, _ = self._lesson_ref(group, lesson_id, day)
-            if teacher_move and self._teacher_too_late(ref.starts_at, self.now()):
-                refusal = R.err(409, "MOVE_TOO_LATE")
+            refusal = self._check_refusal(group, ref, new_date, start, end, teacher)
         if refusal is None:
             return self._move_check(group, ref, new_date, start, end)
         if refusal.status_code == 404:
             raise refusal
         return {"ok": False, "teacherId": None, "teacherName": None, "teacherConflicts": [], "groupConflicts": [], "warnings": [], "code": refusal.code,
                 "message": refusal.message}
+
+    @staticmethod
+    def _slot_refusal(r: Any, new_date: date, start: str, end: str, start_m: int, now: datetime) -> Optional[OpsError]:
+        """The rules of the NEW slot, in one place for the move and its live check: in the past / too far ahead / the same slot (``r``: a request or a lesson reference)."""
+        if bc.lesson_instant_utc(new_date, start_m) <= now:
+            return R.err(422, "MOVE_IN_PAST")
+        if new_date > bc.business_today() + timedelta(days=R.MOVE_MAX_DAYS_AHEAD):
+            return R.err(422, "MOVE_TOO_FAR")
+        if new_date.isoformat() == r.lesson_date and start == r.start_time and end == r.end_time:
+            return R.err(422, "MOVE_SAME_SLOT")
+        return None
+
+    def _check_refusal(self, group: Group, ref: Any, new_date: date, start: str, end: str, teacher: Optional[UUID]) -> Optional[OpsError]:
+        """What the move would refuse about the lesson in time and about the NEW slot, read only (the live check); answered BEFORE anything of another person is looked up, so a
+        refusal carries no conflicts of a stranger.  ``teacher``: the teacher who moves his own lesson (his 60-minute line, his own days); ``None``: a manager."""
+        now = self.now()
+        if teacher is not None and self._teacher_too_late(ref.starts_at, now):
+            return R.err(409, "MOVE_TOO_LATE")
+        try:
+            start_m, end_m = self.svc._validate_lesson_time_range(start, end)
+        except ValueError as exc:
+            raise R.err(422, "MOVE_FIELDS_REQUIRED", str(exc)) from exc
+        refusal = self._slot_refusal(ref, new_date, start, end, start_m, now)
+        if refusal is None and teacher is not None and TeacherBook(self.db).default_teacher(group, new_date.isoformat(), end_m) != teacher:
+            return R.err(403, "NOT_LESSON_TEACHER")
+        return refusal
 
     def _teacher_gate(self, group: Group, lesson_id: str, day: date, actor: Optional[UUID]) -> None:
         """P1.1: a teacher moves only the lesson he leads by the schedule; the substitute of one lesson does not (403 ``NOT_LESSON_TEACHER``; 404 ``LESSON_NOT_FOUND``)."""
@@ -1012,16 +1036,18 @@ class Substitutions(SubstitutionsBase):
     def _teacher_too_late(starts_at: datetime, now: datetime) -> bool:
         return starts_at - now <= timedelta(minutes=R.TEACHER_MOVE_LEAD_MINUTES)
 
-    def _origin_refusal(self, group: Group, lesson_id: str, day: date) -> Optional[OpsError]:
+    def _origin_refusal(self, group: Group, lesson_id: str, day: date, teacher: Optional[UUID] = None) -> Optional[OpsError]:
         """R3 #6: the refusal POST ``lesson-move`` would give for the ORIGIN lesson (same checks, same order, same codes and texts), without writing or locking anything:
         a pending request that would be closed / a lesson that has started -> the decided / started refusals; a decided move; an archived group; no such lesson (404);
-        a cancelled lesson; a journal row (the lesson has started); the planned start passed; a lesson without a teacher.  ``None`` = the lesson can be moved."""
+        a cancelled lesson; a journal row (the lesson has started); the planned start passed; a lesson without a teacher.  ``teacher``: the teacher who moves his own lesson (a request of somebody else waits -> refused).  ``None`` = the lesson can be moved."""
         iso = day.isoformat()
         now = self.now()
         reqs = (self.db.query(Req).filter(Req.group_id == group.id, Req.lesson_id == lesson_id, Req.lesson_date == iso)
                 .order_by(Req.created_at.desc(), Req.id).all())
         pending = next((r for r in reqs if r.status == PENDING), None)
         if pending is not None:             # the decision path: ``decide`` revalidates, then ``_reschedule`` refuses a lesson that has started
+            if teacher is not None and pending.requester_id != teacher:
+                return R.err(409, "FOREIGN_REQUEST_PENDING")
             reason, occ = self.closure_reason(pending, group)
             if reason and reason != "LESSON_OUTSIDE_WINDOW":
                 text = CLOSED_REASON_TEXT.get(reason)

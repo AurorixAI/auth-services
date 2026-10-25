@@ -207,7 +207,6 @@ ROUTES = [
     ("get", "/api/v1/auth/org/groups/g1", None, "get_group_detail"),
     ("post", "/api/v1/auth/org/groups/g1/students/bulk", {"student_ids": ["s1"]}, "bulk_add_students"),
     ("post", "/api/v1/auth/org/groups/g1/students/s1", None, "add_student_to_group"),
-    ("post", "/api/v1/auth/org/schedule/lessons/l1/reschedule", {"lessonDate": "2026-10-26", "reason": "Болезнь"}, "reschedule_lesson_occurrence"),
 ]
 
 
