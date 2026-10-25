@@ -1254,7 +1254,7 @@ def _check_pay2_objects(engine,config,ids):
             c.execute(text("ALTER TABLE groups ADD COLUMN IF NOT EXISTS inactive_intervals jsonb NOT NULL DEFAULT '[]'::jsonb, ADD COLUMN IF NOT EXISTS archive_reason varchar(300), ADD COLUMN IF NOT EXISTS exam_release_pending boolean NOT NULL DEFAULT false"))
             c.execute(text("ALTER TABLE group_attendance ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1"))
             # ... and the columns of the console pack (users.platform_block*, organizations.blocked_*)
-            c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS platform_blocked_at timestamp, ADD COLUMN IF NOT EXISTS platform_block_reason text"))
+            c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS platform_blocked_at timestamp, ADD COLUMN IF NOT EXISTS platform_block_reason text, ADD COLUMN IF NOT EXISTS platform_block_was_active boolean"))
             c.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS blocked_at timestamp, ADD COLUMN IF NOT EXISTS blocked_reason text"))
             rep=report_module.build_report(c,today=date(2026,10,21))
         finally:

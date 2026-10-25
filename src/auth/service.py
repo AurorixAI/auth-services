@@ -564,6 +564,8 @@ class AuthService:
         )
         if not org:
             raise ValueError("Невалидная или уже использованная ссылка активации")
+        if org.blocked_at is not None:  # a centre blocked from the console is not activated by an old link
+            raise ValueError("Доступ центра приостановлен. Свяжитесь с ALGO")
 
         # Check expiry
         if org.activation_token_expires_at:
@@ -584,6 +586,8 @@ class AuthService:
         owner = self.db.query(User).filter(User.id == org.owner_id).first()
         if not owner:
             raise ValueError("Владелец организации не найден")
+        if owner.platform_blocked_at is not None:
+            raise ValueError("Пользователь заблокирован командой ALGO")
         owner.is_active = True
         owner.is_verified = True
 

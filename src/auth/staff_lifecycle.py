@@ -310,8 +310,11 @@ class StaffLifecycle:
         if member.is_active:
             self.db.rollback()
             raise conflict("NOT_REMOVED", ERROR_CATALOGUE["NOT_REMOVED"][1])
-        member.is_active = True
         user = self.db.query(User).filter(User.id == member.user_id).with_for_update().first()
+        if user is not None and user.platform_blocked_at is not None:        # blocked from the platform console: only the platform team lifts it
+            self.db.rollback()
+            raise conflict("USER_BLOCKED_BY_PLATFORM", "Пользователь заблокирован командой ALGO")
+        member.is_active = True
         if user is not None:
             user.is_active = True
         self._audit(member, actor_id, "restored", {"org_role": member.org_role})

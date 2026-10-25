@@ -106,6 +106,7 @@ class PlatformStaff(Base):
     must_change_password = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     failed_logins = Column(Integer, nullable=False, default=0, server_default=text("0"))
     locked_until = Column(DateTime)
+    failed_at = Column(DateTime)  # the last failed sign-in: ``failed_logins`` counts inside a 15-minute window from it
     last_login_at = Column(DateTime)
     totp_enabled = Column(Boolean, nullable=False, default=False, server_default=text("false"))  # 2FA is not built yet
     created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())

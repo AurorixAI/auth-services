@@ -151,6 +151,7 @@ class User(Base):
     # «разблокировать» does not reactivate an account that a centre switched off for its own reasons. Naive UTC.
     platform_blocked_at = Column(DateTime, nullable=True)
     platform_block_reason = Column(Text, nullable=True)
+    platform_block_was_active = Column(Boolean, nullable=True)  # ``is_active`` just before the block: an unblock restores exactly that
 
     last_login_at = Column(DateTime)
     login_count = Column(Integer, default=0)

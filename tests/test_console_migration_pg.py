@@ -58,7 +58,7 @@ def test_up_down_up_and_the_template_roles(engine):
     cfg = config()
     command.upgrade(cfg, "head")
     assert version(engine) == HEAD and NEW_TABLES <= set(inspect(engine).get_table_names())
-    assert {"blocked_at", "blocked_reason"} <= columns(engine, "organizations") and {"platform_blocked_at", "platform_block_reason"} <= columns(engine, "users")
+    assert {"blocked_at", "blocked_reason"} <= columns(engine, "organizations") and {"platform_blocked_at", "platform_block_reason", "platform_block_was_active"} <= columns(engine, "users")
     with engine.connect() as c:
         roles = {r.name: (r.permissions, r.is_template, r.is_system) for r in c.execute(text("SELECT name, permissions, is_template, is_system FROM platform_roles"))}
     assert set(roles) == {"Владелец платформы", "Продажи", "Поддержка", "Контент", "Финансы"} and all(v[1] for v in roles.values())
@@ -79,7 +79,7 @@ def test_up_down_up_and_the_template_roles(engine):
     command.downgrade(cfg, BEFORE)
     assert version(engine) == BEFORE
     assert not (NEW_TABLES & set(inspect(engine).get_table_names()))
-    assert not ({"blocked_at", "blocked_reason"} & columns(engine, "organizations")) and not ({"platform_blocked_at", "platform_block_reason"} & columns(engine, "users"))
+    assert not ({"blocked_at", "blocked_reason"} & columns(engine, "organizations")) and not ({"platform_blocked_at", "platform_block_reason", "platform_block_was_active"} & columns(engine, "users"))
     command.downgrade(cfg, BEFORE)                                                      # repeated: harmless
     with engine.connect() as c:
         assert c.execute(text("SELECT name FROM organizations WHERE id = :i"), {"i": org_id}).scalar_one() == "Центр-свидетель"

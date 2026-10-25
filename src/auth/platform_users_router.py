@@ -229,6 +229,7 @@ def block_user(
     user = _get(db, user_id, lock=True)
     if user.platform_blocked_at is not None:
         raise PlatformError(409, "Пользователь уже заблокирован", "already_blocked")
+    user.platform_block_was_active = bool(user.is_active)     # an unblock restores exactly this
     user.is_active = False
     user.platform_blocked_at = utcnow()
     user.platform_block_reason = reason
@@ -252,9 +253,17 @@ def unblock_user(
     user = _get(db, user_id, lock=True)
     if user.platform_blocked_at is None:
         raise PlatformError(409, "Пользователь не заблокирован консолью", "not_blocked")
-    user.is_active = True
+    # The account comes back only if it was active before the block AND it still has an active place in a centre: a person whom
+    # the centre removed meanwhile (or before) stays switched off.
+    still_member = db.query(OrganizationMember.id).filter(OrganizationMember.user_id == user.id, OrganizationMember.is_active.is_(True)).first()
+    restored = user.platform_block_was_active is True and still_member is not None
+    user.is_active = bool(restored)
     user.platform_blocked_at = None
     user.platform_block_reason = None
-    audit.record(db, actor_id=p.user.id, action="user.unblocked", target_type="user", target_id=user.id, reason=reason, request=request)
+    user.platform_block_was_active = None
+    audit.record(
+        db, actor_id=p.user.id, action="user.unblocked", target_type="user", target_id=user.id, reason=reason,
+        details={"reactivated": bool(restored)}, request=request,
+    )
     db.commit()
     return _row(*_load(db, user.id))

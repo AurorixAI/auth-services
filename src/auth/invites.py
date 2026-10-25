@@ -180,6 +180,9 @@ class Invites:
         if not org:
             self.db.rollback()
             raise ValueError("Организация не найдена")
+        if org.blocked_at is not None:                          # a centre blocked from the console takes nobody in
+            self.db.rollback()
+            raise OpsError(403, "ORG_BLOCKED", "Доступ центра приостановлен. Свяжитесь с ALGO")
         existing = self.db.query(User).filter(func.lower(User.email) == email).with_for_update().first()
         now = bc.utc_now()
         if existing is not None:
@@ -196,6 +199,9 @@ class Invites:
                 if other is not None:
                     raise conflict("EMAIL_IN_OTHER_ORG", ERROR_CATALOGUE["EMAIL_IN_OTHER_ORG"][1])
                 raise ValueError("Пользователь с таким email уже существует")
+            if existing.platform_blocked_at is not None:        # blocked from the platform console: an invitation does not lift it
+                self.db.rollback()
+                raise conflict("USER_BLOCKED_BY_PLATFORM", "Пользователь заблокирован командой ALGO")
             # the same person comes back: the same user.id, a new password, the sessions of the past are over, the name is kept
             previous_role = own.org_role
             existing.password_hash = hash_password(request.password)

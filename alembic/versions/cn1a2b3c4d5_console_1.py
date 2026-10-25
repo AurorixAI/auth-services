@@ -6,7 +6,7 @@ Create Date: 2026-10-25
 
 New tables: ``demo_requests``, ``demo_request_notes``, ``platform_roles`` (+ the five template roles), ``platform_staff``,
 ``platform_sessions``, ``platform_audit``, ``password_links``.
-New columns: ``organizations.blocked_at / blocked_reason``; ``users.platform_blocked_at / platform_block_reason``.
+New columns: ``organizations.blocked_at / blocked_reason``; ``users.platform_blocked_at / platform_block_reason / platform_block_was_active`` (whether the account was active before the block: an unblock restores exactly that).
 
 Idempotent: a table or column that already exists (the baseline revision creates ``organizations`` and ``users`` from today's models) is skipped.
 Rollback (downgrade): drops the seven tables and the four columns - the requests, the staff, the journal and the block marks are LOST;
@@ -67,6 +67,8 @@ def upgrade() -> None:
         op.add_column("users", sa.Column("platform_blocked_at", sa.DateTime(), nullable=True))
     if "platform_block_reason" not in _columns(bind, "users"):
         op.add_column("users", sa.Column("platform_block_reason", sa.Text(), nullable=True))
+    if "platform_block_was_active" not in _columns(bind, "users"):
+        op.add_column("users", sa.Column("platform_block_was_active", sa.Boolean(), nullable=True))
 
     tables = _tables(bind)
     if "platform_roles" not in tables:
@@ -101,6 +103,7 @@ def upgrade() -> None:
             sa.Column("must_change_password", sa.Boolean(), nullable=False, server_default=sa.text("false")),
             sa.Column("failed_logins", sa.Integer(), nullable=False, server_default=sa.text("0")),
             sa.Column("locked_until", sa.DateTime()),
+            sa.Column("failed_at", sa.DateTime()),
             sa.Column("last_login_at", sa.DateTime()),
             sa.Column("totp_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
             sa.Column("created_at", sa.DateTime(), nullable=False, server_default=NOW_UTC),
@@ -209,7 +212,7 @@ def downgrade() -> None:
         if table in tables:
             op.drop_table(table)
     for table, column in (
-        ("users", "platform_block_reason"), ("users", "platform_blocked_at"),
+        ("users", "platform_block_was_active"), ("users", "platform_block_reason"), ("users", "platform_blocked_at"),
         ("organizations", "blocked_reason"), ("organizations", "blocked_at"),
     ):
         if column in _columns(bind, table):
