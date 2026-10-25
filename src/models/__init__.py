@@ -37,6 +37,15 @@ from src.models.auth import (
     LessonSubstitutionRequest,
     LessonSubstitutionEvent,
 )
+from src.models.platform import (
+    DemoRequest,
+    DemoRequestNote,
+    PlatformRole,
+    PlatformStaff,
+    PlatformSession,
+    PlatformAudit,
+    PasswordLink,
+)
 from src.models.analytics import (
     AnswerEvent,
     SessionSummary,
@@ -77,6 +86,14 @@ __all__ = [
     "MemberAudit",
     "LessonSubstitutionRequest",
     "LessonSubstitutionEvent",
+    # Platform console (pack «Консоль-1»)
+    "DemoRequest",
+    "DemoRequestNote",
+    "PlatformRole",
+    "PlatformStaff",
+    "PlatformSession",
+    "PlatformAudit",
+    "PasswordLink",
     # Analytics (skill states written by internal callback)
     "AnswerEvent",
     "SessionSummary",

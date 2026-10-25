@@ -68,6 +68,11 @@ class Organization(Base):
     max_students = Column(Integer, default=500)
     max_teachers = Column(Integer, default=50)
 
+    # Console block (pack «Консоль-1»): set by the platform team, enforced for every member of the centre on sign-in and on every
+    # request (``platform_blocks``); ``status`` stays as it was, so unblocking restores exactly the previous state. Naive UTC.
+    blocked_at = Column(DateTime, nullable=True)
+    blocked_reason = Column(Text, nullable=True)
+
     # Префикс для публичных ID учеников (display_id вида "NC-001").
     # Если не задан — инициалы из name, уникальные между орг-ми (NC → NC1 → NC2);
     # см. student_id_service.ensure_org_prefix.
@@ -141,6 +146,11 @@ class User(Base):
 
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
+
+    # Block by the platform team (console): ``is_active`` is switched off with it; these two say it was the console, so that
+    # «разблокировать» does not reactivate an account that a centre switched off for its own reasons. Naive UTC.
+    platform_blocked_at = Column(DateTime, nullable=True)
+    platform_block_reason = Column(Text, nullable=True)
 
     last_login_at = Column(DateTime)
     login_count = Column(Integer, default=0)

@@ -27,7 +27,7 @@ PAY2 = "e1f2a3b4c5d"
 B1 = "lb1a2b3c4d5"
 B2 = "lb2b3c4d5e6"
 B3 = "lb3c4d5e6f7"
-HEAD = "sa1b2c3d4e5"   # the head of the chain (IA fix pack: student profile journal); B3 is the LOGIC-B2 revision before it
+HEAD = "cn1a2b3c4d5"   # the head of the chain (console pack, on top of the IA fix pack sa1b2c3d4e5); B3 is the LOGIC-B2 revision before it
 DB_NAME = "a5_auth_logb_migrations"
 
 

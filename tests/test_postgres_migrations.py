@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
-HEAD='sa1b2c3d4e5'          # IA fix pack: student profile journal
+HEAD='cn1a2b3c4d5'          # console pack «Консоль-1», on top of sa1b2c3d4e5 (IA fix pack: student profile journal)
 LOGICB2_HEAD='lb3c4d5e6f7'  # LOGIC-B2: exam release marker, substitution requests
 LOGICB2='lb2b3c4d5e6'       # LOGIC-B (2/2): group archive, member audit, invitations
 LOGICB1='lb1a2b3c4d5'       # LOGIC-B (1/2): marks version, lesson teachers, validFrom
