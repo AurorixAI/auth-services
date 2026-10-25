@@ -16,7 +16,8 @@ ReasonCode = Literal["sick", "personal", "other"]
 RequestStatus = Literal["pending", "substituted", "rescheduled", "cancelled", "rejected", "withdrawn", "closed"]
 DecisionKind = Literal["substitute", "reschedule", "cancel", "reject", "withdraw", "closed"]
 ClosedReason = Literal[
-    "LESSON_STARTED", "LESSON_CANCELLED", "LESSON_REMOVED", "GROUP_ARCHIVED", "GROUP_TEACHER_CHANGED", "TEACHER_REMOVED", "LESSON_OUTSIDE_WINDOW"
+    "LESSON_STARTED", "LESSON_CANCELLED", "LESSON_REMOVED", "GROUP_ARCHIVED", "GROUP_TEACHER_CHANGED", "TEACHER_REMOVED", "LESSON_OUTSIDE_WINDOW",
+    "ASSIGNMENT_CLEARED",
 ]
 
 REASON_LABELS = {"sick": "Болезнь", "personal": "Личное", "other": "Другое"}
@@ -28,6 +29,7 @@ CLOSED_REASON_TEXT = {
     "GROUP_TEACHER_CHANGED": "Преподаватель группы изменён",
     "TEACHER_REMOVED": "Преподаватель больше не работает в центре",
     "LESSON_OUTSIDE_WINDOW": "Срок разбора истёк",
+    "ASSIGNMENT_CLEARED": "Замена снята",
 }
 
 

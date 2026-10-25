@@ -790,7 +790,8 @@ class LessonTeachers:
             book.forget(group.id, req.lessonId, lesson_date)
             cancelled_asg = asg
         new_asg = asg if (asg is not None and cancelled_asg is None) else None
-        if not clearing and not (asg is not None and asg.teacher_id == target):
+        assigned = not clearing and not (asg is not None and asg.teacher_id == target)         # a substitute set by THIS call (not one that was already there)
+        if assigned:
             new_asg = LessonTeacherAssignment(
                 org_id=org_id, group_id=group.id, lesson_id=req.lessonId, lesson_date=lesson_date, teacher_id=target,
                 reason=req.reason, set_by=actor, created_at=now,
@@ -812,8 +813,8 @@ class LessonTeachers:
         from . import lesson_substitutions  # lazy: it imports this module
 
         out["requestClosed"] = lesson_substitutions.on_lesson_teacher_changed(
-            self.svc, group, req.lessonId, lesson_date, cancelled_asg=cancelled_asg, new_asg=new_asg, want=want, actor_id=actor,
-            skip_request_id=skip_request_id,
+            self.svc, group, req.lessonId, lesson_date, cancelled_asg=cancelled_asg, new_asg=new_asg, assigned=assigned, want=want, default=default, occ=occ,
+            reason=req.reason, actor_id=actor, skip_request_id=skip_request_id,
         )
         if commit:
             self.db.commit()

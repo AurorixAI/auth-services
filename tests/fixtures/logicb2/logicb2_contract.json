@@ -1371,7 +1371,8 @@
                   "GROUP_ARCHIVED",
                   "GROUP_TEACHER_CHANGED",
                   "TEACHER_REMOVED",
-                  "LESSON_OUTSIDE_WINDOW"
+                  "LESSON_OUTSIDE_WINDOW",
+                  "ASSIGNMENT_CLEARED"
                 ],
                 "type": "string"
               },
@@ -3203,6 +3204,7 @@
   },
   "x-labels": {
     "closedReasons": {
+      "ASSIGNMENT_CLEARED": "Замена снята",
       "GROUP_ARCHIVED": "Группа закрыта",
       "GROUP_TEACHER_CHANGED": "Преподаватель группы изменён",
       "LESSON_CANCELLED": "Урок отменён",

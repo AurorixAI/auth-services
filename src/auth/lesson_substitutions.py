@@ -10,6 +10,8 @@
 * Every status change = exactly one row of ``lesson_substitution_events`` (INV-B2-7); the journal is append-only.
 * Time: ``business_clock`` only; ``starts_at`` / ``created_at`` / ``decided_at`` are UTC naive, lesson dates are ``YYYY-MM-DD``.
 * Interface with package A (SPEC 3.5): ``moved_one_off_keys``; a cancelled / moved row is never ``completed`` so payroll never pays it.
+* P1.1 / P1.2: what the administrator does on a lesson sheet with no request (a move, a substitution) is a ``system`` record decided in the same transaction, so the journal
+  "Замены" shows every move and every substitution; taking a substitution off closes its record ``ASSIGNMENT_CLEARED``.
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from uuid import UUID, uuid4
 
 from sqlalchemy import event, func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from src.models.auth import PayrollRate
 
@@ -59,6 +61,7 @@ LIST_DEFAULT_DAYS = 30
 MINE_DAYS = 60
 ASSIGNED_AHEAD_DAYS = 30
 TEACHER_MOVE = "teacher_move"                # ``decided_via`` of a lesson moved by the teacher of the lesson himself (P1.1); the administrator's decision is ``request``
+PUT_VIA = "lesson_teacher_put"               # ``decided_via`` of what the administrator did on the lesson sheet (PUT lesson-teacher): a request it decided, a substitution it set without one (P1.2), one it took off
 MOVE_STARTED_TEXT = "Урок уже начался или прошёл: перенести его нельзя"          # the one text of every «the lesson is no longer ahead» refusal of a move
 
 
@@ -94,6 +97,7 @@ class SubstitutionsBase:
     def event(self, req: Req, action: str, actor_id: Any, snapshot: Optional[Dict[str, Any]] = None) -> None:
         self.db.add(LessonSubstitutionEvent(request_id=req.id, org_id=req.org_id, actor_id=_uuid(actor_id), action=action,
                                             snapshot=snapshot or {}, created_at=_next_event_time(self.db, req.id, self.now())))
+        self.db.flush()             # the sessions run with autoflush off: the next event of this request must see this one to keep the order
 
     def _person(self, ctx: Ctx, user_id: Any) -> Optional[Dict[str, Any]]:
         if user_id is None:
@@ -253,8 +257,9 @@ class SubstitutionsBase:
             return "GROUP_TEACHER_CHANGED", occ
         return None, occ
 
-    def close(self, r: Req, reason: str, *, actor_id: Any = None, trigger: str = "revalidate", group: Optional[Group] = None) -> None:
-        """Close a pending request because its premise is gone (status ``closed`` + one event)."""
+    def close(self, r: Req, reason: str, *, actor_id: Any = None, trigger: str = "revalidate", group: Optional[Group] = None, via: str = "system") -> None:
+        """Close a request because its premise is gone (status ``closed`` + one event).  ``via`` ``system``: nobody did it; otherwise ``actor_id`` is the author (P1.2: the administrator
+        took the substitution off)."""
         now = self.now()
         note = None
         if reason == "GROUP_TEACHER_CHANGED" and group is not None:
@@ -266,8 +271,8 @@ class SubstitutionsBase:
         r.status = "closed"
         r.closed_reason = reason
         r.decided_at = now
-        r.decided_via = "system"
-        r.decided_by = None
+        r.decided_via = via
+        r.decided_by = None if via == "system" else _uuid(actor_id)
         r.decision_note = note
         r.updated_at = now
         self.event(r, "closed", actor_id, {"closedReason": reason, "trigger": trigger})
@@ -549,8 +554,8 @@ class SubstitutionsBase:
             q = q.filter(Req.lesson_date >= (today - timedelta(days=LIST_DEFAULT_DAYS)).isoformat())
         if group_id and _uuid(group_id):
             q = q.filter(Req.group_id == _uuid(group_id))
-        if teacher_id and _uuid(teacher_id):
-            q = q.filter(Req.requester_id == _uuid(teacher_id))
+        if teacher_id and _uuid(teacher_id):            # P1.2: both teachers of a record - the one who was replaced and the one who replaces
+            q = q.filter(or_(Req.requester_id == _uuid(teacher_id), Req.substitute_id == _uuid(teacher_id)))
         if date_from:
             q = q.filter(Req.lesson_date >= date_from.isoformat())
         if date_to:
@@ -559,8 +564,9 @@ class SubstitutionsBase:
             q = q.filter(Req.status == PENDING, Req.starts_at > now, Req.starts_at < now + timedelta(minutes=R.URGENT_MINUTES))
         if search:
             like = f"%{search.strip()}%"
-            q = q.join(Group, Group.id == Req.group_id).join(User, User.id == Req.requester_id).filter(
-                or_(Group.name.ilike(like), User.last_name.ilike(like), User.first_name.ilike(like)))
+            substitute = aliased(User)
+            q = q.join(Group, Group.id == Req.group_id).join(User, User.id == Req.requester_id).outerjoin(substitute, substitute.id == Req.substitute_id).filter(
+                or_(Group.name.ilike(like), User.last_name.ilike(like), User.first_name.ilike(like), substitute.last_name.ilike(like), substitute.first_name.ilike(like)))
         total = q.count()
         if status == "pending":
             q = q.order_by((Req.starts_at <= now).desc(), Req.starts_at, Req.id)
@@ -729,6 +735,13 @@ class Substitutions(SubstitutionsBase):
         now = self.now()
         r.status, r.decided_by, r.decided_at, r.decided_via, r.decision_note, r.updated_at = status, actor, now, via, note, now
 
+    def _substituted(self, r: Req, teacher: UUID, asg: Optional[LessonTeacherAssignment], actor: Any, note: Optional[str], via: str) -> None:
+        """The one place a request becomes ``substituted``: the decision of the Замены page (``request``) and the assignment on the lesson sheet (``PUT_VIA``)."""
+        r.substitute_id = teacher
+        r.assignment_id = asg.id if asg is not None else None
+        self._finish(r, "substituted", _uuid(actor), note, via)
+        self.event(r, "substituted", actor, {"teacherId": [str(r.requester_id), str(teacher)], "assignmentId": _s(r.assignment_id), "via": via})
+
     @staticmethod
     def _reason(body, low: int, high: int) -> str:
         reason = (body.reason or "").strip()
@@ -778,11 +791,7 @@ class Substitutions(SubstitutionsBase):
         reason = (note or REASON_LABELS[r.reason_code])[:300]       # the admin's note; the teacher's own comment stays in the request only
         put = LessonTeacherPut(lessonDate=date.fromisoformat(r.lesson_date), lessonId=r.lesson_id, teacherId=str(teacher), reason=reason)
         out = self.teachers._put_locked(org_id, group, put, actor_id=actor, actor_role=actor_role, commit=False, skip_request_id=r.id)
-        asg = self.teachers.last_assignment
-        r.substitute_id = teacher
-        r.assignment_id = asg.id if asg is not None else None
-        self._finish(r, "substituted", actor, note)
-        self.event(r, "substituted", actor, {"teacherId": [str(r.requester_id), str(teacher)], "assignmentId": _s(r.assignment_id), "via": "request"})
+        self._substituted(r, teacher, self.teachers.last_assignment, actor, note, "request")
         return {"kind": "substitute", "teacherId": out["teacherId"], "teacherName": out["teacherName"], "isSubstitution": out["isSubstitution"],
                 "attendanceUpdated": out["attendanceUpdated"], "payrollSheetsAffected": out["payrollSheetsAffected"]}
 
@@ -973,10 +982,38 @@ class Substitutions(SubstitutionsBase):
         occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == lesson_id), None)
         if occ is None:
             raise not_found("LESSON_NOT_FOUND", "Урок не найден")
-        start_m = hhmm_to_minutes(occ["startTime"])
-        ref = SimpleNamespace(id=None, org_id=group.org_id, group_id=group.id, lesson_id=lesson_id, lesson_date=day.isoformat(), start_time=occ["startTime"],
-                              end_time=occ["endTime"], starts_at=bc.lesson_instant_utc(day, start_m))
-        return ref, occ
+        return self._ref_of(group, lesson_id, day, occ), occ
+
+    @staticmethod
+    def _ref_of(group: Group, lesson_id: str, day: date, occ: Dict[str, Any]) -> SimpleNamespace:
+        return SimpleNamespace(id=None, org_id=group.org_id, group_id=group.id, lesson_id=lesson_id, lesson_date=day.isoformat(), start_time=occ["startTime"],
+                               end_time=occ["endTime"], starts_at=bc.lesson_instant_utc(day, hhmm_to_minutes(occ["startTime"])))
+
+    def _lesson_requests(self, group: Group, lesson_id: str, iso: str) -> List[Req]:
+        """Every record of one lesson, the newest first."""
+        return (self.db.query(Req).filter(Req.group_id == group.id, Req.lesson_id == lesson_id, Req.lesson_date == iso)
+                .order_by(Req.created_at.desc(), Req.id).all())
+
+    def _system_request(self, group: Group, ref: Any, requester: UUID, comment: Optional[str], trigger: str, actor: UUID, prev: Optional[Req]) -> Req:
+        """The record the system makes for what the administrator (or the teacher of the lesson) does on a lesson without a request of a teacher: origin ``system``, the teacher of
+        the lesson as requester, the ``trigger`` in the event.  The caller decides it in the SAME transaction (a move: ``decide``; a substitution: ``_substituted``)."""
+        now = self.now()
+        r = Req(org_id=group.org_id, group_id=group.id, lesson_id=ref.lesson_id, lesson_date=ref.lesson_date, start_time=ref.start_time, end_time=ref.end_time, starts_at=ref.starts_at,
+                requester_id=requester, origin="system", batch_id=uuid4(), reason_code="other", comment=(comment or "").strip()[:500] or None, status=PENDING,
+                previous_request_id=prev.id if prev is not None else None, created_at=now, updated_at=now)
+        self.db.add(r)
+        self.db.flush()
+        self.event(r, "requested", actor, {"reasonCode": "other", "trigger": trigger, "batchId": str(r.batch_id)})
+        return r
+
+    def assigned_without_request(self, group: Group, lesson_id: str, lesson_date: str, occ: Dict[str, Any], *, requester: UUID, teacher: UUID,
+                                 asg: Optional[LessonTeacherAssignment], actor: UUID, reason: str) -> None:
+        """P1.2: a substitution the administrator set on the lesson sheet with no request of the teacher is a record of the journal like a move without a request: made
+        and decided ``substituted`` in the transaction of the assignment.  The newest record of the lesson stays what it was (the history); the new one points to it."""
+        ref = self._ref_of(group, lesson_id, date.fromisoformat(lesson_date), occ)
+        history = self._lesson_requests(group, lesson_id, lesson_date)
+        r = self._system_request(group, ref, requester, reason, "manager_assign", actor, history[0] if history else None)
+        self._substituted(r, teacher, asg, actor, None, PUT_VIA)
 
     def lesson_move_check(self, org_id: Any, actor_id: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, new_date: date, start: str, end: str) -> Dict[str, Any]:
         gid = _uuid(group_id)
@@ -1042,8 +1079,7 @@ class Substitutions(SubstitutionsBase):
         a cancelled lesson; a journal row (the lesson has started); the planned start passed; a lesson without a teacher.  ``teacher``: the teacher who moves his own lesson (a request of somebody else waits -> refused).  ``None`` = the lesson can be moved."""
         iso = day.isoformat()
         now = self.now()
-        reqs = (self.db.query(Req).filter(Req.group_id == group.id, Req.lesson_id == lesson_id, Req.lesson_date == iso)
-                .order_by(Req.created_at.desc(), Req.id).all())
+        reqs = self._lesson_requests(group, lesson_id, iso)
         pending = next((r for r in reqs if r.status == PENDING), None)
         if pending is not None:             # the decision path: ``decide`` revalidates, then ``_reschedule`` refuses a lesson that has started
             if teacher is not None and pending.requester_id != teacher:
@@ -1118,8 +1154,7 @@ class Substitutions(SubstitutionsBase):
         try:
             if via == TEACHER_MOVE:
                 self._teacher_gate(group, body.lessonId, day, actor)
-            reqs = (self.db.query(Req).filter(Req.group_id == group.id, Req.lesson_id == body.lessonId, Req.lesson_date == iso)
-                    .order_by(Req.created_at.desc(), Req.id).all())
+            reqs = self._lesson_requests(group, body.lessonId, iso)
             pending = next((r for r in reqs if r.status == PENDING), None)
             if pending is not None:
                 if via == TEACHER_MOVE and pending.requester_id != actor:
@@ -1153,13 +1188,7 @@ class Substitutions(SubstitutionsBase):
             reason, _ = self.closure_reason(SimpleNamespace(**{**ref.__dict__, "requester_id": teacher}), group)
             if teacher is None or reason in ("TEACHER_REMOVED", "GROUP_TEACHER_CHANGED"):
                 raise R.err(422, "LESSON_HAS_NO_TEACHER")
-            prev = reqs[0] if reqs else None
-            r = Req(org_id=org_id, group_id=group.id, lesson_id=body.lessonId, lesson_date=iso, start_time=ref.start_time, end_time=ref.end_time, starts_at=ref.starts_at,
-                    requester_id=teacher, origin="system", batch_id=uuid4(), reason_code="other", comment=(body.reason or "").strip()[:500] or None, status=PENDING,
-                    previous_request_id=prev.id if prev is not None else None, created_at=now, updated_at=now)
-            self.db.add(r)
-            self.db.flush()
-            self.event(r, "requested", actor, {"reasonCode": "other", "trigger": "teacher_move" if via == TEACHER_MOVE else "manager_move", "batchId": str(r.batch_id)})
+            r = self._system_request(group, ref, teacher, body.reason, "teacher_move" if via == TEACHER_MOVE else "manager_move", actor, reqs[0] if reqs else None)
         except BaseException:
             self.db.rollback()
             raise
@@ -1210,23 +1239,29 @@ class DecideRequestLike:
 # hooks of the operations of package B / B2 (eager closing, D-9, D-10)
 # ======================================================================================================================
 def on_lesson_teacher_changed(svc, group: Group, lesson_id: str, lesson_date: str, *, cancelled_asg: Optional[LessonTeacherAssignment],
-                              new_asg: Optional[LessonTeacherAssignment], want: Any, actor_id: Any, skip_request_id: Any = None) -> Optional[Dict[str, Any]]:
-    """Called by ``PUT lesson-teacher`` (and by a decision, with ``skip_request_id``): a pending request of the lesson that the new teacher takes over is decided
-    ``substituted`` (``decidedVia=lesson_teacher_put``); a request substituted through the assignment that has just been cancelled gets the event ``assignment_cleared``."""
+                              new_asg: Optional[LessonTeacherAssignment], assigned: bool, want: Any, default: Any, occ: Optional[Dict[str, Any]], reason: str,
+                              actor_id: Any, skip_request_id: Any = None) -> Optional[Dict[str, Any]]:
+    """Called by ``PUT lesson-teacher`` (and by a decision, with ``skip_request_id``).  Every substitution is in the journal (P1.2):
+    * a pending request of the lesson that the new teacher takes over is decided ``substituted`` (``decidedVia=lesson_teacher_put``);
+    * a substitution SET (``assigned``) with no request of the lesson is a system record of the main teacher (``default``), decided ``substituted`` in the same transaction;
+    * a request substituted through the assignment that has just been cancelled gets the event ``assignment_cleared``; when the lesson went back to its main teacher
+      (nobody takes the place) a record the sheet made is closed ``ASSIGNMENT_CLEARED``, by the administrator; a substitute replaced by another stays as the history and
+      the new one points to it."""
     subs = Substitutions(svc)
     closed = None
     pending = svc.db.query(Req).filter(Req.group_id == group.id, Req.lesson_id == lesson_id, Req.lesson_date == lesson_date, Req.status == PENDING).first()
     if pending is not None and pending.id != skip_request_id and want is not None and want != pending.requester_id:
-        now = bc.utc_now()
-        pending.status, pending.substitute_id, pending.assignment_id = "substituted", want, new_asg.id if new_asg is not None else None
-        pending.decided_by, pending.decided_at, pending.decided_via, pending.updated_at = _uuid(actor_id), now, "lesson_teacher_put", now
-        subs.event(pending, "substituted", actor_id, {"teacherId": [str(pending.requester_id), str(want)], "assignmentId": _s(pending.assignment_id),
-                                                      "via": "lesson_teacher_put"})
+        subs._substituted(pending, want, new_asg, actor_id, None, PUT_VIA)
         closed = {"id": str(pending.id), "status": "substituted"}
+    elif pending is None and assigned and occ is not None and default is not None:
+        subs.assigned_without_request(group, lesson_id, lesson_date, occ, requester=default, teacher=want, asg=new_asg, actor=_uuid(actor_id), reason=reason)
     if cancelled_asg is not None:
         for sr in svc.db.query(Req).filter(Req.assignment_id == cancelled_asg.id, Req.status == "substituted").all():
-            if sr.id != skip_request_id:
-                subs.event(sr, "assignment_cleared", actor_id, {"teacherId": [str(cancelled_asg.teacher_id), _s(want)]})
+            if sr.id == skip_request_id:
+                continue
+            subs.event(sr, "assignment_cleared", actor_id, {"teacherId": [str(cancelled_asg.teacher_id), _s(want)]})
+            if new_asg is None and sr.origin == "system" and sr.decided_via == PUT_VIA:       # the record the sheet made; a request of a teacher keeps its decision (B2)
+                subs.close(sr, "ASSIGNMENT_CLEARED", actor_id=actor_id, trigger=PUT_VIA, via=PUT_VIA)
     return closed
 
 
