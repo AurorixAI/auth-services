@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/public", tags=["Public"])
 
 PER_IP = 5      # requests per hour from one address (IPv6: per /64) ...
-PER_EMAIL = 3   # ... and per e-mail address
+PER_EMAIL = 3   # ... and per e-mail address,
+PER_DOMAIN = 10  # ... and per e-mail domain (one mailbox provider of a throw-away flood),
+GLOBAL_PER_HOUR = 60  # ... and for the whole form (a botnet with a different address and e-mail every time)
 WINDOW = 3600
 THROTTLED_TEXT = "Слишком много заявок. Повторите попытку позже."
 
@@ -31,6 +33,10 @@ def _throttle(request: Request, body) -> None:
     if isinstance(email, str) and email.strip():
         digest = hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()[:32]  # no e-mail in a Redis key
         keys.append((f"rl:demo_request_email:{digest}", PER_EMAIL))
+    if isinstance(email, str) and "@" in email:
+        domain = hashlib.sha256(email.rsplit("@", 1)[1].strip().lower().encode("utf-8")).hexdigest()[:32]
+        keys.append((f"rl:demo_request_domain:{domain}", PER_DOMAIN))
+    keys.append(("rl:demo_request_global", GLOBAL_PER_HOUR))
     for key, limit in keys:
         count, left = hit_window(key, WINDOW)
         if count > limit:

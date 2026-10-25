@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any, Dict, Iterable, Optional
 from uuid import UUID
 
 from .platform_errors import PlatformError, validation_error
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
+def strip_format_controls(value: str) -> str:
+    """Remove the invisible format characters (Unicode category Cf: bidi overrides, zero-width marks): they hide text and flip its order on screen."""
+    return "".join(ch for ch in value if unicodedata.category(ch) != "Cf")
+
+
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")  # control characters (tab and new lines are allowed in long text)
 
 
@@ -39,6 +45,7 @@ class Form:
         if not isinstance(value, str):
             self.fail(key, f"{label}: нужен текст")
             return None
+        value = strip_format_controls(value)
         if strip:
             value = value.strip()
         if _CONTROL.search(value) or (not multiline and re.search(r"[\r\n\t]", value)):

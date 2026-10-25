@@ -62,13 +62,31 @@ def _clean(value: Any, limit: int = 2000) -> str:
     return text[:limit]
 
 
+_SCHEME = re.compile(r"(?i)\b(https?|ftps?|file)\s*:\s*/{1,2}")
+_PSEUDO = re.compile(r"(?i)\b(mailto|tel|javascript|data)\s*:")
+_WWW = re.compile(r"(?i)\bwww\.")
+_DOT = re.compile(r"(?<=\w)\.(?=[A-Za-z]{2,})")  # a dot between a word and Latin letters is what makes ``x.com`` a link
+
+
+def _inert(value: str, limit: int) -> str:
+    """Text from a stranger for the OWNER's letter: cut short and defanged so that no mail client turns it into a link
+    (``https://x`` -> ``https[:]//x``, ``www.x`` -> ``www[.]x``, ``x.com`` -> ``x[.]com``). The console shows the original."""
+    text = _clean(value, limit + 1)
+    cut = len(text) > limit
+    text = text[:limit].rstrip() + ("…" if cut else "")
+    text = _SCHEME.sub(lambda m: f"{m.group(1)}[:]//", text)
+    text = _PSEUDO.sub(lambda m: f"{m.group(1)}[:]", text)
+    text = _WWW.sub("www[.]", text)
+    return _DOT.sub("[.]", text)
+
+
 def _source_text(source: dict | None) -> str:
     if not isinstance(source, dict):
         return ""
-    parts = [f"{k}={_clean(v, 120)}" for k, v in source.items() if v and k.startswith("utm_")]
+    parts = [f"{k}={_inert(v, 80)}" for k, v in source.items() if v and k.startswith("utm_")]
     for key in ("referrer", "landing"):
         if source.get(key):
-            parts.append(f"{key}: {_clean(source[key], 160)}")
+            parts.append(f"{key}: {_inert(source[key], 120)}")
     return "\n".join(parts)
 
 
@@ -92,13 +110,13 @@ def _prepare(letter: str, ctx: dict) -> dict:
     elif letter == "new_application":
         r = out["request"]
         rows = [
-            ("Имя", _clean(r.get("contact_name"), 200), "plain"),
-            ("Центр", _clean(r.get("centre_name"), 300), "plain"),
-            ("Город", _clean(r.get("city"), 200), "plain"),
+            ("Имя", _inert(r.get("contact_name"), 120), "plain"),
+            ("Центр", _inert(r.get("centre_name"), 200), "plain"),
+            ("Город", _inert(r.get("city"), 100), "plain"),
             ("Телефон", _clean(r.get("phone"), 40), "tel"),
             ("Почта", _clean(r.get("email"), 255), "mail"),
             ("Учеников", "" if r.get("students_count") is None else str(r.get("students_count")), "plain"),
-            ("Комментарий", _clean(r.get("comment"), 2000), "plain"),
+            ("Комментарий", _inert(r.get("comment"), 600), "plain"),
             ("Источник", _source_text(r.get("source")), "plain"),
             ("Получена", tashkent_text(r.get("created_at")) + " (Ташкент)", "plain"),
         ]

@@ -14,7 +14,7 @@ from src.models.platform import DemoRequest
 
 from . import platform_audit as audit
 from .platform_common import iso, utcnow
-from .platform_validation import Form
+from .platform_validation import Form, strip_format_controls
 
 REPEAT_WINDOW = timedelta(days=30)
 SOURCE_KEYS = ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "referrer", "landing")
@@ -44,7 +44,7 @@ def clean_source(raw: Any) -> Dict[str, str]:
     for key in SOURCE_KEYS:
         value = raw.get(key)
         if isinstance(value, str) and value.strip():
-            out[key] = re.sub(r"[\x00-\x1f\x7f]", " ", value.strip())[:300]
+            out[key] = re.sub(r"[\x00-\x1f\x7f]", " ", strip_format_controls(value).strip())[:300]
     return out
 
 

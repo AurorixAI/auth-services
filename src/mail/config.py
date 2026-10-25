@@ -28,6 +28,17 @@ def _url(name: str, default: str) -> str:
     return (os.getenv(name) or default).strip().rstrip("/")
 
 
+def localhost_urls(cfg: "MailConfig | None" = None) -> list:
+    """Names of the settings whose links would point at a developer's machine (a letter with such a link is useless to the person)."""
+    cfg = cfg or load()
+    bad = []
+    for name, value in (("FRONTEND_URL", cfg.frontend_url), ("CONSOLE_URL", cfg.console_url)):
+        host = (value.split("://", 1)[-1].split("/", 1)[0].split(":")[0]).lower()
+        if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0") or host.endswith(".localhost") or host.endswith(".local"):
+            bad.append(name)
+    return bad
+
+
 def load() -> MailConfig:
     return MailConfig(
         smtp_host=os.getenv("SMTP_HOST", "").strip(),
