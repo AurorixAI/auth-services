@@ -2135,6 +2135,11 @@
             "title": "Name",
             "type": "string"
           },
+          "orgRole": {
+            "default": "teacher",
+            "title": "Orgrole",
+            "type": "string"
+          },
           "teacherId": {
             "title": "Teacherid",
             "type": "string"

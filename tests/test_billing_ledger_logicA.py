@@ -202,6 +202,17 @@ def test_defer_fixed_day_switches_on_the_next_cell_and_a_new_student_at_once():
     assert fresh.segments[0].period_start == D(2026, 10, 10) and fresh.segments[0].days[0] == D(2026, 10, 25)
 
 
+def test_defer_a_student_whose_first_day_is_the_day_of_the_change_has_no_running_period():
+    """Batch 25.10: came ON the day of the switch -> the new mode from his first day; came the day before -> the running period goes to its end."""
+    old = bl.Regime()
+    new = bl.Regime(effective_from=D(2026, 10, 21), mode=bl.LESSONS, package_size=12, defer=True)
+    mk = lambda first: bl.run_ledger(bl.LedgerInput(today=D(2026, 10, 21), accounting_start=AS, stays=(bl.Stay(first),), regimes=(old, new), price_at=flat(600_000)))
+    same, before = mk(D(2026, 10, 21)), mk(D(2026, 10, 20))
+    assert same.mode == bl.LESSONS and same.charged == 0                       # a package: nothing is charged before a lesson is held
+    assert before.mode == bl.CALENDAR and before.charged == 600_000            # the running month 20.10-19.11
+    assert bl.regime_switch_days(bl.LedgerInput(today=D(2026, 10, 21), accounting_start=AS, stays=(bl.Stay(D(2026, 10, 21)),), regimes=(old,), price_at=flat(600_000)), new) == [D(2026, 10, 21)]
+
+
 def test_defer_two_changes_in_one_period_meet_in_one_boundary():
     old = bl.Regime()
     mid = bl.Regime(effective_from=D(2026, 10, 18), anchor=ps.FIXED_DAY, billing_day=5, defer=True)

@@ -180,7 +180,8 @@ def test_g10_a_deferred_regime_leaves_the_begun_periods_as_they_were(chunk):
         have = {key(s) for s in lg_new.segments}
         for s in lg_old.segments:
             began = (s.days[0] if s.days else s.period_start)
-            if began <= c and s.begun and not (old.mode == bl.LESSONS and not s.complete_package and any(x.day > c for x in lessons[:0])):
+            # a student whose first day IS the day of the change has no running period: his first period goes by the new mode (batch 25.10); every other begun period is kept
+            if (began < c or (began <= c and first < c)) and s.begun and not (old.mode == bl.LESSONS and not s.complete_package and any(x.day > c for x in lessons[:0])):
                 if old.mode == bl.LESSONS:
                     # a package in progress on the change day is finished under the old regime: compare the ones that are full
                     if not s.complete_package:

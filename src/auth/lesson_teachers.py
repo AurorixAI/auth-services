@@ -863,6 +863,7 @@ class LessonTeachers:
         cand = BusyItem(lesson_date, start, end, occ["startTime"], occ["endTime"], str(group.id), group.name, lesson_id)
         out: List[Dict[str, Any]] = []
         everybody = self.busy_map(org_id, day, day, exclude_keys={cand.key}, book=book)      # one pass for all the teachers
+        roles = dict(self.db.query(OrganizationMember.user_id, OrganizationMember.org_role).filter(OrganizationMember.org_id == org_id).all())
         for user in self.staff_who_can_teach(org_id):
             pairs = self.overlap_pairs([cand], everybody.get(user.id, []))
             other = pairs[0][1] if pairs else None
@@ -870,6 +871,7 @@ class LessonTeachers:
                 {
                     "teacherId": str(user.id),
                     "name": short_name(user) or user.email,
+                    "orgRole": roles.get(user.id, "teacher"),
                     "busy": other is not None,
                     "busyWith": {"groupName": other.group_name, "startTime": other.startTime, "endTime": other.endTime}
                     if other is not None

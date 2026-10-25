@@ -410,8 +410,8 @@ put("x_lesson_teacher_candidates.json", "LessonTeacherCandidatesOut", {
     "lessonId": LESSON["L1"], "lessonDate": "2026-10-26", "startTime": "10:00", "endTime": "11:30",
     "currentTeacherId": IDS["C"], "defaultTeacherId": IDS["C"],
     "candidates": [
-        {"teacherId": IDS["D"], "name": short("D"), "busy": False, "busyWith": None},
-        {"teacherId": IDS["B"], "name": short("B"), "busy": True, "busyWith": {"groupName": "8-В", "startTime": "10:00", "endTime": "11:30"}},
+        {"teacherId": IDS["D"], "name": short("D"), "orgRole": "teacher", "busy": False, "busyWith": None},
+        {"teacherId": IDS["B"], "name": short("B"), "orgRole": "teacher", "busy": True, "busyWith": {"groupName": "8-В", "startTime": "10:00", "endTime": "11:30"}},
     ],
 })
 put("x_lesson_teacher_changed.json", "-", error(409, "LESSON_TEACHER_CHANGED", f"Преподаватель урока уже изменён: {short('D')} Обновите страницу",

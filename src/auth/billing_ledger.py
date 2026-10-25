@@ -867,7 +867,8 @@ def _window_starts(windows, piece_first: date, priced_days: List[date], pauses: 
     A version without ``defer`` starts on its date.  A deferred one starts at the first day of the NEXT PERIOD of the regime that
     was in force for the piece on that date (the later decision wins: a deferred version that has not begun yet is not "the
     previous regime"): ``fixed_day`` - the next cell of the grid; ``payment_date`` - the next month of the piece's chain;
-    ``lessons`` - after the package in progress is finished.  A piece that had nothing charged by then switches at once.
+    ``lessons`` - after the package in progress is finished.  A piece whose first billable day is the day of the change or later (a new student)
+    switches at once: he has no running period.
     """
     starts = [date.min]
     for k in range(1, len(windows)):
@@ -878,7 +879,8 @@ def _window_starts(windows, piece_first: date, priced_days: List[date], pauses: 
         j = max(i for i in range(k) if starts[i] <= c)
         prev = windows[j][0]
         begin = max(piece_first, starts[j])
-        if begin > c:
+        if piece_first >= c:
+            # a student whose first billable day is the day of the change (or later) has no running period to protect: his first period goes by the mode in force on that day
             starts.append(c)
         elif prev.mode == LESSONS:
             starts.append(_lessons_switch(max(1, prev.package_size), priced_days, begin, c))

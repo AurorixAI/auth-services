@@ -253,6 +253,7 @@ class BusyWith(BaseModel):
 class LessonTeacherCandidate(BaseModel):
     teacherId: str
     name: str
+    orgRole: str = "teacher"
     busy: bool = False
     busyWith: Optional[BusyWith] = None
 
