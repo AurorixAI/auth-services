@@ -46,7 +46,7 @@ def test_a_blocked_member_cannot_be_restored_by_the_centre_and_stays_off_after_t
     assert r.status_code == 409 and BLOCKED_USER in str(r.json()) and r.json()["detail"]["code"] == "USER_BLOCKED_BY_PLATFORM"
     cw.db.expire_all()
     assert cw.db.get(User, centre.teacher.id).is_active is False
-    assert cw.db.query(OrganizationMember).get(mid).is_active is False
+    assert cw.db.get(OrganizationMember, mid).is_active is False
     # the unblock does not bring back a person the centre had removed before the block
     r = cw.client.post(f"{API}/users/{centre.teacher.id}/unblock", json={})
     assert r.status_code == 200 and r.json()["is_active"] is False and r.json()["blocked"] is False
