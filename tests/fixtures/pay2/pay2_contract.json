@@ -602,6 +602,18 @@
               }
             ]
           },
+          "paid_through_forecast": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Through Forecast"
+          },
           "paid_until": {
             "anyOf": [
               {
@@ -1387,6 +1399,13 @@
           "price": {
             "$ref": "#/components/schemas/PriceOut"
           },
+          "recalc": {
+            "items": {
+              "$ref": "#/components/schemas/RecalcOut"
+            },
+            "title": "Recalc",
+            "type": "array"
+          },
           "result": {
             "anyOf": [
               {
@@ -1418,7 +1437,8 @@
           "suggested_amount",
           "amount",
           "result",
-          "warnings"
+          "warnings",
+          "recalc"
         ],
         "title": "PaymentPreview",
         "type": "object"
@@ -1683,6 +1703,11 @@
             "title": "Billing Day",
             "type": "integer"
           },
+          "centre_cancel_recalc": {
+            "default": false,
+            "title": "Centre Cancel Recalc",
+            "type": "boolean"
+          },
           "excuse_deadline_days": {
             "default": 5,
             "maximum": 30.0,
@@ -1788,6 +1813,11 @@
             "minimum": 1.0,
             "title": "Billing Day",
             "type": "integer"
+          },
+          "centre_cancel_recalc": {
+            "default": false,
+            "title": "Centre Cancel Recalc",
+            "type": "boolean"
           },
           "dry_run": {
             "default": false,
@@ -1937,6 +1967,17 @@
               }
             ],
             "title": "Billing Day"
+          },
+          "centre_cancel_recalc": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Centre Cancel Recalc"
           },
           "excuse_deadline_days": {
             "anyOf": [
@@ -2729,6 +2770,36 @@
         "title": "QuotePartOut",
         "type": "object"
       },
+      "RecalcOut": {
+        "description": "PAY-F: one deduction «Перерасчёт: урок ДД.ММ отменён центром» (derived from the cancelled lesson, never stored).",
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "integer"
+          },
+          "lesson_date": {
+            "format": "date",
+            "title": "Lesson Date",
+            "type": "string"
+          },
+          "lesson_id": {
+            "title": "Lesson Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lesson_date",
+          "lesson_id",
+          "amount",
+          "text"
+        ],
+        "title": "RecalcOut",
+        "type": "object"
+      },
       "ReceiptItem": {
         "description": "One record behind a number of the report (drill-down).",
         "properties": {
@@ -3103,6 +3174,13 @@
                 "type": "null"
               }
             ]
+          },
+          "recalc": {
+            "items": {
+              "$ref": "#/components/schemas/RecalcOut"
+            },
+            "title": "Recalc",
+            "type": "array"
           },
           "receipt_no": {
             "title": "Receipt No",
@@ -4149,6 +4227,11 @@
           "price": {
             "$ref": "#/components/schemas/PriceOut"
           },
+          "recalculated": {
+            "default": 0,
+            "title": "Recalculated",
+            "type": "integer"
+          },
           "remaining": {
             "default": 0,
             "title": "Remaining",
@@ -4190,6 +4273,7 @@
           "lessons",
           "paid",
           "written_off",
+          "recalculated",
           "unpaid",
           "remaining",
           "covered_days",
@@ -4347,6 +4431,16 @@
             ],
             "title": "Reason"
           },
+          "recalc": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecalcOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "receipt_no": {
             "anyOf": [
               {
@@ -4461,6 +4555,7 @@
           "from_membership_id",
           "to_group_name",
           "to_membership_id",
+          "recalc",
           "replaces_receipt_no",
           "replaces_amount",
           "replaced_by_receipt_no"
@@ -4659,7 +4754,8 @@
               "transfer_out",
               "opening_debt",
               "opening_paid_until",
-              "pause"
+              "pause",
+              "recalc"
             ],
             "title": "Type",
             "type": "string"
@@ -4751,6 +4847,11 @@
             ],
             "title": "Paid Until"
           },
+          "recalculated": {
+            "default": 0,
+            "title": "Recalculated",
+            "type": "integer"
+          },
           "reconciles": {
             "default": true,
             "title": "Reconciles",
@@ -4796,6 +4897,7 @@
           "paid",
           "transferred_in",
           "written_off",
+          "recalculated",
           "refunded",
           "transferred_out",
           "debt",

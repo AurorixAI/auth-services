@@ -45,6 +45,7 @@
     "lessons_total": null,
     "lessons_used": null,
     "lessons_left": null,
+    "paid_through_forecast": null,
     "last_payment": {
       "id": "00000000-0000-4000-8000-000000000031",
       "membership_id": "00000000-0000-4000-8000-000000000001",

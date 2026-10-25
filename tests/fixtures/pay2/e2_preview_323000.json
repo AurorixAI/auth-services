@@ -40,6 +40,7 @@
         },
         "paid": 0,
         "written_off": 0,
+        "recalculated": 0,
         "unpaid": 323000,
         "remaining": 323000,
         "covered_days": 0,
@@ -82,5 +83,6 @@
     "summary_text": "На текущий период 323 000 → оплачено до 31.10",
     "price_ahead": []
   },
-  "warnings": []
+  "warnings": [],
+  "recalc": []
 }

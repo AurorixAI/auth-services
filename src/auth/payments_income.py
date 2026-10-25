@@ -509,11 +509,12 @@ class IncomeReports:
                 if seg.kind not in ("period", "package") or not seg.begun or not (first <= seg.period_start <= last):
                     continue
                 forg = min(seg.forgiven, seg.amount)
+                recalc = min(seg.recalculated, seg.amount)          # PAY-F: a lesson the centre cancelled is not to be collected: the target shrinks, it is not «paid»
                 unpaid = seg.unpaid
-                charged += seg.amount
+                charged += seg.amount - recalc
                 forgiven += forg
                 debt += unpaid
-                paid += seg.amount - forg - unpaid
+                paid += seg.amount - recalc - forg - unpaid
             if charged == 0:
                 continue
             row = groups.setdefault(e.group.id, {

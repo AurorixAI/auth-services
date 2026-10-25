@@ -53,6 +53,7 @@
     "lessons_total": null,
     "lessons_used": null,
     "lessons_left": null,
+    "paid_through_forecast": null,
     "last_payment": null,
     "debt": 213000,
     "past_debt": 0,

@@ -20,7 +20,7 @@ def legacy_add(db,model,**values):
     revisions: an ORM insert names EVERY mapped column, also the ones of revisions newer than the one the DB is at (the console pack added
     ``users.platform_block*`` and ``organizations.blocked_*``); Core names only what it is given."""
     db.execute(model.__table__.insert().values(**values))
-HEAD='cn1a2b3c4d5'          # console pack «Консоль-1», on top of sa1b2c3d4e5 (IA fix pack: student profile journal)
+HEAD='pf1a2b3c4d5'          # PAY-F (cancellation kind, days off), on top of cn1a2b3c4d5 (console pack «Консоль-1»)
 LOGICB2_HEAD='lb3c4d5e6f7'  # LOGIC-B2: exam release marker, substitution requests
 LOGICB2='lb2b3c4d5e6'       # LOGIC-B (2/2): group archive, member audit, invitations
 LOGICB1='lb1a2b3c4d5'       # LOGIC-B (1/2): marks version, lesson teachers, validFrom

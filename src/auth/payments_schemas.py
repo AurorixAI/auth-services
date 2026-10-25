@@ -62,7 +62,7 @@ SegmentBasis = Literal["full", "lessons", "days", "zero", "opening"]
 SegmentState = Literal["closed", "partial", "open", "future", "unpriced"]
 SegmentBucket = Literal["past_debt", "current", "future"]
 StatementRowType = Literal["charge", "payment", "writeoff", "refund", "transfer_in", "transfer_out",
-                           "opening_debt", "opening_paid_until", "pause"]  # LOGIC-A: the opening balance and a pause (info row, no money)
+                           "opening_debt", "opening_paid_until", "pause", "recalc"]  # LOGIC-A: the opening balance and a pause (info row, no money)
 ReceiptColumn = Literal["received", "to_past_debt", "to_current", "to_advance", "written_off", "refunded"]
 ReceiptItemType = Literal["payment", "writeoff", "refund"]
 PayWarningCode = Literal[
@@ -122,8 +122,9 @@ class Segment(PayModel):
     lessons: Optional[SegmentLessons] = None
     paid: int = 0  # money that lies on the segment (payments and transfers in; write-offs not included)
     written_off: int = 0
-    unpaid: int = 0  # charge - paid - written_off
-    remaining: int = 0  # LOGIC-A: the same as ``unpaid`` under the name the month header uses (charge - paid - written_off)
+    recalculated: int = 0  # PAY-F: deductions for the lessons the centre cancelled that lie on the segment
+    unpaid: int = 0  # charge - paid - written_off - recalculated
+    remaining: int = 0  # LOGIC-A: the same as ``unpaid`` under the name the month header uses (charge - paid - written_off - recalculated)
     covered_days: int = 0  # floor(money * billable_days / charge); a day is paid only when paid in full
     covered_through: Optional[date_type] = None  # last paid day of the segment (null - none)
     partial_credit: int = 0  # money "inside" the first unpaid day; counts towards the next payment
@@ -190,6 +191,9 @@ class PaymentSettings(BaseModel):
     excuse_deadline_days: int = Field(5, ge=0, le=30)
     excuse_deadline_lessons: int = Field(2, ge=0, le=12)
     admin_can_manage: bool = False
+    # PAY-F.  «Уроки, отменённые центром, при помесячной оплате»: false = не пересчитывать (как раньше), true = вычитать из следующей оплаты.
+    # A change acts for the lessons dated from the day it was made (``recalc_history``); it never rewrites the past.
+    centre_cancel_recalc: bool = False
     # PAY-2.  "Начало учёта оплат": days before it are never charged (a student entered with a past join date gets no
     # debt for the months before ALGO).  GET always returns the EFFECTIVE date: the stored setting, else the centre's
     # earliest live payment date / the migration day (stored by the migration), else the day the centre was created.
@@ -210,6 +214,7 @@ class PaymentSettingsUpdate(BaseModel):
     excuse_deadline_days: Optional[int] = Field(None, ge=0, le=30)
     excuse_deadline_lessons: Optional[int] = Field(None, ge=0, le=12)
     admin_can_manage: Optional[bool] = None
+    centre_cancel_recalc: Optional[bool] = None
     # PAY-2, the owner only; not later than today + 31 days (422 ``ACCOUNTING_START_RANGE``).
     accounting_start_date: Optional[date_type] = None
 
@@ -300,6 +305,8 @@ class MembershipPaymentRow(BaseModel):
     lessons_total: Optional[int] = None
     lessons_used: Optional[int] = None
     lessons_left: Optional[int] = None
+    # PAY-F: «хватит до ~ДД.ММ» - the day of the last paid lesson by the schedule (a package only; null = no forecast: a month mode, the package is over, no schedule)
+    paid_through_forecast: Optional[date] = None
     last_payment: Optional[PaymentOut] = None
     # PAY-2 (always present).  ``paid_until`` may be inside a period (money buys days).  ``debt`` = what the periods
     # that have begun cost minus the money; ``advance`` = money beyond that; never both > 0.  ``partial_credit`` - money
@@ -666,6 +673,15 @@ class PaymentQuote(BaseModel):
     explanation: str
 
 
+class RecalcOut(PayModel):
+    """PAY-F: one deduction «Перерасчёт: урок ДД.ММ отменён центром» (derived from the cancelled lesson, never stored)."""
+
+    lesson_date: date_type
+    lesson_id: str
+    amount: int  # positive: it comes OFF the payment
+    text: str  # «−46 000 сум: урок 21.10 отменён центром»
+
+
 class ReceiptOut(BaseModel):
     """Everything the printed receipt shows (no other payment data)."""
 
@@ -700,6 +716,7 @@ class ReceiptOut(BaseModel):
     paid_until_before: Optional[date] = None
     paid_until_after: Optional[date] = None
     price_snapshot: Optional[SnapshotPrice] = None
+    recalc: List[RecalcOut] = Field(default_factory=list)  # PAY-F: «−46 000 сум: урок 21.10 отменён центром»
     note: Optional[str] = None
     accepted_by_name: Optional[str] = None
     created_at: Optional[str] = None
@@ -773,6 +790,7 @@ class PaymentPreview(PayModel):
     amount: Optional[int] = None  # the typed amount (echo); null - not typed
     result: Optional[PreviewResult] = None  # null when ``amount`` was not given
     warnings: List[PaymentWarningOut] = Field(default_factory=list)
+    recalc: List[RecalcOut] = Field(default_factory=list)  # PAY-F: what is already deducted from this student's account (lessons the centre cancelled)
 
 
 class WriteoffCreate(BaseModel):
@@ -890,13 +908,14 @@ class StatementSummary(PayModel):
     paid: int = 0  # payments (gross, refunds not taken off)
     transferred_in: int = 0
     written_off: int = 0
+    recalculated: int = 0  # PAY-F: the deductions for the lessons the centre cancelled
     refunded: int = 0
     transferred_out: int = 0
     debt: int = 0
     advance: int = 0
     paid_until: Optional[date_type] = None
     status: MembershipStatus = "none"
-    reconciles: bool = True  # charged - paid - transferred_in - written_off + refunded + transferred_out == debt - advance
+    reconciles: bool = True  # charged - paid - transferred_in - written_off - recalculated + refunded + transferred_out == debt - advance
 
 
 class StatementDetails(PayModel):
@@ -916,6 +935,7 @@ class StatementDetails(PayModel):
     from_membership_id: Optional[str] = None
     to_group_name: Optional[str] = None  # transfer_out
     to_membership_id: Optional[str] = None
+    recalc: Optional[RecalcOut] = None  # PAY-F: recalc
     # LOGIC-A: the correction chain of a payment row.  A correction shows «исправлена: было 450 000»; the voided original
     # (``include_voided``) links to the receipt that replaced it.
     replaces_receipt_no: Optional[int] = None
@@ -1129,6 +1149,7 @@ class ReceiptSnapshot(PayModel):
     paid_until_after: Optional[date_type] = None
     price: SnapshotPrice = Field(default_factory=SnapshotPrice)
     mode: PeriodMode = "calendar"
+    recalc: List[RecalcOut] = Field(default_factory=list)  # PAY-F: the deductions for cancelled lessons this payment took into account
 
 
 class AccountingStartImpact(PayModel):

@@ -3068,6 +3068,21 @@
       "ReconcileMissedLessonRequest": {
         "description": "Explicit teacher decision for a past lesson that was never started.",
         "properties": {
+          "cancellationKind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "centre",
+                  "holiday"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellationkind"
+          },
           "cancellationReason": {
             "maxLength": 500,
             "minLength": 3,
@@ -3341,6 +3356,21 @@
             "default": false,
             "title": "Acknowledgeliveexam",
             "type": "boolean"
+          },
+          "cancellationKind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "centre",
+                  "holiday"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellationkind"
           },
           "cancellationReason": {
             "anyOf": [

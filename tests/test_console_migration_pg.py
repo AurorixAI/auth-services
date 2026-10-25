@@ -15,7 +15,7 @@ from src.core.db_timezone import utc_connect_args
 BASE_URL = os.environ.get("A5_AUTH_MIGRATION_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
 
-HEAD = "cn1a2b3c4d5"
+HEAD = "pf1a2b3c4d5"       # the head of the chain (PAY-F, on top of the console pack cn1a2b3c4d5, which this file is about)
 BEFORE = "sa1b2c3d4e5"
 DB_NAME = "a5_auth_console_migrations"
 NEW_TABLES = {"demo_requests", "demo_request_notes", "platform_roles", "platform_staff", "platform_sessions", "platform_audit", "password_links"}

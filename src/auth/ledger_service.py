@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from src.models.auth import (
     Group,
+    GroupAttendance,
     MembershipOpeningBalance,
     MembershipPause,
     MembershipTransfer,
@@ -45,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 MAX_TRANSFER_HOPS = 8
 SCHEDULE_HORIZON_DAYS = 800  # the preload of the schedule reaches this far past today (24 future periods + slack)
+FORECAST_DAYS = 400          # how far ahead the forecast of a package looks for the day of its last lesson (a package of 57 weekly lessons fits)
 
 
 # ============================================================================================================
@@ -58,10 +60,12 @@ class LedgerSettings:
     regimes: Tuple[bl.Regime, ...]
     expiring_days: int
     expiring_lessons: int
+    recalc_versions: Tuple[bl.RecalcVersion, ...] = ()    # PAY-F: «вычитать уроки, отменённые центром» (own history: it never splits the periods)
 
     @property
     def current(self) -> bl.Regime:
         return self.regimes[-1]
+
 
 
 def regime_from_block(block: Dict[str, Any], effective_from: date) -> bl.Regime:
@@ -101,6 +105,22 @@ def parse_regimes(block: Dict[str, Any]) -> Tuple[bl.Regime, ...]:
     return tuple(regimes)
 
 
+def parse_recalc(block: Dict[str, Any]) -> Tuple[bl.RecalcVersion, ...]:
+    """PAY-F: ``recalc_history`` = ``[{"from": "2026-10-25", "on": true}, ...]`` (the setting «уроки, отменённые центром» with the day each value began)."""
+    out: List[bl.RecalcVersion] = []
+    history = block.get("recalc_history")
+    for entry in history if isinstance(history, list) else []:
+        if not isinstance(entry, dict) or not isinstance(entry.get("on"), bool):
+            continue
+        raw = entry.get("from")
+        try:
+            start = date.min if raw in (None, "", "min") else date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            continue
+        out.append(bl.RecalcVersion(start, entry["on"]))
+    return tuple(sorted(out, key=lambda v: v.effective_from))
+
+
 def accounting_start_of(block: Dict[str, Any], created: Optional[datetime]) -> date:
     """The accounting start: the setting, else the day the centre was created (never a retro debt for "all the history")."""
     if block.get("accounting_start_date"):
@@ -122,6 +142,7 @@ def load_settings(db: Session, org_id: str) -> LedgerSettings:
         regimes=parse_regimes(block),
         expiring_days=_int(block.get("expiring_days"), ps.DEFAULT_EXPIRING_DAYS),
         expiring_lessons=_int(block.get("expiring_lessons"), ps.DEFAULT_EXPIRING_LESSONS),
+        recalc_versions=parse_recalc(block),
     )
 
 
@@ -151,6 +172,7 @@ class MembershipLedger:
     credit_of_transfer: Dict[str, int] = field(default_factory=dict)  # transfer id -> the sum that travelled
     pauses: List[MembershipPause] = field(default_factory=list)  # live (LOGIC-A)
     opening: Optional[MembershipOpeningBalance] = None  # the live opening balance (LOGIC-A)
+    loader: Optional["LedgerLoader"] = field(default=None, repr=False, compare=False)  # PAY-F: for ``LedgerLoader.forecasts``
 
 
 def price_info(price: pricing.Price) -> bl.PriceInfo:
@@ -173,11 +195,15 @@ def _like(term: str) -> str:
 class LedgerLoader:
     """Loads the facts of a set of memberships (and of the memberships linked to them by transfers) and runs the ledger."""
 
-    def __init__(self, db: Session, org_id: str, today: date, settings: Optional[LedgerSettings] = None) -> None:
+    def __init__(self, db: Session, org_id: str, today: date, settings: Optional[LedgerSettings] = None, *, recalc: bool = True) -> None:
+        """``recalc=False``: the account WITHOUT the deduction for lessons the centre cancelled (payroll reads the money of the students as it was: PAY-F, scenario 17)."""
         self.db = db
         self.org_id = org_id
         self.today = today
         self.settings = settings or load_settings(db, org_id)
+        self.recalc_versions = self.settings.recalc_versions if recalc else ()
+        self.cancels: Dict[UUID, List[bl.CentreCancel]] = {}      # group id -> lessons the centre cancelled (kind ``centre``)
+        self._cancels_loaded: Set[UUID] = set()
         self.members: Dict[UUID, Tuple[StudentGroup, Student, Group, Optional[User]]] = {}
         self.stays: Dict[UUID, List[bl.Stay]] = {}
         self.payments: Dict[UUID, List[StudentPayment]] = {}
@@ -354,6 +380,23 @@ class LedgerLoader:
             (self.t_in if side == "in" else self.t_out)[mid].sort(key=lambda t: (t.at, str(t.id)))
         if self._needs_lessons():
             self._load_counted(found)
+        if any(v.on for v in self.recalc_versions):
+            self._load_cancels({self.members[m][2].id for m in found})
+
+    def _load_cancels(self, group_ids: Set[UUID]) -> None:
+        """PAY-F: the lessons the CENTRE cancelled (``cancellation_kind = 'centre'``; a holiday, a move and an old cancellation have another kind or none) - one query."""
+        wanted = group_ids - self._cancels_loaded
+        for gid in wanted:
+            self.cancels[gid] = []
+        self._cancels_loaded |= wanted
+        if not wanted:
+            return
+        since = self.settings.accounting_start.isoformat()
+        for group_id, day, lesson_id in self.db.query(GroupAttendance.group_id, GroupAttendance.lesson_date, GroupAttendance.lesson_id).filter(
+            GroupAttendance.org_id == self.org_id, GroupAttendance.group_id.in_(wanted), GroupAttendance.status == "cancelled",
+            GroupAttendance.cancellation_kind == "centre", GroupAttendance.lesson_date >= since,
+        ):
+            self.cancels[group_id].append(bl.CentreCancel(date.fromisoformat(day), lesson_id or ""))
 
     def _prices(self) -> None:
         self.books = pricing.load_books(
@@ -381,6 +424,22 @@ class LedgerLoader:
 
     # ---------------------------------------------------------------- the schedule (incomplete periods)
 
+    def _occurrences(self, group: Group, start: date, end: date, *, pattern: bool = False) -> List[Dict[str, Any]]:
+        """The resolved lessons of ``group`` in ``start .. end`` (cancelled ones included; ``pattern=True``: the FULL schedule pattern, the ``validFrom`` of the slots ignored)."""
+        from .service import AuthService  # lazy: service is heavy
+
+        if self._schedule is None:
+            low = self.settings.accounting_start - timedelta(days=62)
+            high = self.today + timedelta(days=SCHEDULE_HORIZON_DAYS)
+            gids = list({g.id for _, _, g, _ in self.members.values()})
+            self._schedule = AuthService(self.db)._preload_schedule_data(gids, date_from=low, date_to=high)
+        if pattern:
+            from . import schedule_rules
+
+            with schedule_rules.ignoring_valid_from():
+                return AuthService(self.db)._resolved_occurrences_for_group(group, date_from=start, date_to=end, preloaded=self._schedule)
+        return AuthService(self.db)._resolved_occurrences_for_group(group, date_from=start, date_to=end, preloaded=self._schedule)
+
     def _lesson_days(self, group: Group, start: date, end: date, *, pattern: bool = False) -> List[date]:
         """The lessons of ``group`` in ``start .. end``.  ``pattern=True``: the group's FULL schedule pattern, ignoring the ``validFrom`` of the slots - the
         denominator of the proration of a partial period (a partial month costs price x the student's lessons / the lessons of a full month by the schedule,
@@ -389,24 +448,19 @@ class LedgerLoader:
         key = (group.id, start, end, pattern)
         if key in self._lesson_days_cache:
             return self._lesson_days_cache[key]
-        from .service import AuthService  # lazy: service is heavy
-
-        if self._schedule is None:
-            low = self.settings.accounting_start - timedelta(days=62)
-            high = self.today + timedelta(days=SCHEDULE_HORIZON_DAYS)
-            gids = list({g.id for _, _, g, _ in self.members.values()})
-            self._schedule = AuthService(self.db)._preload_schedule_data(gids, date_from=low, date_to=high)
         # LOGIC-A (S-4, decision 3): a lesson the CENTRE cancelled still counts - the month costs the same, so the share of an incomplete
         # first period never depends on cancellations (and a late cancellation no longer rewrites a closed charge)
-        if pattern:
-            from . import schedule_rules
-
-            with schedule_rules.ignoring_valid_from():
-                occurrences = AuthService(self.db)._resolved_occurrences_for_group(group, date_from=start, date_to=end, preloaded=self._schedule)
-        else:
-            occurrences = AuthService(self.db)._resolved_occurrences_for_group(group, date_from=start, date_to=end, preloaded=self._schedule)
+        occurrences = self._occurrences(group, start, end, pattern=pattern)
         # LOGIC-B2 (decision 3, neutral move): a lesson moved by a substitution decision = the CANCELLED original (counted above) + a one-off copy;
         # the copy is left out, so a move never changes the share of an incomplete first period
+        moved = self._moved_copies(group)
+        days = [date.fromisoformat(item["occurrenceDate"]) for item in occurrences
+                if not (item.get("isOneOff") and (str(group.id), str(item["id"])) in moved)]
+        self._lesson_days_cache[key] = days
+        return days
+
+    def _moved_copies(self, group: Group) -> Set[Tuple[str, str]]:
+        """``{(group id, lesson id)}`` of the one-off copies that a decision «перенос» of LOGIC-B2 made (loaded for all the loader's groups at once)."""
         if group.id not in self._moved_one_offs:
             from .payroll_hooks import moved_one_off_lesson_keys
 
@@ -414,11 +468,42 @@ class LedgerLoader:
             found = moved_one_off_lesson_keys(self.db, todo)
             for gid in todo:
                 self._moved_one_offs[gid] = {k for k in found if k[0] == str(gid)}
-        moved = self._moved_one_offs[group.id]
-        days = [date.fromisoformat(item["occurrenceDate"]) for item in occurrences
-                if not (item.get("isOneOff") and (str(group.id), str(item["id"])) in moved)]
-        self._lesson_days_cache[key] = days
-        return days
+        return self._moved_one_offs[group.id]
+
+    # ---------------------------------------------------------------- the forecast of a package (PAY-F, part 1)
+
+    def forecasts(self, entries: Sequence["MembershipLedger"]) -> Dict[UUID, Optional[date]]:
+        """«Хватит до ~ДД.ММ» of the memberships in the lessons mode: the day of the N-th FUTURE lesson of the student, N = the lessons he has paid and not yet had.
+
+        The future lessons are those of the group's schedule from today on: without the cancelled ones (a holiday, a sick teacher; a lesson that was moved counts at its
+        new date: the original is cancelled, the copy is a one-off lesson), without the days of the student's pause and without the lessons already counted.  ``None``:
+        not a package, nothing left (the package is over), the student is not in the group, or the schedule does not reach that far.  It is a promise of the
+        schedule, not of the money - the front says «по расписанию»."""
+        wanted = [e for e in entries if e.ledger.mode == bl.LESSONS and e.ledger.lessons is not None and e.ledger.lessons.left > 0
+                  and e.membership.is_active and e.group.status == "active"]
+        out: Dict[UUID, Optional[date]] = {e.membership.id: None for e in entries}
+        if not wanted:
+            return out
+        horizon = self.today + timedelta(days=FORECAST_DAYS)
+        gids = {e.group.id for e in wanted}
+        cancelled: Dict[UUID, Set[Tuple[str, str]]] = {gid: set() for gid in gids}
+        for group_id, day, lesson_id in self.db.query(GroupAttendance.group_id, GroupAttendance.lesson_date, GroupAttendance.lesson_id).filter(
+            GroupAttendance.org_id == self.org_id, GroupAttendance.group_id.in_(gids), GroupAttendance.status == "cancelled",
+            GroupAttendance.lesson_date >= self.today.isoformat(), GroupAttendance.lesson_date <= horizon.isoformat(),
+        ):
+            cancelled[group_id].add((day, lesson_id or ""))
+        upcoming: Dict[UUID, List[Tuple[date, str]]] = {}
+        for e in wanted:
+            if e.group.id not in upcoming:
+                upcoming[e.group.id] = sorted(
+                    (date.fromisoformat(o["occurrenceDate"]), o["id"]) for o in self._occurrences(e.group, self.today, horizon)
+                    if (o["occurrenceDate"], o["id"]) not in cancelled[e.group.id])
+            held = {(c.day, c.lesson_id) for c in e.ledger.counted}
+            paused = {d for p in e.pauses for d in _days(p.first_day, p.last_day)}
+            coming = [d for d, lesson_id in upcoming[e.group.id] if (d, lesson_id) not in held and d not in paused]
+            left = e.ledger.lessons.left
+            out[e.membership.id] = coming[left - 1] if len(coming) >= left else None
+        return out
 
     # ---------------------------------------------------------------- inputs
 
@@ -522,6 +607,8 @@ class LedgerLoader:
             expiring_lessons=self.settings.expiring_lessons,
             pauses=tuple(bl.Pause(p.first_day, p.last_day) for p in self.pauses.get(mid, [])),
             opening=self._opening_of(mid),
+            centre_cancels=tuple(self.cancels.get(group.id, ())),
+            recalc_versions=self.recalc_versions,
         )
         return bl.sliced_input(inp, as_of) if as_of is not None else inp
 
@@ -551,6 +638,7 @@ class LedgerLoader:
                     transfers_in=list(self.t_in.get(mid, [])), transfers_out=list(self.t_out.get(mid, [])),
                     credit_of_transfer={str(t.id): self.x_of(t) for t in self.t_in.get(mid, []) + self.t_out.get(mid, [])},
                     pauses=sorted(self.pauses.get(mid, []), key=lambda p: p.first_day), opening=self.openings.get(mid),
+                    loader=self,
                 )
             )
         return out

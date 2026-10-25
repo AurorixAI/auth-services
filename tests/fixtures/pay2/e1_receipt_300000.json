@@ -54,6 +54,7 @@
     "amount": 500000,
     "source": "group"
   },
+  "recalc": [],
   "note": "за октябрь",
   "accepted_by_name": "Рустам Каримов",
   "created_at": "2026-10-21T09:12:00",

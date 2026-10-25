@@ -13,6 +13,10 @@ intersection of the two intervals - "the oldest debt first" without any loop ove
 days and charge ``c`` that holds ``m`` is paid for ``floor(m * n / c)`` days (a day is paid only when paid in full; the rest
 is a "partial day" that goes on counting towards the next payment).  Only the charge is rounded (``round_1000``), never the
 money.  Whole sums are ``int``; ``//`` is the only division.
+
+PAY-F: a lesson that the CENTRE cancelled (kind ``centre``) is paid back by the next payment when the centre asked for it (``recalc_versions``).  The
+"recalculation" is a credit of kind ``recalc`` that ``run_ledger`` derives from the facts (the cancelled lessons, the periods, the prices); it is laid on the
+money line like a write-off, but it is never stored and it is not cash (no refund, no payroll).
 """
 from __future__ import annotations
 
@@ -34,6 +38,8 @@ MAX_VIRTUAL_LESSONS = 5000
 PAYMENT = "payment"
 TRANSFER_IN = "transfer_in"
 WRITEOFF = "writeoff"
+RECALC = "recalc"              # PAY-F: derived from the cancelled lessons, never stored
+NOT_CASH = (WRITEOFF, RECALC)  # credits that are not money received
 # outflow kinds
 REFUND = "refund"
 TRANSFER_OUT = "transfer_out"
@@ -135,6 +141,22 @@ class Opening:
 
 
 @dataclass(frozen=True)
+class CentreCancel:
+    """A lesson of the group that the CENTRE cancelled with a recalculation in mind (cancellation kind ``centre``; a holiday, a move and the old cancellations are not here)."""
+
+    day: date
+    lesson_id: str = ""
+
+
+@dataclass(frozen=True)
+class RecalcVersion:
+    """The centre's setting «уроки, отменённые центром» from ``effective_from``: ``on`` = deduct them from the next payment (a lesson counts by its own date)."""
+
+    effective_from: date
+    on: bool
+
+
+@dataclass(frozen=True)
 class LedgerInput:
     today: date
     accounting_start: date
@@ -154,6 +176,8 @@ class LedgerInput:
     expiring_lessons: int = ps.DEFAULT_EXPIRING_LESSONS
     pauses: Sequence[Pause] = ()
     opening: Optional[Opening] = None
+    centre_cancels: Sequence[CentreCancel] = ()
+    recalc_versions: Sequence[RecalcVersion] = ()
 
 
 # ================================================================================================================
@@ -184,12 +208,13 @@ class Segment:
     # after the money is laid
     money: int = 0
     forgiven: int = 0
+    recalculated: int = 0
     covered_days: int = 0
     partial_credit: int = 0
 
     @property
     def unpaid(self) -> int:
-        return max(0, self.amount - self.money - self.forgiven)
+        return max(0, self.amount - self.money - self.forgiven - self.recalculated)
 
     @property
     def covered_through(self) -> Optional[date]:
@@ -251,6 +276,20 @@ class StatementEvent:
 
 
 @dataclass(frozen=True)
+class RecalcLine:
+    """«Перерасчёт: урок ДД.ММ отменён центром»: ``amount`` comes off the next payment (a credit on the money line)."""
+
+    id: str
+    day: date
+    lesson_id: str
+    amount: int
+    segment_id: str
+
+    def credit(self) -> "Credit":
+        return Credit(self.id, RECALC, self.day, datetime.min, self.amount)
+
+
+@dataclass(frozen=True)
 class LessonsView:
     package_size: int
     covered: int  # lessons paid for (held or not yet held)
@@ -305,13 +344,15 @@ class Ledger:
     package_costs: Dict[str, Tuple[int, ...]] = field(default_factory=dict, repr=False, compare=False)
     pauses: Tuple[Tuple[date, date], ...] = ()
     opening: Optional[Opening] = None
+    recalcs: Tuple[RecalcLine, ...] = ()       # PAY-F: the derived deductions for lessons the centre cancelled
+    recalculated: int = 0                      # their sum
     _cache: Dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def reconciles(self) -> bool:
-        """I2: charged - paid - transferred_in - written_off + refunded + transferred_out == debt - advance."""
+        """I2: charged - paid - transferred_in - written_off - recalculated + refunded + transferred_out == debt - advance."""
         return (
-            self.charged - self.paid - self.transferred_in - self.written_off + self.refunded + self.transferred_out
+            self.charged - self.paid - self.transferred_in - self.written_off - self.recalculated + self.refunded + self.transferred_out
             == self.debt - self.advance
         )
 
@@ -430,11 +471,11 @@ def regime_at(regimes: Sequence[Regime], day: date) -> Regime:
 
 
 def apply_outflows(credits: Sequence[Credit], outflows: Sequence[Outflow]):
-    """Every outflow takes money off the NEWEST money credits dated on or before it (LIFO); write-offs never come back."""
+    """Every outflow takes money off the NEWEST money credits dated on or before it (LIFO); write-offs and recalculations never come back."""
     net = {c.id: c.amount for c in credits}
     refunded_from: Dict[str, int] = {c.id: 0 for c in credits}
     transferred_from: Dict[str, int] = {c.id: 0 for c in credits}
-    money = sorted((c for c in credits if c.kind != WRITEOFF), key=_credit_key)
+    money = sorted((c for c in credits if c.kind not in NOT_CASH), key=_credit_key)
     exceeds = False
     for out in sorted(outflows, key=_credit_key):
         need = out.amount
@@ -872,6 +913,47 @@ def regime_switch_days(inp: LedgerInput, new: Regime) -> List[date]:
     return [_window_starts(windows, first, priced, pause_days)[-1] for first, last in spans if last is None]
 
 
+def recalc_on(versions: Sequence[RecalcVersion], day: date) -> bool:
+    """Whether the centre's setting «вычитать уроки, отменённые центром» was on for a lesson of ``day`` (the last version that began by then; none = off)."""
+    on = False
+    for version in sorted(versions, key=lambda v: v.effective_from):
+        if version.effective_from <= day:
+            on = version.on
+    return on
+
+
+def _recalc_lines(inp: LedgerInput, gen: "_Gen", segments: Sequence[Segment]) -> List[RecalcLine]:
+    """PAY-F: one deduction per lesson that the centre cancelled inside a charged period of a calendar mode.
+
+    A lesson counts when the student was charged for its day (the day is one of the days of a period that has begun: not on a pause, not before he
+    came or after he left, not in the lessons mode) and the setting was on that day.  It costs ``round_1000(period charge / lessons of the period
+    by the schedule)``; a partial first period of a fixed billing day costs the same price of a lesson (``price / lessons of the full month``), so
+    the total is the price x the lessons that were held / the lessons of the month.  The deductions of a period never exceed its charge."""
+    if not inp.centre_cancels or not any(v.on for v in inp.recalc_versions):
+        return []
+    owner = {d: s for s in segments if s.kind == "period" and s.begun and not s.unpriced and s.amount > 0 for d in s.days}
+    left = {s.id: s.amount for s in owner.values()}
+    unit: Dict[str, int] = {}
+    lines: List[RecalcLine] = []
+    for cancel in sorted(inp.centre_cancels, key=lambda c: (c.day, c.lesson_id)):
+        seg = owner.get(cancel.day)
+        if seg is None or not recalc_on(inp.recalc_versions, cancel.day):
+            continue
+        if seg.id not in unit:
+            inside = set(seg.days)
+            if seg.basis == "lessons" and seg.lessons_in_period:
+                unit[seg.id] = round_1000(seg.price.amount, seg.lessons_in_period)        # the full month by the schedule is the divisor
+            else:
+                count = sum(1 for d in gen.pattern_days(seg.period_start, seg.period_end) if d in inside)
+                unit[seg.id] = round_1000(seg.amount, count) if count else 0
+        amount = min(unit[seg.id], left[seg.id])
+        if amount <= 0:
+            continue
+        left[seg.id] -= amount
+        lines.append(RecalcLine(f"rc:{cancel.day.isoformat()}:{cancel.lesson_id}", cancel.day, cancel.lesson_id, amount, seg.id))
+    return lines
+
+
 def run_ledger(inp: LedgerInput) -> Ledger:
     today = inp.today
     flags: set = set()
@@ -969,6 +1051,13 @@ def run_ledger(inp: LedgerInput) -> Ledger:
 
     segments.sort(key=lambda s: (s.kind != "opening", (s.days[0] if s.days else s.period_start), s.period_start, s.id))
 
+    # ---- PAY-F: the recalculation for the lessons the centre cancelled is one more credit on the money line (derived here, never stored)
+    recalcs = _recalc_lines(inp, gen, segments)
+    if recalcs:
+        credits = sorted([*credits, *(line.credit() for line in recalcs)], key=_credit_key)
+        net, refunded_from, transferred_from, _ = apply_outflows(credits, inp.outflows)
+        total_credit = sum(net.values())
+
     # ---- the money line
     spans: Dict[str, Tuple[int, int]] = {}
     pos = 0
@@ -993,7 +1082,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     vol_by_seg_credit: Dict[Tuple[str, str], int] = {}
     for s in segments:
         lo, hi = seg_span[s.id]
-        money = forgiven = 0
+        money = forgiven = recalculated = 0
         for c in credits:
             a, b = spans[c.id]
             part = max(0, min(b, hi) - max(a, lo))
@@ -1001,9 +1090,11 @@ def run_ledger(inp: LedgerInput) -> Ledger:
                 vol_by_seg_credit[(s.id, c.id)] = part
                 if kind_of[c.id] == WRITEOFF:
                     forgiven += part
+                elif kind_of[c.id] == RECALC:
+                    recalculated += part
                 else:
                     money += part
-        vol = money + forgiven
+        vol = money + forgiven + recalculated
         covered = _cover(s, vol, seg_costs.get(s.id))
         partial = 0
         if covered < len(s.days) and s.amount and not s.unpriced:
@@ -1011,7 +1102,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
                 partial = vol - sum(seg_costs[s.id][:covered])
             else:
                 partial = vol - (covered * s.amount) // len(s.days)
-        final.append(replace(s, money=money, forgiven=forgiven, covered_days=covered, partial_credit=partial))
+        final.append(replace(s, money=money, forgiven=forgiven, recalculated=recalculated, covered_days=covered, partial_credit=partial))
     segments = final
     money_total_in_segments = cur
 
@@ -1067,6 +1158,9 @@ def run_ledger(inp: LedgerInput) -> Ledger:
                 credit_id=c.id, segment_id=ADVANCE_SEGMENT, amount=left, days=extra, bucket=ADVANCE, closes=False,
                 price=None, label=label, period_start=c.on, period_end=c.on))
         cum_before_credit += net[c.id]
+    if recalcs:     # a recalculation is not a payment: it keeps its place on the money line but has no allocation of its own
+        derived = {line.id for line in recalcs}
+        allocations = [a for a in allocations if a.credit_id not in derived]
 
     # ---- totals
     begun = [s for s in segments if s.begun]
@@ -1074,13 +1168,14 @@ def run_ledger(inp: LedgerInput) -> Ledger:
     paid = sum(c.amount for c in credits if c.kind == PAYMENT)
     transferred_in = sum(c.amount for c in credits if c.kind == TRANSFER_IN)
     written_off = sum(c.amount for c in credits if c.kind == WRITEOFF)
+    recalculated = sum(line.amount for line in recalcs)
     refunded = sum(o.amount for o in inp.outflows if o.kind == REFUND)
     transferred_out = sum(o.amount for o in inp.outflows if o.kind == TRANSFER_OUT)
     debt = max(0, charged - total_credit)
     advance = max(0, total_credit - charged)
     past_debt = min(sum(s.unpaid for s in begun if s.ended), debt)
     current_due = debt - past_debt
-    money_net = sum(v for k, v in net.items() if kind_of[k] != WRITEOFF)
+    money_net = sum(v for k, v in net.items() if kind_of[k] not in NOT_CASH)
     refundable = min(advance, money_net)
 
     # ---- coverage prefix ("paid until" of the opening balance is where it starts; an unpaid opening debt stops it)
@@ -1144,7 +1239,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
             unpaid=max(0, used - covered_lessons), paid_flags=flags_paid)
 
     # ---- status
-    has_event = bool(credits) or opening is not None or bool(pause_days)
+    has_event = bool(inp.credits) or opening is not None or bool(pause_days)
     open_now = any(last is None or last >= today for _, last in runs)
     price_today = inp.price_at(today).amount
     paused_until = next((last for first, last in pause_days if first <= today <= last), None) if open_now else None
@@ -1154,7 +1249,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
         owed_since = open_debt.period_start
     # m2: a student whose price is 0 stays FREE whatever pauses / openings he has - only money that was really paid (or moved in) changes that
     status = _status(inp, mode, has_event, open_now, through, lessons_view, price_today, paused_until, owed_since, pause_days,
-                     has_money=bool(credits))
+                     has_money=bool(inp.credits))
 
     # ---- statement
     events: List[StatementEvent] = []
@@ -1188,7 +1283,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
         status=status, lessons=lessons_view, statement=tuple(stmt), flags=tuple(sorted(flags)),
         counted=tuple(held_lessons), calendar_windows=tuple(cal_windows), lessons_windows=tuple(les_windows),
         lesson_owner=tuple(lesson_owner), package_costs={sid: tuple(c) for sid, c in seg_costs.items()},
-        pauses=tuple(pause_days), opening=opening)
+        pauses=tuple(pause_days), opening=opening, recalcs=tuple(recalcs), recalculated=recalculated)
     return ledger
 
 
@@ -1253,6 +1348,7 @@ def sliced_input(inp: LedgerInput, as_of: date) -> LedgerInput:
         inp, today=as_of, stays=tuple(stays),
         credits=tuple(c for c in inp.credits if c.on <= as_of), outflows=tuple(o for o in inp.outflows if o.on <= as_of),
         counted_lessons=tuple(c for c in inp.counted_lessons if c.day <= as_of),
+        centre_cancels=tuple(c for c in inp.centre_cancels if c.day <= as_of),
         pauses=tuple(p for p in inp.pauses if p.first <= as_of),
     )
 

@@ -17,6 +17,7 @@
     "paid": 0,
     "transferred_in": 0,
     "written_off": 0,
+    "recalculated": 0,
     "refunded": 0,
     "transferred_out": 0,
     "debt": 0,
@@ -54,6 +55,7 @@
         "from_membership_id": null,
         "to_group_name": null,
         "to_membership_id": null,
+        "recalc": null,
         "replaces_receipt_no": null,
         "replaces_amount": null,
         "replaced_by_receipt_no": null
@@ -87,6 +89,7 @@
         "from_membership_id": null,
         "to_group_name": null,
         "to_membership_id": null,
+        "recalc": null,
         "replaces_receipt_no": null,
         "replaces_amount": null,
         "replaced_by_receipt_no": null

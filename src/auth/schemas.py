@@ -272,6 +272,9 @@ class DiagnosticInviteResponse(BaseModel):
 
 # N13 P3: kind of lessons - the teacher's payroll percent is set per kind.
 LessonType = Literal["group", "mini_group", "pair", "individual"]
+# PAY-F: why the centre cancelled a lesson: its own fault (may be deducted from the next payment) or a holiday / day off (never)
+CancellationKind = Literal["centre", "holiday"]
+DEFAULT_CANCELLATION_KIND: CancellationKind = "centre"  # the usual cancellation is the centre's own (a holiday is chosen on purpose)
 
 
 class GroupCreateRequest(BaseModel):
@@ -548,6 +551,7 @@ class SaveAttendanceRequest(BaseModel):
     records: Dict[UUID, StudentAttendanceStatus] = Field(default_factory=dict)
     correctionReason: Optional[str] = Field(None, min_length=3, max_length=500)
     cancellationReason: Optional[str] = Field(None, min_length=3, max_length=500)
+    cancellationKind: Optional[CancellationKind] = None  # PAY-F: only with a cancellation; absent = "centre"
     # Reason for every student newly marked "excused" (3..300 characters). May
     # also be sent for an already excused student to change the reason.
     excuseReasons: Optional[Dict[UUID, str]] = None
@@ -643,6 +647,7 @@ class ReconcileMissedLessonRequest(BaseModel):
     lessonDate: date
     lessonId: str = Field(..., min_length=1, max_length=100)
     cancellationReason: str = Field(..., min_length=3, max_length=500)
+    cancellationKind: Optional[CancellationKind] = None  # PAY-F: absent = "centre"
 
 
 # ============================================================================

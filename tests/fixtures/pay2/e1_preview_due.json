@@ -37,6 +37,7 @@
         "lessons": null,
         "paid": 231000,
         "written_off": 0,
+        "recalculated": 0,
         "unpaid": 269000,
         "remaining": 269000,
         "covered_days": 13,
@@ -66,6 +67,7 @@
         "lessons": null,
         "paid": 0,
         "written_off": 0,
+        "recalculated": 0,
         "unpaid": 500000,
         "remaining": 500000,
         "covered_days": 0,
@@ -81,5 +83,6 @@
   "suggested_amount": 769000,
   "amount": null,
   "result": null,
-  "warnings": []
+  "warnings": [],
+  "recalc": []
 }

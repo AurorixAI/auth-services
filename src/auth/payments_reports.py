@@ -94,6 +94,7 @@ class PaymentsReports:
         refunds = {str(r.id): r for r in entry.refunds}
         transfers = {f"tr:{t.id}": t for t in entry.transfers_in + entry.transfers_out}
         segments = {s.id: s for s in ledger.segments}
+        recalcs = {line.id: line for line in ledger.recalcs}
 
         def group_name(mid: UUID) -> str:
             found = loader.members.get(mid)
@@ -137,6 +138,9 @@ class PaymentsReports:
                 w = writeoffs[e.ref_id]
                 rows.append(StatementRow(type="writeoff", title=tx.forgiven_title(w.reason), details=StatementDetails(
                     writeoff_id=str(w.id), reason=w.reason, created_by_name=_person(users.get(w.created_by))), **common))
+            elif e.kind == bl.RECALC:      # PAY-F: derived from the cancelled lesson, nothing is stored
+                line = recalcs[e.ref_id]
+                rows.append(StatementRow(type="recalc", title=tx.recalc_title(line.day), details=StatementDetails(recalc=pv.recalc_out(line)), **common))
             elif e.kind == bl.REFUND:
                 r = refunds[e.ref_id]
                 rows.append(StatementRow(type="refund", title="Возврат аванса", details=StatementDetails(
@@ -160,7 +164,7 @@ class PaymentsReports:
             voided = self._voided_rows(org_id, membership_id)
         summary = StatementSummary(
             charged=ledger.charged, paid=ledger.paid, transferred_in=ledger.transferred_in, written_off=ledger.written_off,
-            refunded=ledger.refunded, transferred_out=ledger.transferred_out, debt=ledger.debt, advance=ledger.advance,
+            recalculated=ledger.recalculated, refunded=ledger.refunded, transferred_out=ledger.transferred_out, debt=ledger.debt, advance=ledger.advance,
             paid_until=ledger.status.paid_until, status=ledger.status.status, reconciles=ledger.reconciles)
         return StatementOut(
             membership=StatementMembership(
@@ -169,7 +173,7 @@ class PaymentsReports:
                 display_id=entry.student.display_id, group_id=str(entry.group.id), group_name=entry.group.name,
                 teacher_name=_person(entry.teacher), is_active=bool(entry.membership.is_active)),
             as_of=today, mode=ledger.mode, accounting_start=loader.settings.accounting_start, summary=summary, rows=rows,
-            voided=voided, upcoming=[pv.segment_out(s) for s in ledger.segments if not s.begun and (s.money or s.forgiven)])
+            voided=voided, upcoming=[pv.segment_out(s) for s in ledger.segments if not s.begun and (s.money or s.forgiven or s.recalculated)])
 
     def _correction_chain(self, org_id: str, payments) -> Tuple[Dict[Any, tuple], Dict[Any, Optional[int]]]:
         """For a set of payments: ``was[id] = (receipt_no, amount)`` of the payment it corrects and ``becomes[id]`` = the receipt
@@ -414,9 +418,9 @@ class PaymentsReports:
                                 diff=totals["received"] - allocated - refunded_from - transferred_from),
             ReconciliationCheck(
                 code="charged_minus_paid_eq_debt_minus_advance",
-                left=sum(l.charged - l.paid - l.transferred_in - l.written_off + l.refunded + l.transferred_out for l in ledgers),
+                left=sum(l.charged - l.paid - l.transferred_in - l.written_off - l.recalculated + l.refunded + l.transferred_out for l in ledgers),
                 right=sum(l.debt - l.advance for l in ledgers),
-                diff=sum(l.charged - l.paid - l.transferred_in - l.written_off + l.refunded + l.transferred_out for l in ledgers)
+                diff=sum(l.charged - l.paid - l.transferred_in - l.written_off - l.recalculated + l.refunded + l.transferred_out for l in ledgers)
                 - sum(l.debt - l.advance for l in ledgers)),
             ReconciliationCheck(code="transfers_net_zero", left=sum(l.transferred_out for l in ledgers),
                                 right=sum(l.transferred_in for l in ledgers),

@@ -8,6 +8,7 @@
   "excuse_deadline_days": 5,
   "excuse_deadline_lessons": 2,
   "admin_can_manage": false,
+  "centre_cancel_recalc": false,
   "accounting_start_date": "2026-10-01",
   "updated_by": "Арслан",
   "updated_at": "2026-10-01T08:00:00",

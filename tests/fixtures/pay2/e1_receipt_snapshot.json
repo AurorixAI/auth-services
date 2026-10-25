@@ -39,5 +39,6 @@
     "amount": 500000,
     "source": "group"
   },
-  "mode": "calendar"
+  "mode": "calendar",
+  "recalc": []
 }

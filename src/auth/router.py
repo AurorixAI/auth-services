@@ -35,6 +35,7 @@ from .student_archive import (
 )
 from . import import_limits, import_ops, import_service, xlsx_style
 from .ops_router import router as ops_router
+from .days_off_router import router as days_off_router
 from .ops_rules import GroupArchivedForEnrolment, OpsError
 from .ops_schemas import (
     AcceptInviteRequestB,
@@ -1811,3 +1812,4 @@ def cancel_missed_group_attendance(
 
 # LOGIC-B: the new operations routes (lesson teacher, group archive, staff handover / restore).
 router.include_router(ops_router)
+router.include_router(days_off_router)  # PAY-F: «Выходной день центра»

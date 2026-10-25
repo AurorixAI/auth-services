@@ -68,6 +68,7 @@ from .models import (
     GroupScheduleAudit,
 )
 from .schemas import (
+    DEFAULT_CANCELLATION_KIND,
     OrgApplicationRequest,
     LoginRequest,
     UserResponse,
@@ -5503,6 +5504,7 @@ class AuthService:
             marked_by=cancelled_by,
             started_at=None,
             cancellation_reason=req.cancellationReason,
+            cancellation_kind=req.cancellationKind or DEFAULT_CANCELLATION_KIND,
         )
         self.db.add(attendance)
         self.db.flush()
@@ -5740,6 +5742,7 @@ class AuthService:
         marked_by: Optional[str],
         is_org_admin: bool,
         is_org_manager: bool = False,
+        day_off_id: Optional[Any] = None,  # PAY-F: the day off of the centre that cancels the lesson ("org_days_off")
     ) -> Dict[str, Any]:
         """Сохранить полный проверенный снимок отметок одного экземпляра урока.
 
@@ -5762,6 +5765,7 @@ class AuthService:
         target_lesson_id = req.lessonId or f"lesson_{lesson_date.isoformat()}"
         requested_status = req.status.value
         is_cancellation = requested_status == LessonAttendanceStatus.CANCELLED.value
+        cancellation_kind = (req.cancellationKind or DEFAULT_CANCELLATION_KIND) if is_cancellation else None  # PAY-F
         att = (
             self.db.query(GroupAttendance)
             .filter(
@@ -5895,6 +5899,8 @@ class AuthService:
                 raise ValueError("Для отмены урока укажите причину")
         elif req.cancellationReason:
             raise ValueError("Причина отмены передаётся только для отменённого урока")
+        elif req.cancellationKind:
+            raise ValueError("Вид отмены передаётся только для отменённого урока")
         if requested_status == LessonAttendanceStatus.COMPLETED.value:
             missing_student_ids = roster_student_ids - set(records)
             if missing_student_ids:
@@ -5980,6 +5986,8 @@ class AuthService:
                 started_at=None,
                 completed_at=now if requested_status == LessonAttendanceStatus.COMPLETED.value else None,
                 cancellation_reason=req.cancellationReason if is_cancellation else None,
+                cancellation_kind=cancellation_kind,
+                day_off_id=day_off_id,
             )
             self.db.add(att)
             action = "cancelled" if is_cancellation else "created"
@@ -5997,6 +6005,9 @@ class AuthService:
             else:
                 att.completed_at = None
             att.cancellation_reason = req.cancellationReason if is_cancellation else None
+            if is_cancellation and before_status != LessonAttendanceStatus.CANCELLED.value:
+                att.cancellation_kind = cancellation_kind
+                att.day_off_id = day_off_id
             action = (
                 "reconciliation_cancelled"
                 if is_cancellation and is_reconciliation_cancellation

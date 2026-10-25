@@ -180,7 +180,7 @@ def charge_words(segment) -> Tuple[str, str]:
         part = ""
     span = f"{tx.ddmm(segment.period_from)}–{tx.ddmm(segment.period_to)}"
     if segment.kind == "package":
-        return f"Пакет уроков {span}{f' ({part})' if part else ''}", sub
+        return f"{tx.mode_title('lessons')} {span}{f' ({part})' if part else ''}", sub
     if is_calendar_month_period(segment.period_from, segment.period_to):
         key = month_key(segment.period_from)
         partial = bool(segment.days_text) or segment.basis in ("lessons", "days")
@@ -306,6 +306,8 @@ def build_entries(rows: Sequence, upcoming: Iterable = ()) -> List[Entry]:
             title = f"Возврат аванса — {lower_method(d.method)}{f' · {d.created_by_name}' if d.created_by_name else ''}"
             out.append(Entry(title=title, sub=f"причина: {d.reason}" if d.reason else None, charged=None,
                              paid=-int(row.outflow), **base))
+        elif row.type == "recalc":     # PAY-F: «Перерасчёт: урок 21.10 отменён центром» - money off the next payment, like a write-off
+            out.append(Entry(title=row.title, sub=d.recalc.text if d.recalc else None, charged=None, paid=int(row.credit), **base))
         elif row.type == "transfer_in":
             out.append(Entry(title=row.title, sub=None, charged=None, paid=int(row.credit), **base))
         elif row.type == "transfer_out":
@@ -321,7 +323,7 @@ def build_entries(rows: Sequence, upcoming: Iterable = ()) -> List[Entry]:
 STATEMENT_TYPE_LABEL = {
     "charge": "Стоимость", "payment": "Оплата", "writeoff": "Долг прощён", "refund": "Возврат", "transfer_in": "Перенос из группы",
     "transfer_out": "Перенос в группу", "opening_debt": "Долг на начало учёта", "opening_paid_until": "Оплачено до начала учёта",
-    "pause": "Пауза",
+    "pause": "Пауза", "recalc": "Перерасчёт",
 }
 
 
@@ -389,11 +391,11 @@ def upcoming_line(segment) -> str:
 
 
 def total_lines(summary) -> List[Tuple[str, object]]:
-    """The tiles above the statement (``statementTotals``): Стоимость обучения · Оплачено · (Перенесено из групп · Прощено ·
+    """The tiles above the statement (``statementTotals``): Стоимость обучения · Оплачено · (Перенесено из групп · Прощено · Перерасчёт ·
     Возвращено · Перенесено в группы, only when there is something) · Баланс.  The balance is text («Долг 92 000»)."""
     out: List[Tuple[str, object]] = [("Стоимость обучения", int(summary.charged)), ("Оплачено", int(summary.paid))]
     for label, value in (("Перенесено из групп", summary.transferred_in), ("Прощено", summary.written_off),
-                         ("Возвращено", summary.refunded), ("Перенесено в группы", summary.transferred_out)):
+                         ("Перерасчёт", summary.recalculated), ("Возвращено", summary.refunded), ("Перенесено в группы", summary.transferred_out)):
         if int(value) > 0:
             out.append((label, int(value)))
     out.append(("Баланс", balance_cell(int(summary.advance) - int(summary.debt))[1]))
