@@ -986,7 +986,9 @@ def _recalc_lines(inp: LedgerInput, gen: "_Gen", segments: Sequence[Segment], fo
                 # the full month by the schedule is the divisor
                 unit[seg.id] = round_1000(seg.price.amount * bearable[seg.id], seg.lessons_in_period * seg.amount)
             else:
-                count = sum(1 for d in gen.pattern_days(seg.period_start, seg.period_end, regular=seg.by_cell and gen.regular(seg.period_start)) if d in inside)
+                # the price of the month is the price of the REGULAR schedule: an extra one-off lesson of the period never cheapens the deducted lesson
+                # (the recalculation is new, so there is no earlier rule to keep - unlike the share of a partial period, see REGULAR_SCHEDULE_FROM)
+                count = sum(1 for d in gen.pattern_days(seg.period_start, seg.period_end, regular=True) if d in inside)
                 unit[seg.id] = round_1000(bearable[seg.id], count) if count else 0
         amount = min(unit[seg.id], left[seg.id])
         if amount <= 0:

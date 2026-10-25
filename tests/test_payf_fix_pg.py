@@ -108,8 +108,8 @@ def test_3_an_extra_one_off_lesson_costs_nothing_and_two_cancellations_of_a_day_
     assert kind_of(w, g, "2026-10-28", extra) == "centre"
     assert recalc_days(w, m) == [] and row_of(w, s)["debt"] == 600_000
     cancel(w, g, "lesson-wed", "2026-10-28")                                                  # the regular lesson of the same day
-    # exactly one line.  Its price is 600 000 / 14: the extra lesson is still in the DENOMINATOR of the month (an old feature of the proration, not touched here)
-    assert recalc_days(w, m) == ["2026-10-28"] and row_of(w, s)["debt"] == 600_000 - 43_000 == 557_000
+    # exactly one line, priced by the REGULAR schedule (600 000 / 13): the extra lesson of the period does not cheapen the deducted lesson
+    assert recalc_days(w, m) == ["2026-10-28"] and row_of(w, s)["debt"] == 600_000 - 46_000 == 554_000
 
 
 def test_3_the_copy_of_a_moved_lesson_is_in_the_price_when_the_centre_cancels_it(pg_session, clock):
