@@ -34,6 +34,12 @@ from src.auth.payments_router import router as payments_router
 from src.auth.payroll_router import router as payroll_router
 from src.api.internal_router import router as internal_router
 
+# Platform console (pack «Консоль-1»): /api/v1/platform/*, the public demo request, «Задать пароль» by link
+from src.auth import platform_errors
+from src.auth.platform_router import router as platform_router
+from src.auth.demo_requests_router import router as demo_requests_router
+from src.auth.password_links_router import router as password_links_router
+
 # Настройка логирования через structlog
 from src.core.middleware import configure_logging, RequestIDMiddleware
 configure_logging(is_development=os.getenv("APP_ENV", "production") == "development")
@@ -204,6 +210,10 @@ app.include_router(attendance_excuses_router, prefix="/api/v1")
 app.include_router(payments_router, prefix="/api/v1")
 app.include_router(payroll_router, prefix="/api/v1")
 app.include_router(internal_router, prefix="/api/v1")
+platform_errors.register(app)  # PlatformError -> {"detail", "code"}; Russian 422 for the new routes only
+app.include_router(platform_router, prefix="/api/v1")
+app.include_router(demo_requests_router, prefix="/api/v1")
+app.include_router(password_links_router, prefix="/api/v1")
 # analytics_router removed — analytics live in diagnostic-service (port 8002)
 
 # ─── Dev Router (quick login) — dev environment only, never in staging/prod ───

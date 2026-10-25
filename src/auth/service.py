@@ -611,6 +611,8 @@ class AuthService:
         password_ok = verify_password(request.password, user.password_hash if user else _DUMMY_PASSWORD_HASH)
         if not user or not user.is_active or not password_ok:
             raise InvalidCredentialsError()
+        from .platform_blocks import ensure_login_allowed  # a console account / a blocked centre never gets a session
+        ensure_login_allowed(self.db, user)
 
         user.last_login_at = datetime.now(timezone.utc)
         user.login_count = (user.login_count or 0) + 1

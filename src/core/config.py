@@ -63,12 +63,16 @@ class Settings(BaseSettings):
     internal_service_token: str = ""
 
     # ── Organization onboarding ───────────────────────────────────────────────
-    # When True, a new org application is activated immediately (owner can log
+    # (Default is now False.) When True, a new org application is activated immediately (owner can log
     # in right away with the credentials they registered with) instead of
     # sitting in "pending" for manual admin review. The manual review path
     # (approve_organization / approve_org.sh) stays fully functional — flip
     # this back to False to require it again, no code changes needed.
-    auto_approve_organizations: bool = Field(default=True)
+    auto_approve_organizations: bool = Field(default=False)  # off since the console (pack «Консоль-1»): access is by invitation
+
+    # Self-registration is closed: ``POST /auth/apply`` answers 410 «Регистрация по приглашению — оставьте заявку на демо»
+    # (access comes from a demo request approved in the console). ``SELF_REGISTRATION_CLOSED=false`` reopens the old route.
+    self_registration_closed: bool = Field(default=True)
 
     # ── CORS ──────────────────────────────────────────────────────────────────
     cors_origins: List[str] = [

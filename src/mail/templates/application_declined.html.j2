@@ -1,0 +1,19 @@
+{% extends "_layout.html.j2" %}
+{% from "_macros.html.j2" import p, small %}
+{% block preheader %}Мы рассмотрели вашу заявку на доступ к ALGO.{% endblock %}
+{% block title %}Заявка рассмотрена{% endblock %}
+{% block content %}
+{% call p() %}{% if greeting %}Здравствуйте, {{ greeting }}!{% else %}Здравствуйте!{% endif %}{% endcall %}
+{% call p() %}Благодарим вас за интерес к ALGO и за время, которое вы уделили заявке центра <strong class="ink" style="color:#0f172a;">«{{ centre_name }}»</strong>.{% endcall %}
+{% call p() %}Мы внимательно её рассмотрели. К сожалению, сейчас мы не можем открыть вам доступ к платформе.{% endcall %}
+{% if reason %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel" style="margin:8px 0 20px 0;background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;">
+  <tr><td style="padding:18px 22px;font-family:Inter,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+    <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#64748b;margin-bottom:6px;">Комментарий команды</div>
+    <div class="text" style="font-size:15px;line-height:23px;color:#334155;white-space:pre-line;">{{ reason }}</div>
+  </td></tr>
+</table>
+{% endif %}
+{% call p() %}Если ситуация изменится, вы всегда можете оставить новую заявку на <a class="link" href="{{ site_url }}" style="color:#2563eb;">algolab.me</a> или просто ответить на это письмо — мы с радостью вернёмся к разговору.{% endcall %}
+{% endblock %}
+{% block footer_reason %}Вы получили это письмо, потому что оставили заявку на доступ к ALGO на сайте algolab.me.{% endblock %}

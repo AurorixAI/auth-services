@@ -1,0 +1,14 @@
+{% extends "_layout.html.j2" %}
+{% from "_macros.html.j2" import p, small, button, url_fallback %}
+{% block preheader %}Ваша заявка одобрена. Осталось задать пароль — и можно входить.{% endblock %}
+{% block title %}Добро пожаловать в ALGO{% endblock %}
+{% block content %}
+{% call p() %}{% if greeting %}Здравствуйте, {{ greeting }}!{% else %}Здравствуйте!{% endif %}{% endcall %}
+{% call p() %}Рады пригласить центр <strong class="ink" style="color:#0f172a;">«{{ centre_name }}»</strong> в ALGO. Мы подготовили для вас кабинет владельца — осталось задать пароль.{% endcall %}
+{{ button(cta_url, "Задать пароль и войти") }}
+{% call small() %}Ссылка персональная и действует {{ expires_phrase }} — до {{ expires_text }} (по Ташкенту). Открыть её можно один раз.{% endcall %}
+{% call small() %}Если ссылка истекла — просто ответьте на это письмо, и мы пришлём новую.{% endcall %}
+{% if email %}{% call small() %}Ваша почта для входа: <strong class="ink" style="color:#0f172a;">{{ email }}</strong>{% endcall %}{% endif %}
+{{ url_fallback(cta_url) }}
+{% endblock %}
+{% block footer_reason %}Вы получили это письмо, потому что для центра «{{ centre_name }}» создан доступ в ALGO.{% endblock %}

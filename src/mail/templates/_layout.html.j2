@@ -1,0 +1,73 @@
+{#- ALGO letter layout: table based, inline CSS, 600 px, mobile, light and dark.  Brand: Inter, #2563eb -> #1d4ed8 mark with the integral sign, slate ink, #eff3f8 canvas. -#}
+<!DOCTYPE html>
+<html lang="ru" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>{{ subject }}</title>
+<style>
+  body, table, td, a { -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }
+  table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; }
+  img { border:0; outline:none; text-decoration:none; }
+  a { color:#2563eb; }
+  @media only screen and (max-width: 620px) {
+    .container { width:100% !important; }
+    .px { padding-left:22px !important; padding-right:22px !important; }
+    .h1 { font-size:26px !important; line-height:32px !important; }
+    .btn-cell { display:block !important; width:100% !important; }
+    .btn-link { display:block !important; padding:16px 12px !important; }
+    .stack { display:block !important; width:100% !important; }
+    .lbl { padding:12px 22px 0 22px !important; }
+    .val { padding:2px 22px 12px 22px !important; }
+  }
+  @media (prefers-color-scheme: dark) {
+    .canvas { background-color:#0b1220 !important; }
+    .card { background-color:#111a2e !important; border-color:#1e2a44 !important; }
+    .ink { color:#f1f5f9 !important; }
+    .text { color:#cbd5e1 !important; }
+    .muted { color:#94a3b8 !important; }
+    .rule { border-color:#1e2a44 !important; background-color:#1e2a44 !important; }
+    .panel { background-color:#16223b !important; border-color:#24324f !important; }
+    a.link { color:#7db1ff !important; }
+  }
+</style>
+</head>
+<body class="canvas" style="margin:0;padding:0;background-color:#eff3f8;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px;">{% block preheader %}{% endblock %}&#8199;&zwnj;&#8199;&zwnj;&#8199;&zwnj;&#8199;&zwnj;&#8199;&zwnj;</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="canvas" style="background-color:#eff3f8;">
+<tr><td align="center" style="padding:32px 12px 40px 12px;">
+
+  <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;">
+    <tr><td style="padding:0 4px 18px 4px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+        <td width="44" height="44" align="center" valign="middle" bgcolor="#2563eb" style="width:44px;height:44px;background-color:#2563eb;background-image:linear-gradient(135deg,#3b82f6,#1d4ed8);border-radius:12px;color:#ffffff;font-family:Georgia,'Times New Roman',serif;font-size:26px;font-weight:bold;line-height:44px;">&#8747;</td>
+        <td valign="middle" class="ink" style="padding-left:12px;font-family:Inter,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:22px;font-weight:700;letter-spacing:0.6px;color:#0f172a;">ALGO</td>
+      </tr></table>
+    </td></tr>
+  </table>
+
+  <table role="presentation" class="container card" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e2e8f0;border-radius:20px;">
+    <tr><td class="px" style="padding:44px 48px 8px 48px;font-family:Inter,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+      <h1 class="h1 ink" style="margin:0 0 20px 0;font-size:30px;line-height:36px;font-weight:700;color:#0f172a;letter-spacing:-0.3px;">{% block title %}{% endblock %}</h1>
+      {% block content %}{% endblock %}
+    </td></tr>
+    <tr><td class="px" style="padding:8px 48px 40px 48px;font-family:Inter,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td class="rule" height="1" style="height:1px;line-height:1px;font-size:1px;background-color:#e2e8f0;border-top:1px solid #e2e8f0;">&nbsp;</td></tr></table>
+      <p class="text" style="margin:24px 0 2px 0;font-size:16px;line-height:24px;color:#334155;">С уважением,</p>
+      <p class="ink" style="margin:0;font-size:16px;line-height:24px;font-weight:600;color:#0f172a;">Команда ALGO</p>
+    </td></tr>
+  </table>
+
+  <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;">
+    <tr><td class="px" align="center" style="padding:24px 24px 0 24px;font-family:Inter,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+      <p class="muted" style="margin:0 0 8px 0;font-size:13px;line-height:20px;color:#64748b;">{% block footer_reason %}{% endblock %}</p>
+      <p class="muted" style="margin:0;font-size:13px;line-height:20px;color:#64748b;"><a class="link" href="{{ site_url }}" style="color:#2563eb;text-decoration:none;">algolab.me</a> &middot; ALGO &mdash; платформа для учебных центров</p>
+    </td></tr>
+  </table>
+
+</td></tr>
+</table>
+</body>
+</html>

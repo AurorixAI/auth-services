@@ -73,6 +73,7 @@ from .cookies import (
     set_auth_cookies,
 )
 from .dependencies import security
+from .platform_errors import PlatformError
 from .schemas import (
     OrgApplicationRequest,
     LoginRequest,
@@ -215,7 +216,15 @@ def _throttle_apply(http_request: Request, email: str) -> None:
             )
 
 
-@router.post("/apply", response_model=OrgApplicationPendingResponse, status_code=201)
+def _registration_closed() -> None:
+    """Self-registration is closed (a dependency: the answer does not depend on the body)."""
+    if get_settings().self_registration_closed:
+        raise PlatformError(410, "Регистрация по приглашению — оставьте заявку на демо", "registration_closed")
+
+
+@router.post(
+    "/apply", response_model=OrgApplicationPendingResponse, status_code=201, dependencies=[Depends(_registration_closed)]
+)
 def apply_organization(
     request: OrgApplicationRequest,
     http_request: Request,
@@ -228,6 +237,9 @@ def apply_organization(
     здесь не выдаются (это не логин), только подтверждение регистрации.
     Ручной режим одобрения (approve_organization / approve_org.sh) остаётся
     рабочим — если флаг выключить, поведение вернётся к статусу pending.
+
+    С консолью (пакет «Консоль-1») самостоятельная регистрация закрыта: 410, доступ — по заявке на демо.
+    ``SELF_REGISTRATION_CLOSED=false`` возвращает прежнее поведение.
     """
     _throttle_apply(http_request, request.email)
     try:

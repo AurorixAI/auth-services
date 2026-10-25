@@ -151,6 +151,12 @@ def get_current_active_user_payload(
             detail="Организация недоступна",
         )
 
+    if organisation.blocked_at is not None:  # blocked from the platform console (pack «Консоль-1»)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ центра приостановлен. Свяжитесь с ALGO",
+        )
+
     resolved["org_id"] = str(organisation.id)
     resolved["org_role"] = membership.org_role
     return resolved

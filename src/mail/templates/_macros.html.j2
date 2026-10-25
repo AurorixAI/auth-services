@@ -1,0 +1,20 @@
+{#- One big bulletproof button (a table cell: renders in Outlook too).  `url` is escaped by autoescape. -#}
+{% macro button(url, label) -%}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:28px 0 8px 0;"><tr>
+  <td class="btn-cell" align="center" bgcolor="#2563eb" style="background-color:#2563eb;background-image:linear-gradient(135deg,#3b82f6,#1d4ed8);border-radius:14px;">
+    <a class="btn-link" href="{{ url }}" target="_blank" style="display:inline-block;padding:18px 40px;font-family:Inter,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:17px;line-height:22px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:14px;">{{ label }}</a>
+  </td>
+</tr></table>
+{%- endmacro %}
+
+{% macro p(class_="text") -%}
+<p class="{{ class_ }}" style="margin:0 0 16px 0;font-size:16px;line-height:26px;color:#334155;">{{ caller() }}</p>
+{%- endmacro %}
+
+{% macro small() -%}
+<p class="muted" style="margin:0 0 12px 0;font-size:14px;line-height:22px;color:#64748b;">{{ caller() }}</p>
+{%- endmacro %}
+
+{% macro url_fallback(url) -%}
+<p class="muted" style="margin:16px 0 0 0;font-size:13px;line-height:20px;color:#64748b;word-break:break-all;">Если кнопка не открывается, скопируйте ссылку в браузер:<br><a class="link" href="{{ url }}" style="color:#2563eb;text-decoration:underline;">{{ url }}</a></p>
+{%- endmacro %}
