@@ -284,14 +284,15 @@ def test_reset_of_a_staff_password_forces_a_change_and_ends_the_sessions(cw):
 
 
 def test_the_journal_lists_filters_and_paginates(cw):
-    centre = cw.make_centre("Журнал")
+    tag = uuid4().hex[:8]
+    centre = cw.make_centre(f"Журнал {tag}")
     cw.client.post(f"{API}/orgs/{centre.org.id}/block", json={"reason": "Нарушение условий"})
     cw.client.post(f"{API}/orgs/{centre.org.id}/unblock", json={})
     cw.client.patch(f"{API}/orgs/{centre.org.id}/limits", json={"max_students": 77})
     j = cw.client.get(f"{API}/audit").json()
     assert j["total"] >= 4 and j["items"][0]["created_at"] >= j["items"][-1]["created_at"]
     row = next(i for i in j["items"] if i["action"] == "org.blocked")
-    assert row["label"] == "Центр заблокирован" and row["target_type"] == "org" and row["target_label"] == "Журнал"
+    assert row["label"] == "Центр заблокирован" and row["target_type"] == "org" and row["target_label"] == f"Журнал {tag}"
     assert row["actor"]["email"] == cw.owner.email and row["reason"] == "Нарушение условий" and row["ip"] is not None
     only = cw.client.get(f"{API}/audit", params={"action": "org.blocked,org.unblocked", "target_id": str(centre.org.id)}).json()
     assert [i["action"] for i in only["items"]] == ["org.unblocked", "org.blocked"]

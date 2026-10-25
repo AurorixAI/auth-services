@@ -62,10 +62,10 @@ def test_without_the_right_the_requests_are_403(cw):
 
 def test_list_filters_search_sort_and_pages(cw):
     now = utcnow()
-    a = lead(cw, centre_name="Альфа школа", city="Ташкент", email="a@example.test", contact_name="Сидоров Пётр")
+    a = lead(cw, centre_name="Альфа школа", city="Ташкент", email="zz-a@example.test", contact_name="Сидоров Пётр")
     b = lead(cw, centre_name="Бета центр", city="Самарканд", status="contacted", source={"utm_source": "google"}, created_at=now - timedelta(days=3))
     c = lead(cw, centre_name="Гамма курсы", city="Самарканд", status="spam", created_at=now - timedelta(days=10))
-    d = lead(cw, centre_name="Дельта", city="Бухара", email="a@example.test", phone="+998935550000")   # a repeat of a@example.test
+    d = lead(cw, centre_name="Дельта", city="Бухара", email="zz-a@example.test", phone="+998935550000")   # a repeat of zz-a@example.test
     assert d.is_repeat is True
     get = lambda **q: cw.client.get(URL, params=q).json()  # noqa: E731
 
@@ -77,7 +77,7 @@ def test_list_filters_search_sort_and_pages(cw):
     assert [i["centre_name"] for i in get(status="contacted,spam")["items"]] == ["Бета центр", "Гамма курсы"]
     assert get(city="самарканд")["total"] == 2
     assert [i["centre_name"] for i in get(q="сидоров")["items"]] == ["Альфа школа"]
-    assert get(q="935550000")["total"] == 1 and get(q="a@example")["total"] == 2
+    assert get(q="935550000")["total"] == 1 and get(q="zz-a@")["total"] == 2
     assert get(q="%")["total"] == 0                                                        # a LIKE wildcard is text, not a pattern
     assert [i["centre_name"] for i in get(source="google")["items"]] == ["Бета центр"]
     assert [i["centre_name"] for i in get(repeat="true")["items"]] == ["Дельта"]
@@ -135,14 +135,15 @@ def approve_setup(cw, **kw):
 
 
 def test_approve_creates_the_centre_the_owner_the_link_and_the_letter(cw):
-    row, c = approve_setup(cw, centre_name="Учебный центр Альфа")
+    name = f"Учебный центр Альфа {uuid4().hex[:6]}"
+    row, c = approve_setup(cw, centre_name=name)
     r = c.post(f"{URL}/{row.id}/approve", json={})
     assert r.status_code == 200, r.text
     j = r.json()
-    assert j["org"]["name"] == "Учебный центр Альфа" and j["owner"]["email"] == row.email and j["invite"]["email_sent"] is True
+    assert j["org"]["name"] == name and j["owner"]["email"] == row.email and j["invite"]["email_sent"] is True
     assert j["request"]["status"] == "approved" and j["request"]["org_id"] == j["org"]["id"]
 
-    org = cw.db.query(Organization).filter_by(name="Учебный центр Альфа").one()
+    org = cw.db.query(Organization).filter_by(name=name).one()
     owner = cw.db.query(User).filter_by(email=row.email).one()
     assert (org.status, org.blocked_at, org.city, org.owner_id) == ("active", None, "Ташкент", owner.id)
     assert (owner.role, owner.default_org_id, owner.is_active, owner.must_change_password) == ("owner", org.id, True, False)
@@ -171,18 +172,20 @@ def test_approve_creates_the_centre_the_owner_the_link_and_the_letter(cw):
 
 
 def test_a_double_click_makes_one_centre(cw):
-    row, c = approve_setup(cw, centre_name="Двойной клик")
+    name = f"Двойной клик {uuid4().hex[:6]}"
+    row, c = approve_setup(cw, centre_name=name)
     first = c.post(f"{URL}/{row.id}/approve", json={})
     second = c.post(f"{URL}/{row.id}/approve", json={})
     assert (first.status_code, second.status_code) == (200, 409) and second.json()["code"] == "already_processed"
-    assert cw.db.query(Organization).filter_by(name="Двойной клик").count() == 1
+    assert cw.db.query(Organization).filter_by(name=name).count() == 1
     assert cw.db.query(User).filter_by(email=row.email).count() == 1 and len(letters_to(cw.outbox, row.email)) == 1
     assert len(audit_rows(cw.db, "demo_request.approved", target_id=str(row.id))) == 1
 
 
 def test_two_clicks_at_the_same_moment_make_one_centre(cw):
     """Two requests in flight at once, each with its own database session: the row lock lets only one through."""
-    row, _ = approve_setup(cw, centre_name="Одновременно")
+    name = f"Одновременно {uuid4().hex[:6]}"
+    row, _ = approve_setup(cw, centre_name=name)
     cookie = cw.make_staff(["requests.manage"])
     token_holder = {}
     clients = [cw.signed_in(cookie), cw.signed_in(cookie)]
@@ -209,7 +212,7 @@ def test_two_clicks_at_the_same_moment_make_one_centre(cw):
     [t.join() for t in threads]
     assert sorted(results) == [200, 409], results
     cw.db.expire_all()
-    assert cw.db.query(Organization).filter_by(name="Одновременно").count() == 1
+    assert cw.db.query(Organization).filter_by(name=name).count() == 1
 
 
 def test_approve_twice_or_after_decline_is_409(cw):
@@ -225,19 +228,20 @@ def test_approve_twice_or_after_decline_is_409(cw):
 
 def test_an_owner_email_that_exists_is_409_and_nothing_is_created(cw):
     existing = cw.make_centre()
-    row, c = approve_setup(cw, email=existing.owner.email.upper(), centre_name="Не создаётся")
+    name = f"Не создаётся {uuid4().hex[:6]}"
+    row, c = approve_setup(cw, email=existing.owner.email.upper(), centre_name=name)
     r = c.post(f"{URL}/{row.id}/approve", json={})
     assert r.status_code == 409 and r.json()["code"] == "email_in_use" and "другую почту" in r.json()["detail"]
     cw.db.expire_all()
-    assert cw.db.get(DemoRequest, row.id).status == "new" and cw.db.query(Organization).filter_by(name="Не создаётся").count() == 0
+    assert cw.db.get(DemoRequest, row.id).status == "new" and cw.db.query(Organization).filter_by(name=name).count() == 0
     assert letters_to(cw.outbox, existing.owner.email) == [] and audit_rows(cw.db, "demo_request.approved") == []
     # a console account's address is taken too
     staff_mail = cw.owner.email
     row2, c2 = approve_setup(cw, email=staff_mail)
     assert c2.post(f"{URL}/{row2.id}/approve", json={}).json()["code"] == "email_in_use"
     # ... and the team can name another address for the owner
-    r = c2.post(f"{URL}/{row2.id}/approve", json={"owner_email": f"other-{uuid4().hex[:6]}@example.test", "org_name": "Новое имя", "owner_first_name": "Пётр", "owner_last_name": "Петров"})
-    assert r.status_code == 200 and r.json()["org"]["name"] == "Новое имя" and r.json()["owner"]["name"] == "Пётр Петров"
+    r = c2.post(f"{URL}/{row2.id}/approve", json={"owner_email": f"other-{uuid4().hex[:6]}@example.test", "org_name": f"Новое имя {uuid4().hex[:6]}", "owner_first_name": "Пётр", "owner_last_name": "Петров"})
+    assert r.status_code == 200 and r.json()["org"]["name"].startswith("Новое имя") and r.json()["owner"]["name"] == "Пётр Петров"
     assert "Здравствуйте, Пётр!" in body_of(letters_to(cw.outbox, r.json()["owner"]["email"])[0])
 
 
@@ -245,10 +249,11 @@ def test_the_centre_exists_even_if_the_letter_did_not_go(cw, monkeypatch):
     from src.mail import sender
 
     monkeypatch.setattr(sender, "deliver", lambda msg, cfg=None: False)
-    row, c = approve_setup(cw, centre_name="Без письма")
+    name = f"Без письма {uuid4().hex[:6]}"
+    row, c = approve_setup(cw, centre_name=name)
     r = c.post(f"{URL}/{row.id}/approve", json={})
     assert r.status_code == 200 and r.json()["invite"]["email_sent"] is False
-    assert cw.db.query(Organization).filter_by(name="Без письма").count() == 1
+    assert cw.db.query(Organization).filter_by(name=name).count() == 1
     assert audit_rows(cw.db, "demo_request.approved")[0].details["email_sent"] is False
 
 

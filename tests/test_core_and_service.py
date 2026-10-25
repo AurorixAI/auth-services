@@ -897,7 +897,8 @@ class TestAuthServiceExtended:
         user.password_hash = hash_password("good_password")
         user.to_dict.return_value = self._user_dict(user)
         db.query.return_value.filter.return_value.first.return_value = user
-        result = service.login(LoginRequest(email="u@t.kz", password="good_password"))
+        with patch("src.auth.platform_blocks.ensure_login_allowed"):  # the console account / blocked centre check has its own tests
+            result = service.login(LoginRequest(email="u@t.kz", password="good_password"))
         assert isinstance(result, AuthResponse)
         assert result.tokens.access_token
         assert user.login_count == 1

@@ -26,7 +26,7 @@ def _query_with(value):
     return query
 
 
-def _resolve(*, token_role="admin", user_role="admin", member_role="admin", member=True, org=True, user=True):
+def _resolve(*, token_role="admin", user_role="admin", member_role="admin", member=True, org=True, user=True, blocked=False):
     from src.auth.dependencies import get_current_active_user_payload
 
     user_id = uuid4()
@@ -44,7 +44,7 @@ def _resolve(*, token_role="admin", user_role="admin", member_role="admin", memb
         else None
     )
     current_member = SimpleNamespace(org_role=member_role) if member else None
-    current_org = SimpleNamespace(id=org_id, status="active") if org else None
+    current_org = SimpleNamespace(id=org_id, status="active", blocked_at=("2026-10-25" if blocked else None)) if org else None
     db = MagicMock()
     db.query.side_effect = [
         _query_with(current_user),
@@ -75,6 +75,14 @@ def test_disabled_account_loses_access_before_jwt_expiry():
 
     assert exc.value.status_code == 401
     assert exc.value.detail == "Учётная запись отключена или не найдена"
+
+
+def test_an_organisation_blocked_from_the_console_loses_access_at_once():
+    with pytest.raises(HTTPException) as exc:
+        _resolve(blocked=True)
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Доступ центра приостановлен. Свяжитесь с ALGO"
 
 
 def test_suspended_organisation_loses_access_before_jwt_expiry():

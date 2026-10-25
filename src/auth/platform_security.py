@@ -8,6 +8,12 @@ and the dependencies every ``/api/v1/platform`` route is built on.
   (``sid``); the row decides (revoked / expired / staff disabled close the session at once).
 * **Cookie** ``algo_console_session``: host-only, ``HttpOnly``, ``SameSite=Strict``, ``Secure`` on staging/production, 12 h.
 * **Origin**: an unsafe request that carries ``Origin`` must come from a console host.
+
+«Войти как» (pack K4) plugs in here without touching this module's contract: ``Principal`` carries the staff member, his role, his permissions
+(``impersonate.view`` / ``impersonate.write`` are already in the catalogue) and the ``platform_sessions`` row; K4 adds a table of one-time codes
+(60 s, one use, bound to ``session.id``, the target user, the reason and the mode), a console route that issues one under
+``require_platform("impersonate.view")``, and a cabinet route that exchanges it for an ordinary cabinet session marked «служебная»
+(≤ 1 h; the view mode is enforced in ``dependencies.get_current_active_user_payload``). Every step is one ``platform_audit`` row.
 """
 from __future__ import annotations
 

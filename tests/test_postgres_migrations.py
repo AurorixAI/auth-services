@@ -13,6 +13,13 @@ from sqlalchemy.orm import Session
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
+
+
+def legacy_add(db,model,**values):
+    """Insert a row of ``model`` through Core, with the columns given plus the model's own defaults.  The DB of this test sits at many
+    revisions: an ORM insert names EVERY mapped column, also the ones of revisions newer than the one the DB is at (the console pack added
+    ``users.platform_block*`` and ``organizations.blocked_*``); Core names only what it is given."""
+    db.execute(model.__table__.insert().values(**values))
 HEAD='cn1a2b3c4d5'          # console pack «Консоль-1», on top of sa1b2c3d4e5 (IA fix pack: student profile journal)
 LOGICB2_HEAD='lb3c4d5e6f7'  # LOGIC-B2: exam release marker, substitution requests
 LOGICB2='lb2b3c4d5e6'       # LOGIC-B (2/2): group archive, member audit, invitations
@@ -56,7 +63,7 @@ def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatc
     ids={name:uuid4() for name in ['org','group','student','membership']}
     from src.models.auth import Organization,Group,Student,StudentGroup
     with Session(engine) as db:
-        db.add(Organization(id=ids['org'],name='Migration sentinel',status='active')); db.flush()
+        legacy_add(db,Organization,id=ids['org'],name='Migration sentinel',status='active'); db.flush()
         db.add(Group(id=ids['group'],org_id=ids['org'],name='Migration group',class_level=9))
         db.add(Student(id=ids['student'],org_id=ids['org'],first_name='Synthetic',last_name='Migration',class_level=9,status='active'))
         db.flush()
@@ -98,7 +105,7 @@ def _check_n13_p1_objects(engine,config,ids):
     from src.models.auth import User
     teacher,att,exc_id=uuid4(),uuid4(),uuid4()
     with Session(engine) as db:
-        db.add(User(id=teacher,email=f'{teacher}@m.invalid',password_hash='synthetic-only',first_name='T',last_name='T',role='teacher'))
+        legacy_add(db,User,id=teacher,email=f'{teacher}@m.invalid',password_hash='synthetic-only',first_name='T',last_name='T',role='teacher')
         db.commit()
     with engine.begin() as c:
         c.execute(text('UPDATE groups SET teacher_id=:t WHERE id=:g'),{'t':teacher,'g':ids['group']})
@@ -156,7 +163,7 @@ def _check_n13_p2_objects(engine,config,ids):
     from src.models.auth import User
     actor,pay=uuid4(),uuid4()
     with Session(engine) as db:
-        db.add(User(id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='P',role='owner'))
+        legacy_add(db,User,id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='P',role='owner')
         db.commit()
     params={'o':ids['org'],'m':ids['membership'],'s':ids['student'],'g':ids['group'],'u':actor,'p':pay}
     insert=("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,valid_from,valid_to,lessons_count,created_by{extra}) "
@@ -214,7 +221,7 @@ def _check_n13_p21_objects(engine,config,ids):
     from src.models.auth import User
     actor,orig,orig2,carry,carry2=uuid4(),uuid4(),uuid4(),uuid4(),uuid4()
     with Session(engine) as db:
-        db.add(User(id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='C',last_name='C',role='owner'))
+        legacy_add(db,User,id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='C',last_name='C',role='owner')
         db.commit()
     params={'o':ids['org'],'m':ids['membership'],'s':ids['student'],'g':ids['group'],'u':actor,'p':orig,'p2':orig2,'c':carry,'c2':carry2}
     insert=("INSERT INTO student_payments (id,org_id,membership_id,student_id,group_id,amount,paid_on,valid_from,valid_to,lessons_count,created_by,carried_from_payment_id) "
@@ -280,8 +287,8 @@ def _check_n13_p22_objects(engine,config,ids):
     actor=uuid4()
     org2,group2,student2,membership2=uuid4(),uuid4(),uuid4(),uuid4()
     with Session(engine) as db:
-        db.add(User(id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='R',last_name='R',role='owner'))
-        db.add(Organization(id=org2,name='Second centre',status='active')); db.flush()
+        legacy_add(db,User,id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='R',last_name='R',role='owner')
+        legacy_add(db,Organization,id=org2,name='Second centre',status='active'); db.flush()
         _group_row(db,group2,org2,'G2',9)
         db.add(Student(id=student2,org_id=org2,first_name='S',last_name='Two',class_level=9,status='active')); db.flush()
         db.add(StudentGroup(id=membership2,student_id=student2,group_id=group2)); db.commit()
@@ -367,7 +374,7 @@ def _check_n13_p3_objects(engine,config,ids):
     actor=uuid4()
     org,group=ids['org'],ids['group']
     with Session(engine) as db:
-        db.add(User(id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='3',role='owner'))
+        legacy_add(db,User,id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='3',role='owner')
         db.commit()
     def group_cols(): return {c['name'] for c in inspect(engine).get_columns('groups')}
     def tables(): return set(inspect(engine).get_table_names())
@@ -457,7 +464,7 @@ def _check_n13_archive_objects(engine,config,ids,monkeypatch):
             conn.execute(text("INSERT INTO group_audit (id,org_id,group_id,actor_id,actor_role,action,snapshot) VALUES (gen_random_uuid(),:o,:g,:a,'admin',:x,'{}'::jsonb)"),
                          {'o':org,'g':group,'a':actor,'x':action})
     with Session(engine) as db:
-        db.add(User(id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='A',last_name='R',role='owner')); db.commit()
+        legacy_add(db,User,id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='A',last_name='R',role='owner'); db.commit()
     cols=student_cols()
     assert {'archived_at','archive_reason'} <= set(cols) and cols['archived_at']['nullable'] and cols['archive_reason']['nullable']
     assert str(cols['archive_reason']['type'])=='VARCHAR(300)'
@@ -577,7 +584,7 @@ def _check_n13_invite_cancelled_objects(engine,config,ids):
     from src.models.auth import User
     org,student,creator=ids['org'],ids['student'],uuid4()
     with Session(engine) as db:
-        db.add(User(id=creator,email=f'{creator}@m.invalid',password_hash='synthetic-only',first_name='I',last_name='C',role='owner')); db.commit()
+        legacy_add(db,User,id=creator,email=f'{creator}@m.invalid',password_hash='synthetic-only',first_name='I',last_name='C',role='owner'); db.commit()
     def cols(): return {c['name']:c for c in inspect(engine).get_columns('diagnostic_invites')}
     def add(status,code,reason=None):
         """Raw SQL: the models describe the NEWEST head, the database may be at an older one."""
@@ -641,7 +648,7 @@ def _check_n13_periods_objects(engine,config,ids):
     org=ids['org']
     actor=uuid4()
     with Session(engine) as db:
-        db.add(User(id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='A',role='owner')); db.commit()
+        legacy_add(db,User,id=actor,email=f'{actor}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='A',role='owner'); db.commit()
     # --- the table as the head leaves it
     assert 'student_group_periods' in inspect(engine).get_table_names()
     c={x['name']:x for x in inspect(engine).get_columns('student_group_periods')}
@@ -785,7 +792,7 @@ def _check_n13_sessions_objects(engine,config,ids):
     def user(n,token_hash=None):
         uid=uuid4()
         with Session(engine) as db:
-            db.add(User(id=uid,email=f'sess-{n}-{uid}@m.invalid',password_hash='synthetic-only',first_name='S',last_name=str(n),role='teacher',is_active=True,refresh_token_hash=token_hash)); db.commit()
+            legacy_add(db,User,id=uid,email=f'sess-{n}-{uid}@m.invalid',password_hash='synthetic-only',first_name='S',last_name=str(n),role='teacher',is_active=True,refresh_token_hash=token_hash); db.commit()
         return uid
     def sessions_of(uid):
         with engine.connect() as conn:
@@ -884,8 +891,8 @@ def _check_n13_group_price_objects(engine,config,ids):
     from src.models.auth import Group,Organization,Student,User
     org,owner=uuid4(),uuid4()
     with Session(engine) as db:
-        db.add(Organization(id=org,name='Price migration org',status='active')); db.flush()
-        db.add(User(id=owner,email=f'{owner}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='P',role='owner')); db.commit()
+        legacy_add(db,Organization,id=org,name='Price migration org',status='active'); db.flush()
+        legacy_add(db,User,id=owner,email=f'{owner}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='P',role='owner'); db.commit()
     groups={n:uuid4() for n in ('majority','tie_date','tie_sum','all_null','inactive_only','free','empty','single','pairs')}
     with Session(engine) as db:
         for name,gid in groups.items():
@@ -1033,7 +1040,7 @@ def _check_n13_excuse_mark_objects(engine,config,ids):
     from src.models.auth import User
     user,att=uuid4(),uuid4()
     with Session(engine) as db:
-        db.add(User(id=user,email=f'{user}@m.invalid',password_hash='synthetic-only',first_name='M',last_name='M',role='admin')); db.commit()
+        legacy_add(db,User,id=user,email=f'{user}@m.invalid',password_hash='synthetic-only',first_name='M',last_name='M',role='admin'); db.commit()
     mark={'decided_after_deadline','deadline_at_decision'}
     def columns():
         return {c['name']:c for c in inspect(engine).get_columns('attendance_excuses')}
@@ -1104,9 +1111,9 @@ def _check_ux2_payroll_rates_objects(engine,config,ids):
     org2=uuid4()
     teachers={n:uuid4() for n in 'ABCD'}
     with Session(engine) as db:
-        db.add(Organization(id=org2,name='Migration second',status='active')); db.flush()
+        legacy_add(db,Organization,id=org2,name='Migration second',status='active'); db.flush()
         for name,uid in teachers.items():
-            db.add(User(id=uid,email=f'{uid}@m.invalid',password_hash='synthetic-only',first_name=name,last_name='T',role='teacher'))
+            legacy_add(db,User,id=uid,email=f'{uid}@m.invalid',password_hash='synthetic-only',first_name=name,last_name='T',role='teacher')
         db.commit()
     def tables():
         return set(inspect(engine).get_table_names())
@@ -1202,8 +1209,8 @@ def _check_pay2_objects(engine,config,ids):
     from src.models.auth import User,Organization,Group,StudentGroup
     user,org2,group_b,member_b=uuid4(),uuid4(),uuid4(),uuid4()
     with Session(engine) as db:
-        db.add(User(id=user,email=f'{user}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='A',role='owner'))
-        db.add(Organization(id=org2,name='PAY-2 second centre',status='active',settings={'payments':{'period_mode':'lessons','lessons_per_payment':8}})); db.flush()
+        legacy_add(db,User,id=user,email=f'{user}@m.invalid',password_hash='synthetic-only',first_name='P',last_name='A',role='owner')
+        legacy_add(db,Organization,id=org2,name='PAY-2 second centre',status='active',settings={'payments':{'period_mode':'lessons','lessons_per_payment':8}}); db.flush()
         _group_row(db,group_b,ids['org'],'PAY-2 group B',9); db.flush()
         db.add(StudentGroup(id=member_b,student_id=ids['student'],group_id=group_b)); db.commit()
     with engine.begin() as c:        # the earlier checks leave payments behind: start from none
@@ -1246,6 +1253,9 @@ def _check_pay2_objects(engine,config,ids):
             # the ORM of today also reads the LOGIC-B columns, which a database at PAYROLL_RATES has not got yet (rolled back below)
             c.execute(text("ALTER TABLE groups ADD COLUMN IF NOT EXISTS inactive_intervals jsonb NOT NULL DEFAULT '[]'::jsonb, ADD COLUMN IF NOT EXISTS archive_reason varchar(300), ADD COLUMN IF NOT EXISTS exam_release_pending boolean NOT NULL DEFAULT false"))
             c.execute(text("ALTER TABLE group_attendance ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1"))
+            # ... and the columns of the console pack (users.platform_block*, organizations.blocked_*)
+            c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS platform_blocked_at timestamp, ADD COLUMN IF NOT EXISTS platform_block_reason text"))
+            c.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS blocked_at timestamp, ADD COLUMN IF NOT EXISTS blocked_reason text"))
             rep=report_module.build_report(c,today=date(2026,10,21))
         finally:
             tx.rollback()
@@ -1357,8 +1367,8 @@ def _check_logic_a_objects(engine,config,ids):
     studs={k:uuid4() for k in ('closed_price','closed_plain','closed_null','active_price','closed_returned','closed_future')}
     mems={k:uuid4() for k in studs}
     with Session(engine) as db:
-        db.add(User(id=user,email=f'{user}@m.invalid',password_hash='synthetic-only',first_name='L',last_name='A',role='owner'))
-        db.add(Organization(id=org_b,name='LOGIC-A second centre',status='active',settings={'payroll':{'divisor':13}})); db.flush()
+        legacy_add(db,User,id=user,email=f'{user}@m.invalid',password_hash='synthetic-only',first_name='L',last_name='A',role='owner')
+        legacy_add(db,Organization,id=org_b,name='LOGIC-A second centre',status='active',settings={'payroll':{'divisor':13}}); db.flush()
         # raw SQL: the schema is the one BEFORE LOGIC-A and before pack B (the ORM group has columns of both, e.g. inactive_intervals)
         for gid,gname,glt in ((grp_pair,'Pair group','pair'),(grp_b,'Plain group','group')):
             db.execute(text("INSERT INTO groups (id,org_id,name,class_level,lesson_type,created_at,updated_at) VALUES (:i,:o,:n,9,:t,now(),now())"),

@@ -48,7 +48,8 @@ def test_centre_rights_are_checked_one_by_one(cw):
 
 
 def test_the_list_carries_the_health_numbers_from_the_auth_tables(cw):
-    centre = cw.make_centre("Метрики Альфа", members=("owner", "admin", "teacher"), city="Ташкент")
+    tag = uuid4().hex[:8]
+    centre = cw.make_centre(f"Метрики Альфа {tag}", members=("owner", "admin", "teacher"), city="Ташкент")
     extra_teacher = cw.make_user(first="Ещё", last="Учитель", role="teacher")
     extra_teacher.default_org_id = centre.org.id
     cw.db.add(OrganizationMember(org_id=centre.org.id, user_id=extra_teacher.id, org_role="teacher"))
@@ -62,10 +63,10 @@ def test_the_list_carries_the_health_numbers_from_the_auth_tables(cw):
     cw.db.flush()
     for i, status in enumerate(("active", "active", "new", "archived")):
         cw.db.add(Student(org_id=centre.org.id, first_name=f"С{i}", last_name="Ученик", class_level=9, status=status))
-    other = cw.make_centre("Метрики Бета", members=("owner",), city="Самарканд")
+    other = cw.make_centre(f"Метрики Бета {tag}", members=("owner",), city="Самарканд")
     cw.db.commit()
 
-    j = cw.client.get(f"{API}/orgs", params={"q": "Метрики Альфа"}).json()
+    j = cw.client.get(f"{API}/orgs", params={"q": f"Метрики Альфа {tag}"}).json()
     assert j["total"] == 1
     row = j["items"][0]
     assert (row["students"], row["teachers"], row["groups"]) == (3, 2, 1)                  # archived students and groups are not counted
@@ -74,19 +75,20 @@ def test_the_list_carries_the_health_numbers_from_the_auth_tables(cw):
     assert row["status"] == "active" and row["plan"] is None and row["blocked_at"] is None
     assert row["owner"]["email"] == centre.owner.email and row["max_students"] == 500 and row["max_teachers"] == 50
 
-    names = lambda **q: [i["name"] for i in cw.client.get(f"{API}/orgs", params={"q": "Метрики", **q}).json()["items"]]  # noqa: E731
-    assert names(sort="students", order="desc") == ["Метрики Альфа", "Метрики Бета"]
-    assert names(sort="name", order="asc") == ["Метрики Альфа", "Метрики Бета"]
-    assert names(sort="last_login_at", order="desc")[0] == "Метрики Альфа"
-    assert names(city="самарканд") == ["Метрики Бета"]
-    assert names(status="active") == ["Метрики Бета", "Метрики Альфа"] or set(names(status="active")) == {"Метрики Альфа", "Метрики Бета"}
+    alpha, beta = f"Метрики Альфа {tag}", f"Метрики Бета {tag}"
+    names = lambda **q: [i["name"] for i in cw.client.get(f"{API}/orgs", params={"q": tag, **q}).json()["items"]]  # noqa: E731
+    assert names(sort="students", order="desc") == [alpha, beta]
+    assert names(sort="name", order="asc") == [alpha, beta]
+    assert names(sort="last_login_at", order="desc")[0] == alpha
+    assert names(city="самарканд") == [beta]
+    assert set(names(status="active")) == {alpha, beta}
     assert cw.client.get(f"{API}/orgs", params={"sort": "owner"}).status_code == 422
     assert cw.client.get(f"{API}/orgs", params={"status": "weird"}).status_code == 422
-    assert cw.client.get(f"{API}/orgs", params={"page_size": 1}).json()["pages"] >= 2
+    assert cw.client.get(f"{API}/orgs", params={"page_size": 1, "q": tag}).json()["pages"] == 2
 
 
 def test_the_card_has_members_usage_and_history(cw):
-    centre = cw.make_centre("Карточка")
+    centre = cw.make_centre(f"Карточка {uuid4().hex[:6]}")
     group = Group(org_id=centre.org.id, name="Г", class_level=9, status="active")
     cw.db.add(group)
     cw.db.flush()
@@ -96,7 +98,7 @@ def test_the_card_has_members_usage_and_history(cw):
         cw.db.add(GroupAttendance(org_id=centre.org.id, group_id=group.id, lesson_date=day.isoformat(), lesson_id=f"l{i}", status=status))
     cw.db.commit()
     j = cw.client.get(f"{API}/orgs/{centre.org.id}").json()
-    assert j["name"] == "Карточка" and j["phone"] == "+998901112233" and j["blocked_reason"] is None
+    assert j["name"].startswith("Карточка ") and j["phone"] == "+998901112233" and j["blocked_reason"] is None
     assert j["usage_30d"] == {"attendance_marks": 2, "payments": 0, "exams": None, "diagnostics": None}
     assert {m["org_role"] for m in j["members"]} == {"owner", "admin", "teacher"} and all(m["email"] for m in j["members"])
     assert all("password" not in str(k).lower() for m in j["members"] for k in m)
@@ -108,10 +110,11 @@ def test_the_card_has_members_usage_and_history(cw):
 
 
 def test_a_blocked_centre_is_closed_for_owner_admin_and_teacher_and_open_again_after_unblock(cw):
-    centre = cw.make_centre("Блок")
+    tag = uuid4().hex[:8]
+    centre = cw.make_centre(f"Блок {tag}")
     inside = {role: cabinet_login(cw, getattr(centre, role))[0] for role in ("owner", "admin", "teacher")}
     assert all(c.get("/api/v1/auth/me").status_code == 200 for c in inside.values())
-    outsider = cw.make_centre("Чужой")
+    outsider = cw.make_centre(f"Чужой {tag}")
     outsider_client, _ = cabinet_login(cw, outsider.owner)
 
     r = cw.client.post(f"{API}/orgs/{centre.org.id}/block", json={"reason": "Неоплата счёта"})
@@ -127,8 +130,8 @@ def test_a_blocked_centre_is_closed_for_owner_admin_and_teacher_and_open_again_a
 
     card = cw.client.get(f"{API}/orgs/{centre.org.id}").json()
     assert card["status"] == "blocked" and card["blocked_reason"] == "Неоплата счёта"
-    assert cw.client.get(f"{API}/orgs", params={"status": "blocked", "q": "Блок"}).json()["total"] == 1
-    assert cw.client.get(f"{API}/orgs", params={"status": "active", "q": "Блок"}).json()["total"] == 0
+    assert cw.client.get(f"{API}/orgs", params={"status": "blocked", "q": tag}).json()["total"] == 1
+    assert cw.client.get(f"{API}/orgs", params={"status": "active", "q": tag}).json()["total"] == 1       # only the other centre
 
     r = cw.client.post(f"{API}/orgs/{centre.org.id}/unblock", json={"reason": "Оплатили"})
     assert r.status_code == 200 and r.json()["status"] == "active" and r.json()["blocked_at"] is None
@@ -157,7 +160,7 @@ def test_block_needs_a_reason_and_is_not_repeated(cw):
 
 
 def test_limits_change_and_warn_when_below_the_current_numbers(cw):
-    centre = cw.make_centre("Лимиты")
+    centre = cw.make_centre(f"Лимиты {uuid4().hex[:6]}")
     for i in range(4):
         cw.db.add(Student(org_id=centre.org.id, first_name=f"Л{i}", last_name="У", class_level=9, status="active"))
     cw.db.commit()
@@ -178,31 +181,33 @@ def test_limits_change_and_warn_when_below_the_current_numbers(cw):
 
 
 def test_users_search_filters_and_no_staff_in_the_list(cw):
-    centre = cw.make_centre("Пользователи Центр")
+    tag = uuid4().hex[:8]
+    name = f"Пользователи Центр {tag}"
+    centre = cw.make_centre(name)
     centre.owner.last_login_at = utcnow()
     cw.db.commit()
     get = lambda **q: cw.client.get(f"{API}/users", params=q).json()  # noqa: E731
     by_email = get(q=centre.owner.email)
-    assert by_email["total"] == 1 and by_email["items"][0]["org"]["name"] == "Пользователи Центр"
+    assert by_email["total"] == 1 and by_email["items"][0]["org"]["name"] == name
     item = by_email["items"][0]
     assert item["role"] == "owner" and item["org"]["org_role"] == "owner" and item["status"] == "active" and item["blocked"] is False
-    assert get(q="Пользователи Центр")["total"] == 3 and get(q="Пользователи Центр", role="teacher")["total"] == 1
-    assert get(q="Пользователи Центр", status="never_logged_in")["total"] == 2
+    assert get(q=tag)["total"] == 3 and get(q=tag, role="teacher")["total"] == 1
+    assert get(q=tag, status="never_logged_in")["total"] == 2
     assert get(org_id=str(centre.org.id))["total"] == 3
-    assert get(q="+99890111")["total"] >= 3                                                    # the phone of the centre
+    assert get(q="+998901112233", org_id=str(centre.org.id))["total"] == 3                    # the phone of the centre
     assert get(q=cw.owner.email)["total"] == 0                                                 # console staff are not cabinet users
     assert cw.client.get(f"{API}/users/{cw.owner.user.id}").status_code == 404
     assert cw.client.get(f"{API}/users", params={"status": "weird"}).status_code == 422
-    assert [i["email"] for i in get(q="Пользователи Центр", sort="email", order="asc")["items"]] == sorted(i["email"] for i in get(q="Пользователи Центр")["items"])
+    assert [i["email"] for i in get(q=tag, sort="email", order="asc")["items"]] == sorted(i["email"] for i in get(q=tag)["items"])
 
 
 def test_the_user_card_never_shows_a_password(cw):
-    centre = cw.make_centre("Карточка Пользователя")
+    centre = cw.make_centre(f"Карточка Пользователя {uuid4().hex[:6]}")
     token, link = links.issue(cw.db, centre.owner.id, "centre_invite")
     cw.db.commit()
     r = cw.client.get(f"{API}/users/{centre.owner.id}")
     j = r.json()
-    assert r.status_code == 200 and j["email"] == centre.owner.email and j["memberships"][0]["org_name"] == "Карточка Пользователя"
+    assert r.status_code == 200 and j["email"] == centre.owner.email and j["memberships"][0]["org_name"].startswith("Карточка Пользователя")
     assert j["pending_link"]["purpose"] == "centre_invite" and j["block"] is None and j["active_sessions"] == 0
     flat = str(j).lower()
     assert "hash" not in flat and "$2b$" not in flat and token not in flat and "password" not in flat.replace("pending_link", "")
@@ -223,7 +228,8 @@ def test_user_rights(cw):
 
 
 def test_resend_invite_for_an_owner_who_never_signed_in(cw):
-    centre = cw.make_centre("Приглашение", members=("owner", "teacher"))
+    centre = cw.make_centre(f"Приглашение {uuid4().hex[:6]}", members=("owner", "teacher"))
+    assert centre.org.name.startswith("Приглашение")
     old_token, old = links.issue(cw.db, centre.owner.id, "centre_invite")
     centre.owner.last_login_at = None
     cw.db.commit()
@@ -231,7 +237,7 @@ def test_resend_invite_for_an_owner_who_never_signed_in(cw):
     assert r.status_code == 200 and r.json()["email_sent"] is True
     mail = letters_to(cw.outbox, centre.owner.email)[-1]
     new_token = re.search(r"/set-password/([\w-]+)", body_of(mail)).group(1)
-    assert new_token != old_token and "Приглашение" in body_of(mail)
+    assert new_token != old_token and centre.org.name in body_of(mail)
     assert cw.new_client(APP).get(f"/api/v1/auth/password-links/{old_token}").json()["code"] == "link_revoked"     # the new link burns the old one
     assert cw.new_client(APP).get(f"/api/v1/auth/password-links/{new_token}").status_code == 200
     rows = audit_rows(cw.db, "user.invite_resent", target_id=str(centre.owner.id))
