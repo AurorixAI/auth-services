@@ -3248,10 +3248,13 @@ class AuthService:
             "room", "format", "color", "topic",
         )
         result = {field: payload.get(field) for field in fields}
+        sent = getattr(request, "model_fields_set", set())
         for field in fields:
             value = getattr(request, field, None)
             if value is not None:
-                result[field] = value
+                result[field] = ops_rules.normalize_room(value) if field == "room" else value
+            elif field in ("room", "topic") and field in sent:
+                result[field] = None            # W1 S25 (Л-4): an explicit ``null`` takes the room / the topic off (an absent field leaves it as it is)
         return result
 
     def get_diagnostic_invite(
@@ -3761,8 +3764,9 @@ class AuthService:
         later = self._patch_later_revisions(group, lesson_id, req, recurring_end)
         if not changed_now and not later:
             raise ops_rules.OpsError(400, "NO_CHANGES", "Укажите хотя бы одно изменение постоянного расписания")
-        timing = any(key in ("dayOfWeek", "startTime", "endTime") for key in [*changed_now, *(f for _, _, fields in later for f in fields)])
-        exams = self._exams_of_changed_schedule(org_id, group, lesson_id, req.effectiveFrom, release=bool(getattr(req, "releaseAffectedExams", False))) if timing else None
+        # only a change of the DAY takes lessons away from their dates (the exam bound to (lesson, date) would hang on a date that is no lesson); a change of the time keeps that identity
+        day_changes = "dayOfWeek" in [*changed_now, *(f for _, _, fields in later for f in fields)]
+        exams = self._exams_of_changed_schedule(org_id, group, lesson_id, req.effectiveFrom, release=bool(getattr(req, "releaseAffectedExams", False))) if day_changes else None
 
         # Inspect the first two weeks after the effective date. That covers
         # every weekday once and verifies conflicts against other versioned
@@ -3854,7 +3858,7 @@ class AuthService:
         return out
 
     def _exams_of_changed_schedule(self, org_id: str, group: Group, lesson_id: str, effective_from: date, *, release: bool) -> Dict[str, Any]:
-        """W1 S8 (ДЫРА-2): a change of the DAY or the TIME of a weekly lesson looks at the exams of its future dates like a move of one lesson does (LESSONS 40): an exam that is
+        """W1 S8 (ДЫРА-2): a change of the DAY of a weekly lesson looks at the exams of its future dates like a move of one lesson does (LESSONS 40): an exam that is
         launched or has attempts refuses it (409 ``LESSON_HAS_LIVE_EXAM``); a draft / lobby / printed one goes back to a draft - only when the author said so (409
         ``EXAMS_NEED_CONFIRMATION`` lists them, the answer is repeated with ``releaseAffectedExams``).  exam-service down: ``RuntimeError`` (the router answers 503)."""
         impact = self._fetch_exam_recurring_end_impact(org_id=org_id, group_id=str(group.id), lesson_id=lesson_id, effective_from=effective_from.isoformat())
@@ -5693,10 +5697,14 @@ class AuthService:
             .first()
         )
 
-        if is_cancellation and not manager and not self._empty_started_lesson(att):
-            # W1 S3: a teacher does not cancel a lesson himself - «Не смогу провести» (the administrator decides); a PAST lesson that never started is «Урока не было».  The one
-            # exception: a lesson he started whose roster is empty (O6: it cannot be finished, the way out is its cancellation)
-            raise ops_rules.forbidden("TEACHER_CANNOT_CANCEL", "Отменить урок может администратор. Нажмите «Не смогу провести»")
+        if is_cancellation and not manager:
+            # W1 S3: a teacher does not cancel a lesson himself - «Не смогу провести» (the administrator decides); a PAST lesson that never started is «Урока не было».  Two exceptions:
+            # a lesson he started whose roster is empty (O6: it cannot be finished, the way out is its cancellation) and (S27) a FUTURE one-off lesson that HE added, that is no copy of a
+            # move and has no marks (a lesson created by mistake must be removable) - both only «по вине центра»
+            if not (self._empty_started_lesson(att) or self._own_future_one_off(group_id, target_lesson_id, lesson_date, marked_by, att)):
+                raise ops_rules.forbidden("TEACHER_CANNOT_CANCEL", "Отменить урок может администратор. Нажмите «Не смогу провести»")
+            if cancellation_kind != DEFAULT_CANCELLATION_KIND:
+                raise PermissionError("Выбирать «Праздник, выходной» может только владелец или администратор: преподаватель отменяет урок «по вине центра»")
 
         matching_slot = next(
             (
@@ -5910,6 +5918,22 @@ class AuthService:
             else None
         )
         return {"version": att.version, "examSync": exam_sync, "warnings": []}
+
+    def _own_future_one_off(self, group_id: str, lesson_id: str, lesson_date: date, actor_id: Optional[str], att: Optional[GroupAttendance]) -> bool:
+        """W1 S27 (ОД-24): a one-off lesson that THIS teacher created, still ahead, with no journal row but its own cancellation (so no marks) and not the copy of a move (a move has its own road)."""
+        if (att is not None and att.status != LessonAttendanceStatus.CANCELLED.value) or not str(lesson_id).startswith("one-off-") or not actor_id:      # a repeat of his own cancellation is answered, not refused
+            return False
+        one_off = self.db.query(GroupScheduleOneOffLesson).filter(GroupScheduleOneOffLesson.id == lesson_id, GroupScheduleOneOffLesson.group_id == group_id).first()
+        if one_off is None or str(one_off.created_by) != str(actor_id) or one_off.lesson_date != lesson_date.isoformat():
+            return False
+        payload = one_off.payload or {}
+        try:
+            starts = business_clock.lesson_instant_utc(lesson_date, self._validate_lesson_time_range(payload.get("startTime"), payload.get("endTime"))[0])
+        except ValueError:
+            return False
+        if starts <= business_clock.utc_now():
+            return False
+        return lesson_substitutions.moved_from_map(self.db, [one_off.group_id], [lesson_id]).get((str(one_off.group_id), lesson_id)) is None
 
     def _empty_started_lesson(self, att: Optional[GroupAttendance]) -> bool:
         """A started lesson with no marks whose roster is empty (O6): the teacher cannot finish it and may cancel it."""

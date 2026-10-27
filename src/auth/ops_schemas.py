@@ -135,6 +135,7 @@ class ScheduleOccurrenceResponseB(ScheduleOccurrenceResponse):
     defaultTeacherId: Optional[str] = None
     defaultTeacherName: Optional[str] = None
     # LOGIC-B2 (additive): the pending request of the lesson (manager and the requester only) and what happened to a cancelled original (no reasons)
+    createdBy: Optional[Dict[str, Any]] = None             # W1: {id, name, role} - who added a ONE-OFF lesson (null for a lesson of a series); visibility only
     substitutionRequest: Optional[Dict[str, Any]] = None
     substitutionOutcome: Optional[Dict[str, Any]] = None
     movedFrom: Optional[Dict[str, Any]] = None             # #124: the slot of the original, on the new lesson that a move created
@@ -291,6 +292,8 @@ class LessonTeacherCandidate(BaseModel):
     teacherId: str
     name: str
     orgRole: str = "teacher"
+    substitutePayEstimate: Optional[int] = None          # W1: an ESTIMATE (UZS) of what this lesson would pay him: the engine of the payroll on the roster of the lesson; null + the reason below
+    substitutePayEstimateReason: Optional[str] = None    # ``RATE_MISSING`` | ``NO_STUDENTS`` when there is no estimate
     rateMissing: Optional[bool] = None   # W1 (F5): no payroll rate for the type of this group in the month of the lesson (a yes / no; the owner alone sees the rates)
     busy: bool = False
     busyWith: Optional[BusyWith] = None

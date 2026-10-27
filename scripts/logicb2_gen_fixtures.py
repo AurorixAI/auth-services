@@ -101,17 +101,17 @@ c1 = item("c1", "L1", "2026-10-26", "A", NOW, reason="sick", comment="Темпе
 assert c1["minutesToStart"] == 6960 and c1["lesson"]["startsAtUtc"] == "2026-10-26T05:00:00" and not c1["urgent"]
 put("b2c1_create.json", "CreateSubstitutionOut", {"batchId": c1["batchId"], "created": [c1], "alreadyRequested": [], "skipped": []})
 put("b2c1_create_repeat.json", "CreateSubstitutionOut", {"batchId": c1["batchId"], "created": [], "alreadyRequested": [c1], "skipped": []})
-put("b2c1_summary_pending.json", "SubstitutionSummary", {"pendingTotal": 1, "urgentTotal": 0, "overdueTotal": 0})
+put("b2c1_summary_pending.json", "SubstitutionSummary", {"pendingTotal": 1, "urgentTotal": 0, "overdueTotal": 0, "expiringTotal": 0})
 cand = []
 free = sorted(["admin", "C", "owner"], key=lambda k: B.PEOPLE[k][1])           # by surname: Каримова, Сидоров, Усманов
 cand.append({"teacherId": IDS["D"], "name": short("D"), "orgRole": "teacher", "suggested": True, "isDefaultTeacher": False, "busy": False,
-             "busyWith": None, "rateMissing": True})
+             "busyWith": None, "substitutePayEstimate": None, "substitutePayEstimateReason": "RATE_MISSING", "rateMissing": True})
 for key in free:
     role = "owner" if key == "owner" else "admin" if key == "admin" else "teacher"
     cand.append({"teacherId": IDS[key], "name": short(key), "orgRole": role, "suggested": False, "isDefaultTeacher": False, "busy": False,
-                 "busyWith": None, "rateMissing": key != "C"})
+                 "busyWith": None, "substitutePayEstimate": 0 if key == "C" else None, "substitutePayEstimateReason": None if key == "C" else "RATE_MISSING", "rateMissing": key != "C"})
 cand.append({"teacherId": IDS["B"], "name": short("B"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": False, "busy": True,
-             "busyWith": {"kind": "lesson", "groupName": "8-В", "startTime": "10:00", "endTime": "11:30", "pendingRequest": False}, "rateMissing": False})
+             "busyWith": {"kind": "lesson", "groupName": "8-В", "startTime": "10:00", "endTime": "11:30", "pendingRequest": False}, "substitutePayEstimate": 0, "substitutePayEstimateReason": None, "rateMissing": False})
 put("b2c1_candidates_admin.json", "CandidatesOut", {
     "requestId": c1["id"], "lesson": {"groupId": IDS["G1"], "groupName": "9-А", "lessonId": LESSON["L1"], "date": "2026-10-26",
                                       "startTime": "10:00", "endTime": "11:30"},
@@ -121,7 +121,7 @@ c1_done = dict(c1, status="substituted", urgent=False, decision=decision("substi
                minutesToStart=minutes_between(DEC1, "2026-10-26", "10:00"))
 put("b2c1_decide_substitute.json", "DecideOut", {"item": c1_done, "result": result(
     "substitute", teacherId=IDS["D"], teacherName=short("D"), isSubstitution=True, attendanceUpdated=False, payrollSheetsAffected=[])})
-put("b2c1_summary_after.json", "SubstitutionSummary", {"pendingTotal": 0, "urgentTotal": 0, "overdueTotal": 0})
+put("b2c1_summary_after.json", "SubstitutionSummary", {"pendingTotal": 0, "urgentTotal": 0, "overdueTotal": 0, "expiringTotal": 0})
 put("b2c1_not_lesson_teacher.json", "-", B.error(403, "NOT_LESSON_TEACHER", f"Этот урок ведёт {short('D')}"))
 
 # ================================================================================================ chain 2
@@ -175,7 +175,7 @@ assert c5_late["minutesToStart"] == -30
 put("b2c5_item_overdue.json", "SubstitutionItem", c5_late)
 put("b2c5_lesson_already_started.json", "-", B.error(409, "LESSON_ALREADY_STARTED", "Урок уже начался или прошёл. Обратитесь к администратору"))
 put("b2c5_create_already_requested.json", "CreateSubstitutionOut", {"batchId": c5["batchId"], "created": [], "alreadyRequested": [c5_late], "skipped": []})
-put("b2c5_summary_overdue.json", "SubstitutionSummary", {"pendingTotal": 1, "urgentTotal": 0, "overdueTotal": 1})
+put("b2c5_summary_overdue.json", "SubstitutionSummary", {"pendingTotal": 1, "urgentTotal": 0, "overdueTotal": 1, "expiringTotal": 0})
 
 # ================================================================================================ chain 6
 c6a = item("c6a", "L1", "2026-11-02", "A", NOW, reason="sick")
@@ -213,12 +213,12 @@ c8 = item("c8", "L1", "2026-10-26", "D", NOW8, reason="sick", comment="Сам з
           previous={"id": c1["id"], "status": "substituted", "teacherName": short("A"), "substituteName": short("D")})
 put("b2c8_create.json", "CreateSubstitutionOut", {"batchId": c8["batchId"], "created": [c8], "alreadyRequested": [], "skipped": []})
 cand8 = [
-    {"teacherId": IDS["A"], "name": short("A"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": True, "busy": False, "busyWith": None, "rateMissing": False},
-    {"teacherId": IDS["admin"], "name": short("admin"), "orgRole": "admin", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "rateMissing": True},
-    {"teacherId": IDS["C"], "name": short("C"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "rateMissing": False},
-    {"teacherId": IDS["owner"], "name": short("owner"), "orgRole": "owner", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "rateMissing": True},
+    {"teacherId": IDS["A"], "name": short("A"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": True, "busy": False, "busyWith": None, "substitutePayEstimate": 0, "substitutePayEstimateReason": None, "rateMissing": False},
+    {"teacherId": IDS["admin"], "name": short("admin"), "orgRole": "admin", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "substitutePayEstimate": None, "substitutePayEstimateReason": "RATE_MISSING", "rateMissing": True},
+    {"teacherId": IDS["C"], "name": short("C"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "substitutePayEstimate": 0, "substitutePayEstimateReason": None, "rateMissing": False},
+    {"teacherId": IDS["owner"], "name": short("owner"), "orgRole": "owner", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "substitutePayEstimate": None, "substitutePayEstimateReason": "RATE_MISSING", "rateMissing": True},
     {"teacherId": IDS["B"], "name": short("B"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": False, "busy": True,
-     "busyWith": {"kind": "lesson", "groupName": "8-В", "startTime": "10:00", "endTime": "11:30", "pendingRequest": False}, "rateMissing": False},
+     "busyWith": {"kind": "lesson", "groupName": "8-В", "startTime": "10:00", "endTime": "11:30", "pendingRequest": False}, "substitutePayEstimate": 0, "substitutePayEstimateReason": None, "rateMissing": False},
 ]
 put("b2c8_candidates.json", "CandidatesOut", {"requestId": c8["id"], "lesson": {"groupId": IDS["G1"], "groupName": "9-А", "lessonId": LESSON["L1"], "date": "2026-10-26",
                                                                               "startTime": "10:00", "endTime": "11:30"},
@@ -233,11 +233,11 @@ c9_closed = dict(c9, status="closed", decision=decision("closed", None, datetime
 put("b2c9_closed.json", "SubstitutionItem", c9_closed)
 
 # ============================================================================================= misc shapes
-put("b2x_summary.json", "SubstitutionSummary", {"pendingTotal": 3, "urgentTotal": 1, "overdueTotal": 0})
-put("b2x_list.json", "SubstitutionListOut", {"items": [c1], "total": 1, "pendingTotal": 1, "urgentTotal": 0})
+put("b2x_summary.json", "SubstitutionSummary", {"pendingTotal": 3, "urgentTotal": 1, "overdueTotal": 0, "expiringTotal": 0})
+put("b2x_list.json", "SubstitutionListOut", {"items": [c1], "total": 1, "pendingTotal": 1, "urgentTotal": 0, "expiringTotal": 0})
 put("b2x_mine.json", "MineOut", {"items": [c1], "pendingTotal": 1, "assignedToMe": [
     {"groupId": IDS["G1"], "groupName": "9-А", "lessonId": LESSON["L1"], "lessonDate": "2026-10-26", "startTime": "10:00", "endTime": "11:30",
-     "replacing": person("A"), "assignedAt": iso(utc(DEC1))}]})
+     "replacing": person("A"), "assignedAt": iso(utc(DEC1))}], "clearedForMe": []})
 put("b2x_withdraw_batch.json", "WithdrawBatchOut", {"withdrawn": [dict(c1, status="withdrawn", decision=decision("withdraw", "A", NOW + timedelta(minutes=1), via="withdraw"))],
                                                     "skipped": [{"id": uid("req-x"), "code": "SUBSTITUTION_ALREADY_DECIDED", "message": "Запрос уже решён"}]})
 put("b2x_detail.json", "SubstitutionDetailOut", {"item": c1, "chain": [], "events": [

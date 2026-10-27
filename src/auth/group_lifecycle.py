@@ -333,6 +333,11 @@ class GroupLifecycle:
             except OpsError:
                 self.db.rollback()
                 raise
+        try:
+            self.teachers.check_substitutes_of_group(group.org_id, group)          # W1 S23: the substitutes that come back with the lessons are free then too
+        except OpsError:
+            self.db.rollback()
+            raise
         group.teacher_id = new_teacher
         if new_teacher is not None and new_teacher != old_teacher:
             self.db.add(

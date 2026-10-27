@@ -213,6 +213,72 @@
         "title": "CandidatesOut",
         "type": "object"
       },
+      "ClearedForMe": {
+        "description": "W1 S22: a lesson where I was the substitute and the assignment was taken off (last 14 days).",
+        "properties": {
+          "clearedAt": {
+            "title": "Clearedat",
+            "type": "string"
+          },
+          "clearedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endtime"
+          },
+          "groupId": {
+            "title": "Groupid",
+            "type": "string"
+          },
+          "groupName": {
+            "title": "Groupname",
+            "type": "string"
+          },
+          "lessonDate": {
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "startTime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starttime"
+          }
+        },
+        "required": [
+          "groupId",
+          "groupName",
+          "lessonId",
+          "lessonDate",
+          "clearedAt"
+        ],
+        "title": "ClearedForMe",
+        "type": "object"
+      },
       "ColleagueOut": {
         "description": "«Предложить коллегу»: a member of the centre who can teach (no e-mail, no phone).",
         "properties": {
@@ -924,6 +990,13 @@
             "title": "Assignedtome",
             "type": "array"
           },
+          "clearedForMe": {
+            "items": {
+              "$ref": "#/components/schemas/ClearedForMe"
+            },
+            "title": "Clearedforme",
+            "type": "array"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/SubstitutionItem"
@@ -1419,7 +1492,10 @@
                   "TEACHER_REMOVED",
                   "LESSON_OUTSIDE_WINDOW",
                   "ASSIGNMENT_CLEARED",
-                  "LESSON_RESTORED"
+                  "LESSON_RESTORED",
+                  "KIND_CHANGED",
+                  "ROLE_CHANGED",
+                  "ONE_OFF_ADDED"
                 ],
                 "type": "string"
               },
@@ -1493,7 +1569,8 @@
                   "system",
                   "withdraw",
                   "teacher_cancel",
-                  "manager_restore"
+                  "manager_restore",
+                  "reason_change"
                 ],
                 "type": "string"
               },
@@ -1707,6 +1784,28 @@
               }
             ],
             "title": "Ratemissing"
+          },
+          "substitutePayEstimate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Substitutepayestimate"
+          },
+          "substitutePayEstimateReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Substitutepayestimatereason"
           },
           "suggested": {
             "default": false,
@@ -1998,6 +2097,11 @@
       },
       "SubstitutionListOut": {
         "properties": {
+          "expiringTotal": {
+            "default": 0,
+            "title": "Expiringtotal",
+            "type": "integer"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/SubstitutionItem"
@@ -2105,6 +2209,11 @@
       },
       "SubstitutionSummary": {
         "properties": {
+          "expiringTotal": {
+            "default": 0,
+            "title": "Expiringtotal",
+            "type": "integer"
+          },
           "overdueTotal": {
             "default": 0,
             "title": "Overduetotal",
@@ -3309,11 +3418,14 @@
       "ASSIGNMENT_CLEARED": "Замена снята",
       "GROUP_ARCHIVED": "Группа закрыта",
       "GROUP_TEACHER_CHANGED": "Преподаватель группы изменён",
+      "KIND_CHANGED": "Вид отмены изменён",
       "LESSON_CANCELLED": "Урок отменён",
-      "LESSON_OUTSIDE_WINDOW": "Срок разбора истёк",
+      "LESSON_OUTSIDE_WINDOW": "Не решено вовремя",
       "LESSON_REMOVED": "Урока больше нет в расписании",
       "LESSON_RESTORED": "Урок возвращён",
       "LESSON_STARTED": "Урок начат — запрос закрыт",
+      "ONE_OFF_ADDED": "Разовый урок добавил преподаватель",
+      "ROLE_CHANGED": "Сотрудник стал администратором",
       "TEACHER_REMOVED": "Преподаватель больше не работает в центре"
     },
     "reasons": {

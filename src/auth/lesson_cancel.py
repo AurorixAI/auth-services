@@ -34,6 +34,9 @@ MANAGER_CANCEL = "manager_cancel"                # ``trigger`` of the record a c
 TEACHER_CANCEL = "teacher_cancel"                # ... by a teacher («Урока не было» of a lesson that was never started)
 MANAGER_RESTORE = "manager_restore"              # ... a lesson given back
 RESTORED = "LESSON_RESTORED"                     # ``closed_reason`` of the record of a restore
+KIND_CHANGED = "KIND_CHANGED"                    # ... of the record of a change of the kind of a cancellation (S17)
+MANAGER_REASON_CHANGE = "manager_reason_change"        # ``trigger`` of the event
+REASON_CHANGE_VIA = "reason_change"                      # ``decided_via`` of the record (the column is 20 characters)
 EXAMS_NOT_RESTORED = "Экзамены, снятые с урока при его отмене, не вернутся — назначьте их заново"
 
 
@@ -77,6 +80,12 @@ class LessonCancelMixin:
         if converted is not None:
             warnings.append({"code": "CANCELLED_AS_HOLIDAY", "message": f"{_dm(day)} — выходной день центра ({converted}): урок отменён как «выходной», вычета у учеников не будет"})
         record = self._record_of(group, ref, request, reason, MANAGER_CANCEL if by_manager else TEACHER_CANCEL, actor, journal=day_off_id is None)
+        if request is None and day_off_id is not None:       # a request that waits for a lesson of a DAY OFF is closed by it, with the day off in the event: «Отменить выходной» opens it again (Д28)
+            waiting = next((r for r in self._lesson_requests(group, lesson_id, iso) if r.status == "pending"), None)
+            if waiting is not None:
+                self.close(self.db.query(Req).filter(Req.id == waiting.id).with_for_update().populate_existing().first(), "LESSON_CANCELLED", actor_id=actor,
+                           trigger="day_off", group=group, extra={"dayOffId": str(day_off_id)})
+            record = None
         self._exam_check(ref, reason)
         if row is None:
             row = self._cancelled_row(group, ref, actor, reason, {"cancellation_kind": kind}, kind=kind, day_off_id=day_off_id, request=request)
@@ -86,6 +95,10 @@ class LessonCancelMixin:
         if released:
             warnings.append({"code": "SUBSTITUTE_RELEASED", "message": f"Замена снята: {released}"})
         self._exam_release(ref, reason)
+        if record is None and day_off_id is None:        # a group without a teacher: no record of «Замены» (nobody to attribute it to) - the author stays in the history of the group
+            self.db.add(GroupAudit(org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role="admin" if by_manager else "teacher", action="lesson_cancelled",
+                                   assigned_teacher_id=None, created_at=bc.utc_now(),
+                                   snapshot={"lessonId": lesson_id, "lessonDate": iso, "cancellationKind": kind, "reason": reason, "version": row.version}))
         if record is not None:
             self._finish(record, "cancelled", actor, reason, via)
             self.event(record, "cancelled", actor, {"reason": reason, "version": row.version, "cancellationKind": kind})
@@ -119,12 +132,12 @@ class LessonCancelMixin:
     def _record_of(self, group: Group, ref: Any, request: Optional[Req], reason: str, trigger: str, actor: Any, *, journal: bool) -> Optional[Req]:
         """The record of the journal that this cancellation decides: the request it was asked for, a request of the lesson that is waiting, else a new system record of the
         main teacher of the lesson - none when the group has no teacher (nobody to attribute it to) or ``journal`` is false (a DAY OFF is the journal of its own lessons and the
-        note of the student; a request that waits for such a lesson is still decided by the cancellation)."""
+        note of the student; a request that waits for such a lesson is closed by the day off itself, ``_cancel_locked``)."""
         if request is not None:
             return request
         reqs = self._lesson_requests(group, ref.lesson_id, ref.lesson_date)
         pending = next((r for r in reqs if r.status == "pending"), None)
-        if pending is not None:
+        if pending is not None and journal:
             return self.db.query(Req).filter(Req.id == pending.id).with_for_update().populate_existing().first()
         main = TeacherBook(self.db).default_teacher(group, ref.lesson_date, hhmm_to_minutes(ref.end_time))
         if main is None or not journal:
@@ -209,6 +222,24 @@ class LessonCancelMixin:
         self.db.delete(row)
         self.db.flush()
         return {"ok": True, "restored": True, "lessonId": lesson_id, "lessonDate": iso, "previousKind": trace["cancellationKind"], "examsNote": EXAMS_NOT_RESTORED, "warnings": []}
+
+    def record_kind_change(self, group: Group, lesson_id: str, day: date, actor: Any, before: str, after: str, reason: str) -> None:
+        """W1 S17 (Д10): «Изменить причину отмены» leaves a record in the journal «Замены» (``closed`` / ``KIND_CHANGED``, trigger ``manager_reason_change``: who, when, from what to what, why) -
+        the deduction of the recalculation moves with it, so it must not be a silent edit.  A lesson that is no longer in the schedule or a group without a teacher: no record (the audit row of the
+        cancellation has it).  The caller commits."""
+        try:
+            ref, _occ = self._lesson_ref(group, lesson_id, day)
+        except OpsError:
+            return
+        main = TeacherBook(self.db).default_teacher(group, ref.lesson_date, hhmm_to_minutes(ref.end_time))
+        if main is None:
+            return
+        reqs = self._lesson_requests(group, lesson_id, ref.lesson_date)
+        record = self._system_request(group, ref, main, reason, MANAGER_REASON_CHANGE, actor, reqs[0] if reqs else None)
+        now = self.now()
+        record.status, record.closed_reason, record.decided_at, record.decided_via, record.decided_by, record.decision_note, record.updated_at = (
+            "closed", KIND_CHANGED, now, REASON_CHANGE_VIA, actor, None, now)
+        self.event(record, "closed", actor, {"closedReason": KIND_CHANGED, "trigger": MANAGER_REASON_CHANGE, "reason": reason, "cancellationKind": {"from": before, "to": after}})
 
     def _close_restored(self, record: Req, actor: Any, trace: Dict[str, Any]) -> None:
         """The record of a restore: ``closed`` / ``LESSON_RESTORED`` decided by the administrator, one ``closed`` event that carries what was cancelled."""

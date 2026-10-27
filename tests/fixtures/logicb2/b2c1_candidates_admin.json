@@ -7,6 +7,8 @@
       "name": "Рахимов Т.",
       "orgRole": "teacher",
       "rateMissing": true,
+      "substitutePayEstimate": null,
+      "substitutePayEstimateReason": "RATE_MISSING",
       "suggested": true,
       "teacherId": "5fd041ac-c0cc-5b16-8903-db2bbc1e9333"
     },
@@ -17,6 +19,8 @@
       "name": "Каримова Н.",
       "orgRole": "admin",
       "rateMissing": true,
+      "substitutePayEstimate": null,
+      "substitutePayEstimateReason": "RATE_MISSING",
       "suggested": false,
       "teacherId": "53d3d68e-604b-5982-9804-9ae7ce0e9893"
     },
@@ -27,6 +31,8 @@
       "name": "Сидоров С.",
       "orgRole": "teacher",
       "rateMissing": false,
+      "substitutePayEstimate": 0,
+      "substitutePayEstimateReason": null,
       "suggested": false,
       "teacherId": "23da0f33-efdf-5266-af96-b052211c5c8f"
     },
@@ -37,6 +43,8 @@
       "name": "Усманов У.",
       "orgRole": "owner",
       "rateMissing": true,
+      "substitutePayEstimate": null,
+      "substitutePayEstimateReason": "RATE_MISSING",
       "suggested": false,
       "teacherId": "2c55bf81-ae1c-532b-9fad-a5c3a63dda98"
     },
@@ -53,6 +61,8 @@
       "name": "Петров П.",
       "orgRole": "teacher",
       "rateMissing": false,
+      "substitutePayEstimate": 0,
+      "substitutePayEstimateReason": null,
       "suggested": false,
       "teacherId": "dfa29678-0238-53bf-841f-f7b02e776e91"
     }

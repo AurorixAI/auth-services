@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from sqlalchemy.exc import IntegrityError
 
-from src.models.auth import Group, GroupAttendance, GroupAttendanceAudit, GroupAudit, Organization, OrgDayOff, User
+from src.models.auth import Group, GroupAttendance, GroupAttendanceAudit, GroupAudit, LessonTeacherAssignment, Organization, OrgDayOff, User
 
 from . import business_clock as bc
 from . import payments_texts as tx
@@ -119,12 +119,25 @@ class DayOffApplied(BaseModel):
     complete: bool = True                                             # False: the exam-service stopped the loop - ``apply`` finishes it
 
 
+_Date = date
+
+
+class DayOffWarning(BaseModel):
+    code: str
+    message: str
+    groupId: Optional[str] = None
+    lessonId: Optional[str] = None
+    date: Optional[_Date] = None
+    substituteName: Optional[str] = None
+
+
 class DayOffVoided(BaseModel):
     dayOff: DayOffOut
     restored: List[DayOffLesson] = Field(default_factory=list)
     kept: List[DayOffLesson] = Field(default_factory=list)
     dryRun: bool = False
     examsNote: str = EXAMS_NOTE
+    warnings: List[DayOffWarning] = Field(default_factory=list)      # W1: ``SUBSTITUTE_NOT_RESTORED`` - a lesson that came back without the substitute the day off took off it
 
 
 class DayOffForDate(BaseModel):
@@ -258,7 +271,11 @@ class DaysOffService:
         except (KeyError, ValueError, AttributeError):
             started = False
         if started:                       # W1 S10 (Д23 / Д11): a lesson that is past or going on may have been held - the day off only warns, the lesson is closed in the journal
+            if day == bc.business_today():
+                return "Урок уже начался — отмените вручную, если не состоялся"
             return "Урок уже прошёл или идёт: закройте его в журнале (отметьте посещаемость или «Урока не было»)"
+        if str(occurrence["id"]).startswith("one-off-"):       # W1 S10+ (Д5): a one-off lesson / a copy of a move is deliberate (a make-up) - in EVERY order of the actions it stays and only warns
+            return "Разовый урок или перенос на эту дату назначен осознанно — отмените его вручную, если не нужен"
         if not ask_exams:
             return None
         try:
@@ -490,6 +507,8 @@ class DaysOffService:
             day = date.fromisoformat(att.lesson_date)
             item = DayOffLesson(groupId=str(att.group_id), groupName=group.name if group else "", lessonId=att.lesson_id or "", date=day)
             why = self._not_restorable(att, today, group)
+            if why is None and day == today and self._started_today(group, att):
+                why = "Урок сегодня уже начался: остаётся отменённым"          # W1 S10+ (Д17): a lesson of today whose time has passed does not come back as a «пропущенный»
             covering = next((o for o in others if o.date_from <= day <= o.date_to), None) if why is None else None
             if covering is not None:
                 why = "Дата входит в другой выходной"
@@ -517,12 +536,47 @@ class DaysOffService:
                     actor_role=actor_role if actor_role in ("owner", "admin", "teacher", "superadmin") else "admin", action="day_off_voided",
                     snapshot={"day_off_id": str(row.id), "reason": row.reason, "dateFrom": row.date_from.isoformat(), "dateTo": row.date_to.isoformat(), "restored": entries}))
             self.db.flush()
+            warnings = self._substitutes_not_restored(doomed, groups)
+            from .lesson_substitutions import reopen_requests_closed_by_day_off
+
+            reopen_requests_closed_by_day_off(self.svc, row, doomed, UUID(str(actor_id)))          # W1 S10+ (Д28)
             for att in doomed:
                 self.db.delete(att)
             self.db.commit()
             logger.info("day off voided org=%s id=%s restored=%d kept=%d", org_id, row.id, len(restored), len(kept))
             row = self.db.query(OrgDayOff).filter(OrgDayOff.id == day_off_id).one()
-        return DayOffVoided(dayOff=self._out(row), restored=restored, kept=kept, dryRun=dry_run)
+        else:
+            warnings = self._substitutes_not_restored(doomed, groups)
+        return DayOffVoided(dayOff=self._out(row), restored=restored, kept=kept, dryRun=dry_run, warnings=warnings)
+
+    def _started_today(self, group: Optional[Group], att: GroupAttendance) -> bool:
+        """The lesson of the row is today and its start has passed (a lesson that is gone from the schedule is not «started»)."""
+        if group is None:
+            return False
+        day = date.fromisoformat(att.lesson_date)
+        occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == att.lesson_id), None)
+        try:
+            return bool(occ) and bc.lesson_instant_utc(day, hhmm_to_minutes(occ["startTime"])) <= bc.utc_now()
+        except (KeyError, ValueError, AttributeError):
+            return False
+
+    def _substitutes_not_restored(self, doomed: List[GroupAttendance], groups: Dict[Any, Group]) -> List[DayOffWarning]:
+        """W1: the lessons that come back WITHOUT the substitute the day off took off them (the author of the cancellation took the assignment off in the same step): the administrator
+        assigns them again."""
+        out: List[DayOffWarning] = []
+        for att in doomed:
+            asg = (self.db.query(LessonTeacherAssignment).filter(LessonTeacherAssignment.group_id == att.group_id, LessonTeacherAssignment.lesson_id == att.lesson_id,
+                                                                  LessonTeacherAssignment.lesson_date == att.lesson_date, LessonTeacherAssignment.cancelled_at.isnot(None),
+                                                                  LessonTeacherAssignment.cancelled_by == att.marked_by).order_by(LessonTeacherAssignment.cancelled_at.desc()).first())
+            if asg is None or self.db.query(LessonTeacherAssignment.id).filter(LessonTeacherAssignment.group_id == att.group_id, LessonTeacherAssignment.lesson_id == att.lesson_id,
+                                                                               LessonTeacherAssignment.lesson_date == att.lesson_date, LessonTeacherAssignment.cancelled_at.is_(None)).first():
+                continue
+            who = self._names([asg.teacher_id]).get(asg.teacher_id)
+            group = groups.get(att.group_id)
+            day = date.fromisoformat(att.lesson_date)
+            out.append(DayOffWarning(code="SUBSTITUTE_NOT_RESTORED", groupId=str(att.group_id), lessonId=att.lesson_id, date=day, substituteName=who,
+                                     message=f"{_dm(day)}{(' — «' + group.name + '»') if group else ''}: замена ({who or 'преподаватель'}) была снята выходным и не вернулась — назначьте её заново"))
+        return out
 
     @staticmethod
     def _not_restorable(att: GroupAttendance, today: date, group: Optional[Group]) -> Optional[str]:

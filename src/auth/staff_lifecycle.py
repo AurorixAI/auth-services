@@ -340,6 +340,8 @@ class StaffLifecycle:
                 self.db.rollback()
                 raise self._assignments_error(impact)
         member.org_role = new_role
+        if old_role == "teacher" and new_role != "teacher":
+            lesson_substitutions.on_role_changed(self.svc, org_id, member.user_id, actor_id)         # W1 S21: his waiting requests are closed (``ROLE_CHANGED``)
         user = self.db.query(User).filter(User.id == member.user_id).first()
         if user is not None:
             user.role = new_role

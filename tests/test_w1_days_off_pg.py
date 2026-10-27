@@ -117,7 +117,7 @@ def test_lessons_that_are_past_or_going_on_are_listed_not_cancelled(w, clock):
     # «now»: a lesson that is going on without a start in the journal is not cancelled either (Д11)
     clock.set("2026-10-28 16:30")
     made2 = give(w, "2026-10-28", reason="Сегодня")
-    assert made2["cancelled"] == [] and [x["lessonId"] for x in made2["blocked"]] == ["lesson-l2"] and "прошёл или идёт" in made2["blocked"][0]["reason"]
+    assert made2["cancelled"] == [] and [x["lessonId"] for x in made2["blocked"]] == ["lesson-l2"] and "отмените вручную, если не состоялся" in made2["blocked"][0]["reason"]
 
 
 # ============================================================================================ Д4: two days off that overlap

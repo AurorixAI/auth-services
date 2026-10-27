@@ -134,7 +134,7 @@ def test_s3_lesson_was_not_held_is_not_for_a_lesson_that_has_not_passed(w):
 def test_s13_an_owner_or_admin_who_is_a_substitute_reads_his_lessons(w):
     for who in ("owner", "admin"):
         assert client(w, who).get(f"{SUB}/mine").status_code == 200
-        assert client(w, who).get(f"{SUB}/mine").json() == {"items": [], "pendingTotal": 0, "assignedToMe": []}
+        assert client(w, who).get(f"{SUB}/mine").json() == {"items": [], "pendingTotal": 0, "assignedToMe": [], "clearedForMe": []}
     put = client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher",
                                  json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "teacherId": str(w.owner.id), "reason": "Болезнь"})
     assert put.status_code == 200, put.text
@@ -158,3 +158,18 @@ def test_rate_missing_is_a_yes_no_for_the_admin_in_both_assignment_windows(w):
     for who in ("admin", "owner"):
         cands = client(w, who).get(f"{SUB}/{item['id']}/candidates").json()["candidates"]
         assert {c["teacherId"]: c["rateMissing"] for c in cands}[str(w.D.id)] is True
+
+
+# ===================================================================================================== S28
+def test_s28_every_route_takes_its_rights_from_the_org_role_only():
+    """The one-off lesson route (router.py create_one_off_lesson) and every route W1 added ask ``is_org_manager`` / the manager dependency, never the global role."""
+    root = Path(__file__).resolve().parents[1] / "src" / "auth"
+    for name in ("router.py", "ops_router.py", "substitution_router.py", "days_off_router.py", "attendance_access.py"):
+        text = (root / name).read_text()
+        assert "is_org_admin(" not in text, name
+    router = (root / "router.py").read_text()
+    block = router[router.index("def create_one_off_lesson("):]
+    assert "is_org_admin=is_org_manager(user)" in block[:700]
+    assert "def restore_cancelled_lesson" in (root / "substitution_router.py").read_text()
+    sub = (root / "substitution_router.py").read_text()
+    assert "user: dict = Depends(_manager)" in sub[sub.index("def restore_cancelled_lesson"):][:300]

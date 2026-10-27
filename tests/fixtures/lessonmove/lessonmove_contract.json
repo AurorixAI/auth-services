@@ -592,7 +592,10 @@
                   "TEACHER_REMOVED",
                   "LESSON_OUTSIDE_WINDOW",
                   "ASSIGNMENT_CLEARED",
-                  "LESSON_RESTORED"
+                  "LESSON_RESTORED",
+                  "KIND_CHANGED",
+                  "ROLE_CHANGED",
+                  "ONE_OFF_ADDED"
                 ],
                 "type": "string"
               },
@@ -666,7 +669,8 @@
                   "system",
                   "withdraw",
                   "teacher_cancel",
-                  "manager_restore"
+                  "manager_restore",
+                  "reason_change"
                 ],
                 "type": "string"
               },

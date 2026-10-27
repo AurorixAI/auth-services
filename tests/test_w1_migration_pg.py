@@ -78,8 +78,9 @@ def test_up_down_up_adds_and_drops_only_its_own(engine):
     with engine.begin() as c:
         c.execute(text("INSERT INTO org_days_off (id, org_id, date_from, date_to, reason) VALUES (gen_random_uuid(), :o, '2026-10-28', '2026-10-28', 'Хайит')"), {"o": org})
         # the new audit action is accepted
-        c.execute(text("INSERT INTO group_audit (id, org_id, group_id, actor_id, actor_role, action, snapshot) VALUES (gen_random_uuid(), :o, :g, :u, 'admin', 'lesson_restored', '{}')"),
-                  {"o": org, "g": group, "u": user})
+        for action in ("lesson_restored", "lesson_cancelled"):                          # the new audit actions are accepted
+            c.execute(text("INSERT INTO group_audit (id, org_id, group_id, actor_id, actor_role, action, snapshot) VALUES (gen_random_uuid(), :o, :g, :u, 'admin', :a, '{}')"),
+                      {"o": org, "g": group, "u": user, "a": action})
         assert c.execute(text("SELECT incomplete FROM org_days_off WHERE org_id=:o"), {"o": org}).scalar_one() is False
     with pytest.raises(IntegrityError):                                      # one LIVE day off per range
         with engine.begin() as c:
@@ -92,7 +93,7 @@ def test_up_down_up_adds_and_drops_only_its_own(engine):
     assert version(engine) == BEFORE
     assert "incomplete" not in columns(engine, "org_days_off") and "uq_org_days_off_live_range" not in indexes(engine, "org_days_off")
     with engine.connect() as c:
-        assert c.execute(text("SELECT count(*) FROM group_audit WHERE action='lesson_restored'")).scalar_one() == 0      # the rows of the new action go with it
+        assert c.execute(text("SELECT count(*) FROM group_audit WHERE action IN ('lesson_restored', 'lesson_cancelled')")).scalar_one() == 0      # the rows of the new actions go with it
         assert c.execute(text("SELECT count(*) FROM org_days_off WHERE org_id=:o"), {"o": org}).scalar_one() == 3          # the days off stay
     command.downgrade(cfg, BEFORE)                                           # repeated: harmless
     with pytest.raises(IntegrityError):                                      # the old CHECK is back
@@ -104,7 +105,7 @@ def test_up_down_up_adds_and_drops_only_its_own(engine):
     assert version(engine) == REVISION
 
 
-def test_live_duplicates_of_a_range_are_merged_before_the_index(engine):
+def test_live_duplicates_of_a_range_are_merged_before_the_index(engine, capfd):
     cfg = config()
     command.upgrade(cfg, BEFORE)
     org, group, user = world(engine)
@@ -123,6 +124,8 @@ def test_live_duplicates_of_a_range_are_merged_before_the_index(engine):
             c.execute(text("INSERT INTO group_attendance (id, org_id, group_id, lesson_date, lesson_id, status, cancellation_kind, day_off_id, version) "
                            "VALUES (gen_random_uuid(), :o, :g, '2026-10-28', :l, 'cancelled', 'holiday', :d, 1)"), {"o": org, "g": group, "l": lesson, "d": day_off})
     command.upgrade(cfg, "head")
+    out = capfd.readouterr()
+    assert "merged 2 live duplicate day off(s)" in out.out + out.err and "2 cancelled lesson(s) re-pointed" in out.out + out.err           # the stage / prod output says how many
     with engine.connect() as c:
         live = {str(r[0]) for r in c.execute(text("SELECT id FROM org_days_off WHERE org_id=:o AND voided_at IS NULL"), {"o": org})}
         assert live == {str(first), str(other)}                              # the oldest of the range stays; the other range is untouched
@@ -151,5 +154,6 @@ def test_the_migration_and_the_models_agree(engine):
         definition = c.execute(text("SELECT indexdef FROM pg_indexes WHERE indexname='uq_org_days_off_live_range'")).scalar_one()
         assert "UNIQUE" in definition and "(org_id, date_from, date_to)" in definition and "voided_at IS NULL" in definition
         assert c.execute(text("SELECT convalidated FROM pg_constraint WHERE conname='ck_group_audit_action'")).scalar_one() is True          # NOT VALID, then VALIDATEd
+        assert "'lesson_cancelled'" in c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='ck_group_audit_action'")).scalar_one()
         assert "'lesson_restored'" in c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='ck_group_audit_action'")).scalar_one()
         assert c.execute(text("SELECT column_default FROM information_schema.columns WHERE table_name='org_days_off' AND column_name='incomplete'")).scalar_one() == "false"

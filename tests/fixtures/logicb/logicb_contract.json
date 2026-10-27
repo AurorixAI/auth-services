@@ -2170,6 +2170,28 @@
             ],
             "title": "Ratemissing"
           },
+          "substitutePayEstimate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Substitutepayestimate"
+          },
+          "substitutePayEstimateReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Substitutepayestimatereason"
+          },
           "teacherId": {
             "title": "Teacherid",
             "type": "string"
@@ -3637,6 +3659,18 @@
             "default": "blue",
             "title": "Color",
             "type": "string"
+          },
+          "createdBy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Createdby"
           },
           "dayOfWeek": {
             "title": "Dayofweek",

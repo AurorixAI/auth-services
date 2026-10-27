@@ -6,6 +6,8 @@
       "name": "Рахимов Т.",
       "orgRole": "teacher",
       "rateMissing": true,
+      "substitutePayEstimate": null,
+      "substitutePayEstimateReason": "RATE_MISSING",
       "teacherId": "5fd041ac-c0cc-5b16-8903-db2bbc1e9333"
     },
     {
@@ -18,6 +20,8 @@
       "name": "Петров П.",
       "orgRole": "teacher",
       "rateMissing": true,
+      "substitutePayEstimate": null,
+      "substitutePayEstimateReason": "RATE_MISSING",
       "teacherId": "dfa29678-0238-53bf-841f-f7b02e776e91"
     }
   ],

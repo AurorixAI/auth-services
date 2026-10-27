@@ -297,6 +297,7 @@ class ScheduleRules:
         from .models import GroupScheduleOneOffLesson
         from .ops_schemas import ScheduleOccurrenceResponseB
         from .days_off import DaysOffService
+        from .lesson_substitutions import one_off_authors
         from uuid import UUID
 
         if not actor_id:
@@ -336,11 +337,16 @@ class ScheduleRules:
                 payload=payload, created_by=UUID(actor_id),
             )
         )
+        if not is_org_admin:                 # a teacher adds it: the journal «Замены» says who (visibility only)
+            from .lesson_substitutions import record_one_off_added
+
+            record_one_off_added(self.svc, group, lesson_id, req.lessonDate, payload, UUID(actor_id))
         self.db.commit()
         warnings += DaysOffService(self.svc).warnings_for_date(org_id, req.lessonDate)      # a lesson on a day off is deliberate (a make-up): a warning, no cancellation
         return ScheduleOccurrenceResponseB(
             id=lesson_id, groupId=str(group.id), groupName=group.name, classLevel=group.class_level or 5, **payload,
             occurrenceDate=req.lessonDate.isoformat(), isOneOff=True, warnings=warnings,
+            createdBy=one_off_authors(self.svc, [lesson_id]).get(lesson_id),
         )
 
     # ------------------------------------------------------------------------- teacher overlap (all writers)

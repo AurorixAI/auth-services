@@ -18,7 +18,7 @@ RequestStatus = Literal["pending", "substituted", "rescheduled", "cancelled", "r
 DecisionKind = Literal["substitute", "reschedule", "cancel", "reject", "withdraw", "closed"]
 ClosedReason = Literal[
     "LESSON_STARTED", "LESSON_CANCELLED", "LESSON_REMOVED", "GROUP_ARCHIVED", "GROUP_TEACHER_CHANGED", "TEACHER_REMOVED", "LESSON_OUTSIDE_WINDOW",
-    "ASSIGNMENT_CLEARED", "LESSON_RESTORED",
+    "ASSIGNMENT_CLEARED", "LESSON_RESTORED", "KIND_CHANGED", "ROLE_CHANGED", "ONE_OFF_ADDED",
 ]
 
 REASON_LABELS = {"sick": "Болезнь", "personal": "Личное", "other": "Другое"}
@@ -29,9 +29,12 @@ CLOSED_REASON_TEXT = {
     "GROUP_ARCHIVED": "Группа закрыта",
     "GROUP_TEACHER_CHANGED": "Преподаватель группы изменён",
     "TEACHER_REMOVED": "Преподаватель больше не работает в центре",
-    "LESSON_OUTSIDE_WINDOW": "Срок разбора истёк",
+    "LESSON_OUTSIDE_WINDOW": "Не решено вовремя",
     "ASSIGNMENT_CLEARED": "Замена снята",
     "LESSON_RESTORED": "Урок возвращён",
+    "KIND_CHANGED": "Вид отмены изменён",
+    "ROLE_CHANGED": "Сотрудник стал администратором",
+    "ONE_OFF_ADDED": "Разовый урок добавил преподаватель",
 }
 
 
@@ -75,7 +78,7 @@ class SubDecision(BaseModel):
     kind: DecisionKind
     by: Optional[PersonRef] = None
     at: str
-    via: Optional[Literal["request", "teacher_move", "lesson_teacher_put", "system", "withdraw", "teacher_cancel", "manager_restore"]] = None
+    via: Optional[Literal["request", "teacher_move", "lesson_teacher_put", "system", "withdraw", "teacher_cancel", "manager_restore", "reason_change"]] = None
     note: Optional[str] = None
     substitute: Optional[PersonRef] = None
     movedTo: Optional[MovedTo] = None
@@ -177,10 +180,24 @@ class AssignedToMe(BaseModel):
     assignedAt: Optional[str] = None
 
 
+class ClearedForMe(BaseModel):
+    """W1 S22: a lesson where I was the substitute and the assignment was taken off (last 14 days)."""
+
+    groupId: str
+    groupName: str
+    lessonId: str
+    lessonDate: str
+    startTime: Optional[str] = None
+    endTime: Optional[str] = None
+    clearedAt: str
+    clearedBy: Optional[PersonRef] = None
+
+
 class MineOut(BaseModel):
     items: List[SubstitutionItem] = Field(default_factory=list)
     pendingTotal: int = 0
     assignedToMe: List[AssignedToMe] = Field(default_factory=list)
+    clearedForMe: List[ClearedForMe] = Field(default_factory=list)
 
 
 class ColleagueOut(BaseModel):
@@ -212,12 +229,14 @@ class SubstitutionListOut(BaseModel):
     total: int = 0
     pendingTotal: int = 0
     urgentTotal: int = 0
+    expiringTotal: int = 0
 
 
 class SubstitutionSummary(BaseModel):
     pendingTotal: int = 0
     urgentTotal: int = 0
     overdueTotal: int = 0
+    expiringTotal: int = 0     # W1 S20: requests that fall out of the window of the unclosed lessons on the 1st (shown only in the last 3 days before it)
 
 
 class SubstitutionEvent(BaseModel):
@@ -263,6 +282,8 @@ class SubstitutionCandidate(BaseModel):
     isDefaultTeacher: bool = False
     busy: bool = False
     busyWith: Optional[CandidateBusy] = None
+    substitutePayEstimate: Optional[int] = None          # W1: an ESTIMATE (UZS) of what this lesson would pay him (payroll engine, roster of the lesson); null + the reason below
+    substitutePayEstimateReason: Optional[str] = None    # ``RATE_MISSING`` | ``NO_STUDENTS`` when there is no estimate
     rateMissing: Optional[bool] = None  # no payroll rate for the type of the group in the month of the lesson: a yes / no for the owner and the administrator (the rates stay the owner's)
 
 

@@ -174,7 +174,7 @@ def test_m6_a_read_commits_nothing_and_revalidates_only_what_it_returns(w, clock
     w.db.commit()
     page = client(w, "admin").get(SUB, params={"status": "pending", "limit": 1}).json()
     assert [i["id"] for i in page["items"]] == [a["id"]]
-    assert sorted(r.status for r in requests_of(w)) == ["pending", "pending"]      # the stale one was not revalidated: it is not on the page
+    assert sorted(r.status for r in requests_of(w)) == ["closed", "pending"]      # W1 S18: the badge (``summary``) runs the same lazy pass over every pending request, so the stale one is closed
     full = client(w, "admin").get(SUB, params={"status": "pending"}).json()
     assert [i["id"] for i in full["items"]] == [a["id"]] and sorted(r.status for r in requests_of(w)) == ["closed", "pending"]
 

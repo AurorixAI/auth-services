@@ -167,7 +167,7 @@ def test_4_a_range_cancels_every_lesson_of_it(five_groups):
     out = client(w, "owner").post(f"{API}/org/days-off", json={"dateFrom": "2026-10-19", "dateTo": "2026-10-23", "reason": "Навруз"}).json()
     # the clock is Monday 12:00: Monday's lessons (10:00) are past - a day off only lists them (W1 S10, Д23); Wed and Fri x 5 groups are cancelled, minus the one with the exam
     assert len(out["cancelled"]) == 2 * 5 - 1
-    assert sorted(b["reason"] for b in out["blocked"]) == sorted(["У урока идёт экзамен"] + ["Урок уже прошёл или идёт: закройте его в журнале (отметьте посещаемость или «Урока не было»)"] * 5)
+    assert sorted(b["reason"] for b in out["blocked"]) == sorted(["У урока идёт экзамен"] + ["Урок уже начался — отмените вручную, если не состоялся"] * 5)
 
 
 def test_5_voiding_the_day_off_gives_back_its_own_untouched_lessons(five_groups):

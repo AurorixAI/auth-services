@@ -628,6 +628,28 @@ class LessonTeachers:
                 user = self.db.query(User).filter(User.id == teacher_id).first()
                 self.raise_if_busy(conflicts, short_name(user))
 
+    def check_substitutes_of_group(self, org_id: Any, group: Group) -> None:
+        """W1 S23 (D26): a group that comes back from the archive gets its lessons back WITH their substitutes (the assignments stayed): each substitute must be free then - the new lessons of
+        his own may have been given meanwhile (``TEACHER_BUSY``, the first substitute with a conflict).  The same horizon as a handover."""
+        today = bc.business_today()
+        d_to = today + timedelta(days=HORIZON_DAYS - 1)
+        book = TeacherBook(self.db)
+        by_teacher: Dict[UUID, List[BusyItem]] = {}
+        asgs = (self.db.query(LessonTeacherAssignment).filter(LessonTeacherAssignment.group_id == group.id, LessonTeacherAssignment.cancelled_at.is_(None),
+                                                              LessonTeacherAssignment.lesson_date >= today.isoformat(), LessonTeacherAssignment.lesson_date <= d_to.isoformat()).all())
+        for asg in asgs:
+            day = date.fromisoformat(asg.lesson_date)
+            occ = self._occurrence(group, asg.lesson_id, day)
+            if occ is None:
+                continue
+            by_teacher.setdefault(asg.teacher_id, []).append(BusyItem(asg.lesson_date, hhmm_to_minutes(occ["startTime"]), hhmm_to_minutes(occ["endTime"]), occ["startTime"],
+                                                                      occ["endTime"], str(group.id), group.name, asg.lesson_id))
+        for teacher_id in sorted(by_teacher, key=str):
+            cands = by_teacher[teacher_id]
+            conflicts = self.teacher_conflicts(org_id, teacher_id, cands, ignore={c.key for c in cands}, book=book)
+            if conflicts:
+                self.raise_if_busy(conflicts, short_name(self.db.query(User).filter(User.id == teacher_id).first()))
+
     # ----------------------------------------------------------------------------- substitution cleaning
     def cancel_assignment(self, asg: LessonTeacherAssignment, actor_id: Any, *, group: Group, reason: str, trigger: str = "release") -> None:
         asg.cancelled_at = bc.utc_now()
@@ -664,10 +686,20 @@ class LessonTeachers:
             )
             .all()
         )
-        for asg in rows:
+        rows = self._not_started([(asg, group) for asg in rows])
+        for asg, _g in rows:
             self.cancel_assignment(asg, actor_id, group=group, reason="Преподаватель группы сменён: замена совпала с ним",
                                    trigger="group_teacher_changed")
         return len(rows)
+
+    def _not_started(self, pairs: List[Tuple[LessonTeacherAssignment, Group]]) -> List[Tuple[LessonTeacherAssignment, Group]]:
+        """W1 S22 (D30): an assignment on a lesson that has already begun (a journal row ``in_progress`` / ``completed``) is a fact - who taught it - and is never taken off by a release."""
+        if not pairs:
+            return pairs
+        started = {(r.group_id, r.lesson_id, r.lesson_date) for r in self.db.query(GroupAttendance.group_id, GroupAttendance.lesson_id, GroupAttendance.lesson_date).filter(
+            GroupAttendance.group_id.in_({a.group_id for a, _ in pairs}), GroupAttendance.lesson_date.in_({a.lesson_date for a, _ in pairs}),
+            GroupAttendance.status.in_((IN_PROGRESS, COMPLETED)))}
+        return [(a, g) for a, g in pairs if (a.group_id, a.lesson_id, a.lesson_date) not in started]
 
     def release_substitutions_of(self, org_id: Any, teacher_id: UUID, actor_id: Any) -> int:
         """A removed teacher's future substitutions are taken off (the lessons return to the group teachers by date).  ``self.last_released`` keeps
@@ -683,6 +715,7 @@ class LessonTeachers:
             )
             .all()
         )
+        rows = self._not_started(list(rows))
         self.last_released = list(rows)
         for asg, group in rows:
             self.cancel_assignment(asg, actor_id, group=group, reason="Сотрудник удалён: замена снята", trigger="member_removed")
@@ -881,6 +914,9 @@ class LessonTeachers:
         roles = dict(self.db.query(OrganizationMember.user_id, OrganizationMember.org_role).filter(OrganizationMember.org_id == org_id).all())
         staff = self.staff_who_can_teach(org_id)
         no_rate = self.rates_missing(org_id, [u.id for u in staff], group.lesson_type, lesson_date)
+        from .payroll_estimate import substitute_pay_estimates  # lazy: it imports the payments and payroll services
+
+        pay = substitute_pay_estimates(self.svc, org_id, group, lesson_date, start, [u.id for u in staff])
         for user in staff:
             pairs = self.overlap_pairs([cand], everybody.get(user.id, []))
             other = pairs[0][1] if pairs else None
@@ -890,6 +926,8 @@ class LessonTeachers:
                     "name": short_name(user) or user.email,
                     "orgRole": roles.get(user.id, "teacher"),
                     "rateMissing": user.id in no_rate,
+                    "substitutePayEstimate": pay[user.id]["amount"],
+                    "substitutePayEstimateReason": pay[user.id]["reason"],
                     "busy": other is not None,
                     "busyWith": {"groupName": other.group_name, "startTime": other.startTime, "endTime": other.endTime}
                     if other is not None

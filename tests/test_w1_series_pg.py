@@ -161,24 +161,28 @@ def test_s8_a_change_of_the_day_asks_for_confirmation_when_exams_hang_on_the_dat
     assert exams_.calls == [("impact", "2026-11-03"), ("impact", "2026-11-03"), ("release", "2026-11-03")]
 
 
-def test_s8_a_change_of_the_time_looks_at_the_exams_too_a_live_exam_refuses_whatever_the_flag(w, exams_):
+def test_s8_a_live_exam_refuses_a_change_of_the_day_whatever_the_flag(w, exams_):
     exams_.add("2026-11-09", can_release=False, status="active", title="Итоговая")
-    r = client(w, "admin").put(REV, json={"effectiveFrom": "2026-11-03", "startTime": "12:00", "endTime": "13:30", "reason": "Время", "releaseAffectedExams": True})
+    r = client(w, "admin").put(REV, json={"effectiveFrom": "2026-11-03", "dayOfWeek": 5, "reason": "День", "releaseAffectedExams": True})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "LESSON_HAS_LIVE_EXAM" and "«Итоговая»" in r.json()["detail"]["message"]
     assert revisions(w) == {}
 
 
-def test_s8_a_change_that_does_not_move_the_lesson_never_asks_exam_service(w, exams_):
+def test_s8_a_change_that_keeps_the_dates_never_asks_exam_service_not_even_the_time(w, exams_):
+    """The lead's narrowing: a time-only change keeps the (lesson, date) identity, the exam binding stays - exam-service is not asked, no ``releaseAffectedExams``."""
     exams_.add("2026-11-09")
     out = revise(w, {"effectiveFrom": "2026-11-03", "room": "Каб. 5", "topic": "Тема"})
     assert exams_.calls == [] and out["releasedExamIds"] == [] and revisions(w)["2026-11-03"]["room"] == "Каб. 5"
+    out = revise(w, {"effectiveFrom": "2026-11-16", "startTime": "12:00", "endTime": "13:30"})
+    assert exams_.calls == [] and out["releasedExamIds"] == [] and occurrence(w, "2026-11-16")["startTime"] == "12:00"
 
 
-def test_s8_exam_service_down_refuses_a_change_of_the_time_with_503_and_writes_nothing(w, exams_):
+def test_s8_exam_service_down_refuses_a_change_of_the_day_with_503_and_writes_nothing(w, exams_):
     exams_.down = True
-    r = client(w, "admin").put(REV, json={"effectiveFrom": "2026-11-03", "startTime": "12:00", "endTime": "13:30", "reason": "Время"})
+    r = client(w, "admin").put(REV, json={"effectiveFrom": "2026-11-03", "dayOfWeek": 5, "reason": "День"})
     assert r.status_code == 503 and revisions(w) == {}
-    assert revise(w, {"effectiveFrom": "2026-11-03", "room": "Каб. 5"})["room"] == "Каб. 5"             # T7: a room does not depend on exam-service
+    assert revise(w, {"effectiveFrom": "2026-11-03", "room": "Каб. 5"})["room"] == "Каб. 5"             # a room does not depend on exam-service
+    assert revise(w, {"effectiveFrom": "2026-11-16", "startTime": "12:00", "endTime": "13:30"})["startTime"] == "12:00"        # nor does a time
 
 
 def test_s8_a_failed_release_rolls_the_revision_back(w, exams_, monkeypatch):

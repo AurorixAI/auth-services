@@ -11,9 +11,11 @@ from typing import Any, Dict
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from src.models.auth import GroupAttendance, GroupAttendanceAudit
+from src.models.auth import Group, GroupAttendance, GroupAttendanceAudit
 
-from .ops_rules import conflict, not_found
+from . import business_clock as bc
+from .ops_rules import conflict, not_found, unprocessable
+from .lesson_teachers import _uuid
 from .schemas import CancellationKind
 
 
@@ -35,6 +37,8 @@ def change_cancellation_kind(db: Session, org_id: str, group_id: str, req: Chang
         raise conflict("CANCELLED_BY_DAY_OFF", "Урок отменён выходным днём центра: измените или отмените сам выходной")
     if row.cancellation_kind is None:
         raise conflict("CANCELLATION_HAS_NO_KIND", "Это отмена до обновления или перенос урока: вид отмены у неё не меняется")
+    if req.lessonDate < bc.month_window_start(bc.business_today()):       # W1 S17 (Д10): the same window as the marks of a past lesson - an old period is closed, its money does not move
+        raise unprocessable("REASON_CHANGE_TOO_OLD", "Причину отмены можно менять только у уроков не старше окна незакрытых уроков (с 1-го числа прошлого месяца)")
     before = row.cancellation_kind
     if before == req.cancellationKind:
         return {"ok": True, "changed": False, "cancellationKind": before, "version": row.version}
@@ -44,5 +48,11 @@ def change_cancellation_kind(db: Session, org_id: str, group_id: str, req: Chang
         attendance_id=row.id, org_id=org_id, group_id=group_id, actor_id=actor_id, action="corrected", before_status="cancelled", after_status="cancelled",
         before_records={}, after_records={}, correction_reason=req.reason.strip(), cancellation_reason=row.cancellation_reason,
         details={"cancellation_kind": {"from": before, "to": req.cancellationKind}}))
+    group = db.query(Group).filter(Group.id == group_id, Group.org_id == org_id).first()
+    if group is not None:
+        from .lesson_substitutions import Substitutions
+        from .service import AuthService  # lazy: the service layer imports this module's neighbours
+
+        Substitutions(AuthService(db)).record_kind_change(group, req.lessonId, req.lessonDate, _uuid(actor_id), before, req.cancellationKind, req.reason.strip())
     db.commit()
     return {"ok": True, "changed": True, "cancellationKind": req.cancellationKind, "version": row.version}
