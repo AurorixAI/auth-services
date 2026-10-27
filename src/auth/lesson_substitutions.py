@@ -87,6 +87,7 @@ class Ctx:
     def __init__(self) -> None:
         self.groups: Dict[UUID, Group] = {}
         self.users: Dict[str, User] = {}
+        self.roles: Dict[str, str] = {}                          # user id -> the org role in THIS centre (owner / admin / teacher): the front names the person by it
         self.counts: Dict[UUID, int] = {}
         self.occ: Dict[Tuple[UUID, str, str], Dict[str, Any]] = {}
         self.previous: Dict[UUID, Req] = {}
@@ -114,7 +115,15 @@ class SubstitutionsBase:
     def _person(self, ctx: Ctx, user_id: Any) -> Optional[Dict[str, Any]]:
         if user_id is None:
             return None
-        return {"id": str(user_id), "name": short_name(ctx.users.get(str(user_id)))}
+        return {"id": str(user_id), "name": short_name(ctx.users.get(str(user_id))), "role": getattr(ctx, "roles", {}).get(str(user_id))}
+
+    def roles_of(self, org_ids: Iterable[Any], user_ids: Iterable[Any]) -> Dict[str, str]:
+        """``{user id: org role}`` for the people of one answer in ONE query (never one per person)."""
+        users, orgs = {u for u in user_ids if u}, {o for o in org_ids if o}
+        if not users or not orgs:
+            return {}
+        rows = self.db.query(OrganizationMember.user_id, OrganizationMember.org_role).filter(OrganizationMember.org_id.in_(orgs), OrganizationMember.user_id.in_(users)).all()
+        return {str(uid): role for uid, role in rows}
 
     # ============================================================================================ item
     def ctx_for(self, reqs: Sequence[Req]) -> Ctx:
@@ -133,6 +142,7 @@ class SubstitutionsBase:
         for e in ctx.cleared.values():
             user_ids.update({e.actor_id, _uuid(self._cleared_to(e))})
         ctx.users = self.teachers.users_by_id(u for u in user_ids if u)
+        ctx.roles = self.roles_of({r.org_id for r in reqs}, user_ids)
         ctx.counts = dict(
             self.db.query(StudentGroup.group_id, func.count(StudentGroup.id))
             .filter(StudentGroup.group_id.in_(gids), StudentGroup.is_active.is_(True), student_not_archived())
@@ -520,13 +530,14 @@ class SubstitutionsBase:
                 .filter(LessonTeacherAssignment.org_id == org_id, LessonTeacherAssignment.teacher_id == actor, LessonTeacherAssignment.cancelled_at.isnot(None),
                         LessonTeacherAssignment.cancelled_at >= since).order_by(LessonTeacherAssignment.cancelled_at.desc()).all())
         users = self.teachers.users_by_id(a.cancelled_by for a, _ in rows if a.cancelled_by)
+        roles = self.roles_of([org_id], [a.cancelled_by for a, _ in rows])
         out = []
         for asg, group in rows:
             day = date.fromisoformat(asg.lesson_date)
             occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == asg.lesson_id), None)
             out.append({"groupId": str(group.id), "groupName": group.name, "lessonId": asg.lesson_id, "lessonDate": asg.lesson_date,
                         "startTime": occ["startTime"] if occ else None, "endTime": occ["endTime"] if occ else None, "clearedAt": asg.cancelled_at.isoformat(),
-                        "clearedBy": self._person(SimpleNamespace(users=users), asg.cancelled_by) if asg.cancelled_by else None})
+                        "clearedBy": self._person(SimpleNamespace(users=users, roles=roles), asg.cancelled_by) if asg.cancelled_by else None})
         return out
 
     def _assigned_to(self, org_id: Any, actor: UUID) -> List[Dict[str, Any]]:
@@ -557,6 +568,10 @@ class SubstitutionsBase:
                         "startTime": occ["startTime"], "endTime": occ["endTime"],
                         "replacing": {"id": str(default), "name": short_name(user)} if default else None,
                         "assignedAt": asg.created_at.isoformat() if asg.created_at else None})
+        roles = self.roles_of([org_id], [o["replacing"]["id"] for o in out if o["replacing"]])      # one query for all the rows
+        for o in out:
+            if o["replacing"]:
+                o["replacing"]["role"] = roles.get(o["replacing"]["id"])
         return out
 
     # =================================================================================================== withdraw
@@ -678,9 +693,10 @@ class SubstitutionsBase:
         events = self.db.query(LessonSubstitutionEvent).filter(LessonSubstitutionEvent.request_id == r.id).order_by(
             LessonSubstitutionEvent.created_at, LessonSubstitutionEvent.id).all()
         names = self.teachers.users_by_id(e.actor_id for e in events if e.actor_id)
+        roles = self.roles_of([r.org_id], [e.actor_id for e in events])
         return {
             "item": self.one(r), "chain": self.items(chain),
-            "events": [{"action": e.action, "actor": {"id": str(e.actor_id), "name": short_name(names.get(str(e.actor_id)))} if e.actor_id else None,
+            "events": [{"action": e.action, "actor": {"id": str(e.actor_id), "name": short_name(names.get(str(e.actor_id))), "role": roles.get(str(e.actor_id))} if e.actor_id else None,
                         "at": e.created_at.isoformat(), "snapshot": e.snapshot or {}} for e in events],
             "examBinding": self.exam_binding(r),
         }

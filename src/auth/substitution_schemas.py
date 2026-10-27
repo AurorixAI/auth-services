@@ -42,6 +42,7 @@ CLOSED_REASON_TEXT = {
 class PersonRef(BaseModel):
     id: str
     name: Optional[str] = None
+    role: Optional[str] = None  # the person's org role in this centre (owner | admin | teacher): the journal names the owner as the owner
 
 
 class SuggestedTeacher(BaseModel):

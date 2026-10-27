@@ -51,7 +51,7 @@ def test_mine_lists_the_requests_and_the_assigned_lessons(w, clock):
     assert d["items"] == [] and len(d["assignedToMe"]) == 1
     got = d["assignedToMe"][0]
     assert (got["groupName"], got["lessonId"], got["lessonDate"], got["startTime"], got["endTime"]) == ("9-А", "lesson-l1", "2026-10-26", "10:00", "11:30")
-    assert got["replacing"] == {"id": str(w.A.id), "name": "Иванов И."} and "reason" not in str(got) and "Температура" not in str(got)
+    assert got["replacing"] == {"id": str(w.A.id), "name": "Иванов И.", "role": "teacher"} and "reason" not in str(got) and "Температура" not in str(got)
     a = client(w, "A").get(f"{SUB}/mine").json()
     assert a["items"][0]["status"] == "substituted" and a["items"][0]["comment"] == "Температура" and a["assignedToMe"] == []
 

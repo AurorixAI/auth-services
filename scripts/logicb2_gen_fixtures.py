@@ -62,7 +62,7 @@ def minutes_between(now_local: datetime, day: str, hhmm: str) -> int:
 
 
 def person(key: str) -> Dict[str, str]:
-    return {"id": IDS[key], "name": short(key)}
+    return {"id": IDS[key], "name": short(key), "role": "owner" if key == "owner" else "admin" if key == "admin" else "teacher"}      # W1: the org role in the centre
 
 
 def item(name: str, lesson: str, day: str, requester: str, now_local: datetime, *, reason="sick", comment=None, suggested: Optional[str] = None,

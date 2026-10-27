@@ -26,7 +26,8 @@
         },
         "teacher": {
           "id": "A",
-          "name": "Иванов И."
+          "name": "Иванов И.",
+          "role": "teacher"
         },
         "reasonCode": "other",
         "reasonLabel": "Другое",
@@ -40,7 +41,8 @@
           "kind": "reschedule",
           "by": {
             "id": "admin",
-            "name": "Каримова Н."
+            "name": "Каримова Н.",
+            "role": "admin"
           },
           "at": "2026-10-21T09:00:00",
           "via": "request",

@@ -9,7 +9,8 @@
       "lessonId": "lesson-l1",
       "replacing": {
         "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
-        "name": "Иванов И."
+        "name": "Иванов И.",
+        "role": "teacher"
       },
       "startTime": "10:00"
     }
@@ -55,7 +56,8 @@
       },
       "teacher": {
         "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
-        "name": "Иванов И."
+        "name": "Иванов И.",
+        "role": "teacher"
       },
       "trigger": null,
       "urgent": false

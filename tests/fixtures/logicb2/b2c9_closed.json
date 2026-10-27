@@ -43,7 +43,8 @@
   "suggestedTeacher": null,
   "teacher": {
     "id": "dfa29678-0238-53bf-841f-f7b02e776e91",
-    "name": "Петров П."
+    "name": "Петров П.",
+    "role": "teacher"
   },
   "trigger": null,
   "urgent": false

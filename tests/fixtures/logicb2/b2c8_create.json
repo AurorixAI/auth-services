@@ -42,7 +42,8 @@
       "suggestedTeacher": null,
       "teacher": {
         "id": "5fd041ac-c0cc-5b16-8903-db2bbc1e9333",
-        "name": "Рахимов Т."
+        "name": "Рахимов Т.",
+        "role": "teacher"
       },
       "trigger": null,
       "urgent": false

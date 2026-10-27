@@ -11,7 +11,8 @@
       "at": "2026-10-21T09:12:00",
       "by": {
         "id": "53d3d68e-604b-5982-9804-9ae7ce0e9893",
-        "name": "Каримова Н."
+        "name": "Каримова Н.",
+        "role": "admin"
       },
       "closedReason": null,
       "closedReasonText": null,
@@ -20,7 +21,8 @@
       "note": null,
       "substitute": {
         "id": "5fd041ac-c0cc-5b16-8903-db2bbc1e9333",
-        "name": "Рахимов Т."
+        "name": "Рахимов Т.",
+        "role": "teacher"
       },
       "via": "request"
     },
@@ -54,7 +56,8 @@
     },
     "teacher": {
       "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
-      "name": "Иванов И."
+      "name": "Иванов И.",
+      "role": "teacher"
     },
     "trigger": null,
     "urgent": false

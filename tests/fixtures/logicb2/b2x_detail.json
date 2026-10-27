@@ -5,7 +5,8 @@
       "action": "requested",
       "actor": {
         "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
-        "name": "Иванов И."
+        "name": "Иванов И.",
+        "role": "teacher"
       },
       "at": "2026-10-21T09:00:00",
       "snapshot": {}
@@ -55,7 +56,8 @@
     },
     "teacher": {
       "id": "917b0543-3c26-52c4-b849-5d99a8a9dd87",
-      "name": "Иванов И."
+      "name": "Иванов И.",
+      "role": "teacher"
     },
     "trigger": null,
     "urgent": false
