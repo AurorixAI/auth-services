@@ -49,7 +49,7 @@ def test_r1_a_running_exam_is_warned_about_then_runs_on_its_own_timer_chain5(w, 
     w.db.refresh(row)
     assert row.status == "in_progress"
     acked = complete(w, acknowledgeLiveExam=True)
-    assert acked.status_code == 200 and acked.json() == {"ok": True, "saved": True, "version": 2,
+    assert acked.status_code == 200 and acked.json() == {"ok": True, "saved": True, "version": 2, "warnings": [],
                                                         "examSync": {"released": [], "leftRunning": ["EX_123"], "warning": None}}
     w.db.refresh(row)
     assert row.status == "completed"

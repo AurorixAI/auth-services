@@ -24,12 +24,14 @@ from uuid import UUID
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from src.models.auth import Group, GroupAttendance, GroupAttendanceAudit, GroupAudit, OrgDayOff, User
+from sqlalchemy.exc import IntegrityError
+
+from src.models.auth import Group, GroupAttendance, GroupAttendanceAudit, GroupAudit, Organization, OrgDayOff, User
 
 from . import business_clock as bc
 from . import payments_texts as tx
-from .ops_rules import conflict, not_found, unprocessable
-from .schemas import LessonAttendanceStatus, SaveAttendanceRequest
+from .ops_rules import conflict, hhmm_to_minutes, not_found, unprocessable
+from .schemas import LessonAttendanceStatus
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +107,7 @@ class DayOffOut(BaseModel):
     createdByName: Optional[str] = None
     voidedAt: Optional[str] = None
     active: bool = True
+    incomplete: bool = False          # W1 S10: the exam-service stopped the apply - some lessons wait for ``apply`` («Продолжить»); kept on the server, not in the tab
 
 
 class DayOffApplied(BaseModel):
@@ -150,6 +153,10 @@ def not_cancelled_text(day: date, reason: str, why: Optional[str]) -> str:
     return f"{_dm(day)} — выходной день центра ({reason}): урок в этот день не удалось отменить автоматически ({why}) — отмените его вручную"
 
 
+def converted_text(day: date, reason: str) -> str:
+    return f"{_dm(day)} — выходной день центра ({reason}): отмена урока «по вине центра» переведена в «выходной», вычета у учеников не будет"
+
+
 def on_day_off_text(day: date, reason: str) -> str:
     return f"{_dm(day)} — выходной день центра ({reason}): урок в этот день будет проведён, это не отменяется автоматически"
 
@@ -185,7 +192,7 @@ class DaysOffService:
         return DayOffOut(id=str(row.id), dateFrom=row.date_from, dateTo=row.date_to, reason=row.reason,
                          createdAt=row.created_at.isoformat() if row.created_at else None,
                          createdByName=names.get(row.created_by), voidedAt=row.voided_at.isoformat() if row.voided_at else None,
-                         active=row.voided_at is None)
+                         active=row.voided_at is None, incomplete=bool(row.incomplete) and row.voided_at is None)
 
     def _names(self, ids) -> Dict[Any, str]:
         wanted = {i for i in ids if i}
@@ -199,11 +206,14 @@ class DaysOffService:
         names = self._names(r.created_by for r in rows)
         return [self._out(r, names) for r in rows]
 
+    def live_for_date(self, org_id: Any, day: date) -> Optional[OrgDayOff]:
+        """The live day off that holds ``day`` (the newest one when several do)."""
+        return (self.db.query(OrgDayOff).filter(OrgDayOff.org_id == org_id, OrgDayOff.voided_at.is_(None), OrgDayOff.date_from <= day, OrgDayOff.date_to >= day)
+                .order_by(OrgDayOff.created_at.desc(), OrgDayOff.id).first())
+
     def for_date(self, org_id: str, day: date) -> DayOffForDate:
         """The live day off that holds ``day`` (the hint when a lesson is created on that date: a warning, never a block)."""
-        row = (self.db.query(OrgDayOff).filter(OrgDayOff.org_id == org_id, OrgDayOff.voided_at.is_(None),
-                                               OrgDayOff.date_from <= day, OrgDayOff.date_to >= day)
-               .order_by(OrgDayOff.created_at.desc()).first())
+        row = self.live_for_date(org_id, day)
         return DayOffForDate(dayOff=self._out(row) if row else None)
 
     # ---------------------------------------------------------------------------------------------- the lessons of a range
@@ -243,6 +253,12 @@ class DaysOffService:
             return "Урок уже начат" if row.status == LessonAttendanceStatus.IN_PROGRESS.value else "Урок уже проведён"
         if day < bc.month_window_start(bc.business_today()):
             return "Урок старше окна незакрытых уроков"
+        try:
+            started = bc.lesson_instant_utc(day, hhmm_to_minutes(occurrence["startTime"])) <= bc.utc_now()
+        except (KeyError, ValueError, AttributeError):
+            started = False
+        if started:                       # W1 S10 (Д23 / Д11): a lesson that is past or going on may have been held - the day off only warns, the lesson is closed in the journal
+            return "Урок уже прошёл или идёт: закройте его в журнале (отметьте посещаемость или «Урока не было»)"
         if not ask_exams:
             return None
         try:
@@ -291,13 +307,37 @@ class DaysOffService:
         duplicated).  Each lesson is its own (usual) cancellation and commit: a lesson that was started a second ago, or one an exam is attached to, lands in ``blocked``
         and the others go on; when exam-service does not answer the loop stops and the rest waits in ``blocked`` for ``apply``."""
         self._check_range(req)
-        row = (self.db.query(OrgDayOff).filter(OrgDayOff.org_id == org_id, OrgDayOff.voided_at.is_(None), OrgDayOff.date_from == req.dateFrom,
-                                               OrgDayOff.date_to == req.dateTo, OrgDayOff.reason == req.reason).order_by(OrgDayOff.created_at).first())
-        if row is None:
-            row = OrgDayOff(org_id=UUID(str(org_id)), date_from=req.dateFrom, date_to=req.dateTo, reason=req.reason, created_by=UUID(str(actor_id)))
-            self.db.add(row)
-            self.db.commit()
+        row = self._live_row(org_id, actor_id, req)
         return self._apply(org_id, actor_id, row.id)
+
+    def _live_row(self, org_id: str, actor_id: str, req: DayOffRequest) -> OrgDayOff:
+        """W1 S10 (Д26): the live day off of this range - found or given, under the lock of the centre (two windows / a retry after a dropped connection do not give it twice; the
+        partial unique index is the backstop).  The same range with ANOTHER reason is refused: one range, one live day off."""
+        def live() -> Optional[OrgDayOff]:
+            return (self.db.query(OrgDayOff).filter(OrgDayOff.org_id == org_id, OrgDayOff.voided_at.is_(None), OrgDayOff.date_from == req.dateFrom,
+                                                    OrgDayOff.date_to == req.dateTo).order_by(OrgDayOff.created_at, OrgDayOff.id).first())
+
+        def same(found: OrgDayOff) -> OrgDayOff:
+            if found.reason != req.reason:
+                raise conflict("DAY_OFF_EXISTS", f"На эти даты уже назначен выходной «{found.reason}»: отмените его или назначьте на другие даты")
+            return found
+
+        self.db.query(Organization.id).filter(Organization.id == org_id).with_for_update(key_share=True).first()       # FOR NO KEY UPDATE: the foreign key of the new row does not wait for it
+        found = live()
+        if found is not None:
+            self.db.rollback()
+            return same(found)
+        row = OrgDayOff(org_id=UUID(str(org_id)), date_from=req.dateFrom, date_to=req.dateTo, reason=req.reason, created_by=UUID(str(actor_id)))
+        self.db.add(row)
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            found = live()
+            if found is None:
+                raise
+            return same(found)
+        return row
 
     def apply(self, org_id: str, actor_id: str, day_off_id: UUID) -> DayOffApplied:
         """Finish a day off (idempotent): what is cancelled stays, the rest is tried again."""
@@ -315,6 +355,9 @@ class DaysOffService:
         cancelled, blocked, converted, already, down = self._run(org_id, actor_id, day_off_id, reason, found, rows)
         logger.info("day off applied org=%s id=%s %s..%s cancelled=%d blocked=%d converted=%d", org_id, day_off_id, date_from, date_to, len(cancelled), len(blocked), len(converted))
         row = self.db.query(OrgDayOff).filter(OrgDayOff.id == day_off_id).one()
+        if bool(row.incomplete) != down:                                  # W1 S10 (Д6): «не завершён» lives on the server, a reloaded panel still shows «Продолжить»
+            row.incomplete = down
+            self.db.commit()
         return DayOffApplied(dayOff=self._out(row), cancelled=cancelled, blocked=blocked, converted=converted, alreadyCancelled=already, complete=not down)
 
     def _run(self, org_id: str, actor_id: str, day_off_id: UUID, reason: str, found, rows):
@@ -358,10 +401,24 @@ class DaysOffService:
                 continue
             found, rows = self._lessons(org_id, first, last, group_id)
             found = [(g, o) for g, o in found if o["id"] == lesson_id]
-            cancelled, blocked, _, _, _ = self._run(org_id, actor_id, day_off.id, day_off.reason, found, rows)
+            cancelled, blocked, converted, _, _ = self._run(org_id, actor_id, day_off.id, day_off.reason, found, rows)
             warnings += [{"code": "DAY_OFF_CANCELLED", "message": cancelled_text(item.date, day_off.reason)} for item in cancelled]
+            warnings += [{"code": "DAY_OFF_CONVERTED", "message": converted_text(item.date, day_off.reason)} for item in converted]
             warnings += [{"code": "DAY_OFF_NOT_CANCELLED", "message": not_cancelled_text(item.date, day_off.reason, item.reason)} for item in blocked]
         return warnings
+
+    def apply_to_group(self, org_id: str, actor_id: str, group_id: Any) -> int:
+        """W1 S10 (Д7): a group that comes back from the archive meets the live days off of the centre from today on: its lessons that fall into them are cancelled by the same
+        step (``_run``).  Returns how many lessons were cancelled."""
+        today = bc.business_today()
+        live = (self.db.query(OrgDayOff).filter(OrgDayOff.org_id == org_id, OrgDayOff.voided_at.is_(None), OrgDayOff.date_to >= today)
+                .order_by(OrgDayOff.created_at, OrgDayOff.id).all())
+        done = 0
+        for day_off in live:
+            found, rows = self._lessons(org_id, max(day_off.date_from, today), day_off.date_to, group_id)
+            cancelled, _, _, _, _ = self._run(org_id, actor_id, day_off.id, day_off.reason, found, rows)
+            done += len(cancelled)
+        return done
 
     def warnings_for_date(self, org_id: str, day: date) -> List[Dict[str, str]]:
         """A one-off lesson or a MOVE onto a date of a live day off is allowed (a make-up, a deliberate lesson): the author only gets the warning ``DAY_OFF``."""
@@ -379,12 +436,14 @@ class DaysOffService:
         self.db.commit()
 
     def _cancel(self, org_id: str, actor_id: str, group: Group, occurrence: Dict[str, Any], reason: str, day_off_id: UUID) -> Optional[str]:
-        """The usual cancellation, kind ``holiday``.  ``None`` = done, else the reason it was refused (``EXAM_DOWN``: stop asking)."""
-        request = SaveAttendanceRequest(lessonDate=date.fromisoformat(occurrence["occurrenceDate"]), lessonId=occurrence["id"],
-                                        status=LessonAttendanceStatus.CANCELLED, cancellationReason=lesson_reason_text(reason),
-                                        cancellationKind=HOLIDAY)
+        """The usual cancellation (``Substitutions.cancel_lesson``), kind ``holiday``, of a lesson that has no journal row (a started one is never touched: the row is read again
+        under the lock).  ``None`` = done, else the reason it was refused (``EXAM_DOWN``: stop asking)."""
+        from .lesson_substitutions import Substitutions  # lazy: it imports this module
+
         try:
-            self.svc.save_group_attendance(org_id, str(group.id), request, marked_by=actor_id, is_org_admin=True, is_org_manager=True, day_off_id=day_off_id)
+            Substitutions(self.svc).cancel_lesson(org_id, actor_id, group.id, occurrence["id"], date.fromisoformat(occurrence["occurrenceDate"]),
+                                                  reason=lesson_reason_text(reason), kind=HOLIDAY, day_off_id=day_off_id)
+            self.db.commit()
         except RuntimeError:
             self.db.rollback()
             return EXAM_DOWN
@@ -394,6 +453,10 @@ class DaysOffService:
         except HTTPException as exc:
             self.db.rollback()
             detail = exc.detail
+            if isinstance(detail, dict) and detail.get("code") == "EXAM_SERVICE_UNAVAILABLE":
+                return EXAM_DOWN
+            if isinstance(detail, dict) and detail.get("code") == "ALREADY_CANCELLED":     # another apply (a second window) cancelled it a moment ago: it is done
+                return None
             return detail.get("message") if isinstance(detail, dict) else str(detail)
         except Exception:     # one lesson must not stop the others
             self.db.rollback()
@@ -427,8 +490,11 @@ class DaysOffService:
             day = date.fromisoformat(att.lesson_date)
             item = DayOffLesson(groupId=str(att.group_id), groupName=group.name if group else "", lessonId=att.lesson_id or "", date=day)
             why = self._not_restorable(att, today, group)
-            if why is None and any(o.date_from <= day <= o.date_to for o in others):
+            covering = next((o for o in others if o.date_from <= day <= o.date_to), None) if why is None else None
+            if covering is not None:
                 why = "Дата входит в другой выходной"
+                if not dry_run:
+                    att.day_off_id = covering.id            # W1 S10 (Д4): the lesson stays cancelled and now belongs to the day off that still holds the date (cancelling THAT one gives it back)
             if why:
                 item.reason = why
                 kept.append(item)

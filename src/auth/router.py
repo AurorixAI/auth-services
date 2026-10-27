@@ -22,7 +22,7 @@ from .service import (
     hash_token,
     verify_access_token,
 )
-from .attendance_access import is_org_admin, is_org_manager
+from .attendance_access import is_org_manager
 from .models import DiagnosticInvite, Group
 from .student_archive import (
     ArchiveError,
@@ -56,6 +56,9 @@ from .ops_schemas import (
     RemoveMemberOut,
     SaveAttendanceOut,
     SaveAttendanceRequestB,
+    ReviseRecurringLessonRequestB,
+    EndRecurringLessonResponseB,
+    ScheduleLessonRevisedB,
     ScheduleLessonResponseB,
     ScheduleOccurrenceResponseB,
     StartAttendanceOut,
@@ -815,7 +818,7 @@ def create_student(
     db: Session = Depends(get_db),
 ):
     """Добавить ученика (O12: только owner/admin - зачисление запускает начисления, решает администратор)"""
-    if not is_org_admin(user):
+    if not is_org_manager(user):
         raise OpsError(403, "STAFF_ROLE_REQUIRED", "Добавлять учеников может администратор центра")
     return _svc(db).create_student(user["org_id"], request)
 
@@ -854,7 +857,7 @@ def list_students(
         offset=offset,
         has_primary_group=has_primary_group,
         actor_id=user["user_id"],
-        is_org_admin=is_org_admin(user),
+        is_org_admin=is_org_manager(user),
         teacher_id=str(teacher_id) if teacher_id else None,
     )
     if include_meta:
@@ -874,7 +877,7 @@ def get_student(
             user["org_id"],
             student_id,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -894,7 +897,7 @@ def get_student_profile(
             user["org_id"],
             student_id,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -1068,7 +1071,7 @@ def get_diagnostic(
             user["org_id"],
             diagnostic_id,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -1088,7 +1091,7 @@ def acknowledge_diagnostic_report(
             user["org_id"],
             diagnostic_id,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -1113,8 +1116,8 @@ def create_group(
             user["org_id"],
             request,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
-            actor_role=user.get("org_role") or user.get("role"),
+            is_org_admin=is_org_manager(user),
+            actor_role=user["org_role"],
         )
     except PermissionError as e:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(e))
@@ -1135,7 +1138,7 @@ def list_groups(
         teacher_id=teacher_id,
         class_level=class_level,
         actor_id=user["user_id"],
-        is_org_admin=is_org_admin(user),
+        is_org_admin=is_org_manager(user),
     )
     if groups and has_payments_access(user, db):
         # The money roles get ``price_current`` on every group.  The price is NOT a field of ``GroupResponse`` (the
@@ -1163,7 +1166,7 @@ def get_group(
             user["org_id"],
             group_id,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
         if has_payments_access(user, db):
             from . import pricing  # lazy: money modules
@@ -1190,7 +1193,7 @@ def get_group_stats(
             user["org_id"],
             group_id,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
     except PermissionError as e:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(e))
@@ -1437,7 +1440,7 @@ def get_schedule(
 ):
     """Получить расписание уроков организации (или конкретного преподавателя)."""
     # Teacher никогда не может подменить teacher_id параметром запроса.
-    tid = teacher_id if is_org_admin(user) else user["user_id"]
+    tid = teacher_id if is_org_manager(user) else user["user_id"]
 
     return _svc(db).get_schedule(user["org_id"], teacher_id=tid)
 
@@ -1456,7 +1459,7 @@ def get_schedule_occurrences(
         end = datetime.strptime(date_to, "%Y-%m-%d").date()
     except ValueError as exc:
         raise HTTPException(400, "date_from и date_to должны иметь формат YYYY-MM-DD") from exc
-    tid = teacher_id if is_org_admin(user) else user["user_id"]
+    tid = teacher_id if is_org_manager(user) else user["user_id"]
     try:
         svc = _svc(db)
         items = svc.get_schedule_occurrences(user["org_id"], date_from=start, date_to=end, teacher_id=tid)
@@ -1479,7 +1482,7 @@ def create_lesson(
             user["org_id"],
             request,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -1503,7 +1506,7 @@ def create_one_off_lesson(
             user["org_id"],
             request,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -1540,26 +1543,28 @@ def reschedule_lesson_occurrence_gone(lesson_id: str, user: dict = Depends(requi
     raise HTTPException(status.HTTP_410_GONE, "Перенос урока: используйте «Перенести урок» в листе урока")
 
 
-@router.put("/org/schedule/lessons/{lesson_id}/recurrence", response_model=ScheduleLessonResponseB)
+@router.put("/org/schedule/lessons/{lesson_id}/recurrence", response_model=ScheduleLessonRevisedB)
 def revise_recurring_lesson(
     lesson_id: str,
-    request: ReviseRecurringLessonRequest,
+    request: ReviseRecurringLessonRequestB,
     user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
-    """Изменить расписание будущих экземпляров урока с указанной даты."""
+    """Изменить расписание будущих экземпляров урока с указанной даты (W1 S8: изменение применяется и к более поздним уже запланированным изменениям; смена дня / времени смотрит экзамены)."""
     try:
         return _svc(db).revise_recurring_lesson(
             user["org_id"],
             lesson_id,
             request,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
 
 
 @router.get(
@@ -1579,7 +1584,7 @@ def get_recurring_lesson_end_impact(
             lesson_id,
             effective_from=effective_from,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -1591,7 +1596,7 @@ def get_recurring_lesson_end_impact(
 
 @router.post(
     "/org/schedule/lessons/{lesson_id}/recurrence/end",
-    response_model=EndRecurringLessonResponse,
+    response_model=EndRecurringLessonResponseB,
 )
 def end_recurring_lesson(
     lesson_id: str,
@@ -1606,7 +1611,7 @@ def end_recurring_lesson(
             lesson_id,
             request,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -1645,7 +1650,7 @@ def get_open_attendance_actions(
         return _svc(db).get_open_attendance_actions(
             user["org_id"],
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -1670,10 +1675,10 @@ def get_group_attendance(
             date_from=date_from,
             date_to=date_to,
             actor_id=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
             is_org_manager=is_org_manager(user),
         )
-        if not is_org_admin(user):
+        if not is_org_manager(user):
             # LOGIC-B2: a substitute / a former teacher gets only the lessons that are his (see ``attendance_rules.restrict_journal``)
             from .attendance_rules import AttendanceRules
 
@@ -1706,10 +1711,10 @@ def save_group_attendance(
             group_id,
             request,
             marked_by=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
             is_org_manager=is_org_manager(user),
         )
-        return {"ok": True, "saved": True, "version": result["version"], "examSync": result["examSync"]}
+        return {"ok": True, "saved": True, "version": result["version"], "examSync": result["examSync"], "warnings": result["warnings"]}
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ExcusePauseRefused as e:  # LOGIC-A: an excuse on a day of the student's pause
@@ -1734,7 +1739,7 @@ def start_group_attendance(
             group_id,
             request,
             started_by=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
         return {"ok": True, "started": True, "version": version}
     except PermissionError as e:
@@ -1757,7 +1762,7 @@ def reconcile_missed_group_attendance(
             group_id,
             request,
             reconciled_by=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
         )
         return {"ok": True, "reconciled": True, "version": version}
     except PermissionError as e:
@@ -1775,15 +1780,15 @@ def cancel_missed_group_attendance(
 ):
     """Cancel a missed occurrence with a mandatory reason and audit trail."""
     try:
-        version = _svc(db).cancel_missed_group_attendance(
+        result = _svc(db).cancel_missed_group_attendance(
             user["org_id"],
             group_id,
             request,
             cancelled_by=user["user_id"],
-            is_org_admin=is_org_admin(user),
+            is_org_admin=is_org_manager(user),
             is_org_manager=is_org_manager(user),
         )
-        return {"ok": True, "cancelled": True, "version": version}
+        return {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"]}
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ValueError as e:

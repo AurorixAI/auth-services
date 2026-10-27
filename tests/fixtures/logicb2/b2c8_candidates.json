@@ -6,7 +6,7 @@
       "isDefaultTeacher": true,
       "name": "Иванов И.",
       "orgRole": "teacher",
-      "rateMissing": null,
+      "rateMissing": false,
       "suggested": false,
       "teacherId": "917b0543-3c26-52c4-b849-5d99a8a9dd87"
     },
@@ -16,7 +16,7 @@
       "isDefaultTeacher": false,
       "name": "Каримова Н.",
       "orgRole": "admin",
-      "rateMissing": null,
+      "rateMissing": true,
       "suggested": false,
       "teacherId": "53d3d68e-604b-5982-9804-9ae7ce0e9893"
     },
@@ -26,7 +26,7 @@
       "isDefaultTeacher": false,
       "name": "Сидоров С.",
       "orgRole": "teacher",
-      "rateMissing": null,
+      "rateMissing": false,
       "suggested": false,
       "teacherId": "23da0f33-efdf-5266-af96-b052211c5c8f"
     },
@@ -36,7 +36,7 @@
       "isDefaultTeacher": false,
       "name": "Усманов У.",
       "orgRole": "owner",
-      "rateMissing": null,
+      "rateMissing": true,
       "suggested": false,
       "teacherId": "2c55bf81-ae1c-532b-9fad-a5c3a63dda98"
     },
@@ -52,7 +52,7 @@
       "isDefaultTeacher": false,
       "name": "Петров П.",
       "orgRole": "teacher",
-      "rateMissing": null,
+      "rateMissing": false,
       "suggested": false,
       "teacherId": "dfa29678-0238-53bf-841f-f7b02e776e91"
     }

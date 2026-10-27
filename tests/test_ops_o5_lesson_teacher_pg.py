@@ -118,8 +118,8 @@ def test_r4b_parallel_assignments_leave_exactly_one_active_row(w):
     assert len(active(w, w.G1)) == 1
 
 
-def test_r4c_a_substitution_during_a_start_moves_the_row_and_the_old_teacher_loses_the_right(w, clock):
-    """[O5.R4] C started the lesson a moment before the substitution: the row is moved to D, the next save of C is 403 NOT_LESSON_TEACHER, marks made so far stay."""
+def test_r4c_a_substitution_during_a_start_is_refused_and_the_teacher_keeps_the_lesson(w, clock):
+    """[O5.R4 + W1 S7 / D20] C started the lesson a moment before the substitution: a lesson that is going on keeps its teacher (409 ``LESSON_IN_PROGRESS``), C's marks go on."""
     w.G1.teacher_id = w.C.id
     w.db.commit()
     clock.set("2026-10-26 10:05")
@@ -128,16 +128,13 @@ def test_r4c_a_substitution_during_a_start_moves_the_row_and_the_old_teacher_los
     assert cl.post(base + "/start", json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1"}).status_code == 200
     assert cl.post(base, json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "status": "in_progress",
                                "records": {str(w.s1.id): "present"}, "expectedVersion": 1}).status_code == 200
-    moved = put(w, "admin", w.G1, "D")
-    assert moved.json()["attendanceUpdated"] is True and moved.json()["version"] == 3
-    denied = cl.post(base, json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "status": "in_progress",
-                                 "records": {str(w.s1.id): "present", str(w.s2.id): "absent"}})
-    assert denied.status_code == 403 and denied.json()["detail"]["code"] == "NOT_LESSON_TEACHER"
-    row = w.db.query(GroupAttendance).filter_by(group_id=w.G1.id, lesson_id="lesson-l1", lesson_date="2026-10-26").one()
-    assert row.teacher_id == w.D.id and row.records == {str(w.s1.id): "present"}
-    ok = client(w, "D").post(base, json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "status": "in_progress",
-                                         "records": {str(w.s1.id): "present", str(w.s2.id): "absent"}})
+    refused = put(w, "admin", w.G1, "D")
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "LESSON_IN_PROGRESS"
+    ok = cl.post(base, json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "status": "in_progress",
+                             "records": {str(w.s1.id): "present", str(w.s2.id): "absent"}})
     assert ok.status_code == 200
+    row = w.db.query(GroupAttendance).filter_by(group_id=w.G1.id, lesson_id="lesson-l1", lesson_date="2026-10-26").one()
+    assert row.teacher_id == w.C.id and row.records == {str(w.s1.id): "present", str(w.s2.id): "absent"}
 
 
 def test_r5_who_taught_a_finished_lesson_can_be_corrected_inside_the_window_only(w, monkeypatch, clock):

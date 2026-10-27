@@ -572,7 +572,7 @@ class GroupAudit(Base):
             "'payment_writeoff', 'payment_writeoff_void', 'payment_refund', 'payment_refund_void', "
             "'membership_pause_set', 'membership_pause_void', 'opening_balance_set', 'opening_balance_void', "
             "'group_lesson_type_set', 'student_left_group', "
-            "'group_archived', 'group_restored', 'lesson_teacher_set', 'lesson_teacher_cleared', 'day_off_voided')",
+            "'group_archived', 'group_restored', 'lesson_teacher_set', 'lesson_teacher_cleared', 'day_off_voided', 'lesson_restored')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(
@@ -1035,11 +1035,15 @@ class OrgDayOff(Base):
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     # What voiding the day off gave back (the cancellation rows are deleted): [{groupId, groupName, lessonId, date, cancelledBy, cancelledAt, reason}]
     restored = Column(JSONB, nullable=True)
+    # W1 S10: the exam-service stopped the apply, some lessons wait for «Продолжить» (``apply``); kept here so that a reloaded panel still shows it.
+    incomplete = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     __table_args__ = (
         CheckConstraint("date_to >= date_from AND date_to - date_from <= 13", name="ck_org_days_off_range"),
         CheckConstraint("char_length(btrim(reason)) >= 3", name="ck_org_days_off_reason"),
         Index("idx_org_days_off_org_dates", "org_id", "date_from", "date_to"),
+        # W1 S10 (Д26): one live day off per centre and range (two windows / a retry cannot give it twice)
+        Index("uq_org_days_off_live_range", "org_id", "date_from", "date_to", unique=True, postgresql_where=text("voided_at IS NULL")),
     )
 
 

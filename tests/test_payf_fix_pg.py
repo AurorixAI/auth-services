@@ -35,19 +35,19 @@ def test_1_a_teacher_cannot_choose_a_holiday_and_gets_a_clear_403(pg_session, cl
     w = build_org(pg_session)
     g, s, m = month_world(w, clock)
     r = cancel(w, g, "lesson-mon", "2026-10-26", kind="holiday", who="A", expect=403)
-    assert "только владелец или администратор" in r.json()["detail"]
+    assert r.json()["detail"]["code"] == "TEACHER_CANNOT_CANCEL"                                  # W1 S3: a teacher does not cancel a lesson himself at all, whatever kind he sends
     assert w.db.query(GroupAttendance).filter_by(group_id=g.id, lesson_date="2026-10-26").count() == 0          # nothing was written, nothing replaced silently
     missed = client(w, "A").post(f"{API}/org/groups/{g.id}/attendance/reconcile/cancel", json={
         "lessonDate": "2026-10-19", "lessonId": "lesson-mon", "cancellationReason": "Преподаватель заболел", "cancellationKind": "holiday"})
     assert missed.status_code == 403 and "только владелец или администратор" in missed.json()["detail"]
 
 
-def test_1_a_teacher_without_a_kind_cancels_by_the_fault_of_the_centre_and_the_audit_keeps_the_kind(pg_session, clock):
+def test_1_a_cancellation_without_a_kind_is_by_the_fault_of_the_centre_and_the_audit_keeps_the_kind(pg_session, clock):
     w = build_org(pg_session)
     g, s, m = month_world(w, clock)
-    cancel(w, g, "lesson-mon", "2026-10-26", who="A")
+    cancel(w, g, "lesson-mon", "2026-10-26")
     assert kind_of(w, g, "2026-10-26", "lesson-mon") == "centre" and row_of(w, s)["debt"] == 554_000
-    cancel(w, g, "lesson-wed", "2026-10-28", kind="centre", who="A")                             # saying «centre» is allowed
+    cancel(w, g, "lesson-wed", "2026-10-28", kind="centre")                                      # saying «centre» is allowed
     audit = w.db.query(GroupAttendanceAudit).filter_by(group_id=g.id, action="cancelled").all()
     assert sorted(a.details["cancellation_kind"] for a in audit) == ["centre", "centre"]
     client(w, "A").post(f"{API}/org/groups/{g.id}/attendance/reconcile/cancel", json={"lessonDate": "2026-10-19", "lessonId": "lesson-mon", "cancellationReason": "Заболел"})
@@ -59,7 +59,7 @@ def test_1_a_teacher_without_a_kind_cancels_by_the_fault_of_the_centre_and_the_a
 def test_1_an_owner_or_admin_chooses_and_changes_the_kind_of_a_cancelled_lesson(pg_session, clock):
     w = build_org(pg_session)
     g, s, m = month_world(w, clock)
-    cancel(w, g, "lesson-wed", "2026-10-21", who="A")                                          # the teacher: «по вине центра»
+    cancel(w, g, "lesson-wed", "2026-10-21")                                                   # «по вине центра» by default
     assert recalc_days(w, m) == ["2026-10-21"] and row_of(w, s)["debt"] == 554_000
     put = lambda who, body, expect=200: (lambda r: (r.status_code == expect or pytest.fail(r.text), r)[1])(  # noqa: E731
         client(w, who).put(f"{API}/org/groups/{g.id}/attendance/cancellation-kind", json={"lessonDate": "2026-10-21", "lessonId": "lesson-wed", **body}))
@@ -258,9 +258,11 @@ def test_8_a_lesson_under_another_live_day_off_is_not_given_back(three_groups, m
     voided = c.post(f"{API}/org/days-off/{first['dayOff']['id']}/void").json()
     assert voided["restored"] == [] and {k["reason"] for k in voided["kept"]} == {"Дата входит в другой выходной"}
     assert w.db.query(GroupAttendance).filter_by(org_id=w.org.id, lesson_date="2026-10-21").count() == 3
-    # once the other one is voided too, nothing holds the 21st: its own lessons are given back (they belong to the first day off, already voided -> only the 23rd goes)
+    # once the other one is voided too, nothing holds the 21st
+    # W1 S10 (Д4): the lessons of the 21st that the first day off cancelled were handed to the second one when the first was voided - nobody is left as a zombie
     gone = c.post(f"{API}/org/days-off/{second['dayOff']['id']}/void").json()
-    assert {r["date"] for r in gone["restored"]} == {"2026-10-23"}
+    assert {r["date"] for r in gone["restored"]} == {"2026-10-21", "2026-10-23"}
+    assert w.db.query(GroupAttendance).filter_by(org_id=w.org.id, status="cancelled").count() == 0
 
 
 def test_8_a_manual_cancellation_of_the_centre_becomes_a_holiday(three_groups, monkeypatch):

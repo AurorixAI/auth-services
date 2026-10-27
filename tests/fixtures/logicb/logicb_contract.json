@@ -596,6 +596,25 @@
         "title": "BusyWith",
         "type": "object"
       },
+      "CancelWarning": {
+        "description": "W1 S2: what the cancellation did besides cancelling - ``CANCELLED_AS_HOLIDAY`` (the date is under a day off of the centre: no deduction), ``SUBSTITUTE_RELEASED``.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "CancelWarning",
+        "type": "object"
+      },
       "CompletedOut": {
         "properties": {
           "leftRunning": {
@@ -2140,6 +2159,17 @@
             "title": "Orgrole",
             "type": "string"
           },
+          "rateMissing": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratemissing"
+          },
           "teacherId": {
             "title": "Teacherid",
             "type": "string"
@@ -3069,6 +3099,13 @@
           "version": {
             "title": "Version",
             "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/CancelWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -3354,6 +3391,13 @@
           "version": {
             "title": "Version",
             "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/CancelWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [

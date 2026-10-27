@@ -204,7 +204,7 @@ def test_s4_r7_busy_not_from_the_centre_requester_and_missing_rate(w):
     assert decide(w, "admin", item["id"], decision="substitute").json()["detail"]["code"] == "TEACHER_REQUIRED"
     cands = {c["name"]: c for c in client(w, "owner").get(f"{SUB}/{item['id']}/candidates").json()["candidates"]}
     assert cands["Рахимов Т."]["rateMissing"] is True and cands["Сидоров С."]["rateMissing"] is False
-    assert all(c["rateMissing"] is None for c in client(w, "admin").get(f"{SUB}/{item['id']}/candidates").json()["candidates"])
+    assert {c["name"]: c["rateMissing"] for c in client(w, "admin").get(f"{SUB}/{item['id']}/candidates").json()["candidates"]} == {n: c["rateMissing"] for n, c in cands.items()}      # W1 (F5): a yes / no for the administrator too
     assert decide(w, "admin", item["id"], **sub_body(w, "D")).status_code == 200                        # no rate: allowed
 
 
@@ -424,15 +424,16 @@ def test_s6_r1_chain3_cancel_golden(w, clock, sync):
 
 
 def test_s6_r2_repeat_and_an_already_cancelled_lesson(w, sync):
-    """[B2.S6.R2] A repeat: 200 the same item; a lesson cancelled by another way: the request is closed LESSON_CANCELLED and the answer is 409 with the item."""
+    """[B2.S6.R2] A repeat: 200 the same item; a lesson cancelled by another way (W1 S2: the administrator's cancellation from the lesson sheet is THE cancellation - it decides the
+    waiting request ``cancelled``): the answer to a second decision is 409 with that item."""
     item = one(w, "A", "L1", "2026-11-02")
     first = decide(w, "admin", item["id"], decision="cancel", reason="Преподаватель болен")
     again = decide(w, "admin", item["id"], decision="cancel", reason="Преподаватель болен")
     assert again.status_code == 200 and again.json()["item"] == first.json()["item"] and w.db.query(GroupAttendance).filter_by(group_id=w.G1.id, lesson_date="2026-11-02").count() == 1
     other = one(w, "A", "L2", "2026-10-28")
-    assert client(w, "A").post(f"{API}/org/groups/{w.G1.id}/attendance", json={"lessonDate": "2026-10-28", "lessonId": "lesson-l2", "status": "cancelled", "cancellationReason": "Сам отменил", "records": {}}).status_code == 200
+    assert client(w, "admin").post(f"{API}/org/groups/{w.G1.id}/attendance", json={"lessonDate": "2026-10-28", "lessonId": "lesson-l2", "status": "cancelled", "cancellationReason": "Сам отменил", "records": {}}).status_code == 200
     r = decide(w, "admin", other["id"], decision="cancel", reason="Преподаватель болен")
-    assert r.status_code == 409 and r.json()["detail"]["item"]["decision"]["closedReason"] == "LESSON_CANCELLED"
+    assert r.status_code == 409 and r.json()["detail"]["item"]["status"] == "cancelled" and r.json()["detail"]["item"]["decision"]["note"] == "Сам отменил"
 
 
 def test_s6_r3_a_cancelled_lesson_stays_cancelled(w, sync, clock):
@@ -506,12 +507,17 @@ def test_s6_r7_exam_service_down_and_reason_rules(w, sync):
 
 
 def test_s6_r8_roles_and_the_teacher_who_cancels_himself(w, sync):
-    """[B2.S6.R8] Only a manager decides; a teacher cancelling his own lesson by the old path closes the request ``LESSON_CANCELLED`` through the hook; the student does not see the reason."""
+    """[B2.S6.R8] Only a manager decides; a teacher does not cancel his own lesson any more (W1 S3: 403 ``TEACHER_CANNOT_CANCEL``, his request waits); the administrator's cancellation
+    from the lesson sheet decides the waiting request."""
     item = one(w, "A", "L1", "2026-10-26")
     assert decide(w, "A", item["id"], decision="cancel", reason="Отмена").status_code == 403
-    assert client(w, "A").post(f"{API}/org/groups/{w.G1.id}/attendance", json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "status": "cancelled", "cancellationReason": "Отменяю сам", "records": {}}).status_code == 200
+    body = {"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "status": "cancelled", "cancellationReason": "Отменяю сам", "records": {}}
+    refused = client(w, "A").post(f"{API}/org/groups/{w.G1.id}/attendance", json=body)
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "TEACHER_CANNOT_CANCEL"
+    assert [r.status for r in requests_of(w)] == ["pending"]
+    assert client(w, "admin").post(f"{API}/org/groups/{w.G1.id}/attendance", json=body).status_code == 200
     (row,) = requests_of(w)
-    assert (row.status, row.closed_reason) == ("closed", "LESSON_CANCELLED")
+    assert (row.status, row.decided_via, row.closed_reason) == ("cancelled", "request", None)
 
 
 def test_s6_r9_cancel_never_counts_and_does_not_busy_the_teachers(w, sync):

@@ -356,6 +356,13 @@ class GroupLifecycle:
             )
         )
         self.db.commit()
+        from .days_off import DaysOffService  # lazy: it imports the service layer
+
+        try:                         # W1 S10 (Д7): the group meets the live days off of the centre (its lessons that fall into them are cancelled by the day off's own step)
+            DaysOffService(self.svc).apply_to_group(group.org_id, actor_id, group.id)
+        except Exception:            # the group is back whatever happens: «Продолжить» of the day off finishes what was not done
+            self.db.rollback()
+            logger.exception("restore: the days off were not applied to group %s", group.id)
         return self.svc._build_group_response(group).model_dump()
 
     def _is_group_teacher(self, org_id: Any, user_id: Any) -> bool:

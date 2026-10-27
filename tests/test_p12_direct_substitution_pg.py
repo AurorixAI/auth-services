@@ -247,9 +247,9 @@ def test_s7_the_rules_of_the_assignment_are_as_they_were_nothing_widened_and_a_r
     assert len(held) == 1 and (held[0].status, held[0].origin, held[0].substitute_id, held[0].requester_id) == ("substituted", "system", w.D.id, w.A.id)
     clock.set("2026-10-26 10:05")                                                           # Mon: the lesson has started (a row in progress)
     assert client(w, "A").post(f"{API}/org/groups/{w.G1.id}/attendance/start", json={"lessonDate": MON, "lessonId": "lesson-l1"}).status_code == 200
-    started = put(w, "admin", "C")
-    assert started.status_code == 200 and started.json()["attendanceUpdated"] is True
-    assert [r.substitute_id for r in requests_of(w) if r.lesson_date == MON] == [w.C.id]
+    started = put(w, "admin", "C")                                                         # W1 S7 (D20): a lesson that is going on keeps its teacher
+    assert started.status_code == 409 and started.json()["detail"]["code"] == "LESSON_IN_PROGRESS"
+    assert [r for r in requests_of(w) if r.lesson_date == MON] == []                        # and a refusal writes no record
 
 
 # ------------------------------------------------------------------------------------------------------ S8

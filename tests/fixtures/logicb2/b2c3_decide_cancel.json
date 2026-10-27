@@ -54,6 +54,7 @@
   },
   "result": {
     "attendanceUpdated": null,
+    "cancellationKind": "centre",
     "cancelledVersion": null,
     "isSubstitution": null,
     "kind": "cancel",
@@ -62,6 +63,6 @@
     "teacherId": null,
     "teacherName": null,
     "version": 1,
-    "warnings": null
+    "warnings": []
   }
 }

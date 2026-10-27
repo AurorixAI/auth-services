@@ -21,9 +21,11 @@ from .schemas import (
     CreateLessonRequest,
     CreateOneOffLessonRequest,
     GroupAttendanceResponse,
+    EndRecurringLessonResponse,
     GroupResponse,
     InviteMemberRequest,
     OpenAttendanceActionResponse,
+    ReviseRecurringLessonRequest,
     ScheduleLessonResponse,
     ScheduleOccurrenceResponse,
     SaveAttendanceRequest,
@@ -90,10 +92,36 @@ class CreateOneOffLessonRequestB(CreateOneOffLessonRequest):
     room: Optional[str] = None
 
 
+class LaterRevision(BaseModel):
+    """W1 S8: a revision of the series that was already planned for a LATER date and that the change was applied to as well."""
+
+    effectiveFrom: str
+    fields: List[str] = Field(default_factory=list)       # dayOfWeek | startTime | endTime | subject | room | format | color | topic
+
+
+class ReviseRecurringLessonRequestB(ReviseRecurringLessonRequest):
+    # W1 S8: a change of the day / the time takes the exams of the future dates back to drafts - only when the author confirmed it (409 ``EXAMS_NEED_CONFIRMATION`` lists them)
+    releaseAffectedExams: bool = False
+
+
 class ScheduleLessonResponseB(ScheduleLessonResponse):
     room: Optional[str] = None
     validFrom: Optional[str] = None
     warnings: List[OpsWarning] = Field(default_factory=list)
+
+
+class ScheduleLessonRevisedB(ScheduleLessonResponseB):
+    """The answer of the revision of a weekly lesson (``PUT .../recurrence``) = the lesson as it is from the date + what the revision did besides (W1 S8)."""
+
+    laterRevisions: List[LaterRevision] = Field(default_factory=list)
+    releasedExamIds: List[str] = Field(default_factory=list)               # the exams that went back to drafts
+
+
+class EndRecurringLessonResponseB(EndRecurringLessonResponse):
+    # W1 S9: what stopping the series did to what hung on its lessons
+    closedRequests: int = 0                  # waiting requests of teachers for lessons that are no more (closed ``LESSON_REMOVED``)
+    releasedSubstitutes: int = 0             # substitutes assigned to lessons that are no more (taken off, in the journal «Замены»)
+    removedCancellations: int = 0            # cancellations set in advance for dates after the stop (recorded in the schedule audit)
 
 
 class ScheduleOccurrenceResponseB(ScheduleOccurrenceResponse):
@@ -153,10 +181,18 @@ class ReconcileOut(BaseModel):
     version: int
 
 
+class CancelWarning(BaseModel):
+    """W1 S2: what the cancellation did besides cancelling - ``CANCELLED_AS_HOLIDAY`` (the date is under a day off of the centre: no deduction), ``SUBSTITUTE_RELEASED``."""
+
+    code: str
+    message: str
+
+
 class ReconcileCancelOut(BaseModel):
     ok: bool = True
     cancelled: bool = True
     version: int
+    warnings: List[CancelWarning] = Field(default_factory=list)
 
 
 class SaveAttendanceOut(BaseModel):
@@ -164,6 +200,7 @@ class SaveAttendanceOut(BaseModel):
     saved: bool = True
     version: int
     examSync: Optional[ExamSyncOut] = None
+    warnings: List[CancelWarning] = Field(default_factory=list)       # W1 S2: only a cancellation has any
 
 
 class AttendanceConflictDetail(OpsErrorDetail):
@@ -254,6 +291,7 @@ class LessonTeacherCandidate(BaseModel):
     teacherId: str
     name: str
     orgRole: str = "teacher"
+    rateMissing: Optional[bool] = None   # W1 (F5): no payroll rate for the type of this group in the month of the lesson (a yes / no; the owner alone sees the rates)
     busy: bool = False
     busyWith: Optional[BusyWith] = None
 

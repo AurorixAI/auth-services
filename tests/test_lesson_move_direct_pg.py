@@ -210,8 +210,11 @@ def test_m13_a_lesson_with_a_substitute_moves_and_the_substitution_is_released(w
     assert r.status_code == 200, r.text
     w.db.expire_all()
     assert w.db.query(LessonTeacherAssignment).filter_by(group_id=w.G1.id, lesson_id="lesson-l2", lesson_date="2026-10-28", cancelled_at=None).count() == 0
-    (last,) = [x for x in requests_of(w) if x.origin == "system"]
+    # W1 S12: the substitute stays on the NEW lesson - the move leaves its own record and the record of the kept substitution
+    (last,) = [x for x in requests_of(w) if x.origin == "system" and x.status == "rescheduled"]
     assert last.origin == "system" and last.requester_id == w.B.id and last.status == "rescheduled" and str(last.previous_request_id) == item["id"]
+    kept = [x for x in requests_of(w) if x.origin == "system" and x.status == "substituted"]
+    assert len(kept) == 1 and kept[0].substitute_id == w.B.id and kept[0].lesson_id != "lesson-l2"
 
 
 def test_m14_only_the_owner_the_admin_and_the_teacher_of_the_lesson(w, sync):

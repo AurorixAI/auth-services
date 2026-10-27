@@ -59,6 +59,7 @@
   },
   "result": {
     "attendanceUpdated": null,
+    "cancellationKind": null,
     "cancelledVersion": 1,
     "isSubstitution": null,
     "kind": "reschedule",

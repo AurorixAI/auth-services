@@ -353,6 +353,21 @@
       },
       "DecideBulkRequest": {
         "properties": {
+          "cancellationKind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "centre",
+                  "holiday"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellationkind"
+          },
           "decision": {
             "enum": [
               "substitute",
@@ -433,6 +448,21 @@
       "DecideRequest": {
         "description": "One body for the four decisions; the service checks the fields of the chosen decision (422 with a code).",
         "properties": {
+          "cancellationKind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "centre",
+                  "holiday"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellationkind"
+          },
           "decision": {
             "enum": [
               "substitute",
@@ -569,6 +599,21 @@
               }
             ],
             "title": "Attendanceupdated"
+          },
+          "cancellationKind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "centre",
+                  "holiday"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellationkind"
           },
           "cancelledVersion": {
             "anyOf": [
@@ -952,6 +997,7 @@
         "type": "object"
       },
       "MoveWarning": {
+        "additionalProperties": true,
         "properties": {
           "code": {
             "title": "Code",
@@ -1372,7 +1418,8 @@
                   "GROUP_TEACHER_CHANGED",
                   "TEACHER_REMOVED",
                   "LESSON_OUTSIDE_WINDOW",
-                  "ASSIGNMENT_CLEARED"
+                  "ASSIGNMENT_CLEARED",
+                  "LESSON_RESTORED"
                 ],
                 "type": "string"
               },
@@ -1444,7 +1491,9 @@
                   "teacher_move",
                   "lesson_teacher_put",
                   "system",
-                  "withdraw"
+                  "withdraw",
+                  "teacher_cancel",
+                  "manager_restore"
                 ],
                 "type": "string"
               },
@@ -2601,7 +2650,7 @@
     },
     "/org/substitutions/mine": {
       "get": {
-        "description": "Мои запросы и уроки, где меня назначили заменяющим.",
+        "description": "Мои запросы и уроки, где меня назначили заменяющим.  W1 S13: also for an owner / admin who was made a substitute (they ask nothing: ``items`` is empty, ``assignedToMe`` is theirs).",
         "parameters": [
           {
             "in": "query",
@@ -3263,6 +3312,7 @@
       "LESSON_CANCELLED": "Урок отменён",
       "LESSON_OUTSIDE_WINDOW": "Срок разбора истёк",
       "LESSON_REMOVED": "Урока больше нет в расписании",
+      "LESSON_RESTORED": "Урок возвращён",
       "LESSON_STARTED": "Урок начат — запрос закрыт",
       "TEACHER_REMOVED": "Преподаватель больше не работает в центре"
     },

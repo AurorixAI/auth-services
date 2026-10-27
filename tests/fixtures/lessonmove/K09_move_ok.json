@@ -75,6 +75,7 @@
       "format": "offline"
     },
     "version": null,
-    "warnings": []
+    "warnings": [],
+    "cancellationKind": null
   }
 }

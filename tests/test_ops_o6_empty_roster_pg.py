@@ -100,7 +100,7 @@ def test_r5_reconcile_refuses_an_empty_roster_cancel_missed_does_not(w):
         w.svc.reconcile_missed_group_attendance(str(w.org.id), str(group.id), req, reconciled_by=str(w.admin.id), is_org_admin=True)
     assert w.svc.cancel_missed_group_attendance(
         str(w.org.id), str(group.id), ReconcileMissedLessonRequest(lessonDate=day, lessonId="lesson-e", cancellationReason="Урока не было"),
-        cancelled_by=str(w.admin.id), is_org_admin=True) == 1
+        cancelled_by=str(w.admin.id), is_org_admin=True)["version"] == 1
 
 
 def test_r6_roster_boundaries_live_start_by_the_active_members_reconcile_by_the_periods(w, clock):

@@ -66,7 +66,7 @@ def put_lesson_teacher(
     from .lesson_teachers import LessonTeachers
 
     return LessonTeachers(_svc(db)).put(
-        user["org_id"], group_id, request, actor_id=user["user_id"], actor_role=user.get("org_role") or "admin"
+        user["org_id"], group_id, request, actor_id=user["user_id"], actor_role=user["org_role"]
     )
 
 
@@ -125,7 +125,7 @@ def archive_group(
     from .group_lifecycle import GroupLifecycle
 
     return GroupLifecycle(_svc(db)).archive(
-        user["org_id"], group_id, request, actor_id=user["user_id"], actor_role=user.get("org_role") or "admin"
+        user["org_id"], group_id, request, actor_id=user["user_id"], actor_role=user["org_role"]
     )
 
 
@@ -140,7 +140,7 @@ def restore_group(
     from .group_lifecycle import GroupLifecycle
 
     return GroupLifecycle(_svc(db)).restore(
-        user["org_id"], group_id, request, actor_id=user["user_id"], actor_role=user.get("org_role") or "admin"
+        user["org_id"], group_id, request, actor_id=user["user_id"], actor_role=user["org_role"]
     )
 
 
@@ -170,7 +170,7 @@ def handover_member_groups(
     from .staff_lifecycle import StaffLifecycle
 
     return StaffLifecycle(_svc(db)).handover(
-        user["org_id"], member_id, request, actor_id=user["user_id"], actor_role=user.get("org_role") or "admin"
+        user["org_id"], member_id, request, actor_id=user["user_id"], actor_role=user["org_role"]
     )
 
 

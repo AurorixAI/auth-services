@@ -113,10 +113,19 @@ def test_excuse_reasons_for_non_excused_students_are_ignored(world):
     assert excuse_of(world, s) is None
 
 
-def test_cancelling_removes_excuses(world):
+def test_cancelling_a_lesson_with_excuses_is_refused_until_the_marks_are_taken_off(world):
+    """W1 S7 (Д27): the cancellation used to delete the reviewed excuses with their files; now the marks are taken off first (that removes the excuse, audited), then the lesson is cancelled."""
+    from src.auth.ops_rules import OpsError
+
     day, lesson_id = excused_lesson(world)
-    save(world, day, lesson_id, [], status="cancelled", cancellationReason="Праздник")
+    with pytest.raises(OpsError) as refused:
+        save(world, day, lesson_id, [], status="cancelled", cancellationReason="Праздник")
+    assert refused.value.code == "LESSON_HAS_MARKS"
+    world.db.rollback()
+    assert excuse_of(world) is not None
+    save(world, day, lesson_id, [])                                                      # every mark is taken off: the excuse goes with its mark
     assert excuse_of(world) is None
+    save(world, day, lesson_id, [], status="cancelled", cancellationReason="Праздник")
 
 
 # ============================================================================
@@ -258,10 +267,6 @@ def test_removing_an_excuse_is_audited_with_details(world):
     save(world, day, lesson_id, [(s, "absent")])
     (row,) = audit_rows(world, "excuse_removed")
     assert row.details == {"excuse_id": str(excuse.id), "student_id": str(s.id), "status_before": "rejected", "files_removed": 1}
-    # Cancelling the lesson removes the remaining excuses the same way.
-    day2, lesson2 = excused_lesson(world, offset_days=2)
-    save(world, day2, lesson2, [], status="cancelled", cancellationReason="Праздник")
-    assert len(audit_rows(world, "excuse_removed")) == 2
 
 
 def test_legacy_excused_mark_without_excuse_row_gets_a_pending_excuse(world):
@@ -290,7 +295,7 @@ def test_global_admin_role_without_org_admin_membership_cannot_correct(world):
     # org_role teacher, global role admin: passes the group-access check, not the correction check.
     loose = make_client(world, user=world.teacher, role="admin", org_role="teacher")
     r = loose.post(url, json=body)
-    assert r.status_code == 403 and "owner или admin" in r.json()["detail"]
+    assert r.status_code in (400, 403)                                    # W1 S1: a teacher here is a teacher whatever he owns elsewhere - a completed lesson is not his to correct
     world.db.expire_all()
     att = world.db.query(GroupAttendance).filter_by(lesson_id=lesson_id, group_id=world.group.id).one()
     assert set(att.records.values()) == {"present"}

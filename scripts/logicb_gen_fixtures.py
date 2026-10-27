@@ -330,8 +330,8 @@ remaining = int((EXAM_END_LOCAL - CHECK_LOCAL).total_seconds())
 assert remaining == 900 and utc(EXAM_END_LOCAL).isoformat() == "2026-10-21T12:30:00"
 put("c5_live_exam_conflict.json", "-", error(409, "LESSON_HAS_LIVE_EXAM", "Экзамен «Контрольная №3» ещё идёт (осталось 15 мин). Он продолжится по своему таймеру и закроется сам.",
                                               exams=[{"examId": IDS["exam"], "title": "Контрольная №3", "status": "active", "remainingSeconds": remaining, "waitingCount": 0}]))
-put("c5_save_completed_ack.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 3, "examSync": {"released": [], "leftRunning": [IDS["exam"]], "warning": None}})
-put("c5_save_lobby_released.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 3, "examSync": {"released": [IDS["exam"]], "leftRunning": [], "warning": None}})
+put("c5_save_completed_ack.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 3, "examSync": {"released": [], "leftRunning": [IDS["exam"]], "warning": None}, "warnings": []})
+put("c5_save_lobby_released.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 3, "examSync": {"released": [IDS["exam"]], "leftRunning": [], "warning": None}, "warnings": []})
 put("c5_completion_check.json", "CompletionCheckOut", {"ok": True, "exams": [{
     "examId": IDS["exam"], "title": "Контрольная №3", "status": "active", "deliveryMode": "online",
     "remainingSeconds": remaining, "waitingCount": 0, "endsAt": utc(EXAM_END_LOCAL).isoformat()}]})
@@ -367,13 +367,13 @@ put("c6_members_removed.json", "MemberOut", {
 
 # ================================================================================================ chain 7
 L1_KEY = f"2026-10-26_{LESSON['L1']}"
-put("c7_save_v2.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 2, "examSync": None})
+put("c7_save_v2.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 2, "examSync": None, "warnings": []})
 put("c7_conflict.json", "-", error(409, "ATTENDANCE_CONFLICT", "Отметки уже изменил(а) Рахимов Т. в 10:42", currentVersion=2,
                                     updatedBy={"id": IDS["D"], "name": short("D")}, updatedAt="2026-10-26T05:42:10",
                                     records={IDS["s1"]: "present"}))
-put("c7_save_v3.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 3, "examSync": None})
-put("c7_complete_v4.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 4, "examSync": {"released": [], "leftRunning": [], "warning": None}})
-put("c7_correct_v5.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 5, "examSync": None})
+put("c7_save_v3.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 3, "examSync": None, "warnings": []})
+put("c7_complete_v4.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 4, "examSync": {"released": [], "leftRunning": [], "warning": None}, "warnings": []})
+put("c7_correct_v5.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 5, "examSync": None, "warnings": []})
 put("c7_journal_extras.json", "-", {
     "versions": {L1_KEY: 5},
     "lessonTeachers": {L1_KEY: {"teacherId": IDS["D"], "teacherName": short("D"), "isSubstitution": True,
@@ -410,8 +410,8 @@ put("x_lesson_teacher_candidates.json", "LessonTeacherCandidatesOut", {
     "lessonId": LESSON["L1"], "lessonDate": "2026-10-26", "startTime": "10:00", "endTime": "11:30",
     "currentTeacherId": IDS["C"], "defaultTeacherId": IDS["C"],
     "candidates": [
-        {"teacherId": IDS["D"], "name": short("D"), "orgRole": "teacher", "busy": False, "busyWith": None},
-        {"teacherId": IDS["B"], "name": short("B"), "orgRole": "teacher", "busy": True, "busyWith": {"groupName": "8-В", "startTime": "10:00", "endTime": "11:30"}},
+        {"teacherId": IDS["D"], "name": short("D"), "orgRole": "teacher", "rateMissing": True, "busy": False, "busyWith": None},        # W1 (F5): D0 has no payroll rates at all
+        {"teacherId": IDS["B"], "name": short("B"), "orgRole": "teacher", "rateMissing": True, "busy": True, "busyWith": {"groupName": "8-В", "startTime": "10:00", "endTime": "11:30"}},
     ],
 })
 put("x_lesson_teacher_changed.json", "-", error(409, "LESSON_TEACHER_CHANGED", f"Преподаватель урока уже изменён: {short('D')} Обновите страницу",

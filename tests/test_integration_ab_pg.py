@@ -375,8 +375,8 @@ def test_the_linear_chain_composes_the_check_constraints_of_a_and_b(monkeypatch)
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["pf1a2b3c4d5"]                              # PAY-F, on top of the console pack, the IA fix pack (student journal) and LOGIC-B2
-    assert [r.revision for r in script.walk_revisions()][:8] == ["pf1a2b3c4d5", "cn1a2b3c4d5", "sa1b2c3d4e5", "lb3c4d5e6f7", "lb2b3c4d5e6", "lb1a2b3c4d5", "f2a3b4c5d6e", "e1f2a3b4c5d"]
+    assert script.get_heads() == ["w1a2b3c4d5e"]                              # W1 on top of PAY-F, on top of the console pack, the IA fix pack (student journal) and LOGIC-B2
+    assert [r.revision for r in script.walk_revisions()][:9] == ["w1a2b3c4d5e", "pf1a2b3c4d5", "cn1a2b3c4d5", "sa1b2c3d4e5", "lb3c4d5e6f7", "lb2b3c4d5e6", "lb1a2b3c4d5", "f2a3b4c5d6e", "e1f2a3b4c5d"]
     name = "a5_auth_chain_migrations"
     url_base = make_url(base)
     admin = create_engine(url_base.set(database="postgres"), isolation_level="AUTOCOMMIT", connect_args=utc_connect_args(base))
@@ -414,7 +414,7 @@ def test_the_linear_chain_composes_the_check_constraints_of_a_and_b(monkeypatch)
             assert not any(f"'{v}'" in d for v in A_VALUES[table] + B_VALUES[table]), (table, d)
         command.upgrade(config, "head")
         with eng.connect() as c:
-            assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "pf1a2b3c4d5"
+            assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "w1a2b3c4d5e"
     finally:
         eng.dispose()
         with admin.connect() as c:

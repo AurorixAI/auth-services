@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from src.auth.attendance_access import is_org_admin
+from src.auth.attendance_access import is_org_manager
 from src.auth.schemas import (
     GroupAttendanceResponse,
     LessonAttendanceStatus,
@@ -315,7 +315,9 @@ class AttendanceContractTests(unittest.TestCase):
                 str(uuid4()), str(group.id), actor_id=str(uuid4()), is_org_admin=False
             )
 
-    def test_org_admin_helper_uses_org_role_not_spoofable_query_parameters(self):
-        self.assertTrue(is_org_admin({"org_role": "owner", "role": "teacher"}))
-        self.assertTrue(is_org_admin({"org_role": "admin", "role": "teacher"}))
-        self.assertFalse(is_org_admin({"org_role": "teacher", "role": "teacher"}))
+    def test_org_manager_helper_uses_org_role_not_the_global_role(self):
+        self.assertTrue(is_org_manager({"org_role": "owner", "role": "teacher"}))
+        self.assertTrue(is_org_manager({"org_role": "admin", "role": "teacher"}))
+        self.assertFalse(is_org_manager({"org_role": "teacher", "role": "teacher"}))
+        self.assertFalse(is_org_manager({"org_role": "teacher", "role": "owner"}))       # W1 S1: the owner of ANOTHER centre is a teacher here
+        self.assertFalse(is_org_manager({"org_role": None, "role": "admin"}))

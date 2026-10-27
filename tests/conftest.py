@@ -82,4 +82,11 @@ def _exam_service_has_no_exams(monkeypatch):
         return {"ok": True, "releasedExamIds": []}
 
     monkeypatch.setattr(exam_bridge, "_post", empty)
+    # W1 S8: a change of the day / time of a weekly lesson and the stop of a series ask exam-service for the exams of the future dates (``AuthService._fetch_exam_recurring_end_impact``,
+    # plain httpx): by default "no exams"; a test of the exam behaviour replaces the two methods (``tests/test_w1_series_pg.py``)
+    from src.auth.service import AuthService
+
+    monkeypatch.setattr(AuthService, "_fetch_exam_recurring_end_impact", lambda self, **kw: {"can_end": True, "affected_exam_count": 0, "releasable_exam_count": 0,
+                                                                                            "blocked_exam_count": 0, "exams": []})
+    monkeypatch.setattr(AuthService, "_release_exam_recurring_end", lambda self, **kw: [])
     yield

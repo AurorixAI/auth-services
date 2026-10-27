@@ -91,7 +91,7 @@ def decision(kind: str, by: Optional[str], at_local: datetime, *, via="request",
 
 def result(kind: str, **kw) -> Dict[str, Any]:
     base = {"kind": kind, "teacherId": None, "teacherName": None, "isSubstitution": None, "attendanceUpdated": None,
-            "payrollSheetsAffected": None, "cancelledVersion": None, "newLesson": None, "version": None, "warnings": None}
+            "payrollSheetsAffected": None, "cancelledVersion": None, "newLesson": None, "version": None, "warnings": None, "cancellationKind": None}
     base.update(kw)
     return base
 
@@ -105,13 +105,13 @@ put("b2c1_summary_pending.json", "SubstitutionSummary", {"pendingTotal": 1, "urg
 cand = []
 free = sorted(["admin", "C", "owner"], key=lambda k: B.PEOPLE[k][1])           # by surname: Каримова, Сидоров, Усманов
 cand.append({"teacherId": IDS["D"], "name": short("D"), "orgRole": "teacher", "suggested": True, "isDefaultTeacher": False, "busy": False,
-             "busyWith": None, "rateMissing": None})
+             "busyWith": None, "rateMissing": True})
 for key in free:
     role = "owner" if key == "owner" else "admin" if key == "admin" else "teacher"
     cand.append({"teacherId": IDS[key], "name": short(key), "orgRole": role, "suggested": False, "isDefaultTeacher": False, "busy": False,
-                 "busyWith": None, "rateMissing": None})
+                 "busyWith": None, "rateMissing": key != "C"})
 cand.append({"teacherId": IDS["B"], "name": short("B"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": False, "busy": True,
-             "busyWith": {"kind": "lesson", "groupName": "8-В", "startTime": "10:00", "endTime": "11:30", "pendingRequest": False}, "rateMissing": None})
+             "busyWith": {"kind": "lesson", "groupName": "8-В", "startTime": "10:00", "endTime": "11:30", "pendingRequest": False}, "rateMissing": False})
 put("b2c1_candidates_admin.json", "CandidatesOut", {
     "requestId": c1["id"], "lesson": {"groupId": IDS["G1"], "groupName": "9-А", "lessonId": LESSON["L1"], "date": "2026-10-26",
                                       "startTime": "10:00", "endTime": "11:30"},
@@ -154,7 +154,7 @@ c3 = item("c3", "L1", "2026-11-02", "A", NOW, reason="sick")
 assert c3["minutesToStart"] == 17040
 c3_done = dict(c3, status="cancelled", decision=decision("cancel", "admin", NOW + timedelta(minutes=2), note="Преподаватель болен, замены нет"),
                minutesToStart=minutes_between(NOW + timedelta(minutes=2), "2026-11-02", "10:00"))
-put("b2c3_decide_cancel.json", "DecideOut", {"item": c3_done, "result": result("cancel", version=1)})
+put("b2c3_decide_cancel.json", "DecideOut", {"item": c3_done, "result": result("cancel", version=1, warnings=[], cancellationKind="centre")})
 put("b2c3_cancelled_row.json", "-", {"lesson_date": "2026-11-02", "status": "cancelled", "version": 1, "records": {}, "teacher_id": IDS["A"],
                                      "marked_by": IDS["admin"], "cancellation_reason": "Преподаватель болен, замены нет"})
 
@@ -213,12 +213,12 @@ c8 = item("c8", "L1", "2026-10-26", "D", NOW8, reason="sick", comment="Сам з
           previous={"id": c1["id"], "status": "substituted", "teacherName": short("A"), "substituteName": short("D")})
 put("b2c8_create.json", "CreateSubstitutionOut", {"batchId": c8["batchId"], "created": [c8], "alreadyRequested": [], "skipped": []})
 cand8 = [
-    {"teacherId": IDS["A"], "name": short("A"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": True, "busy": False, "busyWith": None, "rateMissing": None},
-    {"teacherId": IDS["admin"], "name": short("admin"), "orgRole": "admin", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "rateMissing": None},
-    {"teacherId": IDS["C"], "name": short("C"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "rateMissing": None},
-    {"teacherId": IDS["owner"], "name": short("owner"), "orgRole": "owner", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "rateMissing": None},
+    {"teacherId": IDS["A"], "name": short("A"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": True, "busy": False, "busyWith": None, "rateMissing": False},
+    {"teacherId": IDS["admin"], "name": short("admin"), "orgRole": "admin", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "rateMissing": True},
+    {"teacherId": IDS["C"], "name": short("C"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "rateMissing": False},
+    {"teacherId": IDS["owner"], "name": short("owner"), "orgRole": "owner", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "rateMissing": True},
     {"teacherId": IDS["B"], "name": short("B"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": False, "busy": True,
-     "busyWith": {"kind": "lesson", "groupName": "8-В", "startTime": "10:00", "endTime": "11:30", "pendingRequest": False}, "rateMissing": None},
+     "busyWith": {"kind": "lesson", "groupName": "8-В", "startTime": "10:00", "endTime": "11:30", "pendingRequest": False}, "rateMissing": False},
 ]
 put("b2c8_candidates.json", "CandidatesOut", {"requestId": c8["id"], "lesson": {"groupId": IDS["G1"], "groupName": "9-А", "lessonId": LESSON["L1"], "date": "2026-10-26",
                                                                               "startTime": "10:00", "endTime": "11:30"},

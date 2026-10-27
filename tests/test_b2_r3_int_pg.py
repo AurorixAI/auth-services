@@ -185,7 +185,8 @@ def test_m6_the_rate_of_every_candidate_is_found_with_one_query(w, clock):
     cands = client(w, "owner").get(f"{SUB}/{item['id']}/candidates").json()["candidates"]
     by_name = {c["name"]: c["rateMissing"] for c in cands}
     assert by_name["Рахимов Т."] is True and by_name["Сидоров С."] is False
-    assert all(c["rateMissing"] is None for c in client(w, "admin").get(f"{SUB}/{item['id']}/candidates").json()["candidates"])
+    admin_view = {c["name"]: c["rateMissing"] for c in client(w, "admin").get(f"{SUB}/{item['id']}/candidates").json()["candidates"]}
+    assert admin_view == by_name                                                      # W1 (F5): the administrator sees the same yes / no (the rates themselves stay the owner's)
 
 
 # ------------------------------------------------------------------------------------------------------------------------------ m7

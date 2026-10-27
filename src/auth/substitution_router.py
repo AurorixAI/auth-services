@@ -30,6 +30,8 @@ from .substitution_schemas import (
     LessonAccessOut,
     LessonMoveCheckOut,
     LessonMoveRequest,
+    LessonRestoreOut,
+    LessonRestoreRequest,
     MineOut,
     MoveCheckOut,
     MyLessonsOut,
@@ -97,9 +99,9 @@ def create_substitution_requests(request: CreateSubstitutionRequest, user: dict 
 
 @router.get("/org/substitutions/mine", response_model=MineOut)
 def my_substitution_requests(
-    status: Literal["pending", "all"] = Query("all"), user: dict = Depends(_teacher), db: Session = Depends(get_db)
+    status: Literal["pending", "all"] = Query("all"), user: dict = Depends(_member), db: Session = Depends(get_db)
 ):
-    """Мои запросы и уроки, где меня назначили заменяющим."""
+    """Мои запросы и уроки, где меня назначили заменяющим.  W1 S13: also for an owner / admin who was made a substitute (they ask nothing: ``items`` is empty, ``assignedToMe`` is theirs)."""
     return _subs(db).mine(user["org_id"], user["user_id"], status)
 
 
@@ -119,7 +121,7 @@ def withdraw_substitution_requests(request: WithdrawBatchRequest, user: dict = D
 @router.post("/org/substitutions/decide-bulk", response_model=DecideBulkOut)
 def decide_substitutions_bulk(request: DecideBulkRequest, user: dict = Depends(_manager), db: Session = Depends(get_db)):
     """Массовое решение (substitute / cancel / reject); каждый запрос - своя транзакция."""
-    return _subs(db).decide_bulk(user["org_id"], user["user_id"], user.get("org_role") or "admin", request)
+    return _subs(db).decide_bulk(user["org_id"], user["user_id"], user["org_role"], request)
 
 
 @router.get("/org/substitutions/summary", response_model=SubstitutionSummary)
@@ -181,7 +183,7 @@ def substitution_move_check(
 @router.post("/org/substitutions/{request_id}/decide", response_model=DecideOut)
 def decide_substitution(request_id: str, request: DecideRequest, user: dict = Depends(_manager), db: Session = Depends(get_db)):
     """Решение: назначить замену / перенести / отменить / отклонить."""
-    return _subs(db).decide(user["org_id"], user["user_id"], user.get("org_role") or "admin", request_id, request)
+    return _subs(db).decide(user["org_id"], user["user_id"], user["org_role"], request_id, request)
 
 
 # ------------------------------------------------------------------------------ #124: the lesson sheet (no request needed)
@@ -217,6 +219,15 @@ def lesson_exam_binding(
 ):
     """Предпроверка «Отменить урок» для листа урока (экзамен, привязанный к уроку): `canCancel=false` — активный экзамен; тот же ответ, что `examBinding` диалога «Замены»."""
     return _subs(db).lesson_exam_binding(user["org_id"], group_id, lessonId, lessonDate, user["user_id"], user["org_role"])
+
+
+@router.post("/org/groups/{group_id}/lessons/restore", response_model=LessonRestoreOut)
+def restore_cancelled_lesson(group_id: str, request: LessonRestoreRequest, user: dict = Depends(_manager), db: Session = Depends(get_db)):
+    """W1 S5 «Вернуть отменённый урок» (owner / admin): только будущий урок, с причиной; перенесённый оригинал и урок выходного дня не возвращаются (коды ``RESTORE_*``)."""
+    from .lesson_substitutions import Substitutions
+
+    reason = Substitutions._reason(request, 3, 500)
+    return _subs(db).restore_lesson(user["org_id"], user["user_id"], user["org_role"], group_id, request.lessonId, request.lessonDate, reason)
 
 
 # ------------------------------------------------------------------------------------ exam-service (D-1)

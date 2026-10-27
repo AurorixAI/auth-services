@@ -27,6 +27,8 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from . import business_clock as bc
 from . import payroll_hooks
+from src.models.auth import PayrollRate
+
 from .models import (
     Group,
     GroupAttendance,
@@ -283,6 +285,17 @@ class LessonTeachers:
             .all()
         )
         return rows
+
+    def rates_missing(self, org_id: Any, teacher_ids: Iterable[UUID], lesson_type: Optional[str], lesson_date: str) -> Set[UUID]:
+        """W1 (F5, D3): the teachers (of ``teacher_ids``) without a payroll rate for the type of lessons in the month of the lesson - one query for all of them.  A yes / no only:
+        the rates themselves stay the owner's."""
+        ids = list(teacher_ids)
+        if not ids:
+            return set()
+        month = date.fromisoformat(lesson_date[:7] + "-01")
+        have = {t for (t,) in self.db.query(PayrollRate.teacher_id).filter(
+            PayrollRate.org_id == org_id, PayrollRate.teacher_id.in_(ids), PayrollRate.lesson_type == (lesson_type or "group"), PayrollRate.valid_from <= month)}
+        return set(ids) - have
 
     def users_by_id(self, ids: Iterable[Any]) -> Dict[str, User]:
         wanted = {u for u in (_uuid(i) for i in ids) if u}
@@ -728,6 +741,8 @@ class LessonTeachers:
             raise not_found("LESSON_NOT_FOUND", "Урок не найден в расписании группы")
         if row is not None and row.status == CANCELLED:
             raise conflict("LESSON_CANCELLED", "Урок отменён: преподавателя менять нельзя")
+        if row is not None and row.status == IN_PROGRESS:              # W1 S7 (D20): a lesson that is going on keeps its teacher; finish it first, then «назначить того, кто провёл»
+            raise conflict("LESSON_IN_PROGRESS", "Урок идёт: сначала завершите его, затем назначьте того, кто провёл")
         end_minutes = hhmm_to_minutes(occ["endTime"]) if occ and occ.get("endTime") else None
         book = TeacherBook(self.db)
         res = book.resolve(group, req.lessonId, lesson_date, end_minutes)
@@ -864,7 +879,9 @@ class LessonTeachers:
         out: List[Dict[str, Any]] = []
         everybody = self.busy_map(org_id, day, day, exclude_keys={cand.key}, book=book)      # one pass for all the teachers
         roles = dict(self.db.query(OrganizationMember.user_id, OrganizationMember.org_role).filter(OrganizationMember.org_id == org_id).all())
-        for user in self.staff_who_can_teach(org_id):
+        staff = self.staff_who_can_teach(org_id)
+        no_rate = self.rates_missing(org_id, [u.id for u in staff], group.lesson_type, lesson_date)
+        for user in staff:
             pairs = self.overlap_pairs([cand], everybody.get(user.id, []))
             other = pairs[0][1] if pairs else None
             out.append(
@@ -872,6 +889,7 @@ class LessonTeachers:
                     "teacherId": str(user.id),
                     "name": short_name(user) or user.email,
                     "orgRole": roles.get(user.id, "teacher"),
+                    "rateMissing": user.id in no_rate,
                     "busy": other is not None,
                     "busyWith": {"groupName": other.group_name, "startTime": other.startTime, "endTime": other.endTime}
                     if other is not None

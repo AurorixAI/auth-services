@@ -112,9 +112,11 @@ from src.core.exceptions import InvalidCredentialsError
 # LOGIC-B: the answers that grew (room may be null, validFrom, teacher of a lesson, ...) are the subclasses of ops_schemas, used under the old names.
 from .ops_schemas import (  # noqa: E402
     GroupAttendanceResponseB as GroupAttendanceResponse,
+    EndRecurringLessonResponseB as EndRecurringLessonResponse,
     GroupResponseB as GroupResponse,
     OpenAttendanceActionResponseB as OpenAttendanceActionResponse,
     ScheduleLessonResponseB as ScheduleLessonResponse,
+    ScheduleLessonRevisedB,
     ScheduleOccurrenceResponseB as ScheduleOccurrenceResponse,
     StudentResponseB as StudentResponse,
     TeacherDashboardSummaryResponseB as TeacherDashboardSummaryResponse,
@@ -3735,6 +3737,7 @@ class AuthService:
         today = datetime.now(BUSINESS_TIMEZONE).date()
         if req.effectiveFrom <= today:
             raise ValueError("Постоянное расписание можно менять только начиная с будущей даты")
+        self._lock_group_row(group)         # W1 S6 (ДЫРА-12): two revisions / a revision and a stop of one group serialise
 
         # A dated end marker wins over later recurring revisions.  Without
         # this guard an edit whose effective date is after the end would be
@@ -3752,8 +3755,14 @@ class AuthService:
         )
         updated_payload = self._apply_schedule_patch(current_payload, req)
         self._validate_schedule_payload(updated_payload)
-        if all(updated_payload.get(key) == current_payload.get(key) for key in ("dayOfWeek", "startTime", "endTime", "subject", "room", "format", "color", "topic")):
-            raise ValueError("Укажите хотя бы одно изменение постоянного расписания")
+        changed_now = self._changed_schedule_fields(current_payload, updated_payload)
+        # W1 S8 (ДЫРА-1): the same patch goes to every revision of the series that is already planned for a LATER date (a revision is a full snapshot: without this the changed
+        # field silently falls back to the old value from that date on).  The answer lists them.
+        later = self._patch_later_revisions(group, lesson_id, req, recurring_end)
+        if not changed_now and not later:
+            raise ops_rules.OpsError(400, "NO_CHANGES", "Укажите хотя бы одно изменение постоянного расписания")
+        timing = any(key in ("dayOfWeek", "startTime", "endTime") for key in [*changed_now, *(f for _, _, fields in later for f in fields)])
+        exams = self._exams_of_changed_schedule(org_id, group, lesson_id, req.effectiveFrom, release=bool(getattr(req, "releaseAffectedExams", False))) if timing else None
 
         # Inspect the first two weeks after the effective date. That covers
         # every weekday once and verifies conflicts against other versioned
@@ -3774,29 +3783,102 @@ class AuthService:
              if (req.effectiveFrom + timedelta(days=offset)).isoweekday() == updated_payload["dayOfWeek"]],
             updated_payload,
         )
-        self._upsert_schedule_override(
-            group=group,
-            lesson_id=lesson_id,
-            scope="recurring",
-            effective_date=req.effectiveFrom,
-            payload=updated_payload,
-            reason=req.reason.strip(),
-            actor_id=actor_id,
-            baseline_payload=current_payload,
-        )
+        if changed_now:
+            self._upsert_schedule_override(
+                group=group,
+                lesson_id=lesson_id,
+                scope="recurring",
+                effective_date=req.effectiveFrom,
+                payload=updated_payload,
+                reason=req.reason.strip(),
+                actor_id=actor_id,
+                baseline_payload=current_payload,
+            )
+        for revision, patched, _fields in later:
+            before = dict(revision.payload or {})
+            revision.payload = patched
+            flag_modified(revision, "payload")
+            revision.changed_by = actor_id
+            self.db.add(GroupScheduleAudit(
+                override_id=revision.id, org_id=group.org_id, group_id=group.id, lesson_id=lesson_id, scope="recurring", effective_date=revision.effective_date,
+                actor_id=actor_id, before_payload=before, after_payload=patched, reason=f"{req.reason.strip()} (изменение с {req.effectiveFrom.isoformat()} применено и к этому изменению)"[:500],
+            ))
+        self.db.flush()
+        from .lesson_substitutions import on_schedule_changed
+
+        moved = on_schedule_changed(self, group, lesson_id, req.effectiveFrom, actor_id)       # W1 S8 (ДЫРА-3): substitutes / requests of lessons that are gone
+        released = self._release_exams_of_changed_schedule(org_id, group, lesson_id, req.effectiveFrom, exams, actor_id, req.reason.strip())
         self.db.commit()
         from .days_off import DaysOffService  # a revision that puts the series on a day off of the centre: those lessons are cancelled as the day off's own
 
         day_off_warnings = DaysOffService(self).apply_to_lesson(org_id, actor_id, group.id, lesson_id, req.effectiveFrom)
-        return ScheduleLessonResponse(
+        closed_note = (
+            [{"code": "SUBSTITUTIONS_CLOSED", "message": f"Замены и запросы на уроки, которых больше нет: {moved['closedRequests'] + moved['releasedSubstitutes']} — закрыты, запись в журнале «Замены»"}]
+            if moved["closedRequests"] or moved["releasedSubstitutes"] else []
+        )
+        return ScheduleLessonRevisedB(
             id=lesson_id,
             groupId=str(group.id),
             groupName=group.name,
             classLevel=group.class_level or 5,
             validFrom=schedule_rules.slot_valid_from(group, self._find_schedule_slot(group, lesson_id)),
-            warnings=[*room_warnings, *day_off_warnings],
+            warnings=[*room_warnings, *day_off_warnings, *closed_note],
+            laterRevisions=[{"effectiveFrom": revision.effective_date, "fields": fields} for revision, _patched, fields in later],
+            releasedExamIds=released,
             **updated_payload,
         )
+
+    @staticmethod
+    def _changed_schedule_fields(before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
+        return [key for key in ("dayOfWeek", "startTime", "endTime", "subject", "room", "format", "color", "topic") if after.get(key) != before.get(key)]
+
+    def _lock_group_row(self, group: Group) -> None:
+        self.db.query(Group).filter(Group.id == group.id, Group.org_id == group.org_id).with_for_update().populate_existing().first()
+
+    def _patch_later_revisions(self, group: Group, lesson_id: str, req: Any, recurring_end: Optional[GroupScheduleOverride]) -> List[tuple]:
+        """``[(revision, patched payload, changed fields)]`` of the revisions planned for a date AFTER ``req.effectiveFrom`` that the patch changes (a revision at or after the date
+        the series stops is dead and is left alone)."""
+        query = self.db.query(GroupScheduleOverride).filter(
+            GroupScheduleOverride.group_id == group.id, GroupScheduleOverride.lesson_id == lesson_id, GroupScheduleOverride.scope == "recurring",
+            GroupScheduleOverride.effective_date > req.effectiveFrom.isoformat(),
+        )
+        if recurring_end is not None:
+            query = query.filter(GroupScheduleOverride.effective_date < recurring_end.effective_date)
+        out = []
+        for revision in query.order_by(GroupScheduleOverride.effective_date, GroupScheduleOverride.created_at).with_for_update().all():
+            patched = self._apply_schedule_patch(revision.payload or {}, req)
+            self._validate_schedule_payload(patched)
+            fields = self._changed_schedule_fields(revision.payload or {}, patched)
+            if fields:
+                out.append((revision, patched, fields))
+        return out
+
+    def _exams_of_changed_schedule(self, org_id: str, group: Group, lesson_id: str, effective_from: date, *, release: bool) -> Dict[str, Any]:
+        """W1 S8 (ДЫРА-2): a change of the DAY or the TIME of a weekly lesson looks at the exams of its future dates like a move of one lesson does (LESSONS 40): an exam that is
+        launched or has attempts refuses it (409 ``LESSON_HAS_LIVE_EXAM``); a draft / lobby / printed one goes back to a draft - only when the author said so (409
+        ``EXAMS_NEED_CONFIRMATION`` lists them, the answer is repeated with ``releaseAffectedExams``).  exam-service down: ``RuntimeError`` (the router answers 503)."""
+        impact = self._fetch_exam_recurring_end_impact(org_id=org_id, group_id=str(group.id), lesson_id=lesson_id, effective_from=effective_from.isoformat())
+        exams = list(impact.get("exams") or [])
+        blocked = [item for item in exams if not item.get("can_release")]
+        if blocked:
+            names = ", ".join(f"«{item.get('title') or 'Экзамен'}»" for item in blocked[:2])
+            raise ops_rules.conflict("LESSON_HAS_LIVE_EXAM", f"Нельзя изменить расписание: экзамен {names} уже запущен или имеет попытки учеников")
+        if exams and not release:
+            listed = [{"examId": str(item.get("exam_id") or ""), "title": str(item.get("title") or "Экзамен"), "lessonDate": str(item.get("lesson_date") or ""),
+                       "status": str(item.get("status") or "draft")} for item in exams]
+            raise ops_rules.conflict("EXAMS_NEED_CONFIRMATION", "К этим занятиям привязаны экзамены: они вернутся в черновик, привяжите их заново. Подтвердите изменение", exams=listed)
+        return {"exams": exams}
+
+    def _release_exams_of_changed_schedule(self, org_id: str, group: Group, lesson_id: str, effective_from: date, exams: Optional[Dict[str, Any]], actor_id: str,
+                                           reason: str) -> List[str]:
+        if not exams or not exams["exams"]:
+            return []
+        try:
+            return self._release_exam_recurring_end(org_id=org_id, group_id=str(group.id), group_name=group.name, lesson_id=lesson_id, effective_from=effective_from.isoformat(),
+                                                    actor_id=str(actor_id), reason=reason)
+        except Exception:
+            self.db.rollback()          # the schedule is written only when the exams are released (the remote release is atomic and checks the sessions again)
+            raise
 
     def _require_recurring_lesson(
         self,
@@ -3975,6 +4057,7 @@ class AuthService:
         )
         if group.status != "active":
             raise ops_rules.group_archived()
+        self._lock_group_row(group)         # W1 S6 (ДЫРА-12): two stops of one series serialise (the second is «уже прекращены», never a 500)
         existing_end = self._assert_recurring_end_is_allowed(
             group,
             lesson_id,
@@ -4040,21 +4123,26 @@ class AuthService:
             self.db.add(end_override)
             self.db.flush()
 
-        self.db.add(
-            GroupScheduleAudit(
-                override_id=end_override.id,
-                org_id=group.org_id,
-                group_id=group.id,
-                lesson_id=lesson_id,
-                scope="recurring_end",
-                effective_date=effective_iso,
-                actor_id=UUID(str(actor_id)),
-                before_payload=before_payload,
-                after_payload=end_payload,
-                reason=req.reason.strip(),
-            )
+        end_audit = GroupScheduleAudit(
+            override_id=end_override.id,
+            org_id=group.org_id,
+            group_id=group.id,
+            lesson_id=lesson_id,
+            scope="recurring_end",
+            effective_date=effective_iso,
+            actor_id=UUID(str(actor_id)),
+            before_payload=before_payload,
+            after_payload=end_payload,
+            reason=req.reason.strip(),
         )
+        self.db.add(end_audit)
         self.db.flush()
+        from .lesson_substitutions import on_schedule_changed
+
+        # W1 S9 (ДЫРА-3, А-7): requests / substitutes of the lessons that stop are closed with a trace, the cancellations set in advance for those dates are removed (and recorded here)
+        moved = on_schedule_changed(self, group, lesson_id, req.effectiveFrom, actor_id, ended=True)
+        if moved["removedCancellations"] or moved["closedRequests"] or moved["releasedSubstitutes"]:
+            end_audit.after_payload = {**end_payload, **moved}
 
         released_exam_ids: List[str] = []
         if affected_count:
@@ -4084,7 +4172,10 @@ class AuthService:
                 payload=impact,
                 ended=True,
                 released_exam_ids=released_exam_ids,
-            )
+            ),
+            closedRequests=moved["closedRequests"],
+            releasedSubstitutes=moved["releasedSubstitutes"],
+            removedCancellations=len(moved["removedCancellations"]),
         )
 
     def create_lesson(
@@ -5300,8 +5391,12 @@ class AuthService:
         cancelled_by: Optional[str],
         is_org_admin: bool,
         is_org_manager: bool = False,
-    ) -> int:
-        """Record an explicit, reasoned cancellation for a missed lesson."""
+    ) -> Dict[str, Any]:
+        """«Урока не было»: an explicit, reasoned cancellation of a past lesson that was never started - THE cancellation (``Substitutions.cancel_lesson``, W1 S2).
+
+        A teacher may do it for a lesson of his own (always «по вине центра», ``teacher_cancel`` in the journal «Замены»); a lesson that has not passed yet is not «missed» - the
+        teacher asks «Не смогу провести», the administrator cancels it from the lesson sheet.  Returns ``{"version", "warnings"}``."""
+        manager = is_org_manager or is_org_admin
         cancellation_kind = req.cancellationKind or DEFAULT_CANCELLATION_KIND      # PAY-F: owner / admin choose, a teacher cancels «по вине центра»
         if cancellation_kind != DEFAULT_CANCELLATION_KIND and not is_org_manager:
             raise PermissionError("Выбирать «Праздник, выходной» может только владелец или администратор: преподаватель отменяет урок «по вине центра»")
@@ -5340,69 +5435,18 @@ class AuthService:
         )
         if attendance:
             if attendance.status == LessonAttendanceStatus.CANCELLED.value:
-                return attendance.version  # The same cancellation was already committed.
+                return {"version": attendance.version, "warnings": []}  # The same cancellation was already committed.
             raise ValueError("Нельзя отменить урок, который уже начали или завершили")
         rules.assert_unclosed_window(req.lessonDate)
 
-        self._sync_exam_lesson_cancellation(
-            phase="cancellation-check",
-            org_id=org_id,
-            group_id=group_id,
-            lesson_id=req.lessonId,
-            lesson_date=req.lessonDate.isoformat(),
-            reason=req.cancellationReason,
+        from .lesson_substitutions import Substitutions
+
+        out = Substitutions(self).cancel_lesson(
+            org_id, cancelled_by, group_id, req.lessonId, req.lessonDate, reason=req.cancellationReason, kind=cancellation_kind, by_manager=manager,
+            via="request" if manager else "teacher_cancel", archived_ok=True,       # the missed lessons of an archived group are resolved by this very road
         )
-        start_minutes, _ = self._validate_lesson_time_range(
-            occurrence.get("startTime"), occurrence.get("endTime")
-        )
-        scheduled_start = lesson_start_as_naive_utc(req.lessonDate, start_minutes)
-        attendance = GroupAttendance(
-            org_id=org_id,
-            group_id=group_id,
-            teacher_id=self._attendance_teacher_snapshot(group, req.lessonId, req.lessonDate, occurrence),
-            version=1,
-            lesson_date=req.lessonDate.isoformat(),
-            lesson_id=req.lessonId,
-            topic=occurrence.get("topic") or occurrence.get("subject"),
-            status=LessonAttendanceStatus.CANCELLED.value,
-            records={},
-            roster_snapshot=self._attendance_roster_at(group.id, scheduled_start),
-            marked_by=cancelled_by,
-            started_at=None,
-            cancellation_reason=req.cancellationReason,
-            cancellation_kind=cancellation_kind,
-        )
-        self.db.add(attendance)
-        self.db.flush()
-        self.db.add(
-            GroupAttendanceAudit(
-                attendance_id=attendance.id,
-                org_id=org_id,
-                group_id=group_id,
-                actor_id=cancelled_by,
-                action="reconciliation_cancelled",
-                before_status=None,
-                after_status=LessonAttendanceStatus.CANCELLED.value,
-                before_records=None,
-                after_records={},
-                cancellation_reason=req.cancellationReason,
-                details={"cancellation_kind": cancellation_kind},
-            )
-        )
-        try:
-            self._sync_exam_lesson_cancellation(
-                phase="release",
-                org_id=org_id,
-                group_id=group_id,
-                lesson_id=req.lessonId,
-                lesson_date=req.lessonDate.isoformat(),
-                reason=req.cancellationReason,
-            )
-        except Exception:
-            self.db.rollback()
-            raise
         self.db.commit()
-        return attendance.version
+        return {"version": out["version"], "warnings": out["warnings"]}
 
     def start_group_attendance(
         self,
@@ -5609,11 +5653,11 @@ class AuthService:
         marked_by: Optional[str],
         is_org_admin: bool,
         is_org_manager: bool = False,
-        day_off_id: Optional[Any] = None,  # PAY-F: the day off of the centre that cancels the lesson ("org_days_off")
     ) -> Dict[str, Any]:
         """Сохранить полный проверенный снимок отметок одного экземпляра урока.
 
-        Returns ``{"version": <row version>, "examSync": {...} | None}`` (LOGIC-B O7 / O8)."""
+        Returns ``{"version": <row version>, "examSync": {...} | None, "warnings": [...]}`` (LOGIC-B O7 / O8).  A cancellation (``status`` ``cancelled``) is THE cancellation
+        of ``Substitutions.cancel_lesson`` (W1 S2): its warnings (a day off, a released substitute) come back in ``warnings``."""
         if not marked_by:
             raise ValueError("Не удалось определить автора отметки")
         group = self._require_group_read_access(
@@ -5633,8 +5677,10 @@ class AuthService:
         requested_status = req.status.value
         is_cancellation = requested_status == LessonAttendanceStatus.CANCELLED.value
         cancellation_kind = (req.cancellationKind or DEFAULT_CANCELLATION_KIND) if is_cancellation else None  # PAY-F
-        if cancellation_kind not in (None, DEFAULT_CANCELLATION_KIND) and not is_org_manager:
-            raise PermissionError("Выбирать «Праздник, выходной» может только владелец или администратор: преподаватель отменяет урок «по вине центра»")
+        manager = is_org_manager or is_org_admin
+        if is_cancellation:
+            # W1 S6: the lock of the group comes first (the order of the move and of every other writer of the lesson); the cancellation re-takes it
+            self.db.query(Group).filter(Group.id == group.id, Group.org_id == org_id).with_for_update().populate_existing().first()
         att = (
             self.db.query(GroupAttendance)
             .filter(
@@ -5646,6 +5692,11 @@ class AuthService:
             .with_for_update()
             .first()
         )
+
+        if is_cancellation and not manager and not self._empty_started_lesson(att):
+            # W1 S3: a teacher does not cancel a lesson himself - «Не смогу провести» (the administrator decides); a PAST lesson that never started is «Урока не было».  The one
+            # exception: a lesson he started whose roster is empty (O6: it cannot be finished, the way out is its cancellation)
+            raise ops_rules.forbidden("TEACHER_CANNOT_CANCEL", "Отменить урок может администратор. Нажмите «Не смогу провести»")
 
         matching_slot = next(
             (
@@ -5675,36 +5726,34 @@ class AuthService:
         if att is None and is_cancellation:
             rules.assert_unclosed_window(lesson_date)  # a never-started lesson older than the "unclosed lessons" window is nobody's to cancel
         if rules.version_gate(att, req):
-            return {"version": att.version, "examSync": None}
+            return {"version": att.version, "examSync": None, "warnings": []}
 
         if not is_cancellation and not att:
             raise ValueError("Сначала начните урок, затем отмечайте посещаемость")
+        if is_cancellation:
+            if req.records:
+                raise ValueError("У отменённого урока не может быть отметок посещаемости")
+            if not req.cancellationReason:
+                raise ValueError("Для отмены урока укажите причину")
+            from .lesson_substitutions import Substitutions
+
+            out = Substitutions(self).cancel_lesson(                     # W1 S2: the one road of every cancellation
+                org_id, marked_by, group_id, target_lesson_id, lesson_date, reason=req.cancellationReason, kind=cancellation_kind, allow_started=True,
+                by_manager=manager, via="request" if manager else "teacher_cancel",
+            )
+            self.db.commit()
+            return {"version": out["version"], "examSync": None, "warnings": out["warnings"]}
         # An administrator may correct a completed lesson (a reason is required
         # below); anyone else only edits a lesson that is in progress.
         is_correction_save = bool(
             att
-            and not is_cancellation
             and is_org_manager
             and att.status == LessonAttendanceStatus.COMPLETED.value
         )
-        if (
-            att
-            and not is_cancellation
-            and att.status == LessonAttendanceStatus.COMPLETED.value
-            and is_org_admin
-            and not is_org_manager
-        ):
-            # Only the organisation's owner/admin corrects completed lessons;
-            # a global "admin" role without that membership does not.
-            raise PermissionError("Корректировать завершённый урок может только owner или admin")
-        if (
-            not is_cancellation
-            and att.status != LessonAttendanceStatus.IN_PROGRESS.value
-            and not is_correction_save
-        ):
+        if att.status != LessonAttendanceStatus.IN_PROGRESS.value and not is_correction_save:
             raise ValueError("Отметки можно изменять только у начатого урока")
 
-        if matching_slot and lesson_date == today and not is_cancellation and not is_correction_save:
+        if matching_slot and lesson_date == today and not is_correction_save:
             start_time = matching_slot.get("startTime")
             end_time = matching_slot.get("endTime")
             start_minutes, end_minutes = self._validate_lesson_time_range(start_time, end_time)
@@ -5723,7 +5772,6 @@ class AuthService:
         # after the lesson must not rewrite yesterday's attendance evidence.
         if (
             att
-            and not is_cancellation
             and att.status == LessonAttendanceStatus.IN_PROGRESS.value
             and att.roster_snapshot is None
         ):
@@ -5732,7 +5780,7 @@ class AuthService:
             att.roster_snapshot = self._active_attendance_roster(group.id)
             flag_modified(att, "roster_snapshot")
         roster_student_ids = set()
-        if att and not is_cancellation:
+        if att:
             roster_student_ids = self._roster_ids_from_snapshot(att.roster_snapshot)
             if not roster_student_ids:
                 # A completed legacy lesson cannot be rebuilt from the current
@@ -5761,12 +5809,7 @@ class AuthService:
         if unknown_student_ids:
             raise ValueError("В журнал передан ученик, которого не было в составе начатого урока")
 
-        if is_cancellation:
-            if records:
-                raise ValueError("У отменённого урока не может быть отметок посещаемости")
-            if not req.cancellationReason:
-                raise ValueError("Для отмены урока укажите причину")
-        elif req.cancellationReason:
+        if req.cancellationReason:
             raise ValueError("Причина отмены передаётся только для отменённого урока")
         elif req.cancellationKind:
             raise ValueError("Вид отмены передаётся только для отменённого урока")
@@ -5811,35 +5854,6 @@ class AuthService:
         if att and att.status == LessonAttendanceStatus.CANCELLED.value and requested_status != before_status:
             raise ValueError("Отменённый урок нельзя повторно открыть")
 
-        # Reconciliation starts a historical missed lesson without fabricating a
-        # real start timestamp. Preserve that distinct workflow in the audit if
-        # the teacher later decides it was opened by mistake and cancels it.
-        is_reconciliation_cancellation = False
-        if is_cancellation and att and att.status == LessonAttendanceStatus.IN_PROGRESS.value:
-            is_reconciliation_cancellation = (
-                self.db.query(GroupAttendanceAudit.id)
-                .filter(
-                    GroupAttendanceAudit.attendance_id == att.id,
-                    GroupAttendanceAudit.action == "reconciliation_started",
-                )
-                .first()
-                is not None
-            )
-
-        # A cancelled lesson must not silently invalidate a live exam or erase
-        # a student waiting in its lobby.  Exam-service is the owner of those
-        # rows, so it is consulted before this service persists the
-        # cancellation.  This protects direct API callers as well as the UI.
-        if is_cancellation:
-            self._sync_exam_lesson_cancellation(
-                phase="cancellation-check",
-                org_id=org_id,
-                group_id=group_id,
-                lesson_id=target_lesson_id,
-                lesson_date=lesson_date.isoformat(),
-                reason=req.cancellationReason,
-            )
-
         if not att:
             att = GroupAttendance(
                 org_id=org_id,
@@ -5854,12 +5868,9 @@ class AuthService:
                 marked_by=marked_by,
                 started_at=None,
                 completed_at=now if requested_status == LessonAttendanceStatus.COMPLETED.value else None,
-                cancellation_reason=req.cancellationReason if is_cancellation else None,
-                cancellation_kind=cancellation_kind,
-                day_off_id=day_off_id,
             )
             self.db.add(att)
-            action = "cancelled" if is_cancellation else "created"
+            action = "created"
         else:
             att.records = records
             flag_modified(att, "records")
@@ -5873,19 +5884,7 @@ class AuthService:
                 att.completed_at = att.completed_at or now
             else:
                 att.completed_at = None
-            att.cancellation_reason = req.cancellationReason if is_cancellation else None
-            if is_cancellation and before_status != LessonAttendanceStatus.CANCELLED.value:
-                att.cancellation_kind = cancellation_kind
-                att.day_off_id = day_off_id
-            action = (
-                "reconciliation_cancelled"
-                if is_cancellation and is_reconciliation_cancellation
-                else "cancelled"
-                if is_cancellation
-                else "corrected"
-                if is_completed_correction
-                else "updated"
-            )
+            action = "corrected" if is_completed_correction else "updated"
 
         self.db.flush()
         excuse_service.apply_save(att, excuse_plan, marked_by, now)
@@ -5901,34 +5900,25 @@ class AuthService:
                 before_records=before_records,
                 after_records=records,
                 correction_reason=req.correctionReason if is_completed_correction else None,
-                cancellation_reason=req.cancellationReason if is_cancellation else None,
-                details={"cancellation_kind": cancellation_kind} if is_cancellation else None,
             )
         )
         self.db.flush()
-        if is_cancellation:
-            try:
-                # The request is deliberately made before the local commit:
-                # if exam-service rejects a race (a student joined just now),
-                # both the attendance write and audit record are rolled back.
-                self._sync_exam_lesson_cancellation(
-                    phase="release",
-                    org_id=org_id,
-                    group_id=group_id,
-                    lesson_id=target_lesson_id,
-                    lesson_date=lesson_date.isoformat(),
-                    reason=req.cancellationReason,
-                )
-            except Exception:
-                self.db.rollback()
-                raise
         self.db.commit()
         exam_sync = (
             rules.after_completion(org_id, group_id, target_lesson_id, lesson_date.isoformat(), marked_by, exam_warning, live_exams)
             if completing
             else None
         )
-        return {"version": att.version, "examSync": exam_sync}
+        return {"version": att.version, "examSync": exam_sync, "warnings": []}
+
+    def _empty_started_lesson(self, att: Optional[GroupAttendance]) -> bool:
+        """A started lesson with no marks whose roster is empty (O6): the teacher cannot finish it and may cancel it."""
+        return bool(
+            att is not None
+            and att.status == LessonAttendanceStatus.IN_PROGRESS.value
+            and not att.records
+            and not self._roster_ids_from_snapshot(att.roster_snapshot)
+        )
 
     def _sync_exam_lesson_cancellation(
         self,

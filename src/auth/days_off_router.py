@@ -59,7 +59,7 @@ def apply_day_off(day_off_id: UUID, user: dict = Depends(_manager), db: Session 
 @router.post("/org/days-off/{day_off_id}/void", response_model=DayOffVoided)
 def void_day_off(day_off_id: UUID, dry_run: bool = Query(False), user: dict = Depends(_manager), db: Session = Depends(get_db)):
     """«Отменить выходной»: its own, untouched, future lessons come back; the others are listed (``dry_run``: only the lists)."""
-    return _service(db).void(user["org_id"], user["user_id"], user.get("org_role") or "admin", day_off_id, dry_run=dry_run)
+    return _service(db).void(user["org_id"], user["user_id"], user["org_role"], day_off_id, dry_run=dry_run)
 
 
 @router.put("/org/groups/{group_id}/attendance/cancellation-kind")

@@ -30,6 +30,21 @@
             ],
             "title": "Attendanceupdated"
           },
+          "cancellationKind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "centre",
+                  "holiday"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellationkind"
+          },
           "cancelledVersion": {
             "anyOf": [
               {
@@ -395,6 +410,7 @@
         "type": "object"
       },
       "MoveWarning": {
+        "additionalProperties": true,
         "properties": {
           "code": {
             "title": "Code",
@@ -575,7 +591,8 @@
                   "GROUP_TEACHER_CHANGED",
                   "TEACHER_REMOVED",
                   "LESSON_OUTSIDE_WINDOW",
-                  "ASSIGNMENT_CLEARED"
+                  "ASSIGNMENT_CLEARED",
+                  "LESSON_RESTORED"
                 ],
                 "type": "string"
               },
@@ -647,7 +664,9 @@
                   "teacher_move",
                   "lesson_teacher_put",
                   "system",
-                  "withdraw"
+                  "withdraw",
+                  "teacher_cancel",
+                  "manager_restore"
                 ],
                 "type": "string"
               },

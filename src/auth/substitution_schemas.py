@@ -10,14 +10,15 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .ops_schemas import OpsErrorDetail, TeacherConflict
+from .ops_schemas import CancelWarning, OpsErrorDetail, TeacherConflict
+from .schemas import CancellationKind
 
 ReasonCode = Literal["sick", "personal", "other"]
 RequestStatus = Literal["pending", "substituted", "rescheduled", "cancelled", "rejected", "withdrawn", "closed"]
 DecisionKind = Literal["substitute", "reschedule", "cancel", "reject", "withdraw", "closed"]
 ClosedReason = Literal[
     "LESSON_STARTED", "LESSON_CANCELLED", "LESSON_REMOVED", "GROUP_ARCHIVED", "GROUP_TEACHER_CHANGED", "TEACHER_REMOVED", "LESSON_OUTSIDE_WINDOW",
-    "ASSIGNMENT_CLEARED",
+    "ASSIGNMENT_CLEARED", "LESSON_RESTORED",
 ]
 
 REASON_LABELS = {"sick": "Болезнь", "personal": "Личное", "other": "Другое"}
@@ -30,6 +31,7 @@ CLOSED_REASON_TEXT = {
     "TEACHER_REMOVED": "Преподаватель больше не работает в центре",
     "LESSON_OUTSIDE_WINDOW": "Срок разбора истёк",
     "ASSIGNMENT_CLEARED": "Замена снята",
+    "LESSON_RESTORED": "Урок возвращён",
 }
 
 
@@ -73,7 +75,7 @@ class SubDecision(BaseModel):
     kind: DecisionKind
     by: Optional[PersonRef] = None
     at: str
-    via: Optional[Literal["request", "teacher_move", "lesson_teacher_put", "system", "withdraw"]] = None
+    via: Optional[Literal["request", "teacher_move", "lesson_teacher_put", "system", "withdraw", "teacher_cancel", "manager_restore"]] = None
     note: Optional[str] = None
     substitute: Optional[PersonRef] = None
     movedTo: Optional[MovedTo] = None
@@ -261,7 +263,7 @@ class SubstitutionCandidate(BaseModel):
     isDefaultTeacher: bool = False
     busy: bool = False
     busyWith: Optional[CandidateBusy] = None
-    rateMissing: Optional[bool] = None  # only the owner sees it
+    rateMissing: Optional[bool] = None  # no payroll rate for the type of the group in the month of the lesson: a yes / no for the owner and the administrator (the rates stay the owner's)
 
 
 class CandidateLesson(BaseModel):
@@ -281,6 +283,7 @@ class CandidatesOut(BaseModel):
 
 
 class MoveWarning(BaseModel):
+    model_config = ConfigDict(extra="allow")        # ``STUDENT_BUSY`` also carries ``students`` [{id, name, groupName, startTime, endTime}] (W1 S12)
     code: str
     message: str
 
@@ -315,6 +318,7 @@ class DecideRequest(BaseModel):
     format: Optional[Literal["offline", "online"]] = None
     reason: Optional[str] = Field(None, max_length=500)   # cancel / reschedule (3..500), reject (3..300)
     expectedStatus: Optional[Literal["pending"]] = None
+    cancellationKind: Optional[CancellationKind] = None    # cancel (W1 S11): «по вине центра» (default) | «праздник / выходной»
 
 
 class LessonMoveRequest(BaseModel):
@@ -354,6 +358,7 @@ class DecideResult(BaseModel):
     newLesson: Optional[NewLesson] = None
     version: Optional[int] = None
     warnings: Optional[List[MoveWarning]] = None
+    cancellationKind: Optional[CancellationKind] = None   # cancel: the kind that was written (a date of a live day off turns it into ``holiday``, then ``warnings`` says so)
 
 
 class DecideOut(BaseModel):
@@ -367,6 +372,7 @@ class DecideBulkRequest(BaseModel):
     teacherId: Optional[str] = None
     reason: Optional[str] = Field(None, max_length=500)
     note: Optional[str] = Field(None, max_length=300)
+    cancellationKind: Optional[CancellationKind] = None    # cancel (W1 S11): one kind for every request of the batch
 
 
 class BulkSkipped(BaseModel):
@@ -483,3 +489,22 @@ class LessonAccessOut(BaseModel):
     status: str = "active"
     substitution: bool = True
     lessons: List[LessonAccessLesson] = Field(default_factory=list)
+
+
+# ------------------------------------------------------------------------------------------ W1 S5: «Вернуть отменённый урок»
+class LessonRestoreRequest(BaseModel):
+    """``POST /org/groups/{id}/lessons/restore``: a cancelled lesson that has not started comes back (owner / admin); the reason is recorded (3..500 after trim)."""
+
+    lessonId: str = Field(..., min_length=1, max_length=100)
+    lessonDate: date
+    reason: str = Field(..., max_length=500)
+
+
+class LessonRestoreOut(BaseModel):
+    ok: bool = True
+    restored: bool = True
+    lessonId: str
+    lessonDate: str
+    previousKind: Optional[CancellationKind] = None       # what the cancellation was (null: an old one / a move): the deduction of ``centre`` is gone with the row
+    examsNote: str = ""                                    # the exams freed by the cancellation do not come back
+    warnings: List[CancelWarning] = Field(default_factory=list)

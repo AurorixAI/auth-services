@@ -74,7 +74,7 @@ def test_r4_two_tabs_conflict_and_keep_mine_chain7(w, clock):
     expectedVersion=2 -> v3; completing -> v4; the admin's correction with expectedVersion=4 -> v5; the same correction again -> 200, no bump."""
     exp_conflict = fixture("c7_conflict.json")["body"]["detail"]
     start(w, "A")
-    assert save(w, "A", {"s1": "present"}, expectedVersion=1).json() == {"ok": True, "saved": True, "version": 2, "examSync": None}      # tab 2
+    assert save(w, "A", {"s1": "present"}, expectedVersion=1).json() == {"ok": True, "saved": True, "version": 2, "examSync": None, "warnings": []}      # tab 2
     r = save(w, "A", {"s2": "absent"}, expectedVersion=1)                                                                                # tab 1
     assert r.status_code == 409
     detail = r.json()["detail"]
