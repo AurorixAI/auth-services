@@ -28,6 +28,7 @@ from src.models.auth import OrgDayOff, PayrollRate
 
 from . import business_clock as bc
 from . import exam_bridge, payroll_hooks, substitution_rules as R
+from .days_off import DaysOffService
 from .lesson_teachers import (
     BusyItem,
     LessonTeachers,
@@ -959,6 +960,7 @@ class Substitutions(SubstitutionsBase):
 
         warnings = ScheduleRules(self.svc).warnings_for(group, "__new__", [new_date], {"startTime": start, "endTime": end, "room": occ.get("room") if occ else None,
                                                                                           "format": occ.get("format") if occ else None})
+        warnings += DaysOffService(self.svc).warnings_for_date(group.org_id, new_date)       # a move onto a day off of the centre: a warning, never a block
         return {"ok": not t_conf and not g_conf, "teacherId": _s(teacher_id), "teacherName": short_name(user), "teacherConflicts": t_conf[:20],
                 "groupConflicts": g_conf[:20], "warnings": warnings}
 
@@ -1006,6 +1008,7 @@ class Substitutions(SubstitutionsBase):
         from .schedule_rules import ScheduleRules
 
         warnings = ScheduleRules(self.svc).warnings_for(group, new_id, [new_date], payload)
+        warnings += DaysOffService(self.svc).warnings_for_date(group.org_id, new_date)
         r.moved_to_lesson_id, r.moved_to_date, r.moved_to_start, r.moved_to_end = new_id, new_date.isoformat(), start, end
         self._finish(r, "rescheduled", actor, reason, via)
         self.event(r, "rescheduled", actor, {"reason": reason, "via": via, "movedTo": {"lessonId": new_id, "date": new_date.isoformat(), "startTime": start, "endTime": end},

@@ -3785,13 +3785,16 @@ class AuthService:
             baseline_payload=current_payload,
         )
         self.db.commit()
+        from .days_off import DaysOffService  # a revision that puts the series on a day off of the centre: those lessons are cancelled as the day off's own
+
+        day_off_warnings = DaysOffService(self).apply_to_lesson(org_id, actor_id, group.id, lesson_id, req.effectiveFrom)
         return ScheduleLessonResponse(
             id=lesson_id,
             groupId=str(group.id),
             groupName=group.name,
             classLevel=group.class_level or 5,
             validFrom=schedule_rules.slot_valid_from(group, self._find_schedule_slot(group, lesson_id)),
-            warnings=room_warnings,
+            warnings=[*room_warnings, *day_off_warnings],
             **updated_payload,
         )
 

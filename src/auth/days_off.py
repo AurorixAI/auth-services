@@ -10,6 +10,9 @@ stays on record (``org_days_off.restored`` and one ``group_audit`` row per group
 ``org_days_off`` is the journal; the lessons point to their day off by ``group_attendance.day_off_id``.  The apply is idempotent: the same range and reason among the live
 days off continues that day off, and ``apply`` finishes a day off whose exam-service was unavailable.  Nothing here touches money: a ``holiday`` cancellation is never
 recalculated (part 3).
+
+A day off cancels what EXISTS when it is given.  A WEEKLY lesson that appears later (a new slot, a revision that moves a series onto the date) goes through the same step
+(``apply_to_lesson``); a one-off lesson or a move onto the date is deliberate (a make-up) and only gets the warning ``DAY_OFF`` (``warnings_for_date``).
 """
 from __future__ import annotations
 
@@ -135,6 +138,22 @@ def lesson_reason_text(reason: str) -> str:
     return f"Выходной ({reason})"
 
 
+def _dm(day: date) -> str:
+    return day.strftime("%d.%m")
+
+
+def cancelled_text(day: date, reason: str) -> str:
+    return f"{_dm(day)} — выходной день центра ({reason}): урок в этот день отменён автоматически"
+
+
+def not_cancelled_text(day: date, reason: str, why: Optional[str]) -> str:
+    return f"{_dm(day)} — выходной день центра ({reason}): урок в этот день не удалось отменить автоматически ({why}) — отмените его вручную"
+
+
+def on_day_off_text(day: date, reason: str) -> str:
+    return f"{_dm(day)} — выходной день центра ({reason}): урок в этот день будет проведён, это не отменяется автоматически"
+
+
 def _one(count: int) -> bool:
     return count % 10 == 1 and count % 100 != 11
 
@@ -189,9 +208,12 @@ class DaysOffService:
 
     # ---------------------------------------------------------------------------------------------- the lessons of a range
 
-    def _lessons(self, org_id: str, date_from: date, date_to: date):
-        """``[(group, occurrence)]`` of the lessons of the active groups in the range, with the journal rows that already exist."""
-        groups = self.db.query(Group).filter(Group.org_id == org_id, Group.status == "active").order_by(Group.name, Group.id).all()
+    def _lessons(self, org_id: str, date_from: date, date_to: date, group_id: Optional[Any] = None):
+        """``[(group, occurrence)]`` of the lessons of the active groups (or of the one ``group_id``) in the range, with the journal rows that already exist."""
+        query = self.db.query(Group).filter(Group.org_id == org_id, Group.status == "active")
+        if group_id is not None:
+            query = query.filter(Group.id == group_id)
+        groups = query.order_by(Group.name, Group.id).all()
         preload = self.svc._preload_schedule_data([g.id for g in groups], date_from=date_from, date_to=date_to)
         found = [(g, o) for g in groups for o in self.svc._resolved_occurrences_for_group(g, date_from=date_from, date_to=date_to, preloaded=preload)]
         rows = {}
@@ -290,6 +312,15 @@ class DaysOffService:
         row = self.db.query(OrgDayOff).filter(OrgDayOff.id == day_off_id).one()
         date_from, date_to, reason = row.date_from, row.date_to, row.reason
         found, rows = self._lessons(org_id, date_from, date_to)
+        cancelled, blocked, converted, already, down = self._run(org_id, actor_id, day_off_id, reason, found, rows)
+        logger.info("day off applied org=%s id=%s %s..%s cancelled=%d blocked=%d converted=%d", org_id, day_off_id, date_from, date_to, len(cancelled), len(blocked), len(converted))
+        row = self.db.query(OrgDayOff).filter(OrgDayOff.id == day_off_id).one()
+        return DayOffApplied(dayOff=self._out(row), cancelled=cancelled, blocked=blocked, converted=converted, alreadyCancelled=already, complete=not down)
+
+    def _run(self, org_id: str, actor_id: str, day_off_id: UUID, reason: str, found, rows):
+        """THE step of a day off over ``found`` lessons: a hand-cancelled «по вине центра» one is turned into a holiday, a cancelled one is skipped, the others go through the usual
+        cancellation.  The day off itself and ``apply_to_lesson`` (a lesson that appears after the day off) both walk through it: one road, no copy.
+        Returns ``(cancelled, blocked, converted, already, exam_service_down)``."""
         cancelled: List[DayOffLesson] = []
         blocked: List[DayOffLesson] = []
         converted: List[DayOffLesson] = []
@@ -311,9 +342,31 @@ class DaysOffService:
                 why = self._cancel(org_id, actor_id, group, occurrence, reason, day_off_id)
                 down = down or why == EXAM_DOWN
             (blocked if why else cancelled).append(self._item(group, occurrence, why))
-        logger.info("day off applied org=%s id=%s %s..%s cancelled=%d blocked=%d converted=%d", org_id, day_off_id, date_from, date_to, len(cancelled), len(blocked), len(converted))
-        row = self.db.query(OrgDayOff).filter(OrgDayOff.id == day_off_id).one()
-        return DayOffApplied(dayOff=self._out(row), cancelled=cancelled, blocked=blocked, converted=converted, alreadyCancelled=already, complete=not down)
+        return cancelled, blocked, converted, already, down
+
+    def apply_to_lesson(self, org_id: str, actor_id: str, group_id: Any, lesson_id: str, date_from: date, date_to: Optional[date] = None) -> List[str]:
+        """A WEEKLY lesson that appears after a day off was given (a new slot, or a revision that moves a series onto a new day / time): its occurrences from ``date_from`` that fall into a
+        LIVE day off of the centre are cancelled by the same step as the day off's own lessons (``_run``: the usual cancellation, kind ``holiday``, ``day_off_id``, «Выходной (…)»);
+        what is already cancelled stays.  Returns the warnings of the answer (``DAY_OFF_CANCELLED`` / ``DAY_OFF_NOT_CANCELLED``: «не удалось … отмените вручную»).  A one-off lesson
+        never comes here: it is a deliberate lesson (a make-up), only ``warnings_for_date`` tells the author about the day off."""
+        live = (self.db.query(OrgDayOff).filter(OrgDayOff.org_id == org_id, OrgDayOff.voided_at.is_(None), OrgDayOff.date_to >= date_from)
+                .order_by(OrgDayOff.created_at, OrgDayOff.id).all())
+        warnings: List[Dict[str, str]] = []
+        for day_off in live:
+            first, last = max(day_off.date_from, date_from), day_off.date_to if date_to is None else min(day_off.date_to, date_to)
+            if last < first:
+                continue
+            found, rows = self._lessons(org_id, first, last, group_id)
+            found = [(g, o) for g, o in found if o["id"] == lesson_id]
+            cancelled, blocked, _, _, _ = self._run(org_id, actor_id, day_off.id, day_off.reason, found, rows)
+            warnings += [{"code": "DAY_OFF_CANCELLED", "message": cancelled_text(item.date, day_off.reason)} for item in cancelled]
+            warnings += [{"code": "DAY_OFF_NOT_CANCELLED", "message": not_cancelled_text(item.date, day_off.reason, item.reason)} for item in blocked]
+        return warnings
+
+    def warnings_for_date(self, org_id: str, day: date) -> List[Dict[str, str]]:
+        """A one-off lesson or a MOVE onto a date of a live day off is allowed (a make-up, a deliberate lesson): the author only gets the warning ``DAY_OFF``."""
+        found = self.for_date(org_id, day).dayOff
+        return [{"code": "DAY_OFF", "message": on_day_off_text(day, found.reason)}] if found else []
 
     def _convert(self, row: GroupAttendance, group: Group, day_off_id: UUID, reason: str, actor_id: str) -> None:
         """A lesson cancelled by hand «по вине центра» on a date of the day off: the day is a holiday whoever cancelled it (audited, no recalculation from now on)."""

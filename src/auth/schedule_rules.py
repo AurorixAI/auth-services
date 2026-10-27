@@ -222,6 +222,7 @@ class ScheduleRules:
     def create_lesson(self, org_id: str, req, *, actor_id: Optional[str], is_org_admin: bool):
         """``POST /org/schedule/lessons`` (SPEC 4.1, O1 / O11)."""
         from .ops_schemas import ScheduleLessonResponseB
+        from .days_off import DaysOffService
 
         group = self.svc._require_group_access(org_id, req.groupId, actor_id=actor_id, is_org_admin=is_org_admin)
         group = self._lock_group(group)  # the JSON slot list is written under the lock: no lost slot (O1.R4)
@@ -282,6 +283,7 @@ class ScheduleRules:
         group.schedule = [*(group.schedule or []), new_slot]
         flag_modified(group, "schedule")
         self.db.commit()
+        warnings += DaysOffService(self.svc).apply_to_lesson(org_id, actor_id, group.id, new_id, valid_from)      # the series does not stay on a day off of the centre that was given before it
         return ScheduleLessonResponseB(
             id=new_id, groupId=str(group.id), groupName=group.name, classLevel=group.class_level or 5,
             subject=new_slot["subject"], dayOfWeek=new_slot["dayOfWeek"], startTime=new_slot["startTime"],
@@ -294,6 +296,7 @@ class ScheduleRules:
         """``POST /org/schedule/occurrences`` (one lesson on one date)."""
         from .models import GroupScheduleOneOffLesson
         from .ops_schemas import ScheduleOccurrenceResponseB
+        from .days_off import DaysOffService
         from uuid import UUID
 
         if not actor_id:
@@ -334,6 +337,7 @@ class ScheduleRules:
             )
         )
         self.db.commit()
+        warnings += DaysOffService(self.svc).warnings_for_date(org_id, req.lessonDate)      # a lesson on a day off is deliberate (a make-up): a warning, no cancellation
         return ScheduleOccurrenceResponseB(
             id=lesson_id, groupId=str(group.id), groupName=group.name, classLevel=group.class_level or 5, **payload,
             occurrenceDate=req.lessonDate.isoformat(), isOneOff=True, warnings=warnings,
