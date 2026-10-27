@@ -97,43 +97,7 @@ def test_d3_voiding_a_day_off_warns_about_the_substitutes_it_took_off(w):
     assert client(w, "owner").post(f"{DAYS}/{made2['dayOff']['id']}/void").json()["warnings"] == []
 
 
-def pay_group(w):
-    give_group_price(w.db, w.G1, 600_000)
-    return w.G1
-
-
-def test_d7_the_estimate_for_a_calendar_roster_is_the_engine_sum(w):
-    """Owner's decision 2: price x percent / D_lesson over the roster, rounded once: 3 calendar students x 600 000 x 30 % / 12 = 45 000 for B (30 %); D has no rate."""
-    pay_group(w)
-    sheet_c = client(w, "admin").get(f"{API}/org/groups/{w.G1.id}/lesson-teacher-candidates", params={"lessonId": "lesson-l1", "lessonDate": "2026-10-26"}).json()["candidates"]
-    by = {c["teacherId"]: c for c in sheet_c}
-    assert (by[str(w.B.id)]["substitutePayEstimate"], by[str(w.B.id)]["substitutePayEstimateReason"]) == (45_000, None)
-    assert (by[str(w.D.id)]["substitutePayEstimate"], by[str(w.D.id)]["substitutePayEstimateReason"]) == (None, "RATE_MISSING")
-    item = req(w, "A", [(w.G1, "lesson-l1", "2026-10-26")]).json()["created"][0]
-    for who in ("admin", "owner"):
-        cands = {c["teacherId"]: c for c in client(w, who).get(f"{SUB}/{item['id']}/candidates").json()["candidates"]}
-        assert cands[str(w.B.id)]["substitutePayEstimate"] == 45_000 and cands[str(w.D.id)]["substitutePayEstimateReason"] == "RATE_MISSING"
-
-
-def test_d7_a_package_student_counts_with_the_size_of_his_package_and_a_group_without_students_has_no_estimate(w, monkeypatch):
-    """One calendar student (D = the divisor 12) + one package student (D = his package, 8): 600 000 x 30 % x (1/12 + 1/8) = 37 500, rounded once; the others as the engine says."""
-    from src.auth import payroll_estimate
-    from src.auth.payments_service import PaymentService
-
-    group = pay_group(w)
-    mids = {str(s.id): m.id for s in (w.s1, w.s2, w.s3) for m in w.db.query(StudentGroup).filter_by(group_id=group.id, student_id=s.id)}
-    w.db.query(StudentGroup).filter(StudentGroup.group_id == group.id, StudentGroup.student_id == w.s3.id).update({"is_active": False})
-    w.db.commit()
-    seg = lambda kind, size: SimpleNamespace(kind=kind, nominal_days=size)
-    entries = {mids[str(w.s1.id)]: SimpleNamespace(membership=SimpleNamespace(id=mids[str(w.s1.id)]), ledger=SimpleNamespace(segments=[seg("period", 30)])),
-               mids[str(w.s2.id)]: SimpleNamespace(membership=SimpleNamespace(id=mids[str(w.s2.id)]), ledger=SimpleNamespace(segments=[seg("package", 8)]))}
-    loader = SimpleNamespace(run=lambda ids: [entries[i] for i in ids if i in entries], settings=SimpleNamespace(regimes=[]))
-    monkeypatch.setattr(PaymentService, "_loader", lambda self, org_id, *a, **kw: loader)
-    out = payroll_estimate.substitute_pay_estimates(w.svc, w.org.id, group, "2026-10-26", 600, [w.B.id, w.D.id])
-    assert out[w.B.id] == {"amount": 37_500, "reason": None} and out[w.D.id] == {"amount": None, "reason": "RATE_MISSING"}
-    empty = new_group(w.db, w.org, w.ids, "Ge", "Без учеников", w.C, [new_slot("lesson-e", 1, "12:00", "13:00", "2026-10-12")])
-    w.db.commit()
-    assert payroll_estimate.substitute_pay_estimates(w.svc, w.org.id, empty, "2026-10-26", 720, [w.B.id])[w.B.id] == {"amount": None, "reason": "NO_STUDENTS"}
+# (the estimate - owner only, covered lessons, package students - is tested in tests/test_w1r3_pg.py: test_r3_7_*)
 
 
 # ============================================================================================================ S16

@@ -92,6 +92,22 @@ class CreateOneOffLessonRequestB(CreateOneOffLessonRequest):
     room: Optional[str] = None
 
 
+class SeriesRevision(BaseModel):
+    effectiveFrom: str
+    reason: Optional[str] = None
+    fields: List[str] = Field(default_factory=list)       # what this revision changes against the state before it: dayOfWeek | startTime | endTime | subject | room | format | color | topic
+
+
+class SeriesRevisionsOut(BaseModel):
+    """W1 (F6): what is already planned for a weekly lesson - the revisions dated AFTER ``after`` (default: today) and the date the series stops (null: it does not).  The edit dialog shows
+    «С ДД.ММ у этого урока уже есть своё изменение» from this, not from a guess."""
+
+    lessonId: str
+    after: str
+    revisions: List[SeriesRevision] = Field(default_factory=list)
+    endsFrom: Optional[str] = None
+
+
 class LaterRevision(BaseModel):
     """W1 S8: a revision of the series that was already planned for a LATER date and that the change was applied to as well."""
 
@@ -135,6 +151,7 @@ class ScheduleOccurrenceResponseB(ScheduleOccurrenceResponse):
     defaultTeacherId: Optional[str] = None
     defaultTeacherName: Optional[str] = None
     # LOGIC-B2 (additive): the pending request of the lesson (manager and the requester only) and what happened to a cancelled original (no reasons)
+    replacedBy: Optional[Dict[str, Any]] = None            # W1 F10: {id, name} of the teacher who substitutes this lesson - set only in the schedule of its MAIN teacher (he sees «Замена: <имя>»)
     createdBy: Optional[Dict[str, Any]] = None             # W1: {id, name, role} - who added a ONE-OFF lesson (null for a lesson of a series); visibility only
     substitutionRequest: Optional[Dict[str, Any]] = None
     substitutionOutcome: Optional[Dict[str, Any]] = None
@@ -240,6 +257,13 @@ class GroupResponseB(GroupResponse):
     archiveReason: Optional[str] = None
     # "My groups" of a teacher: the group is shown only because of a substitution
     substitution: bool = False
+
+
+class GroupRestoredB(GroupResponseB):
+    """The answer of «Вернуть из архива»: the group + what its return met (W1 R3 11): ``DAY_OFF_NOT_APPLIED`` - a live day off of the centre could not be applied to its lessons (the day off is
+    marked ``incomplete``: «Продолжить» finishes it); ``DAY_OFF_NOT_CANCELLED`` - a lesson that stays (started, exam)."""
+
+    warnings: List[OpsWarning] = Field(default_factory=list)
 
 
 class TeacherDashboardSummaryResponseB(TeacherDashboardSummaryResponse):

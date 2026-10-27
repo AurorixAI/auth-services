@@ -83,7 +83,8 @@ def test_s4_r1_substitute_creates_the_assignment_and_the_audit(w, clock):
     assert [e.action for e in events_of(w)] == ["requested", "substituted"] and events_of(w)[1].snapshot["via"] == "request"
     mine = occurrence(w, "D", "L1", "2026-10-26")
     assert mine["teacherId"] == str(w.D.id) and mine["isSubstitution"] is True and mine["defaultTeacherId"] == str(w.A.id)
-    assert [o for o in client(w, "A").get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-26", "date_to": "2026-10-26"}).json() if o["id"] == "lesson-l1"] == []
+    mine_a = [o for o in client(w, "A").get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-26", "date_to": "2026-10-26"}).json() if o["id"] == "lesson-l1"]
+    assert [(o["teacherId"], o["isSubstitution"], o["defaultTeacherId"], o["replacedBy"]["id"]) for o in mine_a] == [(str(w.D.id), True, str(w.A.id), str(w.D.id))]     # W1 F10: A keeps HIS lesson, marked «Замена»
 
 
 def test_s4_r2_double_click_and_another_decision(w):

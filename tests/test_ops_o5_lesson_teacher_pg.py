@@ -53,7 +53,7 @@ def test_r1_substitute_leads_the_lesson_and_is_paid_as_the_one_who_taught(w, clo
     assert out["attendanceUpdated"] is False and out["version"] is None and out["payrollSheetsAffected"] == []
     mine = occurrences_of(w, "D", teacher="D")
     assert [(o["id"], o["isSubstitution"], o["teacherName"]) for o in mine] == [("lesson-l1", True, "Рахимов Т.")]
-    assert [o for o in occurrences_of(w, "A", teacher="A") if o["id"] == "lesson-l1"] == []
+    assert [o["replacedBy"]["id"] for o in occurrences_of(w, "A", teacher="A") if o["id"] == "lesson-l1"] == [str(w.D.id)]       # W1 F10: the main teacher keeps his lesson, marked «Замена»
     dash = client(w, "D").get("/api/v1/auth/org/teacher/dashboard/summary", params={"business_date": "2026-10-26"}).json()
     assert [l["id"] for l in dash["todayLessons"]] == ["lesson-l1"] and dash["groups"] == []      # the lesson is his, the group is not ("Мои группы")
     clock.set("2026-10-26 10:00")

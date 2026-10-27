@@ -2211,9 +2211,11 @@ class AuthService:
             diff[key] = [old_value, value]
             setattr(group, key, UUID(value) if key == "teacher_id" else value)
 
+        actor_role = actor_role or self._org_role_of(org_id, actor_id)      # W1 S15: the role is the one of the live membership, never a default
+
         if "lesson_type" in diff:  # LOGIC-A B1: a new type is a history row effective today (+ audit), not a bare write
             from .lesson_types import LessonTypeService
-            LessonTypeService(self.db).patch_type(org_id, group, diff["lesson_type"][0], diff["lesson_type"][1], actor_id, actor_role or "admin")
+            LessonTypeService(self.db).patch_type(org_id, group, diff["lesson_type"][0], diff["lesson_type"][1], actor_id, actor_role)
 
         if diff:
             self.db.add(
@@ -2221,7 +2223,7 @@ class AuthService:
                     org_id=org_id,
                     group_id=group.id,
                     actor_id=actor_id,
-                    actor_role=actor_role or "admin",
+                    actor_role=actor_role,
                     action="teacher_changed" if teacher_changed else "updated",
                     assigned_teacher_id=group.teacher_id,
                     snapshot=diff,
@@ -3704,7 +3706,7 @@ class AuthService:
         occurrences: List[ScheduleOccurrenceResponse] = [
             ScheduleOccurrenceResponse(**item)
             for item in lesson_teachers.LessonTeachers(self).annotated_occurrences(
-                query.order_by(Group.name).all(), date_from, date_to, only_teacher=teacher_id
+                query.order_by(Group.name).all(), date_from, date_to, only_teacher=teacher_id, include_replaced=True
             )
         ]
         return sorted(occurrences, key=lambda item: (item.occurrenceDate, item.startTime, item.groupName))
@@ -3765,8 +3767,9 @@ class AuthService:
         if not changed_now and not later:
             raise ops_rules.OpsError(400, "NO_CHANGES", "Укажите хотя бы одно изменение постоянного расписания")
         # only a change of the DAY takes lessons away from their dates (the exam bound to (lesson, date) would hang on a date that is no lesson); a change of the time keeps that identity
-        day_changes = "dayOfWeek" in [*changed_now, *(f for _, _, fields in later for f in fields)]
-        exams = self._exams_of_changed_schedule(org_id, group, lesson_id, req.effectiveFrom, release=bool(getattr(req, "releaseAffectedExams", False))) if day_changes else None
+        # (R3 4) the check starts at the EARLIEST date where the day really changes: the date of the revision itself or the date of a later revision the patch moves to another day
+        day_dates = ([req.effectiveFrom] if "dayOfWeek" in changed_now else []) + [date.fromisoformat(rev.effective_date) for rev, _, fields in later if "dayOfWeek" in fields]
+        exams = (self._exams_of_changed_schedule(org_id, group, lesson_id, min(day_dates), release=bool(getattr(req, "releaseAffectedExams", False))) if day_dates else None)
 
         # Inspect the first two weeks after the effective date. That covers
         # every weekday once and verifies conflicts against other versioned
@@ -3787,6 +3790,7 @@ class AuthService:
              if (req.effectiveFrom + timedelta(days=offset)).isoweekday() == updated_payload["dayOfWeek"]],
             updated_payload,
         )
+        room_warnings += self._check_later_revisions(group, lesson_id, later, room_warnings)       # (R3 3) the same checks for the later revisions the patch changes
         if changed_now:
             self._upsert_schedule_override(
                 group=group,
@@ -3811,7 +3815,7 @@ class AuthService:
         from .lesson_substitutions import on_schedule_changed
 
         moved = on_schedule_changed(self, group, lesson_id, req.effectiveFrom, actor_id)       # W1 S8 (ДЫРА-3): substitutes / requests of lessons that are gone
-        released = self._release_exams_of_changed_schedule(org_id, group, lesson_id, req.effectiveFrom, exams, actor_id, req.reason.strip())
+        released = self._release_exams_of_changed_schedule(org_id, group, lesson_id, min(day_dates) if day_dates else req.effectiveFrom, exams, actor_id, req.reason.strip())
         self.db.commit()
         from .days_off import DaysOffService  # a revision that puts the series on a day off of the centre: those lessons are cancelled as the day off's own
 
@@ -3836,6 +3840,13 @@ class AuthService:
     def _changed_schedule_fields(before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
         return [key for key in ("dayOfWeek", "startTime", "endTime", "subject", "room", "format", "color", "topic") if after.get(key) != before.get(key)]
 
+    def _org_role_of(self, org_id: str, user_id: Any) -> str:
+        """The role of ``user_id`` in the organisation, from the membership row (``ValueError`` when there is none: no role is invented)."""
+        role = self.db.query(OrganizationMember.org_role).filter(OrganizationMember.org_id == org_id, OrganizationMember.user_id == user_id).scalar()
+        if role is None:
+            raise ValueError("Не удалось определить роль сотрудника в центре")
+        return role
+
     def _lock_group_row(self, group: Group) -> None:
         self.db.query(Group).filter(Group.id == group.id, Group.org_id == group.org_id).with_for_update().populate_existing().first()
 
@@ -3856,6 +3867,19 @@ class AuthService:
             if fields:
                 out.append((revision, patched, fields))
         return out
+
+    def _check_later_revisions(self, group: Group, lesson_id: str, later: List[tuple], known: List[Any]) -> List[Any]:
+        """W1 R3 (3): every later revision the patch changes gets the teacher-time check (14 days from its OWN date, ``TEACHER_BUSY``) and the room warnings (56 days) of its new payload;
+        returns the warnings that are not in ``known`` yet."""
+        found: List[Any] = []
+        for revision, patched, _fields in later:
+            first = date.fromisoformat(revision.effective_date)
+            days = [first + timedelta(days=offset) for offset in range(56) if (first + timedelta(days=offset)).isoweekday() == patched["dayOfWeek"]]
+            for day in days:
+                if (day - first).days < 14:
+                    self._assert_teacher_time_is_available(group=group, lesson_id=lesson_id, occurrence_date=day, payload=patched)
+            found += [w for w in schedule_rules.ScheduleRules(self).warnings_for(group, lesson_id, days, patched) if w not in known and w not in found]
+        return found
 
     def _exams_of_changed_schedule(self, org_id: str, group: Group, lesson_id: str, effective_from: date, *, release: bool) -> Dict[str, Any]:
         """W1 S8 (ДЫРА-2): a change of the DAY of a weekly lesson looks at the exams of its future dates like a move of one lesson does (LESSONS 40): an exam that is
@@ -3883,6 +3907,22 @@ class AuthService:
         except Exception:
             self.db.rollback()          # the schedule is written only when the exams are released (the remote release is atomic and checks the sessions again)
             raise
+
+    def get_series_revisions(self, org_id: str, lesson_id: str, *, after: Optional[date], actor_id: Optional[str], is_org_admin: bool) -> Dict[str, Any]:
+        """The revisions of a weekly lesson dated after ``after`` (default: today) with the fields each one changes, and the date the series stops (W1 F6)."""
+        group = self._require_recurring_lesson(org_id, lesson_id, actor_id=actor_id, is_org_admin=is_org_admin)
+        after = after or datetime.now(BUSINESS_TIMEZONE).date()
+        rows = (self.db.query(GroupScheduleOverride).filter(GroupScheduleOverride.group_id == group.id, GroupScheduleOverride.lesson_id == lesson_id,
+                                                           GroupScheduleOverride.scope == "recurring", GroupScheduleOverride.effective_date > after.isoformat())
+                .order_by(GroupScheduleOverride.effective_date, GroupScheduleOverride.created_at).all())
+        before = self._configured_schedule_payload_as_of(group, lesson_id, after)
+        out = []
+        for row in rows:
+            payload = dict(row.payload or {})
+            out.append({"effectiveFrom": row.effective_date, "reason": row.reason, "fields": self._changed_schedule_fields(before, payload)})
+            before = payload
+        end = self._recurring_end_override(group, lesson_id)
+        return {"lessonId": lesson_id, "after": after.isoformat(), "revisions": out, "endsFrom": end.effective_date if end else None}
 
     def _require_recurring_lesson(
         self,
@@ -4822,10 +4862,12 @@ class AuthService:
         schedule_window: list[ScheduleOccurrenceResponse] = [
             ScheduleOccurrenceResponse(**item)
             for item in teachers_service.annotated_occurrences(
-                schedule_groups, window_start, window_end, only_teacher=actor_id
+                schedule_groups, window_start, window_end, only_teacher=actor_id, include_replaced=True
             )
         ]
         schedule_window.sort(key=lambda item: (item.occurrenceDate, item.startTime, item.groupName))
+        # the SAME annotation as ``GET /org/schedule/occurrences`` (one function: the request marks, the outcome of a cancelled / moved original, ``movedFrom``, ``createdBy``)
+        lesson_substitutions.annotate_occurrences(self, {"org_role": "teacher", "user_id": actor_id}, schedule_window)
         today_lessons = [
             occurrence
             for occurrence in schedule_window
@@ -5439,9 +5481,13 @@ class AuthService:
         )
         if attendance:
             if attendance.status == LessonAttendanceStatus.CANCELLED.value:
-                return {"version": attendance.version, "warnings": []}  # The same cancellation was already committed.
-            raise ValueError("Нельзя отменить урок, который уже начали или завершили")
-        rules.assert_unclosed_window(req.lessonDate)
+                if (req.cancellationReason or None) == (attendance.cancellation_reason or None):
+                    return {"version": attendance.version, "warnings": []}  # The same cancellation was already committed.
+                # a different one: the ONE rule of every road answers (ALREADY_MOVED for a moved original, else ALREADY_CANCELLED) - W1 R3 9
+            else:
+                raise ValueError("Нельзя отменить урок, который уже начали или завершили")
+        else:
+            rules.assert_unclosed_window(req.lessonDate)
 
         from .lesson_substitutions import Substitutions
 
@@ -5936,10 +5982,11 @@ class AuthService:
         return lesson_substitutions.moved_from_map(self.db, [one_off.group_id], [lesson_id]).get((str(one_off.group_id), lesson_id)) is None
 
     def _empty_started_lesson(self, att: Optional[GroupAttendance]) -> bool:
-        """A started lesson with no marks whose roster is empty (O6): the teacher cannot finish it and may cancel it."""
+        """A started lesson with no marks whose roster is empty (O6): the teacher cannot finish it and may cancel it; the row he already cancelled this way is his too, so an exact repeat
+        of his cancellation reaches the version gate and is answered 200 (W1 R3 8)."""
         return bool(
             att is not None
-            and att.status == LessonAttendanceStatus.IN_PROGRESS.value
+            and att.status in (LessonAttendanceStatus.IN_PROGRESS.value, LessonAttendanceStatus.CANCELLED.value)
             and not att.records
             and not self._roster_ids_from_snapshot(att.roster_snapshot)
         )

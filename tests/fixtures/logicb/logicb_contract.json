@@ -1476,6 +1476,154 @@
         "title": "GroupResponseB",
         "type": "object"
       },
+      "GroupRestoredB": {
+        "description": "The answer of «Вернуть из архива»: the group + what its return met (W1 R3 11): ``DAY_OFF_NOT_APPLIED`` - a live day off of the centre could not be applied to its lessons (the day off is\nmarked ``incomplete``: «Продолжить» finishes it); ``DAY_OFF_NOT_CANCELLED`` - a lesson that stays (started, exam).",
+        "properties": {
+          "archiveReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archivereason"
+          },
+          "archivedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archivedat"
+          },
+          "class_level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Level"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lesson_type": {
+            "default": "group",
+            "title": "Lesson Type",
+            "type": "string"
+          },
+          "max_students": {
+            "default": 30,
+            "title": "Max Students",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule"
+          },
+          "status": {
+            "default": "active",
+            "title": "Status",
+            "type": "string"
+          },
+          "student_count": {
+            "default": 0,
+            "title": "Student Count",
+            "type": "integer"
+          },
+          "substitution": {
+            "default": false,
+            "title": "Substitution",
+            "type": "boolean"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/OpsWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "name"
+        ],
+        "title": "GroupRestoredB",
+        "type": "object"
+      },
       "GroupUpdateRequest": {
         "properties": {
           "class_level": {
@@ -3783,6 +3931,18 @@
             ],
             "title": "Originalstarttime"
           },
+          "replacedBy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replacedby"
+          },
           "rescheduleReason": {
             "anyOf": [
               {
@@ -5654,7 +5814,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupResponseB"
+                  "$ref": "#/components/schemas/GroupRestoredB"
                 }
               }
             },

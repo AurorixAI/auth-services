@@ -33,7 +33,13 @@ def change_cancellation_kind(db: Session, org_id: str, group_id: str, req: Chang
            .with_for_update().first())
     if row is None or row.status != "cancelled":
         raise not_found("LESSON_NOT_CANCELLED", "Урок не отменён: менять нечего")
-    if row.day_off_id is not None:
+    from .days_off import DaysOffService
+    from .service import AuthService  # lazy: the service layer imports this module's neighbours
+
+    held = DaysOffService(AuthService(db)).live_for_date(org_id, req.lessonDate)
+    if held is not None:                                                  # W1 R3 (1): a date a live day off holds is a holiday whoever cancelled the lesson
+        raise conflict("CANCELLED_BY_DAY_OFF", "Дата — выходной день центра: причина отмены — праздник")
+    if row.day_off_id is not None:                                        # cancelled by a day off that is gone meanwhile
         raise conflict("CANCELLED_BY_DAY_OFF", "Урок отменён выходным днём центра: измените или отмените сам выходной")
     if row.cancellation_kind is None:
         raise conflict("CANCELLATION_HAS_NO_KIND", "Это отмена до обновления или перенос урока: вид отмены у неё не меняется")
@@ -51,7 +57,6 @@ def change_cancellation_kind(db: Session, org_id: str, group_id: str, req: Chang
     group = db.query(Group).filter(Group.id == group_id, Group.org_id == org_id).first()
     if group is not None:
         from .lesson_substitutions import Substitutions
-        from .service import AuthService  # lazy: the service layer imports this module's neighbours
 
         Substitutions(AuthService(db)).record_kind_change(group, req.lessonId, req.lessonDate, _uuid(actor_id), before, req.cancellationKind, req.reason.strip())
     db.commit()

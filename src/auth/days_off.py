@@ -253,6 +253,13 @@ class DaysOffService:
         return DayOffLesson(groupId=str(group.id), groupName=group.name, lessonId=occurrence["id"], date=date.fromisoformat(occurrence["occurrenceDate"]),
                             startTime=occurrence.get("startTime"), endTime=occurrence.get("endTime"), reason=reason)
 
+    OLD_CONVERT = "Отмена «по вине центра» старше окна незакрытых уроков: её вид не меняется (закрытый период не пересчитывается)"
+
+    @staticmethod
+    def _in_window(lesson_date: str) -> bool:
+        """W1 R3 (2): the same window as the marks of a past lesson - a cancellation older than it is never turned into a holiday (a closed or paid month does not change)."""
+        return date.fromisoformat(lesson_date) >= bc.month_window_start(bc.business_today())
+
     @staticmethod
     def _convertible(row: Optional[GroupAttendance]) -> bool:
         """A lesson cancelled by hand «по вине центра» (not by a day off): the day off turns it into a holiday."""
@@ -301,8 +308,10 @@ class DaysOffService:
         for group, occurrence in found:
             row = rows.get((group.id, occurrence["id"], occurrence["occurrenceDate"]))
             if row is not None and row.status == LessonAttendanceStatus.CANCELLED.value:
-                if self._convertible(row):
+                if self._convertible(row) and self._in_window(occurrence["occurrenceDate"]):
                     convertible.append(self._item(group, occurrence))
+                elif self._convertible(row):
+                    blocked.append(self._item(group, occurrence, self.OLD_CONVERT))
                 else:
                     already += 1
                 continue
@@ -389,8 +398,10 @@ class DaysOffService:
         for group, occurrence in found:
             existing = rows.get((group.id, occurrence["id"], occurrence["occurrenceDate"]))
             if self._convertible(existing):
-                self._convert(existing, group, day_off_id, reason, actor_id)
-                converted.append(self._item(group, occurrence))
+                if not self._in_window(occurrence["occurrenceDate"]):
+                    blocked.append(self._item(group, occurrence, self.OLD_CONVERT))
+                elif self._convert(existing, group, day_off_id, reason, actor_id):
+                    converted.append(self._item(group, occurrence))
                 continue
             if existing is not None and existing.status == LessonAttendanceStatus.CANCELLED.value:
                 already += 1
@@ -424,33 +435,54 @@ class DaysOffService:
             warnings += [{"code": "DAY_OFF_NOT_CANCELLED", "message": not_cancelled_text(item.date, day_off.reason, item.reason)} for item in blocked]
         return warnings
 
-    def apply_to_group(self, org_id: str, actor_id: str, group_id: Any) -> int:
+    def apply_to_group(self, org_id: str, actor_id: str, group_id: Any) -> List[Dict[str, str]]:
         """W1 S10 (Д7): a group that comes back from the archive meets the live days off of the centre from today on: its lessons that fall into them are cancelled by the same
-        step (``_run``).  Returns how many lessons were cancelled."""
+        step (``_run``).  R3 11: nothing fails silently - a day off that could not be applied (an error, the exam-service down) is marked ``incomplete`` («Продолжить» finishes it) and the
+        answer carries ``DAY_OFF_NOT_APPLIED``; a lesson that stays comes back as ``DAY_OFF_NOT_CANCELLED``.  Returns the warnings."""
         today = bc.business_today()
         live = (self.db.query(OrgDayOff).filter(OrgDayOff.org_id == org_id, OrgDayOff.voided_at.is_(None), OrgDayOff.date_to >= today)
                 .order_by(OrgDayOff.created_at, OrgDayOff.id).all())
-        done = 0
-        for day_off in live:
-            found, rows = self._lessons(org_id, max(day_off.date_from, today), day_off.date_to, group_id)
-            cancelled, _, _, _, _ = self._run(org_id, actor_id, day_off.id, day_off.reason, found, rows)
-            done += len(cancelled)
-        return done
+        warnings: List[Dict[str, str]] = []
+        for day_off in [(d.id, d.reason, d.date_from, d.date_to) for d in live]:
+            day_off_id, reason, first_day, last_day = day_off
+            unfinished = False
+            try:
+                found, rows = self._lessons(org_id, max(first_day, today), last_day, group_id)
+                _, blocked, _, _, down = self._run(org_id, actor_id, day_off_id, reason, found, rows)
+                warnings += [{"code": "DAY_OFF_NOT_CANCELLED", "message": not_cancelled_text(item.date, reason, item.reason)} for item in blocked if item.reason != EXAM_DOWN]
+                unfinished = down
+            except Exception:
+                self.db.rollback()
+                logger.exception("restore: the day off %s was not applied to group %s", day_off_id, group_id)
+                unfinished = True
+            if unfinished:
+                self.db.query(OrgDayOff).filter(OrgDayOff.id == day_off_id).update({"incomplete": True})
+                self.db.commit()
+                warnings.append({"code": "DAY_OFF_NOT_APPLIED", "message": f"Выходной «{reason}» ({_dm(first_day)}–{_dm(last_day)}) не применён к урокам вернувшейся группы полностью: откройте «Выходные дни» и нажмите «Продолжить»"})
+        return warnings
 
     def warnings_for_date(self, org_id: str, day: date) -> List[Dict[str, str]]:
         """A one-off lesson or a MOVE onto a date of a live day off is allowed (a make-up, a deliberate lesson): the author only gets the warning ``DAY_OFF``."""
         found = self.for_date(org_id, day).dayOff
         return [{"code": "DAY_OFF", "message": on_day_off_text(day, found.reason)}] if found else []
 
-    def _convert(self, row: GroupAttendance, group: Group, day_off_id: UUID, reason: str, actor_id: str) -> None:
-        """A lesson cancelled by hand «по вине центра» on a date of the day off: the day is a holiday whoever cancelled it (audited, no recalculation from now on)."""
+    def _convert(self, row: GroupAttendance, group: Group, day_off_id: UUID, reason: str, actor_id: str) -> bool:
+        """A lesson cancelled by hand «по вине центра» on a date of the day off: the day is a holiday whoever cancelled it (audited, no recalculation from now on).  The row is locked and
+        read again (a second writer may have changed it), ``day_off_id`` is set (the day off owns it now: «Отменить выходной» and the day-off checks see it).  ``False``: it was not
+        convertible any more."""
+        row = self.db.query(GroupAttendance).filter(GroupAttendance.id == row.id).with_for_update().populate_existing().first()
+        if not self._convertible(row):
+            self.db.rollback()
+            return False
         row.cancellation_kind = HOLIDAY
+        row.day_off_id = day_off_id
         row.version = int(row.version or 1) + 1
         self.db.add(GroupAttendanceAudit(
             attendance_id=row.id, org_id=row.org_id, group_id=row.group_id, actor_id=UUID(str(actor_id)), action="corrected", before_status="cancelled",
             after_status="cancelled", before_records={}, after_records={}, correction_reason=lesson_reason_text(reason)[:500],
             cancellation_reason=row.cancellation_reason, details={"cancellation_kind": {"from": CENTRE, "to": HOLIDAY}, "day_off_id": str(day_off_id)}))
         self.db.commit()
+        return True
 
     def _cancel(self, org_id: str, actor_id: str, group: Group, occurrence: Dict[str, Any], reason: str, day_off_id: UUID) -> Optional[str]:
         """The usual cancellation (``Substitutions.cancel_lesson``), kind ``holiday``, of a lesson that has no journal row (a started one is never touched: the row is read again
@@ -513,6 +545,7 @@ class DaysOffService:
             if covering is not None:
                 why = "Дата входит в другой выходной"
                 if not dry_run:
+                    att.cancellation_reason = lesson_reason_text(covering.reason)          # the reason the students read is the one of the day off that holds the date now (R3 17)
                     att.day_off_id = covering.id            # W1 S10 (Д4): the lesson stays cancelled and now belongs to the day off that still holds the date (cancelling THAT one gives it back)
             if why:
                 item.reason = why

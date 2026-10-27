@@ -25,6 +25,7 @@
   "isSubstitution": false,
   "defaultTeacherId": "A",
   "defaultTeacherName": "Иванов И.",
+  "replacedBy": null,
   "createdBy": {
     "id": "admin",
     "name": "Каримова Н.",

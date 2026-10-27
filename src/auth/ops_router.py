@@ -20,6 +20,7 @@ from .ops_schemas import (
     ArchiveGroupRequest,
     ArchiveImpactOut,
     GroupResponseB,
+    GroupRestoredB,
     HandoverOut,
     HandoverRequest,
     LessonTeacherCandidatesOut,
@@ -91,7 +92,7 @@ def get_lesson_teacher_candidates(
         _date.fromisoformat(lessonDate)
     except ValueError:  # 2026-13-45 matches the pattern: a 422, not a 500
         raise HTTPException(422, "lessonDate: такой даты нет в календаре")
-    return LessonTeachers(_svc(db)).candidates(user["org_id"], group_id, lessonId, lessonDate)
+    return LessonTeachers(_svc(db)).candidates(user["org_id"], group_id, lessonId, lessonDate, is_owner=user.get("org_role") == "owner")
 
 
 # --------------------------------------------------------------------------------------------- group archive
@@ -129,7 +130,7 @@ def archive_group(
     )
 
 
-@router.post("/org/groups/{group_id}/restore", response_model=GroupResponseB, tags=["LOGIC-B group archive"])
+@router.post("/org/groups/{group_id}/restore", response_model=GroupRestoredB, tags=["LOGIC-B group archive"])
 def restore_group(
     group_id: str,
     request: Optional[RestoreGroupRequest] = None,

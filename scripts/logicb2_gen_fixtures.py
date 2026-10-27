@@ -105,13 +105,13 @@ put("b2c1_summary_pending.json", "SubstitutionSummary", {"pendingTotal": 1, "urg
 cand = []
 free = sorted(["admin", "C", "owner"], key=lambda k: B.PEOPLE[k][1])           # by surname: Каримова, Сидоров, Усманов
 cand.append({"teacherId": IDS["D"], "name": short("D"), "orgRole": "teacher", "suggested": True, "isDefaultTeacher": False, "busy": False,
-             "busyWith": None, "substitutePayEstimate": None, "substitutePayEstimateReason": "RATE_MISSING", "rateMissing": True})
+             "busyWith": None, "substitutePayEstimate": None, "substitutePayEstimateReason": "HIDDEN", "rateMissing": True})
 for key in free:
     role = "owner" if key == "owner" else "admin" if key == "admin" else "teacher"
     cand.append({"teacherId": IDS[key], "name": short(key), "orgRole": role, "suggested": False, "isDefaultTeacher": False, "busy": False,
-                 "busyWith": None, "substitutePayEstimate": 0 if key == "C" else None, "substitutePayEstimateReason": None if key == "C" else "RATE_MISSING", "rateMissing": key != "C"})
+                 "busyWith": None, "substitutePayEstimate": None, "substitutePayEstimateReason": "HIDDEN", "rateMissing": key != "C"})
 cand.append({"teacherId": IDS["B"], "name": short("B"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": False, "busy": True,
-             "busyWith": {"kind": "lesson", "groupName": "8-В", "startTime": "10:00", "endTime": "11:30", "pendingRequest": False}, "substitutePayEstimate": 0, "substitutePayEstimateReason": None, "rateMissing": False})
+             "busyWith": {"kind": "lesson", "groupName": "8-В", "startTime": "10:00", "endTime": "11:30", "pendingRequest": False}, "substitutePayEstimate": None, "substitutePayEstimateReason": "HIDDEN", "rateMissing": False})
 put("b2c1_candidates_admin.json", "CandidatesOut", {
     "requestId": c1["id"], "lesson": {"groupId": IDS["G1"], "groupName": "9-А", "lessonId": LESSON["L1"], "date": "2026-10-26",
                                       "startTime": "10:00", "endTime": "11:30"},
@@ -213,12 +213,12 @@ c8 = item("c8", "L1", "2026-10-26", "D", NOW8, reason="sick", comment="Сам з
           previous={"id": c1["id"], "status": "substituted", "teacherName": short("A"), "substituteName": short("D")})
 put("b2c8_create.json", "CreateSubstitutionOut", {"batchId": c8["batchId"], "created": [c8], "alreadyRequested": [], "skipped": []})
 cand8 = [
-    {"teacherId": IDS["A"], "name": short("A"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": True, "busy": False, "busyWith": None, "substitutePayEstimate": 0, "substitutePayEstimateReason": None, "rateMissing": False},
-    {"teacherId": IDS["admin"], "name": short("admin"), "orgRole": "admin", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "substitutePayEstimate": None, "substitutePayEstimateReason": "RATE_MISSING", "rateMissing": True},
-    {"teacherId": IDS["C"], "name": short("C"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "substitutePayEstimate": 0, "substitutePayEstimateReason": None, "rateMissing": False},
-    {"teacherId": IDS["owner"], "name": short("owner"), "orgRole": "owner", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "substitutePayEstimate": None, "substitutePayEstimateReason": "RATE_MISSING", "rateMissing": True},
+    {"teacherId": IDS["A"], "name": short("A"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": True, "busy": False, "busyWith": None, "substitutePayEstimate": None, "substitutePayEstimateReason": "HIDDEN", "rateMissing": False},
+    {"teacherId": IDS["admin"], "name": short("admin"), "orgRole": "admin", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "substitutePayEstimate": None, "substitutePayEstimateReason": "HIDDEN", "rateMissing": True},
+    {"teacherId": IDS["C"], "name": short("C"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "substitutePayEstimate": None, "substitutePayEstimateReason": "HIDDEN", "rateMissing": False},
+    {"teacherId": IDS["owner"], "name": short("owner"), "orgRole": "owner", "suggested": False, "isDefaultTeacher": False, "busy": False, "busyWith": None, "substitutePayEstimate": None, "substitutePayEstimateReason": "HIDDEN", "rateMissing": True},
     {"teacherId": IDS["B"], "name": short("B"), "orgRole": "teacher", "suggested": False, "isDefaultTeacher": False, "busy": True,
-     "busyWith": {"kind": "lesson", "groupName": "8-В", "startTime": "10:00", "endTime": "11:30", "pendingRequest": False}, "substitutePayEstimate": 0, "substitutePayEstimateReason": None, "rateMissing": False},
+     "busyWith": {"kind": "lesson", "groupName": "8-В", "startTime": "10:00", "endTime": "11:30", "pendingRequest": False}, "substitutePayEstimate": None, "substitutePayEstimateReason": "HIDDEN", "rateMissing": False},
 ]
 put("b2c8_candidates.json", "CandidatesOut", {"requestId": c8["id"], "lesson": {"groupId": IDS["G1"], "groupName": "9-А", "lessonId": LESSON["L1"], "date": "2026-10-26",
                                                                               "startTime": "10:00", "endTime": "11:30"},
@@ -242,7 +242,7 @@ put("b2x_withdraw_batch.json", "WithdrawBatchOut", {"withdrawn": [dict(c1, statu
                                                     "skipped": [{"id": uid("req-x"), "code": "SUBSTITUTION_ALREADY_DECIDED", "message": "Запрос уже решён"}]})
 put("b2x_detail.json", "SubstitutionDetailOut", {"item": c1, "chain": [], "events": [
     {"action": "requested", "actor": person("A"), "at": iso(utc(NOW)), "snapshot": {}}], "examBinding": {"state": "none", "title": None, "canCancel": True}})
-put("b2x_decide_bulk_busy.json", "DecideBulkOut", {"updated": 4, "items": [], "skipped": [
+put("b2x_decide_bulk_busy.json", "DecideBulkOut", {"updated": 4, "items": [], "results": [], "warningsTotal": 0, "skipped": [
     {"id": uid("req-x"), "code": "TEACHER_BUSY", "message": "У преподавателя уже есть урок", "conflicts": [conf], "total": 1}]})
 put("b2x_lesson_access.json", "LessonAccessOut", {"id": IDS["G1"], "org_id": IDS["org"], "name": "9-А", "class_level": 9, "teacher_id": IDS["A"],
                                                   "teacher_name": "Иван Иванов", "status": "active", "substitution": True,

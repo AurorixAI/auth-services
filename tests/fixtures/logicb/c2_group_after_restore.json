@@ -27,5 +27,6 @@
   "student_count": 0,
   "substitution": false,
   "teacher_id": "23da0f33-efdf-5266-af96-b052211c5c8f",
-  "teacher_name": "Сергей Сидоров"
+  "teacher_name": "Сергей Сидоров",
+  "warnings": []
 }

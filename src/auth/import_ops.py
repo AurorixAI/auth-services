@@ -395,10 +395,7 @@ def commit(org_id: Any, creator_id: Any, data: bytes, db: Session, *, money: boo
         if plan.has_errors:
             return ImportCommitResponseB(ok=False, counts=plan.counts, issues=plan.issues, skipped=plan.skipped)
         svc = AuthService(db)
-        actor_role = (
-            db.query(OrganizationMember.org_role).filter(OrganizationMember.org_id == org_id, OrganizationMember.user_id == creator_id).scalar()
-            or "admin"
-        )
+        actor_role = svc._org_role_of(org_id, creator_id)          # W1 S15: the role of the live membership, never a default
         created: List[CreatedGroup] = []
         group_ids: Dict[str, Any] = {}
         try:

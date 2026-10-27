@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "3a1946d"
+BASE = "814d948"           # the commit the W1 package started from (prod main); a diff against an older base only measures the earlier packs
 pytestmark = pytest.mark.skipif(shutil.which("git") is None or not (ROOT / ".git").exists(), reason="needs a git checkout")
 
 

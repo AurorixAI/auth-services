@@ -59,6 +59,7 @@ from .ops_schemas import (
     ReviseRecurringLessonRequestB,
     EndRecurringLessonResponseB,
     ScheduleLessonRevisedB,
+    SeriesRevisionsOut,
     ScheduleLessonResponseB,
     ScheduleOccurrenceResponseB,
     StartAttendanceOut,
@@ -1565,6 +1566,22 @@ def revise_recurring_lesson(
         raise HTTPException(400, str(e))
     except RuntimeError as e:
         raise HTTPException(503, str(e))
+
+
+@router.get("/org/schedule/lessons/{lesson_id}/recurrence/revisions", response_model=SeriesRevisionsOut)
+def get_series_revisions(
+    lesson_id: str,
+    after: Optional[date] = Query(None, description="Только изменения после этой даты (по умолчанию — сегодня)"),
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Что уже запланировано у постоянного урока: изменения после даты и дата прекращения (диалог правки серии)."""
+    try:
+        return _svc(db).get_series_revisions(user["org_id"], lesson_id, after=after, actor_id=user["user_id"], is_org_admin=is_org_manager(user))
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get(

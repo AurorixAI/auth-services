@@ -405,10 +405,22 @@ class BulkSkipped(BaseModel):
     total: Optional[int] = None
 
 
+class BulkResult(BaseModel):
+    """W1 R3 (D): what ONE decided request of a bulk decision did besides deciding - a bulk cancel that turned into a holiday (``CANCELLED_AS_HOLIDAY``), released a substitute
+    (``SUBSTITUTE_RELEASED``) ... is not silent."""
+
+    id: str
+    kind: Literal["substitute", "reschedule", "cancel", "reject"]
+    cancellationKind: Optional[CancellationKind] = None
+    warnings: List[MoveWarning] = Field(default_factory=list)
+
+
 class DecideBulkOut(BaseModel):
     updated: int = 0
     items: List[SubstitutionItem] = Field(default_factory=list)
     skipped: List[BulkSkipped] = Field(default_factory=list)
+    results: List[BulkResult] = Field(default_factory=list)       # one row per decided request, in the order of ``items``
+    warningsTotal: int = 0                                         # the number of warnings in ``results``
 
 
 class SubstitutionAlreadyDecidedDetail(OpsErrorDetail):

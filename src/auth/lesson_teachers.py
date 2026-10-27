@@ -286,6 +286,12 @@ class LessonTeachers:
         )
         return rows
 
+    def lesson_type_on(self, group: Group, lesson_date: str) -> str:
+        """The kind of lessons of the group ON the day of the lesson (the payroll rate is kept per kind; the group may have changed its kind)."""
+        from . import lesson_types  # lazy
+
+        return lesson_types.load_book(self.db, [group]).type_at(group.id, date.fromisoformat(lesson_date))
+
     def rates_missing(self, org_id: Any, teacher_ids: Iterable[UUID], lesson_type: Optional[str], lesson_date: str) -> Set[UUID]:
         """W1 (F5, D3): the teachers (of ``teacher_ids``) without a payroll rate for the type of lessons in the month of the lesson - one query for all of them.  A yes / no only:
         the rates themselves stay the owner's."""
@@ -319,9 +325,11 @@ class LessonTeachers:
         }
 
     def annotated_occurrences(self, groups: Sequence[Group], d_from: date, d_to: date, *, only_teacher: Any = None,
-                              preloaded=None) -> List[Dict[str, Any]]:
+                              preloaded=None, include_replaced: bool = False) -> List[Dict[str, Any]]:
         """The resolved occurrences of ``groups`` with the teacher of each lesson (``teacherId``, ``teacherName``, ``isSubstitution``,
-        ``defaultTeacherId``, ``defaultTeacherName``).  ``only_teacher`` keeps the lessons that teacher leads (substitutions included)."""
+        ``defaultTeacherId``, ``defaultTeacherName``).  ``only_teacher`` keeps the lessons that teacher leads (substitutions included).  ``include_replaced`` (W1 F10: the schedule and the dashboard of a teacher) also keeps HIS lessons
+        that somebody else substitutes - marked ``isSubstitution`` with ``defaultTeacherId`` = him and ``replacedBy {id, name}`` (he sees «Замена: <имя>»; the rights on such a lesson are
+        the substitute's: he cannot start or mark it)."""
         wanted = str(only_teacher) if only_teacher is not None else None
         ids = [g.id for g in groups]
         if not ids:
@@ -349,13 +357,16 @@ class LessonTeachers:
                 res = book.resolve(group, occ["id"], occ["occurrenceDate"], end)
                 teacher = effective_teacher(rows.get((str(group.id), occ["id"], occ["occurrenceDate"])), res)
                 if wanted is not None and str(teacher or "") != wanted:
-                    continue
+                    if not (include_replaced and teacher is not None and str(res.default_teacher_id or "") == wanted):
+                        continue
                 pending.append((occ, teacher, res.default_teacher_id))
         names = self.users_by_id([x for _o, t, d in pending for x in (t, d)])
         for occ, teacher, default in pending:
+            replaced = wanted is not None and str(teacher or "") != wanted
             out.append(
                 {
                     **occ,
+                    **({"replacedBy": {"id": _s(teacher), "name": short_name(names.get(_s(teacher)))}} if replaced else {}),
                     "teacherId": _s(teacher),
                     "teacherName": short_name(names.get(_s(teacher))) if teacher else None,
                     "isSubstitution": bool(teacher is not None and default is not None and teacher != default),
@@ -637,10 +648,12 @@ class LessonTeachers:
         by_teacher: Dict[UUID, List[BusyItem]] = {}
         asgs = (self.db.query(LessonTeacherAssignment).filter(LessonTeacherAssignment.group_id == group.id, LessonTeacherAssignment.cancelled_at.is_(None),
                                                               LessonTeacherAssignment.lesson_date >= today.isoformat(), LessonTeacherAssignment.lesson_date <= d_to.isoformat()).all())
+        gone = {(r.lesson_id, r.lesson_date) for r in self.db.query(GroupAttendance.lesson_id, GroupAttendance.lesson_date).filter(
+            GroupAttendance.group_id == group.id, GroupAttendance.status == CANCELLED, GroupAttendance.lesson_date >= today.isoformat())}
         for asg in asgs:
             day = date.fromisoformat(asg.lesson_date)
             occ = self._occurrence(group, asg.lesson_id, day)
-            if occ is None:
+            if occ is None or (asg.lesson_id, asg.lesson_date) in gone:          # a cancelled lesson is nobody's time (R3 10)
                 continue
             by_teacher.setdefault(asg.teacher_id, []).append(BusyItem(asg.lesson_date, hhmm_to_minutes(occ["startTime"]), hhmm_to_minutes(occ["endTime"]), occ["startTime"],
                                                                       occ["endTime"], str(group.id), group.name, asg.lesson_id))
@@ -893,7 +906,7 @@ class LessonTeachers:
         }
 
     # -------------------------------------------------------------------------------------- candidates
-    def candidates(self, org_id: Any, group_id: Any, lesson_id: str, lesson_date: str) -> Dict[str, Any]:
+    def candidates(self, org_id: Any, group_id: Any, lesson_id: str, lesson_date: str, *, is_owner: bool = False) -> Dict[str, Any]:
         day = date.fromisoformat(lesson_date)
         group = self.db.query(Group).filter(Group.id == group_id, Group.org_id == org_id).first()
         if not group:
@@ -913,10 +926,10 @@ class LessonTeachers:
         everybody = self.busy_map(org_id, day, day, exclude_keys={cand.key}, book=book)      # one pass for all the teachers
         roles = dict(self.db.query(OrganizationMember.user_id, OrganizationMember.org_role).filter(OrganizationMember.org_id == org_id).all())
         staff = self.staff_who_can_teach(org_id)
-        no_rate = self.rates_missing(org_id, [u.id for u in staff], group.lesson_type, lesson_date)
+        no_rate = self.rates_missing(org_id, [u.id for u in staff], self.lesson_type_on(group, lesson_date), lesson_date)
         from .payroll_estimate import substitute_pay_estimates  # lazy: it imports the payments and payroll services
 
-        pay = substitute_pay_estimates(self.svc, org_id, group, lesson_date, start, [u.id for u in staff])
+        pay = substitute_pay_estimates(self.svc, org_id, group, lesson_id, lesson_date, start, [u.id for u in staff], is_owner=is_owner)
         for user in staff:
             pairs = self.overlap_pairs([cand], everybody.get(user.id, []))
             other = pairs[0][1] if pairs else None

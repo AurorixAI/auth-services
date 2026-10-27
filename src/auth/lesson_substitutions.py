@@ -65,6 +65,7 @@ KIND = {"substituted": "substitute", "rescheduled": "reschedule", "cancelled": "
 STATUS_OF = {"substitute": "substituted", "reschedule": "rescheduled", "cancel": "cancelled", "reject": "rejected"}
 LIST_DEFAULT_DAYS = 30
 MINE_DAYS = 60
+SUMMARY_REVALIDATE_MAX = 200                 # W1 R3 13: how many pending requests the badge revalidates at most
 CLEARED_DAYS = 14                            # W1 S22: how long a substitute sees «снято» in ``mine``
 EXPIRY_WARNING_DAYS = 3                      # W1 S20: «истекают» is shown this many days before the 1st
 ASSIGNED_AHEAD_DAYS = 30
@@ -593,10 +594,11 @@ class SubstitutionsBase:
         return {"withdrawn": done, "skipped": skipped}
 
     # ================================================================================== summary / list / detail
-    def summary(self, org_id: Any) -> Dict[str, int]:
+    def summary(self, org_id: Any, *, revalidate: bool = True) -> Dict[str, int]:
         """The badge of «Замены».  W1 S18 (А-8): the same lazy pass as the list (a revised / stopped series, a month border) runs first, so the counts are not those of requests that are already void.
         ``expiringTotal`` (S20, D25): pending requests of the previous month that fall out of the window of the unclosed lessons on the 1st - non-zero only in the last 3 days before it."""
-        self.revalidate(self.db.query(Req).filter(Req.org_id == org_id, Req.status == PENDING).all())
+        if revalidate:      # (R3 13) one pass per request, bounded (the list does it itself over its page + the same set and asks the counts with ``revalidate=False``)
+            self.revalidate(self._badge_batch(org_id, []))
         now, today = self.now(), bc.business_today()
         base = self.db.query(Req).filter(Req.org_id == org_id, Req.status == PENDING)
         pending = base.count()
@@ -606,6 +608,12 @@ class SubstitutionsBase:
         next_month = (this_month + timedelta(days=32)).replace(day=1)
         expiring = base.filter(Req.lesson_date < this_month.isoformat()).count() if (next_month - today).days <= EXPIRY_WARNING_DAYS else 0
         return {"pendingTotal": pending, "urgentTotal": urgent, "overdueTotal": overdue, "expiringTotal": expiring}
+
+    def _badge_batch(self, org_id: Any, extra: Sequence[Req]) -> List[Req]:
+        """The pending requests to revalidate before counting: the oldest ``SUMMARY_REVALIDATE_MAX`` of the centre + ``extra`` (the page of the list), each once."""
+        batch = {r.id: r for r in self.db.query(Req).filter(Req.org_id == org_id, Req.status == PENDING).order_by(Req.starts_at, Req.id).limit(SUMMARY_REVALIDATE_MAX).all()}
+        batch.update({r.id: r for r in extra})
+        return list(batch.values())
 
     def list(self, org_id: Any, *, status: str, group_id: Optional[str], teacher_id: Optional[str], date_from: Optional[date], date_to: Optional[date],
              urgent: Optional[bool], search: Optional[str], limit: int, offset: int) -> Dict[str, Any]:
@@ -640,15 +648,15 @@ class SubstitutionsBase:
         else:
             q = q.order_by((Req.status == PENDING).desc(), Req.starts_at, Req.id)
         reqs = q.offset(offset).limit(limit).all()
-        # a lazy pass over what is being RETURNED (not over every pending request of the centre): a stale request must not be listed
-        if self.revalidate([r for r in reqs if r.status == PENDING]):
+        # ONE lazy pass over what is being RETURNED plus the bounded set the badge counts (W1 R3 13): a stale request must not be listed nor counted; each request is looked at once
+        if self.revalidate(self._badge_batch(org_id, [r for r in reqs if r.status == PENDING])):
             if status == "pending":
                 reqs = q.offset(offset).limit(limit).all()       # the page refills with the next ones
                 total = q.count()
             else:
                 for r in reqs:
                     self.db.refresh(r)
-        counts = self.summary(org_id)
+        counts = self.summary(org_id, revalidate=False)
         return {"items": self.items(reqs), "total": total, "pendingTotal": counts["pendingTotal"], "urgentTotal": counts["urgentTotal"], "expiringTotal": counts["expiringTotal"]}
 
     def detail(self, org_id: Any, actor_id: Any, is_manager: bool, request_id: Any) -> Dict[str, Any]:
@@ -721,8 +729,8 @@ class SubstitutionsBase:
         staff = self.teachers.staff_who_can_teach(org_id)
         from .payroll_estimate import substitute_pay_estimates  # lazy: it imports the payments and payroll services
 
-        pay = substitute_pay_estimates(self.svc, org_id, group, r.lesson_date, start, [u.id for u in staff])
-        no_rate = self.rates_missing(org_id, [u.id for u in staff], group.lesson_type, r.lesson_date)         # W1 (F5): a yes / no for the administrator too - the rates stay the owner's
+        pay = substitute_pay_estimates(self.svc, org_id, group, r.lesson_id, r.lesson_date, start, [u.id for u in staff], is_owner=is_owner)
+        no_rate = self.rates_missing(org_id, [u.id for u in staff], self.teachers.lesson_type_on(group, r.lesson_date), r.lesson_date)         # W1 (F5): a yes / no for the administrator too - the rates stay the owner's
         for user in staff:
             if user.id == r.requester_id:
                 continue
@@ -830,7 +838,8 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
             return {"kind": "substitute", "teacherId": _s(r.substitute_id), "teacherName": short_name(user), "isSubstitution": True,
                     "attendanceUpdated": False, "payrollSheetsAffected": []}
         if r.status == "cancelled":
-            return {"kind": "cancel", "version": 1, "warnings": []}
+            row = self._row(r)           # the REAL version and kind of the cancellation (a repeat of the decision answers what was written)
+            return {"kind": "cancel", "version": int(row.version or 1) if row is not None else 1, "cancellationKind": row.cancellation_kind if row is not None else None, "warnings": []}
         if r.status == "rescheduled":
             return {"kind": "reschedule", "cancelledVersion": 1, "warnings": [],
                     "newLesson": {"id": r.moved_to_lesson_id, "groupId": str(r.group_id), "date": r.moved_to_date, "startTime": r.moved_to_start,
@@ -975,7 +984,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         group = self.db.query(Group).filter(Group.id == r.group_id).first()
         return self._move_check(group, r, new_date, start, end)
 
-    def _move_check(self, group: Group, r: Any, new_date: date, start: str, end: str) -> Dict[str, Any]:
+    def _move_check(self, group: Group, r: Any, new_date: date, start: str, end: str, *, detail: bool = True) -> Dict[str, Any]:
         """``r`` is a request or a lesson reference (``org_id, group_id, lesson_id, lesson_date``)."""
         try:
             start_m, end_m = self.svc._validate_lesson_time_range(start, end)
@@ -990,7 +999,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         warnings = ScheduleRules(self.svc).warnings_for(group, "__new__", [new_date], {"startTime": start, "endTime": end, "room": occ.get("room") if occ else None,
                                                                                           "format": occ.get("format") if occ else None})
         warnings += DaysOffService(self.svc).warnings_for_date(group.org_id, new_date)       # a move onto a day off of the centre: a warning, never a block
-        warnings += self._student_busy(group, new_date, start_m, end_m)                       # W1 S12: a student who has another lesson then: a warning, never a block
+        warnings += self._student_busy(group, new_date, start_m, end_m, detail=detail)         # W1 S12: a student who has another lesson then: a warning, never a block
         return {"ok": not t_conf and not g_conf, "teacherId": _s(teacher_id), "teacherName": short_name(user), "teacherConflicts": t_conf[:20],
                 "groupConflicts": g_conf[:20], "warnings": warnings}
 
@@ -1043,7 +1052,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
 
         warnings = ScheduleRules(self.svc).warnings_for(group, new_id, [new_date], payload)
         warnings += DaysOffService(self.svc).warnings_for_date(group.org_id, new_date)
-        warnings += self._student_busy(group, new_date, start_m, end_m)
+        warnings += self._student_busy(group, new_date, start_m, end_m, detail=via != TEACHER_MOVE)
         kept = self._keep_substitute(group, sub_id, new_id, new_date, actor)
         r.moved_to_lesson_id, r.moved_to_date, r.moved_to_start, r.moved_to_end = new_id, new_date.isoformat(), start, end
         self._finish(r, "rescheduled", actor, reason, via)
@@ -1063,8 +1072,9 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         out = self.teachers._put_locked(group.org_id, group, put, actor_id=actor, commit=False)
         return {"teacherId": out["teacherId"], "teacherName": out["teacherName"], "isSubstitution": out["isSubstitution"]}
 
-    def _student_busy(self, group: Group, new_date: date, start_m: int, end_m: int) -> List[Dict[str, Any]]:
-        """W1 S12 (D30, decision 4): the students of the group who have ANOTHER lesson of the centre at the new time - one warning ``STUDENT_BUSY`` naming them (never a block)."""
+    def _student_busy(self, group: Group, new_date: date, start_m: int, end_m: int, *, detail: bool = True) -> List[Dict[str, Any]]:
+        """W1 S12 (D30, decision 4): the students of the group who have ANOTHER lesson of the centre at the new time - one warning ``STUDENT_BUSY`` naming them (never a block).  ``detail=False`` (a TEACHER moves his own lesson, W1 R3 14): the other groups of the centre are none of his business - only HIS students' names and the count,
+        no group name, no time."""
         mine = {sid for (sid,) in self.db.query(StudentGroup.student_id)
                 .filter(StudentGroup.group_id == group.id, StudentGroup.is_active.is_(True), student_not_archived())}
         if not mine:
@@ -1094,8 +1104,13 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         if not busy:
             return []
         students = {st.id: st for st in self.db.query(Student).filter(Student.id.in_(list(busy))).all()}
-        listed = [{"id": str(sid), "name": short_name(students.get(sid)) or "Ученик", "groupName": info[0], "startTime": info[1], "endTime": info[2]}
-                  for sid, info in sorted(busy.items(), key=lambda kv: short_name(students.get(kv[0])) or "")]
+        ordered = sorted(busy.items(), key=lambda kv: short_name(students.get(kv[0])) or "")
+        if not detail:
+            names = [short_name(students.get(sid)) or "Ученик" for sid, _ in ordered]
+            more_names = f" и ещё {len(names) - 5}" if len(names) > 5 else ""
+            return [{"code": "STUDENT_BUSY", "message": f"У {len(names)} {'ученика' if len(names) % 10 == 1 and len(names) % 100 != 11 else 'учеников'} в это время другой урок: {', '.join(names[:5])}{more_names}",
+                     "students": [{"id": str(sid), "name": name} for (sid, _), name in zip(ordered[:20], names)]}]
+        listed = [{"id": str(sid), "name": short_name(students.get(sid)) or "Ученик", "groupName": info[0], "startTime": info[1], "endTime": info[2]} for sid, info in ordered]
         head = "; ".join(f"{x['name']} — «{x['groupName']}» {x['startTime']}–{x['endTime']}" for x in listed[:5])
         more = f" и ещё {len(listed) - 5}" if len(listed) > 5 else ""
         return [{"code": "STUDENT_BUSY", "message": f"В это время у учеников есть другой урок: {head}{more}", "students": listed[:20]}]
@@ -1153,7 +1168,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
             ref, _ = self._lesson_ref(group, lesson_id, day)
             refusal = self._check_refusal(group, ref, new_date, start, end, teacher)
         if refusal is None:
-            return self._move_check(group, ref, new_date, start, end)
+            return self._move_check(group, ref, new_date, start, end, detail=teacher is None)
         if refusal.status_code == 404:
             raise refusal
         return {"ok": False, "teacherId": None, "teacherName": None, "teacherConflicts": [], "groupConflicts": [], "warnings": [], "code": refusal.code,
@@ -1346,7 +1361,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
     def decide_bulk(self, org_id: Any, actor_id: Any, actor_role: str, body) -> Dict[str, Any]:
         rows = self.db.query(Req).filter(Req.org_id == org_id, Req.id.in_([u for u in (_uuid(i) for i in body.ids) if u])).order_by(Req.starts_at, Req.id).all()
         order = [str(r.id) for r in rows] + [i for i in body.ids if i not in {str(r.id) for r in rows}]
-        updated, items, skipped = 0, [], []
+        updated, items, skipped, results = 0, [], [], []
         one = DecideRequestLike(body)
         stopped: Optional[OpsError] = None
         for rid in order:
@@ -1357,6 +1372,8 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
                 out = self.decide(org_id, actor_id, actor_role, rid, one)
                 updated += 1
                 items.append(out["item"])
+                res = out["result"]
+                results.append({"id": str(rid), "kind": res["kind"], "cancellationKind": res.get("cancellationKind"), "warnings": list(res.get("warnings") or [])})        # W1 R3 (D)
             except OpsError as exc:
                 self.db.rollback()
                 entry = {"id": str(rid), "code": exc.code, "message": exc.message}
@@ -1370,7 +1387,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
                 self.db.rollback()
                 logger.exception("bulk decision: request %s failed", rid)
                 skipped.append({"id": str(rid), "code": "DECISION_FAILED", "message": "Не удалось обработать запрос. Повторите попытку"})
-        return {"updated": updated, "items": items, "skipped": skipped}
+        return {"updated": updated, "items": items, "skipped": skipped, "results": results, "warningsTotal": sum(len(r["warnings"]) for r in results)}
 
 
 class DecideRequestLike:
@@ -1479,10 +1496,13 @@ def on_role_changed(svc, org_id: Any, user_id: UUID, actor_id: Any) -> int:
     """W1 S21 (D27): a teacher became an administrator - an administrator asks nothing, so the requests of his that wait are closed ``ROLE_CHANGED`` (event, trigger ``role_changed``).  The
     substitutions already planned for him stay (he reads them in ``GET /org/substitutions/mine``).  The caller commits.  Returns how many were closed."""
     subs = Substitutions(svc)
-    rows = svc.db.query(Req).filter(Req.org_id == org_id, Req.requester_id == user_id, Req.status == PENDING).all()
-    for r in rows:
-        subs.close(r, "ROLE_CHANGED", actor_id=actor_id, trigger="role_changed")
-    return len(rows)
+    closed = 0
+    for rid in [r.id for r in svc.db.query(Req.id).filter(Req.org_id == org_id, Req.requester_id == user_id, Req.status == PENDING)]:
+        r = svc.db.query(Req).filter(Req.id == rid).with_for_update().populate_existing().first()          # (R3 5) a decision that came meanwhile wins: the row is read again under its lock
+        if r is not None and r.status == PENDING:
+            subs.close(r, "ROLE_CHANGED", actor_id=actor_id, trigger="role_changed")
+            closed += 1
+    return closed
 
 
 def on_group_teacher_changed(svc, group: Group, actor_id: Any = None, trigger: str = "group_teacher_changed") -> int:

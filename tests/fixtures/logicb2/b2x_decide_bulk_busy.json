@@ -1,5 +1,6 @@
 {
   "items": [],
+  "results": [],
   "skipped": [
     {
       "code": "TEACHER_BUSY",
@@ -18,5 +19,6 @@
       "total": 1
     }
   ],
-  "updated": 4
+  "updated": 4,
+  "warningsTotal": 0
 }

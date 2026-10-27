@@ -1,10 +1,13 @@
-"""W1 (owner's decision 2): what a lesson would pay the teacher who takes it over - an ESTIMATE shown in the window where a substitute is chosen.
+"""W1 (owner's decision 2): what a lesson would pay the teacher who takes it over - an ESTIMATE («≈») shown to the OWNER in the window where a substitute is chosen.
 
-No second formula (LESSONS 38): the sum is ``payroll_engine.lessons_amount`` - for every student of the roster ``price of his group / his own price on THAT day x percent of the
-candidate for the type of the group (``payroll_rates.RateBook``, ``lesson_types``) / D_lesson`` summed, rounded ONCE.  What a payroll sheet knows after the lesson is held (the covering
-payment, a package that really covered it) is only guessed here: ``D_lesson`` is the size of the package of a student whose latest charge is a package, else the divisor of the month
-(``PayrollService.divisor_at``); the roster is the one of the lesson time (the same ``_attendance_roster_at`` a started lesson freezes).  A lesson without students, or a candidate without a
-rate for the type of the group, has no estimate: ``None`` with the reason ``NO_STUDENTS`` / ``RATE_MISSING``."""
+Pay data is the owner's like the payroll sheet: an administrator gets ``None`` with the reason ``HIDDEN`` (``rateMissing`` - a yes / no - stays for both).
+
+No second formula (LESSONS 38): the sum is ``payroll_engine.lessons_amount`` over the students of the roster whose lesson is COVERED (the payroll counts only what a payment covers; an unpaid
+lesson is "не оплачено" and out of the sum): per student ``the price that covers his lesson`` (the price of the period / package that carries it, ``Ledger.lesson_cover``, as
+``payroll_service`` takes it; a day before his first charged day: the price of the day) x percent of the candidate for the type of the group ON THE DAY (``payroll_rates.RateBook``,
+``lesson_types``) / ``D_lesson`` (the size of the package that covers him, else the divisor of the month, ``PayrollService.divisor_at``).  What is only guessed: a future lesson of a student
+in the lessons mode counts as covered when his package still has lessons left.  The roster is the one of the lesson time (``_attendance_roster_at``).
+A lesson without students has no estimate: ``None`` with ``NO_STUDENTS``; a candidate without a rate for the type: ``None`` with ``RATE_MISSING``; students all unpaid: 0."""
 from __future__ import annotations
 
 from datetime import date
@@ -14,20 +17,23 @@ from uuid import UUID
 from src.models.auth import PayrollRate, StudentGroup
 
 from . import business_clock as bc
-from . import billing_ledger as bl
-from . import lesson_types, payment_status as ps, payroll_engine as engine, pricing
+from . import lesson_types, payroll_engine as engine, pricing
 from .payments_service import PaymentService
 from .payroll_rates import RateBook
 from .payroll_service import PayrollService
 
 NO_STUDENTS = "NO_STUDENTS"
 RATE_MISSING = "RATE_MISSING"
+HIDDEN = "HIDDEN"
 
 
-def substitute_pay_estimates(svc, org_id: Any, group, lesson_date: str, start_minutes: int, teacher_ids: Iterable[UUID]) -> Dict[UUID, Dict[str, Any]]:
-    """``{teacher_id: {"amount": int | None, "reason": None | "RATE_MISSING" | "NO_STUDENTS"}}`` for the lesson of ``group`` on ``lesson_date``."""
+def substitute_pay_estimates(svc, org_id: Any, group, lesson_id: str, lesson_date: str, start_minutes: int, teacher_ids: Iterable[UUID],
+                             *, is_owner: bool) -> Dict[UUID, Dict[str, Any]]:
+    """``{teacher_id: {"amount": int | None, "reason": None | "RATE_MISSING" | "NO_STUDENTS" | "HIDDEN"}}`` for the lesson of ``group`` on ``lesson_date``."""
     db = svc.db
     ids = list(teacher_ids)
+    if not is_owner:
+        return {t: {"amount": None, "reason": HIDDEN} for t in ids}
     day = date.fromisoformat(lesson_date)
     month = day.replace(day=1)
     roster = {r["student_id"] for r in svc._attendance_roster_at(group.id, bc.lesson_instant_utc(day, start_minutes))}
@@ -43,14 +49,21 @@ def substitute_pay_estimates(svc, org_id: Any, group, lesson_date: str, start_mi
     book = RateBook(db.query(PayrollRate).filter(PayrollRate.org_id == org_id, PayrollRate.teacher_id.in_(ids)).all()) if ids else RateBook([])
     lessons = []
     for m in memberships:
-        price = books.price(m.id, group.id, day).amount
         entry = entries.get(m.id)
-        charges = [sg for sg in (entry.ledger.segments if entry else []) if sg.kind in ("period", "package")]
-        if charges:
-            size = charges[-1].nominal_days if charges[-1].kind == "package" else None
+        if entry is None:
+            continue
+        ledger = entry.ledger
+        if any(lo <= day and (hi is None or day <= hi) for lo, hi in ledger.lessons_windows) and ledger.lessons is not None:     # lessons mode: a package carries it
+            packages = [sg for sg in ledger.segments if sg.kind == "package"]
+            if ledger.lessons.left <= 0 or not packages:
+                continue                                                          # no package left: the lesson would be unpaid
+            price, size = packages[-1].price.amount, packages[-1].nominal_days
         else:
-            regime = bl.regime_at(loader.settings.regimes, day)
-            size = regime.package_size if regime.mode == ps.LESSONS else None
+            info = ledger.lesson_cover(day, lesson_id)
+            if not info.paid:
+                continue                                                          # UNPAID: out of the sum, as in the payroll sheet
+            price = info.price.amount if info.price is not None else books.price(m.id, group.id, day).amount      # a day before the first charged day: the price of the day
+            size = None
         lessons.append((price, size if size else divisor))
     out: Dict[UUID, Dict[str, Any]] = {}
     for teacher in ids:

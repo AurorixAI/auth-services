@@ -10,7 +10,7 @@
   "c2_archive_blocked.json": "-",
   "c2_archive_impact.json": "ArchiveImpactOut",
   "c2_archive_ok.json": "ArchiveGroupOut",
-  "c2_group_after_restore.json": "GroupResponseB",
+  "c2_group_after_restore.json": "GroupRestoredB",
   "c2_group_state_after_archive.json": "-",
   "c2_restore_teacher_inactive.json": "-",
   "c2_start_archived.json": "-",

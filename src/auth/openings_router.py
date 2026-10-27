@@ -44,7 +44,7 @@ def _http(exc: PaymentError) -> HTTPException:
 
 
 def _role(user: dict) -> str:
-    return user.get("org_role") or "admin"
+    return user["org_role"]                       # W1 S15: the role of the live membership, never a default (these routes are behind the manager dependency)
 
 
 @router.get("/org/opening-balances", response_model=OpeningsList, responses=_ERRORS)

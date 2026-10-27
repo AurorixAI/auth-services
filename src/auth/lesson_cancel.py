@@ -50,21 +50,22 @@ class LessonCancelMixin:
     # ------------------------------------------------------------------------------------------------ cancel
     def cancel_lesson(self, org_id: Any, actor_id: Any, group_id: Any, lesson_id: str, day: date, *, reason: str, kind: str = DEFAULT_CANCELLATION_KIND,
                       by_manager: bool = True, allow_started: bool = False, day_off_id: Any = None, request: Optional[Req] = None, via: str = "request",
-                      archived_ok: bool = False) -> Dict[str, Any]:
+                      archived_ok: bool = False, archive: bool = False) -> Dict[str, Any]:
         """Cancel the lesson of ``group_id`` on ``day``.  ``kind``: what the author chose (``centre`` | ``holiday``); a date of a live day off turns it into ``holiday``.
-        ``archived_ok``: the missed lessons of an archived group are resolved (the group refuses every new row otherwise).  ``allow_started``: a lesson that was started (an administrator's cancellation from the lesson sheet) may be cancelled when nothing is marked on it.  ``day_off_id``: the day
+        ``archive``: the cancellation of a missed lesson by the ARCHIVING of the group (W1 R3 10): the same road (row, audit, substitute released) with the kind it always had (none: neutral for the
+        money), no record of «Замены», no exam call (the archive releases the exams of the group itself).  ``archived_ok``: the missed lessons of an archived group are resolved (the group refuses every new row otherwise).  ``allow_started``: a lesson that was started (an administrator's cancellation from the lesson sheet) may be cancelled when nothing is marked on it.  ``day_off_id``: the day
         off that cancels (its own lessons only: never a started one).  ``request``: the request that this cancellation decides (the decision of the «Замены» page); without one a
         request of the lesson that is waiting is decided by it, and without any a ``cancelled`` record is made.  Caller commits; any refusal rolls everything back.
         Returns ``{"version", "kind", "dayOffId", "warnings", "request"}``."""
         try:
             return self._cancel_locked(org_id, _uuid(actor_id), group_id, lesson_id, day, reason=reason, kind=kind, by_manager=by_manager, allow_started=allow_started,
-                                       day_off_id=day_off_id, request=request, via=via, archived_ok=archived_ok)
+                                       day_off_id=day_off_id, request=request, via=via, archived_ok=archived_ok, archive=archive)
         except BaseException:
             self.db.rollback()
             raise
 
     def _cancel_locked(self, org_id: Any, actor: Optional[Any], group_id: Any, lesson_id: str, day: date, *, reason: str, kind: str, by_manager: bool, allow_started: bool,
-                       day_off_id: Any, request: Optional[Req], via: str, archived_ok: bool) -> Dict[str, Any]:
+                       day_off_id: Any, request: Optional[Req], via: str, archived_ok: bool, archive: bool) -> Dict[str, Any]:
         iso = day.isoformat()
         group = self._group_locked(org_id, _uuid(group_id))
         if group is None:
@@ -76,17 +77,18 @@ class LessonCancelMixin:
         self._refuse_cancel(group, row, day, allow_started=allow_started, day_off_id=day_off_id)
         ref, occ = self._lesson_ref(group, lesson_id, day)
         warnings: List[Dict[str, str]] = []
-        kind, day_off_id, converted = self._kind_for(org_id, day, kind, day_off_id)
+        kind, day_off_id, converted = (None, None, None) if archive else self._kind_for(org_id, day, kind, day_off_id)
         if converted is not None:
             warnings.append({"code": "CANCELLED_AS_HOLIDAY", "message": f"{_dm(day)} — выходной день центра ({converted}): урок отменён как «выходной», вычета у учеников не будет"})
-        record = self._record_of(group, ref, request, reason, MANAGER_CANCEL if by_manager else TEACHER_CANCEL, actor, journal=day_off_id is None)
+        record = None if archive else self._record_of(group, ref, request, reason, MANAGER_CANCEL if by_manager else TEACHER_CANCEL, actor, journal=day_off_id is None)
         if request is None and day_off_id is not None:       # a request that waits for a lesson of a DAY OFF is closed by it, with the day off in the event: «Отменить выходной» opens it again (Д28)
             waiting = next((r for r in self._lesson_requests(group, lesson_id, iso) if r.status == "pending"), None)
             if waiting is not None:
                 self.close(self.db.query(Req).filter(Req.id == waiting.id).with_for_update().populate_existing().first(), "LESSON_CANCELLED", actor_id=actor,
                            trigger="day_off", group=group, extra={"dayOffId": str(day_off_id)})
             record = None
-        self._exam_check(ref, reason)
+        if not archive:
+            self._exam_check(ref, reason)
         if row is None:
             row = self._cancelled_row(group, ref, actor, reason, {"cancellation_kind": kind}, kind=kind, day_off_id=day_off_id, request=request)
         else:
@@ -94,8 +96,9 @@ class LessonCancelMixin:
         released = self._release_substitute(group, ref, actor, "cancel")
         if released:
             warnings.append({"code": "SUBSTITUTE_RELEASED", "message": f"Замена снята: {released}"})
-        self._exam_release(ref, reason)
-        if record is None and day_off_id is None:        # a group without a teacher: no record of «Замены» (nobody to attribute it to) - the author stays in the history of the group
+        if not archive:
+            self._exam_release(ref, reason)
+        if record is None and day_off_id is None and not archive:        # a group without a teacher: no record of «Замены» (nobody to attribute it to) - the author stays in the history of the group
             self.db.add(GroupAudit(org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role="admin" if by_manager else "teacher", action="lesson_cancelled",
                                    assigned_teacher_id=None, created_at=bc.utc_now(),
                                    snapshot={"lessonId": lesson_id, "lessonDate": iso, "cancellationKind": kind, "reason": reason, "version": row.version}))
@@ -219,9 +222,11 @@ class LessonCancelMixin:
             record = self._system_request(group, ref, main, reason, MANAGER_RESTORE, actor, reqs[0] if reqs else None)
             self._close_restored(record, actor, trace)
         self.db.flush()
+        lost = DaysOffService(self.svc)._substitutes_not_restored([row], {group.id: group})          # the substitute the cancellation took off does not come back (R3 12)
         self.db.delete(row)
         self.db.flush()
-        return {"ok": True, "restored": True, "lessonId": lesson_id, "lessonDate": iso, "previousKind": trace["cancellationKind"], "examsNote": EXAMS_NOT_RESTORED, "warnings": []}
+        return {"ok": True, "restored": True, "lessonId": lesson_id, "lessonDate": iso, "previousKind": trace["cancellationKind"], "examsNote": EXAMS_NOT_RESTORED,
+                "warnings": [{"code": w.code, "message": w.message} for w in lost]}
 
     def record_kind_change(self, group: Group, lesson_id: str, day: date, actor: Any, before: str, after: str, reason: str) -> None:
         """W1 S17 (Д10): «Изменить причину отмены» leaves a record in the journal «Замены» (``closed`` / ``KIND_CHANGED``, trigger ``manager_reason_change``: who, when, from what to what, why) -

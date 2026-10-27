@@ -275,8 +275,12 @@ class GroupLifecycle:
         return cleared
 
     def _cancel_missed(self, group: Group, missed, reason: Optional[str], actor_id: Any) -> int:
-        """The explicit decision of the administrator: every missed lesson becomes a cancelled row (teacher by the resolver)."""
+        """The explicit decision of the administrator: every missed lesson becomes a cancelled row (teacher by the resolver).  W1 R3 10: through THE cancellation (``cancel_lesson``,
+        ``archive=True``): the same row and audit as before, the kind it always had (none), and the substitute assigned to the lesson is released."""
+        from .lesson_substitutions import Substitutions  # lazy: it imports this module's neighbours
+
         text = f"Группа закрыта: {reason}" if reason else "Группа закрыта"
+        subs = Substitutions(self.svc)
         count = 0
         for item in missed:
             day = date.fromisoformat(item.lessonDate)
@@ -284,22 +288,7 @@ class GroupLifecycle:
                                if o["id"] == item.lessonId), None)
             if occurrence is None:
                 continue
-            start, _end = self.svc._validate_lesson_time_range(occurrence.get("startTime"), occurrence.get("endTime"))
-            row = GroupAttendance(
-                org_id=group.org_id, group_id=group.id, teacher_id=self.svc._attendance_teacher_snapshot(group, item.lessonId, day, occurrence),
-                lesson_date=item.lessonDate, lesson_id=item.lessonId, topic=occurrence.get("topic") or occurrence.get("subject"),
-                status="cancelled", records={}, roster_snapshot=self.svc._attendance_roster_at(group.id, bc.lesson_instant_utc(day, start)),
-                marked_by=_uuid(actor_id), started_at=None, cancellation_reason=text, version=1,
-            )
-            self.db.add(row)
-            self.db.flush()
-            self.db.add(
-                GroupAttendanceAudit(
-                    attendance_id=row.id, org_id=group.org_id, group_id=group.id, actor_id=_uuid(actor_id),
-                    action="reconciliation_cancelled", before_status=None, after_status="cancelled", before_records=None,
-                    after_records={}, cancellation_reason=text, created_at=bc.utc_now(),
-                )
-            )
+            subs.cancel_lesson(group.org_id, actor_id, group.id, item.lessonId, day, reason=text, kind=None, archive=True, archived_ok=True)
             count += 1
         return count
 
@@ -363,12 +352,10 @@ class GroupLifecycle:
         self.db.commit()
         from .days_off import DaysOffService  # lazy: it imports the service layer
 
-        try:                         # W1 S10 (Д7): the group meets the live days off of the centre (its lessons that fall into them are cancelled by the day off's own step)
-            DaysOffService(self.svc).apply_to_group(group.org_id, actor_id, group.id)
-        except Exception:            # the group is back whatever happens: «Продолжить» of the day off finishes what was not done
-            self.db.rollback()
-            logger.exception("restore: the days off were not applied to group %s", group.id)
-        return self.svc._build_group_response(group).model_dump()
+        warnings = DaysOffService(self.svc).apply_to_group(group.org_id, actor_id, group.id)      # W1 S10 (Д7) + R3 11: the group meets the live days off; a failure is a warning + ``incomplete``, never silent
+        out = self.svc._build_group_response(group).model_dump()
+        out["warnings"] = warnings
+        return out
 
     def _is_group_teacher(self, org_id: Any, user_id: Any) -> bool:
         from .models import OrganizationMember

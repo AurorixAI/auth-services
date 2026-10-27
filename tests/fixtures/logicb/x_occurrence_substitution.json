@@ -18,6 +18,7 @@
   "originalEndTime": null,
   "originalRoom": null,
   "originalStartTime": null,
+  "replacedBy": null,
   "rescheduleReason": null,
   "room": null,
   "startTime": "10:00",

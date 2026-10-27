@@ -250,7 +250,7 @@ put("c2_start_archived.json", "-", error(409, "GROUP_ARCHIVED", "Группа в
 RESTORE_LOCAL = datetime(2026, 11, 5, 14, 0)
 RESTORE_UTC = utc(RESTORE_LOCAL)
 put("c2_restore_teacher_inactive.json", "-", error(409, "TEACHER_INACTIVE", "Преподаватель группы больше не работает в центре", teacherName=short("B")))
-put("c2_group_after_restore.json", "GroupResponseB", group_response("G3", teacher="C", students=0, extra={}))
+put("c2_group_after_restore.json", "GroupRestoredB", group_response("G3", teacher="C", students=0, extra={"warnings": []}))
 put("c2_state_after_restore.json", "-", {
     "inactive_intervals": [{"from": ARCH_UTC.isoformat(), "to": RESTORE_UTC.isoformat()}],
     "no_occurrence_on": ["2026-10-26", "2026-11-02"], "occurrence_on": ["2026-11-09"],
@@ -391,7 +391,7 @@ put("x_occurrence_substitution.json", "ScheduleOccurrenceResponseB", {
     "id": LESSON["L1"], "groupId": IDS["G1"], "groupName": "9-А", "classLevel": 9, "subject": "Математика", "dayOfWeek": 1,
     "startTime": "10:00", "endTime": "11:30", "room": None, "format": "offline", "color": "blue", "topic": None,
     "occurrenceDate": "2026-10-26", "isRescheduled": False, "originalStartTime": None, "originalEndTime": None,
-    "originalRoom": None, "rescheduleReason": None, "isOneOff": False, "validFrom": "2026-10-12", "warnings": [], "createdBy": None,
+    "originalRoom": None, "rescheduleReason": None, "isOneOff": False, "validFrom": "2026-10-12", "warnings": [], "replacedBy": None, "createdBy": None,
     "teacherId": IDS["D"], "teacherName": short("D"), "isSubstitution": True, "defaultTeacherId": IDS["C"],
     "defaultTeacherName": short("C"), "substitutionRequest": None, "substitutionOutcome": None, "movedFrom": None,
 })
@@ -410,8 +410,8 @@ put("x_lesson_teacher_candidates.json", "LessonTeacherCandidatesOut", {
     "lessonId": LESSON["L1"], "lessonDate": "2026-10-26", "startTime": "10:00", "endTime": "11:30",
     "currentTeacherId": IDS["C"], "defaultTeacherId": IDS["C"],
     "candidates": [
-        {"teacherId": IDS["D"], "name": short("D"), "orgRole": "teacher", "rateMissing": True, "substitutePayEstimate": None, "substitutePayEstimateReason": "RATE_MISSING", "busy": False, "busyWith": None},        # W1 (F5): D0 has no payroll rates at all
-        {"teacherId": IDS["B"], "name": short("B"), "orgRole": "teacher", "rateMissing": True, "substitutePayEstimate": None, "substitutePayEstimateReason": "RATE_MISSING", "busy": True, "busyWith": {"groupName": "8-В", "startTime": "10:00", "endTime": "11:30"}},
+        {"teacherId": IDS["D"], "name": short("D"), "orgRole": "teacher", "rateMissing": True, "substitutePayEstimate": None, "substitutePayEstimateReason": "HIDDEN", "busy": False, "busyWith": None},        # W1 (F5): D0 has no payroll rates at all
+        {"teacherId": IDS["B"], "name": short("B"), "orgRole": "teacher", "rateMissing": True, "substitutePayEstimate": None, "substitutePayEstimateReason": "HIDDEN", "busy": True, "busyWith": {"groupName": "8-В", "startTime": "10:00", "endTime": "11:30"}},
     ],
 })
 put("x_lesson_teacher_changed.json", "-", error(409, "LESSON_TEACHER_CHANGED", f"Преподаватель урока уже изменён: {short('D')} Обновите страницу",

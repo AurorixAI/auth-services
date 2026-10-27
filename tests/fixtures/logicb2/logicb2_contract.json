@@ -60,6 +60,53 @@
         "title": "AssignedToMe",
         "type": "object"
       },
+      "BulkResult": {
+        "description": "W1 R3 (D): what ONE decided request of a bulk decision did besides deciding - a bulk cancel that turned into a holiday (``CANCELLED_AS_HOLIDAY``), released a substitute\n(``SUBSTITUTE_RELEASED``) ... is not silent.",
+        "properties": {
+          "cancellationKind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "centre",
+                  "holiday"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellationkind"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "substitute",
+              "reschedule",
+              "cancel",
+              "reject"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/MoveWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "title": "BulkResult",
+        "type": "object"
+      },
       "BulkSkipped": {
         "additionalProperties": true,
         "properties": {
@@ -401,6 +448,13 @@
             "title": "Items",
             "type": "array"
           },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BulkResult"
+            },
+            "title": "Results",
+            "type": "array"
+          },
           "skipped": {
             "items": {
               "$ref": "#/components/schemas/BulkSkipped"
@@ -411,6 +465,11 @@
           "updated": {
             "default": 0,
             "title": "Updated",
+            "type": "integer"
+          },
+          "warningsTotal": {
+            "default": 0,
+            "title": "Warningstotal",
             "type": "integer"
           }
         },
