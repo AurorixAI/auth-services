@@ -96,9 +96,11 @@ def test_r3_1_a_converted_cancellation_belongs_to_the_day_off(w):
     assert [x["lessonId"] for x in made["converted"]] == ["lesson-l2"]
     row = row_of(w, w.G1, "lesson-l2", "2026-10-28")
     assert (row.cancellation_kind, str(row.day_off_id), row.version) == ("holiday", made["dayOff"]["id"], 2)
-    out = client(w, "owner").post(f"{DAYS}/{made['dayOff']['id']}/void").json()           # the day off lists what it owns; a hand-made cancellation (version 2 now) is NOT given back
-    assert out["restored"] == [] and [(x["lessonId"], x["reason"]) for x in out["kept"]] == [("lesson-l2", "Урок изменён после выходного")]
-    assert row_of(w, w.G1, "lesson-l2", "2026-10-28").status == "cancelled"
+    out = client(w, "owner").post(f"{DAYS}/{made['dayOff']['id']}/void").json()           # a hand-made cancellation (version 2 now) is not given back as a lesson: it stays cancelled, its kind returns
+    assert out["restored"] == [] and [(x["lessonId"], x["reason"]) for x in out["kept"]] == [("lesson-l2", "Ручная отмена: вид «по вине центра» возвращён")]
+    row = row_of(w, w.G1, "lesson-l2", "2026-10-28")
+    assert (row.status, row.cancellation_kind, row.day_off_id, row.converted_from_kind, row.version) == ("cancelled", "centre", None, None, 3)
+    assert row.cancellation_reason == "Преподаватель болен"                                           # the author's own reason
 
 
 def test_r3_2_a_day_off_does_not_convert_cancellations_older_than_the_window(w):
@@ -520,3 +522,37 @@ def test_d_a_bulk_cancel_returns_the_warnings_of_every_request(w, sync):
     other = one(w, "A", "L1", "2026-11-16")
     quiet = client(w, "admin").post(f"{SUB}/decide-bulk", json={"ids": [other["id"]], "decision": "reject", "reason": "Нет замены"}).json()
     assert quiet["warningsTotal"] == 0 and quiet["results"] == [{"id": other["id"], "kind": "reject", "cancellationKind": None, "warnings": []}]
+
+
+def test_r3_c_voiding_a_day_off_gives_the_converted_manual_cancellation_its_kind_back(w):
+    """The version-2 converted row still reverts (kind centre, no day off, own reason), the marker is cleared; the audit row says it."""
+    from src.models.auth import GroupAttendanceAudit
+
+    sheet(w, "admin", w.G1, "lesson-l2", "2026-10-28", reason="Свой повод")
+    made = client(w, "owner").post(DAYS, json={"dateFrom": "2026-10-28", "dateTo": "2026-10-28", "reason": "Хайит"}).json()
+    row = row_of(w, w.G1, "lesson-l2", "2026-10-28")
+    assert (row.converted_from_kind, row.cancellation_kind, row.version) == ("centre", "holiday", 2)
+    dry = client(w, "owner").post(f"{DAYS}/{made['dayOff']['id']}/void", params={"dry_run": "true"})
+    assert dry.status_code == 200 and [x["reason"] for x in dry.json()["kept"]] == ["Ручная отмена: вид «по вине центра» возвращён"]
+    assert row_of(w, w.G1, "lesson-l2", "2026-10-28").cancellation_kind == "holiday"           # a dry run writes nothing
+    client(w, "owner").post(f"{DAYS}/{made['dayOff']['id']}/void")
+    row = row_of(w, w.G1, "lesson-l2", "2026-10-28")
+    assert (row.status, row.cancellation_kind, row.cancellation_reason, row.day_off_id) == ("cancelled", "centre", "Свой повод", None)
+    audit = w.db.query(GroupAttendanceAudit).filter_by(attendance_id=row.id, action="corrected").order_by(GroupAttendanceAudit.created_at).all()
+    assert [a.details["cancellation_kind"] for a in audit] == [{"from": "centre", "to": "holiday"}, {"from": "holiday", "to": "centre"}]
+
+
+def test_r3_c_a_second_covering_day_off_wins_and_voiding_it_gives_the_kind_back(w):
+    sheet(w, "admin", w.G1, "lesson-l2", "2026-10-28", reason="Свой повод")
+    first = client(w, "owner").post(DAYS, json={"dateFrom": "2026-10-28", "dateTo": "2026-10-28", "reason": "Первый"}).json()
+    second = client(w, "owner").post(DAYS, json={"dateFrom": "2026-10-28", "dateTo": "2026-10-29", "reason": "Второй"})
+    assert second.status_code in (200, 201), second.text
+    second = second.json()
+    out = client(w, "owner").post(f"{DAYS}/{first['dayOff']['id']}/void").json()
+    assert [(x["lessonId"], x["reason"]) for x in out["kept"] if x["lessonId"] == "lesson-l2"] == [("lesson-l2", "Дата входит в другой выходной")]
+    row = row_of(w, w.G1, "lesson-l2", "2026-10-28")
+    assert (row.cancellation_kind, str(row.day_off_id), row.cancellation_reason) == ("holiday", second["dayOff"]["id"], "Свой повод")
+    out = client(w, "owner").post(f"{DAYS}/{second['dayOff']['id']}/void").json()
+    assert ("lesson-l2", "Ручная отмена: вид «по вине центра» возвращён") in [(x["lessonId"], x["reason"]) for x in out["kept"]]
+    row = row_of(w, w.G1, "lesson-l2", "2026-10-28")
+    assert (row.cancellation_kind, row.day_off_id, row.converted_from_kind) == ("centre", None, None)

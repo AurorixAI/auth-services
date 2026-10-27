@@ -970,6 +970,9 @@ class GroupAttendance(Base):
     cancellation_kind = Column(String(20), nullable=True)
     # PAY-F: the day off of the centre that cancelled the lesson (so that «Отменить выходной» gives back exactly its own lessons).
     day_off_id = Column(UUID(as_uuid=True), ForeignKey("org_days_off.id", ondelete="SET NULL"), nullable=True)
+    # W1 R3: a hand-made cancellation that a day off turned into a holiday keeps the kind it HAD here (``centre``); «Отменить выходной» gives that kind back (the deduction of the
+    # recalculation returns).  NULL = the row was never converted.
+    converted_from_kind = Column(String(20), nullable=True)
     # LOGIC-B O7: optimistic lock of the marks.  Grows by 1 on every successful write of the row (start / reconcile = 1,
     # save, cancel, admin correction, change of the lesson teacher); the resolutions of excuses do not touch it.
     version = Column(Integer, nullable=False, default=1, server_default="1")

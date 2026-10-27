@@ -74,6 +74,7 @@ def test_up_down_up_adds_and_drops_only_its_own(engine):
     command.upgrade(cfg, "head")
     assert version(engine) == REVISION
     assert "incomplete" in columns(engine, "org_days_off") and "uq_org_days_off_live_range" in indexes(engine, "org_days_off")
+    assert "converted_from_kind" in columns(engine, "group_attendance")
     org, group, user = world(engine)
     with engine.begin() as c:
         c.execute(text("INSERT INTO org_days_off (id, org_id, date_from, date_to, reason) VALUES (gen_random_uuid(), :o, '2026-10-28', '2026-10-28', 'Хайит')"), {"o": org})
@@ -92,6 +93,7 @@ def test_up_down_up_adds_and_drops_only_its_own(engine):
     command.downgrade(cfg, BEFORE)
     assert version(engine) == BEFORE
     assert "incomplete" not in columns(engine, "org_days_off") and "uq_org_days_off_live_range" not in indexes(engine, "org_days_off")
+    assert "converted_from_kind" not in columns(engine, "group_attendance")
     with engine.connect() as c:
         assert c.execute(text("SELECT count(*) FROM group_audit WHERE action IN ('lesson_restored', 'lesson_cancelled')")).scalar_one() == 0      # the rows of the new actions go with it
         assert c.execute(text("SELECT count(*) FROM org_days_off WHERE org_id=:o"), {"o": org}).scalar_one() == 3          # the days off stay

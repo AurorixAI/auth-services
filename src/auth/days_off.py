@@ -474,6 +474,7 @@ class DaysOffService:
         if not self._convertible(row):
             self.db.rollback()
             return False
+        row.converted_from_kind = row.cancellation_kind          # the marker: what it WAS (``centre``) - «Отменить выходной» gives it back, the deduction with it
         row.cancellation_kind = HOLIDAY
         row.day_off_id = day_off_id
         row.version = int(row.version or 1) + 1
@@ -538,6 +539,18 @@ class DaysOffService:
             group = groups.get(att.group_id)
             day = date.fromisoformat(att.lesson_date)
             item = DayOffLesson(groupId=str(att.group_id), groupName=group.name if group else "", lessonId=att.lesson_id or "", date=day)
+            if att.converted_from_kind is not None and att.status == LessonAttendanceStatus.CANCELLED.value:
+                covering = next((o for o in others if o.date_from <= day <= o.date_to), None)
+                if covering is not None:
+                    item.reason = "Дата входит в другой выходной"
+                    if not dry_run:
+                        att.day_off_id = covering.id           # the covering day off wins: holiday under THAT one (the marker stays: voiding it gives the kind back); the reason is the author's own
+                else:
+                    item.reason = "Ручная отмена: вид «по вине центра» возвращён"
+                    if not dry_run:
+                        self._revert_conversion(att, row, actor_id)
+                kept.append(item)
+                continue
             why = self._not_restorable(att, today, group)
             if why is None and day == today and self._started_today(group, att):
                 why = "Урок сегодня уже начался: остаётся отменённым"          # W1 S10+ (Д17): a lesson of today whose time has passed does not come back as a «пропущенный»
@@ -581,6 +594,16 @@ class DaysOffService:
         else:
             warnings = self._substitutes_not_restored(doomed, groups)
         return DayOffVoided(dayOff=self._out(row), restored=restored, kept=kept, dryRun=dry_run, warnings=warnings)
+
+    def _revert_conversion(self, att: GroupAttendance, day_off: OrgDayOff, actor_id: str) -> None:
+        """A hand-made cancellation that THIS day off turned into a holiday goes back to the kind it had (``centre``), without a day off, with its own reason; it stays cancelled (audited)."""
+        before = att.cancellation_kind
+        att.cancellation_kind, att.day_off_id, att.converted_from_kind = att.converted_from_kind, None, None
+        att.version = int(att.version or 1) + 1
+        self.db.add(GroupAttendanceAudit(
+            attendance_id=att.id, org_id=att.org_id, group_id=att.group_id, actor_id=UUID(str(actor_id)), action="corrected", before_status="cancelled", after_status="cancelled",
+            before_records={}, after_records={}, correction_reason=f"Выходной «{day_off.reason}» отменён: ручная отмена вернулась к прежнему виду"[:500], cancellation_reason=att.cancellation_reason,
+            details={"cancellation_kind": {"from": before, "to": att.cancellation_kind}, "day_off_voided": str(day_off.id)}))
 
     def _started_today(self, group: Optional[Group], att: GroupAttendance) -> bool:
         """The lesson of the row is today and its start has passed (a lesson that is gone from the schedule is not «started»)."""

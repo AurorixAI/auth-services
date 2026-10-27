@@ -4,6 +4,7 @@ Revision ID: w1a2b3c4d5e
 Revises: pf1a2b3c4d5
 Create Date: 2026-10-27
 
+``group_attendance.converted_from_kind`` (VARCHAR(20) NULL): the kind a hand-made cancellation HAD before a day off turned it into a holiday - «Отменить выходной» gives it back.
 ``org_days_off.incomplete`` (BOOLEAN NOT NULL DEFAULT false): the exam-service stopped the apply, some lessons wait for «Продолжить» (it lived only in the open tab).
 ``uq_org_days_off_live_range`` (partial UNIQUE ``(org_id, date_from, date_to) WHERE voided_at IS NULL``): two windows / a retry cannot give the same day off twice.
 Live DUPLICATES that already exist are merged first: the oldest stays, the others are voided (``voided_at`` now, nobody as the author) and the lessons they cancelled are
@@ -56,6 +57,8 @@ def upgrade() -> None:
     bind = op.get_bind()
     if "incomplete" not in _columns(bind, "org_days_off"):
         op.add_column("org_days_off", sa.Column("incomplete", sa.Boolean(), nullable=False, server_default=sa.text("false")))
+    if "converted_from_kind" not in _columns(bind, "group_attendance"):          # nullable, no default: no table rewrite
+        op.add_column("group_attendance", sa.Column("converted_from_kind", sa.String(20), nullable=True))
     # merge the live duplicates of one range (the oldest stays)
     repointed = bind.execute(sa.text(
         """
@@ -93,3 +96,5 @@ def downgrade() -> None:
     op.execute(f"DROP INDEX IF EXISTS {INDEX}")
     if "incomplete" in _columns(bind, "org_days_off"):
         op.drop_column("org_days_off", "incomplete")
+    if "converted_from_kind" in _columns(bind, "group_attendance"):
+        op.drop_column("group_attendance", "converted_from_kind")

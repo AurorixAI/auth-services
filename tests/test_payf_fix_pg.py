@@ -279,10 +279,11 @@ def test_8_a_manual_cancellation_of_the_centre_becomes_a_holiday(three_groups, m
     assert kind_of(w, gs[0], "2026-10-21", "lesson-wed") == "holiday"
     audit = w.db.query(GroupAttendanceAudit).filter_by(group_id=gs[0].id, action="corrected").one()
     assert audit.details["cancellation_kind"] == {"from": "centre", "to": "holiday"} and audit.details["day_off_id"] == out["dayOff"]["id"]
-    # a voided day off does not take that lesson back: the teacher cancelled it, it stays cancelled
+    # a voided day off does not take that lesson back: the author cancelled it, it stays cancelled - and its kind (the centre's fault) comes back (W1 R3 c)
     voided = c.post(f"{API}/org/days-off/{out['dayOff']['id']}/void").json()
     assert len(voided["restored"]) == 2
-    assert kind_of(w, gs[0], "2026-10-21", "lesson-wed") == "holiday"
+    assert [k["reason"] for k in voided["kept"]] == ["Ручная отмена: вид «по вине центра» возвращён"]
+    assert kind_of(w, gs[0], "2026-10-21", "lesson-wed") == "centre"
 
 
 # ---- 12. the forecast: a lesson that is over today, the end of the window --------------------------------------------------------------------------
