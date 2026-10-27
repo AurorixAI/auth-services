@@ -1154,13 +1154,15 @@ class Substitutions(SubstitutionsBase):
             return R.err(422, "LESSON_HAS_NO_TEACHER")
         return None
 
-    def lesson_exam_binding(self, org_id: Any, group_id: Any, lesson_id: str, day: date) -> Dict[str, Any]:
+    def lesson_exam_binding(self, org_id: Any, group_id: Any, lesson_id: str, day: date, actor_id: Any = None, actor_role: Optional[str] = None) -> Dict[str, Any]:
         """The precheck of «Отменить урок» for the lesson sheet: ``state`` / ``title`` as ``examBinding`` of the request detail; ``canCancel`` / ``message`` from the SAME
         ``cancellation-check`` of exam-service that refuses the cancellation itself (an exam that is launched OR has attempts blocks it), so what is allowed here is not refused later."""
         gid = _uuid(group_id)
         group = self.db.query(Group).filter(Group.id == gid, Group.org_id == org_id).first() if gid else None
         if group is None:
             raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
+        if self._via(actor_role or "") == TEACHER_MOVE:          # the teacher's move dialog asks too (P1.1 + the exam warning of a move): only for HIS lesson
+            self._teacher_gate(group, lesson_id, day, _uuid(actor_id))
         ref, _ = self._lesson_ref(group, lesson_id, day)
         out = dict(self.exam_binding(ref), message=None)
         if out["state"] == "unavailable":

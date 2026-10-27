@@ -274,7 +274,7 @@ def test_x_the_precheck_of_cancel_follows_the_real_guard(w, exams, sync):
 
 
 def test_x_the_precheck_equals_the_dialog_and_guards_access(w, exams, sync):
-    """The `examBinding` of the request detail (frozen B2) is the same state / title / canCancel when the real guard agrees; 404 / 403 for a foreign group, no lesson, a teacher."""
+    """The `examBinding` of the request detail (frozen B2) is the same state / title / canCancel when the real guard agrees; 404 / 403 for a foreign group, no lesson, a teacher who does not lead the lesson."""
     exams.completion_exams = [{"examId": "e1", "title": "Контрольная №3", "status": "lobby"}]
     item = one(w, "A", "L2", "2026-10-28")
     detail = client(w, "admin").get(f"{API}/org/substitutions/{item['id']}").json()["examBinding"]
@@ -283,7 +283,8 @@ def test_x_the_precheck_equals_the_dialog_and_guards_access(w, exams, sync):
     assert binding(w, key="L2", day="2026-10-28", lessonId="nope").status_code == 404
     ghost = client(w, "admin").get(f"{API}/org/groups/00000000-0000-0000-0000-000000000000/lesson-exam-binding", params={"lessonId": "lesson-l2", "lessonDate": "2026-10-28"})
     assert ghost.json()["detail"]["code"] == "GROUP_NOT_FOUND"
-    assert binding(w, "A").status_code == 403 and binding(w, "D").status_code == 403
+    # P1.1 + the exam warning of a move: the teacher who leads the lesson gets the answer (his move dialog asks); anybody else stays 403
+    assert binding(w, "A").status_code == 200 and binding(w, "D").status_code == 403
 
 
 def test_other_organisations_see_nothing_of_the_group(w, sync, exams):

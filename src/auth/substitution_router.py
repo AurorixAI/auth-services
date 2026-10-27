@@ -212,11 +212,11 @@ def lesson_exam_binding(
     group_id: str,
     lessonId: str = Query(..., min_length=1, max_length=100),
     lessonDate: date = Query(...),
-    user: dict = Depends(_manager),
+    user: dict = Depends(_mover),
     db: Session = Depends(get_db),
 ):
     """Предпроверка «Отменить урок» для листа урока (экзамен, привязанный к уроку): `canCancel=false` — активный экзамен; тот же ответ, что `examBinding` диалога «Замены»."""
-    return _subs(db).lesson_exam_binding(user["org_id"], group_id, lessonId, lessonDate)
+    return _subs(db).lesson_exam_binding(user["org_id"], group_id, lessonId, lessonDate, user["user_id"], user["org_role"])
 
 
 # ------------------------------------------------------------------------------------ exam-service (D-1)

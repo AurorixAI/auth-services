@@ -369,3 +369,13 @@ def test_the_check_refuses_a_foreign_pending_request_like_the_move(w, sync):
     w.db.commit()
     refused(check(w, "A"), "FOREIGN_REQUEST_PENDING")
     assert move(w, "A").json()["detail"]["code"] == "FOREIGN_REQUEST_PENDING"
+
+
+def test_the_exam_binding_of_the_move_dialog_answers_the_teacher_only_for_his_lesson(w, sync):
+    """The move dialog checks the exam of the lesson (the warning before a move): the teacher of the lesson gets the answer, a colleague 403, a manager as before."""
+    g, lesson, _ = L(w, "L2", "2026-10-28")
+    params = {"lessonId": lesson, "lessonDate": "2026-10-28"}
+    own = client(w, "A").get(f"{API}/org/groups/{g.id}/lesson-exam-binding", params=params)
+    assert own.status_code == 200 and own.json()["state"] in ("none", "ok", "unavailable")
+    assert client(w, "B").get(f"{API}/org/groups/{g.id}/lesson-exam-binding", params=params).status_code == 403   # B does not lead G1
+    nothing_written(w)
