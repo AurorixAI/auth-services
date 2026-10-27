@@ -1,5 +1,5 @@
 """R3 review fixes of pack B (lead, 21.10): restore overlap, rollback-safe intervals, lock order, removal vs a substitute's start, access, nits, import."""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -54,8 +54,12 @@ def test_open_interval_on_an_active_group_is_closed_and_restore_without_interval
     g = w.db.get(Group, g.id)
     ivs = schedule_rules.parse_intervals(g)
     assert ivs[0][1] is not None and ivs[0][1] >= ivs[0][0]
-    days = [o["occurrenceDate"] for o in w.svc._resolved_occurrences_for_group(g, date_from=date(2026, 10, 26), date_to=date(2026, 11, 2))]
-    assert days == ["2026-10-26", "2026-11-02"]
+    # the interval is closed at the row's last update (the real wall clock, not the test clock): ask for two Mondays safely AFTER it, so the
+    # test does not depend on the day it runs (it failed on 27.10 when 26.10 had become the past)
+    first = date.today() + timedelta(days=7)
+    first += timedelta(days=(7 - first.weekday()) % 7)                       # the first Monday a week or more ahead
+    days = [o["occurrenceDate"] for o in w.svc._resolved_occurrences_for_group(g, date_from=first, date_to=first + timedelta(days=7))]
+    assert days == [first.isoformat(), (first + timedelta(days=7)).isoformat()]
     # archived by an old image: no interval at all
     h = new_group(w.db, w.org, w.ids, "FH", "Старая", w.C, [new_slot("lesson-h", 3, "18:00", "19:00", "2026-10-12")])
     h.status = "archived"
