@@ -73,7 +73,7 @@ def add_event(engine, org, request, action):
 
 def test_up_down_up_the_two_actions_are_accepted_then_refused(engine):
     cfg = config()
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     assert version(engine) == REVISION
     org, request = seed(engine)
     for action in NEW_ACTIONS:
@@ -86,8 +86,8 @@ def test_up_down_up_the_two_actions_are_accepted_then_refused(engine):
         add_event(engine, org, request, "lesson_restored")                          # the old CHECK is back
     add_event(engine, org, request, "closed")                                       # an old action still goes
     command.downgrade(cfg, BEFORE)                                                  # repeated: harmless
-    command.upgrade(cfg, "head")
-    command.upgrade(cfg, "head")                                                    # repeated: harmless
+    command.upgrade(cfg, REVISION)
+    command.upgrade(cfg, REVISION)                                                    # repeated: harmless
     assert version(engine) == REVISION
     add_event(engine, org, request, "day_off_voided")
 
@@ -95,7 +95,7 @@ def test_up_down_up_the_two_actions_are_accepted_then_refused(engine):
 def test_the_check_is_validated_and_the_model_agrees(engine):
     from src.models.auth import LessonSubstitutionEvent
 
-    command.upgrade(config(), "head")
+    command.upgrade(config(), REVISION)
     with engine.connect() as c:
         assert c.execute(text("SELECT convalidated FROM pg_constraint WHERE conname='ck_lse_action'")).scalar_one() is True
         definition = c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='ck_lse_action'")).scalar_one()

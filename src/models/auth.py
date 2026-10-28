@@ -572,7 +572,8 @@ class GroupAudit(Base):
             "'payment_writeoff', 'payment_writeoff_void', 'payment_refund', 'payment_refund_void', "
             "'membership_pause_set', 'membership_pause_void', 'opening_balance_set', 'opening_balance_void', "
             "'group_lesson_type_set', 'student_left_group', "
-            "'group_archived', 'group_restored', 'lesson_teacher_set', 'lesson_teacher_cleared', 'day_off_voided', 'lesson_restored', 'lesson_cancelled')",
+            "'group_archived', 'group_restored', 'lesson_teacher_set', 'lesson_teacher_cleared', 'day_off_voided', 'lesson_restored', 'lesson_cancelled', "
+            "'one_off_created', 'one_off_money_decided')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(
@@ -973,6 +974,9 @@ class GroupAttendance(Base):
     # W1 R3: a hand-made cancellation that a day off turned into a holiday keeps the kind it HAD here (``centre``); «Отменить выходной» gives that kind back (the deduction of the
     # recalculation returns).  NULL = the row was never converted.
     converted_from_kind = Column(String(20), nullable=True)
+    # #154: on the row of a CANCELLED lesson that has a live make-up (``purpose = 'makeup'``): the ``lesson_id`` of the make-up one-off lesson.  Empty = no make-up (the
+    # lock of the row is the lock of «one live make-up per cancelled lesson»); the deduction of the recalculation is lifted by the FACTS of that lesson, per student.
+    made_up_by = Column(String(100), nullable=True)
     # LOGIC-B O7: optimistic lock of the marks.  Grows by 1 on every successful write of the row (start / reconcile = 1,
     # save, cancel, admin correction, change of the lesson teacher); the resolutions of excuses do not touch it.
     version = Column(Integer, nullable=False, default=1, server_default="1")
@@ -998,6 +1002,8 @@ class GroupAttendance(Base):
         Index("idx_attendance_org", "org_id"),
         Index("idx_attendance_teacher", "org_id", "teacher_id", "lesson_date"),
         Index("idx_group_attendance_day_off", "day_off_id", postgresql_where=text("day_off_id IS NOT NULL")),
+        # #154: one make-up lesson is the make-up of one cancelled lesson (a second guard under the lock of the row)
+        Index("uq_group_attendance_made_up_by", "group_id", "made_up_by", unique=True, postgresql_where=text("made_up_by IS NOT NULL")),
     )
 
     def to_dict(self) -> dict:
@@ -1376,10 +1382,28 @@ class GroupScheduleOneOffLesson(Base):
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+    # #154: what the lesson is for.  ``makeup`` = a make-up of a cancelled lesson (money as an ordinary lesson), ``extra`` = an additional lesson (free for the students whatever
+    # their mode of payment; the teacher: ``money``), ``moved`` = the copy a move of a lesson made (nothing changes).  The kind is THIS column, never the prefix of the id.
+    purpose = Column(String(10), nullable=False)
+    # ``extra``: what the teacher gets - ``none`` (nothing), ``wait`` (the teacher asks; the owner / admin decides after the lesson), ``paid``.  A ``makeup`` is NULL (money as an ordinary
+    # lesson) until the decision on an EMPTY make-up (nobody came) writes ``paid`` / ``none`` here; ``moved`` is always NULL.
+    money = Column(String(10), nullable=True)
+    # ``makeup``: the cancelled lesson it makes up for (the row of that lesson carries ``made_up_by`` = this id).
+    made_up_lesson_id = Column(String(100), nullable=True)
+    made_up_date = Column(String(10), nullable=True)
 
     __table_args__ = (
         Index("idx_group_schedule_one_off_group_date", "group_id", "lesson_date"),
         Index("idx_group_schedule_one_off_org_date", "org_id", "lesson_date"),
+        CheckConstraint("purpose IN ('makeup', 'extra', 'moved')", name="ck_one_off_purpose"),
+        CheckConstraint(
+            "(purpose = 'extra' AND money IS NOT NULL AND money IN ('none', 'wait', 'paid')) OR (purpose = 'makeup' AND (money IS NULL OR money IN ('none', 'paid'))) OR (purpose = 'moved' AND money IS NULL)",
+            name="ck_one_off_money",
+        ),
+        CheckConstraint(
+            "((purpose = 'makeup') = (made_up_lesson_id IS NOT NULL)) AND ((made_up_lesson_id IS NULL) = (made_up_date IS NULL))",
+            name="ck_one_off_made_up",
+        ),
     )
 
 
