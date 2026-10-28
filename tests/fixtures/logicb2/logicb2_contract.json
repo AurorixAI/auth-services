@@ -327,7 +327,7 @@
         "type": "object"
       },
       "ColleagueOut": {
-        "description": "«Предложить коллегу»: a member of the centre who can teach (no e-mail, no phone).",
+        "description": "«Предложить коллегу»: a teacher of the centre (no e-mail, no phone).",
         "properties": {
           "id": {
             "title": "Id",
@@ -338,11 +338,7 @@
             "type": "string"
           },
           "role": {
-            "enum": [
-              "teacher",
-              "owner",
-              "admin"
-            ],
+            "const": "teacher",
             "title": "Role",
             "type": "string"
           }
@@ -2829,7 +2825,7 @@
     },
     "/org/substitutions/mine": {
       "get": {
-        "description": "Мои запросы и уроки, где меня назначили заменяющим.  W1 S13: also for an owner / admin who was made a substitute (they ask nothing: ``items`` is empty, ``assignedToMe`` is theirs).",
+        "description": "Мои запросы и уроки, где меня назначили заменяющим.  W1 round 2: only a teacher leads lessons, so for an owner / admin everything is empty (they ask nothing and are nobody's substitute).",
         "parameters": [
           {
             "in": "query",

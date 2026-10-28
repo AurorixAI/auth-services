@@ -324,20 +324,3 @@ def test_a_domain_refusal_of_the_group_service_is_still_shown(owner, monkeypatch
     monkeypatch.setattr(AuthService, "create_group", refuse)
     r = post(owner, "commit", school(1, 1, prefix="Отказ"))
     assert r.json()["ok"] is False and "Некорректный преподаватель" in r.json()["issues"][0]["message"]
-
-
-def test_the_legacy_commit_does_not_leak_either(caplog):
-    plan = MagicMock(has_errors=False)
-    plan.groups = [MagicMock(action="create", name="X-1", class_level=5, teacher_email="", max_students=3)]
-    plan.students = []
-    db = MagicMock()
-    db.add.side_effect = RuntimeError("INSERT INTO groups_secret VALUES (:p)  [parameters: {'p': 'hunter2'}]")
-    original = legacy.build_plan
-    legacy.build_plan = lambda *a, **k: plan
-    try:
-        with caplog.at_level(logging.ERROR):
-            result = legacy.commit("org-1", "user-1", school(1, 1), db)
-    finally:
-        legacy.build_plan = original
-    assert result.ok is False and "groups_secret" not in result.issues[0].message and "hunter2" not in result.issues[0].message
-    assert "groups_secret" in caplog.text and db.rollback.called

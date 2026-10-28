@@ -132,6 +132,7 @@ class DayOffWarning(BaseModel):
     lessonId: Optional[str] = None
     date: Optional[_Date] = None
     startTime: Optional[str] = None            # of the lesson (the same line as in the lists of the lessons)
+    endTime: Optional[str] = None
     substituteName: Optional[str] = None
 
 
@@ -257,16 +258,40 @@ class DaysOffService:
         return DayOffLesson(groupId=str(group.id), groupName=group.name, lessonId=occurrence["id"], date=date.fromisoformat(occurrence["occurrenceDate"]),
                             startTime=occurrence.get("startTime"), endTime=occurrence.get("endTime"), reason=reason)
 
+    def _occurrence_of(self, group: Optional[Group], att: GroupAttendance, cache: Dict[Any, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """The occurrence of the schedule that the journal row stands for (``None`` when the lesson is gone); ``cache`` = ``{(group_id, date): {lesson_id: occurrence}}``, filled by
+        ``_preload_lines`` in one pass, a single day is read on demand for a row it does not know."""
+        if group is None:
+            return None
+        key = (group.id, att.lesson_date)
+        if key not in cache:
+            day = date.fromisoformat(att.lesson_date)
+            cache[key] = {o["id"]: o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day)}
+        return cache[key].get(att.lesson_id)
+
+    def _preload_lines(self, atts: List[GroupAttendance], groups: Dict[Any, Group]) -> Dict[Any, Dict[str, Any]]:
+        """The schedule of ALL the groups of ``atts`` over their days in one preload (as the preview does), not one resolution per row."""
+        rows = [a for a in atts if a.group_id in groups]
+        cache: Dict[Any, Dict[str, Any]] = {}
+        if not rows:
+            return cache
+        days = sorted({a.lesson_date for a in rows})
+        gids = sorted({a.group_id for a in rows}, key=str)
+        d_from, d_to = date.fromisoformat(days[0]), date.fromisoformat(days[-1])
+        preload = self.svc._preload_schedule_data(gids, date_from=d_from, date_to=d_to)
+        wanted = {(a.group_id, a.lesson_date) for a in rows}
+        for gid in gids:
+            for occ in self.svc._resolved_occurrences_for_group(groups[gid], date_from=d_from, date_to=d_to, preloaded=preload):
+                if (gid, occ["occurrenceDate"]) in wanted:
+                    cache.setdefault((gid, occ["occurrenceDate"]), {})[occ["id"]] = occ
+        for key in wanted:
+            cache.setdefault(key, {})
+        return cache
+
     def _att_item(self, att: GroupAttendance, group: Optional[Group], cache: Dict[Any, Dict[str, Any]]) -> DayOffLesson:
         """The line of a lesson that is known by its journal row (the plan of «Отменить выходной», its result and its warnings): the SAME line as the preview builds
         (``_item``), with the time of the lesson in the schedule of the group (a lesson that is no longer there has no time)."""
-        occ = None
-        if group is not None:
-            key = (group.id, att.lesson_date)
-            if key not in cache:
-                day = date.fromisoformat(att.lesson_date)
-                cache[key] = {o["id"]: o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day)}
-            occ = cache[key].get(att.lesson_id)
+        occ = self._occurrence_of(group, att, cache)
         shown = SimpleNamespace(id=att.group_id, name=group.name if group is not None else "")
         return self._item(shown, occ or {"id": att.lesson_id or "", "occurrenceDate": att.lesson_date})
 
@@ -552,7 +577,7 @@ class DaysOffService:
         kept: List[DayOffLesson] = []
         trace: List[Dict[str, Any]] = []
         doomed: List[GroupAttendance] = []
-        lines: Dict[Any, Dict[str, Any]] = {}          # the schedule of a (group, day) read once: the times of the lines
+        lines = self._preload_lines(atts, groups)          # the schedule of every (group, day) of the rows read ONCE: the times of the lines
         for att in atts:
             group = groups.get(att.group_id)
             day = date.fromisoformat(att.lesson_date)
@@ -570,7 +595,7 @@ class DaysOffService:
                 kept.append(item)
                 continue
             why = self._not_restorable(att, today, group)
-            if why is None and day == today and self._started_today(group, att):
+            if why is None and day == today and self._started_today(group, att, lines):
                 why = "Урок сегодня уже начался: остаётся отменённым"          # W1 S10+ (Д17): a lesson of today whose time has passed does not come back as a «пропущенный»
             covering = next((o for o in others if o.date_from <= day <= o.date_to), None) if why is None else None
             if covering is not None:
@@ -624,12 +649,12 @@ class DaysOffService:
             before_records={}, after_records={}, correction_reason=f"Выходной «{day_off.reason}» отменён: ручная отмена вернулась к прежнему виду"[:500], cancellation_reason=att.cancellation_reason,
             details={"cancellation_kind": {"from": before, "to": att.cancellation_kind}, "day_off_voided": str(day_off.id)}))
 
-    def _started_today(self, group: Optional[Group], att: GroupAttendance) -> bool:
+    def _started_today(self, group: Optional[Group], att: GroupAttendance, lines: Dict[Any, Dict[str, Any]]) -> bool:
         """The lesson of the row is today and its start has passed (a lesson that is gone from the schedule is not «started»)."""
         if group is None:
             return False
         day = date.fromisoformat(att.lesson_date)
-        occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == att.lesson_id), None)
+        occ = self._occurrence_of(group, att, lines)
         try:
             return bool(occ) and bc.lesson_instant_utc(day, hhmm_to_minutes(occ["startTime"])) <= bc.utc_now()
         except (KeyError, ValueError, AttributeError):
@@ -651,7 +676,7 @@ class DaysOffService:
             group = groups.get(att.group_id)
             day = date.fromisoformat(att.lesson_date)
             line = self._att_item(att, group, lines)
-            out.append(DayOffWarning(code="SUBSTITUTE_NOT_RESTORED", groupId=str(att.group_id), groupName=line.groupName or None, lessonId=att.lesson_id, date=day, startTime=line.startTime,
+            out.append(DayOffWarning(code="SUBSTITUTE_NOT_RESTORED", groupId=str(att.group_id), groupName=line.groupName or None, lessonId=att.lesson_id, date=day, startTime=line.startTime, endTime=line.endTime,
                                      substituteName=who,
                                      message=f"{_dm(day)}{(' — «' + group.name + '»') if group else ''}: замена ({who or 'преподаватель'}) была снята выходным и не вернулась — назначьте её заново"))
         return out

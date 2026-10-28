@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session, aliased
 from src.models.auth import OrgDayOff
 
 from . import business_clock as bc
-from . import exam_bridge, payroll_hooks, substitution_rules as R
+from . import exam_bridge, substitution_rules as R
 from .days_off import DaysOffService
 from .lesson_cancel import LessonCancelMixin, RESTORED, lesson_outcomes
 from .lesson_teachers import (

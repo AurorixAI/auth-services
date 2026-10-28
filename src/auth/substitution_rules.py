@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict
 
-from .ops_rules import OpsError, conflict, forbidden, not_found, unprocessable
+from .ops_rules import ERROR_CATALOGUE as OPS_CATALOGUE, OpsError, conflict, forbidden, not_found, unprocessable
 
 URGENT_MINUTES = 1440          # < 24 h before the start
 CREATE_MAX_LESSONS = 60
@@ -30,7 +30,7 @@ ERROR_CATALOGUE: Dict[str, tuple[int, str]] = {
     "MOVE_TOO_FAR": (422, "Перенести можно не дальше чем на 60 дней"),
     "GROUP_BUSY": (409, "У группы уже есть урок в это время"),
     "REASON_REQUIRED": (422, "Укажите причину (не менее 3 символов)"),
-    "TEACHER_REQUIRED": (422, "Выберите преподавателя"),
+    "TEACHER_REQUIRED": OPS_CATALOGUE["TEACHER_REQUIRED"],          # one text in one place (``ops_rules``)
     "MOVE_FIELDS_REQUIRED": (422, "Укажите новую дату и время урока"),
     "PERIOD_TOO_LONG": (422, "Период не может превышать 63 дня"),
 }

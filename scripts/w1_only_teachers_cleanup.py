@@ -42,9 +42,10 @@ def cleanup(db) -> List[Dict[str, Any]]:
             continue
         managers = [m.user_id for m in members]
         actor = next((m.user_id for m in members if m.org_role == "owner"), managers[0])          # who the cancellations are recorded under: the owner of the centre
-        row = {"org_id": str(org.id), "org_name": org.name, "released_substitutions": 0, "closed_requests": 0, "reopened_requests": 0,
+        row = {"org_id": str(org.id), "released_substitutions": 0, "closed_requests": 0, "reopened_requests": 0,
                "suggestion_events": 0, "groups_unassigned": 0, "groups_archived_unassigned": 0}
         for uid in managers:
+            life._lock_groups_of(org.id, uid, archived=True)          # the groups he leads (any status) and those of his future substitutions, locked in ascending id (as a dismissal does)
             events_before = db.query(Event).filter(Event.org_id == org.id, Event.action == "suggestion_unavailable").count()
             released, closed, reopened = life._release_work_of(org.id, uid, actor, role_changed=True)
             db.flush()
@@ -59,7 +60,7 @@ def cleanup(db) -> List[Dict[str, Any]]:
                               snapshot={"teacher_id": [str(old), None], "via": VIA}))
             row["groups_unassigned" if group.status == "active" else "groups_archived_unassigned"] += 1
         db.flush()
-        if any(v for k, v in row.items() if k not in ("org_id", "org_name")):
+        if any(v for k, v in row.items() if k != "org_id"):
             out.append(row)
     return out
 
@@ -85,7 +86,7 @@ def main(argv: List[str] | None = None) -> int:
             raise
     mode = "APPLIED" if args.apply else "DRY RUN (nothing changed)"
     for r in rows:
-        print(f"centre {r['org_id']} «{r['org_name']}»: substitutions taken off {r['released_substitutions']}, requests closed {r['closed_requests']}, requests reopened {r['reopened_requests']}, "
+        print(f"centre {r['org_id']}: substitutions taken off {r['released_substitutions']}, requests closed {r['closed_requests']}, requests reopened {r['reopened_requests']}, "
               f"suggestions marked {r['suggestion_events']}, groups left without a teacher {r['groups_unassigned']} (+{r['groups_archived_unassigned']} archived)")
     print(f"{mode}: {len(rows)} centre(s) with something to clean")
     return 0

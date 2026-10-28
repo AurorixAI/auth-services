@@ -8,8 +8,9 @@ import pytest
 from src.models.auth import (
     Group, GroupAudit, LessonSubstitutionEvent, LessonSubstitutionRequest as Req, LessonTeacherAssignment, OrganizationMember, PayrollRate, PayrollSheet,
 )
+from src.auth.ops_rules import short_name
 from tests.b2_helpers import API, build_d2, clock, decide, events_of, needs_pg, pg_session, req, requests_of  # noqa: F401  (fixtures)
-from tests.ops_helpers import client, new_group, new_slot
+from tests.ops_helpers import client, history_row, new_group, new_slot
 from tests.test_ops_b2_decide_pg import L, one, sub_body
 
 pytestmark = needs_pg
@@ -169,14 +170,16 @@ def test_156_the_role_change_teacher_to_admin_needs_the_groups_handed_over_and_t
     w.db.expire_all()
     assert w.db.query(LessonTeacherAssignment).filter_by(teacher_id=w.D.id, cancelled_at=None).count() == 0
     cleared = [e for e in events_of(w) if e.action == "assignment_cleared"]
-    assert [e.snapshot["trigger"] for e in cleared] == ["role_changed"] and cleared[0].request_id == first["id"] or str(cleared[0].request_id) == first["id"]
+    assert [e.snapshot["trigger"] for e in cleared] == ["role_changed"]
+    assert str(cleared[0].request_id) == first["id"]
     audit = w.db.query(GroupAudit).filter_by(group_id=w.G1.id, action="lesson_teacher_cleared").one()
     assert audit.snapshot["reason"] == "Роль изменена: замена снята"
     assert [e.action for e in events_of(w, waiting["id"])][-1] == "suggestion_unavailable"
     listed = {i["id"]: i for i in client(w, "admin").get(SUB, params={"status": "pending"}).json()["items"]}
     assert listed[waiting["id"]]["suggestedTeacher"]["active"] is False                                   # «available» = active AND a teacher
     reopened = [r for r in requests_of(w, "pending") if r.previous_request_id and str(r.previous_request_id) == first["id"]]
-    assert len(reopened) == 1 and reopened[0].origin == "system" and "больше не ведёт уроки" in reopened[0].comment
+    assert len(reopened) == 1 and reopened[0].origin == "system"
+    assert reopened[0].comment == f"Заменяющий {short_name(w.D)} больше не ведёт уроки. Нужно новое решение."          # the events are not shown anywhere: the reason is the comment (R3 3)
     assert any(e.action == "reopened" and e.snapshot.get("cause") == "role_changed" for e in events_of(w, reopened[0].id))
     # admin -> teacher returns nothing taken off (the cancellation is an event, LESSONS 47) and asks nothing
     back = cl.put(M.format(mid=mid(w, "D")) + "/role", params={"role": "teacher"})
@@ -255,3 +258,101 @@ def test_cleanup_script_dry_run_changes_nothing_and_apply_does_the_three_things(
     again = mine(module.cleanup(w.db))
     w.db.rollback()
     assert again == []                                                                                      # idempotent: nothing left to do
+
+
+# ============================================================================================================ R3 (28.10)
+def test_r3_8_s2_1_the_decision_of_a_request_gives_the_admin_only_the_month(w, monkeypatch):
+    """The second road of ``payrollSheetsAffected`` (``decide`` kind=substitute): the owner gets the sheets with the payout state, the admin the month only."""
+    from src.auth.lesson_teachers import LessonTeachers  # noqa: F401
+
+    for teacher_id in (w.A.id, w.D.id):
+        w.db.add(PayrollSheet(org_id=w.org.id, teacher_id=teacher_id, period_month=date(2026, 10, 1), source_fingerprint="x", total_amount=100, created_by=w.owner.id,
+                              updated_by=w.owner.id))
+    first, second = one(w, "A", "L1", "2026-10-26"), one(w, "A", "L2", "2026-10-28")
+    w.db.info["b2_skip"] = {(str(w.G1.id), "lesson-l1", "2026-10-26"), (str(w.G1.id), "lesson-l2", "2026-10-28")}          # the journal rows below do not close the requests
+    for lesson_id, day in (("lesson-l1", "2026-10-26"), ("lesson-l2", "2026-10-28")):
+        history_row(w.db, w.org, w.G1, lesson_id, day, w.A, [w.s1], status="completed")
+    w.db.commit()
+    from src.auth.lesson_substitutions import Substitutions
+
+    original = Substitutions.closure_reason
+    monkeypatch.setattr(Substitutions, "closure_reason", lambda self, r, g, book=None: (lambda out: (None, out[1]) if out[0] == "LESSON_STARTED" else out)(original(self, r, g, book)))
+    mine = decide(w, "owner", first["id"], **sub_body(w, "D"))
+    assert mine.status_code == 200, mine.text
+    sheets = mine.json()["result"]["payrollSheetsAffected"]
+    assert len(sheets) == 2 and all(set(x) == {"sheet_id", "teacher_id", "month", "status"} for x in sheets)
+    theirs = decide(w, "admin", second["id"], **sub_body(w, "D"))
+    assert theirs.status_code == 200, theirs.text
+    assert theirs.json()["result"]["payrollSheetsAffected"] == [{"month": "2026-10"}]
+
+
+def _two_groups_two_days_off(w):
+    """A day off over 26-29.10 takes lessons of four groups on four days; D substitutes the lesson of 26.10 (a warning on the void)."""
+    assert put_teacher(w, "admin", "2026-10-26", "D").status_code == 200
+    made = client(w, "owner").post(f"{API}/org/days-off", json={"dateFrom": "2026-10-26", "dateTo": "2026-10-29", "reason": "Хайит"})
+    assert made.status_code in (200, 201), made.text
+    return made.json()["dayOff"]["id"]
+
+
+def test_r3_2_the_warning_has_the_time_of_the_lesson_and_matches_its_line_in_the_list(w):
+    day_off = _two_groups_two_days_off(w)
+    out = client(w, "owner").post(f"{API}/org/days-off/{day_off}/void").json()
+    (warning,) = out["warnings"]
+    assert (warning["startTime"], warning["endTime"], warning["groupName"], warning["date"]) == ("10:00", "11:30", "9-А", "2026-10-26")
+    line = next(x for x in out["restored"] if x["lessonId"] == warning["lessonId"] and x["date"] == warning["date"])
+    assert (line["startTime"], line["endTime"], line["groupName"]) == (warning["startTime"], warning["endTime"], warning["groupName"])      # the same line in both places (LESSONS 48)
+
+
+def test_r3_8_examsnote_is_empty_when_nothing_comes_back(w):
+    day_off = _two_groups_two_days_off(w)
+    from src.models.auth import GroupAttendance
+
+    w.db.query(GroupAttendance).filter_by(day_off_id=day_off).update({"version": 2})               # every lesson was changed after the day off: nothing comes back
+    w.db.commit()
+    out = client(w, "owner").post(f"{API}/org/days-off/{day_off}/void").json()
+    assert out["restored"] == [] and out["examsNote"] == "" and all(x["reason"] for x in out["kept"])
+
+
+def test_r3_4_the_void_reads_the_schedule_of_all_the_groups_in_one_preload(w, monkeypatch):
+    day_off = _two_groups_two_days_off(w)
+    from src.auth.service import AuthService
+
+    calls = []
+    original = AuthService._preload_schedule_data
+    monkeypatch.setattr(AuthService, "_preload_schedule_data", lambda self, *a, **k: (calls.append(a), original(self, *a, **k))[1])
+    out = client(w, "owner").post(f"{API}/org/days-off/{day_off}/void", params={"dry_run": "true"}).json()
+    assert len({(x["groupName"], x["date"]) for x in out["restored"]}) >= 4                      # 2+ groups x 2+ days
+    assert len({x["groupName"] for x in out["restored"]}) >= 2 and len({x["date"] for x in out["restored"]}) >= 2
+    assert len(calls) == 1 and len(calls[0][0]) >= 2                                              # one preload for the groups of the rows
+    assert all(x["startTime"] and x["endTime"] for x in out["restored"])
+
+
+def test_r3_5_the_new_teacher_of_a_group_is_read_with_for_share(w):
+    from sqlalchemy import event
+
+    statements = []
+    engine = w.db.get_bind()
+
+    def spy(conn, cursor, statement, *a):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", spy)
+    try:
+        assert client(w, "admin").put(f"{API}/org/groups/{w.G3.id}", json={"teacher_id": str(w.C.id)}).status_code == 200
+    finally:
+        event.remove(engine, "before_cursor_execute", spy)
+    shared = [x for x in statements if "FOR SHARE" in x and "organization_members" in x]
+    assert shared, "the membership of the new teacher must be read FOR SHARE"
+    first_group_lock = next(i for i, x in enumerate(statements) if "FROM groups" in x and "FOR UPDATE" in x)
+    assert statements.index(shared[0]) < first_group_lock                                         # member row before the group row: the order of a dismissal / a change of the role
+
+
+def test_r3_8_a_lesson_in_progress_blocks_the_role_change_and_missed_lessons_are_shown(w):
+    cl = client(w, "owner")
+    history_row(w.db, w.org, w.G4, "lesson-l5", "2026-10-15", w.D, [], status="in_progress", start="16:00")             # D (a substitute) has a lesson going on
+    w.db.commit()
+    refused = cl.put(M.format(mid=mid(w, "D")) + "/role", params={"role": "admin"})
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "MEMBER_HAS_ASSIGNMENTS", refused.text
+    assert [x["groupName"] for x in refused.json()["detail"]["inProgressLessons"]] == ["6-Г"] and refused.json()["detail"]["canChangeRole"] is False
+    impact = cl.get(M.format(mid=mid(w, "A")) + "/removal-impact", params={"intent": "role_change"}).json()
+    assert impact["missedLessons"] == {"count": 1} and impact["canChangeRole"] is False and {g["status"] for g in impact["groups"]} == {"active"}

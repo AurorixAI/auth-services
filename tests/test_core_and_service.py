@@ -338,6 +338,7 @@ class TestGroupCreationPermissions:
             query_mock = MagicMock()
             if model is OrganizationMember:
                 query_mock.filter.return_value.first.side_effect = lambda: next(membership_results)
+                query_mock.filter.return_value.with_for_update.return_value.first.side_effect = lambda: next(membership_results)          # the membership is read FOR SHARE
             elif model is User:
                 teacher = MagicMock()
                 teacher.first_name = "Иван"

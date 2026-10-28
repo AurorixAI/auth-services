@@ -2148,6 +2148,7 @@ class AuthService:
                 OrganizationMember.org_role.in_(lesson_teachers.TEACHING_ROLES),  # W1 round 2 (#156): a group is led by a teacher only
                 OrganizationMember.is_active,
             )
+            .with_for_update(read=True)  # FOR SHARE: a change of the role / a dismissal of the teacher waits for this assignment (and the other way round)
             .first()
         )
         if not membership:
@@ -2171,6 +2172,11 @@ class AuthService:
         if "status" in changes:
             # O4: archiving is an operation with preconditions (POST .../archive, .../restore), never a free string
             raise ops_rules.unprocessable("STATUS_USE_ARCHIVE_ACTION", ops_rules.ERROR_CATALOGUE["STATUS_USE_ARCHIVE_ACTION"][1])
+        if "teacher_id" in changes:
+            try:        # the lock order of a dismissal / a change of the role is «member row -> groups»: the new teacher's membership (FOR SHARE) goes before the group lock
+                self.db.query(OrganizationMember.id).filter(OrganizationMember.org_id == org_id, OrganizationMember.user_id == UUID(str(changes["teacher_id"]))).with_for_update(read=True).first()
+            except ValueError:
+                pass          # reported below as «Некорректный преподаватель»
         # The group is locked BEFORE it is read and compared: the diff and the audit are those of the row we hold (a concurrent change of
         # the teacher by another administrator is seen, not overwritten).
         group = (

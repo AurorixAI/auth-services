@@ -116,7 +116,7 @@ class SubstitutionItem(BaseModel):
     clearedAt: Optional[str] = None  # P1.2: the substitution of the record stopped later (taken off, replaced, released, the lesson cancelled / moved); the status does not change
     clearedBy: Optional[PersonRef] = None
     clearedTo: Optional[PersonRef] = None  # the teacher who took the lesson over; null = the main teacher leads again
-    clearedTrigger: Optional[str] = None  # put | member_removed | group_teacher_changed | cancel | move | release
+    clearedTrigger: Optional[str] = None  # put | member_removed | role_changed | group_teacher_changed | cancel | move | release
 
 
 # ---------------------------------------------------------------------------------------- teacher (4.2)
@@ -202,11 +202,11 @@ class MineOut(BaseModel):
 
 
 class ColleagueOut(BaseModel):
-    """«Предложить коллегу»: a member of the centre who can teach (no e-mail, no phone)."""
+    """«Предложить коллегу»: a teacher of the centre (no e-mail, no phone)."""
 
     id: str
     name: str
-    role: Literal["teacher", "owner", "admin"]
+    role: Literal["teacher"]
 
 
 class WithdrawBatchRequest(BaseModel):

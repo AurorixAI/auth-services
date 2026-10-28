@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from . import import_service as legacy
 from . import payroll_hooks
 from .models import Group, GroupAudit, OrganizationMember, Student, StudentGroup, User
-from .lesson_teachers import TEACHING_ROLES
+from .lesson_teachers import can_lead
 from .ops_rules import ERROR_CATALOGUE, OpsError, conflict
 from .ops_schemas import (
     CreatedGroup,
@@ -204,7 +204,7 @@ def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, mon
                          f"Преподаватель {email} не найден в системе. Добавьте его через интерфейс.", "TEACHER_NOT_FOUND")
                 continue
             user, member = entry
-            if member.org_role not in TEACHING_ROLES:
+            if not can_lead(member.org_role):
                 plan.err(legacy.SHEET_GROUPS, r.row, "Почта учителя",
                          f"{email} — не преподаватель (роль: {ROLE_RU.get(member.org_role, member.org_role)})", "TEACHER_NOT_TEACHER")
                 continue

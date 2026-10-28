@@ -101,7 +101,7 @@ def create_substitution_requests(request: CreateSubstitutionRequest, user: dict 
 def my_substitution_requests(
     status: Literal["pending", "all"] = Query("all"), user: dict = Depends(_member), db: Session = Depends(get_db)
 ):
-    """Мои запросы и уроки, где меня назначили заменяющим.  W1 S13: also for an owner / admin who was made a substitute (they ask nothing: ``items`` is empty, ``assignedToMe`` is theirs)."""
+    """Мои запросы и уроки, где меня назначили заменяющим.  W1 round 2: only a teacher leads lessons, so for an owner / admin everything is empty (they ask nothing and are nobody's substitute)."""
     return _subs(db).mine(user["org_id"], user["user_id"], status)
 
 
