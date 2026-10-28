@@ -2099,5 +2099,10 @@ def annotate_student_attendance(svc, org_id: Any, student_id: Any, summary: Dict
             group = db.query(Group).filter(Group.id == row.group_id).first()
             notices.append({"lessonId": row.lesson_id, "date": row.lesson_date, "groupId": str(row.group_id), "groupName": group.name if group else "",
                             "kind": "cancelled", "movedTo": None, "holiday": day_off.reason})
+    if notices:
+        # #154: «Отработан → чт 06.11» on the cancelled original - the very marks of the journal and of the schedule (``OneOffPurpose.marks``); only ``madeUpBy`` is taken: no money, no purpose of a notice
+        made = OneOffPurpose(svc).marks([(n["groupId"], n["lessonId"], n["date"]) for n in notices], manager=False, money_visible=False)
+        for notice in notices:
+            notice["madeUpBy"] = (made.get((notice["groupId"], notice["lessonId"], notice["date"])) or {}).get("madeUpBy")
     summary["notices"] = notices
     return summary

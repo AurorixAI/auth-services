@@ -115,6 +115,38 @@ def test_a_teacher_makes_up_a_cancelled_lesson_without_a_confirmation_and_the_po
     assert (copy["purpose"], copy["purposeLabel"], copy["madeUpFor"]["date"]) == ("makeup", "Отработка за пн 26.10", ORIGIN_DAY)
 
 
+def card_notices(w, who="admin", month="2026-10"):
+    r = client(w, who).get(f"{API}/org/students/{w.s1.id}/attendance", params={"month": month})
+    assert r.status_code == 200, r.text
+    return {n["lessonId"] + "@" + n["date"]: n for n in r.json()["notices"]}
+
+
+def test_the_card_of_a_student_says_where_the_cancelled_lesson_was_made_up_and_never_the_money(w):
+    """Walk on stage 29.10 (D2): the notice of the cancelled original carries ``madeUpBy`` (the very marks of the schedule and the journal), nothing of the money.
+    LESSONS 51 - every path of the answer: ``GET /org/students/{id}/attendance`` is owner / administrator only (a teacher 403, checked here); the notice has no
+    ``money`` / ``moneyLabel`` / ``purpose`` / ``createdBy`` for either of them."""
+    cancel_origin(w)
+    cancel_origin(w, lesson="lesson-l2", day="2026-10-28")                                      # a cancelled lesson nobody made up
+    key, other = f"{ORIGIN}@{ORIGIN_DAY}", "lesson-l2@2026-10-28"
+    assert card_notices(w)[key]["madeUpBy"] is None and card_notices(w)[other]["madeUpBy"] is None
+    body = makeup(w, "A", w.G1, "2026-10-29", start="12:00", end="13:00").json()
+    expected = {"lessonId": body["id"], "date": "2026-10-29", "startTime": "12:00", "endTime": "13:00", "label": "Отработан → чт 29.10"}
+    for who in ("admin", "owner"):
+        notices = card_notices(w, who)
+        assert notices[key]["madeUpBy"] == expected, who
+        assert notices[other]["madeUpBy"] is None
+        assert notices[key]["kind"] == "cancelled" and notices[key]["groupName"] == w.G1.name
+        assert not {"money", "moneyLabel", "purpose", "purposeLabel", "madeUpFor", "createdBy"} & set(notices[key]), who
+        assert "wait" not in str(notices[key]) and "none" not in str(notices[key].get("madeUpBy")) and "paid" not in str(notices[key])
+    assert client(w, "A").get(f"{API}/org/students/{w.s1.id}/attendance", params={"month": "2026-10"}).status_code == 403
+    # the same label as the schedule gives (one function, no second logic)
+    listed = client(w, "admin").get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-26", "date_to": "2026-10-29"}).json()
+    assert next(o for o in listed if o["id"] == ORIGIN and o["occurrenceDate"] == ORIGIN_DAY)["madeUpBy"] == expected
+    # the make-up is deleted: the original is free again, the card stops saying so
+    sheet(w, "admin", w.G1, body["id"], "2026-10-29")
+    assert card_notices(w)[key]["madeUpBy"] is None
+
+
 def test_the_room_of_the_make_up_is_the_room_of_the_cancelled_lesson_unless_sent(w):
     from src.models.auth import Group
 

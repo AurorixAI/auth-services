@@ -133,6 +133,7 @@ def test_s4_the_cell_of_a_not_decided_or_unpaid_lesson_is_zero_and_the_legend_na
     assert marks[engine.UNDECIDED] == marks[engine.NO_PAY] == marks[engine.EXCUSED_CONFIRMED] == 0
     assert marks[engine.COUNTED] == marks[engine.UNPAID] == marks[engine.EXCUSED_PENDING] == 1 and marks[engine.NOT_IN_GROUP] is None
     assert "не решено" in LEGEND_HEAD and "без оплаты" in LEGEND_HEAD
+    assert "дополнительного урока или пустой отработки" in LEGEND_HEAD and "доп. урок" not in LEGEND_HEAD      # D1 of the walk 29.10: an empty make-up lands in «не решено» / «без оплаты» too
     assert "не решено" in legend_line(True) and "без оплаты" in legend_line(False)
 
 

@@ -423,7 +423,7 @@ def test_s6_r1_chain3_cancel_golden(w, clock, sync):
     assert w.db.query(GroupAttendanceAudit).filter_by(attendance_id=row.id).one().action == "cancelled"
     assert [c[0] for c in sync.calls] == ["cancellation-check", "release"]
     notices = client(w, "admin").get(f"{API}/org/students/{w.s1.id}/attendance", params={"month": "2026-11"}).json()["notices"]
-    assert notices == [{"lessonId": "lesson-l1", "date": "2026-11-02", "groupId": str(w.G1.id), "groupName": "9-А", "kind": "cancelled", "movedTo": None}]
+    assert notices == [{"lessonId": "lesson-l1", "date": "2026-11-02", "groupId": str(w.G1.id), "groupName": "9-А", "kind": "cancelled", "movedTo": None, "madeUpBy": None}]          # #154: madeUpBy is always there
     assert "reason" not in str(notices) and "Преподаватель болен" not in str(notices)
 
 

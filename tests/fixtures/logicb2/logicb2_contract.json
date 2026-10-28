@@ -1566,6 +1566,19 @@
             "title": "Lessonid",
             "type": "string"
           },
+          "madeUpBy": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Madeupby"
+          },
           "movedTo": {
             "anyOf": [
               {

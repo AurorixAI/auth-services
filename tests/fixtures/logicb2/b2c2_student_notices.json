@@ -5,6 +5,7 @@
     "groupName": "9-А",
     "kind": "rescheduled",
     "lessonId": "lesson-l2",
+    "madeUpBy": null,
     "movedTo": {
       "date": "2026-10-29",
       "endTime": "17:30",

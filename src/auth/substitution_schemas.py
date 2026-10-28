@@ -488,6 +488,8 @@ class StudentNotice(BaseModel):
     groupName: str
     kind: Literal["cancelled", "rescheduled"]
     movedTo: Optional[MovedTo] = None
+    # #154: where the cancelled lesson was made up ({lessonId, date, startTime, endTime, label «Отработан → чт 06.11»}); null: it was not (``OneOffPurpose.marks``)
+    madeUpBy: Optional[Dict[str, Any]] = None
 
 
 class RequestClosed(BaseModel):

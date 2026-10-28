@@ -166,7 +166,7 @@ put("b2c2_decide_reschedule.json", "DecideOut", {"item": c2_done, "result": resu
                                                                 "endTime": "17:30", "room": None, "format": "offline"})})
 put("b2c2_student_notices.json", "-", [
     {"lessonId": LESSON["L2"], "date": "2026-10-28", "groupId": IDS["G1"], "groupName": "9-А", "kind": "rescheduled",
-     "movedTo": {"lessonId": "one-off-1", "date": "2026-10-29", "startTime": "16:00", "endTime": "17:30"}}])
+     "movedTo": {"lessonId": "one-off-1", "date": "2026-10-29", "startTime": "16:00", "endTime": "17:30"}, "madeUpBy": None}])      # #154: always present, null: not made up
 put("b2c2_cancelled_row.json", "-", {"lesson_date": "2026-10-28", "status": "cancelled", "version": 1, "teacher_id": IDS["A"], "marked_by": IDS["admin"],
                                      "cancellation_reason": "Перенесён на 29.10, 16:00–17:30: Личные обстоятельства"})
 
