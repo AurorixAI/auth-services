@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 from .import_service import (
     ImportCommitResponse,
@@ -285,10 +285,16 @@ class LessonTeacherPut(BaseModel):
 
 
 class LessonTeacherPayrollSheet(BaseModel):
+    """LESSONS 45: the owner gets ``sheet_id`` / ``teacher_id`` / ``status`` (the payout state); the administrator only ``month`` - the fields he does not get are absent, not null."""
+
     sheet_id: Optional[str] = None
-    teacher_id: str
+    teacher_id: Optional[str] = None
     month: str
     status: Optional[str] = None
+
+    @model_serializer(mode="wrap")
+    def _drop_hidden(self, handler):
+        return {k: v for k, v in handler(self).items() if v is not None}
 
 
 class LessonTeacherOut(BaseModel):
@@ -415,6 +421,7 @@ class MemberOut(BaseModel):
 class RemovalGroup(BaseModel):
     id: str
     name: str
+    status: str = "active"          # ``archived`` only in the impact of a change of the role (``?intent=role_change``)
     studentCount: int = 0
     nextLesson: Optional[Dict[str, str]] = None
 
@@ -436,6 +443,7 @@ class RemovalImpactOut(BaseModel):
     name: Optional[str] = None
     orgRole: str
     canRemove: bool
+    canChangeRole: bool = True      # W1 round 2: a teacher can become an administrator only without groups (active and archived) and lessons in progress
     groups: List[RemovalGroup] = Field(default_factory=list)
     inProgressLessons: List[RemovalLesson] = Field(default_factory=list)
     futureSubstitutions: CountOut = Field(default_factory=CountOut)

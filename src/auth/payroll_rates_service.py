@@ -25,6 +25,7 @@ from src.models.auth import Group, GroupAttendance, OrganizationMember, PayrollR
 from . import payment_status as ps
 from . import payroll_engine as engine
 from . import payroll_rates
+from .lesson_teachers import can_lead
 from .payments_files import staff_name
 from .payroll_schemas import (
     MAX_NOTE,
@@ -71,21 +72,35 @@ class RatesService:
             ).filter(OrganizationMember.org_id == org_id)
         }
 
-    def _require_teacher(self, org_id: str, teacher_id: UUID) -> User:
-        user = (
-            self.db.query(User)
+    def _member(self, org_id: str, teacher_id: UUID) -> tuple:
+        """``(user, org_role)`` of a member of the centre of any role and either state (reading the history and the sheets check nothing but the membership: a teacher let go in
+        October is still paid for September; a former teacher who became an administrator keeps his history)."""
+        row = (
+            self.db.query(User, OrganizationMember.org_role)
             .join(OrganizationMember, OrganizationMember.user_id == User.id)
-            .filter(
-                OrganizationMember.org_id == org_id,
-                OrganizationMember.user_id == teacher_id,
-                # any role that can teach (owners and admins do); a DEACTIVATED member is accepted on purpose: a teacher
-                # let go in October is still paid for September
-                OrganizationMember.org_role.in_(("teacher", "owner", "admin")),
-            )
+            .filter(OrganizationMember.org_id == org_id, OrganizationMember.user_id == teacher_id)
             .first()
         )
-        if user is None:
+        if row is None:
             raise PayrollNotFound("Преподаватель не найден")
+        return row[0], row[1]
+
+    def _require_rate_receiver(self, org_id: str, teacher_id: UUID) -> User:
+        """W1 round 2 (#156): «the rate = who led lessons».  A NEW rate goes to a teacher (``can_lead``) or to a person who has led lessons (a teacher let go or
+        turned administrator keeps the right to a rate for the lessons he held: otherwise a month with his lessons could not be closed); an owner / an
+        administrator who never led a lesson gets none.  A DEACTIVATED member is accepted on purpose."""
+        user, role = self._member(org_id, teacher_id)
+        if can_lead(role):
+            return user
+        led = (
+            self.db.query(GroupAttendance.id)
+            .filter(GroupAttendance.org_id == org_id, GroupAttendance.teacher_id == teacher_id, GroupAttendance.status == "completed")
+            .first()
+        )
+        if led is None:
+            raise PayrollInvalid(
+                "Ставку задают только преподавателю. Этот сотрудник не ведёт уроки", code="RATE_RECEIVER_NOT_TEACHER"
+            )
         return user
 
     def _names(self, ids: Iterable[Optional[UUID]]) -> Dict[UUID, Optional[str]]:
@@ -165,7 +180,7 @@ class RatesService:
         last = _month_end(first)
         members = self._member_ids(org_id)
         taught = self._taught(org_id, first, last)
-        candidates = {uid for uid, (role, active) in members.items() if role == "teacher" and active}
+        candidates = {uid for uid, (role, active) in members.items() if can_lead(role) and active}
         candidates |= {uid for uid in taught if uid in members}
         book = payroll_rates.load_book(self.db, org_id, candidates)
         users = {
@@ -185,7 +200,7 @@ class RatesService:
     # ---------------------------------------------------------------- PUT
 
     def put_rates(self, org_id: str, actor_id: str, teacher_id: UUID, body: RatePut) -> TeacherRates:
-        teacher = self._require_teacher(org_id, teacher_id)
+        teacher = self._require_rate_receiver(org_id, teacher_id)
         valid_from = _month_start(body.valid_from, what="«Действует с»")
         percents = body.percents
         if not isinstance(percents, dict) or not percents:
@@ -233,7 +248,7 @@ class RatesService:
     # ------------------------------------------------------------ history
 
     def history(self, org_id: str, teacher_id: UUID) -> List[RateHistoryRow]:
-        self._require_teacher(org_id, teacher_id)
+        self._member(org_id, teacher_id)
         rows = (
             self.db.query(PayrollRate)
             .filter(PayrollRate.org_id == org_id, PayrollRate.teacher_id == teacher_id)

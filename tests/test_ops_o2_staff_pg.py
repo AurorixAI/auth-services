@@ -193,8 +193,9 @@ def test_unassigned_handover_needs_the_confirmation_and_the_target_must_teach(w)
     assert r.status_code == 422 and r.json()["detail"]["code"] == "UNASSIGNED_NOT_CONFIRMED"
     r = client(w, "owner").post(M.format(mid=mid(w, "A")) + "/handover", json={"assignments": [{"groupId": str(w.G1.id), "teacherId": str(w.foreign_admin.id)}]})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "TARGET_NOT_TEACHER"            # not a member of this centre
-    owner_ok = handover(w, "owner", "A", [("G3", "owner")])                                            # lead decision: the owner may take a group
-    assert owner_ok.status_code == 200
+    for who in ("owner", "admin"):                                                                    # W1 round 2: only a teacher can take a group
+        refused = handover(w, "owner", "A", [("G1", who)])
+        assert refused.status_code == 422 and refused.json()["detail"]["code"] == "TARGET_NOT_TEACHER"
     r = handover(w, "owner", "A", [("G1", "C"), ("G2", "A")])
     assert r.status_code == 422                                                                       # the same person is not a target
     w.db.expire_all()

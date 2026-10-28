@@ -39,7 +39,7 @@ ERROR_CATALOGUE: Dict[str, tuple[int, str]] = {
 # #124: the codes of the administrator's move without a request (kept apart: the frozen ``logicB2_contract.json`` lists ``ERROR_CATALOGUE`` only)
 DIRECT_MOVE_ERRORS: Dict[str, tuple[int, str]] = {
     "LESSON_CHANGED": (409, "Расписание урока изменилось: обновите страницу и повторите"),
-    "LESSON_HAS_NO_TEACHER": (422, "У урока нет действующего преподавателя: назначьте его и повторите"),
+    "LESSON_HAS_NO_TEACHER": (422, "У группы нет преподавателя — назначьте его в карточке группы"),
     # P1.1: the teacher moves his own lesson (the same path); the administrator is not bound by the first two
     "NOT_LESSON_TEACHER": (403, "Перенести урок может преподаватель группы или администратор"),
     "MOVE_TOO_LATE": (409, "Перенести урок можно не позднее чем за 60 минут до начала. Нажмите «Не смогу провести» — решит администратор"),

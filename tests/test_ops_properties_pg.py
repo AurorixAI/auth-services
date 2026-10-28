@@ -78,7 +78,7 @@ def test_random_operations_never_break_the_invariants(pg_session, clock, exams, 
                                                            "validFrom": (date(2026, 10, 21) + timedelta(days=rnd.randint(0, 10))).isoformat()})
         elif op in ("substitute", "clear") and slots:
             r = cl.put(f"{API}/org/groups/{group.id}/lesson-teacher", json={"lessonDate": day.isoformat(), "lessonId": rnd.choice(slots),
-                                                                          "teacherId": None if op == "clear" else str(getattr(w, rnd.choice(staff + ['owner'])).id), "reason": "Тест"})
+                                                                          "teacherId": None if op == "clear" else str(getattr(w, rnd.choice(staff)).id), "reason": "Тест"})
         elif op == "handover":
             r = cl.post(f"{API}/org/members/{w.ids('member_' + rnd.choice(staff))}/handover",
                         json={"assignments": [{"groupId": str(group.id), "teacherId": str(getattr(w, rnd.choice(staff)).id)}]})

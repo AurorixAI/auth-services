@@ -236,7 +236,7 @@ def test_7_voiding_keeps_the_trace_of_what_it_gave_back(three_groups, monkeypatc
     c = client(w, "owner")
     out = c.post(f"{API}/org/days-off", json=DAY).json()
     voided = c.post(f"{API}/org/days-off/{out['dayOff']['id']}/void").json()
-    assert "Экзамены, снятые с уроков" in voided["examsNote"] and len(voided["restored"]) == 3
+    assert "снимались экзамены" in voided["examsNote"] and len(voided["restored"]) == 3
     assert w.db.query(GroupAttendance).filter_by(org_id=w.org.id, lesson_date="2026-10-21").count() == 0
     w.db.expire_all()
     row = w.db.query(OrgDayOff).filter_by(id=out["dayOff"]["id"]).one()

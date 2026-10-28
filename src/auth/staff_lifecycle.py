@@ -4,6 +4,8 @@
   has an in-progress lesson.  Future substitutions of his are taken off automatically; missed (never started) lessons do not block - they stay with
   the administrators (the row, once reconciled, is still his: ``teacher_id`` = who taught).
 * ``POST /org/members/{id}/handover`` moves groups to other teachers atomically (all groups or none) with the overlap check over the batch.
+* ``PUT /org/members/{id}/role`` teacher -> administrator (W1 round 2: only a teacher leads lessons) = the same road as a dismissal: the groups (active AND archived) are handed over first, then the future
+  substitutions are taken off, the waiting requests closed / reopened (``_release_work_of``; reason «Роль изменена», trigger ``role_changed``).
 * ``POST /org/members/{id}/restore`` (owner) reactivates member + user: the old password works, the groups do NOT come back.
 * every operation writes ``member_audit`` (INV-O2-4).
 
@@ -22,7 +24,7 @@ from sqlalchemy.orm import joinedload
 from . import business_clock as bc
 from . import user_sessions
 from . import lesson_substitutions
-from .lesson_teachers import TEACHING_ROLES, LessonTeachers, _s, _uuid
+from .lesson_teachers import REASON_REMOVED, REASON_ROLE_CHANGED, TEACHING_ROLES, LessonTeachers, _s, _uuid
 from .models import (
     Group,
     GroupAttendance,
@@ -104,21 +106,22 @@ class StaffLifecycle:
         return out
 
     # ----------------------------------------------------------------------------------------- impact
-    def _teaching_groups(self, org_id: Any, user_id: Any, *, lock: bool = False) -> List[Group]:
-        q = self.db.query(Group).filter(Group.org_id == org_id, Group.teacher_id == user_id, Group.status == "active")
+    def _teaching_groups(self, org_id: Any, user_id: Any, *, lock: bool = False, archived: bool = False) -> List[Group]:
+        """The groups he leads; ``archived=True`` adds the archived ones (a change of the role cannot leave him as the teacher of a group that comes back from the archive)."""
+        q = self.db.query(Group).filter(Group.org_id == org_id, Group.teacher_id == user_id, Group.status.in_(("active", "archived") if archived else ("active",)))
         if lock:
             # the row locks are taken in ASCENDING ID everywhere (a lesson start / a membership change take them in the same order); the name order is for the caller
             rows = q.order_by(Group.id).with_for_update().populate_existing().all()
             return sorted(rows, key=lambda g: (g.name or "", str(g.id)))
         return q.order_by(Group.name, Group.id).all()
 
-    def _lock_groups_of(self, org_id: Any, user_id: Any) -> List[Group]:
+    def _lock_groups_of(self, org_id: Any, user_id: Any, *, archived: bool = False) -> List[Group]:
         """The groups he teaches AND the groups of his future substitutions, locked in ascending id (R3-4: a substitute who starts a lesson holds the group lock,
         so removal either sees his ``in_progress`` row or waits for the start); returns the groups he teaches (name order), read under the locks."""
         today = bc.business_today().isoformat()
         locked: set = set()
         for _ in range(3):
-            own = {g.id for g in self._teaching_groups(org_id, user_id)}
+            own = {g.id for g in self._teaching_groups(org_id, user_id, archived=archived)}
             subs = {
                 gid for (gid,) in self.db.query(LessonTeacherAssignment.group_id).filter(
                     LessonTeacherAssignment.org_id == org_id, LessonTeacherAssignment.teacher_id == user_id,
@@ -130,7 +133,7 @@ class StaffLifecycle:
                 break
             self.db.query(Group).filter(Group.id.in_(list(want))).order_by(Group.id).with_for_update().populate_existing().all()
             locked |= want
-        return self._teaching_groups(org_id, user_id)
+        return self._teaching_groups(org_id, user_id, archived=archived)
 
     def _in_progress(self, org_id: Any, user_id: Any) -> List[Any]:
         return (
@@ -154,13 +157,15 @@ class StaffLifecycle:
                 return {"date": occ["occurrenceDate"], "startTime": occ["startTime"]}
         return None
 
-    def impact(self, org_id: Any, member_id: Any) -> Dict[str, Any]:
+    def impact(self, org_id: Any, member_id: Any, *, role_change: bool = False) -> Dict[str, Any]:
         member = self._member(org_id, member_id)
-        return self._impact_of(org_id, member)
+        return self._impact_of(org_id, member, role_change=role_change)
 
-    def _impact_of(self, org_id: Any, member: OrganizationMember, groups: Optional[List[Group]] = None) -> Dict[str, Any]:
+    def _impact_of(self, org_id: Any, member: OrganizationMember, groups: Optional[List[Group]] = None, *, role_change: bool = False) -> Dict[str, Any]:
+        """``role_change`` = the impact of making a teacher an administrator: the archived groups count too (``groups`` then lists them, ``status`` says which)."""
         user = self.db.query(User).filter(User.id == member.user_id).first()
-        groups = groups if groups is not None else self._teaching_groups(org_id, member.user_id)
+        groups = groups if groups is not None else self._teaching_groups(org_id, member.user_id, archived=role_change)
+        every_group = groups if role_change else self._teaching_groups(org_id, member.user_id, archived=True)
         counts = {}
         if groups:
             counts = dict(
@@ -180,8 +185,10 @@ class StaffLifecycle:
             "name": short_name(user),
             "orgRole": member.org_role,
             "canRemove": member.org_role != "owner" and not groups and not in_progress,
+            "canChangeRole": member.org_role != "owner" and (member.org_role != "teacher" or (not every_group and not in_progress)),
             "groups": [
-                {"id": str(g.id), "name": g.name, "studentCount": int(counts.get(g.id, 0)), "nextLesson": self._next_lesson(g)}
+                {"id": str(g.id), "name": g.name, "status": g.status, "studentCount": int(counts.get(g.id, 0)),
+                 "nextLesson": self._next_lesson(g) if g.status == "active" else None}
                 for g in groups
             ],
             "inProgressLessons": [
@@ -231,7 +238,7 @@ class StaffLifecycle:
         moves: Dict[UUID, Any] = {}
         unassigned = False
         for group in groups:
-            if group.teacher_id != member.user_id or group.status != "active":
+            if group.teacher_id != member.user_id or group.status not in ("active", "archived"):
                 continue  # not his any more (a repeated handover): nothing to do
             target = wanted[group.id]
             if target is None:
@@ -242,7 +249,8 @@ class StaffLifecycle:
                 moves[group.id] = (group, _uuid(target))
         if unassigned and not req.confirmUnassigned:
             raise unprocessable("UNASSIGNED_NOT_CONFIRMED", ERROR_CATALOGUE["UNASSIGNED_NOT_CONFIRMED"][1])
-        self.teachers.check_new_group_teacher(org_id, {gid: pair for gid, pair in moves.items() if pair[1] is not None})
+        # an archived group has no lessons to check: its new teacher is judged when it comes back from the archive (``TEACHER_BUSY`` of the restore)
+        self.teachers.check_new_group_teacher(org_id, {gid: pair for gid, pair in moves.items() if pair[1] is not None and pair[0].status == "active"})
         now = bc.utc_now()
         handed: List[Dict[str, Any]] = []
         released = 0
@@ -261,8 +269,9 @@ class StaffLifecycle:
                     assigned_teacher_id=new_teacher, snapshot={"teacher_id": [_s(old), _s(new_teacher)], "via": "handover"}, created_at=now,
                 )
             )
-            released += self.teachers.release_equal_to_group_teacher(group, actor_id)
-            closed_requests += lesson_substitutions.on_group_teacher_changed(self.svc, group, actor_id, trigger="handover")
+            if group.status == "active":
+                released += self.teachers.release_equal_to_group_teacher(group, actor_id)
+                closed_requests += lesson_substitutions.on_group_teacher_changed(self.svc, group, actor_id, trigger="handover")
             handed.append({"groupId": str(group.id), "groupName": group.name, "fromTeacherId": _s(old), "toTeacherId": _s(new_teacher)})
         self.db.flush()
         remaining = self._teaching_groups(org_id, member.user_id)
@@ -275,6 +284,17 @@ class StaffLifecycle:
         }
 
     # -------------------------------------------------------------------------------------------- remove
+    def _release_work_of(self, org_id: Any, user_id: UUID, actor_id: Any, *, role_changed: bool) -> tuple:
+        """The ONE function of a dismissal and of a change of the role teacher -> administrator (LESSONS 15): his future substitutions are taken off (the reason says why:
+        «Сотрудник удалён» / «Роль изменена»), his waiting requests are closed, the requests that suggested him get ``suggestion_unavailable``, the substitutions decided from a request are
+        reopened.  The caller holds the group locks (``_lock_groups_of``) and the user row.  Returns ``(released, closed_requests, reopened)``."""
+        released = self.teachers.release_substitutions_of(
+            org_id, user_id, actor_id,
+            reason=REASON_ROLE_CHANGED if role_changed else REASON_REMOVED, trigger="role_changed" if role_changed else "member_removed",
+        )
+        closed_requests, reopened = lesson_substitutions.on_member_removed(self.svc, org_id, user_id, actor_id, self.teachers.last_released, role_changed=role_changed)
+        return released, closed_requests, reopened
+
     def remove(self, org_id: Any, member_id: Any, *, actor_id: Any) -> Dict[str, Any]:
         member = self._member(org_id, member_id, lock=True)
         if member.org_role == "owner":
@@ -289,8 +309,7 @@ class StaffLifecycle:
             self.db.rollback()
             raise self._assignments_error(impact)
         user = self.db.query(User).filter(User.id == member.user_id).with_for_update().first()        # the user row before the substitutions are released (same order as an assignment)
-        released = self.teachers.release_substitutions_of(org_id, member.user_id, actor_id)
-        closed_requests, reopened = lesson_substitutions.on_member_removed(self.svc, org_id, member.user_id, actor_id, self.teachers.last_released)
+        released, closed_requests, reopened = self._release_work_of(org_id, member.user_id, actor_id, role_changed=False)
         member.is_active = False
         if user is not None:
             user.is_active = False
@@ -332,19 +351,27 @@ class StaffLifecycle:
         if new_role == old_role:
             self.db.rollback()
             return {"member_id": str(member.id), "new_role": new_role}
-        if old_role == "teacher" and new_role != "teacher":
-            groups = self._teaching_groups(org_id, member.user_id, lock=True)
+        released = closed_requests = reopened = 0
+        leaving_teaching = old_role == "teacher" and new_role != "teacher"
+        if leaving_teaching:
+            # W1 round 2: he stops leading lessons, so (as on a dismissal) the groups - the active AND the archived ones - go to other teachers first, under the same locks
+            groups = self._lock_groups_of(org_id, member.user_id, archived=True)
             in_progress = self._in_progress(org_id, member.user_id)
             if groups or in_progress:
-                impact = self._impact_of(org_id, member, groups)
+                impact = self._impact_of(org_id, member, groups, role_change=True)
                 self.db.rollback()
                 raise self._assignments_error(impact)
+            self.db.query(User).filter(User.id == member.user_id).with_for_update().first()        # the user row before the substitutions are released (same order as an assignment)
+            released, closed_requests, reopened = self._release_work_of(org_id, member.user_id, actor_id, role_changed=True)
         member.org_role = new_role
-        if old_role == "teacher" and new_role != "teacher":
-            lesson_substitutions.on_role_changed(self.svc, org_id, member.user_id, actor_id)         # W1 S21: his waiting requests are closed (``ROLE_CHANGED``)
         user = self.db.query(User).filter(User.id == member.user_id).first()
         if user is not None:
             user.role = new_role
-        self._audit(member, actor_id, "role_changed", {"from": old_role, "to": new_role})
+        self._audit(member, actor_id, "role_changed", {"from": old_role, "to": new_role, "releasedSubstitutions": released, "closedSubstitutionRequests": closed_requests,
+                                                       "reopenedSubstitutionRequests": reopened})
         self.db.commit()
-        return {"member_id": str(member.id), "new_role": new_role}
+        out: Dict[str, Any] = {"member_id": str(member.id), "new_role": new_role}
+        if leaving_teaching:
+            out["releasedSubstitutions"] = released
+            out["closedSubstitutionRequests"] = closed_requests
+        return out

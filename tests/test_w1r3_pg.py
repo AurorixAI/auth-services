@@ -186,7 +186,7 @@ def test_r3_4_the_exam_check_starts_where_the_day_really_changes(w, exams_):
 def test_r3_5_a_request_decided_meanwhile_is_not_closed_by_the_role_change(w):
     from sqlalchemy.orm import sessionmaker
 
-    from src.auth.lesson_substitutions import on_role_changed
+    from src.auth.lesson_substitutions import on_member_removed
 
     put_teacher(w, w.G1, "lesson-l1", "2026-10-26", w.D)
     mine = req(w, "D", [(w.G1, "lesson-l1", "2026-10-26")]).json()["created"][0]
@@ -199,7 +199,7 @@ def test_r3_5_a_request_decided_meanwhile_is_not_closed_by_the_role_change(w):
     def run():
         s = sessionmaker(engine, autoflush=False)()
         try:
-            result["closed"] = on_role_changed(AuthService(s), w.org.id, w.D.id, w.owner.id)
+            result["closed"] = on_member_removed(AuthService(s), w.org.id, w.D.id, w.owner.id, [], role_changed=True)[0]
             s.commit()
         finally:
             s.close()

@@ -210,9 +210,9 @@ def test_s4_r7_busy_not_from_the_centre_requester_and_missing_rate(w):
 
 
 def test_s4_r7b_everybody_busy(w):
-    """[B2.S4.R7] Everybody who can teach is busy at that time: the list says so (``busy`` for all), the choice is refused one by one."""
+    """[B2.S4.R7] Every teacher is busy at that time: the list says so (``busy`` for all), the choice is refused one by one."""
     item = one(w)
-    for key, who in (("lesson-x1", w.C), ("lesson-x2", w.D), ("lesson-x3", w.admin), ("lesson-x4", w.owner)):
+    for key, who in (("lesson-x1", w.C), ("lesson-x2", w.D)):
         new_group(w.db, w.org, w.ids, key, key, who, [new_slot(key, 1, "10:00", "11:30", "2026-10-26")])
     w.db.commit()
     cands = client(w, "admin").get(f"{SUB}/{item['id']}/candidates").json()["candidates"]
@@ -221,13 +221,16 @@ def test_s4_r7b_everybody_busy(w):
 
 
 def test_s4_r8_roles(w):
-    """[B2.S4.R8] Owner / admin decide, a teacher 403; the substitute D: no access to the decision; A after the decision cannot write (NOT_LESSON_TEACHER) but reads the group; an owner / admin can be the substitute."""
+    """[B2.S4.R8] Owner / admin decide, a teacher 403; the substitute D: no access to the decision; A after the decision cannot write (NOT_LESSON_TEACHER) but reads the group; an owner / admin can NOT be the substitute (W1 round 2)."""
     item = one(w)
     assert decide(w, "A", item["id"], **sub_body(w, "D")).status_code == 403
     assert decide(w, "B", item["id"], **sub_body(w, "D")).status_code == 403
-    r = decide(w, "owner", item["id"], **sub_body(w, "admin"))
+    for who in ("admin", "owner"):
+        r = decide(w, "owner", item["id"], **sub_body(w, who))
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "TARGET_NOT_TEACHER", r.text
+    r = decide(w, "owner", item["id"], **sub_body(w, "D"))
     assert r.status_code == 200, r.text
-    assert assignments(w)[0].teacher_id == w.admin.id
+    assert assignments(w)[0].teacher_id == w.D.id
     assert client(w, "A").get(f"{API}/org/groups/{w.G1.id}/attendance", params={"month": "2026-10"}).status_code == 200
 
 

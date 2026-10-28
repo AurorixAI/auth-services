@@ -2145,7 +2145,7 @@ class AuthService:
             .filter(
                 OrganizationMember.org_id == org_id,
                 OrganizationMember.user_id == teacher_id,
-                OrganizationMember.org_role.in_(lesson_teachers.TEACHING_ROLES),  # lead decision: anybody who can teach (teacher / owner / admin)
+                OrganizationMember.org_role.in_(lesson_teachers.TEACHING_ROLES),  # W1 round 2 (#156): a group is led by a teacher only
                 OrganizationMember.is_active,
             )
             .first()
@@ -2163,6 +2163,11 @@ class AuthService:
         actor_role: Optional[str] = None,
     ) -> GroupResponse:
         changes = request.model_dump(exclude_none=True)
+        if "teacher_id" in request.model_fields_set and request.teacher_id is None:
+            # W1 round 2: «Не назначен» is no value of an existing group (a group is without a teacher only at creation, after a dismissal / a change of role)
+            raise ops_rules.unprocessable("TEACHER_REQUIRED", ops_rules.ERROR_CATALOGUE["TEACHER_REQUIRED"][1])
+        if "class_level" in request.model_fields_set and request.class_level is None:
+            changes["class_level"] = None  # an explicit null clears the class (exclude_none dropped it before)
         if "status" in changes:
             # O4: archiving is an operation with preconditions (POST .../archive, .../restore), never a free string
             raise ops_rules.unprocessable("STATUS_USE_ARCHIVE_ACTION", ops_rules.ERROR_CATALOGUE["STATUS_USE_ARCHIVE_ACTION"][1])

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from src.models.auth import GroupAttendance, LessonSubstitutionRequest as Req
+from src.models.auth import GroupAttendance, LessonSubstitutionRequest as Req, LessonTeacherAssignment
 from tests.b2_helpers import API, build_d2, client, clock, decide, needs_pg, pg_session, req, requests_of, row_of  # noqa: F401  (fixtures)
 from tests.pg_world import make_client
 
@@ -131,17 +131,15 @@ def test_s3_lesson_was_not_held_is_not_for_a_lesson_that_has_not_passed(w):
 
 
 # ===================================================================================================== S13
-def test_s13_an_owner_or_admin_who_is_a_substitute_reads_his_lessons(w):
+def test_s13_an_owner_or_admin_leads_no_lesson_and_reads_an_empty_mine(w):
+    """W1 round 2 (#156): only a teacher leads lessons.  The manager still reads ``mine`` (empty), but neither of them can be put on a lesson as a substitute."""
     for who in ("owner", "admin"):
         assert client(w, who).get(f"{SUB}/mine").status_code == 200
         assert client(w, who).get(f"{SUB}/mine").json() == {"items": [], "pendingTotal": 0, "assignedToMe": [], "clearedForMe": []}
-    put = client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher",
-                                 json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "teacherId": str(w.owner.id), "reason": "Болезнь"})
-    assert put.status_code == 200, put.text
-    mine = client(w, "owner").get(f"{SUB}/mine").json()
-    assert [(x["lessonId"], x["lessonDate"], x["groupName"]) for x in mine["assignedToMe"]] == [("lesson-l1", "2026-10-26", "9-А")]
-    assert mine["assignedToMe"][0]["replacing"]["id"] == str(w.A.id)
-    assert client(w, "admin").get(f"{SUB}/mine").json()["assignedToMe"] == []                    # somebody else's lessons are not his
+        put = client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher",
+                                     json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "teacherId": str(getattr(w, who).id), "reason": "Болезнь"})
+        assert put.status_code == 422 and put.json()["detail"]["code"] == "TARGET_NOT_TEACHER", put.text
+    assert w.db.query(LessonTeacherAssignment).filter_by(group_id=w.G1.id).count() == 0
     # a teacher keeps what he had; the admin of ANOTHER centre sees only his own centre (nothing of this one)
     assert client(w, "A").get(f"{SUB}/mine").status_code == 200
     assert make_client(w, user=w.foreign_admin, org="other", org_role="admin", role="admin").get(f"{SUB}/mine").json()["assignedToMe"] == []

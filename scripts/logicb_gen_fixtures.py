@@ -139,7 +139,7 @@ for g in ("G1", "G2"):
     future = [o for o in occurrences(g, TODAY, TODAY + timedelta(days=14)) if minutes(o[2]) > NOW_LOCAL.hour * 60 + NOW_LOCAL.minute or o[0] > TODAY]
     nxt = future[0]
     a_groups.append({
-        "id": IDS[g], "name": GROUPS[g]["name"], "studentCount": 3 if g == "G1" else 2,
+        "id": IDS[g], "name": GROUPS[g]["name"], "status": "active", "studentCount": 3 if g == "G1" else 2,
         "nextLesson": {"date": nxt[0].isoformat(), "startTime": nxt[2]},
     })
 assert a_groups[0]["nextLesson"] == {"date": "2026-10-21", "startTime": "16:00"}      # L2 today 16:00, not started
@@ -149,7 +149,7 @@ missed_A = [o for o in occurrences("G2", date(2026, 9, 1), TODAY) if o[0] not in
 assert [m[0].isoformat() for m in missed_A] == ["2026-10-20"]
 a_groups.sort(key=lambda g: g["name"])  # removal-impact lists the groups by name
 put("c1_removal_impact_A.json", "RemovalImpactOut", {
-    "memberId": IDS["member_A"], "userId": IDS["A"], "name": short("A"), "orgRole": "teacher", "canRemove": False,
+    "memberId": IDS["member_A"], "userId": IDS["A"], "name": short("A"), "orgRole": "teacher", "canRemove": False, "canChangeRole": False,
     "groups": a_groups, "inProgressLessons": [], "futureSubstitutions": {"count": 0},
     "missedLessons": {"count": len(missed_A)}, "pendingSubstitutionRequests": {"count": 0},
 })
@@ -249,7 +249,7 @@ put("c2_group_state_after_archive.json", "-", {
 put("c2_start_archived.json", "-", error(409, "GROUP_ARCHIVED", "Группа в архиве: изменить её нельзя. Верните её из архива"))
 RESTORE_LOCAL = datetime(2026, 11, 5, 14, 0)
 RESTORE_UTC = utc(RESTORE_LOCAL)
-put("c2_restore_teacher_inactive.json", "-", error(409, "TEACHER_INACTIVE", "Преподаватель группы больше не работает в центре", teacherName=short("B")))
+put("c2_restore_teacher_inactive.json", "-", error(409, "TEACHER_INACTIVE", "Преподаватель группы больше не ведёт уроки", teacherName=short("B")))
 put("c2_group_after_restore.json", "GroupRestoredB", group_response("G3", teacher="C", students=0, extra={"warnings": []}))
 put("c2_state_after_restore.json", "-", {
     "inactive_intervals": [{"from": ARCH_UTC.isoformat(), "to": RESTORE_UTC.isoformat()}],
@@ -416,10 +416,8 @@ put("x_lesson_teacher_candidates.json", "LessonTeacherCandidatesOut", {
 })
 put("x_lesson_teacher_changed.json", "-", error(409, "LESSON_TEACHER_CHANGED", f"Преподаватель урока уже изменён: {short('D')} Обновите страницу",
                                                  currentTeacherId=IDS["D"], teacher_name=short("D")))
-put("x_payroll_locked.json", "-", error(409, "PAYROLL_LOCKED", "Ведомость за этот месяц уже утверждена: смена преподавателя недоступна",
-                                         sheets=[{"sheet_id": uid("sheet-A-2026-10"), "teacher_id": IDS["A"], "month": "2026-10", "status": "approved"}]))
 put("x_member_has_assignments.json", "-", error(409, "MEMBER_HAS_ASSIGNMENTS", "У сотрудника есть группы или начатые уроки",
-                                                 memberId=IDS["member_A"], canRemove=False, groups=a_groups,
+                                                 memberId=IDS["member_A"], canRemove=False, canChangeRole=False, groups=a_groups,
                                                  inProgressLessons=[], futureSubstitutions={"count": 0}, missedLessons={"count": 1}))
 put("x_no_students_start.json", "-", error(409, "NO_STUDENTS", "В группе нет учеников — урок начать нельзя. Добавьте учеников в группу."))
 put("x_valid_from_past.json", "-", error(422, "VALID_FROM_PAST", "Дата начала не может быть в прошлом"))

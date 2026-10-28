@@ -251,14 +251,14 @@ def test_m8_the_archive_counts_the_requests_closed_by_the_cancelled_missed_lesso
 
 # ------------------------------------------------------------------------------------------------------------------------------ colleagues
 def test_colleagues_list_for_a_teacher_has_no_contacts_and_not_the_caller(w, clock):
-    """«Предложить коллегу»: the active staff who can teach, except the caller; id, name, role only; teachers allowed; a removed member is not listed."""
+    """«Предложить коллегу»: the active TEACHERS, except the caller (no owner, no admin: only a teacher leads lessons); id, name, role only; a removed member is not listed."""
     got = client(w, "A").get(f"{SUB}/colleagues")
     assert got.status_code == 200, got.text
     items = got.json()
     assert set(items[0]) == {"id", "name", "role"}
     assert str(w.A.id) not in {i["id"] for i in items}
-    assert {i["id"] for i in items} == {str(getattr(w, k).id) for k in ("owner", "admin", "B", "C", "D")}
-    assert {i["role"] for i in items} == {"owner", "admin", "teacher"}
+    assert {i["id"] for i in items} == {str(getattr(w, k).id) for k in ("B", "C", "D")}
+    assert {i["role"] for i in items} == {"teacher"}
     assert "@" not in str(items) and "+998" not in str(items)
     assert client(w, "admin").get(f"{SUB}/colleagues").status_code == 200
     assert client(w, "owner").delete(f"{API}/org/members/{w.ids('member_D')}").status_code == 200

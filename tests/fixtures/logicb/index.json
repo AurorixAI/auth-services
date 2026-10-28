@@ -53,7 +53,6 @@
   "x_occurrence_substitution.json": "ScheduleOccurrenceResponseB",
   "x_open_action_requires_admin.json": "OpenAttendanceActionResponseB",
   "x_org_stats.json": "OrgStatsOut",
-  "x_payroll_locked.json": "-",
   "x_staff_role_required.json": "-",
   "x_student_no_group.json": "StudentResponseB",
   "x_valid_from_past.json": "-"

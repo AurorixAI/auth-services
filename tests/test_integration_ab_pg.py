@@ -142,12 +142,13 @@ def test_payroll_hooks_of_a_name_the_sheets_of_both_teachers_and_never_lock(w, c
     total = saved.json()["total_amount"]
     paid = own.post(f"{API}/org/payroll/sheets/{saved.json()['id']}/payouts", json={"amount": total, "paid_on": "2026-10-21", "method": "cash"})
     assert paid.status_code in (200, 201), paid.text
-    payroll_hooks.assert_lesson_teacher_change_allowed(w.db, w.org.id, "2026-10-19", w.A.id, w.D.id)         # does not raise
-    touched = payroll_hooks.sheets_touched_by_lesson_teacher_change(w.db, w.org.id, "2026-10-19", w.A.id, w.D.id)
+    touched = payroll_hooks.sheets_touched_by_lesson_teacher_change(w.db, w.org.id, "2026-10-19", w.A.id, w.D.id, owner=True)
     assert [(t["teacher_id"], t["month"], t["status"]) for t in touched] == [(str(w.A.id), "2026-10", "settled")]
-    changed = put_teacher(w, w.G1, "D", lesson="lesson-l1", day="2026-10-19")
+    changed = put_teacher(w, w.G1, "D", lesson="lesson-l1", day="2026-10-19", who="owner")
     assert changed.status_code == 200 and changed.json()["attendanceUpdated"] is True
     assert [s["status"] for s in changed.json()["payrollSheetsAffected"]] == ["settled"]
+    # LESSONS 45 (S2-1): the administrator gets «the sheet will change» and nothing about the money of the teacher
+    assert payroll_hooks.sheets_touched_by_lesson_teacher_change(w.db, w.org.id, "2026-10-19", w.D.id, w.A.id, owner=False) == [{"month": "2026-10"}]
 
 
 # ======================================================================================================================== 2. pause x roster

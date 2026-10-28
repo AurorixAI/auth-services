@@ -6,7 +6,7 @@ restore = owner only.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -151,13 +151,14 @@ def restore_group(
 @router.get("/org/members/{member_id}/removal-impact", response_model=RemovalImpactOut, tags=["LOGIC-B staff"])
 def get_member_removal_impact(
     member_id: str,
+    intent: Literal["remove", "role_change"] = Query("remove", description="remove | role_change (a teacher becomes an administrator: the archived groups count too)"),
     user: dict = Depends(_manager),
     db: Session = Depends(get_db),
 ):
-    """Что мешает удалить сотрудника: группы, начатые уроки, замены, пропущенные уроки."""
+    """Что мешает удалить сотрудника (или сменить ему роль с преподавателя): группы, начатые уроки, замены, пропущенные уроки."""
     from .staff_lifecycle import StaffLifecycle
 
-    return StaffLifecycle(_svc(db)).impact(user["org_id"], member_id)
+    return StaffLifecycle(_svc(db)).impact(user["org_id"], member_id, role_change=intent == "role_change")
 
 
 @router.post("/org/members/{member_id}/handover", response_model=HandoverOut, tags=["LOGIC-B staff"])

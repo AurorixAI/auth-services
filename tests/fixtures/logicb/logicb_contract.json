@@ -2615,6 +2615,7 @@
         "type": "object"
       },
       "LessonTeacherPayrollSheet": {
+        "description": "LESSONS 45: the owner gets ``sheet_id`` / ``teacher_id`` / ``status`` (the payout state); the administrator only ``month`` - the fields he does not get are absent, not null.",
         "properties": {
           "month": {
             "title": "Month",
@@ -2643,12 +2644,18 @@
             "title": "Status"
           },
           "teacher_id": {
-            "title": "Teacher Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
           }
         },
         "required": [
-          "teacher_id",
           "month"
         ],
         "title": "LessonTeacherPayrollSheet",
@@ -3375,6 +3382,11 @@
             ],
             "title": "Nextlesson"
           },
+          "status": {
+            "default": "active",
+            "title": "Status",
+            "type": "string"
+          },
           "studentCount": {
             "default": 0,
             "title": "Studentcount",
@@ -3390,6 +3402,11 @@
       },
       "RemovalImpactOut": {
         "properties": {
+          "canChangeRole": {
+            "default": true,
+            "title": "Canchangerole",
+            "type": "boolean"
+          },
           "canRemove": {
             "title": "Canremove",
             "type": "boolean"
@@ -6173,7 +6190,7 @@
     },
     "/org/members/{member_id}/removal-impact": {
       "get": {
-        "description": "Что мешает удалить сотрудника: группы, начатые уроки, замены, пропущенные уроки.",
+        "description": "Что мешает удалить сотрудника (или сменить ему роль с преподавателя): группы, начатые уроки, замены, пропущенные уроки.",
         "parameters": [
           {
             "in": "path",
@@ -6181,6 +6198,22 @@
             "required": true,
             "schema": {
               "title": "Member Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "remove | role_change (a teacher becomes an administrator: the archived groups count too)",
+            "in": "query",
+            "name": "intent",
+            "required": false,
+            "schema": {
+              "default": "remove",
+              "description": "remove | role_change (a teacher becomes an administrator: the archived groups count too)",
+              "enum": [
+                "remove",
+                "role_change"
+              ],
+              "title": "Intent",
               "type": "string"
             }
           }
@@ -6872,11 +6905,6 @@
       "model": "OpsErrorResponse",
       "status": 403
     },
-    "PAYROLL_LOCKED": {
-      "message": "Ведомость за этот месяц уже утверждена: смена преподавателя недоступна",
-      "model": "OpsErrorResponse",
-      "status": 409
-    },
     "STAFF_ROLE_REQUIRED": {
       "message": "Добавлять учеников может администратор центра",
       "model": "OpsErrorResponse",
@@ -6898,9 +6926,14 @@
       "status": 409
     },
     "TEACHER_INACTIVE": {
-      "message": "Преподаватель группы больше не работает в центре",
+      "message": "Преподаватель группы больше не ведёт уроки",
       "model": "TeacherInactiveDetail",
       "status": 409
+    },
+    "TEACHER_REQUIRED": {
+      "message": "Выберите преподавателя",
+      "model": "OpsErrorResponse",
+      "status": 422
     },
     "UNASSIGNED_NOT_CONFIRMED": {
       "message": "Подтвердите, что группа останется без преподавателя",

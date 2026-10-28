@@ -10,34 +10,18 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from .ops_rules import OpsError
-
-
-class PayrollLocked(OpsError):
-    """409 ``PAYROLL_LOCKED``: the month's sheet of one of the two teachers is already approved / paid."""
-
-    def __init__(self, sheets: List[Dict[str, Any]]) -> None:
-        super().__init__(
-            409, "PAYROLL_LOCKED", "Ведомость за этот месяц уже утверждена: смена преподавателя недоступна", sheets=sheets
-        )
-        self.sheets = sheets
-
-
-def assert_lesson_teacher_change_allowed(
-    db, org_id, lesson_date: str, old_teacher_id: Optional[Any], new_teacher_id: Optional[Any]
-) -> None:
-    """LOGIC-A decision 6 (S-8): money that was paid out is never rewritten and a sheet has no "approved" state, so a change of "who taught"
-    is never forbidden by payroll: both teachers' saved sheets become "data changed" through the fingerprint and a paid-out month shows
-    "to pay N more" / "overpaid N".  ``PayrollLocked`` stays for a future lock; nothing raises it today."""
-    return None
-
 
 def sheets_touched_by_lesson_teacher_change(
-    db, org_id, lesson_date: str, old_teacher_id: Optional[Any], new_teacher_id: Optional[Any]
+    db, org_id, lesson_date: str, old_teacher_id: Optional[Any], new_teacher_id: Optional[Any], *, owner: bool
 ) -> List[Dict[str, Any]]:
-    """``[{"sheet_id", "teacher_id", "month", "status"}]`` of the SAVED sheets (of the lesson's month) of the two teachers - the sheets the
-    change makes "data changed".  ``status`` = the payout state of the sheet (``unpaid | due | settled | overpaid``: live payouts against the
-    saved total), so that the owner sees which of them were already paid out."""
+    """The SAVED sheets (of the lesson's month) of the two teachers - the sheets the change makes "data changed".
+
+    A change of "who taught" is never forbidden by payroll: a sheet has no "approved" state, money that was paid out is not rewritten, both
+    teachers' saved sheets become "data changed" through the fingerprint and the difference shows in the comparison.
+
+    LESSONS 45: the state of a teacher's money belongs to the owner.  ``owner=True`` -> ``[{"sheet_id", "teacher_id", "month", "status"}]`` (``status`` = the payout state
+    ``unpaid | due | settled | overpaid``: live payouts against the saved total); otherwise only ``[{"month"}]`` (one entry, no status, sheet or teacher), so that the
+    administrator still sees «Ведомость за октябрь изменится»."""
     from datetime import date
 
     from sqlalchemy import func
@@ -57,6 +41,8 @@ def sheets_touched_by_lesson_teacher_change(
         )
         .all()
     )
+    if not owner:
+        return [{"month": str(lesson_date)[:7]}] if sheets else []
     out: List[Dict[str, Any]] = []
     for sheet in sheets:
         paid = (

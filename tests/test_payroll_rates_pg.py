@@ -430,15 +430,21 @@ def test_a_manual_price_of_an_old_sheet_is_not_carried_to_a_recalculation_and_th
     assert owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}").json()["revision"] == 2
 
 
-def test_rates_belong_to_members_who_may_teach_and_a_deactivated_teacher_is_still_paid(world):
+def test_rates_belong_to_members_who_lead_lessons_and_a_deactivated_teacher_is_still_paid(world):
     from src.models.auth import OrganizationMember
 
     body = {"valid_from": "2026-09", "percents": {"group": "50"}}
     c = owner(world)
-    # an owner and an administrator may teach: they get rates
+    # W1 round 2: «the rate = who led lessons».  An owner / an administrator who never led a lesson gets no rate (422), but the history is readable
     for who in (world.owner, world.admin):
-        assert c.put(f"{API}/org/payroll/rates/{who.id}", json=body).status_code == 200
+        r = c.put(f"{API}/org/payroll/rates/{who.id}", json=body)
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "RATE_RECEIVER_NOT_TEACHER", r.text
         assert c.get(f"{API}/org/payroll/rates/{who.id}/history").status_code == 200
+        assert world.db.query(PayrollRate).filter_by(teacher_id=who.id).count() == 0
+    # ... one who HAS led lessons (a teacher who became an administrator) may be paid for them: the PUT is allowed
+    lesson(world, previous_month().d(20), {st: "present" for st in world.students}, teacher=world.admin)
+    assert c.put(f"{API}/org/payroll/rates/{world.admin.id}", json=body).status_code == 200
+    assert c.put(f"{API}/org/payroll/rates/{world.owner.id}", json=body).status_code == 422          # the owner has led none
     # a user who is not a member of the centre and an unknown id: 404 «Преподаватель не найден»
     outsider = make_user(world.db, "teacher", "Посторонний")
     world.db.commit()

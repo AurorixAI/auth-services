@@ -249,7 +249,7 @@ def test_s20_a_request_that_falls_out_of_the_window_says_so_and_the_badge_warns_
     assert ev.snapshot["trigger"] == "window_expired"
 
 
-def test_s21_a_teacher_who_becomes_an_administrator_has_his_waiting_requests_closed(w):
+def test_s21_a_teacher_who_becomes_an_administrator_has_his_waiting_requests_closed_and_his_substitutions_taken_off(w):
     assert client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher", json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "teacherId": str(w.D.id), "reason": "Болезнь"}).status_code == 200
     mine = req(w, "D", [(w.G1, "lesson-l1", "2026-10-26")]).json()["created"][0]
     member = w.db.query(OrganizationMember).filter_by(org_id=w.org.id, user_id=w.D.id).one()
@@ -259,11 +259,18 @@ def test_s21_a_teacher_who_becomes_an_administrator_has_his_waiting_requests_clo
     closed = [x for x in requests_of(w) if str(x.id) == mine["id"]][0]
     assert (closed.status, closed.closed_reason) == ("closed", "ROLE_CHANGED")
     assert events_of(w, closed.id)[-1].snapshot["trigger"] == "role_changed"
-    # the substitution planned for him stays and he reads it (S13)
-    assert [x["lessonId"] for x in client(w, "admin").get(f"{SUB}/mine").json()["assignedToMe"]] == []      # the admin of the test is somebody else
+    # W1 round 2 (#156): he no longer leads lessons, so the substitution planned for him is TAKEN OFF (the same function as a dismissal, reason «Роль изменена»)
+    assert r.json()["releasedSubstitutions"] == 1
+    asg = w.db.query(LessonTeacherAssignment).filter_by(group_id=w.G1.id, teacher_id=w.D.id).one()
+    assert asg.cancelled_at is not None
     from tests.pg_world import make_client
     d_as_admin = make_client(w, user=w.D, org="own", org_role="admin", role="admin")
-    assert [x["lessonId"] for x in d_as_admin.get(f"{SUB}/mine").json()["assignedToMe"]] == ["lesson-l1"]
+    assert d_as_admin.get(f"{SUB}/mine").json()["assignedToMe"] == []
+    occ = client(w, "admin").get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-26", "date_to": "2026-10-26"}).json()
+    assert [o["teacherId"] for o in occ if o["id"] == "lesson-l1"] == [str(w.A.id)]
+    assert {a_.action for a_ in w.db.query(GroupAudit).filter_by(group_id=w.G1.id)} >= {"lesson_teacher_cleared"}
+    cleared = [x for x in w.db.query(LessonSubstitutionEvent) if x.action == "assignment_cleared" or (x.snapshot or {}).get("trigger") == "role_changed"]
+    assert any((x.snapshot or {}).get("trigger") == "role_changed" for x in cleared)
 
 
 def test_s22_a_release_never_takes_off_a_started_or_held_lesson_and_the_substitute_reads_what_was_cleared(w, clock):

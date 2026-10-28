@@ -4,7 +4,6 @@ from datetime import date, datetime, timedelta
 import pytest
 from sqlalchemy import text
 
-from src.auth import payroll_hooks
 from src.models.auth import GroupAttendance, GroupAudit, LessonTeacherAssignment
 
 from tests.ops_helpers import (  # noqa: F401  (fixtures)
@@ -138,7 +137,7 @@ def test_r4c_a_substitution_during_a_start_is_refused_and_the_teacher_keeps_the_
 
 
 def test_r5_who_taught_a_finished_lesson_can_be_corrected_inside_the_window_only(w, monkeypatch, clock):
-    """[O5.R5] Admin / owner, window from the 1st of the previous month; an approved sheet (payroll hook) -> 409 PAYROLL_LOCKED; older than the window -> 422;
+    """[O5.R5] Admin / owner, window from the 1st of the previous month (a saved / paid sheet never blocks the change: it becomes «data changed»); older than the window -> 422;
     a missed lesson is reconciled by the teacher OF THAT DATE, not by the new teacher."""
     r = put(w, "admin", w.G1, "D", lesson="lesson-l1", day="2026-10-19", reason="Исправление")
     assert r.status_code == 200 and r.json()["attendanceUpdated"] is True and r.json()["version"] == 2
@@ -148,13 +147,6 @@ def test_r5_who_taught_a_finished_lesson_can_be_corrected_inside_the_window_only
         [r_[0] for r_ in w.db.execute(text("SELECT action FROM group_attendance_audit WHERE attendance_id=:i"), {"i": row.id}).fetchall()]
     assert "teacher_changed" in kinds
 
-    def locked(db, org_id, lesson_date, old, new):
-        raise payroll_hooks.PayrollLocked([{"sheet_id": "x", "teacher_id": str(old), "month": lesson_date[:7], "status": "approved"}])
-
-    monkeypatch.setattr(payroll_hooks, "assert_lesson_teacher_change_allowed", locked)
-    blocked = put(w, "admin", w.G1, "B", lesson="lesson-l1", day="2026-10-12", reason="Исправление")
-    assert blocked.status_code == 409 and blocked.json()["detail"]["code"] == "PAYROLL_LOCKED"
-    assert blocked.json()["detail"]["sheets"][0]["month"] == "2026-10"
     old = put(w, "admin", w.G1, "B", lesson="lesson-l1", day="2026-08-31", reason="Исправление")
     assert old.status_code == 422 and old.json()["detail"]["code"] == "LESSON_OUTSIDE_WINDOW"
 
@@ -296,4 +288,4 @@ def test_inv_o5_candidates_busy_flags(w):
     assert r.status_code == 200
     by_name = {c["name"]: c for c in r.json()["candidates"]}
     assert by_name["Петров П."]["busy"] is True and by_name["Петров П."]["busyWith"] == {"groupName": "8-В", "startTime": "10:00", "endTime": "11:30"}
-    assert by_name["Рахимов Т."]["busy"] is False and by_name["Усманов У."]["busy"] is False         # the owner can teach too (Q1)
+    assert by_name["Рахимов Т."]["busy"] is False and "Усманов У." not in by_name         # the owner leads no lesson (W1 round 2)

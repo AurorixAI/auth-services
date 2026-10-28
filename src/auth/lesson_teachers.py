@@ -52,7 +52,18 @@ from .ops_rules import (
 
 logger = logging.getLogger(__name__)
 
-TEACHING_ROLES = ("teacher", "owner", "admin")  # lead decision on Q1: any member who can teach (as for the payroll rates)
+TEACHING_ROLES = ("teacher",)  # W1 round 2 (#156): lessons are led by a TEACHER only; an owner / administrator leads nothing (the one place of the rule)
+
+
+REASON_REMOVED = "Сотрудник удалён: замена снята"
+REASON_ROLE_CHANGED = "Роль изменена: замена снята"
+
+
+def can_lead(org_role: Optional[str]) -> bool:
+    """May a member with this role lead lessons (main teacher of a group, substitute, teacher of an import row, receiver of a payroll rate)?"""
+    return org_role in TEACHING_ROLES
+
+
 CONFLICT_LIMIT = 20
 HORIZON_DAYS = 56
 LESSON_DATE_MAX_AHEAD_DAYS = 365
@@ -253,7 +264,7 @@ class LessonTeachers:
 
     # ---------------------------------------------------------------------------------------------- people
     def teaching_member(self, org_id: Any, user_id: Any) -> Optional[Tuple[User, OrganizationMember]]:
-        """The user, if he is an active member of the centre who can teach (teacher / owner / admin) and his account is active."""
+        """The user, if he is an active member of the centre who can teach (``can_lead``: a teacher) and his account is active."""
         uid = _uuid(user_id)
         if uid is None:
             return None
@@ -714,9 +725,10 @@ class LessonTeachers:
             GroupAttendance.status.in_((IN_PROGRESS, COMPLETED)))}
         return [(a, g) for a, g in pairs if (a.group_id, a.lesson_id, a.lesson_date) not in started]
 
-    def release_substitutions_of(self, org_id: Any, teacher_id: UUID, actor_id: Any) -> int:
-        """A removed teacher's future substitutions are taken off (the lessons return to the group teachers by date).  ``self.last_released`` keeps
-        ``[(assignment, group)]`` for LOGIC-B2 (a substitution decided from a request is reopened as a new request)."""
+    def release_substitutions_of(self, org_id: Any, teacher_id: UUID, actor_id: Any, *, reason: str = REASON_REMOVED, trigger: str = "member_removed") -> int:
+        """A removed teacher's (or one who stopped being a teacher) future substitutions are taken off (the lessons return to the group teachers by date).
+        ``reason`` / ``trigger`` say why: «Сотрудник удалён» / «Роль изменена».  ``self.last_released`` keeps ``[(assignment, group)]`` for LOGIC-B2 (a substitution
+        decided from a request is reopened as a new request)."""
         rows = (
             self.db.query(LessonTeacherAssignment, Group)
             .join(Group, Group.id == LessonTeacherAssignment.group_id)
@@ -731,7 +743,7 @@ class LessonTeachers:
         rows = self._not_started(list(rows))
         self.last_released = list(rows)
         for asg, group in rows:
-            self.cancel_assignment(asg, actor_id, group=group, reason="Сотрудник удалён: замена снята", trigger="member_removed")
+            self.cancel_assignment(asg, actor_id, group=group, reason=reason, trigger=trigger)
         return len(rows)
 
     def count_future_substitutions(self, org_id: Any, teacher_id: UUID) -> int:
@@ -830,8 +842,7 @@ class LessonTeachers:
         sheets: List[Dict[str, Any]] = []
         old_for_row = row_teacher if row is not None else current
         if row is not None and row.status == COMPLETED and want != row_teacher:
-            payroll_hooks.assert_lesson_teacher_change_allowed(self.db, org_id, lesson_date, row_teacher, want)
-            sheets = payroll_hooks.sheets_touched_by_lesson_teacher_change(self.db, org_id, lesson_date, row_teacher, want)
+            sheets = payroll_hooks.sheets_touched_by_lesson_teacher_change(self.db, org_id, lesson_date, row_teacher, want, owner=actor_role == "owner")
         now = bc.utc_now()
         actor = _uuid(actor_id)
         if row is not None and row_teacher != want:

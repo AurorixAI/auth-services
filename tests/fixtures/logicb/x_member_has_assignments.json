@@ -1,6 +1,7 @@
 {
   "body": {
     "detail": {
+      "canChangeRole": false,
       "canRemove": false,
       "code": "MEMBER_HAS_ASSIGNMENTS",
       "futureSubstitutions": {
@@ -14,6 +15,7 @@
             "date": "2026-10-27",
             "startTime": "10:00"
           },
+          "status": "active",
           "studentCount": 2
         },
         {
@@ -23,6 +25,7 @@
             "date": "2026-10-21",
             "startTime": "16:00"
           },
+          "status": "active",
           "studentCount": 3
         }
       ],

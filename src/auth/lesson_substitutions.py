@@ -32,6 +32,7 @@ from . import exam_bridge, payroll_hooks, substitution_rules as R
 from .days_off import DaysOffService
 from .lesson_cancel import LessonCancelMixin, RESTORED, lesson_outcomes
 from .lesson_teachers import (
+    TEACHING_ROLES,
     BusyItem,
     LessonTeachers,
     TeacherBook,
@@ -153,7 +154,8 @@ class SubstitutionsBase:
         if suggested:
             ctx.active_members = {
                 uid for (uid,) in self.db.query(OrganizationMember.user_id).join(User, User.id == OrganizationMember.user_id)
-                .filter(OrganizationMember.user_id.in_(suggested), OrganizationMember.is_active.is_(True), User.is_active.isnot(False))
+                .filter(OrganizationMember.user_id.in_(suggested), OrganizationMember.is_active.is_(True), OrganizationMember.org_role.in_(TEACHING_ROLES),
+                        User.is_active.isnot(False))          # W1 round 2: «available» = active AND a teacher (one who became an administrator no longer leads lessons)
             }
         by_group: Dict[UUID, List[str]] = {}
         for r in reqs:
@@ -719,7 +721,7 @@ class SubstitutionsBase:
         return self.teachers.rates_missing(org_id, teacher_ids, lesson_type, lesson_date)
 
     def colleagues(self, org_id: Any, actor_id: Any) -> List[Dict[str, Any]]:
-        """«Предложить коллегу»: the active staff of the centre who can teach (teacher / owner / admin) except the caller - id, name and role only (no e-mail, no phone)."""
+        """«Предложить коллегу»: the active teachers of the centre (only a teacher leads lessons) except the caller - id, name and role only (no e-mail, no phone)."""
         actor = _uuid(actor_id)
         roles = dict(self.db.query(OrganizationMember.user_id, OrganizationMember.org_role).filter(OrganizationMember.org_id == org_id).all())
         return [{"id": str(u.id), "name": short_name(u) or "", "role": roles.get(u.id, "teacher")}
@@ -1508,19 +1510,6 @@ def on_schedule_changed(svc, group: Group, lesson_id: str, from_date: date, acto
     return {"closedRequests": closed, "releasedSubstitutes": released, "removedCancellations": removed}
 
 
-def on_role_changed(svc, org_id: Any, user_id: UUID, actor_id: Any) -> int:
-    """W1 S21 (D27): a teacher became an administrator - an administrator asks nothing, so the requests of his that wait are closed ``ROLE_CHANGED`` (event, trigger ``role_changed``).  The
-    substitutions already planned for him stay (he reads them in ``GET /org/substitutions/mine``).  The caller commits.  Returns how many were closed."""
-    subs = Substitutions(svc)
-    closed = 0
-    for rid in [r.id for r in svc.db.query(Req.id).filter(Req.org_id == org_id, Req.requester_id == user_id, Req.status == PENDING)]:
-        r = svc.db.query(Req).filter(Req.id == rid).with_for_update().populate_existing().first()          # (R3 5) a decision that came meanwhile wins: the row is read again under its lock
-        if r is not None and r.status == PENDING:
-            subs.close(r, "ROLE_CHANGED", actor_id=actor_id, trigger="role_changed")
-            closed += 1
-    return closed
-
-
 def on_group_teacher_changed(svc, group: Group, actor_id: Any = None, trigger: str = "group_teacher_changed") -> int:
     """After the teacher of a group changed (``update_group``, handover, restore): the pending requests whose requester no longer leads the lesson are closed
     ``GROUP_TEACHER_CHANGED`` in the same transaction (the caller commits)."""
@@ -1552,18 +1541,24 @@ def count_pending_of_teacher(db, org_id: Any, user_id: Any) -> int:
     return db.query(Req).filter(Req.org_id == org_id, Req.requester_id == user_id, Req.status == PENDING).count()
 
 
-def on_member_removed(svc, org_id: Any, user_id: UUID, actor_id: Any, released: Sequence[Tuple[LessonTeacherAssignment, Group]]) -> Tuple[int, int]:
-    """After a member was removed (the caller commits): his pending requests are closed ``TEACHER_REMOVED``; the requests whose assignment (HIM as the
-    substitute) was just released are reopened as new system requests when the requester still leads the lesson (D-10); the requests that suggested him get one
-    ``suggestion_unavailable`` event.  Returns ``(closed, reopened)``."""
+def on_member_removed(svc, org_id: Any, user_id: UUID, actor_id: Any, released: Sequence[Tuple[LessonTeacherAssignment, Group]], *, role_changed: bool = False) -> Tuple[int, int]:
+    """After a member was removed - or, with ``role_changed``, stopped being a teacher (W1 round 2: only a teacher leads lessons) - the ONE function of both (the caller commits):
+    his pending requests are closed ``TEACHER_REMOVED`` (``ROLE_CHANGED``, trigger ``role_changed``); the requests whose assignment (HIM as the substitute) was just released are
+    reopened as new system requests when the requester still leads the lesson (D-10); the requests that suggested him get one ``suggestion_unavailable`` event.
+    Returns ``(closed, reopened)``."""
     subs = Substitutions(svc)
     db = svc.db
     now = bc.utc_now()
     closed = 0
     for r in db.query(Req).filter(Req.org_id == org_id, Req.requester_id == user_id, Req.status == PENDING).all():
-        subs.close(r, "TEACHER_REMOVED", actor_id=actor_id, trigger="member_removed")
+        r = db.query(Req).filter(Req.id == r.id).with_for_update().populate_existing().first()          # (R3 5) a decision that came meanwhile wins: the row is read again under its lock
+        if r is None or r.status != PENDING:
+            continue
+        subs.close(r, "ROLE_CHANGED" if role_changed else "TEACHER_REMOVED", actor_id=actor_id, trigger="role_changed" if role_changed else "member_removed")
         closed += 1
     for r in db.query(Req).filter(Req.org_id == org_id, Req.suggested_teacher_id == user_id, Req.status == PENDING).all():
+        if any((e.snapshot or {}).get("teacherId") == str(user_id) for e in db.query(LessonSubstitutionEvent).filter(LessonSubstitutionEvent.request_id == r.id, LessonSubstitutionEvent.action == "suggestion_unavailable")):
+            continue                        # told once (the cleanup script may run again)
         subs.event(r, "suggestion_unavailable", actor_id, {"teacherId": str(user_id)})
     db.flush()      # the sessions of production run with autoflush=False: the closings above must be visible to the "pending already on this lesson?" query
     reopened = 0
@@ -1590,11 +1585,11 @@ def on_member_removed(svc, org_id: Any, user_id: UUID, actor_id: Any, released: 
             continue                                       # the lesson was cancelled / moved meanwhile: nothing to reopen
         new = Req(org_id=org_id, group_id=group.id, lesson_id=asg.lesson_id, lesson_date=asg.lesson_date, start_time=occ["startTime"], end_time=occ["endTime"],
                   starts_at=starts_at, requester_id=old.requester_id, origin="system", batch_id=uuid4(), reason_code="other",
-                  comment=f"Заменяющий {short_name(removed_user)} больше не работает в центре. Нужно новое решение.", suggested_teacher_id=None,
+                  comment=f"Заменяющий {short_name(removed_user)} больше не {'ведёт уроки' if role_changed else 'работает в центре'}. Нужно новое решение.", suggested_teacher_id=None,
                   status=PENDING, previous_request_id=old.id, created_at=now, updated_at=now)
         db.add(new)
         db.flush()
-        subs.event(new, "reopened", actor_id, {"previousRequestId": str(old.id), "removedTeacherId": str(user_id)})
+        subs.event(new, "reopened", actor_id, {"previousRequestId": str(old.id), "removedTeacherId": str(user_id), **({"cause": "role_changed"} if role_changed else {})})
         reopened += 1
     return closed, reopened
 

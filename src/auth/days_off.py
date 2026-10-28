@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -41,6 +42,7 @@ HOLIDAY = "holiday"
 CENTRE = "centre"
 EXAM_DOWN = "сервис экзаменов недоступен, повторите"
 EXAMS_NOTE = "Экзамены, снятые с уроков, при отмене выходного не вернутся — назначьте заново"
+EXAMS_NOTE_VOID = "Если с этих уроков снимались экзамены — назначьте их заново"          # «Отменить выходной»: the server does not know whether the day off took exams off, so the sentence is conditional
 
 
 # ================================================================================================================
@@ -124,10 +126,12 @@ _Date = date
 
 class DayOffWarning(BaseModel):
     code: str
-    message: str
+    message: str                               # the line for the journal / the API; the screen builds its own line from the fields below
     groupId: Optional[str] = None
+    groupName: Optional[str] = None
     lessonId: Optional[str] = None
     date: Optional[_Date] = None
+    startTime: Optional[str] = None            # of the lesson (the same line as in the lists of the lessons)
     substituteName: Optional[str] = None
 
 
@@ -136,7 +140,7 @@ class DayOffVoided(BaseModel):
     restored: List[DayOffLesson] = Field(default_factory=list)
     kept: List[DayOffLesson] = Field(default_factory=list)
     dryRun: bool = False
-    examsNote: str = EXAMS_NOTE
+    examsNote: str = EXAMS_NOTE_VOID
     warnings: List[DayOffWarning] = Field(default_factory=list)      # W1: ``SUBSTITUTE_NOT_RESTORED`` - a lesson that came back without the substitute the day off took off it
 
 
@@ -252,6 +256,19 @@ class DaysOffService:
     def _item(group: Group, occurrence: Dict[str, Any], reason: Optional[str] = None) -> DayOffLesson:
         return DayOffLesson(groupId=str(group.id), groupName=group.name, lessonId=occurrence["id"], date=date.fromisoformat(occurrence["occurrenceDate"]),
                             startTime=occurrence.get("startTime"), endTime=occurrence.get("endTime"), reason=reason)
+
+    def _att_item(self, att: GroupAttendance, group: Optional[Group], cache: Dict[Any, Dict[str, Any]]) -> DayOffLesson:
+        """The line of a lesson that is known by its journal row (the plan of «Отменить выходной», its result and its warnings): the SAME line as the preview builds
+        (``_item``), with the time of the lesson in the schedule of the group (a lesson that is no longer there has no time)."""
+        occ = None
+        if group is not None:
+            key = (group.id, att.lesson_date)
+            if key not in cache:
+                day = date.fromisoformat(att.lesson_date)
+                cache[key] = {o["id"]: o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day)}
+            occ = cache[key].get(att.lesson_id)
+        shown = SimpleNamespace(id=att.group_id, name=group.name if group is not None else "")
+        return self._item(shown, occ or {"id": att.lesson_id or "", "occurrenceDate": att.lesson_date})
 
     OLD_CONVERT = "Отмена «по вине центра» старше окна незакрытых уроков: её вид не меняется (закрытый период не пересчитывается)"
 
@@ -535,10 +552,11 @@ class DaysOffService:
         kept: List[DayOffLesson] = []
         trace: List[Dict[str, Any]] = []
         doomed: List[GroupAttendance] = []
+        lines: Dict[Any, Dict[str, Any]] = {}          # the schedule of a (group, day) read once: the times of the lines
         for att in atts:
             group = groups.get(att.group_id)
             day = date.fromisoformat(att.lesson_date)
-            item = DayOffLesson(groupId=str(att.group_id), groupName=group.name if group else "", lessonId=att.lesson_id or "", date=day)
+            item = self._att_item(att, group, lines)
             if att.converted_from_kind is not None and att.status == LessonAttendanceStatus.CANCELLED.value:
                 covering = next((o for o in others if o.date_from <= day <= o.date_to), None)
                 if covering is not None:
@@ -582,7 +600,7 @@ class DaysOffService:
                     actor_role=actor_role if actor_role in ("owner", "admin", "teacher", "superadmin") else "admin", action="day_off_voided",
                     snapshot={"day_off_id": str(row.id), "reason": row.reason, "dateFrom": row.date_from.isoformat(), "dateTo": row.date_to.isoformat(), "restored": entries}))
             self.db.flush()
-            warnings = self._substitutes_not_restored(doomed, groups)
+            warnings = self._substitutes_not_restored(doomed, groups, lines)
             from .lesson_substitutions import reopen_requests_closed_by_day_off
 
             reopen_requests_closed_by_day_off(self.svc, row, doomed, UUID(str(actor_id)))          # W1 S10+ (Д28)
@@ -592,8 +610,9 @@ class DaysOffService:
             logger.info("day off voided org=%s id=%s restored=%d kept=%d", org_id, row.id, len(restored), len(kept))
             row = self.db.query(OrgDayOff).filter(OrgDayOff.id == day_off_id).one()
         else:
-            warnings = self._substitutes_not_restored(doomed, groups)
-        return DayOffVoided(dayOff=self._out(row), restored=restored, kept=kept, dryRun=dry_run, warnings=warnings)
+            warnings = self._substitutes_not_restored(doomed, groups, lines)
+        return DayOffVoided(dayOff=self._out(row), restored=restored, kept=kept, dryRun=dry_run, warnings=warnings,
+                            examsNote=EXAMS_NOTE_VOID if restored else "")
 
     def _revert_conversion(self, att: GroupAttendance, day_off: OrgDayOff, actor_id: str) -> None:
         """A hand-made cancellation that THIS day off turned into a holiday goes back to the kind it had (``centre``), without a day off, with its own reason; it stays cancelled (audited)."""
@@ -616,10 +635,11 @@ class DaysOffService:
         except (KeyError, ValueError, AttributeError):
             return False
 
-    def _substitutes_not_restored(self, doomed: List[GroupAttendance], groups: Dict[Any, Group]) -> List[DayOffWarning]:
+    def _substitutes_not_restored(self, doomed: List[GroupAttendance], groups: Dict[Any, Group], lines: Optional[Dict[Any, Dict[str, Any]]] = None) -> List[DayOffWarning]:
         """W1: the lessons that come back WITHOUT the substitute the day off took off them (the author of the cancellation took the assignment off in the same step): the administrator
         assigns them again."""
         out: List[DayOffWarning] = []
+        lines = {} if lines is None else lines
         for att in doomed:
             asg = (self.db.query(LessonTeacherAssignment).filter(LessonTeacherAssignment.group_id == att.group_id, LessonTeacherAssignment.lesson_id == att.lesson_id,
                                                                   LessonTeacherAssignment.lesson_date == att.lesson_date, LessonTeacherAssignment.cancelled_at.isnot(None),
@@ -630,7 +650,9 @@ class DaysOffService:
             who = self._names([asg.teacher_id]).get(asg.teacher_id)
             group = groups.get(att.group_id)
             day = date.fromisoformat(att.lesson_date)
-            out.append(DayOffWarning(code="SUBSTITUTE_NOT_RESTORED", groupId=str(att.group_id), lessonId=att.lesson_id, date=day, substituteName=who,
+            line = self._att_item(att, group, lines)
+            out.append(DayOffWarning(code="SUBSTITUTE_NOT_RESTORED", groupId=str(att.group_id), groupName=line.groupName or None, lessonId=att.lesson_id, date=day, startTime=line.startTime,
+                                     substituteName=who,
                                      message=f"{_dm(day)}{(' — «' + group.name + '»') if group else ''}: замена ({who or 'преподаватель'}) была снята выходным и не вернулась — назначьте её заново"))
         return out
 

@@ -138,9 +138,11 @@ def test_r7_homonym_without_phone_and_the_teacher_errors(w):
     w.db.commit()
     bad = post(w, "preview", book([["Новая", 9, w.D.email, None]], []))
     assert bad.json()["issues"][0]["code"] == "TEACHER_INACTIVE" and bad.json()["ok"] is False
-    # the owner / admin may teach (lead decision)
-    ok = post(w, "preview", book([["Новая", 9, w.admin.email, None]], [])).json()
-    assert ok["ok"] is True
+    # W1 round 2: only a teacher leads a group - the owner / the admin in «Почта учителя» is an error of the row
+    for who in (w.admin, w.owner):
+        bad = post(w, "preview", book([["Новая", 9, who.email, None]], [])).json()
+        assert bad["ok"] is False and bad["issues"][0]["code"] == "TEACHER_NOT_TEACHER"
+    assert post(w, "preview", book([["Новая", 9, w.C.email, None]], [])).json()["ok"] is True
     rng = post(w, "preview", book([["Новая", 9, None, 101]], [])).json()
     assert rng["ok"] is False and rng["issues"][0]["code"] == "MAX_STUDENTS_RANGE"
 

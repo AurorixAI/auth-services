@@ -32,7 +32,7 @@ def test_teacher_change_is_validated_and_audited(world):
     assert row.snapshot == {"teacher_id": [str(world.teacher.id), str(world.teacher2.id)]}
 
 
-@pytest.mark.parametrize("who", ["foreign_teacher", "random", "inactive", "garbage"])  # LOGIC-B (lead decision): an admin / owner of the centre may be a group teacher
+@pytest.mark.parametrize("who", ["foreign_teacher", "admin_user", "random", "inactive", "garbage"])  # W1 round 2: an admin / owner of the centre can NOT be a group teacher
 def test_wrong_teacher_is_400_and_nothing_changes(world, who):
     from tests.pg_world import make_member, make_user
 

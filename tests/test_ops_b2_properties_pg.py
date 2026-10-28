@@ -98,7 +98,7 @@ def test_b2_invariants_after_random_operations(pg_session, clock, sync, seed):
             kind = rnd.choice(["substitute", "substitute", "cancel", "reject", "reschedule"])
             body = {"decision": kind}
             if kind == "substitute":
-                body["teacherId"] = str(getattr(w, rnd.choice(staff + ["admin"])).id)
+                body["teacherId"] = str(getattr(w, rnd.choice(staff)).id)
             elif kind in ("cancel", "reject"):
                 body["reason"] = SECRET
             else:
