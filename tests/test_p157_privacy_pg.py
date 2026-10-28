@@ -134,17 +134,16 @@ def test_a1_the_kind_of_a_cancellation_and_the_reason_of_a_restore_are_the_manag
     assert item["id"] in mine_ids
     teacher_view = client(w, "A").get(f"{SUB}/{item['id']}").json()
     assert all("cancellationKind" not in e["snapshot"] for e in teacher_view["events"])
-    restored = [i for i in client(w, "owner").get(SUB, params={"status": "decided"}).json()["items"] if (i["decision"] or {}).get("closedReason") == "LESSON_RESTORED"]
-    assert len(restored) == 1
     for who, shown in (("owner", True), ("A", False)):
-        body = client(w, who).get(f"{SUB}/{restored[0]['id']}").json()
+        body = client(w, who).get(f"{SUB}/{item['id']}").json()
         text = json.dumps(body, ensure_ascii=False)
-        assert ("Секретная причина возврата" in text) is shown, who                                  # the manager reads it in the event, a teacher never
-        closed = [e for e in body["events"] if e["action"] == "closed"][0]["snapshot"]
-        assert closed["closedReason"] == "LESSON_RESTORED"
-        assert set(closed) <= set(SNAPSHOT_KEYS["closed"]) and ({"reason", "previous"} <= set(closed)) is shown
+        assert ("Секретная причина возврата" in text) is shown, who                                  # the manager reads it in the event, a teacher never (also not in the record of the return)
+        back = [e for e in body["events"] if e["action"] == "lesson_restored"]
+        assert len(back) == 1 and not [e for e in body["events"] if e["action"] == "closed" and e["snapshot"].get("closedReason") == "LESSON_RESTORED"]        # one event for the pair (R3 11)
+        snap = back[0]["snapshot"]
+        assert set(snap) <= set(SNAPSHOT_KEYS["lesson_restored"]) and ({"reason", "previous"} <= set(snap)) is shown
         if shown:
-            assert set(closed["previous"]) <= set(_PREVIOUS_KEYS)
+            assert set(snap["previous"]) <= set(_PREVIOUS_KEYS) and snap["previous"]["cancellationKind"] == "centre"
 
 
 def test_a1_every_key_the_code_writes_is_on_the_list_or_cut_on_purpose(w, sync):
@@ -194,3 +193,66 @@ def test_a2_what_an_administrator_wrote_on_his_own_action_is_not_in_the_teachers
         assert secret in json.dumps(client(w, "admin").get(SUB, params={"status": "decided", "dateFrom": "2026-10-01"}).json(), ensure_ascii=False)       # the manager reads them
     for i in triggered:                                                                                  # the same in the detail
         assert client(w, "A").get(f"{SUB}/{i['id']}").json()["item"]["comment"] is None
+
+
+# ============================================================================================================ R3 fix round
+def test_r3_the_substitute_reads_who_took_the_lesson_off_him_by_the_role_only(w, sync):
+    """/mine ``clearedForMe``: D was the substitute; the administrator took it off, then another teacher cancelled a lesson of his - no name, no id of the author in either."""
+    assert client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher", json={"lessonDate": DAY, "lessonId": "lesson-l1", "teacherId": str(w.D.id), "reason": "Болезнь"}).status_code == 200
+    assert client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher", json={"lessonDate": DAY, "lessonId": "lesson-l1", "teacherId": None, "reason": "Снова основной"}).status_code == 200
+    assert client(w, "owner").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher", json={"lessonDate": "2026-11-02", "lessonId": "lesson-l1", "teacherId": str(w.D.id), "reason": "Болезнь"}).status_code == 200
+    sheet(w, "owner", w.G1, "lesson-l1", "2026-11-02", reason="Урока не будет")                                # the owner cancels the lesson D was to lead: D's substitution is taken off by the owner
+    body = client(w, "D").get(f"{SUB}/mine").json()
+    cleared = body["clearedForMe"]
+    assert len(cleared) == 2 and {c["lessonDate"] for c in cleared} == {DAY, "2026-11-02"}
+    assert all(c["clearedBy"] is not None and c["clearedBy"]["id"] is None and c["clearedBy"]["name"] is None for c in cleared)
+    assert {c["clearedBy"]["role"] for c in cleared} == {"admin", "owner"}
+    text = json.dumps(body, ensure_ascii=False)
+    for who in ("admin", "owner"):
+        assert short_name(getattr(w, who)) not in text and str(getattr(w, who).id) not in text, who
+    # what the substitute is told about the lessons he will lead: the colleague he replaces (a teacher), never a manager
+    assert client(w, "owner").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher", json={"lessonDate": "2026-11-09", "lessonId": "lesson-l1", "teacherId": str(w.D.id), "reason": "Болезнь"}).status_code == 200
+    assigned = client(w, "D").get(f"{SUB}/mine").json()["assignedToMe"]
+    assert assigned and all(a["replacing"]["role"] == "teacher" for a in assigned)
+    assert short_name(w.admin) not in json.dumps(assigned, ensure_ascii=False) and short_name(w.owner) not in json.dumps(assigned, ensure_ascii=False)
+    # the author keeps his own name when he is the viewer
+    own = client(w, "A").get(f"{SUB}/mine").json()
+    assert own["clearedForMe"] == []
+
+
+def test_r3_a_teacher_reads_that_a_day_off_did_it_but_not_which_day_off(w, sync):
+    item = one(w, "A", "L1", "2026-11-02")
+    assert decide(w, "admin", item["id"], decision="substitute", teacherId=str(w.D.id)).status_code == 200
+    made = client(w, "owner").post(f"{API}/org/days-off", json={"dateFrom": "2026-11-02", "dateTo": "2026-11-02", "reason": "Хайит"}).json()
+    day_off_id = made["dayOff"]["id"]
+    manager = client(w, "owner").get(f"{SUB}/{item['id']}").json()
+    teacher = client(w, "A").get(f"{SUB}/{item['id']}").json()
+    cleared_m = [e for e in manager["events"] if e["action"] == "assignment_cleared"][0]["snapshot"]
+    cleared_t = [e for e in teacher["events"] if e["action"] == "assignment_cleared"][0]["snapshot"]
+    assert cleared_m["dayOffId"] == day_off_id and cleared_m["byDayOff"] is True
+    assert "dayOffId" not in cleared_t and cleared_t["byDayOff"] is True and day_off_id not in json.dumps(teacher)
+    assert client(w, "owner").post(f"{API}/org/days-off/{day_off_id}/void").status_code == 200
+    voided = [e for e in client(w, "A").get(f"{SUB}/{item['id']}").json()["events"] if e["action"] == "day_off_voided"][0]["snapshot"]
+    assert "dayOffId" not in voided and voided["byDayOff"] is True and set(voided) <= set(SNAPSHOT_KEYS["day_off_voided"])
+    pending = req(w, "A", [(w.G1, "lesson-l1", "2026-11-09")]).json()["created"][0]                    # a request closed by a day off on another date: its closing event
+    made2 = client(w, "owner").post(f"{API}/org/days-off", json={"dateFrom": "2026-11-09", "dateTo": "2026-11-09", "reason": "Второй"}).json()
+    closed = [e for e in client(w, "A").get(f"{SUB}/{pending['id']}").json()["events"] if e["action"] == "closed"][0]["snapshot"]
+    assert closed["trigger"] == "day_off" and closed["byDayOff"] is True and "dayOffId" not in closed and made2["dayOff"]["id"] not in json.dumps(closed)
+    closed_m = [e for e in client(w, "owner").get(f"{SUB}/{pending['id']}").json()["events"] if e["action"] == "closed"][0]["snapshot"]
+    assert closed_m["dayOffId"] == made2["dayOff"]["id"]
+
+
+def test_r3_a_record_of_another_teacher_does_not_exist_for_a_teacher(w, sync):
+    first, second = chain_of_two(w)
+    foreign = client(w, "A").get(f"{SUB}/{second['id']}")
+    unknown = client(w, "A").get(f"{SUB}/00000000-0000-0000-0000-000000000000")
+    assert foreign.status_code == 404 and foreign.json() == unknown.json() and unknown.json()["detail"]["code"] == "SUBSTITUTION_NOT_FOUND"
+    assert client(w, "admin").get(f"{SUB}/{second['id']}").status_code == 200
+    assert client(w, "owner", org="other").get(f"{SUB}/{second['id']}").status_code in (403, 404)
+
+
+def test_r3_the_context_of_the_items_has_no_default_viewer():
+    from src.auth.lesson_substitutions import Ctx
+
+    with pytest.raises(TypeError):
+        Ctx()

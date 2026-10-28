@@ -5,8 +5,7 @@ Revision ID: p157a1b2c3d4
 Revises: w1a2b3c4d5e
 Create Date: 2026-10-28
 
-Schema only, no data: the CHECK ``ck_lse_action`` of ``lesson_substitution_events`` also accepts the two actions (drop + add ``NOT VALID`` + ``VALIDATE``: the first takes a short lock; a short
-table).  Rollback (downgrade): the rows with the two actions are deleted (they are information only - no status hangs on them) and the old CHECK comes back.
+Schema only, no data: the CHECK ``ck_lse_action`` of ``lesson_substitution_events`` also accepts the two actions (drop + add ``NOT VALID`` + ``VALIDATE``).  Rollback (downgrade): the rows with the two actions are deleted (they are information only - no status hangs on them) and the old CHECK comes back.
 """
 from __future__ import annotations
 

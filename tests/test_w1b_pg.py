@@ -290,7 +290,7 @@ def test_s22_a_release_never_takes_off_a_started_or_held_lesson_and_the_substitu
     assert states == {"2026-10-26": False, "2026-11-02": True}
     mine = client(w, "D").get(f"{SUB}/mine").json()
     (cleared,) = mine["clearedForMe"]
-    assert (cleared["lessonDate"], cleared["groupName"], cleared["clearedBy"]["id"]) == ("2026-11-02", "9-А", str(w.owner.id)) and cleared["clearedAt"]
+    assert (cleared["lessonDate"], cleared["groupName"], cleared["clearedBy"]) == ("2026-11-02", "9-А", {"id": None, "name": None, "role": "owner"}) and cleared["clearedAt"]        # #157 R3: by the role only
     clock.set("2026-11-20 12:00")                                                               # 14 days later it is gone
     assert client(w, "D").get(f"{SUB}/mine").json()["clearedForMe"] == []
 

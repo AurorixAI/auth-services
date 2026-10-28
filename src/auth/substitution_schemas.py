@@ -263,6 +263,7 @@ class SubstitutionEvent(BaseModel):
     actor: Optional[Union[EventActor, EventActorRole]] = None
     at: str
     snapshot: Dict[str, Any] = Field(default_factory=dict)
+    substituteName: Optional[str] = None  # #157 R3: the teacher a substitution passes to («Фамилия И.») on ``substituted`` / ``assignment_cleared``: the front prefixes «Новая замена:» / «Заменена на»
     mergedRequestId: Optional[str] = None  # #157 A5: «taken off» on the old record + «substituted» on the new one are ONE event; this is the new record
 
 

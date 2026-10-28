@@ -13,7 +13,8 @@
       "requestId": "5404e474-b04e-5e02-ba9a-e1862433c3c8",
       "snapshot": {
         "reasonCode": "sick"
-      }
+      },
+      "substituteName": null
     }
   ],
   "examBinding": {

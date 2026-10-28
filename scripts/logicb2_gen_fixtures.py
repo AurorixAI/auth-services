@@ -260,7 +260,7 @@ put("b2x_mine.json", "MineOut", {"items": [c1], "pendingTotal": 1, "assignedToMe
 put("b2x_withdraw_batch.json", "WithdrawBatchOut", {"withdrawn": [settled(c1, status="withdrawn", decision=decision("withdraw", "A", NOW + timedelta(minutes=1), via="withdraw"))],
                                                     "skipped": [{"id": uid("req-x"), "code": "SUBSTITUTION_ALREADY_DECIDED", "message": "Запрос уже решён"}]})
 put("b2x_detail.json", "SubstitutionDetailOut", {"item": c1, "chain": [], "next": [], "truncated": False, "events": [
-    {"requestId": c1["id"], "action": "requested", "actor": person("A"), "at": iso(utc(NOW)), "snapshot": {"reasonCode": "sick"}, "mergedRequestId": None}], "examBinding": {"state": "none", "title": None, "canCancel": True}})
+    {"requestId": c1["id"], "action": "requested", "actor": person("A"), "at": iso(utc(NOW)), "snapshot": {"reasonCode": "sick"}, "substituteName": None, "mergedRequestId": None}], "examBinding": {"state": "none", "title": None, "canCancel": True}})
 put("b2x_decide_bulk_busy.json", "DecideBulkOut", {"updated": 4, "items": [], "results": [], "warningsTotal": 0, "skipped": [
     {"id": uid("req-x"), "code": "TEACHER_BUSY", "message": "У преподавателя уже есть урок", "conflicts": [conf], "total": 1}]})
 put("b2x_lesson_access.json", "LessonAccessOut", {"id": IDS["G1"], "org_id": IDS["org"], "name": "9-А", "class_level": 9, "teacher_id": IDS["A"],

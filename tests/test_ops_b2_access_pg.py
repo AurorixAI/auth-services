@@ -72,7 +72,7 @@ def test_the_substitute_reaches_nothing_but_his_lesson(w, clock):
         assert d.get(f"{SUB}{path}").status_code == 403
     assert d.post(f"{SUB}/decide-bulk", json={"ids": ["00000000-0000-0000-0000-000000000000"], "decision": "reject", "reason": "xxx"}).status_code == 403
     rid = str(requests_of(w)[0].id)
-    assert d.get(f"{SUB}/{rid}").status_code == 403 and d.get(f"{SUB}/{rid}/candidates").status_code == 403
+    assert d.get(f"{SUB}/{rid}").status_code == 404 and d.get(f"{SUB}/{rid}/candidates").status_code == 403          # #157 R3: the detail of a record that is not his does not exist for him
     assert d.post(f"{SUB}/{rid}/decide", json={"decision": "reject", "reason": "xxx"}).status_code == 403
     # what he may do: see the lesson in the schedule, ask for a replacement of it, work it
     assert [o["id"] for o in d.get(f"{B}/schedule/occurrences", params={"date_from": "2026-10-21", "date_to": "2026-11-20"}).json()] == ["lesson-l1"]

@@ -178,7 +178,10 @@ def test_s9_r1_handover_closes_the_pending(w):
     assert (row.status, row.closed_reason, row.decision_note) == ("closed", "GROUP_TEACHER_CHANGED", "Сидоров С.")
     assert events_of(w)[-1].action == "closed" and events_of(w)[-1].snapshot["trigger"] == "handover"
     mine = client(w, "A").get(f"{SUB}/mine").json()["items"][0]
-    assert mine["decision"]["closedReasonText"] == "Преподаватель группы изменён: урок ведёт Сидоров С."
+    assert mine["decision"]["closedReasonText"] == "Запрос закрыт: группу передали другому преподавателю"           # owner 28.10: the requester is not told WHO leads now
+    assert "Сидоров" not in str(mine)
+    seen = [i for i in client(w, "admin").get(SUB, params={"status": "decided"}).json()["items"] if i["id"] == item["id"]][0]
+    assert seen["decision"]["closedReasonText"] == "Группу передали: Сидоров С."                                           # the manager reads the name
     assert client(w, "admin").get(f"{SUB}/summary").json()["pendingTotal"] == 0
 
 

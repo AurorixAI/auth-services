@@ -1,12 +1,12 @@
 """#157 A11: the one ``outcome`` code of a record (P157_API.md §2) - every code, by the rules, without a database (the function is pure), and the guard that nothing is left out."""
-import re
+import json
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
-from src.auth.lesson_substitutions import CLOSED_OUTCOME, Ctx, SubstitutionsBase
+from src.auth.lesson_substitutions import CLOSED_OUTCOME, MANAGER, Ctx, SubstitutionsBase
 from src.auth.substitution_schemas import ClosedReason
 from src.models.auth import LessonSubstitutionEvent as Ev, LessonSubstitutionRequest as Req
 
@@ -24,7 +24,7 @@ def event(request, action, **snapshot):
 
 
 def outcome(r, *, cleared=None, triggers=None, closed=None, restored=False, voided=False):
-    ctx = Ctx()
+    ctx = Ctx(MANAGER)
     if cleared is not None:
         ctx.cleared[r.id] = cleared
     if triggers:
@@ -87,12 +87,9 @@ def test_a_day_off_that_was_cancelled_wins_over_the_rest_and_a_pending_one_is_pe
     assert outcome(rec("pending"), voided=True) == "pending"
 
 
-def test_the_codes_of_the_doc_are_the_codes_of_the_code():
-    """P157_API.md §2 lists every code; the code returns no code the doc does not name and the doc names none the code cannot return."""
-    doc = (Path(__file__).resolve().parents[2] / "artifacts" / "analysis" / "P157_API.md")
-    if not doc.exists():
-        pytest.skip("the doc lives next to the repository of the lead")
-    named = set(re.findall(r"^\| `([a-z_]+)` \|", doc.read_text(encoding="utf-8").split("## 2. Коды")[1].split("## 3.")[0], re.M))
+def test_the_codes_the_front_is_told_are_the_codes_the_code_can_return():
+    """``tests/fixtures/p157_outcome_codes.json`` is the list P157_API.md section 2 promises to the front (25 codes): the code returns no code that is not on it and every code on it can be returned."""
+    listed = set(json.loads((Path(__file__).resolve().parent / "fixtures" / "p157_outcome_codes.json").read_text(encoding="utf-8")))
     returned = {"pending", "substituted", "rescheduled", "cancelled", "lesson_not_held", "rejected", "substitution_cleared", "substitution_replaced", "lesson_later_cancelled", "lesson_later_moved",
                 "cancelled_by_day_off", "day_off_voided", "withdrawn", "lesson_already_cancelled", "closed"} | set(CLOSED_OUTCOME.values()) | {"lesson_restored"}
-    assert named == returned and len(named) == 25
+    assert listed == returned and len(listed) == 25

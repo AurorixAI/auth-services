@@ -617,7 +617,7 @@ def test_s7_r8_roles_and_who_sees_the_reason(w):
     assert decide(w, "A", item["id"], decision="reject", reason="Отказ").status_code == 403
     decide(w, "admin", item["id"], decision="reject", reason="Замену не нашли")
     assert client(w, "A").get(f"{SUB}/{item['id']}").json()["item"]["decision"]["note"] == "Замену не нашли"
-    assert client(w, "B").get(f"{SUB}/{item['id']}").status_code == 403 and client(w, "D").get(f"{SUB}/{item['id']}").status_code == 403
+    assert client(w, "B").get(f"{SUB}/{item['id']}").status_code == 404 and client(w, "D").get(f"{SUB}/{item['id']}").status_code == 404      # #157 R3: it does not exist for them
 
 
 def test_s7_r9_system_closed_request_is_409(w):

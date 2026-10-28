@@ -87,7 +87,7 @@ def test_a4_a_substitution_a_day_off_took_off_says_so_and_the_voided_day_off_mar
     out = void(w, made)
     assert [x["code"] for x in out["warnings"]] == ["SUBSTITUTE_NOT_RESTORED"]
     (voided,) = kinds_of_events(w, item["id"], "day_off_voided")
-    assert voided.snapshot == {"dayOffId": made["dayOff"]["id"], "reopened": False}
+    assert voided.snapshot == {"dayOffId": made["dayOff"]["id"], "reopened": False, "subject": "substitution", "needsDecision": True}      # a request stood behind it: somebody has to be assigned
     seen = client(w, "owner").get(f"{SUB}/{item['id']}").json()
     assert [e["action"] for e in seen["events"]][-2:] == ["assignment_cleared", "day_off_voided"]
 
@@ -130,10 +130,10 @@ def test_a10_the_record_of_a_cancellation_learns_that_the_lesson_is_back(w, sync
     clock.set("2026-10-21 14:01")                                                      # the records of one lesson are ordered by their time: the frozen clock would tie them
     restore(w, "admin", w.G1, "lesson-l1", NEXT, reason="По ошибке отменили")
     (restored,) = kinds_of_events(w, item["id"], "lesson_restored")
-    assert restored.actor_id == w.admin.id and restored.snapshot == {"reason": "По ошибке отменили"}
+    assert restored.actor_id == w.admin.id and restored.snapshot == {"reason": "По ошибке отменили"}      # (the stored event; the history adds what was cancelled from the record of the return)
     detail = client(w, "owner").get(f"{SUB}/{item['id']}").json()
     own = [e for e in detail["events"] if e["requestId"] == item["id"]]
-    assert own[-1]["action"] == "lesson_restored" and own[-1]["snapshot"] == {"reason": "По ошибке отменили"}
+    assert own[-1]["action"] == "lesson_restored" and own[-1]["snapshot"]["reason"] == "По ошибке отменили" and own[-1]["snapshot"]["previous"]["cancellationKind"] == "centre"
     teacher_view = client(w, "A").get(f"{SUB}/{item['id']}").json()
     own = [e for e in teacher_view["events"] if e["requestId"] == item["id"]]
     assert own[-1] == {**own[-1], "action": "lesson_restored", "snapshot": {}, "actor": {"role": "admin"}}
@@ -207,7 +207,9 @@ def test_a5_a_teacher_reads_his_own_records_of_the_history_only(w, sync, clock):
     assert a_view["next"] == [] and {e["requestId"] for e in a_view["events"]} == {first["id"]} and "Свой комментарий D" not in json.dumps(a_view, ensure_ascii=False)
     d_view = client(w, "D").get(f"{SUB}/{second['id']}").json()
     assert d_view["chain"] == [] and {e["requestId"] for e in d_view["events"]} == {second["id"]} and "Секретная причина А" not in json.dumps(d_view, ensure_ascii=False)
-    assert client(w, "A").get(f"{SUB}/{second['id']}").status_code == 403                                   # not his record
+    foreign = client(w, "A").get(f"{SUB}/{second['id']}")                                                     # not his record: it does not exist for him (R3: no probing of ids)
+    unknown = client(w, "A").get(f"{SUB}/00000000-0000-0000-0000-000000000000")
+    assert foreign.status_code == 404 == unknown.status_code and foreign.json() == unknown.json()
     both = client(w, "owner").get(f"{SUB}/{second['id']}").json()
     assert [c["id"] for c in both["chain"]] == [first["id"]] and {e["requestId"] for e in both["events"]} == {first["id"], second["id"]}
 
@@ -332,3 +334,81 @@ def test_a11_the_same_outcome_in_the_list_the_detail_mine_and_the_answer_of_the_
     by_item = {i["id"]: i["outcome"] for i in decided(w)}
     assert by_item[pending["id"]] == "substitution_replaced"                                                           # r1's last fate is still «taken over by C» (C's own record carries the rest)
     assert "substitution_cleared" in by_item.values()                                                                  # C's record: the main teacher leads again
+
+
+# ============================================================================================================ R3 fix round
+def voided_events(w, request_id):
+    return [e for e in client(w, "owner").get(f"{SUB}/{request_id}").json()["events"] if e["action"] == "day_off_voided" and e["requestId"] == request_id]
+
+
+def test_r3_day_off_voided_says_what_it_is_about_and_whether_anything_is_to_be_decided(w, sync):
+    # (a) a request the day off closed, a new one opened: the decision is needed - on the new request
+    asked = one(w, "A", "L1", NEXT)
+    behind = one(w, "B", "L4", NEXT)
+    assert decide(w, "admin", behind["id"], decision="substitute", teacherId=str(w.C.id)).status_code == 200
+    made = day_off(w, NEXT, "Хайит")
+    # (b) a substitution that stood behind a request: the teacher still cannot lead - somebody has to be assigned again
+    # (c) a substitution the administrator set himself on a lesson sheet: nothing to decide
+    put(w, "admin", w.G2, "lesson-l3", "2026-10-27", w.D)
+    made_c = day_off(w, "2026-10-27", "Другой")
+    direct = [r for r in requests_of(w) if r.lesson_date == "2026-10-27"]
+    void(w, made)
+    void(w, made_c)
+    (a,) = voided_events(w, asked["id"])
+    assert (a["snapshot"]["subject"], a["snapshot"]["reopened"], a["snapshot"]["needsDecision"]) == ("request", True, True)
+    # the day off «NEXT» had cancelled the lessons of G1 AND G3: B's substitution is lost with the lesson of G3
+    (b,) = voided_events(w, behind["id"])
+    assert (b["snapshot"]["subject"], b["snapshot"]["reopened"], b["snapshot"]["needsDecision"]) == ("substitution", False, True)
+    (c,) = [e for r in direct for e in voided_events(w, str(r.id))]
+    assert (c["snapshot"]["subject"], c["snapshot"]["reopened"], c["snapshot"]["needsDecision"]) == ("substitution", False, False)
+    # a request closed by a day off that stays closed (the requester no longer leads the lesson): the lesson is back, nothing to decide
+    other = one(w, "A", "L2", "2026-11-04")
+    made2 = day_off(w, "2026-11-04", "Третий")
+    w.db.query(type(w.G1)).filter_by(id=w.G1.id).update({"teacher_id": w.C.id})
+    w.db.commit()
+    void(w, made2)
+    (d,) = voided_events(w, other["id"])
+    assert (d["snapshot"]["subject"], d["snapshot"]["reopened"], d["snapshot"]["needsDecision"]) == ("request", False, False)
+    teacher = [e for e in client(w, "A").get(f"{SUB}/{asked['id']}").json()["events"] if e["action"] == "day_off_voided"][0]["snapshot"]
+    assert teacher == {"byDayOff": True, "reopened": True, "subject": "request", "needsDecision": True}
+
+
+def test_r3_a_substitution_assigned_again_is_not_marked_as_lost_and_the_warning_agrees(w, sync):
+    item = one(w, "A", "L1", NEXT)
+    assert decide(w, "admin", item["id"], decision="substitute", teacherId=str(w.D.id)).status_code == 200
+    made = day_off(w, NEXT, "Хайит")
+    from src.models.auth import LessonTeacherAssignment
+
+    w.db.add(LessonTeacherAssignment(org_id=w.org.id, group_id=w.G1.id, lesson_id="lesson-l1", lesson_date=NEXT, teacher_id=w.C.id, set_by=w.admin.id, reason="Опять"))      # somebody was assigned again meanwhile
+    w.db.commit()
+    out = void(w, made)
+    assert [x["code"] for x in out["warnings"]] == [] and voided_events(w, item["id"]) == []              # the SAME condition: nothing lost, no mark, no warning
+
+
+def test_r3_the_new_substitution_is_one_event_with_the_name_and_an_author(w, sync, clock):
+    r1, r2, r3 = three_records(w, clock)
+    events = client(w, "owner").get(f"{SUB}/{r2}").json()["events"]
+    cleared = [e for e in events if e["action"] == "assignment_cleared"]
+    assert [(e["mergedRequestId"], e["substituteName"]) for e in cleared] == [(r2, short_name(w.C)), (r3, short_name(w.D))]            # «Новая замена: Петров П.» = prefix + the name
+    substituted = [e for e in events if e["action"] == "substituted"]
+    assert [e["substituteName"] for e in substituted] == [short_name(w.D)]
+    assert all(e["actor"] is not None for e in cleared) and [e["actor"]["name"] for e in cleared] == [short_name(w.admin), short_name(w.owner)]
+    seen = [e for e in client(w, "A").get(f"{SUB}/{r1}").json()["events"] if e["action"] == "assignment_cleared"]
+    assert seen and all(e["actor"] is not None and set(e["actor"]) == {"role"} for e in seen)          # a teacher: the role, always
+    assert all(e["actor"] is not None for e in events if e["action"] in ("assignment_cleared", "substituted", "closed", "rescheduled", "cancelled", "rejected"))
+
+
+def test_r3_a_cancellation_and_its_return_are_one_event_in_the_history(w, sync, clock):
+    item = one(w, "A", "L1", NEXT)
+    assert decide(w, "admin", item["id"], decision="cancel", reason="Преподаватель болен", cancellationKind="centre").status_code == 200
+    clock.set("2026-10-21 14:01")
+    restore(w, "admin", w.G1, "lesson-l1", NEXT, reason="По ошибке")
+    back = [r for r in requests_of(w) if r.closed_reason == "LESSON_RESTORED"][0]
+    for opened in (item["id"], str(back.id)):
+        body = client(w, "owner").get(f"{SUB}/{opened}").json()
+        pair = [e for e in body["events"] if e["action"] in ("lesson_restored",) or (e["action"] == "closed" and e["snapshot"].get("closedReason") == "LESSON_RESTORED")]
+        assert len(pair) == 1 and pair[0]["requestId"] == item["id"] and pair[0]["mergedRequestId"] == str(back.id)
+        assert pair[0]["snapshot"]["reason"] == "По ошибке" and pair[0]["snapshot"]["previous"]["cancellationReason"] == "Преподаватель болен" and pair[0]["actor"]["id"] == str(w.admin.id)
+    mine = client(w, "A").get(f"{SUB}/{item['id']}").json()["events"]
+    back_event = [e for e in mine if e["action"] == "lesson_restored"]
+    assert len(back_event) == 1 and back_event[0]["snapshot"] == {} and back_event[0]["actor"] == {"role": "admin"}

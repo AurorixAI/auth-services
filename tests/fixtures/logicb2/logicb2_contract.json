@@ -2040,6 +2040,17 @@
             "additionalProperties": true,
             "title": "Snapshot",
             "type": "object"
+          },
+          "substituteName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Substitutename"
           }
         },
         "required": [

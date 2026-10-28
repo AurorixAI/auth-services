@@ -673,17 +673,25 @@ class DaysOffService:
         except (KeyError, ValueError, AttributeError):
             return False
 
+    def lost_substitution(self, att: GroupAttendance) -> Optional[LessonTeacherAssignment]:
+        """THE condition of «the substitute did not come back» (the warning of the answer and the mark in the journal «Замены» both ask it): the assignment the author of THIS cancellation took off
+        the lesson, and no live assignment on the lesson now (somebody was assigned again meanwhile = nothing was lost)."""
+        asg = (self.db.query(LessonTeacherAssignment).filter(LessonTeacherAssignment.group_id == att.group_id, LessonTeacherAssignment.lesson_id == att.lesson_id,
+                                                              LessonTeacherAssignment.lesson_date == att.lesson_date, LessonTeacherAssignment.cancelled_at.isnot(None),
+                                                              LessonTeacherAssignment.cancelled_by == att.marked_by).order_by(LessonTeacherAssignment.cancelled_at.desc()).first())
+        if asg is None or self.db.query(LessonTeacherAssignment.id).filter(LessonTeacherAssignment.group_id == att.group_id, LessonTeacherAssignment.lesson_id == att.lesson_id,
+                                                                           LessonTeacherAssignment.lesson_date == att.lesson_date, LessonTeacherAssignment.cancelled_at.is_(None)).first():
+            return None
+        return asg
+
     def _substitutes_not_restored(self, doomed: List[GroupAttendance], groups: Dict[Any, Group], lines: Optional[Dict[Any, Dict[str, Any]]] = None) -> List[DayOffWarning]:
         """W1: the lessons that come back WITHOUT the substitute the day off took off them (the author of the cancellation took the assignment off in the same step): the administrator
         assigns them again."""
         out: List[DayOffWarning] = []
         lines = {} if lines is None else lines
         for att in doomed:
-            asg = (self.db.query(LessonTeacherAssignment).filter(LessonTeacherAssignment.group_id == att.group_id, LessonTeacherAssignment.lesson_id == att.lesson_id,
-                                                                  LessonTeacherAssignment.lesson_date == att.lesson_date, LessonTeacherAssignment.cancelled_at.isnot(None),
-                                                                  LessonTeacherAssignment.cancelled_by == att.marked_by).order_by(LessonTeacherAssignment.cancelled_at.desc()).first())
-            if asg is None or self.db.query(LessonTeacherAssignment.id).filter(LessonTeacherAssignment.group_id == att.group_id, LessonTeacherAssignment.lesson_id == att.lesson_id,
-                                                                               LessonTeacherAssignment.lesson_date == att.lesson_date, LessonTeacherAssignment.cancelled_at.is_(None)).first():
+            asg = self.lost_substitution(att)
+            if asg is None:
                 continue
             who = short_name(self.db.query(User).filter(User.id == asg.teacher_id).first())          # “Рахимов Т.” as everywhere (LESSONS 48), not the full name
             group = groups.get(att.group_id)
