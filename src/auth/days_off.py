@@ -542,7 +542,12 @@ class DaysOffService:
         live = self.live_for_date(group.org_id, date.fromisoformat(row.lesson_date))
         if live is None or not self._convertible(row) or not self._in_window(row.lesson_date):
             return False
-        self._convert_row(row, group, live.id, live.reason, actor_id, trigger="makeup_released")
+        # the day off is read again under a SHARE lock that SKIPS a locked row: «Отменить выходной» (``void``) holds it FOR UPDATE while it reverts - then the day off is going away and nothing is converted
+        # (waiting for it could be a cycle: void then wants the key of this group); once we hold the lock void waits for our commit and finds the converted row in its list
+        kept = (self.db.query(OrgDayOff).filter(OrgDayOff.id == live.id, OrgDayOff.voided_at.is_(None)).with_for_update(read=True, skip_locked=True).populate_existing().first())
+        if kept is None:
+            return False
+        self._convert_row(row, group, kept.id, kept.reason, actor_id, trigger="makeup_released")
         return True
 
     def _convert_row(self, row: GroupAttendance, group: Group, day_off_id: UUID, reason: str, actor_id: Any, trigger: str = "day_off") -> None:

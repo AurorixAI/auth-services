@@ -117,7 +117,7 @@ class SheetPatch(BaseModel):
 class MarkOut(BaseModel):
     date: str
     lesson_id: str
-    mark: Optional[int] = None  # 1 counted, 0 not counted (confirmed excuse), null - not in the group
+    mark: Optional[int] = None  # 1 counted, 0 not counted (confirmed excuse; #154: undecided / no_pay too), null - not in the group
     state: str  # counted | excused_confirmed | excused_pending | not_in_group | unpaid | undecided («не решено», #154) | no_pay («без оплаты», #154)
     divisor: Optional[int] = None
     # ROADMAP #105: the price of the student ON THE DAY of this lesson (only on a lesson that carries money, and only

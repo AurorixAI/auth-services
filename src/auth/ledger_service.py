@@ -60,7 +60,7 @@ FORECAST_DAYS = 400          # how far ahead the forecast of a package looks for
 class MakeupFacts:
     """The facts of ONE make-up that the deduction of a cancelled lesson waits for.  ``ahead``: the make-up is still to come or is going on - the deduction is paused for every student of the group;
     ``held``: it was held - it is lifted for the students it COUNTED for (``lifted``: in its roster with a mark that counts by rule 4.3: present / late / absent, an excused one without a confirmed
-    excuse), the others keep it; ``missed``: its day has passed and there is no journal row - not held, nothing is lifted (the journal entered later makes it ``held``); ``gone``: it was cancelled / deleted (the pointer is released by the cancellation; a stale one is no reason to lift anything)."""
+    excuse), the others keep it; ``missed``: its day has passed and the lesson is not closed (no journal row, or one left ``in_progress``) - not held, nothing is lifted (the journal entered later makes it ``held``); ``gone``: it was cancelled / deleted (the pointer is released by the cancellation; a stale one is no reason to lift anything)."""
 
     state: str
     day: Optional[date] = None
@@ -479,10 +479,10 @@ class LedgerLoader:
             key = (group_id, date.fromisoformat(day), lesson_id)
             if one is None:
                 self.makeups[key] = MakeupFacts("gone")
-            elif (row is None and one.lesson_date >= self.today.isoformat()) or (row is not None and row.status == "in_progress"):
-                self.makeups[key] = MakeupFacts("ahead")
-            elif row is None:
-                self.makeups[key] = MakeupFacts("missed")      # the day has passed and nothing was entered: «не проведена», the deduction stays; if the journal is filled later, the facts lift it (LESSONS 54)
+            elif one.lesson_date >= self.today.isoformat() and (row is None or row.status == "in_progress"):
+                self.makeups[key] = MakeupFacts("ahead")      # still to come (or going on today)
+            elif row is None or row.status == "in_progress":
+                self.makeups[key] = MakeupFacts("missed")      # the day has passed and the lesson was never closed (no row, or started and left open): «не проведена», the deduction stays; closed later, the facts lift it (LESSONS 54)
             elif row.status == "cancelled":
                 self.makeups[key] = MakeupFacts("gone")
             else:

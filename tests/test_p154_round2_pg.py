@@ -13,7 +13,8 @@ from tests.ops_helpers import client, code_of
 from tests.payf_helpers import build_org, cancel
 from tests.test_p154_create_pg import ORIGIN, ORIGIN_DAY, cancel_origin, makeup, move, one_off, pointer, w  # noqa: F401  (w: fixture)
 from tests.test_p154_create_pg import make as make_d2
-from tests.test_p154_money_pg import deducted, five, hold
+from tests.test_p154_money_pg import API as _API  # noqa: F401
+from tests.test_p154_money_pg import decide, deducted, extra_world, five, hold, sheet as pay_sheet
 from tests.test_p154_money_pg import make as make_money
 from tests.test_p154_money_pg import makeup as makeup_money
 from tests.test_w1_cancel_pg import code, restore, sheet
@@ -76,16 +77,22 @@ def test_s2_a_make_up_that_was_never_held_stops_pausing_the_deduction_and_the_jo
     assert [deducted(w, m) for m in ms] == [0, 0, 0, 0, 46_000]                         # the facts entered later lift it as always
 
 
-def test_s2_a_make_up_that_is_going_on_stays_ahead(pg_session, clock):
+def test_s2_a_make_up_that_is_going_on_stays_ahead_only_today(pg_session, clock):
     from tests.ops_helpers import history_row
 
     w = build_org(pg_session)
-    g, students, ms = five(w, clock)
+    g, (a, b, c, d, e), ms = five(w, clock)
     mk = makeup_money(w, "admin", g, "2026-10-29", "lesson-mon", "2026-10-26").json()["id"]
-    clock.set("2026-10-30 09:00")
-    history_row(w.db, w.org, g, mk, "2026-10-29", w.A, students, status="in_progress", start="12:00", end="13:00")
+    clock.set("2026-10-29 12:30")
+    row = history_row(w.db, w.org, g, mk, "2026-10-29", w.A, [a, b, c, d, e], status="in_progress", start="12:00", end="13:00")
     w.db.commit()
-    assert [deducted(w, m) for m in ms] == [0] * 5                                     # started and not closed: the lesson is going on
+    assert [deducted(w, m) for m in ms] == [0] * 5                                     # started today and not closed: the lesson is going on
+    clock.set("2026-10-30 09:00")
+    assert [deducted(w, m) for m in ms] == [46_000] * 5                                # yesterday's lesson left open = «не проведена»: the deduction acts (LESSONS 54)
+    row = w.db.query(GroupAttendance).filter_by(id=row.id).one()
+    row.status, row.records = "completed", {str(a.id): "present", str(b.id): "present", str(c.id): "absent"}
+    w.db.commit()
+    assert [deducted(w, m) for m in ms] == [0, 0, 0, 46_000, 46_000]                    # closed later: lifted for those it counted for
 
 
 # ============================================================================================================ S3: a day off under a removed make-up (LESSONS 47)
@@ -268,3 +275,96 @@ def test_s10_a_make_up_is_returned_when_the_slot_is_free_and_the_student_warning
     make_d2(w, "admin", w.G3, "2026-10-30", start="12:30", end="13:30", purpose="extra", money="none")
     r = restore(w, "admin", w.G1, first, "2026-10-30")
     assert pointer(w) == first and [x["code"] for x in r.json()["warnings"]] == ["STUDENT_BUSY"]
+
+
+# ============================================================================================================ the mini-R3
+def test_s3_a_day_off_voided_before_the_make_up_is_removed_converts_nothing(w):
+    cancel_origin(w)
+    mk = make_d2(w, "admin", w.G1, "2026-10-29", start="12:00", end="13:00", purpose="makeup", madeUpLessonId=ORIGIN, madeUpDate=ORIGIN_DAY).json()["id"]
+    day_off = client(w, "owner").post(f"{API}/org/days-off", json={"dateFrom": ORIGIN_DAY, "dateTo": ORIGIN_DAY, "reason": "Хайит"}).json()["dayOff"]["id"]
+    assert client(w, "owner").post(f"{API}/org/days-off/{day_off}/void").status_code == 200
+    sheet(w, "admin", w.G1, mk, "2026-10-29")
+    row = row_of(w, w.G1, ORIGIN, ORIGIN_DAY)
+    assert (row.cancellation_kind, row.converted_from_kind, row.day_off_id, row.made_up_by) == ("centre", None, None, None)
+
+
+def test_s3_a_day_off_that_is_being_voided_right_now_is_not_waited_for_and_converts_nothing(w):
+    from sqlalchemy.orm import sessionmaker
+
+    from src.models.auth import OrgDayOff
+
+    cancel_origin(w)
+    mk = make_d2(w, "admin", w.G1, "2026-10-29", start="12:00", end="13:00", purpose="makeup", madeUpLessonId=ORIGIN, madeUpDate=ORIGIN_DAY).json()["id"]
+    day_off = client(w, "owner").post(f"{API}/org/days-off", json={"dateFrom": ORIGIN_DAY, "dateTo": ORIGIN_DAY, "reason": "Хайит"}).json()["dayOff"]["id"]
+    other = sessionmaker(w.db.get_bind())()
+    try:
+        other.query(OrgDayOff).filter(OrgDayOff.id == day_off).with_for_update().first()             # «Отменить выходной» is in the middle of its work
+        sheet(w, "admin", w.G1, mk, "2026-10-29")                                                     # no wait, no deadlock, nothing converted
+        row = row_of(w, w.G1, ORIGIN, ORIGIN_DAY)
+        assert (row.cancellation_kind, row.day_off_id, row.made_up_by) == ("centre", None, None)
+    finally:
+        other.rollback()
+        other.close()
+
+
+def test_a_copy_of_a_copy_of_a_moved_regular_lesson_still_deducts_when_the_centre_cancels_it(pg_session, clock):
+    w = build_org(pg_session)
+    g, students, ms = five(w, clock)
+    first = move_money(w, g, "lesson-wed", "2026-10-28", "2026-10-29")
+    second = move_money(w, g, first, "2026-10-29", "2026-10-30")
+    assert one_off(w, second).purpose == "moved"
+    cancel(w, g, second, "2026-10-30")
+    assert [deducted(w, m) for m in ms] == [92_000] * 5                                # the Monday lesson and the last copy (a lesson of the price of the month)
+
+
+def test_undecided_changes_neither_the_total_of_the_sheet_nor_the_total_of_the_excel(pg_session, clock):
+    import io
+
+    from openpyxl import load_workbook
+
+    w = build_org(pg_session)
+    g, st, ms, made = extra_world(w, clock, "wait", "A")
+
+    def excel_totals(sheet_id):
+        out = client(w, "owner").get(f"{API}/org/payroll/sheets/{sheet_id}/export.xlsx")
+        assert out.status_code == 200
+        rows = [[c.value for c in row if c.value is not None] for ws in load_workbook(io.BytesIO(out.content)).worksheets for row in ws.iter_rows()]
+        return [r for r in rows if r and r[0] == "Итого"], [r for r in rows if r and isinstance(r[0], str) and r[0].startswith("Заработано ")]
+
+    s = pay_sheet(w, "2026-10")
+    saved = client(w, "owner").post(f"{API}/org/payroll/sheets", json={"month": "2026-10", "teacher_id": str(w.A.id), "expected_fingerprint": s["source_fingerprint"]})
+    assert saved.status_code == 201, saved.text
+    excel, head = excel_totals(saved.json()["id"])
+    assert s["total_amount"] == 0 and excel == [["Итого", 0, 0, 0]] and head and head[0][0].startswith("Заработано 0 ·")      # five students «не решено»: nothing in the sum, nothing in the file
+    decide(w, "owner", made, "skip")
+    look = client(w, "owner").get(f"{API}/org/payroll/sheets/{saved.json()['id']}/diff").json()
+    patched = client(w, "owner").patch(f"{API}/org/payroll/sheets/{saved.json()['id']}", json={"revision": saved.json()["revision"], "recalculate": True, "expected_fingerprint": look["source_fingerprint"]})
+    assert patched.status_code == 200, patched.text
+    excel, _ = excel_totals(saved.json()["id"])
+    assert pay_sheet(w, "2026-10")["total_amount"] == 0 and excel == [["Итого", 0, 0, 0]]                      # «без оплаты» is 0 as well
+
+
+def test_the_doors_of_the_lists_and_the_decision_over_http(w):
+    from tests.pg_world import make_client
+
+    cancel_origin(w)
+    extra = make_d2(w, "A", w.G1, "2026-10-29", start="12:00", end="13:00", purpose="extra", money="wait").json()["id"]
+    url = f"{API}/org/groups/{w.G1.id}/makeup-candidates"
+    for role in ("student", "parent"):
+        assert make_client(w, user=w.A, org="own", org_role=role, role=role).get(url).status_code == 403, role
+    assert client(w, "B").get(url).status_code == 403                                      # a teacher of another group
+    assert client(w, "A").get(url).status_code == 200
+    # a teacher cannot decide: the door of the road is the owner / administrator (the guard DECISION_FORBIDDEN of the service sits behind it)
+    r = client(w, "A").post(f"{API}/org/one-off-lessons/{extra}/money-decision", json={"decision": "pay"})
+    assert r.status_code == 403
+    assert client(w, "B").post(f"{API}/org/one-off-lessons/{extra}/money-decision", json={"decision": "pay"}).status_code == 403
+    assert one_off(w, extra).money == "wait"
+
+
+def test_a_cancelled_additional_lesson_is_not_returned_into_a_slot_that_was_taken_meanwhile(w):
+    first = make_d2(w, "admin", w.G1, "2026-10-29", start="15:00", end="16:00", purpose="extra", money="none").json()["id"]
+    sheet(w, "admin", w.G1, first, "2026-10-29")
+    make_d2(w, "admin", w.G1, "2026-10-29", start="15:30", end="16:30", purpose="extra", money="none")
+    r = restore(w, "admin", w.G1, first, "2026-10-29", expect=409)
+    assert code(r) == "GROUP_BUSY"
+    assert one_off(w, first).purpose == "extra" and row_of(w, w.G1, first, "2026-10-29").status == "cancelled"
