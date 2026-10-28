@@ -187,6 +187,21 @@ def test_a5_a_chain_of_three_records_is_one_history_with_the_pairs_folded(w, syn
     assert [e["requestId"] for e in events if e["action"] == "requested"] == [r1, r2, r3]
 
 
+def test_a5_the_pair_is_folded_when_the_substitute_asks_and_the_administrator_decides(w, sync, clock):
+    """Stage 28.10 (D1): D covers A, D asks in turn, the administrator decides «C» on the Замены page = ONE event, as on the lesson sheet."""
+    first = one(w, "A", "L1", DAY, comment="Температура")
+    clock.set("2026-10-21 14:10")
+    assert decide(w, "admin", first["id"], decision="substitute", teacherId=str(w.D.id)).status_code == 200
+    clock.set("2026-10-21 14:20")
+    second = one(w, "D", "L1", DAY, comment="Не успеваю")
+    clock.set("2026-10-21 14:30")
+    assert decide(w, "admin", second["id"], decision="substitute", teacherId=str(w.C.id)).status_code == 200
+    events = client(w, "owner").get(f"{SUB}/{second['id']}").json()["events"]
+    assert [e["requestId"] for e in events if e["action"] == "substituted"] == [first["id"]]
+    cleared = [e for e in events if e["action"] == "assignment_cleared"]
+    assert [(e["requestId"], e.get("mergedRequestId"), e.get("substituteName")) for e in cleared] == [(first["id"], second["id"], short_name(w.C))]
+
+
 def test_a5_the_order_is_by_time_then_by_the_place_in_the_chain_when_the_times_are_equal(w, sync, clock):
     r1, r2, r3 = three_records(w, clock)
     stamp = datetime(2026, 10, 21, 9, 0, 0)

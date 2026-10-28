@@ -828,7 +828,7 @@ class SubstitutionsBase:
             snap = cleared.snapshot or {}
             if cleared.action == "assignment_cleared" and snap.get("trigger") == "put" and self._cleared_to(cleared) is not None:
                 other = self._partner(rows, linked, cleared, lambda e, r: (
-                    e.action == "substituted" and r.previous_request_id == cleared.request_id and (e.snapshot or {}).get("via") == PUT_VIA
+                    e.action == "substituted" and r.previous_request_id == cleared.request_id and (e.snapshot or {}).get("via") in (PUT_VIA, "request")
                     and ((e.snapshot or {}).get("teacherId") or [None, None])[1] == self._cleared_to(cleared)), dropped)
             elif cleared.action == "lesson_restored":
                 other = self._partner(rows, linked, cleared, lambda e, r: (
