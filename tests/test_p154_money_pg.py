@@ -83,7 +83,7 @@ def one_off(w, lesson_id):
 
 
 def decide(w, who, lesson_id, decision="pay", expect=200):
-    r = client(w, who).post(f"{API}/org/one-off-decisions/{lesson_id}/money-decision" if False else f"{API}/org/one-off-lessons/{lesson_id}/money-decision", json={"decision": decision})
+    r = client(w, who).post(f"{API}/org/one-off-lessons/{lesson_id}/money-decision", json={"decision": decision})
     assert r.status_code == expect, r.text
     return r
 
@@ -348,10 +348,7 @@ def test_inv7_who_may_decide_and_when(pg_session, clock):
     assert decide(w, "admin", "one-off-nothing", "pay", expect=404).json()["detail"]["code"] == "ONE_OFF_NOT_FOUND"
     clock.set("2026-10-29 17:00")
     hold(w, g, made, "2026-10-29", {a: "present"}, start="15:00", end="16:00")
-    # a lesson created «paid» / «none» is never decided; a make-up with students either
-    paid = make(w, "admin", g, "2026-10-30", start="15:00", end="16:00", purpose="extra", money="paid", expect=201)
-    assert paid.status_code == 201
-    out = decide(w, "owner", made, "pay").json()
+    out = decide(w, "owner", made, "pay").json()                                       # held and waiting: the owner decides
     assert out["money"] == "paid"
 
 

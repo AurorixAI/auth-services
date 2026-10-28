@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from src.models.auth import Group, GroupAttendance, GroupAudit, GroupScheduleOneOffLesson
+from src.models.auth import GroupAttendance, GroupAudit, GroupScheduleOneOffLesson
 from tests.b2_helpers import API, build_d2, clock, needs_pg, pg_session, row_of, run_parallel  # noqa: F401  (fixtures)
 from tests.ops_helpers import client, code_of, new_group, new_slot
 from tests.test_w1_cancel_pg import code, restore, sheet
@@ -206,7 +206,6 @@ def test_the_series_end_blocks_a_make_up_after_it(w):
 # ============================================================================================ Ц6: two at once
 def test_c6_two_simultaneous_make_ups_of_one_lesson_give_one_lesson_and_one_409(w):
     cancel_origin(w)
-    from src.auth.schemas import CreateOneOffLessonRequest  # noqa: F401  (the B model is what the router passes)
     from src.auth.ops_schemas import CreateOneOffLessonRequestB
     from datetime import date
 
@@ -272,7 +271,7 @@ def test_c14_the_author_teacher_deletes_his_make_up_before_it_starts_and_the_les
     assert next(o for o in listed if o["id"] == ORIGIN and o["occurrenceDate"] == ORIGIN_DAY)["madeUpBy"] is None
     assert makeup(w, "A", w.G1, "2026-10-30", start="12:00", end="13:00").status_code == 201          # a new make-up of the same lesson
     # after the start: 409
-    again = [p for p in [pointer(w)]][0]
+    again = pointer(w)
     clock.set("2026-10-30 12:05")
     assert client(w, "A").post(f"{API}/org/groups/{w.G1.id}/attendance/start", json={"lessonDate": "2026-10-30", "lessonId": again}).status_code == 200
     r = sheet(w, "A", w.G1, again, "2026-10-30", expect=409)
@@ -358,11 +357,14 @@ def test_c18_the_money_of_a_lesson_is_not_shown_to_a_teacher_of_another_group_no
     assert next(o for o in client(w, "A").get(f"{API}/org/schedule/occurrences", params=params).json() if o["id"] == paid)["moneyLabel"] == "оплачено"
     assert next(o for o in client(w, "admin").get(f"{API}/org/schedule/occurrences", params=params).json() if o["id"] == paid)["moneyLabel"] == "оплачивается"
     # a teacher of ANOTHER group who sees the lesson at all (he substitutes there) never reads it
-    from tests.b2_helpers import decide  # noqa: F401
-
     assert client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher", json={"lessonDate": "2026-10-29", "lessonId": paid, "teacherId": str(w.B.id), "reason": "Замена"}).status_code == 200
     seen = [o for o in client(w, "B").get(f"{API}/org/schedule/occurrences", params=params).json() if o["id"] == paid]
     assert seen and seen[0]["money"] is None and seen[0]["moneyLabel"] is None and seen[0]["purpose"] == "extra"
+    # the dashboard of the teacher: the same function, the same mask
+    dash_b = client(w, "B").get(f"{API}/org/teacher/dashboard/summary", params={"business_date": "2026-10-29"}).json()
+    assert [(o["money"], o["moneyLabel"]) for o in dash_b["scheduleWindow"] if o["id"] == paid] == [(None, None)]
+    dash_a = client(w, "A").get(f"{API}/org/teacher/dashboard/summary", params={"business_date": "2026-10-29"}).json()
+    assert [(o["money"], o["moneyLabel"]) for o in dash_a["scheduleWindow"] if o["id"] == paid] == [("paid", "оплачено")]
     # the journal of the group: the same mask
     journal = client(w, "admin").get(f"{API}/org/groups/{w.G1.id}/attendance", params=params).json()
     assert [l["money"] for l in journal["lessons"] if l.get("id") == paid] == ["paid"]
