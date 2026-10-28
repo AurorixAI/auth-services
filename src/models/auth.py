@@ -1284,7 +1284,7 @@ class LessonSubstitutionEvent(Base):
     __table_args__ = (
         CheckConstraint(
             "action IN ('requested', 'withdrawn', 'substituted', 'rescheduled', 'cancelled', 'rejected', 'closed', 'reopened', "
-            "'assignment_cleared', 'suggestion_unavailable')",
+            "'assignment_cleared', 'suggestion_unavailable', 'lesson_restored', 'day_off_voided')",
             name="ck_lse_action",
         ),
         Index("idx_lse_request", "request_id", "created_at"),

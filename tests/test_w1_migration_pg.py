@@ -16,6 +16,7 @@ BASE_URL = os.environ.get("A5_AUTH_MIGRATION_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
 
 REVISION = "w1a2b3c4d5e"
+HEAD = "p157a1b2c3d4"          # the revision after it (#157: two new actions of the events); this file is about REVISION, ``upgrade head`` runs through it
 BEFORE = "pf1a2b3c4d5"
 DB_NAME = "a5_auth_w1_migrations"
 
@@ -72,7 +73,7 @@ def world(engine):
 def test_up_down_up_adds_and_drops_only_its_own(engine):
     cfg = config()
     command.upgrade(cfg, "head")
-    assert version(engine) == REVISION
+    assert version(engine) == HEAD
     assert "incomplete" in columns(engine, "org_days_off") and "uq_org_days_off_live_range" in indexes(engine, "org_days_off")
     assert "converted_from_kind" in columns(engine, "group_attendance")
     org, group, user = world(engine)
@@ -104,7 +105,7 @@ def test_up_down_up_adds_and_drops_only_its_own(engine):
                       {"o": org, "g": group, "u": user})
     command.upgrade(cfg, "head")
     command.upgrade(cfg, "head")                                             # repeated: harmless
-    assert version(engine) == REVISION
+    assert version(engine) == HEAD
 
 
 def test_live_duplicates_of_a_range_are_merged_before_the_index(engine, capfd):
@@ -144,7 +145,7 @@ def test_a_database_built_from_the_models_and_stamped_back_upgrades_without_fail
     cfg = config()
     command.stamp(cfg, BEFORE)
     command.upgrade(cfg, "head")
-    assert version(engine) == REVISION and "incomplete" in columns(engine, "org_days_off")
+    assert version(engine) == HEAD and "incomplete" in columns(engine, "org_days_off")
 
 
 def test_the_migration_and_the_models_agree(engine):

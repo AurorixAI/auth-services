@@ -40,6 +40,8 @@ MAX_DAYS = 14
 MAX_AHEAD_DAYS = 366
 HOLIDAY = "holiday"
 CENTRE = "centre"
+DAY_OFF_KIND = "day_off"                 # ``trigger`` of the record of the journal «Замены» a day off made when it turned a hand cancellation «по вине центра» into a holiday (#157 A3) ...
+DAY_OFF_VOID_KIND = "day_off_void"       # ... and when its cancellation gave the kind back
 EXAM_DOWN = "сервис экзаменов недоступен, повторите"
 EXAMS_NOTE = "Экзамены, снятые с уроков, при отмене выходного не вернутся — назначьте заново"
 EXAMS_NOTE_VOID = "Если с этих уроков снимались экзамены — назначьте их заново"          # «Отменить выходной»: the server does not know whether the day off took exams off, so the sentence is conditional
@@ -524,8 +526,17 @@ class DaysOffService:
             attendance_id=row.id, org_id=row.org_id, group_id=row.group_id, actor_id=UUID(str(actor_id)), action="corrected", before_status="cancelled",
             after_status="cancelled", before_records={}, after_records={}, correction_reason=lesson_reason_text(reason)[:500],
             cancellation_reason=row.cancellation_reason, details={"cancellation_kind": {"from": CENTRE, "to": HOLIDAY}, "day_off_id": str(day_off_id)}))
+        self._journal_kind(group, row, actor_id, CENTRE, HOLIDAY, f"Выходной «{reason}»: отмена урока стала «праздник», вычета у учеников нет", "day_off")      # #157 A3 (LESSONS 47): the money moved - the journal says so
         self.db.commit()
         return True
+
+    def _journal_kind(self, group: Optional[Group], att: GroupAttendance, actor_id: Any, before: str, after: str, text: str, trigger: str) -> None:
+        """#157 A3: a day off turned the kind of a hand cancellation (or gave it back): one record of the journal «Замены» (``KIND_CHANGED``, author - whoever made / cancelled the day off)."""
+        if group is None:
+            return
+        from .lesson_substitutions import Substitutions  # lazy: it imports this module
+
+        Substitutions(self.svc).record_kind_change(group, att.lesson_id, date.fromisoformat(att.lesson_date), UUID(str(actor_id)), before, after, text[:500], trigger=trigger)
 
     def _cancel(self, org_id: str, actor_id: str, group: Group, occurrence: Dict[str, Any], reason: str, day_off_id: UUID) -> Optional[str]:
         """The usual cancellation (``Substitutions.cancel_lesson``), kind ``holiday``, of a lesson that has no journal row (a started one is never touched: the row is read again
@@ -591,7 +602,7 @@ class DaysOffService:
                 else:
                     item.reason = "Ручная отмена: вид «по вине центра» возвращён"
                     if not dry_run:
-                        self._revert_conversion(att, row, actor_id)
+                        self._revert_conversion(att, row, actor_id, group)
                 kept.append(item)
                 continue
             why = self._not_restorable(att, today, group)
@@ -626,9 +637,10 @@ class DaysOffService:
                     snapshot={"day_off_id": str(row.id), "reason": row.reason, "dateFrom": row.date_from.isoformat(), "dateTo": row.date_to.isoformat(), "restored": entries}))
             self.db.flush()
             warnings = self._substitutes_not_restored(doomed, groups, lines)
-            from .lesson_substitutions import reopen_requests_closed_by_day_off
+            from .lesson_substitutions import mark_substitutions_not_restored, reopen_requests_closed_by_day_off
 
-            reopen_requests_closed_by_day_off(self.svc, row, doomed, UUID(str(actor_id)))          # W1 S10+ (Д28)
+            reopen_requests_closed_by_day_off(self.svc, row, doomed, UUID(str(actor_id)))          # W1 S10+ (Д28); #157 A4: every request it closed learns the day off is gone
+            mark_substitutions_not_restored(self.svc, row, doomed, UUID(str(actor_id)))            # #157 A4: so does every substitution it took off and did not give back
             for att in doomed:
                 self.db.delete(att)
             self.db.commit()
@@ -639,7 +651,7 @@ class DaysOffService:
         return DayOffVoided(dayOff=self._out(row), restored=restored, kept=kept, dryRun=dry_run, warnings=warnings,
                             examsNote=EXAMS_NOTE_VOID if restored else "")
 
-    def _revert_conversion(self, att: GroupAttendance, day_off: OrgDayOff, actor_id: str) -> None:
+    def _revert_conversion(self, att: GroupAttendance, day_off: OrgDayOff, actor_id: str, group: Optional[Group] = None) -> None:
         """A hand-made cancellation that THIS day off turned into a holiday goes back to the kind it had (``centre``), without a day off, with its own reason; it stays cancelled (audited)."""
         before = att.cancellation_kind
         att.cancellation_kind, att.day_off_id, att.converted_from_kind = att.converted_from_kind, None, None
@@ -648,6 +660,7 @@ class DaysOffService:
             attendance_id=att.id, org_id=att.org_id, group_id=att.group_id, actor_id=UUID(str(actor_id)), action="corrected", before_status="cancelled", after_status="cancelled",
             before_records={}, after_records={}, correction_reason=f"Выходной «{day_off.reason}» отменён: ручная отмена вернулась к прежнему виду"[:500], cancellation_reason=att.cancellation_reason,
             details={"cancellation_kind": {"from": before, "to": att.cancellation_kind}, "day_off_voided": str(day_off.id)}))
+        self._journal_kind(group, att, actor_id, before, att.cancellation_kind, f"Выходной «{day_off.reason}» отменён: отмена урока снова «по вине центра»", DAY_OFF_VOID_KIND)      # #157 A3
 
     def _started_today(self, group: Optional[Group], att: GroupAttendance, lines: Dict[Any, Dict[str, Any]]) -> bool:
         """The lesson of the row is today and its start has passed (a lesson that is gone from the schedule is not «started»)."""

@@ -1501,13 +1501,13 @@ def on_lesson_teacher_changed(svc, group: Group, lesson_id: str, lesson_date: st
     return closed
 
 
-def on_assignment_cancelled(svc, asg: LessonTeacherAssignment, actor_id: Any, trigger: str = "release") -> int:
+def on_assignment_cancelled(svc, asg: LessonTeacherAssignment, actor_id: Any, trigger: str = "release", extra: Optional[Dict[str, Any]] = None) -> int:
     """An assignment was taken off by the operations of B (the group teacher became the substitute, the substitute was removed, the lesson was cancelled / moved): every
     request that was substituted through it keeps its status and gets one event ``assignment_cleared`` whose ``trigger`` says why."""
     subs = Substitutions(svc)
     rows = svc.db.query(Req).filter(Req.assignment_id == asg.id, Req.status == "substituted").all()
     for r in rows:
-        subs.event(r, "assignment_cleared", actor_id, {"teacherId": [str(asg.teacher_id), None], "trigger": trigger})
+        subs.event(r, "assignment_cleared", actor_id, {"teacherId": [str(asg.teacher_id), None], "trigger": trigger, **(extra or {})})      # ``extra``: ``dayOffId`` when a DAY OFF took it off (#157 A4)
     return len(rows)
 
 
@@ -1637,7 +1637,9 @@ def on_member_removed(svc, org_id: Any, user_id: UUID, actor_id: Any, released: 
 
 def reopen_requests_closed_by_day_off(svc, day_off, atts: Sequence[GroupAttendance], actor_id: Any) -> int:
     """W1 S10+ (Д28): «Отменить выходной» gives lessons back; the requests of teachers that THIS day off closed (``closed`` / ``LESSON_CANCELLED`` with the day off in the event) are opened
-    again as new system requests (event ``reopened``) when the lesson is still ahead, the requester still leads it and nothing waits there.  The caller commits.  Returns how many."""
+    again as new system requests (event ``reopened``) when the lesson is still ahead, the requester still leads it and nothing waits there.  The caller commits.  Returns how many.
+    #157 A4: EVERY request this day off closed gets the event ``day_off_voided`` (``reopened``: whether a new one was opened) - also in the four cases that stay closed (the lesson passed,
+    the group is archived, another request waits, the requester no longer leads it): the old record must not look finished while the lesson is back."""
     subs = Substitutions(svc)
     db = svc.db
     book = TeacherBook(db)
@@ -1650,22 +1652,41 @@ def reopen_requests_closed_by_day_off(svc, day_off, atts: Sequence[GroupAttendan
             continue
         closing = (db.query(LessonSubstitutionEvent).filter(LessonSubstitutionEvent.request_id == old.id, LessonSubstitutionEvent.action == "closed")
                    .order_by(LessonSubstitutionEvent.created_at.desc()).first())
-        if closing is None or (closing.snapshot or {}).get("dayOffId") != str(day_off.id) or old.starts_at <= now:
+        if closing is None or (closing.snapshot or {}).get("dayOffId") != str(day_off.id):
             continue
+        new = None
         group = db.query(Group).filter(Group.id == att.group_id).first()
-        if group is None or group.status != "active" or db.query(Req.id).filter(Req.group_id == att.group_id, Req.lesson_id == att.lesson_id, Req.lesson_date == att.lesson_date,
-                                                                              Req.status == PENDING).first():
-            continue
-        if book.default_teacher(group, att.lesson_date, hhmm_to_minutes(old.end_time)) != old.requester_id:
-            continue
-        new = Req(org_id=old.org_id, group_id=old.group_id, lesson_id=old.lesson_id, lesson_date=old.lesson_date, start_time=old.start_time, end_time=old.end_time, starts_at=old.starts_at,
-                  requester_id=old.requester_id, origin="system", batch_id=uuid4(), reason_code=old.reason_code, comment=f"Выходной «{day_off.reason}» отменён: урок вернулся. Нужно новое решение."[:500],
-                  suggested_teacher_id=None, status=PENDING, previous_request_id=old.id, created_at=now, updated_at=now)
-        db.add(new)
-        db.flush()
-        subs.event(new, "reopened", actor_id, {"previousRequestId": str(old.id), "dayOffId": str(day_off.id)})
-        reopened += 1
+        if (old.starts_at > now and group is not None and group.status == "active"
+                and not db.query(Req.id).filter(Req.group_id == att.group_id, Req.lesson_id == att.lesson_id, Req.lesson_date == att.lesson_date, Req.status == PENDING).first()
+                and book.default_teacher(group, att.lesson_date, hhmm_to_minutes(old.end_time)) == old.requester_id):
+            new = Req(org_id=old.org_id, group_id=old.group_id, lesson_id=old.lesson_id, lesson_date=old.lesson_date, start_time=old.start_time, end_time=old.end_time, starts_at=old.starts_at,
+                      requester_id=old.requester_id, origin="system", batch_id=uuid4(), reason_code=old.reason_code,
+                      comment=f"Выходной «{day_off.reason}» отменён: урок вернулся. Нужно новое решение."[:500],
+                      suggested_teacher_id=None, status=PENDING, previous_request_id=old.id, created_at=now, updated_at=now)
+            db.add(new)
+            db.flush()
+            subs.event(new, "reopened", actor_id, {"previousRequestId": str(old.id), "dayOffId": str(day_off.id)})
+            reopened += 1
+        subs.event(old, "day_off_voided", actor_id, {"dayOffId": str(day_off.id), "reopened": new is not None})
     return reopened
+
+
+def mark_substitutions_not_restored(svc, day_off, atts: Sequence[GroupAttendance], actor_id: Any) -> int:
+    """#157 A4: the lessons «Отменить выходной» gives back WITHOUT the substitute the day off took off them (the answer of the day off carries ``SUBSTITUTE_NOT_RESTORED``): the record
+    of that substitution gets the event ``day_off_voided`` (``reopened: false``) - «Выходной отменён: замена не вернулась — назначьте заново».  The caller commits.  Returns how many."""
+    if not atts:
+        return 0
+    subs = Substitutions(svc)
+    keys = {(a.group_id, a.lesson_id, a.lesson_date) for a in atts}
+    rows = (svc.db.query(LessonSubstitutionEvent.request_id).filter(LessonSubstitutionEvent.org_id == day_off.org_id, LessonSubstitutionEvent.action == "assignment_cleared",
+                                                                    LessonSubstitutionEvent.snapshot["dayOffId"].astext == str(day_off.id)).distinct().all())
+    marked = 0
+    for (rid,) in rows:
+        r = svc.db.query(Req).filter(Req.id == rid).first()
+        if r is not None and (r.group_id, r.lesson_id, r.lesson_date) in keys:
+            subs.event(r, "day_off_voided", actor_id, {"dayOffId": str(day_off.id), "reopened": False})
+            marked += 1
+    return marked
 
 
 # ======================================================================================================================

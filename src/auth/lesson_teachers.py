@@ -675,13 +675,13 @@ class LessonTeachers:
                 self.raise_if_busy(conflicts, short_name(self.db.query(User).filter(User.id == teacher_id).first()))
 
     # ----------------------------------------------------------------------------- substitution cleaning
-    def cancel_assignment(self, asg: LessonTeacherAssignment, actor_id: Any, *, group: Group, reason: str, trigger: str = "release") -> None:
+    def cancel_assignment(self, asg: LessonTeacherAssignment, actor_id: Any, *, group: Group, reason: str, trigger: str = "release", extra: Optional[Dict[str, Any]] = None) -> None:
         asg.cancelled_at = bc.utc_now()
         asg.cancelled_by = _uuid(actor_id)
         self.db.flush()
         from . import lesson_substitutions  # lazy: it imports this module
 
-        lesson_substitutions.on_assignment_cancelled(self.svc, asg, actor_id, trigger)  # LOGIC-B2: a request substituted through it gets ``assignment_cleared``
+        lesson_substitutions.on_assignment_cancelled(self.svc, asg, actor_id, trigger, extra)  # LOGIC-B2: a request substituted through it gets ``assignment_cleared``
         self.db.add(
             GroupAudit(
                 org_id=group.org_id,
