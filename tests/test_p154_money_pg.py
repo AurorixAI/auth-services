@@ -516,7 +516,25 @@ def test_the_excel_of_a_sheet_says_the_words_of_the_new_states(pg_session, clock
     cells = [c.value for ws in load_workbook(io.BytesIO(out.content)).worksheets for row in ws.iter_rows() for c in row]
     assert cells.count("не решено") == 5                                               # the five students of the lesson
     decide(w, "owner", made, "skip")
-    s = sheet(w, "2026-10")
-    saved = client(w, "owner").post(f"{API}/org/payroll/sheets", json={"month": "2026-10", "teacher_id": str(w.A.id), "expected_fingerprint": s["source_fingerprint"], "note": "после решения"})
-    cells = [c.value for ws in load_workbook(io.BytesIO(client(w, "owner").get(f"{API}/org/payroll/sheets/{saved.json()['id']}/export.xlsx").content)).worksheets for row in ws.iter_rows() for c in row]
+    sheet_id = saved.json()["id"]
+    look = client(w, "owner").get(f"{API}/org/payroll/sheets/{sheet_id}/diff").json()
+    patched = client(w, "owner").patch(f"{API}/org/payroll/sheets/{sheet_id}", json={"revision": saved.json()["revision"], "recalculate": True, "expected_fingerprint": look["source_fingerprint"]})
+    assert patched.status_code == 200, patched.text
+    cells = [c.value for ws in load_workbook(io.BytesIO(client(w, "owner").get(f"{API}/org/payroll/sheets/{sheet_id}/export.xlsx").content)).worksheets for row in ws.iter_rows() for c in row]
     assert cells.count("без оплаты") == 5 and "не решено" not in cells
+
+
+def test_c3_a_moved_make_up_lifts_the_deduction_by_the_roster_of_the_copy(pg_session, clock):
+    w = build_org(pg_session)
+    g, (a, b, c, d, e), ms = five(w, clock)
+    mk = makeup(w, "admin", g, "2026-10-29", "lesson-mon", "2026-10-26").json()["id"]
+    moved = client(w, "admin").post(f"{API}/org/groups/{g.id}/lesson-move", json={"lessonId": mk, "lessonDate": "2026-10-29", "newDate": "2026-10-30", "startTime": "12:00", "endTime": "13:00",
+                                                                                   "reason": "Перенос"})
+    assert moved.status_code == 200, moved.text
+    copy = moved.json()["result"]["newLesson"]["id"]
+    assert [deducted(w, m) for m in ms] == [0] * 5                                     # still ahead: paused for everybody (the pointer went to the copy)
+    clock.set("2026-10-30 13:30")
+    hold(w, g, copy, "2026-10-30", {a: "present", b: "late", c: "absent"})              # only three were in the roster of the copy
+    assert [deducted(w, m) for m in ms] == [0, 0, 0, 46_000, 46_000]
+    s = sheet(w, "2026-10")
+    assert [mark_of(line_of(s, x), copy)["state"] for x in (a, b, c)] == ["counted"] * 3 and s["total_amount"] == 75_000
