@@ -938,6 +938,11 @@
             "title": "Minutestostart",
             "type": "integer"
           },
+          "needsDecision": {
+            "default": false,
+            "title": "Needsdecision",
+            "type": "boolean"
+          },
           "origin": {
             "default": "teacher",
             "enum": [

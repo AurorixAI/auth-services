@@ -64,6 +64,7 @@
         "clearedTo": null,
         "clearedTrigger": null,
         "outcome": "rescheduled",
+        "needsDecision": false,
         "closedTrigger": null,
         "lastActivityAt": "2026-10-21T09:00:00.000001"
       }

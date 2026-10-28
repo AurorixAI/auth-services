@@ -30,6 +30,7 @@
         "startsAtUtc": "2026-10-21T11:00:00"
       },
       "minutesToStart": 120,
+      "needsDecision": false,
       "origin": "teacher",
       "outcome": "pending",
       "overdue": false,
@@ -74,6 +75,7 @@
         "startsAtUtc": "2026-10-26T05:00:00"
       },
       "minutesToStart": 6960,
+      "needsDecision": false,
       "origin": "teacher",
       "outcome": "pending",
       "overdue": false,
@@ -118,6 +120,7 @@
         "startsAtUtc": "2026-10-27T05:00:00"
       },
       "minutesToStart": 8400,
+      "needsDecision": false,
       "origin": "teacher",
       "outcome": "pending",
       "overdue": false,
@@ -162,6 +165,7 @@
         "startsAtUtc": "2026-10-28T11:00:00"
       },
       "minutesToStart": 10200,
+      "needsDecision": false,
       "origin": "teacher",
       "outcome": "pending",
       "overdue": false,
@@ -206,6 +210,7 @@
         "startsAtUtc": "2026-11-02T05:00:00"
       },
       "minutesToStart": 17040,
+      "needsDecision": false,
       "origin": "teacher",
       "outcome": "pending",
       "overdue": false,

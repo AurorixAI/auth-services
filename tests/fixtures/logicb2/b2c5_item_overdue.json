@@ -26,6 +26,7 @@
     "startsAtUtc": "2026-10-21T11:00:00"
   },
   "minutesToStart": -30,
+  "needsDecision": false,
   "origin": "teacher",
   "outcome": "pending",
   "overdue": true,

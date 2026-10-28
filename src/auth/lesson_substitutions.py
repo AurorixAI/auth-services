@@ -127,6 +127,7 @@ class Ctx:
         self.closed_trigger: Dict[UUID, str] = {}                # request id -> the trigger of its last ``closed`` event (#157 A9)
         self.restored: Set[UUID] = set()                         # requests whose lesson was given back (``lesson_restored``, #157 A10)
         self.voided: Set[UUID] = set()                           # requests a day off that was cancelled left behind (``day_off_voided``, #157 A4)
+        self.needs_decision: Dict[UUID, bool] = {}               # request id -> ``needsDecision`` of its LAST ``day_off_voided`` (same query as the rest of the events)
         self.last_event: Dict[UUID, datetime] = {}               # request id -> the time of its newest event of any kind (#157 A8)
 
 
@@ -230,6 +231,7 @@ class SubstitutionsBase:
                 ctx.restored.add(e.request_id)
             elif e.action == "day_off_voided":
                 ctx.voided.add(e.request_id)
+                ctx.needs_decision[e.request_id] = bool((e.snapshot or {}).get("needsDecision"))
             elif (e.snapshot or {}).get("trigger"):
                 ctx.triggers[e.request_id] = e.snapshot["trigger"]
 
@@ -319,7 +321,7 @@ class SubstitutionsBase:
             "comment": comment, "suggestedTeacher": sug, "createdAt": r.created_at.isoformat(),
             "minutesToStart": minutes, "urgent": bool(pending and R.is_urgent(minutes)), "overdue": bool(pending and R.is_overdue(minutes)),
             "decision": decision, "previous": prev, "trigger": ctx.triggers.get(r.id) if r.origin == "system" else None, **self._cleared(r, ctx),
-            "outcome": self.outcome_of(r, ctx), "closedTrigger": ctx.closed_trigger.get(r.id) if r.status == "closed" else None,
+            "outcome": self.outcome_of(r, ctx), "needsDecision": ctx.needs_decision.get(r.id, False), "closedTrigger": ctx.closed_trigger.get(r.id) if r.status == "closed" else None,
             "lastActivityAt": max(t for t in (r.decided_at or r.created_at, ctx.last_event.get(r.id)) if t is not None).isoformat(),
         }
 

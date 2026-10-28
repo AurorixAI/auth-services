@@ -41,6 +41,7 @@
       "startsAtUtc": "2026-11-02T05:00:00"
     },
     "minutesToStart": 17038,
+    "needsDecision": false,
     "origin": "teacher",
     "outcome": "cancelled",
     "overdue": false,

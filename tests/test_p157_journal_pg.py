@@ -412,3 +412,26 @@ def test_r3_a_cancellation_and_its_return_are_one_event_in_the_history(w, sync, 
     mine = client(w, "A").get(f"{SUB}/{item['id']}").json()["events"]
     back_event = [e for e in mine if e["action"] == "lesson_restored"]
     assert len(back_event) == 1 and back_event[0]["snapshot"] == {} and back_event[0]["actor"] == {"role": "admin"}
+
+
+def test_r3_the_item_carries_needs_decision_of_its_last_day_off_voided(w, sync):
+    asked = one(w, "A", "L1", NEXT)
+    behind = one(w, "B", "L4", NEXT)
+    assert decide(w, "admin", behind["id"], decision="substitute", teacherId=str(w.C.id)).status_code == 200
+    put(w, "admin", w.G2, "lesson-l3", "2026-10-27", w.D)
+    made = day_off(w, NEXT, "Хайит")
+    made_direct = day_off(w, "2026-10-27", "Другой")
+    direct = [str(r.id) for r in requests_of(w) if r.lesson_date == "2026-10-27"]
+    plain = one(w, "A", "L2", "2026-10-28")
+    for rid in (asked["id"], behind["id"], *direct, plain["id"]):                                          # before the void: nobody needs anything
+        assert client(w, "owner").get(f"{SUB}/{rid}").json()["item"]["needsDecision"] is False
+    void(w, made)
+    void(w, made_direct)
+    listed = {i["id"]: i["needsDecision"] for i in decided(w)}
+    assert listed[behind["id"]] is True                                  # a request stood behind the substitution
+    assert [listed[d] for d in direct] == [False]                        # the administrator's own substitution: nothing to decide
+    assert asked["id"] in listed and listed[asked["id"]] is True         # the request the day off closed was opened again: decide it
+    assert client(w, "owner").get(f"{SUB}/{behind['id']}").json()["item"]["needsDecision"] is True
+    assert client(w, "B").get(f"{SUB}/{behind['id']}").json()["item"]["needsDecision"] is True                 # same value for the requester
+    assert client(w, "A").get(f"{SUB}/mine").json()["items"] and all("needsDecision" in i for i in client(w, "A").get(f"{SUB}/mine").json()["items"])
+    assert plain["id"] not in listed or listed[plain["id"]] is False

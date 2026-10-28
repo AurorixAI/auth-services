@@ -119,6 +119,7 @@ class SubstitutionItem(BaseModel):
     clearedTrigger: Optional[str] = None  # put | member_removed | role_changed | group_teacher_changed | cancel | move | release
     outcome: str = "pending"  # #157 A11: THE code of what became of the record (P157_API.md §2) - one function for the list, the detail and ``mine``; the texts are the front's
     lastActivityAt: Optional[str] = None  # #157 A8: the later of the decision and the newest event of the record; the «Решённые» are sorted by it
+    needsDecision: bool = False  # #157: ``needsDecision`` of the newest ``day_off_voided`` of the record (an administrator has to decide something after a day off was cancelled); false when there is none
     closedTrigger: Optional[str] = None  # #157 A9: the trigger of the ``closed`` event (day_off, journal_row, window_expired, role_changed, ...); null for a record that is not closed
 
 

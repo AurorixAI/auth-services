@@ -99,7 +99,7 @@ def item(name: str, lesson: str, day: str, requester: str, now_local: datetime, 
         "createdAt": iso(utc(now_local)), "minutesToStart": minutes, "urgent": bool(pending and 0 < minutes < 1440),
         "overdue": bool(pending and minutes <= 0), "decision": decision, "previous": previous,
         "trigger": None, "clearedAt": None, "clearedBy": None, "clearedTo": None, "clearedTrigger": None,
-        "outcome": outcome_of(status, decision), "closedTrigger": CLOSING_TRIGGER.get((decision or {}).get("closedReason")) if status == "closed" else None,
+        "outcome": outcome_of(status, decision), "needsDecision": False, "closedTrigger": CLOSING_TRIGGER.get((decision or {}).get("closedReason")) if status == "closed" else None,
         "lastActivityAt": (decision or {}).get("at") or iso(utc(now_local)),      # #157: no event of these chains comes later than the decision (or the creation)
     }
 

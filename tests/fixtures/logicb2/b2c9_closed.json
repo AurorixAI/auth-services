@@ -36,6 +36,7 @@
     "startsAtUtc": "2026-10-26T05:00:00"
   },
   "minutesToStart": 5760,
+  "needsDecision": false,
   "origin": "teacher",
   "outcome": "group_archived",
   "overdue": false,

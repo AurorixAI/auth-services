@@ -26,6 +26,7 @@
     "startsAtUtc": "2026-11-02T05:00:00"
   },
   "minutesToStart": 11520,
+  "needsDecision": false,
   "origin": "system",
   "outcome": "pending",
   "overdue": false,
