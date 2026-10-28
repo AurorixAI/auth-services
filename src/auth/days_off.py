@@ -31,7 +31,7 @@ from src.models.auth import Group, GroupAttendance, GroupAttendanceAudit, GroupA
 
 from . import business_clock as bc
 from . import payments_texts as tx
-from .ops_rules import conflict, hhmm_to_minutes, not_found, unprocessable
+from .ops_rules import conflict, hhmm_to_minutes, not_found, short_name, unprocessable
 from .schemas import LessonAttendanceStatus
 
 logger = logging.getLogger(__name__)
@@ -672,7 +672,7 @@ class DaysOffService:
             if asg is None or self.db.query(LessonTeacherAssignment.id).filter(LessonTeacherAssignment.group_id == att.group_id, LessonTeacherAssignment.lesson_id == att.lesson_id,
                                                                                LessonTeacherAssignment.lesson_date == att.lesson_date, LessonTeacherAssignment.cancelled_at.is_(None)).first():
                 continue
-            who = self._names([asg.teacher_id]).get(asg.teacher_id)
+            who = short_name(self.db.query(User).filter(User.id == asg.teacher_id).first())          # “Рахимов Т.” as everywhere (LESSONS 48), not the full name
             group = groups.get(att.group_id)
             day = date.fromisoformat(att.lesson_date)
             line = self._att_item(att, group, lines)

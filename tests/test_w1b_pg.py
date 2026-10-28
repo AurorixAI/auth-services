@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 
 from src.models.auth import GroupAttendance, GroupAudit, GroupScheduleOverride, LessonSubstitutionEvent, LessonSubstitutionRequest as Req, LessonTeacherAssignment, OrganizationMember, StudentGroup
+from src.auth.ops_rules import short_name
 from tests.b2_helpers import API, build_d2, clock, decide, events_of, needs_pg, pg_session, req, requests_of, row_of  # noqa: F401  (fixtures)
 from tests.ops_helpers import client, history_row, new_group, new_slot, new_student
 from tests.pg_world import give_group_price
@@ -90,7 +91,7 @@ def test_d3_voiding_a_day_off_warns_about_the_substitutes_it_took_off(w):
     assert [(x["code"], x["date"], x["lessonId"]) for x in dry["warnings"]] == [("SUBSTITUTE_NOT_RESTORED", "2026-10-28", "lesson-l2")]
     out = client(w, "owner").post(f"{DAYS}/{made['dayOff']['id']}/void").json()
     (warning,) = out["warnings"]
-    assert warning["code"] == "SUBSTITUTE_NOT_RESTORED" and warning["date"] == "2026-10-28" and warning["substituteName"] and "назначьте её заново" in warning["message"]
+    assert warning["code"] == "SUBSTITUTE_NOT_RESTORED" and warning["date"] == "2026-10-28" and warning["substituteName"] == short_name(w.D) and f"({short_name(w.D)})" in warning["message"] and "назначьте её заново" in warning["message"]
     assert [x["lessonId"] for x in out["restored"]] == ["lesson-l2"]
     # a day off without substitutes warns about nothing
     made2 = client(w, "owner").post(DAYS, json={"dateFrom": "2026-11-04", "dateTo": "2026-11-04", "reason": "Другой"}).json()

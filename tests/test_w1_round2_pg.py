@@ -299,6 +299,7 @@ def test_r3_2_the_warning_has_the_time_of_the_lesson_and_matches_its_line_in_the
     out = client(w, "owner").post(f"{API}/org/days-off/{day_off}/void").json()
     (warning,) = out["warnings"]
     assert (warning["startTime"], warning["endTime"], warning["groupName"], warning["date"]) == ("10:00", "11:30", "9-А", "2026-10-26")
+    assert warning["substituteName"] == short_name(w.D) and f"({short_name(w.D)})" in warning["message"]          # «Рахимов Т.», not the full «Рахимов Тимур»
     line = next(x for x in out["restored"] if x["lessonId"] == warning["lessonId"] and x["date"] == warning["date"])
     assert (line["startTime"], line["endTime"], line["groupName"]) == (warning["startTime"], warning["endTime"], warning["groupName"])      # the same line in both places (LESSONS 48)
 
