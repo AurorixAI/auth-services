@@ -95,7 +95,7 @@ class LessonCancelMixin:
             row = self._cancelled_row(group, ref, actor, reason, {"cancellation_kind": kind}, kind=kind, day_off_id=day_off_id, request=request)
         else:
             self._cancel_started_row(group, ref, row, actor, reason, kind)
-        OneOffPurpose(self.svc).release(group, lesson_id)          # #154: a cancelled make-up frees the lesson it made up for (the deduction comes back by itself)
+        OneOffPurpose(self.svc).release(group, lesson_id, actor)          # #154: a cancelled make-up frees the lesson it made up for (the deduction comes back by itself)
         released = self._release_substitute(group, ref, actor, "cancel", {"dayOffId": str(day_off_id)} if by_day_off else None)
         if released:
             warnings.append({"code": "SUBSTITUTE_RELEASED", "message": f"Замена снята: {released}"})
@@ -215,7 +215,9 @@ class LessonCancelMixin:
         if row.day_off_id is not None or held is not None:
             why = f" ({held.reason})" if held is not None else ""
             raise conflict("RESTORE_DAY_OFF", f"Дата — выходной день центра{why}: чтобы вернуть урок, отмените сам выходной")
-        self.svc._assert_teacher_time_is_available(group=group, lesson_id=lesson_id, occurrence_date=day, payload=occ)
+        slot_warnings = OneOffPurpose(self.svc).restore_slot(group, lesson_id, day, occ)          # #154: the slot of a make-up / an additional lesson may be taken meanwhile: GROUP_BUSY / TEACHER_BUSY / STUDENT_BUSY
+        if slot_warnings is None:
+            self.svc._assert_teacher_time_is_available(group=group, lesson_id=lesson_id, occurrence_date=day, payload=occ)
         OneOffPurpose(self.svc).relink(group, lesson_id)             # #154: a cancelled make-up makes up for the same lesson again (409 ``RESTORE_MAKEUP_TARGET`` when that lesson changed meanwhile)
         names = {u.id: short_name(u) for u in self.db.query(User).filter(User.id.in_([i for i in (row.marked_by,) if i]))} if row.marked_by else {}
         trace = {"lessonId": lesson_id, "lessonDate": iso, "reason": reason, "cancellationKind": row.cancellation_kind, "cancellationReason": row.cancellation_reason,
@@ -235,7 +237,7 @@ class LessonCancelMixin:
         self.db.delete(row)
         self.db.flush()
         return {"ok": True, "restored": True, "lessonId": lesson_id, "lessonDate": iso, "previousKind": trace["cancellationKind"], "examsNote": EXAMS_NOT_RESTORED,
-                "warnings": [{"code": w.code, "message": w.message} for w in lost]}
+                "warnings": [{"code": w.code, "message": w.message} for w in lost] + (slot_warnings or [])}
 
     def record_kind_change(self, group: Group, lesson_id: str, day: date, actor: Any, before: str, after: str, reason: str, trigger: str = MANAGER_REASON_CHANGE) -> None:
         """W1 S17 (Д10): «Изменить причину отмены» leaves a record in the journal «Замены» (``closed`` / ``KIND_CHANGED``, trigger ``manager_reason_change``: who, when, from what to what, why) -

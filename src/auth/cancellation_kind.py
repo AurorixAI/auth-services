@@ -28,6 +28,9 @@ class ChangeCancellationKind(BaseModel):
 
 
 def change_cancellation_kind(db: Session, org_id: str, group_id: str, req: ChangeCancellationKind, *, actor_id: str) -> Dict[str, Any]:
+    group = db.query(Group).filter(Group.id == group_id, Group.org_id == org_id).with_for_update().populate_existing().first()      # the order of every writer: the GROUP, then the journal row (LESSONS 23; the creation of a make-up takes the same two)
+    if group is None:
+        raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
     row = (db.query(GroupAttendance)
            .filter(GroupAttendance.org_id == org_id, GroupAttendance.group_id == group_id, GroupAttendance.lesson_date == req.lessonDate.isoformat(),
                    GroupAttendance.lesson_id == req.lessonId)
@@ -57,10 +60,8 @@ def change_cancellation_kind(db: Session, org_id: str, group_id: str, req: Chang
         attendance_id=row.id, org_id=org_id, group_id=group_id, actor_id=actor_id, action="corrected", before_status="cancelled", after_status="cancelled",
         before_records={}, after_records={}, correction_reason=req.reason.strip(), cancellation_reason=row.cancellation_reason,
         details={"cancellation_kind": {"from": before, "to": req.cancellationKind}}))
-    group = db.query(Group).filter(Group.id == group_id, Group.org_id == org_id).first()
-    if group is not None:
-        from .lesson_substitutions import Substitutions
+    from .lesson_substitutions import Substitutions
 
-        Substitutions(AuthService(db)).record_kind_change(group, req.lessonId, req.lessonDate, _uuid(actor_id), before, req.cancellationKind, req.reason.strip())
+    Substitutions(AuthService(db)).record_kind_change(group, req.lessonId, req.lessonDate, _uuid(actor_id), before, req.cancellationKind, req.reason.strip())
     db.commit()
     return {"ok": True, "changed": True, "cancellationKind": req.cancellationKind, "version": row.version}

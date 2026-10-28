@@ -162,10 +162,10 @@ class Mark:
 
     @property
     def mark(self) -> Optional[int]:
-        """The cell of the partner's table: 1 counted, 0 not counted (confirmed excuse), empty - not in the group."""
+        """The cell of the partner's table: 1 counted, 0 not counted (confirmed excuse; #154: «не решено» and «без оплаты» - contract v2 §8), empty - not in the group."""
         if self.state == NOT_IN_GROUP:
             return None
-        return 0 if self.state == EXCUSED_CONFIRMED else 1
+        return 0 if self.state in (EXCUSED_CONFIRMED, UNDECIDED, NO_PAY) else 1
 
     def as_dict(self) -> Dict[str, Any]:
         out = {

@@ -531,6 +531,22 @@ class DaysOffService:
         if not self._convertible(row):
             self.db.rollback()
             return False
+        self._convert_row(row, group, day_off_id, reason, actor_id)
+        self.db.commit()
+        return True
+
+    def convert_released(self, group: Group, row: GroupAttendance, actor_id: Any) -> bool:
+        """#154 (LESSONS 47): a make-up was cancelled / deleted and the cancelled lesson it made up for is free again - if a LIVE day off holds its date, the lesson becomes a holiday NOW, by the road of
+        the day off itself (``_convert_row``: the marker ``converted_from_kind``, the audit, the record of «Замены»), as it would have if the make-up had never been.  The row is locked by the caller, nothing
+        is committed or rolled back here (the caller's cancellation is one transaction); a lesson older than the window of the unclosed lessons stays «по вине центра» (the day off does the same)."""
+        live = self.live_for_date(group.org_id, date.fromisoformat(row.lesson_date))
+        if live is None or not self._convertible(row) or not self._in_window(row.lesson_date):
+            return False
+        self._convert_row(row, group, live.id, live.reason, actor_id, trigger="makeup_released")
+        return True
+
+    def _convert_row(self, row: GroupAttendance, group: Group, day_off_id: UUID, reason: str, actor_id: Any, trigger: str = "day_off") -> None:
+        """THE conversion of a hand cancellation «по вине центра» into a holiday (the row is locked and convertible; no commit)."""
         row.converted_from_kind = row.cancellation_kind          # the marker: what it WAS (``centre``) - «Отменить выходной» gives it back, the deduction with it
         row.cancellation_kind = HOLIDAY
         row.day_off_id = day_off_id
@@ -539,9 +555,7 @@ class DaysOffService:
             attendance_id=row.id, org_id=row.org_id, group_id=row.group_id, actor_id=UUID(str(actor_id)), action="corrected", before_status="cancelled",
             after_status="cancelled", before_records={}, after_records={}, correction_reason=lesson_reason_text(reason)[:500],
             cancellation_reason=row.cancellation_reason, details={"cancellation_kind": {"from": CENTRE, "to": HOLIDAY}, "day_off_id": str(day_off_id)}))
-        self._journal_kind(group, row, actor_id, CENTRE, HOLIDAY, f"Выходной «{reason}»: отмена урока стала «праздник», вычета у учеников нет", "day_off")      # #157 A3 (LESSONS 47): the money moved - the journal says so
-        self.db.commit()
-        return True
+        self._journal_kind(group, row, actor_id, CENTRE, HOLIDAY, f"Выходной «{reason}»: отмена урока стала «праздник», вычета у учеников нет", trigger)      # #157 A3 (LESSONS 47): the money moved - the journal says so
 
     def _journal_kind(self, group: Optional[Group], att: GroupAttendance, actor_id: Any, before: str, after: str, text: str, trigger: str) -> None:
         """#157 A3: a day off turned the kind of a hand cancellation (or gave it back): one record of the journal «Замены» (``KIND_CHANGED``, author - whoever made / cancelled the day off)."""

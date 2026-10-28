@@ -216,6 +216,17 @@ class AttendanceRules:
         return versions, out
 
     # ------------------------------------------------------------------------------------ restricted journal (LOGIC-B2, R3-5)
+    @staticmethod
+    def teacher_sees_lesson(group: Group, actor_id: Any, lesson_teacher_id: Any, lesson_date: str) -> bool:
+        """THE criterion of what a teacher sees of a lesson in the journal of a group (``restrict_journal`` and the reason of a cancellation in the list of make-ups use it): the current teacher of the
+        group sees every lesson; any other teacher only a lesson that is HIS (the teacher of the lesson by the resolver / the row) from ``today - 7``."""
+        from .ops_rules import teacher_lesson_window_start
+
+        actor = str(actor_id)
+        if group.teacher_id is not None and str(group.teacher_id) == actor:
+            return True
+        return lesson_teacher_id is not None and str(lesson_teacher_id) == actor and lesson_date >= teacher_lesson_window_start(bc.business_today()).isoformat()
+
     def restrict_journal(self, group: Group, resp, actor_id: Any):
         """The journal as a teacher who does NOT lead the group sees it: only the lessons that are HIS (the teacher of the lesson by the resolver / the row, from
         ``today - 7``) - a substitute's lesson, or the lessons a former teacher taught before a handover - and only their marks.  No other lessons or months, no phones, no
@@ -224,13 +235,9 @@ class AttendanceRules:
         actor = str(actor_id)
         if group.teacher_id is not None and str(group.teacher_id) == actor:
             return resp
-        window_from = bc.business_today()
-        from .ops_rules import teacher_lesson_window_start
-
-        window_from = teacher_lesson_window_start(window_from).isoformat()
         allowed = {
             key for key, info in (resp.lessonTeachers or {}).items()
-            if (info.get("teacherId") if isinstance(info, dict) else getattr(info, "teacherId", None)) == actor and key.split("_", 1)[0] >= window_from
+            if self.teacher_sees_lesson(group, actor, info.get("teacherId") if isinstance(info, dict) else getattr(info, "teacherId", None), key.split("_", 1)[0])
         }
         by_key = {lesson.get("instanceKey"): lesson for lesson in resp.lessons}
         roster_ids: Dict[str, List[str]] = {}

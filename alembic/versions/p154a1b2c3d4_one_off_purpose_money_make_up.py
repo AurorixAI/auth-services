@@ -57,8 +57,8 @@ def upgrade() -> None:
         "ADD COLUMN IF NOT EXISTS made_up_lesson_id VARCHAR(100), ADD COLUMN IF NOT EXISTS made_up_date VARCHAR(10)"
     )
     op.execute(
-        f"UPDATE {ONE_OFF} SET purpose = 'moved' WHERE purpose IS NULL AND id IN "
-        "(SELECT moved_to_lesson_id FROM lesson_substitution_requests WHERE moved_to_lesson_id IS NOT NULL)"
+        f"UPDATE {ONE_OFF} SET purpose = 'moved' WHERE purpose IS NULL AND EXISTS "           # the very rule of ``moved_from_map`` / ``moved_one_off_keys``: a live move (``rescheduled``) of THIS group
+        f"(SELECT 1 FROM lesson_substitution_requests r WHERE r.moved_to_lesson_id = {ONE_OFF}.id AND r.group_id = {ONE_OFF}.group_id AND r.status = 'rescheduled')"
     )
     op.execute(f"UPDATE {ONE_OFF} SET purpose = 'extra', money = 'paid' WHERE purpose IS NULL")
     for name, definition in CHECKS.items():

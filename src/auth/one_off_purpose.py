@@ -18,9 +18,10 @@ from uuid import UUID
 from sqlalchemy import and_, false, or_
 
 from . import business_clock as bc
+from .attendance_rules import AttendanceRules
 from .lesson_teachers import TeacherBook, _s, _uuid
 from .models import Group, GroupAttendance, GroupAudit, GroupScheduleOneOffLesson, LessonSubstitutionRequest as Req, OrganizationMember, User
-from .ops_rules import conflict, not_found, short_name, unprocessable
+from .ops_rules import conflict, forbidden, not_found, short_name, unprocessable
 
 MAKEUP, EXTRA, MOVED = "makeup", "extra", "moved"
 NONE, WAIT, PAID = "none", "wait", "paid"
@@ -156,8 +157,9 @@ class OneOffPurpose:
             raise conflict("MAKEUP_EXISTS", MAKEUP_EXISTS_TEXT)
         return row, occ
 
-    def candidates(self, group: Group, *, manager: bool) -> Dict[str, Any]:
-        """The cancelled lessons of the group that can be made up (``GET makeup-candidates``): the date, the time and - for an owner / admin only - the reason of the cancellation."""
+    def candidates(self, group: Group, *, manager: bool, actor: Optional[Any] = None) -> Dict[str, Any]:
+        """The cancelled lessons of the group that can be made up (``GET makeup-candidates``): the date, the time and the reason of the cancellation - for an owner / admin always, for a teacher only where
+        the journal of the lesson shows it to him (``AttendanceRules.teacher_sees_lesson``: the journal gives the reason to him by the very same function, decision of the lead 29.10 item 2)."""
         today = bc.business_today()
         first = today - timedelta(days=MAKEUP_BACK_DAYS)
         rows = (self.db.query(GroupAttendance).filter(GroupAttendance.group_id == group.id, GroupAttendance.status == "cancelled", GroupAttendance.cancellation_kind == "centre",
@@ -167,19 +169,29 @@ class OneOffPurpose:
         if group.status == "active" and rows:
             days = [date.fromisoformat(r.lesson_date) for r in rows]
             occurrences = {(o["occurrenceDate"], o["id"]): o for o in self.svc._resolved_occurrences_for_group(group, date_from=min(days), date_to=max(days))}
+            teachers = self._journal_teachers(group, rows, occurrences) if not manager else {}
             for row in rows:
                 occ = occurrences.get((row.lesson_date, row.lesson_id))
                 if self._origin_state(group, row.lesson_id, date.fromisoformat(row.lesson_date), row, occ, today) is not None:
                     continue
+                shown = manager or AttendanceRules.teacher_sees_lesson(group, actor, teachers.get(f"{row.lesson_date}_{row.lesson_id}"), row.lesson_date)
                 items.append({"lessonId": row.lesson_id, "lessonDate": row.lesson_date, "startTime": occ["startTime"], "endTime": occ["endTime"],
-                              "label": f"{day_label(row.lesson_date)}, {occ['startTime']}–{occ['endTime']}", "reason": row.cancellation_reason if manager else None})
+                              "label": f"{day_label(row.lesson_date)}, {occ['startTime']}–{occ['endTime']}", "reason": row.cancellation_reason if shown else None})
         return {"items": items, "emptyReason": None if items else NO_CANDIDATES_TEXT}
+
+    def _journal_teachers(self, group: Group, rows: List[GroupAttendance], occurrences: Dict[Tuple[str, str], Dict[str, Any]]) -> Dict[str, Optional[str]]:
+        """``{<date>_<lessonId>: the teacher of the lesson}`` as the journal computes it (``AttendanceRules.journal_extras``: the same function, not a copy)."""
+        lessons = [{"instanceKey": f"{r.lesson_date}_{r.lesson_id}", "id": r.lesson_id, "date": r.lesson_date, "endTime": occurrences[(r.lesson_date, r.lesson_id)]["endTime"]}
+                   for r in rows if (r.lesson_date, r.lesson_id) in occurrences]
+        if not lessons:
+            return {}
+        _, infos = AttendanceRules(self.svc).journal_extras(group, rows, lessons, date.fromisoformat(rows[0].lesson_date), date.fromisoformat(rows[-1].lesson_date))
+        return {key: info["teacherId"] for key, info in infos.items()}
 
     def makeup_slot(self, group: Group, origin_occ: Dict[str, Any], origin_day: date, new_day: date, payload: Dict[str, Any], *, manager: bool) -> List[Dict[str, str]]:
         """The rules of the slot of a make-up: THE function of a move (АД-7) - from today to +60 days, not the very slot of the cancelled lesson, not after the end of its series, the group and the
         teacher are free (``GROUP_BUSY`` / ``TEACHER_BUSY`` 409); a student with another lesson then is the warning ``STUDENT_BUSY``.  The teacher of the new slot is locked first (the pattern of a
         move: two make-ups into one slot of one teacher serialise).  Returns the warnings."""
-        from . import substitution_rules as R
         from .lesson_substitutions import Substitutions
 
         subs = Substitutions(self.svc)
@@ -189,6 +201,25 @@ class OneOffPurpose:
         refusal = subs._slot_refusal(ref, new_day, start, end, start_m, subs.now()) or subs._series_refusal(group, ref, new_day)
         if refusal is not None:
             raise refusal
+        return self.busy_checks(group, ref, new_day, start, end, start_m, end_m, manager=manager)
+
+    def slot_checks(self, group: Group, lesson_id: str, day: date, payload: Dict[str, Any], *, manager: bool) -> List[Dict[str, str]]:
+        """The overlaps of an ADDITIONAL lesson (decision of the lead 29.10, items 3 and 5; also the return of a cancelled make-up / additional lesson): the same three checks as a make-up - ``GROUP_BUSY`` / ``TEACHER_BUSY`` 409, ``STUDENT_BUSY`` a warning.  No limit
+        of days ahead and the past stays refused by the caller (the existing rule).  Called after the lock of the group, so two clicks of one author never both pass.  Returns the warnings."""
+        from .lesson_substitutions import Substitutions
+
+        start, end = payload["startTime"], payload["endTime"]
+        start_m, end_m = self.svc._validate_lesson_time_range(start, end)
+        ref = Substitutions(self.svc)._ref_of(group, lesson_id, day, payload)
+        return self.busy_checks(group, ref, day, start, end, start_m, end_m, manager=manager)
+
+    def busy_checks(self, group: Group, ref: Any, new_day: date, start: str, end: str, start_m: int, end_m: int, *, manager: bool) -> List[Dict[str, str]]:
+        """The one place of the overlaps of a new slot (a make-up and an additional lesson): the teacher of the slot is locked first (the pattern of a move: two lessons into one slot of one teacher
+        serialise), then ``TEACHER_BUSY`` / ``GROUP_BUSY`` 409; a student with another lesson then is the warning ``STUDENT_BUSY``."""
+        from . import substitution_rules as R
+        from .lesson_substitutions import Substitutions
+
+        subs = Substitutions(self.svc)
         teacher = TeacherBook(self.db).default_teacher(group, new_day.isoformat(), end_m)
         if teacher is not None:
             self.db.query(User.id).filter(User.id == teacher).with_for_update(key_share=True).first()        # FOR NO KEY UPDATE (LESSONS 23)
@@ -199,17 +230,19 @@ class OneOffPurpose:
             raise R.err(409, "GROUP_BUSY", conflicts=g_conf[:20], total=len(g_conf))
         return subs._student_busy(group, new_day, start_m, end_m, detail=manager)
 
-    def actor_role(self, org_id: Any, actor_id: Any, manager: bool) -> str:
-        """The role of the author IN THIS centre (the audit row says it); never guessed from the global role."""
+    def actor_role(self, org_id: Any, actor_id: Any) -> str:
+        """The role of the author IN THIS centre (the audit row says it).  Never guessed from the global role and never a default (LESSONS 17): no membership in the centre = 403 ``NOT_A_MEMBER``."""
         member = self.db.query(OrganizationMember.org_role).filter(OrganizationMember.org_id == org_id, OrganizationMember.user_id == _uuid(actor_id)).first()
-        return member[0] if member and member[0] in ("owner", "admin", "teacher") else ("admin" if manager else "teacher")
+        if not member or member[0] not in ("owner", "admin", "teacher"):
+            raise forbidden("NOT_A_MEMBER", "Вы не состоите в этом центре")
+        return member[0]
 
     def link(self, origin: GroupAttendance, lesson_id: str) -> None:
         origin.made_up_by = lesson_id
 
     def audit_created(self, group: Group, actor: UUID, actor_role: str, one_off: GroupScheduleOneOffLesson, payload: Dict[str, Any]) -> None:
         self.db.add(GroupAudit(
-            org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role=actor_role if actor_role in ("owner", "admin", "teacher") else "admin", action=CREATED_ACTION,
+            org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role=actor_role, action=CREATED_ACTION,
             assigned_teacher_id=group.teacher_id, created_at=bc.utc_now(),
             snapshot={"lessonId": one_off.id, "lessonDate": one_off.lesson_date, "startTime": payload.get("startTime"), "endTime": payload.get("endTime"), "purpose": one_off.purpose,
                       "money": one_off.money, "madeUp": {"lessonId": one_off.made_up_lesson_id, "date": one_off.made_up_date} if one_off.made_up_lesson_id else None},
@@ -222,13 +255,17 @@ class OneOffPurpose:
         return (self.db.query(GroupAttendance).filter(GroupAttendance.group_id == group_id, GroupAttendance.lesson_id == one_off.made_up_lesson_id,
                                                       GroupAttendance.lesson_date == one_off.made_up_date).with_for_update().first())
 
-    def release(self, group: Group, lesson_id: str) -> None:
-        """The make-up lesson is gone (cancelled / deleted): the cancelled lesson it made up for is free again (the deduction comes back by itself - it is a function of the facts)."""
+    def release(self, group: Group, lesson_id: str, actor_id: Any) -> None:
+        """The make-up lesson is gone (cancelled / deleted): the cancelled lesson it made up for is free again (the deduction comes back by itself - it is a function of the facts).  If a live day off
+        holds the date of that lesson, it becomes a holiday now (LESSONS 47: the day off converts every «по вине центра» cancellation of its dates, and this one was kept only for the make-up)."""
+        from .days_off import DaysOffService  # lazy: it imports this module's neighbours
+
         one_off = one_off_of(self.db, group.id, lesson_id)
         origin = self._origin_of(group.id, one_off) if one_off is not None else None
         if origin is not None and origin.made_up_by == lesson_id:
             origin.made_up_by = None
             self.db.flush()
+            DaysOffService(self.svc).convert_released(group, origin, actor_id)
 
     def repoint(self, group: Group, source: GroupScheduleOneOffLesson, new_id: str) -> None:
         """A move of a make-up: the cancelled lesson points at the COPY (the copy was written with the same ``made_up_*``)."""
@@ -236,6 +273,14 @@ class OneOffPurpose:
         if origin is not None and origin.made_up_by == source.id:
             origin.made_up_by = new_id
             self.db.flush()
+
+    def restore_slot(self, group: Group, lesson_id: str, day: date, payload: Dict[str, Any]) -> Optional[List[Dict[str, str]]]:
+        """«Вернуть урок» for a cancelled make-up / additional lesson: its slot may have been taken meanwhile - the same ``GROUP_BUSY`` / ``TEACHER_BUSY`` 409 (+ the warning ``STUDENT_BUSY``) as at the
+        creation.  ``None``: not such a lesson (the caller makes its usual check)."""
+        one_off = one_off_of(self.db, group.id, lesson_id)
+        if one_off is None or one_off.purpose not in (MAKEUP, EXTRA):
+            return None
+        return self.slot_checks(group, lesson_id, day, payload, manager=True)
 
     def relink(self, group: Group, lesson_id: str) -> None:
         """«Вернуть урок» for a cancelled make-up: it makes up for the same lesson again if that lesson is still cancelled by the centre and free; else 409 ``RESTORE_MAKEUP_TARGET``."""
@@ -300,6 +345,8 @@ class OneOffPurpose:
     def decide(self, org_id: Any, actor_id: Any, actor_role: str, lesson_id: str, decision: str, *, owner: bool) -> Dict[str, Any]:
         """«Оплатить» / «Не оплачивать»: once, only a held lesson whose money waits (an additional ``wait`` or an empty make-up).  Under the lock of the group, so two administrators never both decide."""
         actor = _uuid(actor_id)
+        if actor_role not in ("owner", "admin"):                    # the road is closed to the others already; no default role is written to the audit (LESSONS 17)
+            raise forbidden("DECISION_FORBIDDEN", "Решать об оплате могут владелец и администратор")
         one_off = self.db.query(GroupScheduleOneOffLesson).filter(GroupScheduleOneOffLesson.id == lesson_id, GroupScheduleOneOffLesson.org_id == org_id).first()
         if one_off is None:
             raise not_found("ONE_OFF_NOT_FOUND", "Урок не найден")
@@ -320,7 +367,7 @@ class OneOffPurpose:
         before = one_off.money or "empty_makeup"
         one_off.money = PAID if decision == "pay" else NONE
         self.db.add(GroupAudit(
-            org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role=actor_role if actor_role in ("owner", "admin") else "admin", action=DECIDED_ACTION,
+            org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role=actor_role, action=DECIDED_ACTION,
             assigned_teacher_id=att.teacher_id, created_at=bc.utc_now(),
             snapshot={"lessonId": one_off.id, "lessonDate": one_off.lesson_date, "purpose": one_off.purpose, "from": before, "to": one_off.money, "decision": decision,
                       "teacherId": _s(att.teacher_id)},

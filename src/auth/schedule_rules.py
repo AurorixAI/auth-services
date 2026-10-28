@@ -310,6 +310,7 @@ class ScheduleRules:
             raise self.archived_error()
         purposes = OneOffPurpose(self.svc)
         purpose, money = purposes.check_request(req, manager=is_org_admin)
+        actor_role = purposes.actor_role(org_id, actor_id)            # no membership in this centre = 403 before anything is written (LESSONS 17: no default role)
         now = bc.business_now()
         origin = origin_occ = None
         if purpose == MAKEUP:
@@ -338,9 +339,7 @@ class ScheduleRules:
         if purpose == MAKEUP:
             slot_warnings = purposes.makeup_slot(group, origin_occ, req.madeUpDate, req.lessonDate, payload, manager=is_org_admin)
         else:
-            self.svc._assert_teacher_time_is_available(
-                group=group, lesson_id=lesson_id, occurrence_date=req.lessonDate, payload=payload
-            )
+            slot_warnings = purposes.slot_checks(group, lesson_id, req.lessonDate, payload, manager=is_org_admin)      # #154: GROUP_BUSY / TEACHER_BUSY / STUDENT_BUSY, after the lock of the group
         items = self._items(group, lesson_id, [req.lessonDate], req.startTime, req.endTime)
         warnings = self.room_warnings(group, lesson_id, items, room, fmt) + slot_warnings
         one_off = GroupScheduleOneOffLesson(
@@ -351,7 +350,7 @@ class ScheduleRules:
         self.db.add(one_off)
         if origin is not None:
             purposes.link(origin, lesson_id)
-        purposes.audit_created(group, UUID(actor_id), purposes.actor_role(org_id, actor_id, is_org_admin), one_off, payload)
+        purposes.audit_created(group, UUID(actor_id), actor_role, one_off, payload)
         if not is_org_admin:                 # a teacher adds it: the journal «Замены» says who (visibility only)
             from .lesson_substitutions import record_one_off_added
 

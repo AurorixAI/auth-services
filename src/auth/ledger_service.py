@@ -60,7 +60,7 @@ FORECAST_DAYS = 400          # how far ahead the forecast of a package looks for
 class MakeupFacts:
     """The facts of ONE make-up that the deduction of a cancelled lesson waits for.  ``ahead``: the make-up is still to come or is going on - the deduction is paused for every student of the group;
     ``held``: it was held - it is lifted for the students it COUNTED for (``lifted``: in its roster with a mark that counts by rule 4.3: present / late / absent, an excused one without a confirmed
-    excuse), the others keep it; ``gone``: it was cancelled / deleted (the pointer is released by the cancellation; a stale one is no reason to lift anything)."""
+    excuse), the others keep it; ``missed``: its day has passed and there is no journal row - not held, nothing is lifted (the journal entered later makes it ``held``); ``gone``: it was cancelled / deleted (the pointer is released by the cancellation; a stale one is no reason to lift anything)."""
 
     state: str
     day: Optional[date] = None
@@ -450,8 +450,17 @@ class LedgerLoader:
                 continue
             last = max(date.fromisoformat(day) for day, _ in items)
             regular = {(o["occurrenceDate"], o["id"]) for o in self._occurrences(group, self.settings.accounting_start, last, pattern=True) if not o.get("isOneOff")}
-            copies = {lesson_id for gid, lesson_id in self._moved_copies(group) if gid == str(group_id)}
+            copies = self._cost_copies(group, {lesson_id for day, lesson_id in items})
             self.cancels[group_id] = [bl.CentreCancel(date.fromisoformat(day), lesson_id) for day, lesson_id in items if (day, lesson_id) in regular or lesson_id in copies]
+
+    def _cost_copies(self, group: Group, lesson_ids: Set[str]) -> Set[str]:
+        """The copies of a move among ``lesson_ids`` whose cancellation costs the students: ONLY ``purpose = 'moved'`` (the copy of a regular lesson, which the month is priced by).  The copy of a move of an
+        additional lesson or of a make-up is a one-off lesson of the other purpose: it was never in the price of the month (LESSONS 53)."""
+        copies = {lesson_id for gid, lesson_id in self._moved_copies(group) if gid == str(group.id) and lesson_id in lesson_ids}
+        if not copies:
+            return set()
+        return {row[0] for row in self.db.query(GroupScheduleOneOffLesson.id).filter(
+            GroupScheduleOneOffLesson.group_id == group.id, GroupScheduleOneOffLesson.id.in_(copies), GroupScheduleOneOffLesson.purpose == "moved")}
 
     def _load_makeups(self, made: Dict[Tuple[UUID, str, str], str]) -> None:
         """#154: the facts of the make-ups of the cancelled lessons ``made`` (``{(group, day, lesson): make-up lesson id}``): the state of the make-up and - when it was held - the students it counted for
@@ -470,8 +479,10 @@ class LedgerLoader:
             key = (group_id, date.fromisoformat(day), lesson_id)
             if one is None:
                 self.makeups[key] = MakeupFacts("gone")
-            elif row is None or row.status == "in_progress":
+            elif (row is None and one.lesson_date >= self.today.isoformat()) or (row is not None and row.status == "in_progress"):
                 self.makeups[key] = MakeupFacts("ahead")
+            elif row is None:
+                self.makeups[key] = MakeupFacts("missed")      # the day has passed and nothing was entered: «не проведена», the deduction stays; if the journal is filled later, the facts lift it (LESSONS 54)
             elif row.status == "cancelled":
                 self.makeups[key] = MakeupFacts("gone")
             else:

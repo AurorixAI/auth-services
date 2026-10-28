@@ -338,7 +338,7 @@ def test_the_candidates_list_and_its_mask(w):
     assert got["emptyReason"] is None
     assert got["items"] == [{"lessonId": ORIGIN, "lessonDate": ORIGIN_DAY, "startTime": "10:00", "endTime": "11:30", "label": "пн 26.10, 10:00–11:30", "reason": "Преподаватель заболел"}]
     mine = client(w, "A").get(f"{API}/org/groups/{w.G1.id}/makeup-candidates").json()
-    assert mine["items"][0]["lessonId"] == ORIGIN and mine["items"][0]["reason"] is None            # the reason of a cancellation is not the teacher's
+    assert mine["items"][0]["lessonId"] == ORIGIN and mine["items"][0]["reason"] == "Преподаватель заболел"      # the group's teacher reads the reason in the journal, so he reads it here (S8)
     assert client(w, "B").get(f"{API}/org/groups/{w.G1.id}/makeup-candidates").status_code == 403    # not his group
     assert client(w, "foreign_admin", org="other").get(f"{API}/org/groups/{w.G1.id}/makeup-candidates").status_code == 404
     makeup(w, "A", w.G1, "2026-10-29", start="12:00", end="13:00")

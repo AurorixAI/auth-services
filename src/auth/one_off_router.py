@@ -102,7 +102,7 @@ def makeup_candidates(group_id: str, user: dict = Depends(require_org_member), d
         raise not_found("GROUP_NOT_FOUND", str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    return _purposes(db).candidates(group, manager=manager)
+    return _purposes(db).candidates(group, manager=manager, actor=user["user_id"])
 
 
 @router.get("/org/one-off-decisions", response_model=OneOffDecisions)
