@@ -33,7 +33,7 @@ def test_s1_an_owner_of_another_centre_is_a_teacher_here_schedule_series_and_one
     c = owner_elsewhere(w, "B")                                                      # B teaches G3 only; G1 is not his
     g1 = str(w.G1.id)
     assert c.post(f"{API}/org/schedule/lessons", json={"groupId": g1, "dayOfWeek": 5, "startTime": "12:00", "endTime": "13:00", "validFrom": "2026-11-02"}).status_code == 403
-    assert c.post(f"{API}/org/schedule/occurrences", json={"groupId": g1, "lessonDate": "2026-11-05", "startTime": "12:00", "endTime": "13:00"}).status_code == 403
+    assert c.post(f"{API}/org/schedule/occurrences", json={"groupId": g1, "lessonDate": "2026-11-05", "startTime": "12:00", "endTime": "13:00", "purpose": "extra", "money": "paid"}).status_code == 403
     assert c.put(f"{API}/org/schedule/lessons/lesson-l1/recurrence", json={"effectiveFrom": "2026-11-09", "startTime": "12:00", "endTime": "13:30", "reason": "Перенос"}).status_code == 403
     assert c.get(f"{API}/org/schedule/lessons/lesson-l1/recurrence/end-impact", params={"effective_from": "2026-11-09"}).status_code == 403
     assert c.post(f"{API}/org/schedule/lessons/lesson-l1/recurrence/end", json={"effectiveFrom": "2026-11-09", "reason": "Курс закончен"}).status_code == 403

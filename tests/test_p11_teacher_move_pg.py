@@ -190,7 +190,7 @@ def test_t8_a_busy_room_only_warns(w, sync):
     """[8] ROOM_BUSY: 200 + the warning (a one-off lesson of 8-В holds «каб 12» on Fri 30.10 12:00-13:00)."""
     w.db.add(GroupScheduleOneOffLesson(id=f"one-off-room-{w.salt}", org_id=w.org.id, group_id=w.G3.id, lesson_date="2026-10-30",
                                        payload={"dayOfWeek": 5, "startTime": "12:00", "endTime": "13:00", "subject": "Математика", "room": "каб 12", "format": "offline", "color": "blue"},
-                                       created_by=w.admin.id))
+                                       created_by=w.admin.id, purpose="extra", money="paid"))
     w.db.commit()
     r = move(w, "A", newDate="2026-10-30", startTime="12:00", endTime="13:00", room="каб 12")
     assert r.status_code == 200, r.text
@@ -351,7 +351,7 @@ def test_the_check_of_a_day_led_by_somebody_else_tells_nothing_of_him(w, sync):
     w.G1.teacher_id = w.C.id
     w.db.add(GroupScheduleOneOffLesson(id=f"one-off-c-{w.salt}", org_id=w.org.id, group_id=w.G4.id, lesson_date="2026-11-09",
                                        payload={"dayOfWeek": 1, "startTime": "10:00", "endTime": "11:30", "subject": "Математика", "room": None, "format": "offline", "color": "blue"},
-                                       created_by=w.admin.id))
+                                       created_by=w.admin.id, purpose="extra", money="paid"))
     w.db.commit()
     refused(check(w, "A", newDate="2026-11-09", startTime="10:00", endTime="11:30"), "NOT_LESSON_TEACHER")
     r = move(w, "A", newDate="2026-11-09", startTime="10:00", endTime="11:30")

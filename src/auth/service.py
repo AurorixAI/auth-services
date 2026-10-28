@@ -3604,6 +3604,7 @@ class AuthService:
                     "originalRoom": configured_payload["room"] if occurrence_override else None,
                     "rescheduleReason": occurrence_override.reason if occurrence_override else None,
                     "isOneOff": True,
+                    "purpose": one_off.purpose,      # #154: what the lesson is for (the ledger / forecast read it: an additional lesson is free for the students); the MONEY is never here (a mask: ``one_off_purpose.marks``)
                 }
             )
         return sorted(result, key=lambda item: (item["occurrenceDate"], item["startTime"], item["groupName"]))
@@ -5759,6 +5760,8 @@ class AuthService:
             # a lesson he started whose roster is empty (O6: it cannot be finished, the way out is its cancellation) and (S27) a FUTURE one-off lesson that HE added, that is no copy of a
             # move and has no marks (a lesson created by mistake must be removable) - both only «по вине центра»
             if not (self._empty_started_lesson(att) or self._own_future_one_off(group_id, target_lesson_id, lesson_date, marked_by, att)):
+                if self._own_one_off_started(group_id, target_lesson_id, lesson_date, marked_by, att):          # #154 (Ц14): his own one-off that has begun is not deleted - 409, not the general «ask the administrator»
+                    raise ops_rules.conflict("LESSON_ALREADY_STARTED", "Урок уже начат или прошёл: удалить его нельзя")
                 raise ops_rules.forbidden("TEACHER_CANNOT_CANCEL", "Отменить урок может администратор. Нажмите «Не смогу провести»")
             if cancellation_kind != DEFAULT_CANCELLATION_KIND:
                 raise PermissionError("Выбирать «Праздник, выходной» может только владелец или администратор: преподаватель отменяет урок «по вине центра»")
@@ -5991,6 +5994,22 @@ class AuthService:
         if starts <= business_clock.utc_now():
             return False
         return lesson_substitutions.moved_from_map(self.db, [one_off.group_id], [lesson_id]).get((str(one_off.group_id), lesson_id)) is None
+
+    def _own_one_off_started(self, group_id: str, lesson_id: str, lesson_date: date, actor_id: Optional[str], att: Optional[GroupAttendance]) -> bool:
+        """#154 (Ц14): a one-off lesson THIS teacher created whose time has come (or that has a started / held row) - the answer to «Удалить урок» is 409, he cannot remove what has begun."""
+        if not actor_id:
+            return False
+        one_off = self.db.query(GroupScheduleOneOffLesson).filter(GroupScheduleOneOffLesson.id == lesson_id, GroupScheduleOneOffLesson.group_id == group_id).first()
+        if one_off is None or str(one_off.created_by) != str(actor_id) or one_off.lesson_date != lesson_date.isoformat():
+            return False
+        if att is not None and att.status != LessonAttendanceStatus.CANCELLED.value:
+            return True
+        payload = one_off.payload or {}
+        try:
+            starts = business_clock.lesson_instant_utc(lesson_date, self._validate_lesson_time_range(payload.get("startTime"), payload.get("endTime"))[0])
+        except ValueError:
+            return False
+        return starts <= business_clock.utc_now()
 
     def _empty_started_lesson(self, att: Optional[GroupAttendance]) -> bool:
         """A started lesson with no marks whose roster is empty (O6): the teacher cannot finish it and may cancel it; the row he already cancelled this way is his too, so an exact repeat

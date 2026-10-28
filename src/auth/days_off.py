@@ -306,8 +306,16 @@ class DaysOffService:
 
     @staticmethod
     def _convertible(row: Optional[GroupAttendance]) -> bool:
-        """A lesson cancelled by hand «по вине центра» (not by a day off): the day off turns it into a holiday."""
-        return row is not None and row.status == LessonAttendanceStatus.CANCELLED.value and row.cancellation_kind == CENTRE and row.day_off_id is None
+        """A lesson cancelled by hand «по вине центра» (not by a day off): the day off turns it into a holiday.  #154: not one that has a make-up - it stays «по вине центра» (the make-up lifts
+        the deduction by the facts; a holiday would have no deduction to lift and the make-up would make up for nothing)."""
+        return row is not None and row.status == LessonAttendanceStatus.CANCELLED.value and row.cancellation_kind == CENTRE and row.day_off_id is None and not row.made_up_by
+
+    @staticmethod
+    def _makeup_kept(row: Optional[GroupAttendance]) -> bool:
+        """A hand cancellation «по вине центра» that has a make-up: a day off on its date does not touch it."""
+        return (row is not None and row.status == LessonAttendanceStatus.CANCELLED.value and row.cancellation_kind == CENTRE and row.day_off_id is None and bool(row.made_up_by))
+
+    MAKEUP_KEPT = "По уроку назначена отработка: отмена остаётся «по вине центра»"
 
     def _blocker(self, org_id: str, group: Group, occurrence: Dict[str, Any], row: Optional[GroupAttendance], *, ask_exams: bool = True) -> Optional[str]:
         """Why the lesson cannot be cancelled by a day off (``None``: it can; ``EXAM_DOWN``: exam-service did not answer).  The same checks the usual cancellation makes,
@@ -325,7 +333,7 @@ class DaysOffService:
             if day == bc.business_today():
                 return "Урок уже начался — отмените вручную, если не состоялся"
             return "Урок уже прошёл или идёт: закройте его в журнале (отметьте посещаемость или «Урока не было»)"
-        if str(occurrence["id"]).startswith("one-off-"):       # W1 S10+ (Д5): a one-off lesson / a copy of a move is deliberate (a make-up) - in EVERY order of the actions it stays and only warns
+        if occurrence.get("isOneOff"):       # W1 S10+ (Д5): a one-off lesson / a copy of a move is deliberate (a make-up) - in EVERY order of the actions it stays and only warns
             return "Разовый урок или перенос на эту дату назначен осознанно — отмените его вручную, если не нужен"
         if not ask_exams:
             return None
@@ -352,7 +360,9 @@ class DaysOffService:
         for group, occurrence in found:
             row = rows.get((group.id, occurrence["id"], occurrence["occurrenceDate"]))
             if row is not None and row.status == LessonAttendanceStatus.CANCELLED.value:
-                if self._convertible(row) and self._in_window(occurrence["occurrenceDate"]):
+                if self._makeup_kept(row):                           # #154: said in a line of the preview: the cancellation stays «по вине центра», the make-up lifts the deduction
+                    blocked.append(self._item(group, occurrence, self.MAKEUP_KEPT))
+                elif self._convertible(row) and self._in_window(occurrence["occurrenceDate"]):
                     convertible.append(self._item(group, occurrence))
                 elif self._convertible(row):
                     blocked.append(self._item(group, occurrence, self.OLD_CONVERT))
@@ -441,6 +451,9 @@ class DaysOffService:
         down = False
         for group, occurrence in found:
             existing = rows.get((group.id, occurrence["id"], occurrence["occurrenceDate"]))
+            if self._makeup_kept(existing):                         # #154: left as it is (the preview said so)
+                already += 1
+                continue
             if self._convertible(existing):
                 if not self._in_window(occurrence["occurrenceDate"]):
                     blocked.append(self._item(group, occurrence, self.OLD_CONVERT))

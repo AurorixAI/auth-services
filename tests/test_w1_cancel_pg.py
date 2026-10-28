@@ -409,7 +409,7 @@ def test_s5_a_lesson_the_schedule_no_longer_has_and_a_teacher_who_became_busy_ar
     assert restore(w, "admin", w.G1, "lesson-l1", "2026-11-09", expect=409).json()["detail"]["code"] == "RESTORE_LESSON_GONE"
     # the teacher got another lesson in the slot meanwhile
     sheet(w, "admin", w.G1, "lesson-l2", "2026-10-28")
-    one_off = client(w, "admin").post(f"{API}/org/schedule/occurrences", json={"groupId": str(w.G2.id), "lessonDate": "2026-10-28", "startTime": "16:30", "endTime": "17:00"})
+    one_off = client(w, "admin").post(f"{API}/org/schedule/occurrences", json={"groupId": str(w.G2.id), "lessonDate": "2026-10-28", "startTime": "16:30", "endTime": "17:00", "purpose": "extra", "money": "paid"})
     assert one_off.status_code == 201, one_off.text
     busy = restore(w, "admin", w.G1, "lesson-l2", "2026-10-28", expect=409)
     assert busy.json()["detail"]["code"] == "TEACHER_BUSY"

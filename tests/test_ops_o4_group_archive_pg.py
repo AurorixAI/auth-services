@@ -227,7 +227,7 @@ def test_archived_group_is_read_only_for_the_writers(w, clock):
     cases = [
         cl.post(G.format(gid=gid) + "/attendance/start", json={"lessonDate": "2026-10-22", "lessonId": "lesson-f"}),
         cl.post("/api/v1/auth/org/schedule/lessons", json={"groupId": gid, "dayOfWeek": 2, "startTime": "10:00", "endTime": "11:00"}),
-        cl.post("/api/v1/auth/org/schedule/occurrences", json={"groupId": gid, "lessonDate": "2026-10-30", "startTime": "10:00", "endTime": "11:00"}),
+        cl.post("/api/v1/auth/org/schedule/occurrences", json={"groupId": gid, "lessonDate": "2026-10-30", "startTime": "10:00", "endTime": "11:00", "purpose": "extra", "money": "paid"}),
         cl.put("/api/v1/auth/org/schedule/lessons/lesson-f/recurrence", json={"effectiveFrom": "2026-11-12", "reason": "x" * 5, "endTime": "16:30"}),
         cl.put(G.format(gid=gid), json={"name": "Новое имя"}),
         cl.post(G.format(gid=gid) + f"/students/{w.s6.id}"),

@@ -95,7 +95,7 @@ def test_1_the_kind_is_not_changed_for_a_lesson_that_is_not_cancelled_a_day_off_
 
 
 def one_off(w, g, day, start="15:00", end="16:00"):
-    r = client(w, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(g.id), "lessonDate": day, "startTime": start, "endTime": end})
+    r = client(w, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(g.id), "lessonDate": day, "startTime": start, "endTime": end, "purpose": "extra", "money": "paid"})
     assert r.status_code == 201, r.text
     return r.json()["id"]
 

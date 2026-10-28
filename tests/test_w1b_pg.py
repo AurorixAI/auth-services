@@ -182,7 +182,7 @@ def test_s10plus_c_a_move_or_a_one_off_on_a_day_off_date_stays_in_either_order(w
     assert "осознанно" in [x["reason"] for x in made2["blocked"] if x["lessonId"] == m2][0]
     assert row_of(w, w.G1, m2, "2026-11-11") is None
     # a one-off lesson: the same
-    one_off = client(w, "admin").post(f"{API}/org/schedule/occurrences", json={"groupId": str(w.G2.id), "lessonDate": "2026-11-18", "startTime": "12:00", "endTime": "13:00"}).json()["id"]
+    one_off = client(w, "admin").post(f"{API}/org/schedule/occurrences", json={"groupId": str(w.G2.id), "lessonDate": "2026-11-18", "startTime": "12:00", "endTime": "13:00", "purpose": "extra", "money": "paid"}).json()["id"]
     made3 = client(w, "owner").post(DAYS, json={"dateFrom": "2026-11-18", "dateTo": "2026-11-18", "reason": "Третий"}).json()
     assert one_off in {x["lessonId"] for x in made3["blocked"]} and row_of(w, w.G2, one_off, "2026-11-18") is None
 
@@ -357,7 +357,7 @@ def test_t_a14_the_cutover_of_the_regular_schedule_is_the_same_for_a_series_revi
     assert occ("2026-11-02")["startTime"] == "12:00"
     # a one-off lesson on 31.10 (a Saturday) and one on 01.11 (a Sunday): both are lessons of their own dates, neither enters the regular schedule of the series
     for day in ("2026-10-31", "2026-11-01"):
-        created = client(w, "admin").post(f"{API}/org/schedule/occurrences", json={"groupId": str(w.G1.id), "lessonDate": day, "startTime": "09:00", "endTime": "09:30"})
+        created = client(w, "admin").post(f"{API}/org/schedule/occurrences", json={"groupId": str(w.G1.id), "lessonDate": day, "startTime": "09:00", "endTime": "09:30", "purpose": "extra", "money": "paid"})
         assert created.status_code == 201 and created.json()["isOneOff"] is True
     assert [o["id"] for o in client(w, "admin").get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-31", "date_to": "2026-11-01"}).json() if o["groupId"] == str(w.G1.id)
             and not o["isOneOff"]] == []
@@ -396,9 +396,12 @@ def test_t_a12_a_cancellation_set_in_advance_and_a_stop_that_comes_earlier_lose_
     assert [x for x in st["rows"] if x["type"] == "recalc"] == [] and st["summary"]["recalculated"] == 0 and st["summary"]["reconciles"] is True
 
 
+PURPOSE = {"admin": {"purpose": "extra", "money": "paid"}, "owner": {"purpose": "extra", "money": "paid"}}          # #154: the server requires the purpose of an owner / admin; a teacher sends none (= extra + wait)
+
+
 # ============================================================================================================ the author of a one-off lesson
 def test_author_a_one_off_lesson_shows_who_added_it_and_a_teachers_one_off_is_in_the_journal(w):
-    mk = lambda who, group, day: client(w, who).post(f"{API}/org/schedule/occurrences", json={"groupId": str(group.id), "lessonDate": day, "startTime": "13:00", "endTime": "14:00"})
+    mk = lambda who, group, day: client(w, who).post(f"{API}/org/schedule/occurrences", json={"groupId": str(group.id), "lessonDate": day, "startTime": "13:00", "endTime": "14:00", **PURPOSE.get(who, {})})
     by_teacher = mk("A", w.G1, "2026-10-29")
     assert by_teacher.status_code == 201, by_teacher.text
     assert by_teacher.json()["createdBy"] == {"id": str(w.A.id), "name": "Иванов И.", "role": "teacher"} or by_teacher.json()["createdBy"]["role"] == "teacher"
@@ -421,7 +424,7 @@ def test_author_a_one_off_lesson_shows_who_added_it_and_a_teachers_one_off_is_in
 
 # ============================================================================================================ S27: a teacher removes the one-off lesson he added
 def one_off(w, who, group, day, start="13:00", end="14:00"):
-    r = client(w, who).post(f"{API}/org/schedule/occurrences", json={"groupId": str(group.id), "lessonDate": day, "startTime": start, "endTime": end})
+    r = client(w, who).post(f"{API}/org/schedule/occurrences", json={"groupId": str(group.id), "lessonDate": day, "startTime": start, "endTime": end, **PURPOSE.get(who, {})})
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
@@ -455,12 +458,12 @@ def test_s27_nothing_else_is_his_to_cancel_a_move_copy_the_one_off_of_an_adminis
     # a lesson that has started (a row exists, a start may have marks) and one whose time has passed
     started = one_off(w, "A", w.G2, "2026-10-21", "18:00", "19:00")
     clock.set("2026-10-21 18:30")
-    assert sheet(w, "A", w.G2, started, "2026-10-21", expect=403).json()["detail"]["code"] == "TEACHER_CANNOT_CANCEL"
+    assert sheet(w, "A", w.G2, started, "2026-10-21", expect=409).json()["detail"]["code"] == "LESSON_ALREADY_STARTED"          # #154 (Ц14): his OWN one-off whose time has come: 409, not the general refusal
     marked = one_off(w, "A", w.G1, "2026-10-22", "10:00", "11:00")
     clock.set("2026-10-22 10:05")
     assert client(w, "A").post(f"{API}/org/groups/{w.G1.id}/attendance/start", json={"lessonDate": "2026-10-22", "lessonId": marked}).status_code == 200
     assert client(w, "A").post(f"{API}/org/groups/{w.G1.id}/attendance", json={"lessonDate": "2026-10-22", "lessonId": marked, "status": "in_progress", "records": {str(w.s1.id): "present"}}).status_code == 200
-    assert refused(marked, "2026-10-22") == "TEACHER_CANNOT_CANCEL"
+    assert sheet(w, "A", w.G1, marked, "2026-10-22", expect=409).json()["detail"]["code"] == "LESSON_ALREADY_STARTED"
     assert row_of(w, w.G1, marked, "2026-10-22").status == "in_progress"
 
 

@@ -319,7 +319,7 @@ def test_s5_r4_two_admins_and_a_concurrent_slot(w, sync):
     g = Golden()
     other = one(w, "A", "L1", "2026-11-02")
     w.db.add(GroupScheduleOneOffLesson(id=f"one-off-ex-{w.salt}", org_id=w.org.id, group_id=w.G1.id, lesson_date="2026-11-03",
-                                       payload={"dayOfWeek": 2, "startTime": "12:00", "endTime": "13:00", "subject": "Математика", "room": None, "format": "offline", "color": "blue"}, created_by=w.admin.id))
+                                       payload={"dayOfWeek": 2, "startTime": "12:00", "endTime": "13:00", "subject": "Математика", "room": None, "format": "offline", "color": "blue"}, created_by=w.admin.id, purpose="extra", money="paid"))
     w.db.commit()
     busy = decide(w, "admin", other["id"], decision="reschedule", newDate="2026-11-03", startTime="12:30", endTime="13:30", reason="Перенос")
     assert busy.status_code == 409 and busy.json()["detail"]["code"] == "GROUP_BUSY" and busy.json()["detail"]["total"] == 1

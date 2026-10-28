@@ -192,3 +192,7 @@ def restore_member(
 from .substitution_router import router as _substitution_router  # noqa: E402
 
 router.include_router(_substitution_router)
+
+from .one_off_router import router as _one_off_router  # noqa: E402  (#154: the purpose of one-off lessons; imports ``_manager`` from this module)
+
+router.include_router(_one_off_router)

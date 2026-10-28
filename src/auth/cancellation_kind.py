@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from src.models.auth import Group, GroupAttendance, GroupAttendanceAudit
 
 from . import business_clock as bc
+from .one_off_purpose import MAKEUP_EXISTS_TEXT
 from .ops_rules import conflict, not_found, unprocessable
 from .lesson_teachers import _uuid
 from .schemas import CancellationKind
@@ -33,6 +34,8 @@ def change_cancellation_kind(db: Session, org_id: str, group_id: str, req: Chang
            .with_for_update().first())
     if row is None or row.status != "cancelled":
         raise not_found("LESSON_NOT_CANCELLED", "Урок не отменён: менять нечего")
+    if row.made_up_by:                                                    # #154: a make-up is appointed - the kind decides the money of its deduction: cancel the make-up first
+        raise conflict("MAKEUP_EXISTS", MAKEUP_EXISTS_TEXT)
     from .days_off import DaysOffService
     from .service import AuthService  # lazy: the service layer imports this module's neighbours
 

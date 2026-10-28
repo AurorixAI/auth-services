@@ -46,6 +46,7 @@ from src.models.auth import (
     AttendanceExcuse,
     Group,
     GroupAttendance,
+    GroupScheduleOneOffLesson,
     Organization,
     OrganizationMember,
     PayrollDivisor,
@@ -233,6 +234,23 @@ def fingerprint_of(month: date, teacher_id: UUID, lines: List["LineSeed"]) -> st
     return hashlib.sha256(blob.encode("ascii")).hexdigest()
 
 
+def pay_state_of(meta: Optional[Tuple[str, Optional[str]]], records: Any) -> Optional[str]:
+    """#154: the state of the TEACHER's money of one held lesson when it is not paid by the ordinary rule: an additional lesson (``purpose = 'extra'``) is ``undecided`` while ``money = 'wait'`` and
+    ``no_pay`` at ``none``; a make-up is ordinary money - except an EMPTY one (nobody present or late): ``undecided`` until the decision, ``no_pay`` when the decision was «Не оплачивать».
+    ``None`` = the ordinary rule (an ordinary lesson, a make-up that has students, an additional lesson the owner pays: ``paid`` goes through the seam of ``lesson_coverage``).  ``meta`` = ``(purpose, money)``."""
+    if meta is None:
+        return None
+    purpose, money = meta
+    if purpose == "extra":
+        return {"wait": engine.UNDECIDED, "none": engine.NO_PAY}.get(money)
+    if purpose == "makeup":
+        if money == "none":
+            return engine.NO_PAY
+        if money is None and not any(m in ("present", "late") for m in (records.values() if isinstance(records, dict) else ())):
+            return engine.UNDECIDED
+    return None
+
+
 # ---- what one calculation reads ------------------------------------------------------
 
 
@@ -256,6 +274,7 @@ class TeacherSeed:
     groups_by_type: Dict[str, Set[str]] = field(default_factory=dict)
     open_lessons: int = 0
     fingerprint: str = ""
+    undecided_lessons: int = 0     # #154: held lessons whose payment waits for a decision (an additional lesson ``wait``, an empty make-up)
 
 
 @dataclass
@@ -546,6 +565,17 @@ class PayrollService:
             for lesson in lessons
             if any(mark == "excused" for mark in lesson.records.values())
         }
+        # #154: what an additional lesson / a make-up is, per lesson: the state of the TEACHER's money (``undecided`` / ``no_pay``) overrides the cover of the students
+        meta = {(r.group_id, r.id): (r.purpose, r.money) for r in self.db.query(
+            GroupScheduleOneOffLesson.group_id, GroupScheduleOneOffLesson.id, GroupScheduleOneOffLesson.purpose, GroupScheduleOneOffLesson.money).filter(
+            GroupScheduleOneOffLesson.org_id == org_id, GroupScheduleOneOffLesson.group_id.in_(group_ids),
+            GroupScheduleOneOffLesson.id.in_({lesson.lesson_id for lessons in by_pair.values() for lesson in lessons})).all()}
+        pay_block: Dict[UUID, str] = {}
+        for (_teacher, gid), lessons in by_pair.items():
+            for lesson in lessons:
+                state = pay_state_of(meta.get((gid, lesson.lesson_id)), lesson.records)
+                if state is not None:
+                    pay_block[lesson.attendance_id] = state
         excuse_status: Dict[Tuple[UUID, str], str] = {}
         if excused_lessons:
             for attendance_id, student_id, status in (
@@ -574,6 +604,7 @@ class PayrollService:
                 continue
             lessons.sort(key=lambda lesson: (lesson.day, lesson.lesson_id))
             teacher = seed.teachers[teacher_id]
+            teacher.undecided_lessons += sum(1 for lesson in lessons if pay_block.get(lesson.attendance_id) == engine.UNDECIDED)
             month_types = {types.type_at(group.id, lesson.day) for lesson in lessons}
             split = len(month_types) > 1
             for month_type in month_types:
@@ -600,6 +631,11 @@ class PayrollService:
                     in_roster = sid in (lesson.roster if lesson.roster is not None else lesson.records)
                     mark = lesson.records.get(sid)
                     excuse = excuse_status.get((lesson.attendance_id, sid)) if mark == "excused" else None
+                    blocked = pay_block.get(lesson.attendance_id)
+                    if blocked is not None and in_roster and ps.lesson_counts(mark=mark, excuse_status=excuse):
+                        marks.append(engine.Mark(lesson.day, lesson.lesson_id, blocked))       # #154: the student WAS there; the teacher's money of this lesson is «не решено» / «без оплаты»
+                        mark_type.append(types.type_at(group.id, lesson.day))
+                        continue
                     cover = coverage.get((membership.id, lesson.day, lesson.lesson_id))
                     if cover is None:  # the payments module does not count this lesson for the student
                         state = (
@@ -965,6 +1001,7 @@ class PayrollService:
                     teacher_id=str(tid),
                     teacher_name=names.get(tid),
                     lessons_count=teacher.lessons_count if teacher else 0,
+                    undecided_lessons=teacher.undecided_lessons if teacher else 0,
                     lesson_types=[
                         LessonTypeSuggestion(
                             lesson_type=t,

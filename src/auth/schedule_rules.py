@@ -293,11 +293,13 @@ class ScheduleRules:
 
     # ------------------------------------------------------------------------------------------ one-off
     def create_one_off(self, org_id: str, req, *, actor_id: Optional[str], is_org_admin: bool):
-        """``POST /org/schedule/occurrences`` (one lesson on one date)."""
+        """``POST /org/schedule/occurrences`` (one lesson on one date).  #154: the lesson has a PURPOSE - ``makeup`` (of a cancelled lesson of the group; the slot is checked by the very function a move
+        uses) or ``extra`` (free for the students, the money of the teacher: ``money``); the creation writes the pointer of the cancelled lesson and the audit row."""
         from .models import GroupScheduleOneOffLesson
         from .ops_schemas import ScheduleOccurrenceResponseB
         from .days_off import DaysOffService
         from .lesson_substitutions import one_off_authors
+        from .one_off_purpose import MAKEUP, OneOffPurpose, apply_marks
         from uuid import UUID
 
         if not actor_id:
@@ -306,11 +308,16 @@ class ScheduleRules:
         group = self._lock_group(group)
         if group.status != "active":
             raise self.archived_error()
+        purposes = OneOffPurpose(self.svc)
+        purpose, money = purposes.check_request(req, manager=is_org_admin)
         now = bc.business_now()
-        if req.lessonDate < now.date():
+        origin = origin_occ = None
+        if purpose == MAKEUP:
+            origin, origin_occ = purposes.makeup_origin(group, req.madeUpLessonId, req.madeUpDate)         # the row of the cancelled lesson is LOCKED from here on
+        elif req.lessonDate < now.date():
             raise ValueError("Нельзя добавить разовый урок на прошедшую дату")
         fmt = req.format or "offline"
-        room = normalize_room(req.room)
+        room = normalize_room(req.room if req.room is not None or origin_occ is None else origin_occ.get("room"))       # a make-up keeps the room of the lesson it makes up for
         payload = {
             "dayOfWeek": req.lessonDate.isoweekday(),
             "startTime": req.startTime,
@@ -321,33 +328,43 @@ class ScheduleRules:
             "color": req.color or "blue",
             "topic": req.topic,
         }
-        start_minutes, _ = self.svc._validate_lesson_time_range(payload["startTime"], payload["endTime"])
+        start_minutes, end_minutes = self.svc._validate_lesson_time_range(payload["startTime"], payload["endTime"])
         self.svc._validate_schedule_payload(payload)
-        if req.lessonDate == now.date() and start_minutes < now.hour * 60 + now.minute:
+        if purpose != MAKEUP and req.lessonDate == now.date() and start_minutes < now.hour * 60 + now.minute:
             raise ValueError("Нельзя добавить разовый урок на прошедшее время сегодняшнего дня")
+        purposes.require_teacher(group, req.lessonDate, end_minutes)
         lesson_id = f"one-off-{uuid4().hex[:16]}"
-        self.svc._assert_teacher_time_is_available(
-            group=group, lesson_id=lesson_id, occurrence_date=req.lessonDate, payload=payload
-        )
-        items = self._items(group, lesson_id, [req.lessonDate], req.startTime, req.endTime)
-        warnings = self.room_warnings(group, lesson_id, items, room, fmt)
-        self.db.add(
-            GroupScheduleOneOffLesson(
-                id=lesson_id, org_id=group.org_id, group_id=group.id, lesson_date=req.lessonDate.isoformat(),
-                payload=payload, created_by=UUID(actor_id),
+        slot_warnings: List[Dict[str, str]] = []
+        if purpose == MAKEUP:
+            slot_warnings = purposes.makeup_slot(group, origin_occ, date.fromisoformat(req.madeUpDate.isoformat()), req.lessonDate, payload, manager=is_org_admin)
+        else:
+            self.svc._assert_teacher_time_is_available(
+                group=group, lesson_id=lesson_id, occurrence_date=req.lessonDate, payload=payload
             )
+        items = self._items(group, lesson_id, [req.lessonDate], req.startTime, req.endTime)
+        warnings = self.room_warnings(group, lesson_id, items, room, fmt) + slot_warnings
+        one_off = GroupScheduleOneOffLesson(
+            id=lesson_id, org_id=group.org_id, group_id=group.id, lesson_date=req.lessonDate.isoformat(), payload=payload, created_by=UUID(actor_id),
+            purpose=purpose, money=money, made_up_lesson_id=req.madeUpLessonId if purpose == MAKEUP else None,
+            made_up_date=req.madeUpDate.isoformat() if purpose == MAKEUP else None,
         )
+        self.db.add(one_off)
+        if origin is not None:
+            purposes.link(origin, lesson_id)
+        purposes.audit_created(group, UUID(actor_id), purposes.actor_role(org_id, actor_id, is_org_admin), one_off, payload)
         if not is_org_admin:                 # a teacher adds it: the journal «Замены» says who (visibility only)
             from .lesson_substitutions import record_one_off_added
 
             record_one_off_added(self.svc, group, lesson_id, req.lessonDate, payload, UUID(actor_id))
         self.db.commit()
         warnings += DaysOffService(self.svc).warnings_for_date(org_id, req.lessonDate)      # a lesson on a day off is deliberate (a make-up): a warning, no cancellation
-        return ScheduleOccurrenceResponseB(
+        resp = ScheduleOccurrenceResponseB(
             id=lesson_id, groupId=str(group.id), groupName=group.name, classLevel=group.class_level or 5, **payload,
             occurrenceDate=req.lessonDate.isoformat(), isOneOff=True, warnings=warnings,
             createdBy=one_off_authors(self.svc, [lesson_id]).get(lesson_id),
         )
+        apply_marks(resp, purposes.marks([(group.id, lesson_id, req.lessonDate.isoformat())], manager=is_org_admin, actor=actor_id).get((str(group.id), lesson_id, req.lessonDate.isoformat())))
+        return resp
 
     # ------------------------------------------------------------------------- teacher overlap (all writers)
     def assert_teacher_free(self, *, group: Group, lesson_id: str, occurrence_date: date, payload: Dict[str, Any]) -> None:

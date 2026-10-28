@@ -35,7 +35,7 @@ def cell(w, membership, first_day):
 
 
 def one_off(w, group, day):
-    r = client(w, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(group.id), "lessonDate": day, "startTime": "15:00", "endTime": "16:00"})
+    r = client(w, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(group.id), "lessonDate": day, "startTime": "15:00", "endTime": "16:00", "purpose": "extra", "money": "paid"})
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
@@ -52,8 +52,8 @@ def test_the_cutover_a_one_off_lesson_and_a_revision_of_the_series_by_hand(pg_se
     (g,), (a,), (ma,) = centre(w, joined=datetime(2026, 10, 15, 6, 0), billing_anchor="fixed_day", billing_day=1)
     # A's October cell without any one-off: 7 of 13
     assert cell(w, ma, "2026-10-01") == (323_000, {"in_part": 7, "in_period": 13})
-    one_off(w, g, "2026-10-23")                                                       # an extra lesson inside A's cell, before the cutover: counted (the old way)
-    assert cell(w, ma, "2026-10-01") == (343_000, {"in_part": 8, "in_period": 14})
+    one_off(w, g, "2026-10-23")                                                       # #154: an additional lesson inside A's cell never changes the share of the cell (it is free for the students), cutover or not
+    assert cell(w, ma, "2026-10-01") == (323_000, {"in_part": 7, "in_period": 13})
 
     clock.set("2026-11-04 09:00")
     b = new_student(w.db, w.org, w.ids, "sB", "Борисов", "Тест", g, joined=datetime(2026, 11, 4, 6, 0))
@@ -63,7 +63,7 @@ def test_the_cutover_a_one_off_lesson_and_a_revision_of_the_series_by_hand(pg_se
 
     one_off(w, g, "2026-11-06")                                                       # an extra lesson inside B's cell, after the cutover: counted by nobody
     assert cell(w, mb, "2026-11-01") == (554_000, {"in_part": 12, "in_period": 13})
-    assert cell(w, ma, "2026-10-01") == (343_000, {"in_part": 8, "in_period": 14})
+    assert cell(w, ma, "2026-10-01") == (323_000, {"in_part": 7, "in_period": 13})
 
     # S8: a LATER revision first (from 20.11 the lesson starts at 12:00), then the change of the day from 05.11 - it is patched into the later revision as well
     revise(w, {"effectiveFrom": "2026-11-20", "startTime": "12:00", "endTime": "13:00"})
@@ -75,4 +75,4 @@ def test_the_cutover_a_one_off_lesson_and_a_revision_of_the_series_by_hand(pg_se
 
     clock.set("2026-11-20 12:00")
     assert cell(w, mb, "2026-11-01") == (550_000, {"in_part": 11, "in_period": 12})   # 11 of 12 by the revised regular schedule, the one-off of 06.11 is not in it
-    assert cell(w, ma, "2026-10-01") == (343_000, {"in_part": 8, "in_period": 14})    # A's closed October cell: not rewritten by the one-off of 06.11 nor by the revision of 05.11
+    assert cell(w, ma, "2026-10-01") == (323_000, {"in_part": 7, "in_period": 13})    # A's closed October cell: not rewritten by the one-off of 06.11 nor by the revision of 05.11

@@ -27,6 +27,7 @@ from . import business_clock as bc
 from .days_off import DaysOffService, HOLIDAY
 from .lesson_teachers import TeacherBook, _uuid
 from .models import AttendanceExcuse, Group, GroupAttendance, GroupAttendanceAudit, LessonSubstitutionRequest as Req, LessonTeacherAssignment, User
+from .one_off_purpose import MAKEUP_EXISTS_TEXT, OneOffPurpose
 from .ops_rules import OpsError, conflict, group_archived, hhmm_to_minutes, not_found, short_name
 from .schemas import DEFAULT_CANCELLATION_KIND
 
@@ -94,6 +95,7 @@ class LessonCancelMixin:
             row = self._cancelled_row(group, ref, actor, reason, {"cancellation_kind": kind}, kind=kind, day_off_id=day_off_id, request=request)
         else:
             self._cancel_started_row(group, ref, row, actor, reason, kind)
+        OneOffPurpose(self.svc).release(group, lesson_id)          # #154: a cancelled make-up frees the lesson it made up for (the deduction comes back by itself)
         released = self._release_substitute(group, ref, actor, "cancel", {"dayOffId": str(day_off_id)} if by_day_off else None)
         if released:
             warnings.append({"code": "SUBSTITUTE_RELEASED", "message": f"Замена снята: {released}"})
@@ -196,6 +198,8 @@ class LessonCancelMixin:
                .with_for_update().first())
         if row is None or row.status != "cancelled":
             raise conflict("RESTORE_NOT_CANCELLED", "Урок не отменён: возвращать нечего")
+        if row.made_up_by:                                                            # #154: a make-up is appointed - the lesson would be held twice
+            raise conflict("MAKEUP_EXISTS", MAKEUP_EXISTS_TEXT)
         moved = (self.db.query(Req).filter(Req.group_id == group.id, Req.lesson_id == lesson_id, Req.lesson_date == iso, Req.status == "rescheduled")
                  .order_by(Req.created_at.desc()).first())
         if moved is not None:
@@ -212,6 +216,7 @@ class LessonCancelMixin:
             why = f" ({held.reason})" if held is not None else ""
             raise conflict("RESTORE_DAY_OFF", f"Дата — выходной день центра{why}: чтобы вернуть урок, отмените сам выходной")
         self.svc._assert_teacher_time_is_available(group=group, lesson_id=lesson_id, occurrence_date=day, payload=occ)
+        OneOffPurpose(self.svc).relink(group, lesson_id)             # #154: a cancelled make-up makes up for the same lesson again (409 ``RESTORE_MAKEUP_TARGET`` when that lesson changed meanwhile)
         names = {u.id: short_name(u) for u in self.db.query(User).filter(User.id.in_([i for i in (row.marked_by,) if i]))} if row.marked_by else {}
         trace = {"lessonId": lesson_id, "lessonDate": iso, "reason": reason, "cancellationKind": row.cancellation_kind, "cancellationReason": row.cancellation_reason,
                  "version": int(row.version or 1), "cancelledBy": names.get(row.marked_by), "cancelledAt": row.created_at.isoformat() if row.created_at else None}

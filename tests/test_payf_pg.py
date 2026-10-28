@@ -208,5 +208,5 @@ def test_6_a_lesson_created_on_a_day_off_is_a_warning_not_a_block(five_groups):
     assert hint["reason"] == "Хайит" and hint["id"] == out["dayOff"]["id"]
     assert client(w, "A").get(f"{API}/org/days-off/for-date", params={"date": "2026-10-21"}).json()["dayOff"]["reason"] == "Хайит"   # a teacher sees the hint too
     assert c.get(f"{API}/org/days-off/for-date", params={"date": "2026-10-22"}).json() == {"dayOff": None}
-    r = c.post(f"{API}/org/schedule/occurrences", json={"groupId": str(gs[0].id), "lessonDate": "2026-10-21", "startTime": "15:00", "endTime": "16:00"})
+    r = c.post(f"{API}/org/schedule/occurrences", json={"groupId": str(gs[0].id), "lessonDate": "2026-10-21", "startTime": "15:00", "endTime": "16:00", "purpose": "extra", "money": "paid"})
     assert r.status_code == 201, r.text                                           # created: the screen warns, the server does not refuse

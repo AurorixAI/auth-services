@@ -53,6 +53,7 @@ from .models import (
     StudentGroup,
     User,
 )
+from .one_off_purpose import MOVED, OneOffPurpose, apply_marks, copy_fields, one_off_of
 from .ops_rules import OpsError, conflict, forbidden, hhmm_to_minutes, normalize_room, not_found, short_name, unprocessable
 from .membership_periods import periods_by_membership
 from .student_archive import student_not_archived
@@ -710,7 +711,8 @@ class SubstitutionsBase:
         this_month = today.replace(day=1)
         next_month = (this_month + timedelta(days=32)).replace(day=1)
         expiring = base.filter(Req.lesson_date < this_month.isoformat()).count() if (next_month - today).days <= EXPIRY_WARNING_DAYS else 0
-        return {"pendingTotal": pending, "urgentTotal": urgent, "overdueTotal": overdue, "expiringTotal": expiring}
+        one_off = OneOffPurpose(self.svc).pending_count(org_id)          # #154: the decisions of the money of additional lessons are in the same badge (the 1st-of-the-month window and «urgent» do not apply to them)
+        return {"pendingTotal": pending, "urgentTotal": urgent, "overdueTotal": overdue, "expiringTotal": expiring, "oneOffDecisionsTotal": one_off, "waitingTotal": pending + one_off}
 
     def _badge_batch(self, org_id: Any, extra: Sequence[Req]) -> List[Req]:
         """The pending requests to revalidate before counting: the oldest ``SUMMARY_REVALIDATE_MAX`` of the centre + ``extra`` (the page of the list), each once."""
@@ -1250,8 +1252,12 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         row = self._cancelled_row(group, r, actor, text, {"moved_to": {"date": new_date.isoformat(), "startTime": start, "endTime": end}}, request=r)
         self._release_substitute(group, r, actor, "move")
         new_id = f"one-off-{uuid4().hex[:16]}"
-        self.db.add(GroupScheduleOneOffLesson(id=new_id, org_id=group.org_id, group_id=group.id, lesson_date=new_date.isoformat(), payload=payload, created_by=actor))
+        source = one_off_of(self.db, group.id, r.lesson_id)       # #154: a copy keeps what the lesson is for (a make-up stays a make-up - the pointer of the cancelled lesson goes to the copy; an additional lesson keeps its money and its author)
+        inherited = copy_fields(source) if source is not None else {"purpose": MOVED, "money": None, "made_up_lesson_id": None, "made_up_date": None, "created_by": actor}
+        self.db.add(GroupScheduleOneOffLesson(id=new_id, org_id=group.org_id, group_id=group.id, lesson_date=new_date.isoformat(), payload=payload, **inherited))
         self.db.flush()
+        if source is not None:
+            OneOffPurpose(self.svc).repoint(group, source, new_id)
         self._exam_release(r, text)
         from .schedule_rules import ScheduleRules
 
@@ -1956,9 +1962,11 @@ def annotate_occurrences(svc, user: Dict[str, Any], items: Sequence[Any]) -> Seq
     gids = {g for g in (_uuid(i.groupId) for i in items) if g}
     origin = moved_from_map(svc.db, gids, [i.id for i in items])
     authors = one_off_authors(svc, [i.id for i in items])
+    purposes = OneOffPurpose(svc).marks([(i.groupId, i.id, i.occurrenceDate) for i in items], manager=manager, actor=actor)          # #154: purpose / madeUp* / money (the mask is in ``marks``)
     for item in items:
         item.movedFrom = origin.get((str(item.groupId), item.id))
         item.createdBy = authors.get(item.id)
+        apply_marks(item, purposes.get((str(item.groupId), item.id, item.occurrenceDate)))
     days = [i.occurrenceDate for i in items]
     reqs = (
         svc.db.query(Req).filter(Req.group_id.in_(gids), Req.lesson_date >= min(days), Req.lesson_date <= max(days)).order_by(Req.created_at, Req.id).all()
@@ -1990,12 +1998,14 @@ def annotate_journal(svc, user: Dict[str, Any], group: Group, resp) -> Any:
         return resp
     origin = moved_from_map(svc.db, [group.id], [l.get("id") for l in keys.values()])
     authors = one_off_authors(svc, [l.get("id") for l in keys.values()])
+    manager, actor = is_org_manager(user), _uuid(user.get("user_id"))
+    purposes = OneOffPurpose(svc).marks([(group.id, l.get("id"), l.get("date")) for l in keys.values()], manager=manager, actor=actor)          # #154
     for lesson in keys.values():
         if (str(group.id), lesson.get("id")) in origin:
             lesson["movedFrom"] = origin[(str(group.id), lesson.get("id"))]
         if lesson.get("id") in authors:
             lesson["createdBy"] = authors[lesson["id"]]
-    manager, actor = is_org_manager(user), _uuid(user.get("user_id"))
+        apply_marks(lesson, purposes.get((str(group.id), lesson.get("id"), lesson.get("date"))))
     dates = sorted({l["date"] for l in keys.values()})
     reqs = svc.db.query(Req).filter(Req.group_id == group.id, Req.lesson_date >= dates[0], Req.lesson_date <= dates[-1]).order_by(Req.created_at, Req.id).all()
     marks: Dict[str, Dict[str, Any]] = {}
@@ -2038,9 +2048,11 @@ def annotate_student_attendance(svc, org_id: Any, student_id: Any, summary: Dict
         book.load_history(list(gids))
         names = LessonTeachers(svc).users_by_id([r.teacher_id for r in rows.values() if r.teacher_id])
         origin = moved_from_map(db, gids, [l["lesson_id"] for l in lessons])
+        purposes = OneOffPurpose(svc).marks([(l["group_id"], l["lesson_id"], l["date"]) for l in lessons], manager=False, money_visible=False)       # #154: a neutral label, never the money
         for lesson in lessons:
             if (lesson["group_id"], lesson["lesson_id"]) in origin:
                 lesson["movedFrom"] = origin[(lesson["group_id"], lesson["lesson_id"])]
+            apply_marks(lesson, purposes.get((lesson["group_id"], lesson["lesson_id"], lesson["date"])))
             row = rows.get((lesson["group_id"], lesson["lesson_id"], lesson["date"]))
             group = groups.get(_uuid(lesson["group_id"]))
             teacher = row.teacher_id if row is not None else None

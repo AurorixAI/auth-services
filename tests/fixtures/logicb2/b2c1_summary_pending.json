@@ -1,6 +1,8 @@
 {
   "expiringTotal": 0,
+  "oneOffDecisionsTotal": 0,
   "overdueTotal": 0,
   "pendingTotal": 1,
-  "urgentTotal": 0
+  "urgentTotal": 0,
+  "waitingTotal": 1
 }

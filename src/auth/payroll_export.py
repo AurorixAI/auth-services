@@ -251,6 +251,10 @@ def write_sheet(ws, sheet: Mapping[str, Any]) -> None:
                 _put(ws, row, col, "Ув.?", **{**style, "fill": pending_fill})
             elif state == engine.UNPAID:
                 _put(ws, row, col, 1, **{**style, "fill": unpaid_fill, "font": grey})
+            elif state == engine.UNDECIDED:                                  # #154: an additional lesson whose payment is not decided yet (not in the sum)
+                _put(ws, row, col, "не решено", **{**style, "fill": pending_fill, "font": grey})
+            elif state == engine.NO_PAY:
+                _put(ws, row, col, "без оплаты", **{**style, "font": grey})
             else:
                 _put(ws, row, col, 1, **style)
         for col in range(first_date_col, last_date_col + 1):                 # a day without a mark still has its borders

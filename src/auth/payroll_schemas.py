@@ -118,7 +118,7 @@ class MarkOut(BaseModel):
     date: str
     lesson_id: str
     mark: Optional[int] = None  # 1 counted, 0 not counted (confirmed excuse), null - not in the group
-    state: str  # counted | excused_confirmed | excused_pending | not_in_group | unpaid
+    state: str  # counted | excused_confirmed | excused_pending | not_in_group | unpaid | undecided («не решено», #154) | no_pay («без оплаты», #154)
     divisor: Optional[int] = None
     # ROADMAP #105: the price of the student ON THE DAY of this lesson (only on a lesson that carries money, and only
     # on a sheet calculated after #105) and where it came from: group | override | none.
@@ -284,6 +284,7 @@ class MonthTeacher(BaseModel):
     teacher_id: str
     teacher_name: Optional[str] = None
     lessons_count: int = 0  # completed lessons the teacher held in the month
+    undecided_lessons: int = 0  # #154: held additional lessons / empty make-ups whose payment is not decided yet (not in the sum)
     lesson_types: List[LessonTypeSuggestion] = Field(default_factory=list)
     # UX-2: the rate in force for the month per kind of lessons the teacher held in it (``{"group": "50"}``; a kind
     # without a rate is absent) and the kinds without a rate - the sheet cannot be calculated until they are set.

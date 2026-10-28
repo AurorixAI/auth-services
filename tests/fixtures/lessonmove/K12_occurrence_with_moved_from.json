@@ -38,5 +38,11 @@
     "date": "2026-10-28",
     "startTime": "16:00",
     "endTime": "17:30"
-  }
+  },
+  "purpose": "moved",
+  "purposeLabel": null,
+  "madeUpFor": null,
+  "madeUpBy": null,
+  "money": null,
+  "moneyLabel": null
 }

@@ -99,12 +99,12 @@ def test_a_revision_of_a_series_onto_a_day_off_cancels_it(world):
 def test_a_one_off_lesson_on_a_day_off_is_not_cancelled_only_a_warning(world):
     w, g, _ = world
     day_off(w)
-    r = client(w, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(g.id), "lessonDate": "2026-10-28", "startTime": "15:00", "endTime": "16:00"})
+    r = client(w, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(g.id), "lessonDate": "2026-10-28", "startTime": "15:00", "endTime": "16:00", "purpose": "extra", "money": "paid"})
     assert r.status_code == 201, r.text
     body = r.json()
     assert [x["code"] for x in body["warnings"]] == ["DAY_OFF"] and "(Хайит)" in body["warnings"][0]["message"] and "28.10" in body["warnings"][0]["message"]
     assert att(w, body["id"]) == []                                              # a deliberate lesson (a make-up): alive
-    quiet = client(w, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(g.id), "lessonDate": "2026-10-29", "startTime": "15:00", "endTime": "16:00"})
+    quiet = client(w, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(g.id), "lessonDate": "2026-10-29", "startTime": "15:00", "endTime": "16:00", "purpose": "extra", "money": "paid"})
     assert quiet.json()["warnings"] == []
 
 

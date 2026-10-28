@@ -22,8 +22,10 @@ from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session
 
 from src.models.auth import (
+    AttendanceExcuse,
     Group,
     GroupAttendance,
+    GroupScheduleOneOffLesson,
     MembershipOpeningBalance,
     MembershipPause,
     MembershipTransfer,
@@ -47,6 +49,29 @@ logger = logging.getLogger(__name__)
 MAX_TRANSFER_HOPS = 8
 SCHEDULE_HORIZON_DAYS = 800  # the preload of the schedule reaches this far past today (24 future periods + slack)
 FORECAST_DAYS = 400          # how far ahead the forecast of a package looks for the day of its last lesson (a package of 57 weekly lessons fits)
+
+
+# ============================================================================================================
+# #154: a make-up and the deduction of the lesson it makes up for
+# ============================================================================================================
+
+
+@dataclass(frozen=True)
+class MakeupFacts:
+    """The facts of ONE make-up that the deduction of a cancelled lesson waits for.  ``ahead``: the make-up is still to come or is going on - the deduction is paused for every student of the group;
+    ``held``: it was held - it is lifted for the students it COUNTED for (``lifted``: in its roster with a mark that counts by rule 4.3: present / late / absent, an excused one without a confirmed
+    excuse), the others keep it; ``gone``: it was cancelled / deleted (the pointer is released by the cancellation; a stale one is no reason to lift anything)."""
+
+    state: str
+    day: Optional[date] = None
+    lifted: frozenset = frozenset()
+
+    def lifts(self, student_id: str, paused_days: Set[date]) -> bool:
+        if self.state == "ahead":
+            return True
+        if self.state != "held":
+            return False
+        return student_id in self.lifted and (self.day is None or self.day not in paused_days)
 
 
 # ============================================================================================================
@@ -215,6 +240,7 @@ class LedgerLoader:
         self.recalc_versions = self.settings.recalc_versions if recalc else ()
         self.cancels: Dict[UUID, List[bl.CentreCancel]] = {}      # group id -> lessons the centre cancelled (kind ``centre``)
         self._cancels_loaded: Set[UUID] = set()
+        self.makeups: Dict[Tuple[UUID, date, str], MakeupFacts] = {}       # #154: (group, day, lesson) of a cancelled lesson that has a make-up -> its facts
         self.members: Dict[UUID, Tuple[StudentGroup, Student, Group, Optional[User]]] = {}
         self.stays: Dict[UUID, List[bl.Stay]] = {}
         self.payments: Dict[UUID, List[StudentPayment]] = {}
@@ -407,11 +433,16 @@ class LedgerLoader:
             return
         since = self.settings.accounting_start.isoformat()
         found: Dict[UUID, List[Tuple[str, str]]] = {}
-        for group_id, day, lesson_id in self.db.query(GroupAttendance.group_id, GroupAttendance.lesson_date, GroupAttendance.lesson_id).filter(
+        made: Dict[Tuple[UUID, str, str], str] = {}
+        for group_id, day, lesson_id, made_up_by in self.db.query(GroupAttendance.group_id, GroupAttendance.lesson_date, GroupAttendance.lesson_id, GroupAttendance.made_up_by).filter(
             GroupAttendance.org_id == self.org_id, GroupAttendance.group_id.in_(wanted), GroupAttendance.status == "cancelled",
             GroupAttendance.cancellation_kind == "centre", GroupAttendance.lesson_date >= since,
         ):
             found.setdefault(group_id, []).append((day, lesson_id or ""))
+            if made_up_by:
+                made[(group_id, day, lesson_id or "")] = made_up_by
+        if made:
+            self._load_makeups(made)
         groups = {g.id: g for _, _, g, _ in self.members.values()}
         for group_id, items in found.items():
             group = groups.get(group_id)
@@ -421,6 +452,46 @@ class LedgerLoader:
             regular = {(o["occurrenceDate"], o["id"]) for o in self._occurrences(group, self.settings.accounting_start, last, pattern=True) if not o.get("isOneOff")}
             copies = {lesson_id for gid, lesson_id in self._moved_copies(group) if gid == str(group_id)}
             self.cancels[group_id] = [bl.CentreCancel(date.fromisoformat(day), lesson_id) for day, lesson_id in items if (day, lesson_id) in regular or lesson_id in copies]
+
+    def _load_makeups(self, made: Dict[Tuple[UUID, str, str], str]) -> None:
+        """#154: the facts of the make-ups of the cancelled lessons ``made`` (``{(group, day, lesson): make-up lesson id}``): the state of the make-up and - when it was held - the students it counted for
+        (the very predicate of the package: in the roster, a mark of rule 4.3 and no confirmed excuse).  A few queries whatever the number of make-ups."""
+        ids = set(made.values())
+        gids = {k[0] for k in made}
+        ones = {o.id: o for o in self.db.query(GroupScheduleOneOffLesson).filter(GroupScheduleOneOffLesson.id.in_(ids), GroupScheduleOneOffLesson.group_id.in_(gids)).all()}
+        rows = {(r.group_id, r.lesson_id, r.lesson_date): r for r in self.db.query(GroupAttendance).filter(
+            GroupAttendance.org_id == self.org_id, GroupAttendance.group_id.in_(gids), GroupAttendance.lesson_id.in_(ids)).all()}
+        held_ids = [r.id for r in rows.values() if r.status == "completed"]
+        confirmed = {(r.attendance_id, str(r.student_id)) for r in self.db.query(AttendanceExcuse.attendance_id, AttendanceExcuse.student_id).filter(
+            AttendanceExcuse.org_id == self.org_id, AttendanceExcuse.attendance_id.in_(held_ids), AttendanceExcuse.status == "confirmed").all()} if held_ids else set()
+        for (group_id, day, lesson_id), make_up in made.items():
+            one = ones.get(make_up)
+            row = rows.get((group_id, make_up, one.lesson_date)) if one is not None and one.group_id == group_id else None
+            key = (group_id, date.fromisoformat(day), lesson_id)
+            if one is None:
+                self.makeups[key] = MakeupFacts("gone")
+            elif row is None or row.status == "in_progress":
+                self.makeups[key] = MakeupFacts("ahead")
+            elif row.status == "cancelled":
+                self.makeups[key] = MakeupFacts("gone")
+            else:
+                records = row.records if isinstance(row.records, dict) else {}
+                roster = {str(x.get("student_id")) for x in row.roster_snapshot if isinstance(x, dict) and x.get("student_id")} if isinstance(row.roster_snapshot, list) else set(records)
+                lifted = frozenset(sid for sid in roster if ps.lesson_counts(mark=records.get(sid), excuse_status="confirmed" if (row.id, sid) in confirmed else None))
+                self.makeups[key] = MakeupFacts("held", date.fromisoformat(one.lesson_date), lifted)
+
+    def _cancels_for(self, mid: UUID, group: Group, student_id: UUID) -> Tuple[bl.CentreCancel, ...]:
+        """The lessons the centre cancelled that are DEDUCTED from THIS student: those without a make-up, and those whose make-up does not count for him (he was not there, left the group, was on a pause,
+        was excused with a confirmed excuse).  A function of the facts, per student - nothing is stored (LESSONS 18)."""
+        sid = str(student_id)
+        paused = {d for p in self.pauses.get(mid, []) for d in _days(p.first_day, p.last_day)} if any(k[0] == group.id for k in self.makeups) else set()
+        out = []
+        for cancel in self.cancels.get(group.id, ()):
+            facts = self.makeups.get((group.id, cancel.day, cancel.lesson_id))
+            if facts is not None and facts.lifts(sid, paused):
+                continue
+            out.append(cancel)
+        return tuple(out)
 
     def _prices(self) -> None:
         self.books = pricing.load_books(
@@ -480,7 +551,7 @@ class LedgerLoader:
         # the copy is left out, so a move never changes the share of an incomplete first period
         moved = self._moved_copies(group)
         days = [date.fromisoformat(item["occurrenceDate"]) for item in occurrences
-                if not (item.get("isOneOff") and ((str(group.id), str(item["id"])) in moved or regular))]
+                if not (item.get("isOneOff") and ((str(group.id), str(item["id"])) in moved or regular or item.get("purpose") in ("extra", "makeup")))]      # #154: an additional lesson / a make-up (its cancelled lesson is counted) change nothing
         self._lesson_days_cache[key] = days
         return days
 
@@ -522,7 +593,7 @@ class LedgerLoader:
             if e.group.id not in upcoming:
                 upcoming[e.group.id] = sorted(
                     (date.fromisoformat(o["occurrenceDate"]), o["id"]) for o in self._occurrences(e.group, self.today, horizon)
-                    if (o["occurrenceDate"], o["id"]) not in cancelled[e.group.id])
+                    if (o["occurrenceDate"], o["id"]) not in cancelled[e.group.id] and o.get("purpose") != "extra")      # #154: an additional lesson does not spend the package
             held = {(c.day, c.lesson_id) for c in e.ledger.counted}
             paused = {d for p in e.pauses for d in _days(p.first_day, p.last_day)}
             coming = [d for d, lesson_id in upcoming[e.group.id] if (d, lesson_id) not in held and d not in paused]
@@ -635,7 +706,7 @@ class LedgerLoader:
             expiring_lessons=self.settings.expiring_lessons,
             pauses=tuple(bl.Pause(p.first_day, p.last_day) for p in self.pauses.get(mid, [])),
             opening=self._opening_of(mid),
-            centre_cancels=tuple(self.cancels.get(group.id, ())),
+            centre_cancels=self._cancels_for(mid, group, membership.student_id),
             recalc_versions=self.recalc_versions,
         )
         return bl.sliced_input(inp, as_of) if as_of is not None else inp

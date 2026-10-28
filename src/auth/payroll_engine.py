@@ -56,7 +56,11 @@ EXCUSED_CONFIRMED = "excused_confirmed"
 EXCUSED_PENDING = "excused_pending"
 NOT_IN_GROUP = "not_in_group"
 UNPAID = "unpaid"
-STATES = (COUNTED, EXCUSED_CONFIRMED, EXCUSED_PENDING, NOT_IN_GROUP, UNPAID)
+# #154: the teacher's money of an additional lesson (or of an empty make-up): ``undecided`` - «не решено» (the owner / admin decides after the lesson; not in the sum), ``no_pay`` - «без оплаты».
+# Neither carries money and neither is «not in the group» - the student WAS there, the lesson is simply not paid.
+UNDECIDED = "undecided"
+NO_PAY = "no_pay"
+STATES = (COUNTED, EXCUSED_CONFIRMED, EXCUSED_PENDING, NOT_IN_GROUP, UNPAID, UNDECIDED, NO_PAY)
 
 # Warnings of a line.
 NO_FEE = "NO_FEE"
@@ -298,6 +302,8 @@ def compute_line(
             "marks": [m.as_dict() for m in marks],
             "counted": len(paid),
             "unpaid": len(unpaid),
+            "undecided": sum(1 for m in marks if m.state == UNDECIDED),      # #154: lessons whose payment is not decided yet (not in the sum)
+            "no_pay": sum(1 for m in marks if m.state == NO_PAY),            # #154: lessons the owner / the teacher left without pay
             "pending_excused": pending_excused,
             "include_unpaid": bool(include_unpaid),
             "written_off": written_off,  # LOGIC-A (decision 5): counted lessons that a write-off of the centre covers
@@ -364,6 +370,7 @@ def sheet_counters(lines: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
     return {
         "total_amount": sheet_total(lines),
         "counted": sum(int(line["counted"]) for line in lines),
+        "undecided": sum(int(line.get("undecided") or 0) for line in lines),
         "written_off": sum(int(line.get("written_off") or 0) for line in lines),
         # lessons nobody paid for - not counting the free lessons (price 0): they owe nothing
         "unpaid": sum(_unpaid_due(line) for line in lines),

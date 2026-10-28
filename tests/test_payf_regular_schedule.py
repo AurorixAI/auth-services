@@ -96,7 +96,7 @@ def test_17_the_real_month_with_two_extra_lessons(pg_session, clock):
     clock.set("2026-11-01 09:00")
     (g,), (s,), (m,) = centre(w, joined=datetime(2026, 11, 15, 6, 0), billing_anchor="fixed_day", billing_day=1, accounting_start_date="2026-11-01")
     for day in ("2026-11-03", "2026-11-05"):
-        r = client(w, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(g.id), "lessonDate": day, "startTime": "15:00", "endTime": "16:00"})
+        r = client(w, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(g.id), "lessonDate": day, "startTime": "15:00", "endTime": "16:00", "purpose": "extra", "money": "paid"})
         assert r.status_code == 201, r.text
     clock.set("2026-11-20 12:00")
     (row,) = rows(w, s)
@@ -107,15 +107,15 @@ def test_17_the_real_month_with_two_extra_lessons(pg_session, clock):
 
 
 @needs_pg
-def test_17_a_package_still_counts_the_one_off_lessons(pg_session, clock):
+def test_17_a_package_does_not_count_an_additional_lesson(pg_session, clock):
     w = build_org(pg_session)
     clock.set("2026-11-03 09:00")
     (g,), (s,), (m,) = centre(w, joined=datetime(2026, 9, 1, 6, 0), period_mode="lessons", lessons_per_payment=12)
-    r = client(w, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(g.id), "lessonDate": "2026-11-05", "startTime": "15:00", "endTime": "16:00"})
+    r = client(w, "owner").post(f"{API}/org/schedule/occurrences", json={"groupId": str(g.id), "lessonDate": "2026-11-05", "startTime": "15:00", "endTime": "16:00", "purpose": "extra", "money": "paid"})
     one_off = r.json()["id"]
     pay(w, m, 600_000, date(2026, 11, 3))
     clock.set("2026-11-05 18:00")
     history_row(w.db, w.org, g, one_off, "2026-11-05", w.A, [s], start="15:00", end="15:55")          # the extra lesson was held
     w.db.commit()
     (row,) = rows(w, s)
-    assert (row["lessons_used"], row["lessons_left"]) == (1, 11)                                       # it spends the package like any lesson
+    assert (row["lessons_used"], row["lessons_left"]) == (0, 12)                                       # #154: an additional lesson is free for the student - it spends nothing

@@ -142,7 +142,7 @@ def test_m8_busy_teacher_or_group_writes_nothing(w, sync):
     nothing_written(w)
     w.db.add(GroupScheduleOneOffLesson(id=f"one-off-ex-{w.salt}", org_id=w.org.id, group_id=w.G1.id, lesson_date="2026-11-03",
                                        payload={"dayOfWeek": 2, "startTime": "12:00", "endTime": "13:00", "subject": "Математика", "room": None, "format": "offline", "color": "blue"},
-                                       created_by=w.admin.id))
+                                       created_by=w.admin.id, purpose="extra", money="paid"))
     w.db.commit()
     gb = move(w, newDate="2026-11-03", startTime="12:30", endTime="13:30")
     assert gb.status_code == 409 and gb.json()["detail"]["code"] == "GROUP_BUSY" and gb.json()["detail"]["total"] == 1

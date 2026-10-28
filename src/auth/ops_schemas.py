@@ -90,6 +90,11 @@ class CreateLessonRequestB(CreateLessonRequest):
 
 class CreateOneOffLessonRequestB(CreateOneOffLessonRequest):
     room: Optional[str] = None
+    # #154: what the lesson is for (checked by ``one_off_purpose.OneOffPurpose.check_request`` - the codes are coded 422s, not the schema's):
+    purpose: Optional[str] = None                 # makeup | extra
+    money: Optional[str] = None                   # extra: none | wait | paid (the role decides which)
+    madeUpLessonId: Optional[str] = None          # makeup: the cancelled lesson it makes up for ...
+    madeUpDate: Optional[date] = None             # ... and its date
 
 
 class SeriesRevision(BaseModel):
@@ -156,6 +161,13 @@ class ScheduleOccurrenceResponseB(ScheduleOccurrenceResponse):
     substitutionRequest: Optional[Dict[str, Any]] = None
     substitutionOutcome: Optional[Dict[str, Any]] = None
     movedFrom: Optional[Dict[str, Any]] = None             # #124: the slot of the original, on the new lesson that a move created
+    # #154: what a one-off lesson is for and the state of its money (``one_off_purpose.OneOffPurpose.marks``: the mask is there)
+    purpose: Optional[str] = None                          # makeup | extra | moved; null - a lesson of the schedule
+    purposeLabel: Optional[str] = None                     # «Отработка за пн 03.11» / «Дополнительный»
+    madeUpFor: Optional[Dict[str, Any]] = None             # makeup: {lessonId, date} of the cancelled lesson
+    madeUpBy: Optional[Dict[str, Any]] = None              # a cancelled lesson that has a make-up: {lessonId, date, startTime, endTime, label}
+    money: Optional[str] = None                            # none | wait | paid (owner / admin; a teacher only for his own lesson; never a student)
+    moneyLabel: Optional[str] = None
 
 
 # -------------------------------------------------------------------------------- 4.2 journal and marks
