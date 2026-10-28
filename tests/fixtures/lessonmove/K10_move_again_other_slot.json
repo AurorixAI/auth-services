@@ -62,7 +62,10 @@
         "clearedAt": null,
         "clearedBy": null,
         "clearedTo": null,
-        "clearedTrigger": null
+        "clearedTrigger": null,
+        "outcome": "rescheduled",
+        "closedTrigger": null,
+        "lastActivityAt": "2026-10-21T09:00:00.000001"
       }
     }
   }

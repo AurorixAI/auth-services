@@ -1966,10 +1966,29 @@
             "type": "array"
           },
           "examBinding": {
-            "$ref": "#/components/schemas/ExamBinding"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "item": {
             "$ref": "#/components/schemas/SubstitutionItem"
+          },
+          "next": {
+            "items": {
+              "$ref": "#/components/schemas/SubstitutionItem"
+            },
+            "title": "Next",
+            "type": "array"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2002,6 +2021,21 @@
             "title": "At",
             "type": "string"
           },
+          "mergedRequestId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mergedrequestid"
+          },
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
           "snapshot": {
             "additionalProperties": true,
             "title": "Snapshot",
@@ -2009,6 +2043,7 @@
           }
         },
         "required": [
+          "requestId",
           "action",
           "at"
         ],
@@ -2063,6 +2098,17 @@
             ],
             "title": "Clearedtrigger"
           },
+          "closedTrigger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closedtrigger"
+          },
           "comment": {
             "anyOf": [
               {
@@ -2095,6 +2141,17 @@
             "title": "Id",
             "type": "string"
           },
+          "lastActivityAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastactivityat"
+          },
           "lesson": {
             "$ref": "#/components/schemas/SubLesson"
           },
@@ -2109,6 +2166,11 @@
               "system"
             ],
             "title": "Origin",
+            "type": "string"
+          },
+          "outcome": {
+            "default": "pending",
+            "title": "Outcome",
             "type": "string"
           },
           "overdue": {

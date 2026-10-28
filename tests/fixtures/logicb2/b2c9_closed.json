@@ -4,6 +4,7 @@
   "clearedBy": null,
   "clearedTo": null,
   "clearedTrigger": null,
+  "closedTrigger": "group_archived",
   "comment": null,
   "createdAt": "2026-10-21T09:00:00",
   "decision": {
@@ -23,6 +24,7 @@
     "studentCount": 0
   },
   "id": "8909a314-c0cc-53cd-ab74-d68c02b4550b",
+  "lastActivityAt": "2026-10-22T05:00:00",
   "lesson": {
     "date": "2026-10-26",
     "endTime": "11:30",
@@ -35,6 +37,7 @@
   },
   "minutesToStart": 5760,
   "origin": "teacher",
+  "outcome": "group_archived",
   "overdue": false,
   "previous": null,
   "reasonCode": "sick",

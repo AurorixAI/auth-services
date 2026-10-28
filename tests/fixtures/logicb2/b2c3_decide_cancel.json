@@ -5,6 +5,7 @@
     "clearedBy": null,
     "clearedTo": null,
     "clearedTrigger": null,
+    "closedTrigger": null,
     "comment": null,
     "createdAt": "2026-10-21T09:00:00",
     "decision": {
@@ -28,6 +29,7 @@
       "studentCount": 3
     },
     "id": "ef994850-8691-5421-8edf-97d52547f0c8",
+    "lastActivityAt": "2026-10-21T09:02:00",
     "lesson": {
       "date": "2026-11-02",
       "endTime": "11:30",
@@ -40,6 +42,7 @@
     },
     "minutesToStart": 17038,
     "origin": "teacher",
+    "outcome": "cancelled",
     "overdue": false,
     "previous": null,
     "reasonCode": "sick",

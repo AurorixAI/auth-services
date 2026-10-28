@@ -8,6 +8,7 @@
       "clearedBy": null,
       "clearedTo": null,
       "clearedTrigger": null,
+      "closedTrigger": null,
       "comment": "Конференция",
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
@@ -17,6 +18,7 @@
         "studentCount": 3
       },
       "id": "fc394dd4-82b3-5b2c-9a5f-dabe36b1632d",
+      "lastActivityAt": "2026-10-21T09:00:00",
       "lesson": {
         "date": "2026-10-21",
         "endTime": "17:30",
@@ -29,6 +31,7 @@
       },
       "minutesToStart": 120,
       "origin": "teacher",
+      "outcome": "pending",
       "overdue": false,
       "previous": null,
       "reasonCode": "personal",
@@ -49,6 +52,7 @@
       "clearedBy": null,
       "clearedTo": null,
       "clearedTrigger": null,
+      "closedTrigger": null,
       "comment": "Конференция",
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
@@ -58,6 +62,7 @@
         "studentCount": 3
       },
       "id": "1bf0f6fd-ff60-5d22-922c-2eb766e260b3",
+      "lastActivityAt": "2026-10-21T09:00:00",
       "lesson": {
         "date": "2026-10-26",
         "endTime": "11:30",
@@ -70,6 +75,7 @@
       },
       "minutesToStart": 6960,
       "origin": "teacher",
+      "outcome": "pending",
       "overdue": false,
       "previous": null,
       "reasonCode": "personal",
@@ -90,6 +96,7 @@
       "clearedBy": null,
       "clearedTo": null,
       "clearedTrigger": null,
+      "closedTrigger": null,
       "comment": "Конференция",
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
@@ -99,6 +106,7 @@
         "studentCount": 2
       },
       "id": "c714967b-18e1-5d0c-8a82-ab4f85a7b5a1",
+      "lastActivityAt": "2026-10-21T09:00:00",
       "lesson": {
         "date": "2026-10-27",
         "endTime": "11:00",
@@ -111,6 +119,7 @@
       },
       "minutesToStart": 8400,
       "origin": "teacher",
+      "outcome": "pending",
       "overdue": false,
       "previous": null,
       "reasonCode": "personal",
@@ -131,6 +140,7 @@
       "clearedBy": null,
       "clearedTo": null,
       "clearedTrigger": null,
+      "closedTrigger": null,
       "comment": "Конференция",
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
@@ -140,6 +150,7 @@
         "studentCount": 3
       },
       "id": "151eabd7-b2ea-571f-bc98-fc9917aea1f0",
+      "lastActivityAt": "2026-10-21T09:00:00",
       "lesson": {
         "date": "2026-10-28",
         "endTime": "17:30",
@@ -152,6 +163,7 @@
       },
       "minutesToStart": 10200,
       "origin": "teacher",
+      "outcome": "pending",
       "overdue": false,
       "previous": null,
       "reasonCode": "personal",
@@ -172,6 +184,7 @@
       "clearedBy": null,
       "clearedTo": null,
       "clearedTrigger": null,
+      "closedTrigger": null,
       "comment": "Конференция",
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
@@ -181,6 +194,7 @@
         "studentCount": 3
       },
       "id": "454547e9-7d4e-5d67-b5b9-51c2291c66cf",
+      "lastActivityAt": "2026-10-21T09:00:00",
       "lesson": {
         "date": "2026-11-02",
         "endTime": "11:30",
@@ -193,6 +207,7 @@
       },
       "minutesToStart": 17040,
       "origin": "teacher",
+      "outcome": "pending",
       "overdue": false,
       "previous": null,
       "reasonCode": "personal",

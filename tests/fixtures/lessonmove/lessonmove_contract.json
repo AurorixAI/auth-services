@@ -877,6 +877,17 @@
             ],
             "title": "Clearedtrigger"
           },
+          "closedTrigger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closedtrigger"
+          },
           "comment": {
             "anyOf": [
               {
@@ -909,6 +920,17 @@
             "title": "Id",
             "type": "string"
           },
+          "lastActivityAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastactivityat"
+          },
           "lesson": {
             "$ref": "#/components/schemas/SubLesson"
           },
@@ -923,6 +945,11 @@
               "system"
             ],
             "title": "Origin",
+            "type": "string"
+          },
+          "outcome": {
+            "default": "pending",
+            "title": "Outcome",
             "type": "string"
           },
           "overdue": {

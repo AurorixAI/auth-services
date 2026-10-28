@@ -23,6 +23,7 @@
       "clearedBy": null,
       "clearedTo": null,
       "clearedTrigger": null,
+      "closedTrigger": null,
       "comment": "Температура",
       "createdAt": "2026-10-21T09:00:00",
       "decision": null,
@@ -32,6 +33,7 @@
         "studentCount": 3
       },
       "id": "5404e474-b04e-5e02-ba9a-e1862433c3c8",
+      "lastActivityAt": "2026-10-21T09:00:00",
       "lesson": {
         "date": "2026-10-26",
         "endTime": "11:30",
@@ -44,6 +46,7 @@
       },
       "minutesToStart": 6960,
       "origin": "teacher",
+      "outcome": "pending",
       "overdue": false,
       "previous": null,
       "reasonCode": "sick",

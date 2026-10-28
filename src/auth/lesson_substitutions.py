@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import event, func, or_
+from sqlalchemy import event, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -74,6 +74,9 @@ TEACHER_MOVE = "teacher_move"                # ``decided_via`` of a lesson moved
 ASSIGN_TRIGGER = "manager_assign"           # ``trigger`` of the ``requested`` event of a record the lesson sheet made (P1.2): the only mark of its creation, nothing else is guessed from ``origin`` / ``decided_via``
 PUT_VIA = "lesson_teacher_put"               # ``decided_via`` of what the administrator did on the lesson sheet (PUT lesson-teacher): a request it decided, a substitution it set without one (P1.2), one it took off
 MOVE_STARTED_TEXT = "Урок уже начался или прошёл: перенести его нельзя"          # the one text of every «the lesson is no longer ahead» refusal of a move
+DETAIL_LINKS = 10                            # #157 A5: how many records before / after the one opened the history shows ...
+DETAIL_EVENTS = 60                           # ... and how many events (the newest); more = ``truncated: true``
+MERGE_SECONDS = 2                            # the two events one act of an administrator writes (the old record's «taken off» and the new one's «substituted») are not further apart than this
 MANAGER = "manager"                          # the viewer of an owner / admin; a teacher (the requester) is viewed by his user id: every answer says WHOSE eyes it is built for (#157 A1)
 
 # #157 A1: what an event of the journal may show of its ``snapshot`` (anything else is cut for EVERYBODY - the money and the ids of the machinery never leave; LESSONS 45).  ``_MANAGER_ONLY`` is
@@ -84,6 +87,11 @@ SNAPSHOT_KEYS: Dict[str, Tuple[str, ...]] = {
     "assignment_cleared": ("teacherId", "trigger", "dayOffId"), "suggestion_unavailable": (), "lesson_restored": ("reason",), "day_off_voided": ("dayOffId", "reopened"),
 }
 _MANAGER_ONLY: Dict[str, Tuple[str, ...]] = {"cancelled": ("cancellationKind",), "closed": ("reason", "cancellationKind", "previous"), "lesson_restored": ("reason",)}
+CLOSED_OUTCOME = {          # #157 A11: ``closed_reason`` -> the code of ``outcome`` (``LESSON_CANCELLED`` is told apart by the closing trigger: a day off)
+    "LESSON_OUTSIDE_WINDOW": "not_resolved_in_time", "LESSON_STARTED": "lesson_started", "LESSON_REMOVED": "lesson_removed", "GROUP_ARCHIVED": "group_archived",
+    "GROUP_TEACHER_CHANGED": "group_teacher_changed", "TEACHER_REMOVED": "teacher_removed", "ROLE_CHANGED": "role_changed", "ASSIGNMENT_CLEARED": "substitution_cleared",
+    "LESSON_RESTORED": "lesson_restored", "KIND_CHANGED": "kind_changed", "ONE_OFF_ADDED": "one_off_added",
+}
 _PREVIOUS_KEYS = ("cancellationKind", "cancellationReason", "cancelledBy", "cancelledAt")        # the inside of ``closed.previous`` (a restore): what was cancelled, by whom
 
 
@@ -107,6 +115,10 @@ class Ctx:
         self.active_members: Set[UUID] = set()
         self.triggers: Dict[UUID, str] = {}                      # request id -> the trigger of its ``requested`` event (a record the system made)
         self.cleared: Dict[UUID, LessonSubstitutionEvent] = {}   # request id -> its last ``assignment_cleared`` event
+        self.closed_trigger: Dict[UUID, str] = {}                # request id -> the trigger of its last ``closed`` event (#157 A9)
+        self.restored: Set[UUID] = set()                         # requests whose lesson was given back (``lesson_restored``, #157 A10)
+        self.voided: Set[UUID] = set()                           # requests a day off that was cancelled left behind (``day_off_voided``, #157 A4)
+        self.last_event: Dict[UUID, datetime] = {}               # request id -> the time of its newest event of any kind (#157 A8)
 
 
 class SubstitutionsBase:
@@ -192,15 +204,23 @@ class SubstitutionsBase:
 
     def _load_events(self, ctx: Ctx, reqs: Sequence[Req]) -> None:
         """ONE query for the page: how a record the system made was created and, for a substitution that stopped, the last ``assignment_cleared`` (when, by whom, to whom, why)."""
+        ctx.last_event = dict(self.db.query(LessonSubstitutionEvent.request_id, func.max(LessonSubstitutionEvent.created_at))
+                              .filter(LessonSubstitutionEvent.request_id.in_([r.id for r in reqs])).group_by(LessonSubstitutionEvent.request_id).all())          # #157 A8: one more query, for the whole page
         ids = [r.id for r in reqs if r.origin == "system" or r.status != PENDING]
         if not ids:
             return
         rows = (self.db.query(LessonSubstitutionEvent).filter(LessonSubstitutionEvent.request_id.in_(ids),
-                                                              LessonSubstitutionEvent.action.in_(("requested", "assignment_cleared")))
+                                                              LessonSubstitutionEvent.action.in_(("requested", "assignment_cleared", "closed", "lesson_restored", "day_off_voided")))
                 .order_by(LessonSubstitutionEvent.created_at, LessonSubstitutionEvent.id).all())
         for e in rows:
             if e.action == "assignment_cleared":
                 ctx.cleared[e.request_id] = e
+            elif e.action == "closed":
+                ctx.closed_trigger[e.request_id] = (e.snapshot or {}).get("trigger")
+            elif e.action == "lesson_restored":
+                ctx.restored.add(e.request_id)
+            elif e.action == "day_off_voided":
+                ctx.voided.add(e.request_id)
             elif (e.snapshot or {}).get("trigger"):
                 ctx.triggers[e.request_id] = e.snapshot["trigger"]
 
@@ -217,6 +237,34 @@ class SubstitutionsBase:
             return {"clearedAt": None, "clearedBy": None, "clearedTo": None, "clearedTrigger": None}
         return {"clearedAt": e.created_at.isoformat(), "clearedBy": self._author(ctx, e.actor_id), "clearedTo": self._person(ctx, self._cleared_to(e)),
                 "clearedTrigger": (e.snapshot or {}).get("trigger")}
+
+    @staticmethod
+    def outcome_of(r: Req, ctx: Ctx) -> str:
+        """#157 A11: THE one code of what became of a record (P157_API.md §2) - the list, the detail and ``mine`` all read it; the texts and colours are the front's.  By the last event:
+        a day off that was cancelled, a lesson given back, the fate of a substitution, then the status / the reason of the closing."""
+        if r.status == PENDING:
+            return "pending"
+        if r.id in ctx.voided:
+            return "day_off_voided"
+        if r.status == "substituted":
+            e = ctx.cleared.get(r.id)
+            if e is None:
+                return "substituted"
+            snap = e.snapshot or {}
+            if snap.get("trigger") == "cancel":
+                return "cancelled_by_day_off" if snap.get("dayOffId") else "lesson_later_cancelled"
+            if snap.get("trigger") == "move":
+                return "lesson_later_moved"
+            return "substitution_replaced" if SubstitutionsBase._cleared_to(e) else "substitution_cleared"
+        if r.status == "cancelled":
+            if r.id in ctx.restored:
+                return "lesson_restored"
+            return "lesson_not_held" if (ctx.triggers.get(r.id) == "teacher_cancel" or r.decided_via == "teacher_cancel") else "cancelled"
+        if r.status == "closed":
+            if r.closed_reason == "LESSON_CANCELLED":
+                return "cancelled_by_day_off" if ctx.closed_trigger.get(r.id) == "day_off" else "lesson_already_cancelled"
+            return CLOSED_OUTCOME.get(r.closed_reason or "", "closed")
+        return r.status          # rescheduled | rejected | withdrawn
 
     def item(self, r: Req, ctx: Ctx, now: Optional[datetime] = None) -> Dict[str, Any]:
         now = now or self.now()
@@ -261,6 +309,8 @@ class SubstitutionsBase:
             "comment": comment, "suggestedTeacher": sug, "createdAt": r.created_at.isoformat(),
             "minutesToStart": minutes, "urgent": bool(pending and R.is_urgent(minutes)), "overdue": bool(pending and R.is_overdue(minutes)),
             "decision": decision, "previous": prev, "trigger": ctx.triggers.get(r.id) if r.origin == "system" else None, **self._cleared(r, ctx),
+            "outcome": self.outcome_of(r, ctx), "closedTrigger": ctx.closed_trigger.get(r.id) if r.status == "closed" else None,
+            "lastActivityAt": max(t for t in (r.decided_at or r.created_at, ctx.last_event.get(r.id)) if t is not None).isoformat(),
         }
 
     def items(self, reqs: Sequence[Req], viewer: Any) -> List[Dict[str, Any]]:
@@ -655,16 +705,24 @@ class SubstitutionsBase:
         batch.update({r.id: r for r in extra})
         return list(batch.values())
 
+    @staticmethod
+    def _activity():
+        """#157 A8: SQL twin of ``lastActivityAt`` - the later of the decision (the creation of a waiting record) and the newest event of the record."""
+        newest = select(func.max(LessonSubstitutionEvent.created_at)).where(LessonSubstitutionEvent.request_id == Req.id).correlate(Req).scalar_subquery()
+        return func.greatest(func.coalesce(Req.decided_at, Req.created_at), newest)
+
     def list(self, org_id: Any, *, status: str, group_id: Optional[str], teacher_id: Optional[str], date_from: Optional[date], date_to: Optional[date],
              urgent: Optional[bool], search: Optional[str], limit: int, offset: int) -> Dict[str, Any]:
-        now, today = self.now(), bc.business_today()
+        now = self.now()
         q = self.db.query(Req).filter(Req.org_id == org_id)
         if status == "pending":
             q = q.filter(Req.status == PENDING)
         elif status == "decided":
             q = q.filter(Req.status != PENDING)
-        if status != "pending" and date_from is None and date_to is None:
-            q = q.filter(Req.lesson_date >= (today - timedelta(days=LIST_DEFAULT_DAYS)).isoformat())
+        activity = self._activity()
+        if status != "pending" and date_from is None and date_to is None:          # #157 A8: «за 30 дней» = what HAPPENED in the last 30 days (the time of the newest event), not the date of the lesson
+            since = now - timedelta(days=LIST_DEFAULT_DAYS)
+            q = q.filter(activity >= since) if status == "decided" else q.filter(or_(Req.status == PENDING, activity >= since))
         if group_id and _uuid(group_id):
             q = q.filter(Req.group_id == _uuid(group_id))
         if teacher_id and _uuid(teacher_id):            # P1.2: both teachers of a record - the one who was replaced and the one who replaces
@@ -684,7 +742,7 @@ class SubstitutionsBase:
         if status == "pending":
             q = q.order_by((Req.starts_at <= now).desc(), Req.starts_at, Req.id)
         elif status == "decided":
-            q = q.order_by(Req.decided_at.desc(), Req.id)
+            q = q.order_by(activity.desc(), Req.id)          # #157 A8: the newest event of the row, not only the decision - a substitution taken off just now lifts its row
         else:
             q = q.order_by((Req.status == PENDING).desc(), Req.starts_at, Req.id)
         reqs = q.offset(offset).limit(limit).all()
@@ -700,31 +758,93 @@ class SubstitutionsBase:
         return {"items": self.items(reqs, MANAGER), "total": total, "pendingTotal": counts["pendingTotal"], "urgentTotal": counts["urgentTotal"], "expiringTotal": counts["expiringTotal"]}
 
     def detail(self, org_id: Any, actor_id: Any, is_manager: bool, request_id: Any) -> Dict[str, Any]:
+        """The record with its WHOLE history (#157 A5): ``chain`` (before), ``next`` (after), ``events`` of all of them, each with ``requestId``.  A GET writes nothing (A6: no revalidate - the
+        list and the decision keep the record fresh); the exam-service is asked only for a waiting record and only for a manager (A7).  A requester reads his OWN records only (W1 S19, A1)."""
         r = self._request(org_id, request_id)
-        if not is_manager and r.requester_id != _uuid(actor_id):
+        actor = _uuid(actor_id)
+        if not is_manager and r.requester_id != actor:
             raise R.err(403, "NOT_REQUEST_OWNER")
-        if r.status == PENDING:
-            self.revalidate([r])
-            self.db.refresh(r)
-        chain: List[Req] = []
-        cur = r
-        while cur.previous_request_id and len(chain) < 10:
-            cur = self.db.query(Req).filter(Req.id == cur.previous_request_id).first()
-            if cur is None:
-                break
-            chain.insert(0, cur)
-        if not is_manager:                  # W1 S19 (D14): the requester sees his OWN earlier requests only - the reason and the comment of another teacher are not his
-            chain = [c for c in chain if c.requester_id == _uuid(actor_id)]
-        events = self.db.query(LessonSubstitutionEvent).filter(LessonSubstitutionEvent.request_id == r.id).order_by(
-            LessonSubstitutionEvent.created_at, LessonSubstitutionEvent.id).all()
-        viewer = MANAGER if is_manager else _uuid(actor_id)
-        names = self.teachers.users_by_id(e.actor_id for e in events if e.actor_id)
-        roles = self.roles_of([r.org_id], [e.actor_id for e in events])
+        viewer = MANAGER if is_manager else actor
+        back, back_cut = self._links_back(r)
+        ahead, ahead_cut = self._links_ahead(r)
+        chain, nxt = ([c for c in part if c.requester_id == actor] if not is_manager else part for part in (back, ahead))      # W1 S19 (D14): the requester sees his OWN requests only - the reason and the comment of another teacher are not his
+        events, events_cut = self._journal([*chain, r, *nxt], viewer)
         return {
-            "item": self.one(r, viewer), "chain": self.items(chain, viewer),
-            "events": [self.event_out(e, names, roles, viewer) for e in events],
-            "examBinding": self.exam_binding(r),
+            "item": self.one(r, viewer), "chain": self.items(chain, viewer), "next": self.items(nxt, viewer), "truncated": bool(back_cut or ahead_cut or events_cut),
+            "events": events,
+            "examBinding": self.exam_binding(r) if (is_manager and r.status == PENDING) else None,
         }
+
+    def _links_back(self, r: Req) -> Tuple[List[Req], bool]:
+        """The records before ``r`` (oldest first, at most ``DETAIL_LINKS``); ``True`` when there were more."""
+        out: List[Req] = []
+        cur = r
+        while cur.previous_request_id and len(out) < DETAIL_LINKS:
+            cur = self.db.query(Req).filter(Req.id == cur.previous_request_id, Req.org_id == r.org_id).first()
+            if cur is None:
+                return out, False
+            out.insert(0, cur)
+        return out, bool(cur is not None and cur.previous_request_id)
+
+    def _links_ahead(self, r: Req) -> Tuple[List[Req], bool]:
+        """The records that came after ``r`` - those that point to it and, in turn, those that point to them (breadth first, at most ``DETAIL_LINKS``), oldest first; ``True`` when there were more.
+        A record can have two followers (a reopened request points to the OLD one): the list is flat, the history by time."""
+        out: List[Req] = []
+        frontier = [r.id]
+        while frontier:
+            rows = self.db.query(Req).filter(Req.previous_request_id.in_(frontier), Req.org_id == r.org_id).order_by(Req.created_at, Req.id).all()
+            frontier = []
+            for row in rows:
+                if len(out) >= DETAIL_LINKS:
+                    return sorted(out, key=lambda x: (x.created_at, str(x.id))), True
+                out.append(row)
+                frontier.append(row.id)
+        return sorted(out, key=lambda x: (x.created_at, str(x.id))), False
+
+    def _journal(self, linked: Sequence[Req], viewer: Any) -> Tuple[List[Dict[str, Any]], bool]:
+        """The events of ``linked`` (the chain, the record, what came after) as ONE history for ``viewer``: ``(created_at, position of the record in ``linked``, id)``; the pair
+        «assignment taken off from the old record» + «substituted on the new one» that one act of the administrator wrote is ONE event (the old record's, ``mergedRequestId``: the new one);
+        at most ``DETAIL_EVENTS`` (the newest), ``True`` when cut."""
+        position = {r.id: i for i, r in enumerate(linked)}
+        rows = (self.db.query(LessonSubstitutionEvent).filter(LessonSubstitutionEvent.request_id.in_(list(position))).order_by(LessonSubstitutionEvent.created_at, LessonSubstitutionEvent.id).all())
+        by_id = {r.id: r for r in linked}
+        merged: Dict[UUID, UUID] = {}               # id of the ``substituted`` event that is folded -> id of the record it belongs to
+        folded: Dict[UUID, UUID] = {}               # id of the ``assignment_cleared`` event that absorbed one -> the id of the new record
+        for cleared in rows:
+            snap = cleared.snapshot or {}
+            if cleared.action != "assignment_cleared" or snap.get("trigger") != "put" or self._cleared_to(cleared) is None:
+                continue
+            for e in rows:
+                follower = by_id.get(e.request_id)
+                if (e.action == "substituted" and e.id not in merged and follower is not None and follower.previous_request_id == cleared.request_id
+                        and (e.snapshot or {}).get("via") == PUT_VIA and ((e.snapshot or {}).get("teacherId") or [None, None])[1] == self._cleared_to(cleared)
+                        and e.actor_id == cleared.actor_id and abs((e.created_at - cleared.created_at).total_seconds()) <= MERGE_SECONDS):
+                    merged[e.id] = follower.id
+                    folded[cleared.id] = follower.id
+                    break
+        rows = [e for e in rows if e.id not in merged]
+        rows.sort(key=lambda e: (e.created_at, position[e.request_id], str(e.id)))
+        cut = len(rows) > DETAIL_EVENTS
+        rows = rows[-DETAIL_EVENTS:]
+        names = self.teachers.users_by_id(e.actor_id for e in rows if e.actor_id)
+        roles = self.roles_of([linked[0].org_id], [e.actor_id for e in rows])
+        out = []
+        for e in rows:
+            item = {"requestId": str(e.request_id), **self.event_out(e, names, roles, viewer)}
+            if e.id in folded:
+                item["mergedRequestId"] = str(folded[e.id])
+            out.append(item)
+        return out, cut
+
+    def exam_binding(self, r: Req) -> Dict[str, Any]:
+        try:
+            exams = exam_bridge.completion_check(r.org_id, r.group_id, r.lesson_id, r.lesson_date)
+        except (exam_bridge.ExamBridgeUnavailable, exam_bridge.ExamBridgeConflict):
+            return {"state": "unavailable", "title": None, "canCancel": False}
+        if not exams:
+            return {"state": "none", "title": None, "canCancel": True}
+        first = exams[0]
+        return {"state": "ok", "title": first.get("title"), "canCancel": first.get("status") != "active"}
 
     @staticmethod
     def clean_snapshot(action: str, snapshot: Optional[Dict[str, Any]], viewer: Any) -> Dict[str, Any]:
@@ -742,16 +862,6 @@ class SubstitutionsBase:
             role = roles.get(str(e.actor_id))
             actor = {"id": str(e.actor_id), "name": short_name(names.get(str(e.actor_id))), "role": role} if viewer == MANAGER else {"role": role}
         return {"action": e.action, "actor": actor, "at": e.created_at.isoformat(), "snapshot": self.clean_snapshot(e.action, e.snapshot, viewer)}
-
-    def exam_binding(self, r: Req) -> Dict[str, Any]:
-        try:
-            exams = exam_bridge.completion_check(r.org_id, r.group_id, r.lesson_id, r.lesson_date)
-        except (exam_bridge.ExamBridgeUnavailable, exam_bridge.ExamBridgeConflict):
-            return {"state": "unavailable", "title": None, "canCancel": False}
-        if not exams:
-            return {"state": "none", "title": None, "canCancel": True}
-        first = exams[0]
-        return {"state": "ok", "title": first.get("title"), "canCancel": first.get("status") != "active"}
 
     # ================================================================================================ candidates
     def rate_missing(self, org_id: Any, teacher_id: UUID, lesson_type: str, lesson_date: str) -> bool:

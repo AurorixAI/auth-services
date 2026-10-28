@@ -8,6 +8,7 @@
       "clearedBy": null,
       "clearedTo": null,
       "clearedTrigger": null,
+      "closedTrigger": null,
       "comment": null,
       "createdAt": "2026-10-21T10:40:00",
       "decision": null,
@@ -17,6 +18,7 @@
         "studentCount": 3
       },
       "id": "e8536c89-5592-5ad5-bd49-37fd4607ed73",
+      "lastActivityAt": "2026-10-21T10:40:00",
       "lesson": {
         "date": "2026-10-21",
         "endTime": "17:30",
@@ -29,6 +31,7 @@
       },
       "minutesToStart": 20,
       "origin": "teacher",
+      "outcome": "pending",
       "overdue": false,
       "previous": null,
       "reasonCode": "sick",

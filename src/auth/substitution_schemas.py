@@ -117,6 +117,9 @@ class SubstitutionItem(BaseModel):
     clearedBy: Optional[PersonRef] = None
     clearedTo: Optional[PersonRef] = None  # the teacher who took the lesson over; null = the main teacher leads again
     clearedTrigger: Optional[str] = None  # put | member_removed | role_changed | group_teacher_changed | cancel | move | release
+    outcome: str = "pending"  # #157 A11: THE code of what became of the record (P157_API.md §2) - one function for the list, the detail and ``mine``; the texts are the front's
+    lastActivityAt: Optional[str] = None  # #157 A8: the later of the decision and the newest event of the record; the «Решённые» are sorted by it
+    closedTrigger: Optional[str] = None  # #157 A9: the trigger of the ``closed`` event (day_off, journal_row, window_expired, role_changed, ...); null for a record that is not closed
 
 
 # ---------------------------------------------------------------------------------------- teacher (4.2)
@@ -255,10 +258,12 @@ class EventActorRole(BaseModel):
 
 
 class SubstitutionEvent(BaseModel):
+    requestId: str  # #157 A5: the record the event belongs to (the history runs over the whole chain)
     action: str
     actor: Optional[Union[EventActor, EventActorRole]] = None
     at: str
     snapshot: Dict[str, Any] = Field(default_factory=dict)
+    mergedRequestId: Optional[str] = None  # #157 A5: «taken off» on the old record + «substituted» on the new one are ONE event; this is the new record
 
 
 class ExamBinding(BaseModel):
@@ -277,8 +282,10 @@ class LessonExamBinding(ExamBinding):
 class SubstitutionDetailOut(BaseModel):
     item: SubstitutionItem
     chain: List[SubstitutionItem] = Field(default_factory=list)
+    next: List[SubstitutionItem] = Field(default_factory=list)  # #157 A5: the records that came after (a reopened request, the next substitution), oldest first
+    truncated: bool = False  # #157 A5: the chain / the history is longer than the limits (10 records each way, 60 events)
     events: List[SubstitutionEvent] = Field(default_factory=list)
-    examBinding: ExamBinding = Field(default_factory=ExamBinding)
+    examBinding: Optional[ExamBinding] = None  # #157 A7: only a waiting record asked by a manager has one
 
 
 class CandidateBusy(BaseModel):

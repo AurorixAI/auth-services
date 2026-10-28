@@ -4,6 +4,7 @@
   "clearedBy": null,
   "clearedTo": null,
   "clearedTrigger": null,
+  "closedTrigger": null,
   "comment": "Заменяющий Рахимов Т. больше не работает в центре. Нужно новое решение.",
   "createdAt": "2026-10-25T05:00:00",
   "decision": null,
@@ -13,6 +14,7 @@
     "studentCount": 3
   },
   "id": "6554cc91-15af-5710-826d-7dd0eef4103d",
+  "lastActivityAt": "2026-10-25T05:00:00",
   "lesson": {
     "date": "2026-11-02",
     "endTime": "11:30",
@@ -25,6 +27,7 @@
   },
   "minutesToStart": 11520,
   "origin": "system",
+  "outcome": "pending",
   "overdue": false,
   "previous": {
     "id": "b406d538-4b4b-516f-9dd4-9ba2ac2ea9ca",
