@@ -389,9 +389,10 @@ def test_chain8_the_substitute_cannot_either_golden(w, clock):
     decide(w, "admin", item["id"], **sub_body(w, "D"))
     clock.set("2026-10-21 14:20")
     created = req(w, "D", [L(w, "L1", "2026-10-26")], reason="sick", comment="Сам заболел")
-    assert created.status_code == 201 and created.json()["created"][0]["previous"]["status"] == "substituted"
-    assert created.json()["created"][0]["previous"]["id"] == item["id"]
+    assert created.status_code == 201 and created.json()["created"][0]["previous"] is None                      # #157 A1: the record of A is not D's (the manager reads it below)
     rid = created.json()["created"][0]["id"]
+    seen = client(w, "admin").get(f"{SUB}/{rid}").json()["item"]["previous"]
+    assert seen["status"] == "substituted" and seen["id"] == item["id"]
     cands = client(w, "admin").get(f"{SUB}/{rid}/candidates")
     assert not g(w, cands.json(), "b2c8_candidates.json"), g(w, cands.json(), "b2c8_candidates.json")
     out = decide(w, "admin", rid, **sub_body(w, "C"))

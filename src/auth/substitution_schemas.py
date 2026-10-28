@@ -6,7 +6,7 @@ A teacher asks "I cannot teach this lesson"; the owner / admin decides (substitu
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,7 +40,7 @@ CLOSED_REASON_TEXT = {
 
 # ------------------------------------------------------------------------------------------------ item (4.1)
 class PersonRef(BaseModel):
-    id: str
+    id: Optional[str] = None  # null: a teacher reads an administrator by the role only (#157 A1)
     name: Optional[str] = None
     role: Optional[str] = None  # the person's org role in this centre (owner | admin | teacher): the journal names the owner as the owner
 
@@ -240,9 +240,23 @@ class SubstitutionSummary(BaseModel):
     expiringTotal: int = 0     # W1 S20: requests that fall out of the window of the unclosed lessons on the 1st (shown only in the last 3 days before it)
 
 
+class EventActor(BaseModel):
+    """#157 A1: an owner / admin reads who did it (``id``, ``name``, ``role``)."""
+
+    id: str
+    name: Optional[str] = None
+    role: Optional[str] = None
+
+
+class EventActorRole(BaseModel):
+    """#157 A1: a teacher reads the ROLE of the author only - no name, no id."""
+
+    role: Optional[str] = None
+
+
 class SubstitutionEvent(BaseModel):
     action: str
-    actor: Optional[PersonRef] = None
+    actor: Optional[Union[EventActor, EventActorRole]] = None
     at: str
     snapshot: Dict[str, Any] = Field(default_factory=dict)
 

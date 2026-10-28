@@ -225,7 +225,7 @@ def test_s19_a_requester_sees_only_his_own_requests_of_the_chain(w):
     assert second.status_code == 201, second.text
     sid = second.json()["created"][0]["id"]
     mine = client(w, "D").get(f"{SUB}/{sid}").json()
-    assert mine["chain"] == [] and "Секретная причина" not in str(mine) and mine["item"]["previous"]["id"] == first["id"]
+    assert mine["chain"] == [] and "Секретная причина" not in str(mine) and mine["item"]["previous"] is None          # #157 A1: not even the id / the name of the record of another teacher
     seen = client(w, "admin").get(f"{SUB}/{sid}").json()
     assert [c["id"] for c in seen["chain"]] == [first["id"]]
     # his own earlier request stays visible to him

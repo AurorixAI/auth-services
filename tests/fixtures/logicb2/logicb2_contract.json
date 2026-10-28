@@ -847,6 +847,60 @@
         "title": "DecideResult",
         "type": "object"
       },
+      "EventActor": {
+        "description": "#157 A1: an owner / admin reads who did it (``id``, ``name``, ``role``).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "EventActor",
+        "type": "object"
+      },
+      "EventActorRole": {
+        "description": "#157 A1: a teacher reads the ROLE of the author only - no name, no id.",
+        "properties": {
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "title": "EventActorRole",
+        "type": "object"
+      },
       "ExamBinding": {
         "properties": {
           "canCancel": {
@@ -1389,8 +1443,15 @@
       "PersonRef": {
         "properties": {
           "id": {
-            "title": "Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
           },
           "name": {
             "anyOf": [
@@ -1415,9 +1476,6 @@
             "title": "Role"
           }
         },
-        "required": [
-          "id"
-        ],
         "title": "PersonRef",
         "type": "object"
       },
@@ -1929,12 +1987,16 @@
           "actor": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/PersonRef"
+                "$ref": "#/components/schemas/EventActor"
+              },
+              {
+                "$ref": "#/components/schemas/EventActorRole"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Actor"
           },
           "at": {
             "title": "At",

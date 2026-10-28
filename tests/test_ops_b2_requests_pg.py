@@ -175,7 +175,8 @@ def test_s1_r8_roles(w):
     assert replaced.status_code == 403 and replaced.json()["detail"]["code"] == "NOT_LESSON_TEACHER"
     r8 = req(w, "D", [L(w, "L1", "2026-10-26")], reason="sick", comment="Сам заболел")
     assert r8.status_code == 201, r8.text
-    assert r8.json()["created"][0]["previous"]["status"] == "substituted"                          # the request of A that made D the teacher of the lesson
+    assert r8.json()["created"][0]["previous"] is None                                              # #157 A1: the request of A (that made D the teacher of the lesson) is not D's: no name, no status (the manager reads it)
+    assert client(w, "admin").get(f"{SUB}/{r8.json()['created'][0]['id']}").json()["item"]["previous"]["status"] == "substituted"
     nobody = client(w, "owner", org="other").post(SUB, json={"lessons": [{"groupId": str(w.G1.id), "lessonId": "lesson-l1", "lessonDate": "2026-10-26"}], "reasonCode": "sick"})
     assert nobody.status_code in (403, 404)
 

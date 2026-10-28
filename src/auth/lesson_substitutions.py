@@ -74,6 +74,17 @@ TEACHER_MOVE = "teacher_move"                # ``decided_via`` of a lesson moved
 ASSIGN_TRIGGER = "manager_assign"           # ``trigger`` of the ``requested`` event of a record the lesson sheet made (P1.2): the only mark of its creation, nothing else is guessed from ``origin`` / ``decided_via``
 PUT_VIA = "lesson_teacher_put"               # ``decided_via`` of what the administrator did on the lesson sheet (PUT lesson-teacher): a request it decided, a substitution it set without one (P1.2), one it took off
 MOVE_STARTED_TEXT = "Урок уже начался или прошёл: перенести его нельзя"          # the one text of every «the lesson is no longer ahead» refusal of a move
+MANAGER = "manager"                          # the viewer of an owner / admin; a teacher (the requester) is viewed by his user id: every answer says WHOSE eyes it is built for (#157 A1)
+
+# #157 A1: what an event of the journal may show of its ``snapshot`` (anything else is cut for EVERYBODY - the money and the ids of the machinery never leave; LESSONS 45).  ``_MANAGER_ONLY`` is
+# what only an owner / admin sees: the kind of a cancellation and the reason of a restore are the centre's business, not the teacher's.  A new key = a new line here + the test that bounds the keys.
+SNAPSHOT_KEYS: Dict[str, Tuple[str, ...]] = {
+    "requested": ("reasonCode", "trigger"), "substituted": ("teacherId", "via"), "rescheduled": ("reason", "via", "movedTo"), "cancelled": ("reason", "cancellationKind"),
+    "rejected": ("reason",), "withdrawn": (), "closed": ("closedReason", "trigger", "dayOffId", "reason", "cancellationKind", "previous"), "reopened": ("cause", "dayOffId"),
+    "assignment_cleared": ("teacherId", "trigger", "dayOffId"), "suggestion_unavailable": (), "lesson_restored": ("reason",), "day_off_voided": ("dayOffId", "reopened"),
+}
+_MANAGER_ONLY: Dict[str, Tuple[str, ...]] = {"cancelled": ("cancellationKind",), "closed": ("reason", "cancellationKind", "previous"), "lesson_restored": ("reason",)}
+_PREVIOUS_KEYS = ("cancellationKind", "cancellationReason", "cancelledBy", "cancelledAt")        # the inside of ``closed.previous`` (a restore): what was cancelled, by whom
 
 
 def _next_event_time(db, request_id: Any, now: datetime) -> datetime:
@@ -85,7 +96,8 @@ def _next_event_time(db, request_id: Any, now: datetime) -> datetime:
 class Ctx:
     """Everything the items of one answer need, loaded in batches."""
 
-    def __init__(self) -> None:
+    def __init__(self, viewer: Any = MANAGER) -> None:
+        self.viewer = viewer                                     # ``MANAGER`` or the user id of the teacher the answer is built for (#157 A1): what he may not see is cut in ``item``
         self.groups: Dict[UUID, Group] = {}
         self.users: Dict[str, User] = {}
         self.roles: Dict[str, str] = {}                          # user id -> the org role in THIS centre (owner / admin / teacher): the front names the person by it
@@ -118,6 +130,13 @@ class SubstitutionsBase:
             return None
         return {"id": str(user_id), "name": short_name(ctx.users.get(str(user_id))), "role": getattr(ctx, "roles", {}).get(str(user_id))}
 
+    def _author(self, ctx: Ctx, user_id: Any) -> Optional[Dict[str, Any]]:
+        """The person who DID something (decided, took a substitution off).  A teacher reads another one by the role only (#157 A1): the name and the id of an administrator are not his."""
+        person = self._person(ctx, user_id)
+        if person is None or ctx.viewer == MANAGER or person["id"] == str(ctx.viewer):
+            return person
+        return {"id": None, "name": None, "role": person["role"]}
+
     def roles_of(self, org_ids: Iterable[Any], user_ids: Iterable[Any]) -> Dict[str, str]:
         """``{user id: org role}`` for the people of one answer in ONE query (never one per person)."""
         users, orgs = {u for u in user_ids if u}, {o for o in org_ids if o}
@@ -127,8 +146,8 @@ class SubstitutionsBase:
         return {str(uid): role for uid, role in rows}
 
     # ============================================================================================ item
-    def ctx_for(self, reqs: Sequence[Req]) -> Ctx:
-        ctx = Ctx()
+    def ctx_for(self, reqs: Sequence[Req], viewer: Any) -> Ctx:
+        ctx = Ctx(viewer)
         if not reqs:
             return ctx
         gids = {r.group_id for r in reqs}
@@ -196,7 +215,7 @@ class SubstitutionsBase:
         e = ctx.cleared.get(r.id)
         if e is None:
             return {"clearedAt": None, "clearedBy": None, "clearedTo": None, "clearedTrigger": None}
-        return {"clearedAt": e.created_at.isoformat(), "clearedBy": self._person(ctx, e.actor_id), "clearedTo": self._person(ctx, self._cleared_to(e)),
+        return {"clearedAt": e.created_at.isoformat(), "clearedBy": self._author(ctx, e.actor_id), "clearedTo": self._person(ctx, self._cleared_to(e)),
                 "clearedTrigger": (e.snapshot or {}).get("trigger")}
 
     def item(self, r: Req, ctx: Ctx, now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -216,15 +235,18 @@ class SubstitutionsBase:
                 if r.closed_reason == "GROUP_TEACHER_CHANGED" and r.decision_note:
                     text = f"{text}: урок ведёт {r.decision_note}"
             decision = {
-                "kind": KIND[r.status], "by": self._person(ctx, r.decided_by), "at": r.decided_at.isoformat() if r.decided_at else r.updated_at.isoformat(),
+                "kind": KIND[r.status], "by": self._author(ctx, r.decided_by), "at": r.decided_at.isoformat() if r.decided_at else r.updated_at.isoformat(),
                 "via": r.decided_via, "note": None if r.status == "closed" else r.decision_note,
                 "substitute": self._person(ctx, r.substitute_id), "movedTo": moved, "closedReason": r.closed_reason, "closedReasonText": text,
             }
         prev = None
-        if r.previous_request_id and r.previous_request_id in ctx.previous:
-            p = ctx.previous[r.previous_request_id]
+        if r.previous_request_id and r.previous_request_id in ctx.previous and (ctx.viewer == MANAGER or ctx.previous[r.previous_request_id].requester_id == ctx.viewer):
+            p = ctx.previous[r.previous_request_id]            # #157 A1: a teacher reads the record that came before ONLY when it is his own (the name of another teacher / his substitute is not his)
             prev = {"id": str(p.id), "status": p.status, "teacherName": short_name(ctx.users.get(str(p.requester_id))),
                     "substituteName": short_name(ctx.users.get(str(p.substitute_id))) if p.substitute_id else None}
+        # #157 A2: what an administrator wrote on an action of his (a cancel, a return, a kind change, a move, a substitution - the records with a ``trigger``) is not for the teacher of the lesson;
+        # the text of a record the system REOPENED stays: it is the explanation (LESSONS 46)
+        comment = None if (r.origin == "system" and ctx.viewer != MANAGER and ctx.triggers.get(r.id)) else r.comment
         sug = None
         if r.suggested_teacher_id:
             sug = {"id": str(r.suggested_teacher_id), "name": short_name(ctx.users.get(str(r.suggested_teacher_id))),
@@ -236,26 +258,27 @@ class SubstitutionsBase:
                        "room": normalize_room(occ.get("room")) if occ else None, "format": (occ.get("format") if occ else None) or "offline",
                        "startsAtUtc": r.starts_at.isoformat(), "exists": occ is not None or r.closed_reason == "GROUP_ARCHIVED"},
             "teacher": self._person(ctx, r.requester_id), "reasonCode": r.reason_code, "reasonLabel": REASON_LABELS[r.reason_code],
-            "comment": r.comment, "suggestedTeacher": sug, "createdAt": r.created_at.isoformat(),
+            "comment": comment, "suggestedTeacher": sug, "createdAt": r.created_at.isoformat(),
             "minutesToStart": minutes, "urgent": bool(pending and R.is_urgent(minutes)), "overdue": bool(pending and R.is_overdue(minutes)),
             "decision": decision, "previous": prev, "trigger": ctx.triggers.get(r.id) if r.origin == "system" else None, **self._cleared(r, ctx),
         }
 
-    def items(self, reqs: Sequence[Req]) -> List[Dict[str, Any]]:
-        ctx = self.ctx_for(reqs)
+    def items(self, reqs: Sequence[Req], viewer: Any) -> List[Dict[str, Any]]:
+        """``viewer``: ``MANAGER`` or the user id of the teacher the answer is for - required, so that a new call site has to say whose eyes it is (#157 A1)."""
+        ctx = self.ctx_for(reqs, viewer)
         now = self.now()
         return [self.item(r, ctx, now) for r in reqs]
 
-    def one(self, r: Req) -> Dict[str, Any]:
-        return self.items([r])[0]
+    def one(self, r: Req, viewer: Any) -> Dict[str, Any]:
+        return self.items([r], viewer)[0]
 
-    def already_decided(self, r: Req, message: Optional[str] = None) -> OpsError:
-        item = self.one(r)
+    def already_decided(self, r: Req, viewer: Any, message: Optional[str] = None) -> OpsError:
+        item = self.one(r, viewer)
         if message is None:
             message = "Учитель отозвал запрос" if r.status == "withdrawn" else (
                 f"Запрос закрыт: {item['decision']['closedReasonText']}" if r.status == "closed" and item["decision"] and item["decision"]["closedReasonText"]
                 else R.ERROR_CATALOGUE["SUBSTITUTION_ALREADY_DECIDED"][1])
-        return R.err(409, "SUBSTITUTION_ALREADY_DECIDED", message, item=item)
+        return R.err(409, "SUBSTITUTION_ALREADY_DECIDED", message, item=item if viewer == MANAGER or r.requester_id == viewer else None)      # a teacher gets the record of ANOTHER one as a refusal only
 
     # ===================================================================================== locking, loading
     def _group_locked(self, org_id: Any, group_id: Any) -> Optional[Group]:
@@ -432,7 +455,7 @@ class SubstitutionsBase:
         self.db.commit()
         # a pure repeat answers the batch of the rows it found (the contract: the same ``batchId`` as the first answer)
         out_batch = batch if created else already[0].batch_id
-        return {"batchId": str(out_batch), "created": self.items(created), "alreadyRequested": self.items(already), "skipped": skipped}
+        return {"batchId": str(out_batch), "created": self.items(created, actor), "alreadyRequested": self.items(already, actor), "skipped": skipped}
 
     def _create_one(self, group: Optional[Group], org_id: Any, actor: UUID, lesson_id: str, day: str, reason: str, comment: Optional[str],
                     suggested: Optional[UUID], batch: UUID, now: datetime, book: Optional[TeacherBook] = None) -> Tuple[str, Req]:
@@ -523,7 +546,7 @@ class SubstitutionsBase:
         for r in reqs:
             self.db.refresh(r)
         pending_total = sum(1 for r in reqs if r.status == PENDING)
-        return {"items": self.items(reqs), "pendingTotal": pending_total, "assignedToMe": self._assigned_to(org_id, actor), "clearedForMe": self._cleared_for(org_id, actor)}
+        return {"items": self.items(reqs, actor), "pendingTotal": pending_total, "assignedToMe": self._assigned_to(org_id, actor), "clearedForMe": self._cleared_for(org_id, actor)}
 
     def _cleared_for(self, org_id: Any, actor: UUID) -> List[Dict[str, Any]]:
         """W1 S22 (D30): the lessons where the actor WAS the substitute and the assignment was taken off in the last 14 days - who took it off and when (the substitute used to just lose it)."""
@@ -590,15 +613,15 @@ class SubstitutionsBase:
                 self.db.commit()
         if r.status == "withdrawn" and r.decided_by == actor:
             self.db.commit()
-            return self.one(r)
+            return self.one(r, actor)
         if r.status != PENDING:
             self.db.commit()
-            raise self.already_decided(r)
+            raise self.already_decided(r, actor)
         now = self.now()
         r.status, r.decided_by, r.decided_at, r.decided_via, r.updated_at = "withdrawn", actor, now, "withdraw", now
         self.event(r, "withdrawn", actor)
         self.db.commit()
-        return self.one(r)
+        return self.one(r, actor)
 
     def withdraw_batch(self, org_id: Any, actor_id: Any, ids: Sequence[str]) -> Dict[str, Any]:
         done, skipped = [], []
@@ -674,7 +697,7 @@ class SubstitutionsBase:
                 for r in reqs:
                     self.db.refresh(r)
         counts = self.summary(org_id, revalidate=False)
-        return {"items": self.items(reqs), "total": total, "pendingTotal": counts["pendingTotal"], "urgentTotal": counts["urgentTotal"], "expiringTotal": counts["expiringTotal"]}
+        return {"items": self.items(reqs, MANAGER), "total": total, "pendingTotal": counts["pendingTotal"], "urgentTotal": counts["urgentTotal"], "expiringTotal": counts["expiringTotal"]}
 
     def detail(self, org_id: Any, actor_id: Any, is_manager: bool, request_id: Any) -> Dict[str, Any]:
         r = self._request(org_id, request_id)
@@ -694,14 +717,31 @@ class SubstitutionsBase:
             chain = [c for c in chain if c.requester_id == _uuid(actor_id)]
         events = self.db.query(LessonSubstitutionEvent).filter(LessonSubstitutionEvent.request_id == r.id).order_by(
             LessonSubstitutionEvent.created_at, LessonSubstitutionEvent.id).all()
+        viewer = MANAGER if is_manager else _uuid(actor_id)
         names = self.teachers.users_by_id(e.actor_id for e in events if e.actor_id)
         roles = self.roles_of([r.org_id], [e.actor_id for e in events])
         return {
-            "item": self.one(r), "chain": self.items(chain),
-            "events": [{"action": e.action, "actor": {"id": str(e.actor_id), "name": short_name(names.get(str(e.actor_id))), "role": roles.get(str(e.actor_id))} if e.actor_id else None,
-                        "at": e.created_at.isoformat(), "snapshot": e.snapshot or {}} for e in events],
+            "item": self.one(r, viewer), "chain": self.items(chain, viewer),
+            "events": [self.event_out(e, names, roles, viewer) for e in events],
             "examBinding": self.exam_binding(r),
         }
+
+    @staticmethod
+    def clean_snapshot(action: str, snapshot: Optional[Dict[str, Any]], viewer: Any) -> Dict[str, Any]:
+        """#157 A1: the keys of ``SNAPSHOT_KEYS[action]`` and nothing else (for everybody); a teacher also loses what is the centre's business (``_MANAGER_ONLY``)."""
+        hidden = set() if viewer == MANAGER else set(_MANAGER_ONLY.get(action, ()))
+        out = {k: v for k, v in (snapshot or {}).items() if k in SNAPSHOT_KEYS.get(action, ()) and k not in hidden}
+        if isinstance(out.get("previous"), dict):
+            out["previous"] = {k: v for k, v in out["previous"].items() if k in _PREVIOUS_KEYS}
+        return out
+
+    def event_out(self, e: LessonSubstitutionEvent, names: Dict[str, User], roles: Dict[str, str], viewer: Any) -> Dict[str, Any]:
+        """One event as the viewer reads it: a manager sees who did it; a teacher sees the ROLE only (no name, no id - #157 A1)."""
+        actor = None
+        if e.actor_id:
+            role = roles.get(str(e.actor_id))
+            actor = {"id": str(e.actor_id), "name": short_name(names.get(str(e.actor_id))), "role": role} if viewer == MANAGER else {"role": role}
+        return {"action": e.action, "actor": actor, "at": e.created_at.isoformat(), "snapshot": self.clean_snapshot(e.action, e.snapshot, viewer)}
 
     def exam_binding(self, r: Req) -> Dict[str, Any]:
         try:
@@ -783,21 +823,22 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
     # ------------------------------------------------------------------------------------------- dispatch
     def decide(self, org_id: Any, actor_id: Any, actor_role: str, request_id: Any, body) -> Dict[str, Any]:
         actor, via = _uuid(actor_id), self._via(actor_role)
+        viewer = actor if via == TEACHER_MOVE else MANAGER          # a teacher who moves his own lesson is answered as a teacher (#157 A1)
         group, r = self._lock_request(org_id, request_id)
         if r.status == PENDING:
             reason, occ = self.closure_reason(r, group)
             if reason and reason != "LESSON_OUTSIDE_WINDOW":
                 self.close(r, reason, trigger="decide", group=group)
                 self.db.commit()
-                raise self.already_decided(r)
+                raise self.already_decided(r, viewer)
             if occ and (occ.get("startTime") != r.start_time or occ.get("endTime") != r.end_time):
                 self._sync_times(r, occ)           # the lesson was moved in the schedule: reschedule / cancel judge the CURRENT time, not the one of the request
         if r.status != PENDING:
             if self._same_decision(r, actor, via, body):
-                item = self.one(r)
+                item = self.one(r, viewer)
                 self.db.commit()
                 return {"item": item, "result": self._result_of(r)}
-            item_error = self.already_decided(r)
+            item_error = self.already_decided(r, viewer)
             self.db.rollback()
             raise item_error
         try:
@@ -813,7 +854,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         except BaseException:
             self.db.rollback()
             raise
-        return {"item": self.one(r), "result": result}
+        return {"item": self.one(r, viewer), "result": result}
 
     # ---------------------------------------------------------------------------------------------- helpers
     def _finish(self, r: Req, status: str, actor: UUID, note: Optional[str], via: str = "request") -> None:
@@ -1266,7 +1307,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
             return None
         done = next((r for r in reqs if r.status == "rescheduled"), None)
         if done is not None:
-            return self.already_decided(done)
+            return self.already_decided(done, teacher if teacher is not None else MANAGER)
         if group.status != "active":
             return conflict("GROUP_ARCHIVED", "Группа в архиве: действие недоступно")
         try:
@@ -1343,10 +1384,10 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
             done = next((r for r in reqs if r.status == "rescheduled"), None)
             if done is not None:
                 if self._same_decision(done, actor, via, one):
-                    item = self.one(done)
+                    item = self.one(done, actor if via == TEACHER_MOVE else MANAGER)
                     self.db.commit()
                     return {"item": item, "result": self._result_of(done)}
-                raise self.already_decided(done)
+                raise self.already_decided(done, actor if via == TEACHER_MOVE else MANAGER)
             if group.status != "active":
                 raise conflict("GROUP_ARCHIVED", "Группа в архиве: действие недоступно")
             ref, occ = self._lesson_ref(group, body.lessonId, day)
