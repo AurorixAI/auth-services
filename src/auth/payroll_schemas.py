@@ -171,6 +171,8 @@ class LineOut(BaseModel):
     pending_excused: int = 0
     include_unpaid: bool = False
     written_off: int = 0  # LOGIC-A (decision 5): counted lessons covered by a write-off of the centre
+    undecided: int = 0  # #154: lessons of the line whose payment is «не решено» (an additional lesson that waits for the owner / admin) - not in the sum
+    no_pay: int = 0  # #154: lessons of the line «без оплаты»
     amount: int = 0
     warnings: List[WarningOut] = Field(default_factory=list)
 
@@ -226,6 +228,7 @@ class SheetOut(BaseModel):
     unpaid_total: int = 0
     pending_excused_total: int = 0
     written_off_total: int = 0  # LOGIC-A: «из них списано центром N уроков»
+    undecided_total: int = 0  # #154: cells «не решено» of the sheet (a student x a lesson whose payment waits for a decision) - not in the sum
     warnings: SheetWarnings = Field(default_factory=SheetWarnings)
     source_fingerprint: str = ""
     stale: Optional[bool] = None  # saved: the data changed after the sheet was saved

@@ -101,6 +101,8 @@
       "pending_excused": 0,
       "include_unpaid": false,
       "written_off": 0,
+      "undecided": 0,
+      "no_pay": 0,
       "amount": 150000,
       "warnings": []
     },
@@ -191,6 +193,8 @@
       "pending_excused": 0,
       "include_unpaid": false,
       "written_off": 0,
+      "undecided": 0,
+      "no_pay": 0,
       "amount": 180000,
       "warnings": []
     }
@@ -278,6 +282,7 @@
   "unpaid_total": 0,
   "pending_excused_total": 0,
   "written_off_total": 0,
+  "undecided_total": 0,
   "warnings": {
     "open_lessons": null,
     "pending_excused": 0,

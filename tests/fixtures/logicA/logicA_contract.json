@@ -1845,6 +1845,11 @@
             ],
             "title": "Monthly Fee"
           },
+          "no_pay": {
+            "default": 0,
+            "title": "No Pay",
+            "type": "integer"
+          },
           "no_price_lessons": {
             "anyOf": [
               {
@@ -1913,6 +1918,11 @@
           "student_name": {
             "title": "Student Name",
             "type": "string"
+          },
+          "undecided": {
+            "default": 0,
+            "title": "Undecided",
+            "type": "integer"
           },
           "unpaid": {
             "default": 0,
@@ -2679,6 +2689,11 @@
               }
             ],
             "title": "Teacher Name"
+          },
+          "undecided_lessons": {
+            "default": 0,
+            "title": "Undecided Lessons",
+            "type": "integer"
           },
           "warnings": {
             "$ref": "#/components/schemas/MonthWarnings"
@@ -6820,6 +6835,11 @@
           "total_amount": {
             "default": 0,
             "title": "Total Amount",
+            "type": "integer"
+          },
+          "undecided_total": {
+            "default": 0,
+            "title": "Undecided Total",
             "type": "integer"
           },
           "unpaid_total": {

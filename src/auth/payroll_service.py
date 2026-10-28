@@ -869,6 +869,7 @@ class PayrollService:
             unpaid_total=counters["unpaid"],
             pending_excused_total=counters["pending_excused"],
             written_off_total=counters["written_off"],
+            undecided_total=counters["undecided"],
             payout=payout,
             warnings=SheetWarnings(
                 open_lessons=open_lessons,

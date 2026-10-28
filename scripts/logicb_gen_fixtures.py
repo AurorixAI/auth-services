@@ -394,6 +394,7 @@ put("x_occurrence_substitution.json", "ScheduleOccurrenceResponseB", {
     "originalRoom": None, "rescheduleReason": None, "isOneOff": False, "validFrom": "2026-10-12", "warnings": [], "replacedBy": None, "createdBy": None,
     "teacherId": IDS["D"], "teacherName": short("D"), "isSubstitution": True, "defaultTeacherId": IDS["C"],
     "defaultTeacherName": short("C"), "substitutionRequest": None, "substitutionOutcome": None, "movedFrom": None,
+    "purpose": None, "purposeLabel": None, "madeUpFor": None, "madeUpBy": None, "money": None, "moneyLabel": None,
 })
 put("x_student_no_group.json", "StudentResponseB", {
     "id": IDS["s6"], "org_id": IDS["org"], "first_name": "Азиз", "last_name": "Каримов", "full_name": "Каримов Азиз",

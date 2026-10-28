@@ -34,12 +34,12 @@ class MakeupCandidates(BaseModel):
     emptyReason: Optional[str] = None
 
 
-class PayrollSheetRef(BaseModel):
+class OneOffPayrollSheet(BaseModel):
     month: str
     status: Optional[str] = None          # the owner only: unpaid | due | settled | overpaid
 
 
-class PersonRef(BaseModel):
+class OneOffPerson(BaseModel):
     id: str
     name: Optional[str] = None
     role: Optional[str] = None
@@ -54,11 +54,11 @@ class OneOffDecisionItem(BaseModel):
     endTime: Optional[str] = None
     purpose: str
     title: str
-    teacher: Optional[PersonRef] = None
-    createdBy: Optional[PersonRef] = None
+    teacher: Optional[OneOffPerson] = None
+    createdBy: Optional[OneOffPerson] = None
     studentsPresent: int
     studentsTotal: int
-    payrollSheet: Optional[PayrollSheetRef] = None
+    payrollSheet: Optional[OneOffPayrollSheet] = None
 
 
 class OneOffDecisions(BaseModel):
@@ -73,7 +73,7 @@ class MoneyDecisionRequest(BaseModel):
 class MoneyDecisionOut(BaseModel):
     lessonId: str
     money: str
-    payrollSheet: Optional[PayrollSheetRef] = None
+    payrollSheet: Optional[OneOffPayrollSheet] = None
 
 
 def _svc(db: Session):

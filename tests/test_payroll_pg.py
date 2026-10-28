@@ -1314,7 +1314,7 @@ def test_a_month_of_ten_teachers_and_two_hundred_students_costs_a_fixed_number_o
     teacher_id = sheets[0]["teacher_id"]
     q_save, saved = count_queries(world, lambda: client.post(f"{API}/org/payroll/sheets", json={
         "month": m.label, "teacher_id": teacher_id, "expected_fingerprint": sheets[0]["source_fingerprint"]}))
-    assert saved.status_code == 201 and q_save <= 60, q_save
+    assert saved.status_code == 201 and q_save <= 70, q_save           # #154: +4 fixed queries (the purpose of the one-off lessons: payroll, counted lessons, coverage)
 
 
 # ============================================================================================

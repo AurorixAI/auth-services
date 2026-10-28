@@ -1729,11 +1729,12 @@ class PaymentService:
             return {}
         detail: Dict[UUID, List[tuple]] = {}
         extra_paid: Dict[UUID, List[tuple]] = {}
+        neutral: Dict[UUID, List[tuple]] = {}
         loader = self._loader(org_id, recalc=False)       # PAY-F: payroll reads the money of the students as they paid it (the deduction for cancelled lessons is not a payment)
         entries = {e.membership.id: e for e in loader.run([m.id for m, _, _ in rows])}
         # a lesson held on a day of a live pause is nobody's lesson (S-3): the student was not in its class
         skip = {mid: {d for p in e.pauses for d in ls._days(p.first_day, p.last_day)} for mid, e in entries.items() if e.pauses}
-        self._counted_lesson_dates(org_id, rows, {}, since=first_day, until=last_day, detail_out=detail, exclude_days=skip, extra_paid_out=extra_paid)
+        self._counted_lesson_dates(org_id, rows, {}, since=first_day, until=last_day, detail_out=detail, exclude_days=skip, extra_paid_out=extra_paid, neutral_out=neutral)
         origins = self._makeup_origin_days(org_id, {g.id for _, _, g in rows}, first_day, last_day)
         regimes = loader.settings.regimes
         by_segment = {mid: {sg.id: sg for sg in e.ledger.segments} for mid, e in entries.items()}
@@ -1759,6 +1760,10 @@ class PaymentService:
                     None, mode, size, paid,
                     info.price if info is not None else None, info.source if info is not None else "unpaid",
                     info.segment_id if info is not None else None)
+            for day, lesson_id, _attendance, origin in neutral.get(membership.id, ()):
+                if first_day <= day <= last_day and entry is not None:      # #154 (АД-5): covered - and priced - by the calendar day of the lesson it makes up for
+                    info = entry.ledger.lesson_cover(origin, lesson_id)
+                    out[(membership.id, day, lesson_id)] = LessonCover(None, ps.CALENDAR, None, info.paid, info.price, info.source, info.segment_id)
             for day, lesson_id, _attendance in extra_paid.get(membership.id, ()):
                 if first_day <= day <= last_day:        # #154: an additional lesson the owner pays: the seam «before the accounting start» - the price of the day, the divisor of the month, the ledger of the student untouched
                     out[(membership.id, day, lesson_id)] = LessonCover(None, ps.CALENDAR, None, True, None, "before_start")
@@ -1808,12 +1813,17 @@ class PaymentService:
         detail_out: Optional[Dict[UUID, List[tuple]]] = None,
         exclude_days: Optional[Dict[UUID, set]] = None,
         extra_paid_out: Optional[Dict[UUID, List[tuple]]] = None,
+        neutral_out: Optional[Dict[UUID, List[tuple]]] = None,
     ) -> Dict[UUID, List[date]]:
         """Dates of the lessons that spend a lessons payment, per membership.
 
         #154: an ADDITIONAL lesson (``purpose = 'extra'``) is free for every student whatever his mode of payment - it spends nothing and is never in the result (the package, the forecast, the status
         page and the coverage of payroll all read this function).  ``extra_paid_out[membership]`` receives ``(day, lesson_id, attendance_id)`` of the additional lessons the owner pays to the teacher
         (``money = 'paid'``) that the student was counted at by the same rule - payroll gives them the seam «before the accounting start» (``lesson_coverage``), the ledger of the student never sees them.
+
+        #154 (АД-5): a MAKE-UP held in the lessons mode for a lesson that was cancelled in a calendar mode (the centre changed the way of payment between them) is neutral for the package of the
+        student - the month that carried the cancelled lesson has already been paid, so the make-up spends nothing; ``neutral_out[membership]`` receives ``(day, lesson_id, attendance_id, origin day)``
+        of such lessons (payroll covers them by the day of the original).
 
         LOGIC-A (S-3): ``exclude_days[membership]`` = the days of the live pauses of the membership - a lesson held on such a day
         spends nothing (the student is not in its roster; a lesson whose snapshot was made before the pause is cut here as well).
@@ -1878,12 +1888,17 @@ class PaymentService:
             )
             .all()
         }
-        extra = {
-            (row.group_id, row.id): row.money
-            for row in self.db.query(GroupScheduleOneOffLesson.group_id, GroupScheduleOneOffLesson.id, GroupScheduleOneOffLesson.money).filter(
-                GroupScheduleOneOffLesson.org_id == org_id, GroupScheduleOneOffLesson.group_id.in_(group_ids), GroupScheduleOneOffLesson.purpose == "extra",
-                GroupScheduleOneOffLesson.lesson_date >= earliest.isoformat()).all()
-        }
+        extra: Dict[tuple, Optional[str]] = {}
+        makeup_origin: Dict[tuple, date] = {}
+        for row in self.db.query(GroupScheduleOneOffLesson.group_id, GroupScheduleOneOffLesson.id, GroupScheduleOneOffLesson.purpose, GroupScheduleOneOffLesson.money,
+                                 GroupScheduleOneOffLesson.made_up_date).filter(
+            GroupScheduleOneOffLesson.org_id == org_id, GroupScheduleOneOffLesson.group_id.in_(group_ids), GroupScheduleOneOffLesson.purpose.in_(("extra", "makeup")),
+            GroupScheduleOneOffLesson.lesson_date >= earliest.isoformat()).all():
+            if row.purpose == "extra":
+                extra[(row.group_id, row.id)] = row.money
+            elif row.made_up_date:
+                makeup_origin[(row.group_id, row.id)] = date.fromisoformat(row.made_up_date)
+        regimes = ls.load_settings(self.db, org_id).regimes if makeup_origin else None
         by_group: Dict[UUID, list] = {}
         for lesson in lessons:
             roster = None
@@ -1924,6 +1939,11 @@ class PaymentService:
                     if (group.id, lesson.lesson_id) in extra:          # #154: free for the student; the teacher's seam only when the owner pays it
                         if extra_paid_out is not None and extra[(group.id, lesson.lesson_id)] == "paid":
                             extra_paid_out.setdefault(membership.id, []).append((lesson_day, lesson.lesson_id or "", lesson.id))
+                        continue
+                    origin = makeup_origin.get((group.id, lesson.lesson_id))
+                    if origin is not None and bl.regime_at(regimes, lesson_day).mode == ps.LESSONS and bl.regime_at(regimes, origin).mode == ps.CALENDAR:
+                        if neutral_out is not None:          # #154 (АД-5): the month of the cancelled lesson was paid by the calendar - the make-up in a package spends nothing
+                            neutral_out.setdefault(membership.id, []).append((lesson_day, lesson.lesson_id or "", lesson.id, origin))
                         continue
                     dates.append(lesson_day)
                     detail.append((lesson_day, lesson.lesson_id or "", lesson.id))

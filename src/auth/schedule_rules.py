@@ -336,7 +336,7 @@ class ScheduleRules:
         lesson_id = f"one-off-{uuid4().hex[:16]}"
         slot_warnings: List[Dict[str, str]] = []
         if purpose == MAKEUP:
-            slot_warnings = purposes.makeup_slot(group, origin_occ, date.fromisoformat(req.madeUpDate.isoformat()), req.lessonDate, payload, manager=is_org_admin)
+            slot_warnings = purposes.makeup_slot(group, origin_occ, req.madeUpDate, req.lessonDate, payload, manager=is_org_admin)
         else:
             self.svc._assert_teacher_time_is_available(
                 group=group, lesson_id=lesson_id, occurrence_date=req.lessonDate, payload=payload

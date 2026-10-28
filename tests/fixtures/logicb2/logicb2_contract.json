@@ -2420,6 +2420,11 @@
             "title": "Expiringtotal",
             "type": "integer"
           },
+          "oneOffDecisionsTotal": {
+            "default": 0,
+            "title": "Oneoffdecisionstotal",
+            "type": "integer"
+          },
           "overdueTotal": {
             "default": 0,
             "title": "Overduetotal",
@@ -2433,6 +2438,11 @@
           "urgentTotal": {
             "default": 0,
             "title": "Urgenttotal",
+            "type": "integer"
+          },
+          "waitingTotal": {
+            "default": 0,
+            "title": "Waitingtotal",
             "type": "integer"
           }
         },
