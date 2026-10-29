@@ -33,9 +33,9 @@ def patch(cw, request_id, body, ip=None):
 
 
 def step2(**over):
-    """The body the landing sends at step 2: steps 1-2 only, with a requestId; the e-mail domain is unique (the limit of 10 an hour per domain)."""
+    """The body the landing sends at step 2: steps 1-2 only, with a request_id; the e-mail domain is unique (the limit of 10 an hour per domain)."""
     body = {
-        "requestId": str(uuid4()), "centre_name": "Репетитор Алия", "org_type": "tutor", "city": "Самарканд", "address": "ул. Навои, 12",
+        "request_id": str(uuid4()), "centre_name": "Репетитор Алия", "org_type": "tutor", "city": "Самарканд", "address": "ул. Навои, 12",
         "students_count": 15, "branches_count": 0, "contact_name": "Каримова Алия Рустамовна", "position": "owner", "phone": "+998 90 123-45-67",
         "email": f"aliya-{uuid4().hex[:8]}@mail-{uuid4().hex[:6]}.test", "preferred_contact_time": "после 18:00", "locale": "ru",
         "source": {"utm_source": "instagram"}, "website": "",
@@ -92,7 +92,7 @@ def test_s12_the_step_3_keys_are_known_and_a_long_unknown_key_is_cut(cw):
 
 def test_s12_an_unknown_key_in_step_3_is_400_too(cw):
     first = post(cw, step2()).json()
-    r = patch(cw, first["id"], {"detailsToken": first["detailsToken"], "needs": ["payments"], "phone": "+998901112233"})
+    r = patch(cw, first["id"], {"details_token": first["details_token"], "needs": ["payments"], "phone": "+998901112233"})
     assert r.status_code == 400 and r.json()["code"] == "unknown_fields" and "phone" in r.json()["fields"]
 
 
@@ -110,9 +110,9 @@ def test_s2_all_fields_of_the_steps_are_stored_and_the_answer_carries_the_token(
     r = post(cw, body)
     assert r.status_code == 201, r.text
     j = r.json()
-    assert j["ok"] is True and j["id"] and j["detailsToken"] and j["detailsTokenExpiresAt"].endswith("Z") and "1 рабочего дня" in j["message"]
+    assert j["ok"] is True and j["id"] and j["details_token"] and j["details_token_expires_at"].endswith("Z") and "1 рабочего дня" in j["message"]
     row = row_of(cw, body["email"])
-    assert str(row.id) == j["id"] and str(row.request_id) == body["requestId"]
+    assert str(row.id) == j["id"] and str(row.request_id) == body["request_id"]
     assert (row.org_type, row.address, row.branches_count, row.position, row.preferred_contact_time) == ("tutor", "ул. Навои, 12", 0, "owner", "после 18:00")
     assert (row.needs, row.current_tool, row.heard_from, row.comment, row.locale) == (["exams", "payments"], "other_system", "Instagram", "Хочу видеть долги", "uz")
     assert row.consent_at is not None and row.status == "new" and row.source == {"utm_source": "instagram", "utm_campaign": "okt"}
@@ -169,7 +169,7 @@ def test_s10_a_bad_phone_is_422_with_the_format_text(cw, phone):
         ({"needs": ["payments", "hack"]}, "needs"), ({"needs": "payments"}, "needs"), ({"needs": [1]}, "needs"), ({"needs": ["payments"] * 21}, "needs"),
         ({"branches_count": -1}, "branches_count"), ({"branches_count": 1000}, "branches_count"), ({"branches_count": "много"}, "branches_count"),
         ({"address": "x" * 301}, "address"), ({"heard_from": "x" * 201}, "heard_from"), ({"preferred_contact_time": "x" * 101}, "preferred_contact_time"),
-        ({"comment": "x" * 2001}, "comment"), ({"consent": "yes"}, "consent"), ({"requestId": "not-a-uuid"}, "requestId"),
+        ({"comment": "x" * 2001}, "comment"), ({"consent": "yes"}, "consent"), ({"request_id": "not-a-uuid"}, "request_id"),
         ({"address": "ул.\x00Навои"}, "address"), ({"preferred_contact_time": "после\n18"}, "preferred_contact_time"), ({"heard_from": "из\x07вестно"}, "heard_from"),
         ({"comment": "ок\x1b[31m"}, "comment"),
     ],
@@ -201,14 +201,14 @@ def test_the_org_types_of_the_form_are_the_six_the_database_allows():
     assert set(ORG_TYPES) == allowed(str(organisation.sqltext)) == allowed(str(request.sqltext))
 
 
-# ---- A3: requestId (scenario 5, invariant 3) -----------------------------------------------------------------------------------------------------
+# ---- A3: request_id (scenario 5, invariant 3) -----------------------------------------------------------------------------------------------------
 
 def test_s5_a_repeat_with_the_same_request_id_is_200_the_same_request_and_no_second_letter(cw):
     body = step2()
     first = post(cw, body)
     second = post(cw, {**body, "centre_name": "Другое название", "comment": "изменено"})       # the body of a repeat is ignored
     assert (first.status_code, second.status_code) == (201, 200)
-    assert second.json() == first.json() and second.json()["detailsToken"]
+    assert second.json() == first.json() and second.json()["details_token"]
     assert len(rows(cw)) == 1 and rows(cw)[0].centre_name == "Репетитор Алия" and rows(cw)[0].comment is None
     assert len(letters_to(cw.outbox, "owner-notify@example.test")) == 1 and len(letters_to(cw.outbox, body["email"])) == 1 and len(cw.outbox) == 2
 
@@ -221,9 +221,9 @@ def test_a_repeat_costs_no_limit_so_a_retry_loop_is_never_429(cw):
 
 
 def test_a_repeat_needs_no_new_turnstile_token_because_a_token_is_single_use(cw, fake_turnstile):
-    body = step2(turnstileToken="good")
+    body = step2(turnstile_token="good")
     assert post(cw, body).status_code == 201
-    assert post(cw, {**body, "turnstileToken": "used-already"}).status_code == 200
+    assert post(cw, {**body, "turnstile_token": "used-already"}).status_code == 200
     assert fake_turnstile["calls"] == ["good"]
 
 
@@ -246,7 +246,7 @@ def test_s5_two_simultaneous_requests_with_one_id_leave_one_row_and_one_letter(c
 
 def test_two_requests_without_a_request_id_are_two_rows_as_before(cw):
     body = step2()
-    del body["requestId"]
+    del body["request_id"]
     assert (post(cw, body).status_code, post(cw, body).status_code) == (201, 201) and len(rows(cw)) == 2
 
 
@@ -255,7 +255,7 @@ def test_a_replay_of_an_old_request_has_no_token_any_more(cw, monkeypatch):
     first = post(cw, body).json()
     advance_clock(monkeypatch, 2 * 3600 + 5)
     again = post(cw, body)
-    assert again.status_code == 200 and again.json()["id"] == first["id"] and again.json()["detailsToken"] is None
+    assert again.status_code == 200 and again.json()["id"] == first["id"] and again.json()["details_token"] is None
 
 
 # ---- A4: step 3 by the token (scenario 6, invariants 3-4) ------------------------------------------------------------------------------------------
@@ -264,7 +264,7 @@ def test_step_3_is_written_into_the_same_request_and_no_second_letter_goes(cw):
     body = step2()
     made = post(cw, body).json()
     before = len(cw.outbox)
-    r = patch(cw, made["id"], {"detailsToken": made["detailsToken"], "needs": ["payments", "attendance"], "current_tool": "excel", "heard_from": "Instagram",
+    r = patch(cw, made["id"], {"details_token": made["details_token"], "needs": ["payments", "attendance"], "current_tool": "excel", "heard_from": "Instagram",
                                "comment": "Нужны долги по оплатам"})
     assert r.status_code == 200 and r.json() == {"ok": True, "id": made["id"]}
     assert len(rows(cw)) == 1 and len(cw.outbox) == before == 2
@@ -276,31 +276,31 @@ def test_step_3_is_written_into_the_same_request_and_no_second_letter_goes(cw):
 def test_step_3_sent_twice_is_harmless_and_a_missing_field_stays(cw):
     body = step2()
     made = post(cw, body).json()
-    token = made["detailsToken"]
-    assert patch(cw, made["id"], {"detailsToken": token, "needs": ["payments"], "comment": "первый"}).status_code == 200
-    assert patch(cw, made["id"], {"detailsToken": token, "needs": ["exams"]}).status_code == 200
+    token = made["details_token"]
+    assert patch(cw, made["id"], {"details_token": token, "needs": ["payments"], "comment": "первый"}).status_code == 200
+    assert patch(cw, made["id"], {"details_token": token, "needs": ["exams"]}).status_code == 200
     row = row_of(cw, body["email"])
     assert (row.needs, row.comment) == (["exams"], "первый")
-    assert patch(cw, made["id"], {"detailsToken": token, "needs": []}).status_code == 200 and row_of(cw, body["email"]).needs == []     # [] clears
+    assert patch(cw, made["id"], {"details_token": token, "needs": []}).status_code == 200 and row_of(cw, body["email"]).needs == []     # [] clears
 
 
 def test_step_3_with_nothing_to_add_or_a_bad_value_is_422(cw):
     made = post(cw, step2()).json()
-    assert patch(cw, made["id"], {"detailsToken": made["detailsToken"]}).status_code == 422
-    r = patch(cw, made["id"], {"detailsToken": made["detailsToken"], "needs": ["payments", "magic"]})
+    assert patch(cw, made["id"], {"details_token": made["details_token"]}).status_code == 422
+    r = patch(cw, made["id"], {"details_token": made["details_token"], "needs": ["payments", "magic"]})
     assert r.status_code == 422 and "needs" in r.json()["fields"]
 
 
 def test_step_3_token_cases_are_403_and_change_nothing(cw, monkeypatch):
     one, two = post(cw, step2()).json(), post(cw, step2()).json()
     good = {"needs": ["payments"]}
-    forged = one["detailsToken"][:-4] + "0000"
-    for token in (None, "", "garbage", forged, two["detailsToken"], one["detailsToken"].replace(".", ":")):
-        r = patch(cw, one["id"], {**good, **({"detailsToken": token} if token is not None else {})})
+    forged = one["details_token"][:-4] + "0000"
+    for token in (None, "", "garbage", forged, two["details_token"], one["details_token"].replace(".", ":")):
+        r = patch(cw, one["id"], {**good, **({"details_token": token} if token is not None else {})})
         assert r.status_code == 403 and r.json()["code"] == "invalid_details_token", (token, r.text)
     assert all(r.needs is None for r in rows(cw))
     advance_clock(monkeypatch, 2 * 3600 + 5)
-    r = patch(cw, one["id"], {**good, "detailsToken": one["detailsToken"]})
+    r = patch(cw, one["id"], {**good, "details_token": one["details_token"]})
     assert r.status_code == 403 and r.json()["code"] == "details_token_expired" and all(r.needs is None for r in rows(cw))
 
 
@@ -308,23 +308,23 @@ def test_step_3_for_an_unknown_request_is_404_and_a_bad_id_too(cw):
     ghost = uuid4()
     expires = 4_102_444_800
     token = f"{ghost.hex}.{expires}.{service._signature(ghost, expires)}"
-    r = patch(cw, ghost, {"detailsToken": token, "needs": ["payments"]})
+    r = patch(cw, ghost, {"details_token": token, "needs": ["payments"]})
     assert r.status_code == 404 and r.json()["code"] == "not_found"
-    assert patch(cw, "not-a-uuid", {"detailsToken": token, "needs": ["payments"]}).status_code == 404
+    assert patch(cw, "not-a-uuid", {"details_token": token, "needs": ["payments"]}).status_code == 404
 
 
 def test_step_3_after_the_approval_is_409(cw):
     body = step2()
     made = post(cw, body).json()
     assert cw.client.post(f"{API}/demo-requests/{made['id']}/approve", json={}).status_code == 200
-    r = patch(cw, made["id"], {"detailsToken": made["detailsToken"], "needs": ["payments"]})
+    r = patch(cw, made["id"], {"details_token": made["details_token"], "needs": ["payments"]})
     assert r.status_code == 409 and r.json()["code"] == "already_processed" and row_of(cw, body["email"]).needs is None
 
 
 def test_step_3_has_its_own_limit_per_address(cw):
     made = post(cw, step2()).json()
     ip = "203.0.113.88"
-    codes = [patch(cw, made["id"], {"detailsToken": made["detailsToken"], "comment": f"v{i}"}, ip=ip).status_code for i in range(21)]
+    codes = [patch(cw, made["id"], {"details_token": made["details_token"], "comment": f"v{i}"}, ip=ip).status_code for i in range(21)]
     assert codes == [200] * 20 + [429]
 
 
@@ -333,22 +333,22 @@ def test_step_3_has_its_own_limit_per_address(cw):
 def test_s7_the_honeypot_comes_first_before_turnstile_and_the_limits(cw, fake_turnstile):
     ip = "203.0.113.91"
     for _ in range(6):                                                                           # spend the limit of the address honestly (5 an hour) ...
-        post(cw, step2(turnstileToken="good"), ip=ip)
+        post(cw, step2(turnstile_token="good"), ip=ip)
     fake_turnstile["calls"].clear()
-    r = post(cw, step2(website="http://spam.example", turnstileToken="bad"), ip=ip)               # ... a bot with a bad token from the spent address: still the silent 201
+    r = post(cw, step2(website="http://spam.example", turnstile_token="bad"), ip=ip)               # ... a bot with a bad token from the spent address: still the silent 201
     assert r.status_code == 201 and r.json() == {"ok": True, "message": service.ACCEPTED_TEXT}
     assert fake_turnstile["calls"] == [] and len(rows(cw)) == 5
 
 
 def test_a5_turnstile_comes_before_the_limits_and_a_refused_token_spends_no_limit(cw, fake_turnstile):
     ip = "203.0.113.92"
-    assert [post(cw, step2(turnstileToken="good"), ip=ip).status_code for _ in range(5)] == [201] * 5
-    r = post(cw, step2(turnstileToken="bad"), ip=ip)                                             # the address is spent, but the token is judged first
+    assert [post(cw, step2(turnstile_token="good"), ip=ip).status_code for _ in range(5)] == [201] * 5
+    r = post(cw, step2(turnstile_token="bad"), ip=ip)                                             # the address is spent, but the token is judged first
     assert r.status_code == 400 and r.json()["code"] == "captcha_failed"
-    assert post(cw, step2(turnstileToken="good"), ip=ip).status_code == 429                      # a good token meets the limit
+    assert post(cw, step2(turnstile_token="good"), ip=ip).status_code == 429                      # a good token meets the limit
     other = "203.0.113.93"
-    assert [post(cw, step2(turnstileToken="bad"), ip=other).status_code for _ in range(10)] == [400] * 10
-    assert [post(cw, step2(turnstileToken="good"), ip=other).status_code for _ in range(5)] == [201] * 5     # 10 refusals cost the address nothing
+    assert [post(cw, step2(turnstile_token="bad"), ip=other).status_code for _ in range(10)] == [400] * 10
+    assert [post(cw, step2(turnstile_token="good"), ip=other).status_code for _ in range(5)] == [201] * 5     # 10 refusals cost the address nothing
 
 
 def test_a5_without_a_token_or_a_key_turnstile_is_skipped_or_refuses_as_set(cw, fake_turnstile, monkeypatch):
@@ -360,7 +360,7 @@ def test_a5_without_a_token_or_a_key_turnstile_is_skipped_or_refuses_as_set(cw, 
 
 def test_a5_when_cloudflare_is_down_the_request_is_accepted(cw, fake_turnstile, caplog):
     fake_turnstile["answers"] = [ConnectionError("no route")]
-    body = step2(turnstileToken="good")
+    body = step2(turnstile_token="good")
     with caplog.at_level("WARNING"):
         assert post(cw, body).status_code == 201                                                 # invariant 2: a real request is not lost for somebody else's outage
     assert len(rows(cw)) == 1 and "turnstile" in caplog.text

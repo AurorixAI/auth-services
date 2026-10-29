@@ -36,11 +36,11 @@ STEP3_KEYS = ("needs", "current_tool", "heard_from", "comment")
 CREATE_KEYS = frozenset(
     (
         "centre_name", "org_type", "city", "address", "students_count", "branches_count", "contact_name", "position", "phone", "email",
-        "preferred_contact_time", "locale", "consent", "source", "requestId", "turnstileToken", "website",
+        "preferred_contact_time", "locale", "consent", "source", "request_id", "turnstile_token", "website",
     )
     + STEP3_KEYS
 )
-PATCH_KEYS = frozenset(("detailsToken",) + STEP3_KEYS)
+PATCH_KEYS = frozenset(("details_token",) + STEP3_KEYS)
 SOURCE_KEYS = ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "referrer", "landing")
 PHONE_TEXT = "Телефон: формат +998 XX XXX-XX-XX"
 ACCEPTED_TEXT = "Заявка принята. Мы свяжемся с вами в течение 1 рабочего дня."
@@ -136,7 +136,7 @@ def validate(body: Any) -> Tuple[Dict[str, Any], Form]:
         "preferred_contact_time": form.text("preferred_contact_time", "Удобное время для звонка", required=False, max_len=100),
         "locale": form.choice("locale", "Язык", LOCALES, required=False) or "ru",
         "consent": form.boolean("consent"),
-        "request_id": form.uuid("requestId", "Идентификатор заявки", required=False),
+        "request_id": form.uuid("request_id", "Идентификатор заявки", required=False),
         **_step3(form),
     }
     phone_raw = form.text("phone", "Телефон", max_len=40)
@@ -283,11 +283,11 @@ def check_details_token(token: Any, request_id: UUID) -> None:
 
 def created_body(row: DemoRequest) -> Dict[str, Any]:
     token, expires_at = details_token(row)
-    return {"ok": True, "message": ACCEPTED_TEXT, "id": str(row.id), "detailsToken": token, "detailsTokenExpiresAt": expires_at}
+    return {"ok": True, "message": ACCEPTED_TEXT, "id": str(row.id), "details_token": token, "details_token_expires_at": expires_at}
 
 
 def save_new(db: Session, data: Dict[str, Any], source: Dict[str, str], bucket: str, *, applicant_mail: str) -> Tuple[DemoRequest, bool]:
-    """``(row, created)``.  A concurrent request with the same ``requestId`` that won the unique index leaves ``created=False`` and its row."""
+    """``(row, created)``.  A concurrent request with the same ``request_id`` that won the unique index leaves ``created=False`` and its row."""
     try:
         row = create(db, data, source, bucket, applicant_mail=applicant_mail)
         db.commit()

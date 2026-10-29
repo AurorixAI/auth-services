@@ -1,6 +1,6 @@
 """``POST /api/v1/public/demo-requests`` (steps 1-2) and ``PATCH /api/v1/public/demo-requests/{id}`` (step 3): the public «Запросить демо» form (no sign-in).
 
-Contract: ``docs/K3_API.md``.  Order of the checks of POST: honeypot -> repeat of ``requestId`` -> Turnstile -> limits -> unknown keys -> values."""
+Contract: ``docs/K3_API.md``.  Order of the checks of POST: honeypot -> repeat of ``request_id`` -> Turnstile -> limits -> unknown keys -> values."""
 from __future__ import annotations
 
 import hashlib
@@ -75,9 +75,9 @@ def _send_letters(request_id: str, mail: dict, send_applicant: bool) -> None:
 
 
 def _request_id_of(body) -> Optional[UUID]:
-    """The ``requestId`` of the body when it is a well-formed uuid (a malformed one is reported by the validation later)."""
+    """The ``request_id`` of the body when it is a well-formed uuid (a malformed one is reported by the validation later)."""
     try:
-        return UUID(str(body.get("requestId"))) if isinstance(body, dict) and body.get("requestId") else None
+        return UUID(str(body.get("request_id"))) if isinstance(body, dict) and body.get("request_id") else None
     except (ValueError, AttributeError, TypeError):
         return None
 
@@ -92,7 +92,7 @@ def create_demo_request(request: Request, background: BackgroundTasks, body: dic
         repeat = service.find_by_request_id(db, request_id)
         if repeat is not None:  # a retry after a lost answer / a double click: the same request, no letter, no limit, no Turnstile token (it is single-use)
             return JSONResponse(service.created_body(repeat), status_code=200)
-    if not turnstile.verify(body.get("turnstileToken") if isinstance(body, dict) else None):
+    if not turnstile.verify(body.get("turnstile_token") if isinstance(body, dict) else None):
         raise PlatformError(400, CAPTCHA_TEXT, "captcha_failed")
     _throttle(request, body)
     service.refuse_unknown(body, service.CREATE_KEYS)
@@ -101,7 +101,7 @@ def create_demo_request(request: Request, background: BackgroundTasks, body: dic
     source = service.clean_source(body.get("source") if isinstance(body, dict) else None)
     send_applicant = service.reserve_applicant_letter(data["email"])
     row, created = service.save_new(db, data, source, client_bucket(request), applicant_mail="pending" if send_applicant else "cap")
-    if not created:  # the twin request with the same requestId was faster
+    if not created:  # the twin request with the same request_id was faster
         return JSONResponse(service.created_body(row), status_code=200)
     response = JSONResponse(service.created_body(row), status_code=201)
     response.background = background  # a Response returned by hand carries its own background tasks
@@ -117,7 +117,7 @@ def add_demo_request_details(request_id: str, request: Request, body: dict = Bod
         raise PlatformError(429, THROTTLED_TEXT, "rate_limited", retry_after=left)
     service.refuse_unknown(body, service.PATCH_KEYS)
     uid = parse_uuid_or_404(request_id, "Заявка")
-    service.check_details_token(body.get("detailsToken") if isinstance(body, dict) else None, uid)
+    service.check_details_token(body.get("details_token") if isinstance(body, dict) else None, uid)
     data, form = service.validate_details(body)
     form.done()
     row = db.query(DemoRequest).filter(DemoRequest.id == uid).with_for_update().first()
