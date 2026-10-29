@@ -25,8 +25,16 @@ def test_d3_the_example_of_the_task(caplog):
 
 
 def test_d3_the_filter_is_installed_on_uvicorn_access_and_on_the_handler_of_the_root_logger():
-    assert any(isinstance(f, DiagnosticCapabilityLogFilter) for f in logging.getLogger("uvicorn.access").filters)
-    assert any(isinstance(f, DiagnosticCapabilityLogFilter) for h in logging.getLogger().handlers for f in h.filters)
+    from src.core.middleware import configure_logging
+
+    root = logging.getLogger()
+    saved = root.handlers[:]                                                                   # configure_logging replaces the handlers of the root logger: put them back
+    try:
+        configure_logging(is_development=False)
+        assert any(isinstance(f, DiagnosticCapabilityLogFilter) for f in logging.getLogger("uvicorn.access").filters)
+        assert any(isinstance(f, DiagnosticCapabilityLogFilter) for h in root.handlers for f in h.filters)
+    finally:
+        root.handlers[:] = saved
 
 
 @pytest.mark.parametrize(
@@ -70,7 +78,11 @@ def test_d3_the_uvicorn_formatter_still_formats_the_filtered_arguments():
     assert "a%40b.com" not in formatted and "status=new" in formatted and "200" in formatted and len(record.args) == 5
 
 
-def test_d3_a_message_without_arguments_is_redacted_too():
-    record = logging.LogRecord("app", logging.INFO, "", 0, "GET /x?email=a@b.com&y=1", None, None)
+def test_d3_an_address_given_as_the_message_is_redacted_and_a_development_mail_body_is_not_touched():
+    record = logging.LogRecord("app", logging.INFO, "", 0, "GET /x?email=a@b.com&y=1 done", None, None)
     DiagnosticCapabilityLogFilter().filter(record)
-    assert record.getMessage() == "GET /x?email=[redacted]&y=1"
+    assert record.getMessage() == "GET /x?email=[redacted]&y=1 done"
+    body = "SMTP not configured\n  Body:\n<p>activate?token=SECRETTOKEN&email=a@b.com</p>"     # the development log of a letter is the developer's own convenience
+    record = logging.LogRecord("src.core.email", logging.INFO, "", 0, "%s", (body,), None)
+    DiagnosticCapabilityLogFilter().filter(record)
+    assert record.getMessage() == body

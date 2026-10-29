@@ -51,9 +51,12 @@ class DiagnosticCapabilityLogFilter(logging.Filter):
             return 8 <= digits <= 15 if value.startswith("+") else 9 <= digits <= 15
         return False
 
+    _url_word = re.compile(r'(?<!\S)((?:https?://|/|\?)\S*)')  # a path / address / bare query as a word of its own; "<p>activate?token=..." of a development mail body is not one
+
     @classmethod
     def _mask_query(cls, text: str) -> str:
-        return cls._param.sub(lambda m: f"{m.group(1)}{m.group(2)}=[redacted]" if cls._is_personal(m.group(2), m.group(3)) else m.group(0), text)
+        mask = lambda m: f"{m.group(1)}{m.group(2)}=[redacted]" if cls._is_personal(m.group(2), m.group(3)) else m.group(0)  # noqa: E731
+        return cls._url_word.sub(lambda word: cls._param.sub(mask, word.group(1)), text)
 
     @classmethod
     def _redact(cls, value):
