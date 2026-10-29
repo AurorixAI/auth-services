@@ -92,7 +92,7 @@
 | `org_type` | код или `null` (подпись — на фронте одной функцией `orgTypeLabel`) |
 | `address`, `branches_count`, `position`, `preferred_contact_time`, `needs` (список, `[]` если пусто), `current_tool`, `heard_from`, `locale`, `consent_at` | как в заявке, `null` если не заполнено |
 | `mail` | `{"team": "pending"\|"sent"\|"failed"\|null, "applicant": "pending"\|"sent"\|"failed"\|"cap"\|null}`; `null` — заявка создана до K3. `team: "failed"` — подпись «письмо команде не ушло»; `applicant: "cap"` — «письмо заявителю не отправлено: потолок»; `applicant: "failed"` — «письмо заявителю не ушло» |
-| `email_in_algo` | `true`, если почта заявки уже есть у пользователя ALGO (считается при каждом чтении). Заявителю об этом не сообщается |
+| `email_in_algo` | `true`, если почта заявки уже есть у пользователя ALGO (считается при каждом чтении, только у открытых заявок: после одобрения почта принадлежит новому владельцу, предупреждения нет). Заявителю об этом не сообщается: его ответ и письмо те же |
 
 `POST /platform/demo-requests/{id}/approve`: центр создаётся с `org_type` **из заявки** (нет в заявке — `center`) и `address` из заявки; остальное как раньше (ответ не менялся). Прежние ошибки `409 already_processed`, `409 email_in_use`.
 

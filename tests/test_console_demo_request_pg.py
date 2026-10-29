@@ -74,13 +74,14 @@ def test_the_fourth_request_with_one_email_is_429_whatever_the_case(cw):
     assert post(cw, request_body(email="SAME@Example.test"), ip="192.0.2.99").status_code == 429
 
 
-def test_a_repeat_from_the_same_email_is_marked_and_the_applicant_gets_the_usual_letter(cw):
+def test_a_repeat_from_the_same_email_is_marked_and_the_applicant_gets_one_letter_a_day(cw):
     first = request_body(email="again@example.test")
     assert post(cw, first, ip="203.0.113.21").status_code == 201
     assert post(cw, first, ip="203.0.113.22").status_code == 201                       # not an error for the applicant
     rows = cw.db.query(DemoRequest).filter_by(email="again@example.test").order_by(DemoRequest.created_at).all()
     assert [r.is_repeat for r in rows] == [False, True] and rows[1].repeat_of_id == rows[0].id
-    assert len(letters_to(cw.outbox, "again@example.test")) == 2
+    assert len(letters_to(cw.outbox, "again@example.test")) == 1                       # K3 A5: one letter per address per day (the second request is kept, the owner is told twice)
+    assert len(letters_to(cw.outbox, "owner-notify@example.test")) == 2
     notify = letters_to(cw.outbox, "owner-notify@example.test")[-1]
     assert "ПОВТОРНАЯ ЗАЯВКА" in body_of(notify) and "Повторная заявка" in body_of(notify, "html")
 

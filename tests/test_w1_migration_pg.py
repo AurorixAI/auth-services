@@ -16,7 +16,7 @@ BASE_URL = os.environ.get("A5_AUTH_MIGRATION_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
 
 REVISION = "w1a2b3c4d5e"
-HEAD = "p159a1b2c3d4"          # the revision after it (#157: two new actions of the events); this file is about REVISION, ``upgrade head`` runs through it
+HEAD = "k3a1b2c3d4e5"          # the revision after it (#157: two new actions of the events); this file is about REVISION, ``upgrade head`` runs through it
 BEFORE = "pf1a2b3c4d5"
 DB_NAME = "a5_auth_w1_migrations"
 

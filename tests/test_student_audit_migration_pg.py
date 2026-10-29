@@ -16,7 +16,7 @@ from src.core.db_timezone import utc_connect_args
 BASE_URL = os.environ.get("A5_AUTH_MIGRATION_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
 
-HEAD = "p159a1b2c3d4"  # the head of the chain (W1 on top of PAY-F, on top of the console pack); this file is about the revision sa1b2c3d4e5
+HEAD = "k3a1b2c3d4e5"  # the head of the chain (W1 on top of PAY-F, on top of the console pack); this file is about the revision sa1b2c3d4e5
 BEFORE = "lb3c4d5e6f7"
 DB_NAME = "a5_auth_studentaudit_migrations"
 

@@ -64,6 +64,10 @@ def cw(monkeypatch):
 
     monkeypatch.setattr(sender, "deliver", capture)
 
+    from src.auth import demo_requests
+
+    monkeypatch.setattr(demo_requests, "background_session", lambda: sessionmaker(engine, autoflush=False)())  # the outcome of the letters after the response
+
     def override():
         try:
             yield session
