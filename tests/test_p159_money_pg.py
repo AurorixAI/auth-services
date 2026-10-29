@@ -97,7 +97,7 @@ def test_ch4_an_admin_without_the_right_chooses_wait_or_none_and_paid_is_a_403_t
     assert created_count(w) == before                                                        # no lesson, no audit row of a creation
     assert w.db.query(GroupAudit).filter_by(org_id=w.org.id, action="one_off_created").count() == 0
     default = make(w, "admin", w.G1, "2026-10-30", purpose="extra").json()                   # the default of the form: «Попросить оплатить»
-    assert (default["money"], default["moneyLabel"]) == ("wait", "оплата: решите после урока") and one_off(w, default["id"]).money == "wait"
+    assert (default["money"], default["moneyLabel"]) == ("wait", "оплата: решит владелец") and one_off(w, default["id"]).money == "wait"
     free = make(w, "admin", w.G1, "2026-10-30", start="17:00", end="17:30", purpose="extra", money="none").json()
     assert one_off(w, free["id"]).money == "none"
     asked = make(w, "admin", w.G1, "2026-10-31", purpose="extra", money="wait").json()["id"]

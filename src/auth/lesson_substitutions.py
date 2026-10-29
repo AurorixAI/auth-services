@@ -698,9 +698,11 @@ class SubstitutionsBase:
         return {"withdrawn": done, "skipped": skipped}
 
     # ================================================================================== summary / list / detail
-    def summary(self, org_id: Any, *, revalidate: bool = True) -> Dict[str, int]:
+    def summary(self, org_id: Any, *, revalidate: bool = True, money_right: bool = True) -> Dict[str, int]:
         """The badge of «Замены».  W1 S18 (А-8): the same lazy pass as the list (a revised / stopped series, a month border) runs first, so the counts are not those of requests that are already void.
-        ``expiringTotal`` (S20, D25): pending requests of the previous month that fall out of the window of the unclosed lessons on the 1st - non-zero only in the last 3 days before it."""
+        ``expiringTotal`` (S20, D25): pending requests of the previous month that fall out of the window of the unclosed lessons on the 1st - non-zero only in the last 3 days before it.
+        #159 M2: ``waitingTotal`` is what the CALLER has to do - the money rows count only for who may decide them (``money_right``); an admin without the right gets the requests only (the money rows
+        stay in ``oneOffDecisionsTotal`` as information)."""
         if revalidate:      # (R3 13) one pass per request, bounded (the list does it itself over its page + the same set and asks the counts with ``revalidate=False``)
             self.revalidate(self._badge_batch(org_id, []))
         now, today = self.now(), bc.business_today()
@@ -712,7 +714,7 @@ class SubstitutionsBase:
         next_month = (this_month + timedelta(days=32)).replace(day=1)
         expiring = base.filter(Req.lesson_date < this_month.isoformat()).count() if (next_month - today).days <= EXPIRY_WARNING_DAYS else 0
         one_off = OneOffPurpose(self.svc).pending_count(org_id)          # #154: the decisions of the money of additional lessons are in the same badge (the 1st-of-the-month window and «urgent» do not apply to them)
-        return {"pendingTotal": pending, "urgentTotal": urgent, "overdueTotal": overdue, "expiringTotal": expiring, "oneOffDecisionsTotal": one_off, "waitingTotal": pending + one_off}
+        return {"pendingTotal": pending, "urgentTotal": urgent, "overdueTotal": overdue, "expiringTotal": expiring, "oneOffDecisionsTotal": one_off, "waitingTotal": pending + (one_off if money_right else 0)}
 
     def _badge_batch(self, org_id: Any, extra: Sequence[Req]) -> List[Req]:
         """The pending requests to revalidate before counting: the oldest ``SUMMARY_REVALIDATE_MAX`` of the centre + ``extra`` (the page of the list), each once."""
@@ -1962,7 +1964,9 @@ def annotate_occurrences(svc, user: Dict[str, Any], items: Sequence[Any]) -> Seq
     gids = {g for g in (_uuid(i.groupId) for i in items) if g}
     origin = moved_from_map(svc.db, gids, [i.id for i in items])
     authors = one_off_authors(svc, [i.id for i in items])
-    purposes = OneOffPurpose(svc).marks([(i.groupId, i.id, i.occurrenceDate) for i in items], manager=manager, actor=actor)          # #154: purpose / madeUp* / money (the mask is in ``marks``)
+    one_off_purpose = OneOffPurpose(svc)
+    purposes = one_off_purpose.marks([(i.groupId, i.id, i.occurrenceDate) for i in items], manager=manager, actor=actor,
+                                     money_right=one_off_purpose.viewer_money_right(user, manager=manager))          # #154: purpose / madeUp* / money (the mask is in ``marks``); #159 M3: the label by the right of money
     for item in items:
         item.movedFrom = origin.get((str(item.groupId), item.id))
         item.createdBy = authors.get(item.id)
@@ -1999,7 +2003,9 @@ def annotate_journal(svc, user: Dict[str, Any], group: Group, resp) -> Any:
     origin = moved_from_map(svc.db, [group.id], [l.get("id") for l in keys.values()])
     authors = one_off_authors(svc, [l.get("id") for l in keys.values()])
     manager, actor = is_org_manager(user), _uuid(user.get("user_id"))
-    purposes = OneOffPurpose(svc).marks([(group.id, l.get("id"), l.get("date")) for l in keys.values()], manager=manager, actor=actor)          # #154
+    one_off_purpose = OneOffPurpose(svc)
+    purposes = one_off_purpose.marks([(group.id, l.get("id"), l.get("date")) for l in keys.values()], manager=manager, actor=actor,
+                                     money_right=one_off_purpose.viewer_money_right(user, manager=manager))          # #154; #159 M3: the label by the right of money
     for lesson in keys.values():
         if (str(group.id), lesson.get("id")) in origin:
             lesson["movedFrom"] = origin[(str(group.id), lesson.get("id"))]

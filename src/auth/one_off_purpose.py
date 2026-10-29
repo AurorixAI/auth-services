@@ -61,12 +61,13 @@ def purpose_label(purpose: Optional[str], made_up_date: Optional[str]) -> Option
     return "Дополнительный" if purpose == EXTRA else None
 
 
-def money_label(money: Optional[str], *, manager: bool, held: bool) -> Optional[str]:
-    """The words of the status of the money; ``held``: the lesson has been held (a ``wait`` before it says when it is decided)."""
+def money_label(money: Optional[str], *, manager: bool, held: bool, money_right: bool = True) -> Optional[str]:
+    """The words of the status of the money; ``held``: the lesson has been held (a ``wait`` before it says when it is decided).  #159 M3: an admin WITHOUT the right of money is not the one who decides - before the lesson
+    he reads «оплата: решит владелец», not «решите после урока»."""
     if money is None:
         return None
     if manager:
-        return {NONE: "без оплаты", PAID: "оплачивается", WAIT: "оплата: не решено" if held else "оплата: решите после урока"}[money]
+        return {NONE: "без оплаты", PAID: "оплачивается", WAIT: "оплата: не решено" if held else ("оплата: решите после урока" if money_right else "оплата: решит владелец")}[money]
     return {NONE: "без оплаты", PAID: "оплачено", WAIT: "не решено"}[money]
 
 
@@ -125,6 +126,10 @@ class OneOffPurpose:
         from .dependencies import payments_enabled_for_admin
 
         return org_role == "owner" or (org_role == "admin" and payments_enabled_for_admin(self.db, str(org_id)))
+
+    def viewer_money_right(self, user: Dict[str, Any], *, manager: bool) -> bool:
+        """The right of money of whoever READS an answer (#159 M2 / M3): only an owner / admin can lack it, and only they read the money rows, so a non-manager is ``True`` (nothing to hide from him here)."""
+        return True if not manager else self.money_right(user.get("org_id"), user.get("org_role"))
 
     def require_teacher(self, group: Group, day: date, end_minutes: int) -> None:
         """A lesson of a group that has no teacher cannot be held and paid: ``TEACHER_REQUIRED`` (ОД-17)."""
@@ -385,10 +390,11 @@ class OneOffPurpose:
         return {"lessonId": lesson_id, "money": one_off.money, "payrollSheet": sheet}
 
     # ============================================================================== what the answers say (the mask)
-    def marks(self, keys: Sequence[Tuple[Any, str, str]], *, manager: bool, actor: Optional[Any] = None, money_visible: bool = True) -> Dict[Tuple[str, str, str], Dict[str, Any]]:
+    def marks(self, keys: Sequence[Tuple[Any, str, str]], *, manager: bool, actor: Optional[Any] = None, money_visible: bool = True, money_right: bool = True) -> Dict[Tuple[str, str, str], Dict[str, Any]]:
         """The fields of the purpose of the lessons ``keys`` = ``[(group_id, lesson_id, date)]`` (``GET schedule/occurrences``, the journal, the student card): ``purpose`` / ``purposeLabel`` /
         ``madeUpFor`` of a one-off lesson, ``madeUpBy`` of a cancelled lesson that has a make-up, ``money`` / ``moneyLabel``.  The mask (LESSONS 45 / 51): an owner / admin read the money; a teacher
-        only of a lesson of HIS group or one he made; ``money_visible=False`` (the student, the parent) never.  No sums, no decisions - only the state."""
+        only of a lesson of HIS group or one he made; ``money_visible=False`` (the student, the parent) never.  No sums, no decisions - only the state.  ``money_right`` (#159 M3): the reader may decide the money
+        (``viewer_money_right``); an admin without it reads «оплата: решит владелец»."""
         out: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
         if not keys:
             return out
@@ -418,7 +424,7 @@ class OneOffPurpose:
                 if one_off.purpose == MAKEUP and one_off.made_up_lesson_id:
                     made_for = {"lessonId": one_off.made_up_lesson_id, "date": one_off.made_up_date}
                 item = {"purpose": one_off.purpose, "purposeLabel": purpose_label(one_off.purpose, one_off.made_up_date), "madeUpFor": made_for, "money": shown,
-                        "moneyLabel": money_label(shown, manager=manager, held=held)}
+                        "moneyLabel": money_label(shown, manager=manager, held=held, money_right=money_right)}
             row = rows.get(key)
             if row is not None and row.made_up_by and row.made_up_by in by_id:
                 target = by_id[row.made_up_by]

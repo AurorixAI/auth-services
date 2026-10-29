@@ -310,7 +310,8 @@ class ScheduleRules:
             raise self.archived_error()
         purposes = OneOffPurpose(self.svc)
         actor_role = purposes.actor_role(org_id, actor_id)            # no membership in this centre = 403 before anything is written (LESSONS 17: no default role)
-        purpose, money = purposes.check_request(req, manager=is_org_admin, money_right=purposes.money_right(org_id, actor_role))      # #159: ``none`` / ``paid`` only for who may decide the money (read under the lock of the group)
+        may_decide = purposes.money_right(org_id, actor_role)
+        purpose, money = purposes.check_request(req, manager=is_org_admin, money_right=may_decide)      # #159: ``none`` / ``paid`` only for who may decide the money (read under the lock of the group)
         now = bc.business_now()
         origin = origin_occ = None
         if purpose == MAKEUP:
@@ -362,7 +363,7 @@ class ScheduleRules:
             occurrenceDate=req.lessonDate.isoformat(), isOneOff=True, warnings=warnings,
             createdBy=one_off_authors(self.svc, [lesson_id]).get(lesson_id),
         )
-        apply_marks(resp, purposes.marks([(group.id, lesson_id, req.lessonDate.isoformat())], manager=is_org_admin, actor=actor_id).get((str(group.id), lesson_id, req.lessonDate.isoformat())))
+        apply_marks(resp, purposes.marks([(group.id, lesson_id, req.lessonDate.isoformat())], manager=is_org_admin, actor=actor_id, money_right=may_decide).get((str(group.id), lesson_id, req.lessonDate.isoformat())))
         return resp
 
     # ------------------------------------------------------------------------- teacher overlap (all writers)

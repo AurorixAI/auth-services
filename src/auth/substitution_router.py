@@ -127,7 +127,10 @@ def decide_substitutions_bulk(request: DecideBulkRequest, user: dict = Depends(_
 @router.get("/org/substitutions/summary", response_model=SubstitutionSummary)
 def substitutions_summary(user: dict = Depends(_manager), db: Session = Depends(get_db)):
     """Счётчик бейджа меню «Замены» (только счёт, без записи)."""
-    return _subs(db).summary(user["org_id"])
+    from .one_off_purpose import OneOffPurpose
+
+    svc = _subs(db)
+    return svc.summary(user["org_id"], money_right=OneOffPurpose(svc.svc).money_right(user["org_id"], user.get("org_role")))          # #159 M2: the badge counts the money rows only for who may decide them
 
 
 @router.get("/org/substitutions", response_model=SubstitutionListOut)

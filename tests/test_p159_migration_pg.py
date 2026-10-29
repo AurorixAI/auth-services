@@ -125,3 +125,23 @@ def test_the_model_agrees_with_the_check(engine):
         db_def = c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='ck_one_off_money'")).scalar_one()
     model = next(str(c.sqltext) for c in GroupScheduleOneOffLesson.__table__.constraints if getattr(c, "name", None) == "ck_one_off_money")
     assert "'makeup', 'moved'" in model and "makeup" in db_def and "'none', 'paid'" not in db_def.split("makeup")[1]
+
+
+def test_e5_the_migration_logs_the_number_of_cleared_make_ups_per_centre_without_names(engine, capfd):
+    """E5: the release reads the number from the log of the container: ``org_id`` and counts only (no names, no lesson ids).  (``alembic/env.py`` configures the logging itself, so the lines
+    are read from what it writes to stderr.)"""
+    cfg = config()
+    command.upgrade(cfg, BEFORE)
+    a, ga, ua = centre(engine, "Секретное название А")
+    b, gb, ub = centre(engine, "Секретное название Б")
+    one_off(engine, a, ga, ua, "mk-1", "makeup", "paid", origin="lesson-1", records="{}")
+    one_off(engine, a, ga, ua, "mk-2", "makeup", "none", origin="lesson-2", records="{}")
+    one_off(engine, b, gb, ub, "mk-3", "makeup", "paid", origin="lesson-3", records="{}")
+    one_off(engine, b, gb, ub, "mk-null", "makeup", None, origin="lesson-4", records="{}")
+    capfd.readouterr()
+    command.upgrade(cfg, REVISION)
+    ours = [line for line in capfd.readouterr().err.splitlines() if "p159: make-up money" in line]
+    assert any(line.endswith(f"p159: make-up money set to NULL: org_id={a} rows=2") for line in ours)
+    assert any(line.endswith(f"p159: make-up money set to NULL: org_id={b} rows=1") for line in ours)
+    assert any(line.endswith("p159: make-up money set to NULL: total rows=3 in 2 centres") for line in ours)
+    assert not any("Секретное" in line or "mk-" in line for line in ours)

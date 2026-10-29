@@ -107,7 +107,7 @@ def makeup_candidates(group_id: str, user: dict = Depends(require_org_member), d
 
 @router.get("/org/one-off-decisions", response_model=OneOffDecisions)
 def one_off_decisions(user: dict = Depends(_manager), db: Session = Depends(get_db)):
-    """«Ждут решения»: проведённые дополнительные уроки с оплатой «прошу оплатить» и пустые отработки (только owner / admin)."""
+    """«Ждут решения»: проведённые дополнительные уроки с оплатой «прошу оплатить» (отработка не ждёт решения; очередь читают owner и любой admin, решает owner / admin с правом денег)."""
     return _purposes(db).pending(user["org_id"], owner=user.get("org_role") == "owner")
 
 

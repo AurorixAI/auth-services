@@ -243,7 +243,7 @@ class SubstitutionSummary(BaseModel):
     overdueTotal: int = 0
     expiringTotal: int = 0     # W1 S20: requests that fall out of the window of the unclosed lessons on the 1st (shown only in the last 3 days before it)
     oneOffDecisionsTotal: int = 0     # #154: held additional lessons that wait for «Оплатить / Не оплачивать»
-    waitingTotal: int = 0             # #154: ``pendingTotal`` + ``oneOffDecisionsTotal`` - the counter of the tab «Ждут решения» and of the badge of the menu
+    waitingTotal: int = 0             # #154: ``pendingTotal`` + ``oneOffDecisionsTotal`` - the counter of the tab «Ждут решения» and of the badge of the menu; #159 M2: an admin WITHOUT the right of money gets ``pendingTotal`` only (the money rows are not his tasks)
 
 
 class EventActor(BaseModel):
