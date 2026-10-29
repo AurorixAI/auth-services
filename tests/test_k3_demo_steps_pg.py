@@ -112,7 +112,7 @@ def test_s2_all_fields_of_the_steps_are_stored_and_the_answer_carries_the_token(
     r = post(cw, body)
     assert r.status_code == 201, r.text
     j = r.json()
-    assert j["ok"] is True and j["id"] and j["details_token"] and j["details_token_expires_at"].endswith("Z") and "1 рабочего дня" in j["message"]
+    assert j["ok"] is True and j["id"] and j["details_token"] and j["details_token_expires_at"].endswith("Z") and "1–2 рабочих дней" in j["message"]
     row = row_of(cw, body["email"])
     assert str(row.id) == j["id"] and str(row.request_id) == body["request_id"]
     assert (row.org_type, row.address, row.branches_count, row.position, row.preferred_contact_time) == ("tutor", "ул. Навои, 12", 0, "owner", "после 18:00")

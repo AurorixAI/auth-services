@@ -43,7 +43,7 @@ CREATE_KEYS = frozenset(
 PATCH_KEYS = frozenset(("details_token",) + STEP3_KEYS)
 SOURCE_KEYS = ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "referrer", "landing")
 PHONE_TEXT = "Телефон: формат +998 XX XXX-XX-XX"
-ACCEPTED_TEXT = "Заявка принята. Мы свяжемся с вами в течение 1 рабочего дня."
+ACCEPTED_TEXT = "Заявка принята. Мы свяжемся с вами в течение 1–2 рабочих дней."
 
 
 def normalise_phone(raw: str) -> Optional[str]:

@@ -102,7 +102,7 @@ def test_the_links_are_right():
     n = rendered["new_application"]
     assert f'href="{CONSOLE}/requests?id=7f0c1e2a-9b1d-4c33-8a55-0d6f3b2a1c9e"' in n.html and "Открыть в консоли" in n.html
     assert 'href="mailto:ivan@example.uz"' in n.html and 'href="tel:+998901234567"' in n.html
-    assert rendered["application_received"].html.count("Что будет дальше") == 1 and "1 рабочего дня" in rendered["application_received"].text
+    assert rendered["application_received"].html.count("Что будет дальше") == 1 and "1–2 рабочих дней" in rendered["application_received"].text
     for r in rendered.values():
         assert 'href="https://algolab.me"' in r.html
 

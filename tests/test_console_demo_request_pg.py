@@ -15,7 +15,7 @@ def post(cw, body, ip="203.0.113.10", host="app.algolab.me"):
 def test_a_valid_request_is_201_stored_and_two_letters_go(cw):
     body = request_body()
     r = post(cw, body)
-    assert r.status_code == 201 and r.json()["ok"] is True and "1 рабочего дня" in r.json()["message"]
+    assert r.status_code == 201 and r.json()["ok"] is True and "1–2 рабочих дней" in r.json()["message"]
     row = cw.db.query(DemoRequest).filter_by(email=body["email"]).one()
     assert (row.status, row.is_repeat, row.phone, row.students_count) == ("new", False, "+998901234567", 120)
     assert row.source == {"utm_source": "telegram", "utm_medium": "post"} and row.ip_hash and "203.0.113" not in row.ip_hash
