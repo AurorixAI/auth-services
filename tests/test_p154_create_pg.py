@@ -8,7 +8,7 @@ import pytest
 
 from src.models.auth import GroupAttendance, GroupAudit, GroupScheduleOneOffLesson
 from tests.b2_helpers import API, build_d2, clock, needs_pg, pg_session, row_of, run_parallel  # noqa: F401  (fixtures)
-from tests.ops_helpers import client, code_of, new_group, new_slot
+from tests.ops_helpers import client, code_of, grant_money_right, new_group, new_slot
 from tests.test_w1_cancel_pg import code, restore, sheet
 
 pytestmark = needs_pg
@@ -18,7 +18,9 @@ ORIGIN, ORIGIN_DAY = "lesson-l1", "2026-10-26"
 @pytest.fixture
 def w(pg_session, clock):
     clock.set("2026-10-21 14:00")                        # Wednesday
-    return build_d2(pg_session)
+    w = build_d2(pg_session)
+    grant_money_right(w)                                 # #159: the admin of #154 decides the money (the owner let him); the admin WITHOUT the right is in ``test_p159_money_pg.py``
+    return w
 
 
 def make(w, who, group, day, *, start="15:00", end="16:30", expect=201, **extra):

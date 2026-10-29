@@ -56,7 +56,7 @@ EXCUSED_CONFIRMED = "excused_confirmed"
 EXCUSED_PENDING = "excused_pending"
 NOT_IN_GROUP = "not_in_group"
 UNPAID = "unpaid"
-# #154: the teacher's money of an additional lesson (or of an empty make-up): ``undecided`` - «не решено» (the owner / admin decides after the lesson; not in the sum), ``no_pay`` - «без оплаты».
+# #154: the teacher's money of an additional lesson: ``undecided`` - «не решено» (the owner / admin decides after the lesson; not in the sum), ``no_pay`` - «без оплаты».
 # Neither carries money and neither is «not in the group» - the student WAS there, the lesson is simply not paid.
 UNDECIDED = "undecided"
 NO_PAY = "no_pay"

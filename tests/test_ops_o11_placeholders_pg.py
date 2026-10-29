@@ -61,7 +61,7 @@ def test_r4_a_busy_room_is_a_warning_not_a_refusal(w):
         second.json()["warnings"][0]["code"] == "ROOM_BUSY" and "10-А" in second.json()["warnings"][0]["message"]
     online = c.post(f"{API}/schedule/lessons", json=body(w.G6, room="Каб 12", format="online", dayOfWeek=5, startTime="12:00", endTime="13:00"))
     assert online.json()["warnings"] == []                                     # online: the room means nothing
-    one_off = c.post(f"{API}/schedule/occurrences", json={"groupId": str(w.G3.id), "lessonDate": "2026-10-23", "startTime": "10:40", "endTime": "10:50", "room": "каб 12", "purpose": "extra", "money": "paid"})
+    one_off = c.post(f"{API}/schedule/occurrences", json={"groupId": str(w.G3.id), "lessonDate": "2026-10-23", "startTime": "10:40", "endTime": "10:50", "room": "каб 12", "purpose": "extra", "money": "none"})
     assert one_off.status_code == 201 and one_off.json()["warnings"][0]["code"] == "ROOM_BUSY"
 
 

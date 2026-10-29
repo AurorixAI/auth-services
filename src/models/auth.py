@@ -1385,8 +1385,8 @@ class GroupScheduleOneOffLesson(Base):
     # #154: what the lesson is for.  ``makeup`` = a make-up of a cancelled lesson (money as an ordinary lesson), ``extra`` = an additional lesson (free for the students whatever
     # their mode of payment; the teacher: ``money``), ``moved`` = the copy a move of a lesson made (nothing changes).  The kind is THIS column, never the prefix of the id.
     purpose = Column(String(10), nullable=False)
-    # ``extra``: what the teacher gets - ``none`` (nothing), ``wait`` (the teacher asks; the owner / admin decides after the lesson), ``paid``.  A ``makeup`` is NULL (money as an ordinary
-    # lesson) until the decision on an EMPTY make-up (nobody came) writes ``paid`` / ``none`` here; ``moved`` is always NULL.
+    # ``extra``: what the teacher gets - ``none`` (nothing), ``wait`` (the teacher asks; the owner / admin decides after the lesson), ``paid``.  A ``makeup`` is ALWAYS NULL (#159: an
+    # official lesson, money as an ordinary lesson, an empty one too); ``moved`` is always NULL.
     money = Column(String(10), nullable=True)
     # ``makeup``: the cancelled lesson it makes up for (the row of that lesson carries ``made_up_by`` = this id).
     made_up_lesson_id = Column(String(100), nullable=True)
@@ -1397,7 +1397,7 @@ class GroupScheduleOneOffLesson(Base):
         Index("idx_group_schedule_one_off_org_date", "org_id", "lesson_date"),
         CheckConstraint("purpose IN ('makeup', 'extra', 'moved')", name="ck_one_off_purpose"),
         CheckConstraint(
-            "(purpose = 'extra' AND money IS NOT NULL AND money IN ('none', 'wait', 'paid')) OR (purpose = 'makeup' AND (money IS NULL OR money IN ('none', 'paid'))) OR (purpose = 'moved' AND money IS NULL)",
+            "(purpose = 'extra' AND money IS NOT NULL AND money IN ('none', 'wait', 'paid')) OR (purpose IN ('makeup', 'moved') AND money IS NULL)",
             name="ck_one_off_money",
         ),
         CheckConstraint(

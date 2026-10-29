@@ -23,7 +23,8 @@ def slots(valid_from: str = "2026-01-01") -> List[dict]:
 def set_payments(w, **block) -> None:
     """The ``payments`` block of the centre's settings (the accounting starts 01.09 unless a test says otherwise)."""
     org = w.db.get(Organization, w.org.id)
-    org.settings = {**(org.settings or {}), "payments": {"accounting_start_date": "2026-09-01", **block}}
+    kept = {k: v for k, v in ((org.settings or {}).get("payments") or {}).items() if k == "admin_can_manage"}          # #159: the right of the admin to the money is not a regime of billing
+    org.settings = {**(org.settings or {}), "payments": {"accounting_start_date": "2026-09-01", **kept, **block}}
     w.db.commit()
 
 

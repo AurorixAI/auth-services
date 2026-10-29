@@ -182,7 +182,7 @@ def test_s10plus_c_a_move_or_a_one_off_on_a_day_off_date_stays_in_either_order(w
     assert "осознанно" in [x["reason"] for x in made2["blocked"] if x["lessonId"] == m2][0]
     assert row_of(w, w.G1, m2, "2026-11-11") is None
     # a one-off lesson: the same
-    one_off = client(w, "admin").post(f"{API}/org/schedule/occurrences", json={"groupId": str(w.G2.id), "lessonDate": "2026-11-18", "startTime": "12:00", "endTime": "13:00", "purpose": "extra", "money": "paid"}).json()["id"]
+    one_off = client(w, "admin").post(f"{API}/org/schedule/occurrences", json={"groupId": str(w.G2.id), "lessonDate": "2026-11-18", "startTime": "12:00", "endTime": "13:00", "purpose": "extra", "money": "none"}).json()["id"]
     made3 = client(w, "owner").post(DAYS, json={"dateFrom": "2026-11-18", "dateTo": "2026-11-18", "reason": "Третий"}).json()
     assert one_off in {x["lessonId"] for x in made3["blocked"]} and row_of(w, w.G2, one_off, "2026-11-18") is None
 
@@ -357,7 +357,7 @@ def test_t_a14_the_cutover_of_the_regular_schedule_is_the_same_for_a_series_revi
     assert occ("2026-11-02")["startTime"] == "12:00"
     # a one-off lesson on 31.10 (a Saturday) and one on 01.11 (a Sunday): both are lessons of their own dates, neither enters the regular schedule of the series
     for day in ("2026-10-31", "2026-11-01"):
-        created = client(w, "admin").post(f"{API}/org/schedule/occurrences", json={"groupId": str(w.G1.id), "lessonDate": day, "startTime": "09:00", "endTime": "09:30", "purpose": "extra", "money": "paid"})
+        created = client(w, "admin").post(f"{API}/org/schedule/occurrences", json={"groupId": str(w.G1.id), "lessonDate": day, "startTime": "09:00", "endTime": "09:30", "purpose": "extra", "money": "none"})
         assert created.status_code == 201 and created.json()["isOneOff"] is True
     assert [o["id"] for o in client(w, "admin").get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-31", "date_to": "2026-11-01"}).json() if o["groupId"] == str(w.G1.id)
             and not o["isOneOff"]] == []
@@ -396,7 +396,7 @@ def test_t_a12_a_cancellation_set_in_advance_and_a_stop_that_comes_earlier_lose_
     assert [x for x in st["rows"] if x["type"] == "recalc"] == [] and st["summary"]["recalculated"] == 0 and st["summary"]["reconciles"] is True
 
 
-PURPOSE = {"admin": {"purpose": "extra", "money": "paid"}, "owner": {"purpose": "extra", "money": "paid"}}          # #154: the server requires the purpose of an owner / admin; a teacher sends none (= extra + wait)
+PURPOSE = {"admin": {"purpose": "extra", "money": "none"}, "owner": {"purpose": "extra", "money": "paid"}}          # #154: the server requires the purpose of an owner / admin; a teacher sends none (= extra + wait)
 
 
 # ============================================================================================================ the author of a one-off lesson

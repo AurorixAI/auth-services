@@ -287,7 +287,7 @@ class MonthTeacher(BaseModel):
     teacher_id: str
     teacher_name: Optional[str] = None
     lessons_count: int = 0  # completed lessons the teacher held in the month
-    undecided_lessons: int = 0  # #154: held additional lessons / empty make-ups whose payment is not decided yet (not in the sum)
+    undecided_lessons: int = 0  # #154: held additional lessons whose payment is not decided yet (not in the sum)
     lesson_types: List[LessonTypeSuggestion] = Field(default_factory=list)
     # UX-2: the rate in force for the month per kind of lessons the teacher held in it (``{"group": "50"}``; a kind
     # without a rate is absent) and the kinds without a rate - the sheet cannot be calculated until they are set.

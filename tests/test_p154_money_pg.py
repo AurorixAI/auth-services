@@ -8,8 +8,8 @@ from decimal import Decimal
 import pytest
 
 from src.models.auth import AttendanceExcuse, GroupAttendance, GroupAudit, GroupScheduleOneOffLesson, PayrollRate, StudentGroup
-from tests.ops_helpers import clock, history_row, needs_pg, new_student, pg_session  # noqa: F401  (fixtures)
-from tests.payf_helpers import API, D, build_org, cancel, centre, client, pay, pause, rows, statement
+from tests.ops_helpers import clock, grant_money_right, history_row, needs_pg, new_student, pg_session  # noqa: F401  (fixtures)
+from tests.payf_helpers import API, D, build_org as _build_org, cancel, centre, client, pay, pause, rows, statement
 from tests.test_payf_recalc_pg import month_world
 
 pytestmark = needs_pg
@@ -18,6 +18,13 @@ FIRST = 25_000                      # 600 000 x 50 % / 12
 
 
 # ============================================================================================================ helpers
+def build_org(db):
+    """The world of #154: the admin decides the money (the owner let him, #159); without the right - ``test_p159_money_pg.py``."""
+    w = _build_org(db)
+    grant_money_right(w)
+    return w
+
+
 def make(w, who, group, day, *, start="12:00", end="13:00", expect=201, **extra):
     r = client(w, who).post(f"{API}/org/schedule/occurrences", json={"groupId": str(group.id), "lessonDate": day, "startTime": start, "endTime": end, **extra})
     assert r.status_code == expect, r.text
@@ -150,7 +157,8 @@ def test_c7_a_student_who_left_or_was_on_a_pause_keeps_the_deduction(pg_session,
     assert [line_of(s, x)["amount"] for x in (a, b, c)] == [FIRST] * 3 and s["total_amount"] == 75_000
 
 
-def test_c8_an_empty_make_up_waits_for_the_decision_of_the_teachers_money_and_the_students_lesson_is_held(pg_session, clock):
+def test_c8_an_empty_make_up_is_an_ordinary_lesson_paid_and_held_for_the_students(pg_session, clock):
+    """#159 (chain Ч5, invariant 2): a make-up nobody came to is paid to the teacher like any held lesson (the marks decide, the rate is the same), never «не решено», never in the queue of the decisions."""
     w = build_org(pg_session)
     g, (a, b, c, d, e), ms = five(w, clock)
     mk = makeup(w, "A", g, "2026-10-29", "lesson-mon", "2026-10-26").json()["id"]
@@ -158,29 +166,21 @@ def test_c8_an_empty_make_up_waits_for_the_decision_of_the_teachers_money_and_th
     hold(w, g, mk, "2026-10-29", {a: "absent", b: "absent", c: "absent", d: "absent", e: "absent"})
     assert [deducted(w, m) for m in ms] == [0] * 5                                     # absent = the lesson was held for them
     s = sheet(w, "2026-10")
-    assert s["total_amount"] == 0 and [mark_of(line_of(s, x), mk)["state"] for x in (a, b, c, d, e)] == ["undecided"] * 5
+    assert [mark_of(line_of(s, x), mk)["state"] for x in (a, b, c, d, e)] == ["counted"] * 5
+    assert s["total_amount"] == 5 * FIRST and s["undecided_total"] == 0
     ov = client(w, "owner").get(f"{API}/org/payroll/months/2026-10").json()
-    assert next(t for t in ov["teachers"] if t["teacher_id"] == str(w.A.id))["undecided_lessons"] == 1
-    # it is in the queue of the decisions with the right title and the counter
-    queue = client(w, "admin").get(f"{API}/org/one-off-decisions").json()
-    assert [(i["lessonId"], i["purpose"], i["title"], i["studentsPresent"], i["studentsTotal"]) for i in queue["items"]] == [(mk, "makeup", "Отработка без учеников — оплатить преподавателю?", 0, 5)]
-    assert client(w, "admin").get(f"{API}/org/substitutions/summary").json()["oneOffDecisionsTotal"] == 1
-    decide(w, "owner", mk, "pay")
-    s = sheet(w, "2026-10")
-    assert s["total_amount"] == 5 * FIRST and one_off(w, mk).money == "paid"           # decided: as an ordinary lesson (absent counts)
-    assert [deducted(w, m) for m in ms] == [0] * 5                                     # the decision does not touch the students
-
-
-def test_c8_an_empty_make_up_decided_not_to_pay_is_without_pay(pg_session, clock):
-    w = build_org(pg_session)
-    g, (a, b, c, d, e), ms = five(w, clock)
-    mk = makeup(w, "A", g, "2026-10-29", "lesson-mon", "2026-10-26").json()["id"]
-    clock.set("2026-10-29 13:30")
-    hold(w, g, mk, "2026-10-29", {a: "absent", b: "absent", c: "absent", d: "absent", e: "absent"})
-    decide(w, "admin", mk, "skip")
-    s = sheet(w, "2026-10")
-    assert s["total_amount"] == 0 and {mark_of(line_of(s, x), mk)["state"] for x in (a, b, c, d, e)} == {"no_pay"}
-    decide(w, "admin", mk, "pay", expect=409)                                          # once
+    assert next(t for t in ov["teachers"] if t["teacher_id"] == str(w.A.id))["undecided_lessons"] == 0
+    assert client(w, "admin").get(f"{API}/org/one-off-decisions").json() == {"total": 0, "items": []}
+    summary = client(w, "admin").get(f"{API}/org/substitutions/summary").json()
+    assert summary["oneOffDecisionsTotal"] == 0
+    assert one_off(w, mk).money is None
+    # nothing to decide: the road answers as for any lesson that needs no decision
+    assert decide(w, "owner", mk, "pay", expect=422).json()["detail"]["code"] == "DECISION_NOT_ALLOWED"
+    assert decide(w, "admin", mk, "skip", expect=422).json()["detail"]["code"] == "DECISION_NOT_ALLOWED"
+    assert one_off(w, mk).money is None and sheet(w, "2026-10")["total_amount"] == 5 * FIRST
+    # what the answers say: no money word on a make-up
+    item = next(o for o in client(w, "admin").get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-29", "date_to": "2026-10-29"}).json() if o["id"] == mk)
+    assert (item["purpose"], item["money"], item["moneyLabel"]) == ("makeup", None, None)
 
 
 def test_a_make_up_with_students_needs_no_decision(pg_session, clock):

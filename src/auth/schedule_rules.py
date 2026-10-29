@@ -309,8 +309,8 @@ class ScheduleRules:
         if group.status != "active":
             raise self.archived_error()
         purposes = OneOffPurpose(self.svc)
-        purpose, money = purposes.check_request(req, manager=is_org_admin)
         actor_role = purposes.actor_role(org_id, actor_id)            # no membership in this centre = 403 before anything is written (LESSONS 17: no default role)
+        purpose, money = purposes.check_request(req, manager=is_org_admin, money_right=purposes.money_right(org_id, actor_role))      # #159: ``none`` / ``paid`` only for who may decide the money (read under the lock of the group)
         now = bc.business_now()
         origin = origin_occ = None
         if purpose == MAKEUP:

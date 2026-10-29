@@ -242,7 +242,7 @@ class SubstitutionSummary(BaseModel):
     urgentTotal: int = 0
     overdueTotal: int = 0
     expiringTotal: int = 0     # W1 S20: requests that fall out of the window of the unclosed lessons on the 1st (shown only in the last 3 days before it)
-    oneOffDecisionsTotal: int = 0     # #154: held additional lessons / empty make-ups that wait for «Оплатить / Не оплачивать»
+    oneOffDecisionsTotal: int = 0     # #154: held additional lessons that wait for «Оплатить / Не оплачивать»
     waitingTotal: int = 0             # #154: ``pendingTotal`` + ``oneOffDecisionsTotal`` - the counter of the tab «Ждут решения» and of the badge of the menu
 
 

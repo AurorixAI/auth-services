@@ -355,3 +355,14 @@ def diff(a: Any, b: Any, path: str = "") -> List[str]:
             return [f"{path}: length {len(a)} != {len(b)}: {a!r} != {b!r}"]
         return [d for i, (x, y) in enumerate(zip(a, b)) for d in diff(x, y, f"{path}[{i}]")]
     return [] if a == b else [f"{path}: {a!r} != {b!r}"]
+
+
+def grant_money_right(w, on: bool = True) -> None:
+    """#159: the owner lets (or no longer lets) the admins of the centre decide the money of the teachers (``organizations.settings.payments.admin_can_manage``)."""
+    from src.models.auth import Organization
+
+    org = w.db.query(Organization).filter_by(id=w.org.id).one()
+    settings = dict(org.settings or {})
+    settings["payments"] = {**(settings.get("payments") or {}), "admin_can_manage": on}
+    org.settings = settings
+    w.db.commit()

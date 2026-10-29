@@ -234,20 +234,15 @@ def fingerprint_of(month: date, teacher_id: UUID, lines: List["LineSeed"]) -> st
     return hashlib.sha256(blob.encode("ascii")).hexdigest()
 
 
-def pay_state_of(meta: Optional[Tuple[str, Optional[str]]], records: Any) -> Optional[str]:
+def pay_state_of(meta: Optional[Tuple[str, Optional[str]]]) -> Optional[str]:
     """#154: the state of the TEACHER's money of one held lesson when it is not paid by the ordinary rule: an additional lesson (``purpose = 'extra'``) is ``undecided`` while ``money = 'wait'`` and
-    ``no_pay`` at ``none``; a make-up is ordinary money - except an EMPTY one (nobody present or late): ``undecided`` until the decision, ``no_pay`` when the decision was «Не оплачивать».
-    ``None`` = the ordinary rule (an ordinary lesson, a make-up that has students, an additional lesson the owner pays: ``paid`` goes through the seam of ``lesson_coverage``).  ``meta`` = ``(purpose, money)``."""
+    ``no_pay`` at ``none``.  ``None`` = the ordinary rule (an ordinary lesson, any make-up - an empty one too, #159: a make-up is an official lesson - an additional lesson the owner pays: ``paid`` goes
+    through the seam of ``lesson_coverage``).  ``meta`` = ``(purpose, money)``."""
     if meta is None:
         return None
     purpose, money = meta
     if purpose == "extra":
         return {"wait": engine.UNDECIDED, "none": engine.NO_PAY}.get(money)
-    if purpose == "makeup":
-        if money == "none":
-            return engine.NO_PAY
-        if money is None and not any(m in ("present", "late") for m in (records.values() if isinstance(records, dict) else ())):
-            return engine.UNDECIDED
     return None
 
 
@@ -274,7 +269,7 @@ class TeacherSeed:
     groups_by_type: Dict[str, Set[str]] = field(default_factory=dict)
     open_lessons: int = 0
     fingerprint: str = ""
-    undecided_lessons: int = 0     # #154: held lessons whose payment waits for a decision (an additional lesson ``wait``, an empty make-up)
+    undecided_lessons: int = 0     # #154: held lessons whose payment waits for a decision (an additional lesson ``wait``)
 
 
 @dataclass
@@ -573,7 +568,7 @@ class PayrollService:
         pay_block: Dict[UUID, str] = {}
         for (_teacher, gid), lessons in by_pair.items():
             for lesson in lessons:
-                state = pay_state_of(meta.get((gid, lesson.lesson_id)), lesson.records)
+                state = pay_state_of(meta.get((gid, lesson.lesson_id)))
                 if state is not None:
                     pay_block[lesson.attendance_id] = state
         excuse_status: Dict[Tuple[UUID, str], str] = {}

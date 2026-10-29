@@ -5,9 +5,10 @@ One module, the rules in one place (LESSONS 38 / 15):
 * creation: ``check_request`` (what the author may choose; the teacher who sends nothing gets ``extra`` + ``wait``), ``makeup_origin`` (which cancelled lesson can be made up - the row is LOCKED, so
   two make-ups of one lesson never both live), the audit row ``one_off_created``;
 * the life of the pointer ``group_attendance.made_up_by`` (the row of the cancelled lesson): ``link`` / ``release`` / ``repoint`` / ``relink`` - the hooks of the cancellation, the restore and the move;
-* the decision «Оплатить / Не оплачивать» of the money of an additional lesson (and of an EMPTY make-up) and the list of what waits for it;
+* the decision «Оплатить / Не оплачивать» of the money of an additional lesson and the list of what waits for it; it is made by the owner or by an admin WITH the right of money (#159, ``money_right``);
 * what the answers say about the lesson (``purpose`` / ``money`` / labels), with the viewer's mask: the teacher reads only the status of HIS lesson, the student / parent never the money (LESSONS 45 / 51).
 
+A make-up is an ordinary official lesson (#159): its ``money`` is always NULL, an empty one (nobody came) is paid and counted to the students like any other lesson; it never waits for a decision.
 Money is never stored here: the deduction of the recalculation, the package, the forecast and the payroll are functions of these facts (``ledger_service``, ``payments_service``, ``payroll_service``)."""
 from __future__ import annotations
 
@@ -44,7 +45,8 @@ MAKEUP_REFUSALS = {
 MAKEUP_EXISTS_TEXT = "По уроку назначена отработка: сначала отмените её"
 NO_CANDIDATES_TEXT = ("Нет отменённых уроков, которые можно отработать: нужен урок по расписанию, отменённый по вине центра за последние "
                       f"{MAKEUP_BACK_DAYS} дней, без отработки")
-TITLES = {EXTRA: "Дополнительный урок — оплатить преподавателю?", MAKEUP: "Отработка без учеников — оплатить преподавателю?"}
+MONEY_RIGHT_TEXT = "Решение об оплате принимает владелец или администратор с правом на оплаты"
+TITLES = {EXTRA: "Дополнительный урок — оплатить преподавателю?"}
 
 
 def day_label(day: str) -> str:
@@ -57,12 +59,6 @@ def purpose_label(purpose: Optional[str], made_up_date: Optional[str]) -> Option
     if purpose == MAKEUP and made_up_date:
         return f"Отработка за {day_label(made_up_date)}"
     return "Дополнительный" if purpose == EXTRA else None
-
-
-def is_empty_roster_lesson(records: Any) -> bool:
-    """A held lesson on which nobody was present or late (the make-up nobody came to)."""
-    marks = records.values() if isinstance(records, dict) else ()
-    return not any(m in ("present", "late") for m in marks)
 
 
 def money_label(money: Optional[str], *, manager: bool, held: bool) -> Optional[str]:
@@ -90,8 +86,10 @@ class OneOffPurpose:
 
     # ================================================================================================ creation
     @staticmethod
-    def check_request(req: Any, *, manager: bool) -> Tuple[str, Optional[str]]:
-        """``(purpose, money)`` of a new one-off lesson, or a coded 422.  The server requires the purpose; a TEACHER who sends none (an old tab, the API) gets ``extra`` + ``wait`` (АД-10)."""
+    def check_request(req: Any, *, manager: bool, money_right: bool = False) -> Tuple[str, Optional[str]]:
+        """``(purpose, money)`` of a new one-off lesson, or a coded 422.  The server requires the purpose; a TEACHER who sends none (an old tab, the API) gets ``extra`` + ``wait`` (АД-10).
+        #159: ``none`` / ``paid`` is chosen only by who may decide the money of a teacher (``money_right``: the owner, an admin with the right of payments); an admin WITHOUT the right chooses as a teacher
+        (``wait`` by default / ``none``) and ``paid`` is 403 ``MONEY_RIGHT_REQUIRED`` (a creation with ``paid`` is a money decision too)."""
         purpose = getattr(req, "purpose", None)
         money = getattr(req, "money", None)
         target = (getattr(req, "madeUpLessonId", None), getattr(req, "madeUpDate", None))
@@ -109,14 +107,24 @@ class OneOffPurpose:
             return MAKEUP, None
         if target[0] or target[1]:
             raise unprocessable("MAKEUP_TARGET_NOT_ALLOWED", "Отменённый урок указывается только у отработки")
-        allowed = MANAGER_MONEY if manager else TEACHER_MONEY
+        decides = manager and money_right
+        allowed = MANAGER_MONEY if decides else TEACHER_MONEY
         if money is None:
-            if manager:
+            if decides:
                 raise unprocessable("MONEY_REQUIRED", "Выберите оплату преподавателю: без оплаты или оплачивается")
             money = WAIT
         if money not in allowed:
+            if manager and money == PAID:
+                raise forbidden("MONEY_RIGHT_REQUIRED", MONEY_RIGHT_TEXT)
             raise unprocessable("MONEY_INVALID", "Такой вариант оплаты вам недоступен")
         return EXTRA, money
+
+    def money_right(self, org_id: Any, org_role: str) -> bool:
+        """May this member decide the money of a teacher (#159)?  The owner always; an admin only while ``organizations.settings.payments.admin_can_manage`` is on; read at the call, UNDER the lock of the
+        group (the caller locked it first), so a right taken away a moment before is not used.  Nobody else (LESSONS 17: no role is guessed)."""
+        from .dependencies import payments_enabled_for_admin
+
+        return org_role == "owner" or (org_role == "admin" and payments_enabled_for_admin(self.db, str(org_id)))
 
     def require_teacher(self, group: Group, day: date, end_minutes: int) -> None:
         """A lesson of a group that has no teacher cannot be held and paid: ``TEACHER_REQUIRED`` (ОД-17)."""
@@ -298,16 +306,15 @@ class OneOffPurpose:
         return self.db.query(GroupAttendance).filter(GroupAttendance.group_id == one_off.group_id, GroupAttendance.lesson_id == one_off.id, GroupAttendance.lesson_date == one_off.lesson_date).first()
 
     def pending_rows(self, org_id: Any) -> List[Tuple[GroupScheduleOneOffLesson, GroupAttendance, Group]]:
-        """The held lessons whose money waits for a decision: an additional lesson with ``wait`` and an EMPTY make-up without a decision (nobody was present or late)."""
+        """The held lessons whose money waits for a decision: an additional lesson with ``wait`` (a make-up never waits, #159)."""
         rows = (self.db.query(GroupScheduleOneOffLesson, GroupAttendance, Group)
                 .join(GroupAttendance, and_(GroupAttendance.group_id == GroupScheduleOneOffLesson.group_id, GroupAttendance.lesson_id == GroupScheduleOneOffLesson.id,
                                             GroupAttendance.lesson_date == GroupScheduleOneOffLesson.lesson_date))
                 .join(Group, Group.id == GroupScheduleOneOffLesson.group_id)
                 .filter(GroupScheduleOneOffLesson.org_id == org_id, GroupAttendance.status == "completed",
-                        or_(and_(GroupScheduleOneOffLesson.purpose == EXTRA, GroupScheduleOneOffLesson.money == WAIT),
-                            and_(GroupScheduleOneOffLesson.purpose == MAKEUP, GroupScheduleOneOffLesson.money.is_(None))))
+                        GroupScheduleOneOffLesson.purpose == EXTRA, GroupScheduleOneOffLesson.money == WAIT)
                 .order_by(GroupScheduleOneOffLesson.lesson_date, GroupScheduleOneOffLesson.id).all())
-        return [(o, a, g) for o, a, g in rows if o.purpose == EXTRA or is_empty_roster_lesson(a.records)]
+        return list(rows)
 
     def pending_count(self, org_id: Any) -> int:
         return len(self.pending_rows(org_id))
@@ -343,7 +350,8 @@ class OneOffPurpose:
         return {"total": len(items), "items": items}
 
     def decide(self, org_id: Any, actor_id: Any, actor_role: str, lesson_id: str, decision: str, *, owner: bool) -> Dict[str, Any]:
-        """«Оплатить» / «Не оплачивать»: once, only a held lesson whose money waits (an additional ``wait`` or an empty make-up).  Under the lock of the group, so two administrators never both decide."""
+        """«Оплатить» / «Не оплачивать»: once, only a held lesson whose money waits (an additional ``wait``).  Under the lock of the group, so two administrators never both decide.  #159: the owner, or an
+        admin with the right of payments - read under that lock; an admin without it: 403 ``MONEY_RIGHT_REQUIRED``, nothing changes."""
         actor = _uuid(actor_id)
         if actor_role not in ("owner", "admin"):                    # the road is closed to the others already; no default role is written to the audit (LESSONS 17)
             raise forbidden("DECISION_FORBIDDEN", "Решать об оплате могут владелец и администратор")
@@ -351,10 +359,12 @@ class OneOffPurpose:
         if one_off is None:
             raise not_found("ONE_OFF_NOT_FOUND", "Урок не найден")
         group = self.db.query(Group).filter(Group.id == one_off.group_id, Group.org_id == org_id).with_for_update().populate_existing().first()
+        if not self.money_right(org_id, actor_role):
+            raise forbidden("MONEY_RIGHT_REQUIRED", MONEY_RIGHT_TEXT)
         one_off = self.db.query(GroupScheduleOneOffLesson).filter(GroupScheduleOneOffLesson.id == lesson_id).with_for_update().populate_existing().first()
         att = (self.db.query(GroupAttendance).filter(GroupAttendance.group_id == one_off.group_id, GroupAttendance.lesson_id == one_off.id, GroupAttendance.lesson_date == one_off.lesson_date)
                .with_for_update().first())
-        waiting = (one_off.purpose == EXTRA and one_off.money == WAIT) or (one_off.purpose == MAKEUP and one_off.money is None)
+        waiting = one_off.purpose == EXTRA and one_off.money == WAIT
         if not waiting:
             decided = self.db.query(GroupAudit.id).filter(GroupAudit.group_id == one_off.group_id, GroupAudit.action == DECIDED_ACTION, GroupAudit.snapshot["lessonId"].astext == lesson_id).first()
             if decided is not None:
@@ -362,9 +372,7 @@ class OneOffPurpose:
             raise unprocessable("DECISION_NOT_ALLOWED", "По этому уроку решение не нужно")
         if att is None or att.status != "completed":
             raise conflict("LESSON_NOT_COMPLETED", "Урок ещё не проведён: решить можно после урока")
-        if one_off.purpose == MAKEUP and not is_empty_roster_lesson(att.records):
-            raise unprocessable("DECISION_NOT_ALLOWED", "По этому уроку решение не нужно")
-        before = one_off.money or "empty_makeup"
+        before = one_off.money
         one_off.money = PAID if decision == "pay" else NONE
         self.db.add(GroupAudit(
             org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role=actor_role, action=DECIDED_ACTION,
@@ -404,8 +412,6 @@ class OneOffPurpose:
             if one_off is not None and one_off.lesson_date == day:
                 held = (rows.get(key) is not None and rows[key].status == "completed")
                 money = one_off.money
-                if money is None and one_off.purpose == MAKEUP and held and is_empty_roster_lesson(rows[key].records):
-                    money = WAIT            # an empty make-up: the teacher's money waits as for an additional lesson
                 own = manager or (actor_id is not None and (teachers.get(str(gid)) == actor_id or one_off.created_by == actor_id))
                 shown = money if (money_visible and own) else None
                 made_for = None
