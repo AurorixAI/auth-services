@@ -10,6 +10,7 @@ import logging
 import re
 import sys
 import uuid
+from urllib.parse import unquote_plus
 
 import httpx
 
@@ -24,18 +25,42 @@ from starlette.responses import Response
 # ---------------------------------------------------------------------------
 
 class DiagnosticCapabilityLogFilter(logging.Filter):
-    """Keep route/status evidence while removing public invite capabilities."""
+    """Keep route/status evidence while removing public invite capabilities, link tokens and the personal data of a query string."""
     _path = re.compile(r'(/(?:api/v1/)?(?:auth/|internal/)?diagnostic/)(?!sessions(?:/|\b))[^/?\s\"\x27]+')
     _query = re.compile(r'([?&]invite_code=)[^&\s\"\x27]+')
     # «Задать пароль» / «Сброс пароля»: the token in the path IS the credential (one-time, but valid for 72 h / 1 h) - never in a log line
     _links = re.compile(r'(/(?:api/v1/)?(?:auth/password-links|set-password)/)[^/?\s\"\x27]+')
+
+    # Personal data in a query string (the console searches requests by e-mail: ``?q=lead%40mail.com``): the values of these keys, and of ANY key whose value looks like
+    # an e-mail address or a phone number, never reach a log line.  The path stays (nginx hides the tokens of paths).
+    _param = re.compile(r'([?&])([^=&\s"\x27#]+)=([^&\s"\x27#]*)')
+    _SENSITIVE_KEYS = frozenset(("q", "email", "phone", "token"))
+    _email_like = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+    _iso_date = re.compile(r"\d{4}-\d{2}-\d{2}([T ].*)?")
+    _phone_like = re.compile(r"\+?[\d\s().-]+")
+
+    @classmethod
+    def _is_personal(cls, key: str, raw_value: str) -> bool:
+        if key.lower() in cls._SENSITIVE_KEYS:
+            return True
+        value = unquote_plus(raw_value).strip()
+        if cls._email_like.search(value):
+            return True
+        if cls._phone_like.fullmatch(value) and not cls._iso_date.fullmatch(value):
+            digits = sum(ch.isdigit() for ch in value)
+            return 8 <= digits <= 15 if value.startswith("+") else 9 <= digits <= 15
+        return False
+
+    @classmethod
+    def _mask_query(cls, text: str) -> str:
+        return cls._param.sub(lambda m: f"{m.group(1)}{m.group(2)}=[redacted]" if cls._is_personal(m.group(2), m.group(3)) else m.group(0), text)
 
     @classmethod
     def _redact(cls, value):
         if not isinstance(value, (str, httpx.URL)):
             return value
         text = cls._links.sub(r'\1[redacted]', str(value))
-        return cls._query.sub(r'\1[redacted]', cls._path.sub(r'\1[redacted]', text))
+        return cls._mask_query(cls._query.sub(r'\1[redacted]', cls._path.sub(r'\1[redacted]', text)))
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.msg, str):
