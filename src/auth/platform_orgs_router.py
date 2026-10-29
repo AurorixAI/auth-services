@@ -176,15 +176,9 @@ def get_org(org_id: str, p: Principal = Depends(require_platform("orgs.view")), 
         .order_by(OrganizationMember.org_role, User.last_name)
         .all()
     )
-    source = db.query(DemoRequest).filter(DemoRequest.org_id == org.id).order_by(DemoRequest.created_at.desc()).first()
     out.update(
         {
             "org_type": org.org_type,
-            "request": None if source is None else {
-                "id": str(source.id), "created_at": iso(source.created_at), "needs": list(source.needs or []), "current_tool": source.current_tool,
-                "heard_from": source.heard_from, "branches_count": source.branches_count, "position": source.position,
-                "preferred_contact_time": source.preferred_contact_time,
-            },
             "phone": org.phone,
             "email": org.email,
             "address": org.address,
@@ -200,6 +194,13 @@ def get_org(org_id: str, p: Principal = Depends(require_platform("orgs.view")), 
             "history": audit.history(db, "org", org.id),
         }
     )
+    if p.can("requests.view"):  # the tasks of the applicant belong to those who see the requests (LESSONS 51: every path of the data checks the right)
+        source = db.query(DemoRequest).filter(DemoRequest.org_id == org.id).order_by(DemoRequest.created_at.desc()).first()
+        out["request"] = None if source is None else {
+            "id": str(source.id), "created_at": iso(source.created_at), "needs": list(source.needs or []), "current_tool": source.current_tool,
+            "heard_from": source.heard_from, "branches_count": source.branches_count, "position": source.position,
+            "preferred_contact_time": source.preferred_contact_time,
+        }
     return out
 
 

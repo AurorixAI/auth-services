@@ -59,11 +59,13 @@ def fake_turnstile(monkeypatch):
     """Turnstile switched on; ``answers`` is what Cloudflare says to the next calls (a list of dicts or an exception), ``calls`` the tokens it was asked about."""
     from src.auth import turnstile
 
-    state = {"answers": [], "calls": []}
+    state = {"answers": [], "calls": [], "remote": []}
     monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test-secret")
+    monkeypatch.delenv("TURNSTILE_HOSTNAMES", raising=False)
 
-    def siteverify(secret_key, token):
+    def siteverify(secret_key, token, remote_ip=None):
         state["calls"].append(token)
+        state["remote"].append(remote_ip)
         answer = state["answers"].pop(0) if state["answers"] else {"success": token == "good"}
         if isinstance(answer, Exception):
             raise answer
@@ -525,19 +527,20 @@ def test_s16_the_card_of_the_centre_shows_the_type_and_the_tasks_of_the_request(
 
 
 def test_s9_an_e_mail_already_in_algo_is_flagged_on_the_card_and_the_list_and_the_applicant_notices_nothing(cw):
-    existing = cw.make_user(email="client@center.test")
-    fresh = step2(email="newcomer@center.test")
-    known = step2(email="CLIENT@center.test")
+    mailbox = f"client-{uuid4().hex[:8]}@center.test"                                                                              # users stay between tests
+    existing = cw.make_user(email=mailbox)
+    fresh = step2(email=f"newcomer-{uuid4().hex[:8]}@center.test")
+    known = step2(email=mailbox.upper())
     r_known, r_fresh = post(cw, known), post(cw, fresh)
     assert r_known.status_code == r_fresh.status_code == 201
     assert set(r_known.json()) == set(r_fresh.json()) and r_known.json()["message"] == r_fresh.json()["message"]                  # the same answer: no leak of who is a client
-    assert len(letters_to(cw.outbox, "client@center.test")) == 1                                                                   # and the same letter
+    assert len(letters_to(cw.outbox, mailbox)) == 1                                                                   # and the same letter
     card_known = cw.client.get(f"{API}/demo-requests/{r_known.json()['id']}").json()
     card_fresh = cw.client.get(f"{API}/demo-requests/{r_fresh.json()['id']}").json()
     assert card_known["email_in_algo"] is True and card_fresh["email_in_algo"] is False
     listed = {row["id"]: row["email_in_algo"] for row in cw.client.get(f"{API}/demo-requests").json()["items"]}
     assert listed == {r_known.json()["id"]: True, r_fresh.json()["id"]: False}
-    assert existing.email == "client@center.test"
+    assert existing.email == mailbox
     r = approve(cw, r_known.json()["id"])
     assert r.status_code == 409 and r.json()["code"] == "email_in_use"                                                             # the approval still refuses
 
@@ -554,3 +557,156 @@ def test_s9_a_repeat_with_the_same_email_is_marked(cw):
     first, second = post(cw, step2(email=email)).json(), post(cw, step2(email=email)).json()
     card = cw.client.get(f"{API}/demo-requests/{second['id']}").json()
     assert card["is_repeat"] is True and [s["id"] for s in card["same_email"]] == [first["id"]]
+
+
+# ---- round after R3 / security review ---------------------------------------------------------------------------------------------------------------
+
+def test_r2_a_replay_with_another_email_is_409_gets_no_token_and_touches_nothing(cw):
+    body = step2()
+    first = post(cw, body)
+    other = post(cw, {**body, "email": "victim@elsewhere.test", "centre_name": "Чужой"})
+    assert first.status_code == 201 and other.status_code == 409
+    j = other.json()
+    assert j["code"] == "request_id_conflict" and "details_token" not in j and "id" not in j and "ok" not in j
+    assert [(r.email, r.centre_name) for r in rows(cw)] == [(body["email"], "Репетитор Алия")] and len(cw.outbox) == 2
+    assert post(cw, {"request_id": body["request_id"]}).status_code == 409                       # no e-mail at all is not the owner either
+
+
+def test_r2_squatting_the_victim_gets_409_not_accepted_and_retries_with_a_new_id(cw):
+    attacker = step2(email="attacker@mail-a.test")
+    assert post(cw, attacker).status_code == 201
+    victim = step2(request_id=attacker["request_id"], email="victim@mail-v.test")
+    r = post(cw, victim)
+    assert r.status_code == 409 and r.json()["code"] == "request_id_conflict"                    # not «Заявка принята»: the victim knows to send again
+    assert [x.email for x in rows(cw)] == ["attacker@mail-a.test"]
+    retry = post(cw, {**victim, "request_id": str(uuid4())})
+    assert retry.status_code == 201 and sorted(x.email for x in rows(cw)) == ["attacker@mail-a.test", "victim@mail-v.test"]
+
+
+def test_r2_the_same_mailbox_in_any_case_and_spaces_is_the_same_request(cw):
+    body = step2(email="Mixed.Case@mail-m.test")
+    first = post(cw, body)
+    again = post(cw, {**body, "email": "  MIXED.case@MAIL-M.test "})
+    assert again.status_code == 200 and again.json() == first.json()
+
+
+def test_r2_a_twin_that_loses_the_insert_race_with_another_email_is_409(cw, monkeypatch):
+    body = step2()
+    assert post(cw, body).status_code == 201
+    real, calls = service.find_by_request_id, []
+
+    def blind_first_time(db, request_id):
+        calls.append(request_id)
+        return None if len(calls) == 1 else real(db, request_id)
+
+    monkeypatch.setattr(service, "find_by_request_id", blind_first_time)
+    r = post(cw, {**body, "email": "twin@mail-t.test"})
+    assert r.status_code == 409 and r.json()["code"] == "request_id_conflict" and len(calls) == 2
+    assert [x.email for x in rows(cw)] == [body["email"]] and len(cw.outbox) == 2
+
+
+@pytest.mark.parametrize("bad", [str(__import__("uuid").uuid1()), "00000000-0000-0000-0000-000000000000", str(__import__("uuid").uuid5(__import__("uuid").NAMESPACE_DNS, "x"))])
+def test_r2_the_request_id_must_be_a_uuid_v4(cw, bad):
+    r = post(cw, step2(request_id=bad))
+    assert r.status_code == 422 and "request_id" in r.json()["fields"] and rows(cw) == []
+
+
+def test_r5_the_letter_is_reserved_only_for_the_request_that_was_created(cw, monkeypatch):
+    body = step2()
+    first = post(cw, body)
+    reserved = []
+    real = service.reserve_applicant_letter
+
+    def counting(email):
+        reserved.append(email)
+        return real(email)
+
+    monkeypatch.setattr(service, "reserve_applicant_letter", counting)
+    again = post(cw, body)                                                                       # a repeat: no reservation
+    real_find, seen = service.find_by_request_id, []
+
+    def blind_first_time(db, request_id):
+        seen.append(1)
+        return None if len(seen) == 1 else real_find(db, request_id)
+
+    monkeypatch.setattr(service, "find_by_request_id", blind_first_time)
+    twin = post(cw, body)                                                                        # the twin that lost the race: no reservation either
+    assert (first.status_code, again.status_code, twin.status_code) == (201, 200, 200)
+    assert reserved == []
+    assert row_of(cw, body["email"]).applicant_mail_status == "sent"                              # the one letter of the day was not eaten by the twins
+    assert len(letters_to(cw.outbox, body["email"])) == 1
+
+
+def test_r5_a_validation_error_does_not_eat_the_daily_letter(cw):
+    email = "valid-later@mail-vl.test"
+    assert post(cw, step2(email=email, phone="123")).status_code == 422
+    assert post(cw, step2(email=email)).status_code == 201
+    assert len(letters_to(cw.outbox, email)) == 1 and row_of(cw, email).applicant_mail_status == "sent"
+
+
+def test_r6_aliases_of_one_mailbox_share_the_daily_letter(cw):
+    sent_to = ["john.doe@gmail.com", "johndoe+promo@googlemail.com", "J.o.h.n.d.o.e+x@GMAIL.com"]
+    for email in sent_to:
+        assert post(cw, step2(email=email)).status_code == 201
+    states = [r.applicant_mail_status for r in sorted(rows(cw), key=lambda r: r.created_at)]
+    assert states == ["sent", "cap", "cap"] and len(cw.outbox) == 1 + 3                           # one letter to the applicant, three to the team
+
+
+def test_r6_the_plus_tag_goes_for_every_domain_but_dots_only_for_gmail(cw):
+    for email in ("first+a@mail-p.test", "first+b@mail-p.test"):
+        assert post(cw, step2(email=email)).status_code == 201
+    assert sorted(r.applicant_mail_status for r in rows(cw)) == ["cap", "sent"]
+    for email in ("a.b@mail-d.test", "ab@mail-d.test"):                                            # a dot is a different mailbox outside gmail
+        assert post(cw, step2(email=email)).status_code == 201
+    assert [r.applicant_mail_status for r in rows(cw) if r.email.endswith("mail-d.test")] == ["sent", "sent"]
+
+
+def test_r7_the_request_block_of_the_centre_card_needs_the_right_to_see_requests(cw):
+    made = post(cw, step2(needs=["payments"], current_tool="excel")).json()
+    org = approve(cw, made["id"]).json()["org"]
+    finance = cw.signed_in(cw.make_staff(["finance.view", "orgs.view"], role_name="Финансы как шаблон"))       # the template «Финансы»: no requests.view
+    card = finance.get(f"{API}/orgs/{org['id']}")
+    assert card.status_code == 200 and "request" not in card.json() and card.json()["org_type"] == "tutor"
+    assert '"needs"' not in card.text and "excel" not in card.text and made["id"] not in card.text
+    sales = cw.signed_in(cw.make_staff(["orgs.view", "requests.view"]))
+    shown = sales.get(f"{API}/orgs/{org['id']}").json()
+    assert shown["request"]["id"] == made["id"] and shown["request"]["needs"] == ["payments"]
+    assert cw.client.get(f"{API}/orgs/{org['id']}").json()["request"]["current_tool"] == "excel"            # the platform owner has every right
+
+
+def test_r8_a_link_in_the_name_or_the_centre_is_defanged_in_every_letter_to_the_applicant_and_in_the_subject(cw):
+    body = step2(contact_name="Иван http://evil.example/x", centre_name="Центр pay.evil.example")
+    made = post(cw, body).json()
+    applicant = letters_to(cw.outbox, body["email"])[0]
+    for kind in ("plain", "html"):
+        text = body_of(applicant, kind)
+        assert "http://evil" not in text and "pay.evil.example" not in text and "http[:]//evil" in text and "pay[.]evil[.]example" in text, kind
+    team = letters_to(cw.outbox, "owner-notify@example.test")[0]
+    assert "evil.example" not in team["Subject"] and "pay[.]evil[.]example" in team["Subject"]
+    approve(cw, made["id"])
+    welcome = letters_to(cw.outbox, body["email"])[-1]
+    assert "http://evil" not in body_of(welcome) and "pay.evil.example" not in body_of(welcome, "html")
+    cw.client.post(f"{API}/demo-requests/{post(cw, step2(contact_name='Анна http://evil.example/y')).json()['id']}/decline", json={"send_email": True, "reason": ""})
+    declined = [m for m in cw.outbox if m["Subject"].startswith("Ответ по вашей заявке")][0]
+    assert "http://evil" not in body_of(declined) and "http[:]//evil" in body_of(declined)
+
+
+def test_r9_the_hostname_of_the_answer_must_be_one_of_the_list(cw, fake_turnstile, monkeypatch):
+    monkeypatch.setenv("TURNSTILE_HOSTNAMES", "algolab.me, WWW.algolab.me")
+    for answer, code in (
+        ({"success": True, "hostname": "evil.example"}, 400), ({"success": True}, 400), ({"success": True, "hostname": ""}, 400),
+        ({"success": True, "hostname": "algolab.me"}, 201), ({"success": True, "hostname": "www.ALGOLAB.me"}, 201), ({"success": False, "hostname": "algolab.me"}, 400),
+    ):
+        fake_turnstile["answers"] = [answer]
+        assert post(cw, step2(turnstile_token="t")).status_code == code, answer
+    assert len(rows(cw)) == 2
+
+
+def test_r9_an_empty_list_of_hostnames_does_not_compare(cw, fake_turnstile):
+    fake_turnstile["answers"] = [{"success": True, "hostname": "anything.example"}]
+    assert post(cw, step2(turnstile_token="t")).status_code == 201
+
+
+def test_r9_the_address_of_the_client_goes_to_cloudflare(cw, fake_turnstile):
+    assert post(cw, step2(turnstile_token="good"), ip="203.0.113.150").status_code == 201
+    assert fake_turnstile["remote"] == ["203.0.113.150"]

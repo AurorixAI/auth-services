@@ -100,7 +100,7 @@ def check_public_urls(environ: Optional[Mapping[str, str]] = None) -> None:
 
     Only for production/staging.  The same host of both is logged as an ERROR; the start is refused when ``REQUIRE_DISTINCT_SITE_HOSTS=true``
     (set it together with the move of the product to ``app.``: until then both are one host on the servers, and a hard stop would block the deploy of auth
-    before the move).  A missing ``TURNSTILE_SECRET_KEY`` is a warning: the form is then held by the honeypot and the limits only.
+    before the move).  A missing ``TURNSTILE_SECRET_KEY`` is a warning: the form is then held by the honeypot and the limits only; a key without ``TURNSTILE_HOSTNAMES`` is a warning too.
     """
     env = os.environ if environ is None else environ
     if not is_strict_env(env):
@@ -119,3 +119,7 @@ def check_public_urls(environ: Optional[Mapping[str, str]] = None) -> None:
         logger.error(message)
     if not (env.get("TURNSTILE_SECRET_KEY") or "").strip():
         logger.warning("TURNSTILE_SECRET_KEY не задан при APP_ENV=%s: форма заявки защищена только honeypot и лимитами.", app_env(env))
+    elif not (env.get("TURNSTILE_HOSTNAMES") or "").strip():
+        logger.warning(
+            "TURNSTILE_HOSTNAMES не задан при APP_ENV=%s: хост ответа Turnstile не сверяется, токен с чужого сайта на том же ключе будет принят.", app_env(env)
+        )

@@ -92,11 +92,16 @@ def _source_text(source: dict | None) -> str:
     return "\n".join(parts)
 
 
+APPLICANT_WORDS_LETTERS = ("application_received", "welcome", "application_declined")
+
+
 def _prepare(letter: str, ctx: dict) -> dict:
     out = dict(ctx)
     for key in ("greeting", "centre_name", "city", "reason", "email"):
         if key in out:
-            out[key] = _clean(out[key], 500)
+            # the name and the centre came from the applicant's own form: in a letter he or the owner receives they must not turn into links
+            inert = letter in APPLICANT_WORDS_LETTERS and key in ("greeting", "centre_name")
+            out[key] = _inert(out[key], 500) if inert else _clean(out[key], 500)
     if letter == "application_received":
         out.setdefault("steps", STEPS)
     elif letter == "welcome":
@@ -134,8 +139,8 @@ def _prepare(letter: str, ctx: dict) -> dict:
             ("Получена", tashkent_text(r.get("created_at")) + " (Ташкент)", "plain"),
         ]
         out["rows"] = [(label, value, kind) for label, value, kind in rows if value and value.strip() != "(Ташкент)"]
-        out["centre_name"] = _clean(r.get("centre_name"), 300)
-        out["city"] = _clean(r.get("city"), 200)
+        out["centre_name"] = _inert(r.get("centre_name"), 200)  # these two go to the Subject too
+        out["city"] = _inert(r.get("city"), 100)
         out["is_repeat"] = bool(r.get("is_repeat"))
     return out
 

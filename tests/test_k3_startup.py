@@ -22,7 +22,7 @@ def test_the_flag_makes_the_same_host_a_stop():
 
 def test_two_different_hosts_start_with_the_flag(caplog):
     env = {"APP_ENV": "production", "FRONTEND_URL": "https://app.algolab.me", "SITE_URL": "https://algolab.me", "REQUIRE_DISTINCT_SITE_HOSTS": "true",
-           "TURNSTILE_SECRET_KEY": "k"}
+           "TURNSTILE_SECRET_KEY": "k", "TURNSTILE_HOSTNAMES": "algolab.me"}
     with caplog.at_level("WARNING"):
         guard.check_public_urls(env)
     assert caplog.text == ""

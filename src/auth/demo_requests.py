@@ -139,6 +139,8 @@ def validate(body: Any) -> Tuple[Dict[str, Any], Form]:
         "request_id": form.uuid("request_id", "Идентификатор заявки", required=False),
         **_step3(form),
     }
+    if data["request_id"] is not None and data["request_id"].version != 4:
+        form.fail("request_id", "Идентификатор заявки: нужен uuid версии 4")
     phone_raw = form.text("phone", "Телефон", max_len=40)
     data["phone"] = None
     if phone_raw is not None:
@@ -272,7 +274,7 @@ def check_details_token(token: Any, request_id: UUID) -> None:
     if not isinstance(token, str) or token.count(".") != 2 or len(token) > 200:
         raise invalid
     hex_id, expires_text, signature = token.split(".")
-    if hex_id != request_id.hex or not expires_text.isdigit() or len(expires_text) > 12:
+    if hex_id != request_id.hex or not re.fullmatch(r"[0-9]{1,12}", expires_text):  # ASCII digits only: ``²`` or ``①`` pass str.isdigit() and break int()
         raise invalid
     expires = int(expires_text)
     if not hmac.compare_digest(signature, _signature(request_id, expires)):
@@ -286,10 +288,20 @@ def created_body(row: DemoRequest) -> Dict[str, Any]:
     return {"ok": True, "message": ACCEPTED_TEXT, "id": str(row.id), "details_token": token, "details_token_expires_at": expires_at}
 
 
-def save_new(db: Session, data: Dict[str, Any], source: Dict[str, str], bucket: str, *, applicant_mail: str) -> Tuple[DemoRequest, bool]:
-    """``(row, created)``.  A concurrent request with the same ``request_id`` that won the unique index leaves ``created=False`` and its row."""
+def request_id_conflict() -> PlatformError:
+    return PlatformError(409, "Эта заявка уже отправлена с другими данными. Обновите страницу и отправьте ещё раз.", "request_id_conflict")
+
+
+def same_requester(row: DemoRequest, email: Any) -> bool:
+    """Whose request is it: the repeat of a ``request_id`` is answered only to the one who named the same e-mail (``strip().lower()``)."""
+    return isinstance(email, str) and email.strip().lower() == (row.email or "").strip().lower()
+
+
+def save_new(db: Session, data: Dict[str, Any], source: Dict[str, str], bucket: str) -> Tuple[DemoRequest, bool]:
+    """``(row, created)``.  A concurrent request with the same ``request_id`` that won the unique index leaves ``created=False`` and its row;
+    when that request is another person's (another e-mail) it is 409, never a silent loss of the data."""
     try:
-        row = create(db, data, source, bucket, applicant_mail=applicant_mail)
+        row = create(db, data, source, bucket)
         db.commit()
         return row, True
     except IntegrityError:
@@ -297,14 +309,32 @@ def save_new(db: Session, data: Dict[str, Any], source: Dict[str, str], bucket: 
         existing = find_by_request_id(db, data["request_id"]) if data.get("request_id") else None
         if existing is None:
             raise
+        if not same_requester(existing, data["email"]):
+            raise request_id_conflict() from None
         return existing, False
 
 
 # ---- the letters to the applicant: the ceilings (A5) and the outcome -------------------------------------------------------------------------------
 
+def canonical_mailbox(email: str) -> str:
+    """The mailbox behind the address: lower case, without ``+tag``; ``googlemail.com`` is ``gmail.com`` and gmail ignores dots in the name.
+    One person cannot get a letter per alias, and cannot make the form send letters to a stranger through ``victim+1@``, ``victim+2@``."""
+    text = (email or "").strip().lower()
+    local, at, domain = text.rpartition("@")
+    if not at:
+        return text
+    if domain == "googlemail.com":
+        domain = "gmail.com"
+    local = local.split("+", 1)[0] or local
+    if domain == "gmail.com":
+        local = local.replace(".", "") or local
+    return f"{local}@{domain}"
+
+
 def reserve_applicant_letter(email: str) -> bool:
-    """One letter per address per 24 hours and at most 100 of the form per 24 hours for everybody; ``False`` = over the ceiling (the request is kept)."""
-    digest = hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()[:32]  # no e-mail in a Redis key
+    """One letter per mailbox per day and at most 100 of the form per day for everybody (fixed windows of 24 hours); ``False`` = over the ceiling
+    (the request is kept).  Called only for a request that was just created: a repeat or a lost race must not eat the letter of the one who made it."""
+    digest = hashlib.sha256(canonical_mailbox(email).encode("utf-8")).hexdigest()[:32]  # no e-mail in a Redis key
     count, _ = hit_window(f"rl:demo_mail_addr:{digest}", DAY)
     if count > APPLICANT_LETTERS_PER_ADDRESS:
         return False

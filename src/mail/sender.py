@@ -1,7 +1,7 @@
 """Building and delivering a letter: multipart/alternative (text + HTML), From «ALGO <noreply@algolab.me>», Reply-To.
 
 ``deliver`` is the only function that touches the network; a test replaces it. A failure never raises: the caller gets False and
-the reason goes to the log (without the body: it carries one-time links).
+the reason goes to the log as the class of the error (without the body: it carries one-time links; without the address: only a masked one).
 """
 from __future__ import annotations
 
@@ -16,6 +16,15 @@ from . import config as mail_config
 from .render import Rendered
 
 logger = logging.getLogger(__name__)
+
+
+def mask_address(address: str) -> str:
+    """``john.doe@gmail.com`` -> ``j***@gmail.com``: the only form of an address that may reach the log (it is the personal data of an applicant)."""
+    text = (address or "").strip()
+    if not text:
+        return "***"
+    local, _, domain = text.partition("@")
+    return f"{local[:1]}***@{domain}" if domain else f"{local[:1]}***"
 
 
 def _line(value: str) -> str:
@@ -37,14 +46,16 @@ def build_message(to: str, rendered: Rendered, cfg: mail_config.MailConfig | Non
     msg["X-Auto-Response-Suppress"] = "OOF, AutoReply"
     msg.set_content(rendered.text)  # text/plain first ...
     msg.add_alternative(rendered.html, subtype="html")  # ... then text/html: multipart/alternative, the richest part last
+    msg.letter_kind = rendered.letter  # for the log only (a Python attribute, not a header of the letter)
     return msg
 
 
 def deliver(msg: EmailMessage, cfg: mail_config.MailConfig | None = None) -> bool:
     cfg = cfg or mail_config.load()
-    to = msg["To"]
+    to = str(msg["To"])
+    kind, who = getattr(msg, "letter_kind", "letter"), mask_address(to)  # the log keeps the kind and a masked address: no Subject (it carries the applicant's words)
     if not cfg.smtp_configured:
-        logger.info("SMTP not configured - letter NOT sent. To: %s Subject: %s", to, msg["Subject"])
+        logger.info("SMTP not configured - letter %s to %s NOT sent", kind, who)
         return False
     try:
         if cfg.smtp_port == 465:
@@ -57,16 +68,16 @@ def deliver(msg: EmailMessage, cfg: mail_config.MailConfig | None = None) -> boo
                 server.starttls(context=ssl.create_default_context())
                 server.login(cfg.smtp_user, cfg.smtp_password)
                 server.send_message(msg, from_addr=cfg.from_address, to_addrs=[to])
-        logger.info("Letter sent to %s - %s", to, msg["Subject"])
+        logger.info("Letter %s sent to %s", kind, who)
         return True
-    except Exception:  # noqa: BLE001 - a letter that did not go must never break the request
-        logger.exception("Failed to send a letter to %s (%s)", to, msg["Subject"])
+    except Exception as exc:  # noqa: BLE001 - a letter that did not go must never break the request
+        logger.error("Failed to send a letter %s to %s: %s", kind, who, type(exc).__name__)  # the class only: the text and the trace of smtplib carry the address
         return False
 
 
 def send(to: str, rendered: Rendered) -> bool:
     try:
         return deliver(build_message(to, rendered))
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to send a letter to %s", to)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to send a letter %s to %s: %s", rendered.letter, mask_address(to), type(exc).__name__)
         return False
