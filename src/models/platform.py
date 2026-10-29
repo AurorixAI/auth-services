@@ -56,11 +56,30 @@ class DemoRequest(Base):
     handled_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
     updated_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now(), onupdate=func.now())
+    # K3 (A1): the fields of the three steps of the form; all nullable (the old form of the product sends none of them)
+    org_type = Column(String(20))  # one of the six types of ``organizations``: the approval creates the centre of this type
+    address = Column(Text)
+    branches_count = Column(Integer)
+    position = Column(String(20))
+    preferred_contact_time = Column(String(100))
+    needs = Column(JSONB)  # list of codes (demo_request_choices.NEEDS)
+    current_tool = Column(String(20))
+    heard_from = Column(String(200))
+    locale = Column(String(5))
+    consent_at = Column(DateTime)  # set when the form sent ``consent: true``; not required (owner 29.10: the policy comes later)
+    request_id = Column(UUID(as_uuid=True))  # the client's idempotency key (A3): the same id returns the same request
+    team_mail_status = Column(String(10))  # pending / sent / failed; NULL = a request from before K3
+    applicant_mail_status = Column(String(10))  # pending / sent / failed / cap (daily ceiling reached)
 
     __table_args__ = (
         CheckConstraint(
             "status IN ('new', 'contacted', 'demo_done', 'approved', 'declined', 'spam')", name="ck_demo_requests_status"
         ),
+        CheckConstraint(
+            "org_type IS NULL OR org_type IN ('center', 'private_school', 'university', 'tutoring_center', 'tutor', 'other')",
+            name="ck_demo_requests_org_type",
+        ),
+        Index("ux_demo_requests_request_id", "request_id", unique=True, postgresql_where=text("request_id IS NOT NULL")),
         Index("ix_demo_requests_status_created", "status", "created_at"),
         Index("ix_demo_requests_email", "email"),
     )

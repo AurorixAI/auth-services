@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from src.core.database import get_db
 from src.models.auth import Group, GroupAttendance, Organization, OrganizationMember, Student, StudentPayment, User
+from src.models.platform import DemoRequest
 
 from . import platform_audit as audit
 from .platform_common import contains, iso, not_found, page_params, page_response, query_form, utcnow
@@ -175,8 +176,15 @@ def get_org(org_id: str, p: Principal = Depends(require_platform("orgs.view")), 
         .order_by(OrganizationMember.org_role, User.last_name)
         .all()
     )
+    source = db.query(DemoRequest).filter(DemoRequest.org_id == org.id).order_by(DemoRequest.created_at.desc()).first()
     out.update(
         {
+            "org_type": org.org_type,
+            "request": None if source is None else {
+                "id": str(source.id), "created_at": iso(source.created_at), "needs": list(source.needs or []), "current_tool": source.current_tool,
+                "heard_from": source.heard_from, "branches_count": source.branches_count, "position": source.position,
+                "preferred_contact_time": source.preferred_contact_time,
+            },
             "phone": org.phone,
             "email": org.email,
             "address": org.address,

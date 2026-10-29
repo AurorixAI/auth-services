@@ -89,3 +89,33 @@ def diagnostic_base_url(environ: Optional[Mapping[str, str]] = None) -> str:
             raise RuntimeError("CRITICAL: " + message)
         logger.error(message)
     return configured or DEFAULT_DIAGNOSTIC_URL
+
+
+def _host(url: str) -> str:
+    return (url.split("://", 1)[-1].split("/", 1)[0].split("@")[-1].split(":")[0]).strip().lower()
+
+
+def check_public_urls(environ: Optional[Mapping[str, str]] = None) -> None:
+    """K3 (A9): the product (``FRONTEND_URL``) and the landing (``SITE_URL``) are two different hosts, and the form is guarded by Turnstile.
+
+    Only for production/staging.  The same host of both is logged as an ERROR; the start is refused when ``REQUIRE_DISTINCT_SITE_HOSTS=true``
+    (set it together with the move of the product to ``app.``: until then both are one host on the servers, and a hard stop would block the deploy of auth
+    before the move).  A missing ``TURNSTILE_SECRET_KEY`` is a warning: the form is then held by the honeypot and the limits only.
+    """
+    env = os.environ if environ is None else environ
+    if not is_strict_env(env):
+        return
+    from src.mail import config as mail_config  # the defaults of the two addresses are the letters' own
+
+    frontend = _host(env.get("FRONTEND_URL") or mail_config.DEFAULT_FRONTEND_URL)
+    site = _host(env.get("SITE_URL") or mail_config.DEFAULT_SITE_URL)
+    if frontend == site:
+        message = (
+            f"FRONTEND_URL и SITE_URL указывают на один хост ({frontend}) при APP_ENV={app_env(env)}: продукт и лендинг должны быть на "
+            f"разных адресах (app. и основной)."
+        )
+        if (env.get("REQUIRE_DISTINCT_SITE_HOSTS") or "").strip().lower() in ("1", "true", "yes"):
+            raise RuntimeError("CRITICAL: " + message)
+        logger.error(message)
+    if not (env.get("TURNSTILE_SECRET_KEY") or "").strip():
+        logger.warning("TURNSTILE_SECRET_KEY не задан при APP_ENV=%s: форма заявки защищена только honeypot и лимитами.", app_env(env))

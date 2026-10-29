@@ -46,7 +46,22 @@ def _users(db: Session, ids) -> Dict[str, dict]:
     return {str(r.id): {"id": str(r.id), "name": f"{r.first_name} {r.last_name}".strip(), "email": r.email} for r in rows}
 
 
-def _row(r: DemoRequest, people: Dict[str, dict]) -> dict:
+def _known_emails(db: Session, emails) -> set:
+    """Which of these e-mails already belong to a person in ALGO (the console warns on the card of the request, A7)."""
+    wanted = {e.lower() for e in emails if e}
+    if not wanted:
+        return set()
+    return {e for (e,) in db.query(func.lower(User.email)).filter(func.lower(User.email).in_(wanted)).all()}
+
+
+def _mail_state(r: DemoRequest) -> Optional[dict]:
+    """The outcome of the letters (A5, A8); ``None`` for a request from before K3."""
+    if r.team_mail_status is None and r.applicant_mail_status is None:
+        return None
+    return {"team": r.team_mail_status, "applicant": r.applicant_mail_status}
+
+
+def _row(r: DemoRequest, people: Dict[str, dict], known_emails: frozenset = frozenset()) -> dict:
     handler = people.get(str(r.handled_by)) if r.handled_by else None
     return {
         "id": str(r.id),
@@ -56,6 +71,18 @@ def _row(r: DemoRequest, people: Dict[str, dict]) -> dict:
         "phone": r.phone,
         "email": r.email,
         "students_count": r.students_count,
+        "org_type": r.org_type,
+        "address": r.address,
+        "branches_count": r.branches_count,
+        "position": r.position,
+        "preferred_contact_time": r.preferred_contact_time,
+        "needs": list(r.needs or []),
+        "current_tool": r.current_tool,
+        "heard_from": r.heard_from,
+        "locale": r.locale,
+        "consent_at": iso(r.consent_at),
+        "mail": _mail_state(r),
+        "email_in_algo": r.status in OPEN_STATUSES and r.email.lower() in known_emails,  # after the approval the e-mail is the new owner's: no warning
         "status": r.status,
         "is_repeat": bool(r.is_repeat),
         "source": r.source or {},
@@ -77,7 +104,7 @@ def _card(db: Session, r: DemoRequest) -> dict:
     )
     people = _users(db, [r.handled_by] + [n.author_id for n in notes])
     org = db.get(Organization, r.org_id) if r.org_id else None
-    out = _row(r, people)
+    out = _row(r, people, frozenset(_known_emails(db, [r.email])))
     out.update(
         {
             "comment": r.comment,
@@ -151,12 +178,13 @@ def list_requests(request: Request, p: Principal = Depends(require_platform("req
     ordered = column.asc() if page.order == "asc" else column.desc()
     rows = query.order_by(ordered, DemoRequest.id).offset(page.offset).limit(page.size).all()
     people = _users(db, [r.handled_by for r in rows])
+    known = frozenset(_known_emails(db, [r.email for r in rows]))
 
     counts = {s: 0 for s in DEMO_REQUEST_STATUSES}
     for status, n in db.query(DemoRequest.status, func.count()).group_by(DemoRequest.status).all():
         counts[status] = n
     counts["all"] = sum(counts.values())
-    return page_response([_row(r, people) for r in rows], total, page, counts=counts)
+    return page_response([_row(r, people, known) for r in rows], total, page, counts=counts)
 
 
 @router.get("/{request_id}")
@@ -244,8 +272,8 @@ def approve(
     patronymic = patronymic[:100] if patronymic else None
     now = utcnow()
     org = Organization(
-        name=org_name or row.centre_name, org_type="center", city=row.city, phone=row.phone, email=owner_email,
-        status="active", approved_at=now, approved_by=p.user.id,
+        name=org_name or row.centre_name, org_type=row.org_type or "center", city=row.city, address=row.address, phone=row.phone,
+        email=owner_email, status="active", approved_at=now, approved_by=p.user.id,  # the type and the address of the request (A7)
     )
     db.add(org)
     db.flush()

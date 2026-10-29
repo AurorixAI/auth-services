@@ -9,6 +9,8 @@ from typing import Any, Dict
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 
+from src.auth.demo_request_choices import LOCALE_LABELS, NEEDS_LABELS, ORG_TYPE_LABELS, POSITION_LABELS, TOOL_LABELS, label
+
 TEMPLATES = Path(__file__).parent / "templates"
 TASHKENT = timezone(timedelta(hours=5))
 MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря")
@@ -109,15 +111,26 @@ def _prepare(letter: str, ctx: dict) -> dict:
         out.setdefault("reason", "")
     elif letter == "new_application":
         r = out["request"]
+        branches = r.get("branches_count")
         rows = [
             ("Имя", _inert(r.get("contact_name"), 120), "plain"),
+            ("Должность", label(POSITION_LABELS, r.get("position")), "plain"),
             ("Центр", _inert(r.get("centre_name"), 200), "plain"),
+            ("Тип центра", label(ORG_TYPE_LABELS, r.get("org_type")), "plain"),
             ("Город", _inert(r.get("city"), 100), "plain"),
+            ("Адрес", _inert(r.get("address"), 300), "plain"),
             ("Телефон", _clean(r.get("phone"), 40), "tel"),
             ("Почта", _clean(r.get("email"), 255), "mail"),
+            ("Удобное время", _inert(r.get("preferred_contact_time"), 100), "plain"),
             ("Учеников", "" if r.get("students_count") is None else str(r.get("students_count")), "plain"),
+            ("Филиалов", "" if branches is None else ("нет" if branches == 0 else str(branches)), "plain"),
+            ("Задачи", ", ".join(label(NEEDS_LABELS, code) for code in (r.get("needs") or []) if label(NEEDS_LABELS, code)), "plain"),
+            ("Чем пользуются", label(TOOL_LABELS, r.get("current_tool")), "plain"),
+            ("Откуда узнали", _inert(r.get("heard_from"), 200), "plain"),
+            ("Язык формы", label(LOCALE_LABELS, r.get("locale")), "plain"),
             ("Комментарий", _inert(r.get("comment"), 600), "plain"),
             ("Источник", _source_text(r.get("source")), "plain"),
+            ("Согласие на обработку данных", "дано " + tashkent_text(r["consent_at"]) if r.get("consent_at") else "", "plain"),
             ("Получена", tashkent_text(r.get("created_at")) + " (Ташкент)", "plain"),
         ]
         out["rows"] = [(label, value, kind) for label, value, kind in rows if value and value.strip() != "(Ташкент)"]

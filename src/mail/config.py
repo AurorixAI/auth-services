@@ -5,6 +5,10 @@ import os
 from dataclasses import dataclass
 
 
+DEFAULT_FRONTEND_URL = "http://localhost:3000"
+DEFAULT_SITE_URL = "https://algolab.me"
+
+
 @dataclass(frozen=True)
 class MailConfig:
     smtp_host: str
@@ -50,6 +54,6 @@ def load() -> MailConfig:
         reply_to=os.getenv("MAIL_REPLY_TO", "").strip(),
         admin_email=os.getenv("ADMIN_NOTIFICATION_EMAIL", "").strip(),
         console_url=_url("CONSOLE_URL", "https://console.algolab.me"),
-        frontend_url=_url("FRONTEND_URL", "http://localhost:3000"),
-        site_url=_url("SITE_URL", "https://algolab.me"),
+        frontend_url=_url("FRONTEND_URL", DEFAULT_FRONTEND_URL),
+        site_url=_url("SITE_URL", DEFAULT_SITE_URL),
     )

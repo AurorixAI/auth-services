@@ -90,6 +90,11 @@ async def lifespan(app: FastAPI):
             "would carry useless links.", ", ".join(bad_urls),
         )
 
+    # K3 (A9): the product and the landing on different hosts (fatal with REQUIRE_DISTINCT_SITE_HOSTS=true); Turnstile key present
+    from src.core.startup_guard import check_public_urls
+
+    check_public_urls()
+
     # Применяем миграции Alembic (только новые, идемпотентно)
     from alembic.config import Config
     from alembic import command
