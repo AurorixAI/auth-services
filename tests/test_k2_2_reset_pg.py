@@ -295,6 +295,24 @@ def test_f3_inv7_the_domain_budget_is_thirty_per_hour(cw, centre, monkeypatch):
 
 
 @needs_pg
+def test_f3_r3_made_up_addresses_of_a_big_domain_do_not_shut_a_real_user_of_that_domain_out(cw, centre, monkeypatch):
+    monkeypatch.setattr(reset, "PER_ADDRESS", (1000, 3600))
+    real = cw.make_user(email=f"real-{uuid4().hex[:6]}@gmail.com", role="teacher")
+    real.default_org_id = centre.org.id
+    cw.db.add(OrganizationMember(org_id=centre.org.id, user_id=real.id, org_role="teacher"))
+    cw.db.commit()
+    for i in range(40):
+        if i == 20:
+            from src.api import rate_limit
+
+            rate_limit._memory_store.clear()                                            # (the burst guard of 30 a minute per client address is not what is tested)
+        r = forgot(anonymous(cw), f"nobody-{i}-{uuid4().hex[:5]}@gmail.com")
+        assert r.status_code == 200 and r.json()["message"] == NEUTRAL
+    assert forgot(anonymous(cw), real.email).status_code == 200
+    assert len(letters_to(cw.outbox, real.email)) == 1                                  # the 40 made-up requests spent no part of the domain budget
+
+
+@needs_pg
 def test_m2_the_platform_budget_is_150_a_day_then_nothing_goes_and_the_log_warns_once(cw, centre, monkeypatch, caplog):
     assert reset.PER_PLATFORM_DAY == 150
     monkeypatch.setattr(reset, "PER_PLATFORM_DAY", 2)

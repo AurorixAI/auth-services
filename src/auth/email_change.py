@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 TTL = timedelta(hours=24)
 PER_TARGET_HOUR = 5
+PER_CENTRE_HOUR = 10   # attempts of the OWNERS of one centre per hour, counted BEFORE the address is looked at (an answer «занят» must not be a free oracle)
 PER_NEW_ADDRESS_DAY = 5
 TAKEN = PlatformError(409, "Этот адрес уже используется", "email_taken")
 
@@ -61,6 +62,9 @@ def start(db: Session, *, org_id, actor: dict, member_id, new_email_raw: object,
         from .password_reset import NOT_FOUND
 
         raise NOT_FOUND
+    count, left = hit_window(f"rl:email_change_centre:{org_id}", 3600)   # every attempt, before ``_taken`` (K2-2 R3, 2)
+    if count > PER_CENTRE_HOUR:
+        raise PlatformError(429, "Слишком много попыток, попробуйте через час", "rate_limited", retry_after=left)
     new_email = _clean_email(new_email_raw)
     if new_email == (user.email or "").strip().lower():
         raise validation_error({"email": "Это уже текущая почта сотрудника"}, message="Это уже текущая почта сотрудника")

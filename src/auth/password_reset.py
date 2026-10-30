@@ -75,18 +75,24 @@ def reachable_by_forgot(db: Session, user: Optional[User]) -> bool:
 
 # ---------------------------------------------------------------------------------------------------------- «Забыли пароль»
 def count_request(email: str, client: str) -> bool:
-    """Count one request in every window (always all four steps: the cost does not depend on the address). True = within the limits."""
-    domain = email.rpartition("@")[2]
+    """Count one request in the two windows that need no knowledge of the address (the mailbox, the client address; both steps always, the cost does not
+    depend on the address). True = within the limits. The DOMAIN budget is counted later, in the background, and only for a request that will really send a
+    letter (``domain_has_room``): a flood of made-up @gmail.com addresses must not shut a real user of gmail out (K2-2 R3, 1)."""
     ok = True
     for key, (limit, window) in (
         (f"rl:forgot_mail:{_digest(email)}", PER_MAILBOX),
         (f"rl:forgot_ip:{client}", PER_ADDRESS),
-        (f"rl:forgot_domain:{_digest(domain)}", PER_DOMAIN),
     ):
         count, _ = hit_window(key, window)
         if count > limit:
             ok = False
     return ok
+
+
+def domain_has_room(email: str) -> bool:
+    """One slot of the hourly budget of the mail domain of a REAL recipient (counted in the background; the answer of the page is the same either way)."""
+    count, _ = hit_window(f"rl:forgot_domain:{_digest(email.rpartition('@')[2])}", PER_DOMAIN[1])
+    return count <= PER_DOMAIN[0]
 
 
 def platform_has_room() -> bool:
@@ -111,7 +117,7 @@ def process_forgot(db: Session, email: str, requested_at: datetime) -> bool:
     user = db.query(User).filter(func.lower(User.email) == email).first()
     if not reachable_by_forgot(db, user):
         return False
-    if not platform_has_room():
+    if not domain_has_room(email) or not platform_has_room():
         return False
     token, link = links.issue(db, user.id, "reset", created_by=None)
     db.commit()

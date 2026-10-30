@@ -215,7 +215,10 @@ def test_e_a_new_request_ends_the_earlier_one_and_there_is_one_live_row(cw, cent
 
 
 @needs_pg
-def test_e_the_address_must_be_an_address_and_a_different_one_and_the_asking_is_limited(cw, centre):
+def test_e_the_address_must_be_an_address_and_a_different_one_and_the_asking_is_limited(cw, centre, monkeypatch):
+    from src.auth import email_change
+
+    monkeypatch.setattr(email_change, "PER_CENTRE_HOUR", 100)                          # (the limit of the centre has its own test)
     owner = signed_in(cw, centre.owner)
     for bad in ("", "not-an-address", "a@b", "x" * 300 + "@y.test", 5, None):
         r = owner.post(f"{AUTH}/org/members/{member_of(cw, centre.teacher).id}/email-change", json={"email": bad})
@@ -224,6 +227,20 @@ def test_e_the_address_must_be_an_address_and_a_different_one_and_the_asking_is_
     assert same.status_code == 422 and "уже текущая" in json.dumps(same.json(), ensure_ascii=False)
     codes = [start(owner, cw, centre.teacher, new_address()).status_code for _ in range(6)]
     assert codes == [200, 200, 200, 200, 200, 429]                                    # five tries an hour for one employee
+
+
+@needs_pg
+def test_e8_r3_the_asking_of_a_centre_is_limited_before_the_address_is_looked_at_so_taken_is_no_oracle(cw, centre):
+    owner = signed_in(cw, centre.owner)
+    other = cw.make_centre()
+    taken = other.teacher.email
+    codes = [start(owner, cw, centre.teacher if i % 2 else centre.admin, taken).status_code for i in range(10)]
+    assert codes == [409] * 10                                                         # ten attempts: «занят» (not yet limited)
+    late = start(owner, cw, centre.teacher, taken)
+    assert late.status_code == 429 and late.json()["detail"] == "Слишком много попыток, попробуйте через час"
+    assert "используется" not in late.text                                              # the 11th attempt no longer tells whether the address is taken
+    assert start(owner, cw, centre.teacher, new_address()).status_code == 429          # nor lets a free one through
+    assert start(signed_in(cw, other.owner), cw, other.teacher, new_address()).status_code == 200   # another centre has its own budget
 
 
 @needs_pg
