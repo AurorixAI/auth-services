@@ -1,4 +1,4 @@
-"""The browser session survives an idle hour: the access COOKIE lives 30 days, the JWT inside 60 minutes.
+"""The browser session survives an idle hour: the access COOKIE lives as long as the session (14 days remembered, until the browser closes otherwise), the JWT inside 60 minutes.
 
 Defect (prod): the access cookie `algo_auth_token` had max-age 3600, so after an hour away the browser
 sent no credential at all, the Next.js middleware redirected to /login before any client code could call
@@ -56,7 +56,7 @@ from src.core.exceptions import AlgoException  # noqa: E402
 
 from tests.pg_world import needs_pg, pg_session, session_clock, world  # noqa: E402,F401  (fixtures)
 
-THIRTY_DAYS = 30 * 86400
+FOURTEEN_DAYS = 14 * 86400   # K2-1 (D): a REMEMBERED session; without the tick the cookies have no Max-Age
 API = "/api/v1/auth"
 
 
@@ -106,20 +106,21 @@ def assert_cleared(response):
     for morsel in jar.values():
         assert morsel.value == "" and morsel["max-age"] == "0"
     assert jar[AUTH_COOKIE_NAME]["path"] == "/"
-    assert jar[REFRESH_COOKIE_NAME]["path"] == "/api/v1/auth"
+    assert jar[REFRESH_COOKIE_NAME]["path"] == "/"          # K2-1 (A3): the __Host- rule needs the root path
 
 
-def assert_session_cookies(response, access_token=None):
+def assert_session_cookies(response, access_token=None, remember=False):
     jar = set_cookies(response)
     assert set(jar) == {AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME}
     access, refresh = jar[AUTH_COOKIE_NAME], jar[REFRESH_COOKIE_NAME]
-    # the access COOKIE is as long-lived as the refresh cookie ...
-    assert access["max-age"] == str(THIRTY_DAYS) == refresh["max-age"]
+    # the access COOKIE is as long-lived as the refresh cookie: 14 days when remembered, a session cookie (no Max-Age) otherwise ...
+    assert access["max-age"] == refresh["max-age"] == (str(FOURTEEN_DAYS) if remember else "")
+    assert not access["expires"] and not refresh["expires"]
     # ... and every flag of the policy is untouched
     for morsel in (access, refresh):
         assert morsel["httponly"] is True
         assert morsel["samesite"].lower() == "lax"
-    assert access["path"] == "/" and refresh["path"] == "/api/v1/auth"
+    assert access["path"] == "/" and refresh["path"] == "/"
     if access_token is not None:
         assert access.value == access_token
     return access, refresh
@@ -129,7 +130,7 @@ def assert_session_cookies(response, access_token=None):
 
 
 def test_access_cookie_lives_as_long_as_the_refresh_cookie_but_the_jwt_stays_short():
-    assert access_cookie_max_age() == refresh_cookie_max_age() == THIRTY_DAYS
+    assert access_cookie_max_age() == refresh_cookie_max_age() == FOURTEEN_DAYS
     token = create_access_token("user-1", "teacher")
     payload = decode_token(token)
     assert payload["exp"] - payload["iat"] == ACCESS_TOKEN_EXPIRE_MINUTES * 60 == 3600
@@ -140,7 +141,7 @@ def test_both_cookie_lifetimes_follow_the_configured_refresh_ttl(monkeypatch):
     """JWT_REFRESH_TTL_DAYS is configurable: the cookies must not outlive (or die before) the refresh JWT."""
     monkeypatch.setattr(service_module, "REFRESH_TOKEN_EXPIRE_DAYS", 7)
     assert refresh_cookie_max_age() == access_cookie_max_age() == 7 * 86400
-    jar = set_cookies(cookies_module.set_auth_cookies(JSONResponse({}), "a", "r"))
+    jar = set_cookies(cookies_module.set_auth_cookies(JSONResponse({}), "a", "r", True))
     assert jar[AUTH_COOKIE_NAME]["max-age"] == jar[REFRESH_COOKIE_NAME]["max-age"] == str(7 * 86400)
     # the refresh JWT really lives that long (same constant)
     refresh = decode_token(create_refresh_token("user-1"))
@@ -149,22 +150,21 @@ def test_both_cookie_lifetimes_follow_the_configured_refresh_ttl(monkeypatch):
 
 def test_set_auth_cookies_flags_and_lifetimes(monkeypatch):
     monkeypatch.setattr(cookies_module, "_IS_PROD", True)
-    monkeypatch.setattr(cookies_module, "_COOKIE_DOMAIN", ".algo.kz")
-    response = cookies_module.set_auth_cookies(JSONResponse({}), "access.jwt", "refresh.jwt")
+    monkeypatch.setenv("COOKIE_DOMAIN", ".algo.kz")          # no Domain is ever set any more (the __Host- rule)
+    response = cookies_module.set_auth_cookies(JSONResponse({}), "access.jwt", "refresh.jwt", True)
     jar = set_cookies(response)
-    assert jar[AUTH_COOKIE_NAME].value == "access.jwt" and jar[REFRESH_COOKIE_NAME].value == "refresh.jwt"
+    assert jar["__Host-algo_auth_token"].value == "access.jwt" and jar["__Host-algo_refresh_token"].value == "refresh.jwt"
     for morsel in jar.values():
-        assert morsel["max-age"] == str(THIRTY_DAYS)
+        assert morsel["max-age"] == str(FOURTEEN_DAYS)
         assert morsel["httponly"] is True and morsel["secure"] is True
         assert morsel["samesite"].lower() == "lax"
-        assert morsel["domain"] == ".algo.kz"
-    assert jar[AUTH_COOKIE_NAME]["path"] == "/" and jar[REFRESH_COOKIE_NAME]["path"] == "/api/v1/auth"
+        assert not morsel["domain"] and morsel["path"] == "/"
 
 
 def test_cookies_are_not_secure_outside_production(monkeypatch):
     monkeypatch.setattr(cookies_module, "_IS_PROD", False)
-    monkeypatch.setattr(cookies_module, "_COOKIE_DOMAIN", None)
     jar = set_cookies(cookies_module.set_auth_cookies(JSONResponse({}), "a", "r"))
+    assert set(jar) == {"algo_auth_token", "algo_refresh_token"}
     for morsel in jar.values():
         assert not morsel["secure"] and not morsel["domain"] and morsel["httponly"] is True
 
@@ -209,13 +209,13 @@ def test_the_module_reads_the_environment_the_deploy_really_sets():
 @pytest.mark.parametrize("secure", [True, False])
 def test_set_and_delete_cookies_carry_the_same_secure_flag(monkeypatch, secure):
     monkeypatch.setattr(cookies_module, "_IS_PROD", secure)
-    monkeypatch.setattr(cookies_module, "_COOKIE_DOMAIN", None)
+    names = cookies_module.cookie_names(secure)
     for response in (
         cookies_module.set_auth_cookies(JSONResponse({}), "a", "r"),
         cookies_module.clear_auth_cookies(JSONResponse({})),
     ):
         jar = set_cookies(response)
-        assert set(jar) == {AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME}
+        assert set(jar) == set(names)
         for morsel in jar.values():
             assert bool(morsel["secure"]) is secure and morsel["httponly"] is True
             assert morsel["samesite"].lower() == "lax"
@@ -357,7 +357,7 @@ def test_a_valid_cookie_still_beats_the_header():
 def revocations(monkeypatch):
     """Record the server-side sign-outs: (kind, subject)."""
     seen = []
-    monkeypatch.setattr(AuthService, "logout", lambda self, user_id: seen.append(("user", user_id)))
+    monkeypatch.setattr(AuthService, "logout", lambda self, user_id, session_id=None: seen.append(("user", user_id)))
     monkeypatch.setattr(
         AuthService, "logout_by_refresh_token", lambda self, token: seen.append(("refresh", token)) or True
     )
@@ -520,13 +520,15 @@ def live_hashes(w, user=None):
 
 
 @needs_pg
-def test_login_sets_a_30_day_access_cookie_holding_a_60_minute_jwt(session_world):
+def test_login_sets_a_session_access_cookie_holding_a_60_minute_jwt_and_a_14_day_one_when_remembered(session_world):
     r = login(session_world)
     access, refresh = assert_session_cookies(r)
     payload = decode_token(access.value)
-    assert payload["type"] == "access" and payload["exp"] - payload["iat"] == 3600
-    assert r.json()["tokens"]["expires_in"] == 3600
+    assert payload["type"] == "access" and payload["exp"] - payload["iat"] == 3600 and payload["sid"]
+    assert "tokens" not in r.json()
     assert decode_token(refresh.value)["type"] == "refresh"
+    remembered = session_world.client.post(f"{API}/login", json={"email": session_world.owner.email, "password": PASSWORD, "remember_me": True})
+    assert_session_cookies(remembered, remember=True)
 
 
 @needs_pg
@@ -562,7 +564,7 @@ def test_retry_with_a_bearer_token_works_even_when_the_stale_cookie_is_still_in_
     refresh_cookie = set_cookies(login(w))[REFRESH_COOKIE_NAME].value
     stale = expired_access_token(str(w.owner.id), "owner")
     r = w.client.post(f"{API}/refresh", json={}, headers=cookie_header(access=stale, refresh=refresh_cookie))
-    fresh = r.json()["access_token"]
+    fresh = set_cookies(r)[AUTH_COOKIE_NAME].value
     r = w.client.get(f"{API}/me", headers={"authorization": f"Bearer {fresh}", **cookie_header(access=stale)})
     assert r.status_code == 200
 

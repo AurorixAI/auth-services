@@ -26,6 +26,7 @@ ACTION_LABELS: Dict[str, str] = {
     "console.password.changed": "Смена пароля консоли",
     "console.password.change_failed": "Неудачная смена пароля консоли (неверный текущий)",
     "user.password_set_by_link": "Пароль задан по ссылке",
+    "login.superadmin_denied": "Вход суперадмина в кабинет отклонён",
     "demo_request.received": "Заявка получена",
     "demo_request.status_changed": "Статус заявки изменён",
     "demo_request.note_added": "Заметка к заявке",

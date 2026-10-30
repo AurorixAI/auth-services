@@ -259,6 +259,9 @@ def make_client(w, user=None, org="own", org_role=None, role=None):
     app.include_router(payroll_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = lambda: w.db
     app.dependency_overrides[get_current_active_user_payload] = lambda: payload
+    from src.auth.platform_errors import PlatformError, platform_error_handler
+
+    app.add_exception_handler(PlatformError, platform_error_handler)  # as the real application answers (the 410 link_revoked of an invitation)
     return TestClient(app)
 
 

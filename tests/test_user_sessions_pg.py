@@ -54,9 +54,9 @@ class Device:
         jar = set_cookies(response)
         self.access, self.refresh = jar[AUTH_COOKIE_NAME].value, jar[REFRESH_COOKIE_NAME].value
 
-    def login(self, password=PASSWORD):
+    def login(self, password=PASSWORD, remember=False):
         r = self.client.post(
-            f"{API}/login", json={"email": self.user.email, "password": password}, headers=self.headers
+            f"{API}/login", json={"email": self.user.email, "password": password, "remember_me": remember}, headers=self.headers
         )
         assert r.status_code == 200, r.text
         self._take(r)
@@ -222,12 +222,13 @@ def test_logout_on_one_device_signs_out_only_that_device(session_world):
 
 
 @needs_pg
-def test_logout_by_access_token_alone_identifies_no_device_and_revokes_nothing(session_world):
+def test_logout_by_access_token_alone_revokes_the_session_it_names_and_only_that_one(session_world):
+    """K2-1 (A5): the access token carries ``sid``, so it does identify a device: that session ends at once; the other device stays."""
     w = session_world
     a, b = Device(w).login(), Device(w).login()
     r = a.client.post(f"{API}/logout", headers=cookie_header(access=a.access))
     assert r.status_code == 200
-    assert len(live(w)) == 2 and a.status_of_refresh() == 200 and b.status_of_refresh() == 200
+    assert len(live(w)) == 1 and a.status_of_refresh() == 401 and b.status_of_refresh() == 200
 
 
 @needs_pg
@@ -432,7 +433,7 @@ def test_the_grace_is_counted_from_the_supersession_of_each_token_not_from_the_l
 @needs_pg
 def test_rotation_slides_the_expiry_and_records_the_last_use(session_world, session_clock):
     w = session_world
-    a = Device(w).login()
+    a = Device(w).login(remember=True)             # only a remembered session slides (a short one keeps its end: see test_k2_1_pg.py)
     first = sessions(w)[0]
     created, expires = first.created_at, first.expires_at
     session_clock.advance(3600)
@@ -568,7 +569,7 @@ def test_a_sign_in_sweeps_at_most_one_batch_of_old_superseded_tokens(session_wor
 @needs_pg
 def test_a_refresh_prunes_the_old_superseded_tokens_of_its_own_session(session_world, session_clock):
     w = session_world
-    a = Device(w).login()
+    a = Device(w).login(remember=True)
     for _ in range(3):
         a.refresh_ok()
     (session,) = sessions(w)
@@ -705,7 +706,7 @@ def test_ip_and_user_agent_come_from_the_trusted_helper_and_are_bounded(session_
 
 
 @needs_pg
-def test_invitation_accept_and_activation_each_create_a_session(session_world):
+def test_invitation_accept_creates_a_session(session_world):
     from src.auth.schemas import AcceptInviteRequest
     from src.models.auth import Invitation, Organization
 
@@ -727,18 +728,6 @@ def test_invitation_accept_and_activation_each_create_a_session(session_world):
     (row,) = sessions(w, invited)
     assert live_tokens(w, invited) == {hash_token(result.tokens.refresh_token)} and row.revoked_at is None
 
-    # activation of an organisation: a new session for its owner, the owner's other sessions stay
-    Device(w).login()
-    token = uuid4().hex
-    org = Organization(name="To activate", status="pending", owner_id=w.owner.id, activation_token=hash_token(token))
-    w.db.add(org)
-    w.db.commit()
-    before = {s.id for s in live(w)}
-    activated = svc.activate_account(token)
-    after = live(w)
-    assert before <= {s.id for s in after} and len(after) == len(before) + 1
-    assert hash_token(activated.tokens.refresh_token) in live_tokens(w)
-
 
 @needs_pg
 def test_dev_quick_login_creates_a_session_per_call(session_world):
@@ -757,7 +746,8 @@ def test_dev_quick_login_creates_a_session_per_call(session_world):
     for _ in range(2):
         r = client.post(f"{API}/dev-login?role=teacher", headers={"x-real-ip": "203.0.113.5"})
         assert r.status_code == 200, r.text
-        hashes.append(hash_token(r.json()["tokens"]["refresh_token"]))
+        assert "tokens" not in r.json()
+        hashes.append(hash_token(set_cookies(r)[REFRESH_COOKIE_NAME].value))
     dev_user = w.db.query(User).filter(User.email == "dev_teacher@algo.test").one()
     rows = {h: session_of(w, h) for h in hashes}
     assert len({r.id for r in rows.values()}) == 2 and set(hashes) <= live_tokens(w, dev_user)

@@ -264,14 +264,16 @@ def test_send_reset_makes_a_one_hour_link_and_one_journal_row(cw):
 def test_block_closes_the_sign_in_and_the_open_sessions_and_unblock_reopens(cw):
     centre = cw.make_centre()
     client, login = cabinet_login(cw, centre.teacher)
-    refresh = login.json()["tokens"]["refresh_token"]
+    refresh = client.cookies.get("algo_refresh_token")
     assert client.get("/api/v1/auth/me").status_code == 200
     friend, _ = cabinet_login(cw, centre.admin)
 
     r = cw.client.post(f"{API}/users/{centre.teacher.id}/block", json={"reason": "Увольнение"})
     assert r.status_code == 200 and r.json()["status"] == "blocked" and r.json()["blocked"] is True
     assert client.get("/api/v1/auth/me").status_code == 401                                    # the open session is closed
-    assert cw.new_client(APP).post("/api/v1/auth/refresh", json={"refresh_token": refresh}).status_code == 401
+    stale = cw.new_client(APP)
+    stale.cookies.set("algo_refresh_token", refresh)
+    assert stale.post("/api/v1/auth/refresh", json={}).status_code == 401
     assert cabinet_login(cw, centre.teacher)[1].status_code == 401                             # the sign-in is closed
     assert friend.get("/api/v1/auth/me").status_code == 200                                    # a colleague is untouched
     cw.db.expire_all()

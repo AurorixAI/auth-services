@@ -29,8 +29,10 @@ SUBJECTS: Dict[str, str] = {
     "application_declined": "Ответ по вашей заявке — ALGO",
     "new_application": "[ALGO] Новая заявка: {centre_name}, {city}",
     "password_reset": "Сброс пароля ALGO",
+    "staff_invite": "Приглашение в ALGO — {centre_name}",
 }
 LETTERS = tuple(SUBJECTS)
+ROLE_TEXT = {"teacher": "преподаватель", "admin": "администратор"}
 
 STEPS = (
     ("1", "Знакомство", "Короткий звонок или сообщение: узнаем, как устроен ваш центр и что для вас важно."),
@@ -108,6 +110,10 @@ def _prepare(letter: str, ctx: dict) -> dict:
         out["expires_text"] = tashkent_text(out.get("expires_at"))
         out.setdefault("expires_phrase", "72 часа")
         out.setdefault("email", "")
+    elif letter == "staff_invite":
+        out["expires_text"] = tashkent_text(out.get("expires_at"))
+        out.setdefault("expires_phrase", "7 дней")
+        out["role_text"] = ROLE_TEXT.get(out.get("org_role"), "сотрудник")
     elif letter == "password_reset":
         out.setdefault("expires_phrase", "1 час")
         out.setdefault("greeting", "")

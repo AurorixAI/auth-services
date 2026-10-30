@@ -83,15 +83,13 @@ class OrgApplicationRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=255)
     password: str = Field(..., min_length=1, max_length=128)
+    # K2-1 (D): «Запомнить меня» - the server keeps the mode on the session (14 days sliding; without it: until the browser closes, at most 12 h)
+    remember_me: bool = False
 
     @field_validator("email")
     @classmethod
     def normalize_email(cls, v):
         return v.lower().strip()
-
-
-class RefreshTokenRequest(BaseModel):
-    refresh_token: Optional[str] = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -684,15 +682,28 @@ class OrgUpdateRequest(BaseModel):
 
 
 class TokenPair(BaseModel):
+    """INTERNAL: what a sign-in or a refresh hands to the route, which puts the two tokens into the httpOnly cookies and never into the body
+    (K2-1, A2: no ``*token*`` field is ever in a response). ``remember`` is the mode of the session (how long the cookies live)."""
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int = 3600
+    remember: bool = False
 
 
 class AuthResponse(BaseModel):
+    """INTERNAL result of a sign-in (service -> route). The routes answer with ``SessionResponse`` (``user`` + ``org``): the tokens go to the cookies."""
+
     user: UserResponse
     tokens: Optional[TokenPair] = None
+    org: Optional[OrgResponse] = None
+
+
+class SessionResponse(BaseModel):
+    """The body of every sign-in / refresh answer: who signed in. No token of any kind (K2-1, A2)."""
+
+    user: UserResponse
     org: Optional[OrgResponse] = None
 
 
@@ -728,9 +739,3 @@ class AdminApproveRequest(BaseModel):
         if v not in {"approve", "reject"}:
             raise ValueError("action must be 'approve' or 'reject'")
         return v
-
-
-class ActivateAccountRequest(BaseModel):
-    """Organization owner activates their account via emailed token."""
-
-    token: str = Field(..., min_length=10)

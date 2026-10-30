@@ -28,7 +28,6 @@ import src.api.internal_router  # noqa: E402,F401  (import order: avoids a pre-e
 from src.api import main_v2  # noqa: E402
 from src.auth.dependencies import RoleChecker, get_current_active_user_payload, require_org_admin, require_superadmin  # noqa: E402
 from src.auth.service import AuthService  # noqa: E402
-from src.core import email as mail  # noqa: E402
 from src.core.database import get_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]

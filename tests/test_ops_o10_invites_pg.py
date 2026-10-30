@@ -32,6 +32,17 @@ def invite(w, who, email, role="teacher"):
     return client(w, who).post(f"{API}/org/invitations", json={"email": email, "org_role": role})
 
 
+def code_of_invitation(w, response):
+    """K2-1 (A1): no answer carries the code (it travels in the letter); the test reads it from the row the answer names."""
+    assert response.status_code == 200, response.text
+    w.db.expire_all()
+    return w.db.get(Invitation, response.json()["id"]).code
+
+
+def invite_code(w, who, email, role="teacher"):
+    return code_of_invitation(w, invite(w, who, email, role))
+
+
 def accept(w, code, password="new-secret-1", **extra):
     return client(w, "owner").post(f"{API}/invite/accept", json={"code": code, "password": password, **extra})
 
@@ -44,20 +55,22 @@ def pending(w):
 def test_r1_the_invitation_carries_the_email_and_the_account_gets_it(w):
     """[O10.R1]"""
     r = invite(w, "owner", f"  {em(w, 't').upper()} ")
-    assert r.status_code == 200 and r.json()["email"] == em(w, "t") and r.json()["status"] == "pending" and r.json()["org_role"] == "teacher"
-    code = r.json()["code"]
+    assert r.status_code == 200 and set(r.json()) == {"id", "email_masked", "expires_at", "email_sent"}
+    code = code_of_invitation(w, r)
+    row = w.db.get(Invitation, r.json()["id"])
+    assert row.email == em(w, "t") and row.status == "pending" and row.org_role == "teacher"
     info = client(w, "owner").get(f"{API}/invite/{code}").json()
-    assert info == {"org_name": "Алго Тест", "org_role": "teacher", "email": em(w, "t"), "is_returning": False}
+    assert info == {"org_name": "Алго Тест", "org_role": "teacher", "email_masked": f"{em(w, 't')[0]}***@x.uz", "is_returning": False}
     done = accept(w, code, first_name="Нодир", last_name="Алиев")
     assert done.status_code == 201 and done.json()["user"]["email"] == em(w, "t")
-    mismatch_code = invite(w, "owner", em(w, "m")).json()["code"]
+    mismatch_code = invite_code(w, "owner", em(w, "m"))
     bad = accept(w, mismatch_code, first_name="М", last_name="Н", email=em(w, "other"))
     assert bad.status_code == 400 and bad.json()["detail"]["code"] == "INVITE_EMAIL_MISMATCH"
 
 
 def test_r2_two_accepts_one_account_and_a_new_invitation_cancels_the_old(w):
     """[O10.R2] [INV-O10-1] Parallel accepts of one code: one account; a new invitation to the same e-mail cancels the previous pending one."""
-    code = invite(w, "owner", em(w, "p")).json()["code"]
+    code = invite_code(w, "owner", em(w, "p"))
     from src.auth.ops_schemas import AcceptInviteRequestB
 
     def call(svc):
@@ -68,18 +81,19 @@ def test_r2_two_accepts_one_account_and_a_new_invitation_cancels_the_old(w):
     bad = [e for _r, e in results if e is not None]
     assert len(ok) == 1 and len(bad) == 1 and "не найдено или уже использовано" in str(bad[0])
     assert w.db.query(User).filter(User.email == em(w, "p")).count() == 1
-    first = invite(w, "owner", em(w, "q")).json()["code"]
-    second = invite(w, "owner", em(w, "q")).json()["code"]
+    first = invite_code(w, "owner", em(w, "q"))
+    second = invite_code(w, "owner", em(w, "q"))
     w.db.expire_all()
     assert w.db.query(Invitation).filter_by(code=first).one().status == "cancelled" and w.db.query(Invitation).filter_by(code=second).one().status == "pending"
 
 
 def test_r3_revoke(w):
     """[O10.R3]"""
-    r = invite(w, "owner", em(w, "r")).json()
-    assert client(w, "owner").delete(f"{API}/org/invitations/{r['id']}").status_code == 200
-    late = accept(w, r["code"], first_name="Р", last_name="Р")
-    assert late.status_code == 400 and "не найдено или уже использовано" in late.json()["detail"]
+    r = invite(w, "owner", em(w, "r"))
+    code = code_of_invitation(w, r)
+    assert client(w, "owner").delete(f"{API}/org/invitations/{r.json()['id']}").status_code == 200
+    late = accept(w, code, first_name="Р", last_name="Р")
+    assert late.status_code == 410 and late.json()["code"] == "link_revoked"          # K2-1: a cancelled link says so
 
 
 def test_r4_owner_and_admin_create_at_once_one_pending(w):
@@ -97,17 +111,19 @@ def test_r4_owner_and_admin_create_at_once_one_pending(w):
 
 def test_r5_expired_at_the_first_read_and_the_boundary(w, clock):
     """[O10.R5] [INV-O10-3] The 8th day: status expired at the first touch (list / info / accept); ``expires_at <= now`` is already expired."""
-    code = invite(w, "owner", em(w, "e")).json()["code"]
+    code = invite_code(w, "owner", em(w, "e"))
     clock.set("2026-10-28 13:59")                                           # 1 minute before 14:00 + 7 days (UTC 09:00 + 7d = 28.10 09:00 -> 14:00 local)
     assert client(w, "owner").get(f"{API}/invite/{code}").status_code == 200
     clock.set("2026-10-28 14:00")                                           # exactly the expiry: expired
     gone = client(w, "owner").get(f"{API}/invite/{code}")
     assert gone.status_code == 404 and "истекло" in gone.json()["detail"]
     listing = client(w, "owner").get(f"{API}/org/invitations").json()
-    assert [i["status"] for i in listing if i["code"] == code] == ["expired"]
+    assert all("code" not in i for i in listing)
+    expired_row = w.db.query(Invitation).filter_by(code=code).one()
+    assert [i["status"] for i in listing if i["id"] == str(expired_row.id)] == ["expired"]
     w.db.expire_all()
     assert not [i for i in w.db.query(Invitation).filter_by(org_id=w.org.id) if i.status == "pending" and i.expires_at <= datetime(2026, 10, 28, 9, 0)]
-    code2 = invite(w, "owner", em(w, "e2")).json()["code"]
+    code2 = invite_code(w, "owner", em(w, "e2"))
     clock.set("2026-11-10 10:00")
     late = accept(w, code2, first_name="Е", last_name="Е")
     assert late.status_code == 400 and "истекло" in late.json()["detail"]
@@ -124,9 +140,11 @@ def test_r6_seven_days_from_the_creation_in_utc_chain6(w, clock):
     assert r.status_code == 200
     expected = w.ids.remap(fixture("c6_invitation_create.json"))
     out = r.json()
-    assert out["expires_at"] == expected["expires_at"] and out["is_returning"] is True and out["status"] == "pending" and out["org_role"] == "teacher"
-    info = client(w, "owner").get(f"{API}/invite/{out['code']}").json()
-    assert info == {"org_name": "Алго Тест", "org_role": "teacher", "email": w.D.email, "is_returning": True}
+    assert out["expires_at"] == expected["expires_at"] and set(out) == {"id", "email_masked", "expires_at", "email_sent"}
+    row = w.db.get(Invitation, out["id"])
+    assert row.status == "pending" and row.org_role == "teacher"
+    info = client(w, "owner").get(f"{API}/invite/{row.code}").json()
+    assert info == {"org_name": "Алго Тест", "org_role": "teacher", "email_masked": f"{w.D.email[0]}***@{w.D.email.split('@')[1]}", "is_returning": True}
 
 
 def test_r7_email_is_mandatory(w):
@@ -154,7 +172,7 @@ def test_r9_active_member_removed_member_and_another_centre_chain6(w, clock):
     from src.auth import user_sessions  # noqa: F401
 
     client(w, "owner").delete(f"{API}/org/members/{w.ids('member_D')}")
-    code = invite(w, "owner", w.D.email, role="admin").json()["code"]
+    code = invite_code(w, "owner", w.D.email, role="admin")
     done = accept(w, code, password="brand-new-1")                       # no names sent: the returning member keeps his own (lead decision)
     assert done.status_code == 201, done.text
     w.db.expire_all()
@@ -168,9 +186,9 @@ def test_r9_active_member_removed_member_and_another_centre_chain6(w, clock):
     audits = w.db.query(MemberAudit).filter_by(member_id=w.ids("member_D"), action="reactivated_by_invite").all()
     assert len(audits) == 1 and audits[0].snapshot["org_role"] == "admin"
     # another centre
-    foreign_code = invite(w, "owner", w.foreign_admin.email).json()["code"]
+    foreign_code = invite_code(w, "owner", w.foreign_admin.email)
     other = accept(w, foreign_code, first_name="Х", last_name="Х")
     assert other.status_code == 409 and other.json()["detail"]["code"] == "EMAIL_IN_OTHER_ORG"
     # a new account needs a name
-    nameless = invite(w, "owner", em(w, "new")).json()["code"]
+    nameless = invite_code(w, "owner", em(w, "new"))
     assert accept(w, nameless).status_code == 400

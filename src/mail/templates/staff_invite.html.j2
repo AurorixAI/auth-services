@@ -1,0 +1,14 @@
+{% extends "_layout.html.j2" %}
+{% from "_macros.html.j2" import p, small, button, url_fallback %}
+{% block preheader %}Центр «{{ centre_name }}» приглашает вас в ALGO.{% endblock %}
+{% block title %}Приглашение в ALGO{% endblock %}
+{% block content %}
+{% call p() %}Здравствуйте!{% endcall %}
+{% call p() %}Вас приглашают в ALGO: центр <strong class="ink" style="color:#0f172a;">«{{ centre_name }}»</strong>, роль — {{ role_text }}.{% endcall %}
+{{ button(cta_url, "Принять приглашение") }}
+{% call small() %}Ссылка персональная, действует {{ expires_phrase }} — до {{ expires_text }} (по Ташкенту) — и открывается один раз. Принять приглашение может только тот, кто получил это письмо.{% endcall %}
+{% call small() %}Если ссылка не работает или истекла, попросите руководителя центра отправить приглашение ещё раз.{% endcall %}
+{% call small() %}Если вы не ждали этого приглашения — просто проигнорируйте письмо, ничего не изменится.{% endcall %}
+{{ url_fallback(cta_url) }}
+{% endblock %}
+{% block footer_reason %}Вы получили это письмо, потому что руководитель центра «{{ centre_name }}» пригласил вас в ALGO.{% endblock %}

@@ -177,10 +177,9 @@ def refresh(client, token, real_ip="203.0.113.5", forwarded=None, via_cookie=Fal
     headers = {"x-real-ip": real_ip}
     if forwarded:
         headers["x-forwarded-for"] = forwarded
-    if via_cookie:
-        headers["cookie"] = f"algo_refresh_token={token}"
-        return client.post(f"{API}/refresh", json={}, headers=headers)
-    return client.post(f"{API}/refresh", json={"refresh_token": token}, headers=headers)
+    # K2-1 (A2): the refresh token is read from the cookie only (``via_cookie`` stays for the callers; both mean the cookie)
+    headers["cookie"] = f"algo_refresh_token={token}"
+    return client.post(f"{API}/refresh", json={}, headers=headers)
 
 
 def test_the_limits_are_what_the_task_decided():

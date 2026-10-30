@@ -23,7 +23,7 @@ from .service import (
     verify_access_token,
 )
 from .attendance_access import is_org_manager
-from .models import DiagnosticInvite, Group
+from .models import DiagnosticInvite, Group, Invitation
 from .student_archive import (
     ArchiveError,
     ArchiveStudentRequest,
@@ -46,6 +46,7 @@ from .ops_schemas import (
     ImportCommitResponseB,
     ImportPreviewResponseB,
     InvitationOut,
+    InvitationSentOut,
     InviteInfoOut,
     InviteMemberRequestB,
     MemberOut,
@@ -82,7 +83,7 @@ from .platform_errors import PlatformError
 from .schemas import (
     OrgApplicationRequest,
     LoginRequest,
-    RefreshTokenRequest,
+    SessionResponse,
     ChangePasswordRequest,
     UpdateProfileRequest,
     InviteMemberRequest,
@@ -106,7 +107,6 @@ from .schemas import (
     MessageResponse,
     OrgApplicationPendingResponse,
     AdminApproveRequest,
-    ActivateAccountRequest,
     ScheduleLessonResponse,
     ScheduleOccurrenceResponse,
     CreateLessonRequest,
@@ -154,7 +154,6 @@ REFRESH_TOKEN_LIMIT = "10/minute"
 SECRET_LOOKUP_IP_LIMIT = "60/minute"
 INVITE_INFO_RATE_ENDPOINT = "auth-invite-info"
 INVITE_ACCEPT_RATE_ENDPOINT = "auth-invite-accept"
-ACTIVATE_RATE_ENDPOINT = "auth-activate"
 
 # A diagnostic invite code (8 characters, 31-letter alphabet) is looked up by the student's browser without a login, and the
 # answer carries the student's name: the code space must not be probed. What a guess costs is a FAILED lookup, so those are
@@ -168,18 +167,18 @@ DIAGNOSTIC_CODE_RATE_ENDPOINT = "auth-diagnostic-code-fail"
 
 
 def _auth_response_with_cookies(auth: AuthResponse) -> JSONResponse:
-    """Return AuthResponse JSON body **and** set httpOnly cookies."""
-    body = auth.model_dump(mode="json")
+    """The tokens go into the httpOnly cookies ONLY (K2-1, A2); the body is ``{user, org}`` - no token of any kind. The cookies live as long
+    as the mode of the session says (``tokens.remember``: 14 days, or until the browser closes)."""
+    body = SessionResponse(user=auth.user, org=auth.org).model_dump(mode="json")
     resp = JSONResponse(content=body)
-    set_auth_cookies(resp, auth.tokens.access_token, auth.tokens.refresh_token)
+    set_auth_cookies(resp, auth.tokens.access_token, auth.tokens.refresh_token, auth.tokens.remember)
     return resp
 
 
 def _token_response_with_cookies(tokens: TokenPair) -> JSONResponse:
-    """Return TokenPair JSON body **and** set httpOnly cookies."""
-    body = tokens.model_dump(mode="json")
-    resp = JSONResponse(content=body)
-    set_auth_cookies(resp, tokens.access_token, tokens.refresh_token)
+    """A refresh: new cookies (same mode as the session), a body without tokens."""
+    resp = JSONResponse(content=MessageResponse(message="Сессия обновлена").model_dump())
+    set_auth_cookies(resp, tokens.access_token, tokens.refresh_token, tokens.remember)
     return resp
 
 
@@ -193,8 +192,9 @@ def _session_client(request: Optional[Request]) -> Optional[SessionClient]:
 
 
 def _svc(db: Session, request: Optional[Request] = None) -> AuthService:
-    """The service; pass the HTTP request on every route that creates or rotates a session."""
-    return AuthService(db, _session_client(request))
+    """The service; pass the HTTP request on every route that creates or rotates a session. The refresh cookie of the request is what the
+    browser held BEFORE a sign-in: the sign-in ends that session (A3)."""
+    return AuthService(db, _session_client(request), previous_refresh=request.cookies.get(REFRESH_COOKIE_NAME) if request else None)
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
@@ -257,14 +257,15 @@ def apply_organization(
         raise HTTPException(status.HTTP_409_CONFLICT, "Пользователь с таким email уже существует")
 
 
-@router.post("/login", response_model=AuthResponse)
+@router.post("/login", response_model=SessionResponse)
 def login(
     request: LoginRequest,
     bucket: str = Depends(login_throttle.enforce_login_ip_limits),
     db: Session = Depends(get_db),
     raw_request: Request = None,
 ):
-    """Вход в систему — возвращает JWT + org info.
+    """Вход в систему — токены уходят в httpOnly-куки (в теле только user + org). ``remember_me`` - «Запомнить меня»: куки на 14 дней и сессия
+    скользит 14 дней; без него куки без срока (до закрытия браузера) и сессия не дольше 12 часов от входа.
 
     Неизвестный email, отключённый аккаунт и неверный пароль дают один и тот же ответ (401, «Неверная почта
     или пароль») за одно и то же время.
@@ -288,23 +289,19 @@ def login(
     return _auth_response_with_cookies(result)
 
 
-@router.post("/refresh", response_model=TokenPair)
+@router.post("/refresh", response_model=MessageResponse)
 def refresh_tokens(
-    request: RefreshTokenRequest,
     raw_request: Request = None,
     db: Session = Depends(get_db),
     _rl=Depends(rate_limit(REFRESH_IP_LIMIT)),
 ):
     """Обновление пары токенов.
-    Принимает refresh_token из тела ИЛИ из httpOnly cookie.
+    Берёт refresh_token ТОЛЬКО из httpOnly cookie (K2-1, A2: ни в теле запроса, ни в теле ответа токенов нет).
 
     Two limits: a generous one per client address (a school behind one NAT returns at 08:00 and
     every browser refreshes at once) and a tight one per refresh token (a client that hammers
     the same token is broken or hostile)."""
-    rt = request.refresh_token
-    # Fallback: read from httpOnly cookie if body is empty
-    if not rt and raw_request:
-        rt = raw_request.cookies.get(REFRESH_COOKIE_NAME)
+    rt = raw_request.cookies.get(REFRESH_COOKIE_NAME) if raw_request else None
     if not rt:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "refresh_token required")
     enforce_rate_limit(hash_token(rt), REFRESH_TOKEN_LIMIT, endpoint="auth-refresh-token")
@@ -321,7 +318,7 @@ def refresh_tokens(
     dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint=INVITE_INFO_RATE_ENDPOINT))],
 )
 def get_invite_info(code: str, db: Session = Depends(get_db)):
-    """Публичная информация о приглашении (орг + роль) — для экрана принятия."""
+    """Публичная информация о приглашении (центр + роль + МАСКА почты ``a***@x.uz``) — для экрана принятия. Заменённое/отозванное — 410 ``link_revoked``."""
     try:
         return _svc(db).get_invitation_info(code)
     except ValueError as e:
@@ -330,12 +327,12 @@ def get_invite_info(code: str, db: Session = Depends(get_db)):
 
 @router.post(
     "/invite/accept",
-    response_model=AuthResponse,
+    response_model=SessionResponse,
     status_code=201,
     dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint=INVITE_ACCEPT_RATE_ENDPOINT))],
 )
 def accept_invite(request: AcceptInviteRequestB, db: Session = Depends(get_db), raw_request: Request = None):
-    """Принять приглашение в организацию — создаёт аккаунт"""
+    """Принять приглашение в организацию — создаёт аккаунт; ссылка пришла письмом, поэтому почта считается подтверждённой. Вход — без «Запомнить меня»."""
     try:
         result = _svc(db, raw_request).accept_invitation(request)
         resp = _auth_response_with_cookies(result)
@@ -346,7 +343,7 @@ def accept_invite(request: AcceptInviteRequestB, db: Session = Depends(get_db), 
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  ADMIN APPROVAL & ACTIVATION                                            ║
+# ║  ADMIN APPROVAL                                                          ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 
@@ -359,7 +356,7 @@ def admin_approve_organization(
 ):
     """
     Одобрить или отклонить заявку организации (superadmin).
-    При одобрении на email владельца отправляется ссылка активации.
+    Письмо владельцу («Добро пожаловать» со ссылкой на пароль) отправляет консоль; здесь центр только активируется.
     """
     try:
         result = _svc(db).approve_organization(
@@ -368,27 +365,6 @@ def admin_approve_organization(
             rejection_reason=request.rejection_reason,
         )
         return result
-    except ValueError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
-
-
-@router.post(
-    "/activate",
-    response_model=AuthResponse,
-    dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint=ACTIVATE_RATE_ENDPOINT))],
-)
-def activate_account(
-    request: ActivateAccountRequest,
-    db: Session = Depends(get_db),
-    raw_request: Request = None,
-):
-    """
-    Активация аккаунта по токену из письма.
-    Активирует организацию и владельца, возвращает JWT.
-    """
-    try:
-        result = _svc(db, raw_request).activate_account(request.token)
-        return _auth_response_with_cookies(result)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
@@ -594,13 +570,13 @@ def _is_cross_site_request(request: Request) -> bool:
 
 def _access_subject(
     request: Request, credentials: Optional[HTTPAuthorizationCredentials]
-) -> Optional[str]:
-    """The user a VALID access token (cookie or Bearer header) belongs to, else None."""
+) -> tuple:
+    """(user id, session id ``sid``) a VALID access token (cookie or Bearer header) belongs to, else (None, None)."""
     for token in (request.cookies.get(AUTH_COOKIE_NAME), credentials.credentials if credentials else None):
         payload = verify_access_token(token) if token else None
         if payload and payload.get("sub"):
-            return str(payload["sub"])
-    return None
+            return str(payload["sub"]), (str(payload["sid"]) if payload.get("sid") else None)
+    return None, None
 
 
 LOGOUT_BODY_MAX_BYTES = 4096  # a refresh token is ~250 bytes; the body of an unauthenticated route stays tiny
@@ -653,7 +629,7 @@ def logout(
       ago (the browser just raced a refresh); an older superseded token, or any other cookie, is just
       removed from the browser. The refresh token is the cookie or, as in /auth/refresh, ``refresh_token``
       in a small (<= 4 KB) JSON body (the cookie wins when both are present). A request with an access token only
-      identifies the user, not a device, so it revokes no session.
+      revokes the session that token names (``sid``, K2-1 A5): the token stops working at once.
     """
     if _is_cross_site_request(request):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Запрос выхода должен приходить с сайта ALGO")
@@ -673,9 +649,9 @@ def logout(
         # The user's other devices stay signed in (#101).
         svc.logout_by_refresh_token(refresh)
     else:
-        user_id = _access_subject(request, credentials)
+        user_id, session_id = _access_subject(request, credentials)
         if user_id:
-            svc.logout(user_id)  # an access token names the user, not the device: nothing to revoke
+            svc.logout(user_id, session_id)  # the session the access token names (if it names one) is revoked
     return clear_auth_cookies(resp)
 
 
@@ -730,17 +706,58 @@ def update_organization(
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 
-@router.post("/org/invitations", response_model=InvitationOut)
+INVITE_MAIL_PER_EMAIL = 10   # K2-1 (A1): letters to ONE mailbox per hour, however many centres ask (an invitation is a letter to a stranger)
+INVITE_MAIL_PER_ORG = 100    # ... and letters of ONE centre per hour
+INVITE_MAIL_WINDOW = 3600
+
+
+def _throttle_invite_mail(org_id, email: Optional[str]) -> None:
+    """429 once a mailbox or a centre has spent its hourly budget of invitation letters (counted before anything is created or sent)."""
+    digest = hashlib.sha256((email or "").strip().lower().encode("utf-8")).hexdigest()[:32]  # no e-mail in a Redis key
+    for key, limit in ((f"rl:invite_mail_email:{digest}", INVITE_MAIL_PER_EMAIL), (f"rl:invite_mail_org:{org_id}", INVITE_MAIL_PER_ORG)):
+        count, left = hit_window(key, INVITE_MAIL_WINDOW)
+        if count > limit:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Слишком много приглашений на этот адрес. Повторите попытку позже.",
+                headers={"Retry-After": str(left)},
+            )
+
+
+@router.post("/org/invitations", response_model=InvitationSentOut)
 def create_invitation(
     request: InviteMemberRequestB,
     user: dict = Depends(require_org_admin),
     db: Session = Depends(get_db),
 ):
-    """Создать приглашение (owner/admin → admin/teacher)"""
+    """Создать приглашение (owner/admin → admin/teacher): ссылка уходит ПИСЬМОМ на почту приглашённого. Ответ — без кода и без ссылки:
+    ``{id, email_masked, expires_at, email_sent}``."""
+    _throttle_invite_mail(user["org_id"], request.email)
     try:
         return _svc(db).create_invitation(user["org_id"], user["user_id"], request, creator_role=user.get("org_role"))
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.post("/org/invitations/{invite_id}/resend", response_model=InvitationSentOut)
+def resend_invitation(
+    invite_id: str,
+    user: dict = Depends(require_org_admin),
+    db: Session = Depends(get_db),
+):
+    """«Отправить ещё раз»: новая ссылка письмом, прежняя перестаёт работать (410 ``link_revoked``)."""
+    try:
+        invite_uuid = UUID(str(invite_id))
+    except ValueError:
+        raise HTTPException(404, "Приглашение не найдено")
+    row = db.query(Invitation.email).filter(Invitation.id == invite_uuid, Invitation.org_id == user["org_id"]).first()
+    if row is None:
+        raise HTTPException(404, "Приглашение не найдено")
+    _throttle_invite_mail(user["org_id"], row[0])
+    try:
+        return _svc(db).resend_invitation(user["org_id"], invite_uuid, user["user_id"], creator_role=user.get("org_role"))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.get("/org/invitations", response_model=list[InvitationOut])

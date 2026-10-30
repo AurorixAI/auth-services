@@ -37,6 +37,7 @@ def _resolve(*, token_role="admin", user_role="admin", member_role="admin", memb
         "org_id": str(org_id),
         "org_role": token_role,
         "type": "access",
+        "sid": str(uuid4()),  # K2-1 (A5): the session check reads the database through ``db.execute`` (a MagicMock here: "alive")
     }
     current_user = (
         SimpleNamespace(id=user_id, role=user_role, is_active=True)

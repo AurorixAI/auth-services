@@ -240,6 +240,9 @@ class UserSession(Base):
 
     revoked_at = Column(DateTime)
     revoke_reason = Column(String(40))  # logout | refresh_reuse | password_changed | user_blocked | session_cap
+    # K2-1 (D): the mode chosen at sign-in. True = «Запомнить меня»: 14 days, sliding at every refresh; False = until the browser closes and
+    # at most 12 hours from the sign-in (expires_at is fixed then). It lives HERE, so a rotation of the refresh token cannot lose it.
+    remember = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     user_agent = Column(String(200))
     ip = Column(String(64))  # the trusted client address (X-Real-IP set by nginx), never a raw header

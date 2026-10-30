@@ -519,8 +519,9 @@ class InviteMemberRequestB(InviteMemberRequest):
 
 
 class InvitationOut(BaseModel):
+    """A row of the list of invitations. K2-1 (A1): NO code and no link - the invitation reaches the person by letter only."""
+
     id: str
-    code: str
     org_role: str
     email: Optional[str] = None
     expires_at: str
@@ -529,10 +530,21 @@ class InvitationOut(BaseModel):
     is_returning: bool = False
 
 
+class InvitationSentOut(BaseModel):
+    """The answer to «Пригласить» and «Отправить ещё раз» (K2-1, A1): no code, no link, the address masked; ``email_sent`` says whether the letter left."""
+
+    id: str
+    email_masked: str
+    expires_at: str
+    email_sent: bool
+
+
 class InviteInfoOut(BaseModel):
+    """What the page of an invitation may show to anybody holding the link: the centre, the role and a MASKED address (``a***@x.uz``)."""
+
     org_name: str
     org_role: str
-    email: Optional[str] = None
+    email_masked: str = ""
     is_returning: bool = False
 
 

@@ -5,6 +5,8 @@
   (the organisation row is read there anyway: no cache, so an unblock works at once); the sign-in check is ``ensure_login_allowed``.
 * A user blocked by the platform team: ``users.is_active`` is off (the cabinets already refuse such an account: sign-in 401, requests
   401) and ``platform_blocked_at`` says it was the console.
+* A ``superadmin`` (the old platform role of ``users.role``) is not a cabinet account either (K2-1, A4): same answer, and the sign-in route
+  writes a ``platform_audit`` row ``login.superadmin_denied``.
 * A console account (a ``platform_staff`` row) is not a cabinet account: the cabinets answer its sign-in with the ordinary «Неверная
   почта или пароль».
 """
@@ -26,6 +28,8 @@ def org_blocked_error() -> HTTPException:
 def ensure_login_allowed(db, user: User) -> None:
     """Called by the cabinet sign-in AFTER the password was verified (so it tells nothing to someone who does not know it)."""
     if db.query(PlatformStaff.id).filter(PlatformStaff.user_id == user.id).first() is not None:
+        raise InvalidCredentialsError()
+    if user.role == "superadmin":  # K2-1 (A4): the platform role has no cabinet (the sign-in route also writes the journal row)
         raise InvalidCredentialsError()
     if user.default_org_id is not None:
         blocked = db.query(Organization.blocked_at).filter(Organization.id == user.default_org_id).scalar()

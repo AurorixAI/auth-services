@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from tests.console_helpers import (  # noqa: F401  (first: it loads the application)
-    API, PASSWORD, actions, advance_clock, audit_rows, body_of, cw, letters_to, needs_pg, request_body,
+    API, PASSWORD, actions, advance_clock, audit_rows, body_of, cw, invite_code_from_mail, letters_to, needs_pg, request_body,
 )
 from src.auth import password_links as links  # noqa: E402
 from src.auth.platform_common import utcnow  # noqa: E402
@@ -64,7 +64,7 @@ def test_an_invitation_does_not_lift_a_platform_block(cw):
     cw.client.post(f"{API}/users/{centre.admin.id}/block", json={"reason": "Нарушение условий"})
     inv = owner.post("/api/v1/auth/org/invitations", json={"email": centre.admin.email, "org_role": "teacher"})
     assert inv.status_code == 200, inv.text
-    r = cw.new_client(APP).post("/api/v1/auth/invite/accept", json={"code": inv.json()["code"], "password": "brand-new-pass-1"})
+    r = cw.new_client(APP).post("/api/v1/auth/invite/accept", json={"code": invite_code_from_mail(cw.outbox, centre.admin.email), "password": "brand-new-pass-1"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "USER_BLOCKED_BY_PLATFORM"
     cw.db.expire_all()
     assert cw.db.get(User, centre.admin.id).is_active is False and cw.db.get(User, centre.admin.id).platform_blocked_at is not None
@@ -308,28 +308,17 @@ def test_a_typed_login_that_is_not_an_email_is_not_journaled(cw):
 
 
 @needs_pg
-def test_a_blocked_centre_takes_nobody_in_by_invitation_or_activation(cw):
+def test_a_blocked_centre_takes_nobody_in_by_invitation(cw):
     centre = cw.make_centre()
     owner = cabinet(cw, centre.owner)
-    inv = owner.post("/api/v1/auth/org/invitations", json={"email": f"new-{uuid4().hex[:8]}@example.test", "org_role": "teacher"})
-    code = inv.json()["code"]
+    address = f"new-{uuid4().hex[:8]}@example.test"
+    inv = owner.post("/api/v1/auth/org/invitations", json={"email": address, "org_role": "teacher"})
+    code = invite_code_from_mail(cw.outbox, address)
     cw.client.post(f"{API}/orgs/{centre.org.id}/block", json={"reason": "Нарушение условий"})
     r = cw.new_client(APP).post("/api/v1/auth/invite/accept", json={"code": code, "password": "brand-new-pass-1", "first_name": "А", "last_name": "Б"})
     assert r.status_code == 403 and r.json()["detail"]["code"] == "ORG_BLOCKED" and "приостановлен" in r.json()["detail"]["message"]
-    # activation by an old token
-    from src.auth.service import hash_token
-
-    token = "activation-token-" + uuid4().hex
-    org = cw.db.get(Organization, centre.org.id)
-    org.activation_token, org.activation_token_expires_at = hash_token(token), utcnow() + timedelta(days=1)
-    cw.db.commit()
-    r = cw.new_client(APP).post("/api/v1/auth/activate", json={"token": token})
-    assert r.status_code == 400 and "приостановлен" in r.json()["detail"]
-    cw.client.post(f"{API}/orgs/{centre.org.id}/unblock", json={})
-    centre.owner.platform_blocked_at = utcnow()
-    cw.db.commit()
-    r = cw.new_client(APP).post("/api/v1/auth/activate", json={"token": token})
-    assert r.status_code == 400 and "заблокирован" in r.json()["detail"]
+    # (K2-1: the activation-by-token route is gone, there is nothing else to try)
+    assert cw.new_client(APP).post("/api/v1/auth/activate", json={"token": "t" * 20}).status_code in (404, 405)
 
 
 # ── m7: the demo form against floods and tricks ──────────────────────────────────────────────────────────────────────

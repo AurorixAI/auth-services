@@ -36,6 +36,7 @@ from src.api import main_v2  # noqa: E402
 from src.api import rate_limit as rl  # noqa: E402
 from src.auth import login_throttle as lt  # noqa: E402
 from src.auth import router as auth_router_module  # noqa: E402
+from src.auth.schemas import UserResponse  # noqa: E402
 from src.auth import service as service_module  # noqa: E402
 from src.auth.dependencies import get_current_active_user_payload  # noqa: E402
 from src.auth.service import AuthService  # noqa: E402
@@ -332,8 +333,8 @@ def login_app(monkeypatch):
         if request.email.startswith("ghost") or request.password != GOOD:
             raise InvalidCredentialsError()
         return SimpleNamespace(
-            model_dump=lambda mode="json": {"ok": True},
-            tokens=SimpleNamespace(access_token="a.b.c", refresh_token="d.e.f"),
+            user=UserResponse(id="u", email="a@x.kz", first_name="A", last_name="B", full_name="B A", role="teacher"), org=None,
+            tokens=SimpleNamespace(access_token="a.b.c", refresh_token="d.e.f", remember=False),
         )
 
     monkeypatch.setattr(AuthService, "login", fake_login)
@@ -986,17 +987,12 @@ def secret_lookup_app(monkeypatch):
     def no_invite(self, code):
         raise ValueError("Приглашение не найдено")
 
-    def bad_token(self, token):
-        raise ValueError("Невалидная или уже использованная ссылка активации")
-
     monkeypatch.setattr(AuthService, "accept_invitation", bad_invite)
     monkeypatch.setattr(AuthService, "get_invitation_info", no_invite)
-    monkeypatch.setattr(AuthService, "activate_account", bad_token)
     return TestClient(make_app())
 
 
 INVITE_BODY = {"code": "ABCD1234", "email": "n@x.kz", "password": "secret-pw", "first_name": "А", "last_name": "Б"}
-ACTIVATE_BODY = {"token": "t" * 20}
 
 
 def invite_info(client, i=0, ip=IP):
@@ -1007,22 +1003,18 @@ def invite_accept(client, ip=IP):
     return client.post(f"{API}/invite/accept", json=INVITE_BODY, headers={"x-real-ip": ip}).status_code
 
 
-def activate(client, ip=IP):
-    return client.post(f"{API}/activate", json=ACTIVATE_BODY, headers={"x-real-ip": ip}).status_code
-
-
-def test_invite_info_invite_accept_and_activate_each_get_sixty_a_minute_per_address(monkeypatch, clock):
+def test_invite_info_and_invite_accept_each_get_sixty_a_minute_per_address(monkeypatch, clock):
     client = secret_lookup_app(monkeypatch)
     monkeypatch.setattr(rl, "time", SimpleNamespace(time=clock, monotonic=clock))  # the in-process sliding window
     assert router_limit_is_sixty_a_minute()
-    for call, ok in ((lambda: invite_info(client), 404), (lambda: invite_accept(client), 400), (lambda: activate(client), 400)):
+    for call, ok in ((lambda: invite_info(client), 404), (lambda: invite_accept(client), 400)):
         codes = [call() for _ in range(61)]
         assert codes == [ok] * 60 + [429], ok  # 60 evaluated, the 61st refused
     # the other endpoints were not touched by the one that ran out: all three are now refused in their own right
-    assert (invite_info(client), invite_accept(client), activate(client)) == (429, 429, 429)
+    assert (invite_info(client), invite_accept(client)) == (429, 429)
     assert (invite_info(client, ip="198.51.100.1"), invite_accept(client, ip="198.51.100.1")) == (404, 400)  # per address
     clock.advance(61)
-    assert (invite_info(client), invite_accept(client), activate(client)) == (404, 400, 400)  # a new minute
+    assert (invite_info(client), invite_accept(client)) == (404, 400)  # a new minute
 
 
 def router_limit_is_sixty_a_minute():
@@ -1032,7 +1024,7 @@ def router_limit_is_sixty_a_minute():
 def test_one_endpoint_running_out_does_not_refuse_the_others(monkeypatch, clock):
     client = secret_lookup_app(monkeypatch)
     assert [invite_info(client, i) for i in range(61)] == [404] * 60 + [429]
-    assert invite_accept(client) == 400 and activate(client) == 400  # their buckets are untouched
+    assert invite_accept(client) == 400  # their bucket is untouched
 
 
 def test_a_school_behind_one_address_can_onboard_twenty_five_teachers_in_a_minute(monkeypatch, clock):
@@ -1052,8 +1044,7 @@ def test_the_invite_buckets_are_named_per_endpoint_not_per_code(monkeypatch, clo
     guessed code would get a bucket of its own and the limit would mean nothing."""
     client = secret_lookup_app(monkeypatch)
     assert [invite_info(client, i) for i in range(61)] == [404] * 60 + [429]  # 61 different codes, one bucket
-    assert {auth_router_module.INVITE_INFO_RATE_ENDPOINT, auth_router_module.INVITE_ACCEPT_RATE_ENDPOINT,
-            auth_router_module.ACTIVATE_RATE_ENDPOINT} == {"auth-invite-info", "auth-invite-accept", "auth-activate"}
+    assert {auth_router_module.INVITE_INFO_RATE_ENDPOINT, auth_router_module.INVITE_ACCEPT_RATE_ENDPOINT} == {"auth-invite-info", "auth-invite-accept"}
 
 
 # ---- Redis: fallback and the shared client ---------------------------------------------------

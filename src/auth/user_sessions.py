@@ -7,8 +7,9 @@ was signed out of the first device at its next refresh, at most an access-token 
 Model: a session (the device) owns refresh tokens, ONE ROW EACH in ``user_session_tokens`` (SHA-256 only): LIVE
 (``superseded_at IS NULL``) or SUPERSEDED. The rules (``AuthService`` only calls these functions):
 
-* **Issue** (login, dev quick-login, invitation accept, activation): a NEW session with one live token; no other
-  session of the user is touched. At most ``MAX_ACTIVE_SESSIONS`` (20) stay active per user: beyond that the
+* **Issue** (login, dev quick-login, invitation accept, password link): a NEW session with one live token; no other
+  session of the user is touched (the session this BROWSER held before is ended by the sign-in route, ``revoke_by_token`` with
+  ``new_login``). At most ``MAX_ACTIVE_SESSIONS`` (20) stay active per user: beyond that the
   sessions used LEAST recently are revoked (``session_cap``). Sessions that expired more than
   ``EXPIRED_RETENTION_DAYS`` ago (with their tokens, ON DELETE CASCADE) and tokens superseded more than
   ``SUPERSEDED_RETENTION_DAYS`` ago are deleted, a bounded batch per sign-in.
@@ -42,6 +43,11 @@ Leeway trade-off (accepted): for ``GRACE_SECONDS`` after a refresh the supersede
 STOLEN just before the refresh is usable for at most that long (it can mint a sibling; the owner's next refresh
 supersedes it, and a replay after the window revokes the session). A shorter window would make a legitimate race
 (two tabs, a retry after a slow response) look like theft.
+
+**Mode (K2-1, D).** A session is created with ``remember``: True = «Запомнить меня», ``expires_at`` slides to now + the remember lifetime
+(14 days, ``JWT_REFRESH_TTL_DAYS``) at EVERY refresh, no absolute ceiling; False = ``expires_at`` is fixed at ``SHORT_SESSION_HOURS`` (12 h)
+from the sign-in and a refresh does NOT extend it. The mode is a column of the session row, so it survives any number of rotations
+(two in a row, a race of two tabs): the refresh token carries no mode at all.
 
 Moments are naive UTC (TIME_CONVENTIONS.md, group "UTC"). Privacy: ``ip`` and ``user_agent`` are kept until the
 session's expiry plus the sweep window (``EXPIRED_RETENTION_DAYS``), then they are deleted with the row.
@@ -80,6 +86,9 @@ REVOKE_REFRESH_REUSE = "refresh_reuse"
 REVOKE_PASSWORD_CHANGED = "password_changed"
 REVOKE_USER_BLOCKED = "user_blocked"
 REVOKE_SESSION_CAP = "session_cap"
+REVOKE_NEW_LOGIN = "new_login"  # the browser signed in again: the session its refresh cookie still named is over (A3)
+
+SHORT_SESSION_HOURS = 12  # a session WITHOUT «Запомнить меня»: at most this long from the sign-in, never extended
 
 
 def _now() -> datetime:
@@ -139,24 +148,38 @@ def _lock_user_sessions(db: Session, user_id) -> None:
     db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"user_sessions:{user_id}"})
 
 
+def lock_user(db: Session, user_id) -> None:
+    """Take the per-user session lock (the one ``issue`` and ``revoke_all`` take) for the rest of the transaction. The lock is re-entrant inside one
+    transaction, so a sign-in takes it BEFORE it re-checks the password it verified (F8) and ``issue`` then finds it already held."""
+    _lock_user_sessions(db, user_id)
+
+
 def issue(
     db: Session,
     user_id,
     token_hash: str,
     ttl: timedelta,
     client: Optional[SessionClient] = None,
+    *,
+    remember: bool = False,
+    session_id=None,
 ) -> UserSession:
     """Create the session of a freshly issued refresh token, with that token as its first live one. Other sessions
-    of the user are NOT touched, except that the ones beyond the cap are revoked and old rows are deleted."""
+    of the user are NOT touched, except that the ones beyond the cap are revoked and old rows are deleted.
+
+    *ttl* is the lifetime of a REMEMBERED session (it slides at every refresh); without *remember* the session lives
+    ``SHORT_SESSION_HOURS`` from now and *ttl* is not used. *session_id* lets the caller put the id into the access
+    token (``sid``) before the row exists."""
     now = _now()
     _lock_user_sessions(db, user_id)
     ip, user_agent = (client or SessionClient()).cleaned()
     session = UserSession(
-        id=uuid4(),
+        id=session_id or uuid4(),
         user_id=user_id,
         created_at=now,
         last_used_at=now,
-        expires_at=now + ttl,
+        expires_at=now + (ttl if remember else timedelta(hours=SHORT_SESSION_HOURS)),
+        remember=bool(remember),
         ip=ip,
         user_agent=user_agent,
     )
@@ -297,7 +320,7 @@ def rotate(
     client: Optional[SessionClient] = None,
 ) -> None:
     """Exchange the claimed token for *new_token_hash*: a live token supersedes every live token of the session; a
-    superseded one (the grace) adds a sibling and supersedes nothing."""
+    superseded one (the grace) adds a sibling and supersedes nothing. *ttl* slides the end of a REMEMBERED session only."""
     now = _now()
     session = claim_.session
     if not claim_.graced:
@@ -318,7 +341,8 @@ def rotate(
         .execution_options(synchronize_session=False)
     )
     session.last_used_at = now
-    session.expires_at = now + ttl
+    if session.remember:  # «Запомнить меня»: 14 days from THIS refresh; the short session keeps its fixed end (sign-in + 12 h)
+        session.expires_at = now + ttl
     if client is not None:
         ip, user_agent = client.cleaned()
         session.ip = ip or session.ip
@@ -344,6 +368,55 @@ def revoke_by_token(db: Session, user_id, token_hash: str, reason: str = REVOKE_
     session.revoke_reason = reason
     db.flush()
     return True
+
+
+def end_browser_session(db: Session, token_hash: str, reason: str = REVOKE_NEW_LOGIN) -> bool:
+    """The browser signs in again (A3): revoke the live session the refresh cookie it still holds names, WHOEVER owns it - on a shared
+    computer the cookie of the person who used it before must not stay alive after the next person signs in. The cookie is the proof
+    (its hash is looked up); the same rule as ``revoke_by_token`` otherwise: a live token or one superseded at most ``GRACE_SECONDS``
+    ago. Unknown, old, already revoked or expired -> False, nothing changes. Not committed."""
+    now = _now()
+    session, token = _lock_session_and_token(db, token_hash)
+    if session is None or session.revoked_at is not None or session.expires_at is None or session.expires_at <= now:
+        return False
+    if token.superseded_at is not None and not _within_grace(token, now):
+        return False
+    session.revoked_at = now
+    session.revoke_reason = reason
+    db.flush()
+    return True
+
+
+def revoke_by_id(db: Session, user_id, session_id, reason: str = REVOKE_LOGOUT) -> bool:
+    """Revoke the live session *session_id* when it belongs to *user_id* (the ``sid`` of an access token). Not committed."""
+    result = db.execute(
+        update(UserSession)
+        .where(
+            UserSession.id == session_id,
+            UserSession.user_id == user_id,
+            UserSession.revoked_at.is_(None),
+            UserSession.expires_at > _now(),
+        )
+        .values(revoked_at=_now(), revoke_reason=reason)
+        .execution_options(synchronize_session="fetch")
+    )
+    return bool(isinstance(result.rowcount, int) and result.rowcount > 0)
+
+
+def is_alive(db: Session, user_id, session_id) -> bool:
+    """The session an access token names (``sid``) is live: not revoked, not expired, and it is the token user's own (A5).
+    One primary-key read per request, no cache: a revocation (sign-out, password, block, removal) ends the access token at once."""
+    if session_id is None:
+        return False
+    row = db.execute(
+        select(UserSession.id).where(
+            UserSession.id == session_id,
+            UserSession.user_id == user_id,
+            UserSession.revoked_at.is_(None),
+            UserSession.expires_at > _now(),
+        )
+    ).first()
+    return row is not None
 
 
 def revoke_all(db: Session, user_id, reason: str) -> int:

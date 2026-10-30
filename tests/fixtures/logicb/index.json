@@ -32,7 +32,7 @@
   "c5_save_lobby_released.json": "SaveAttendanceOut",
   "c5_verify_student_as_of.json": "VerifyStudentAsOfOut",
   "c6_after_accept.json": "-",
-  "c6_invitation_create.json": "InvitationOut",
+  "c6_invitation_create.json": "InvitationSentOut",
   "c6_invite_info_returning.json": "InviteInfoOut",
   "c6_invite_mismatch.json": "-",
   "c6_members_removed.json": "MemberOut",

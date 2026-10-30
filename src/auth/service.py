@@ -106,7 +106,6 @@ from .schemas import (
     LessonAttendanceStatus,
 )
 from src.core.config import get_settings
-from src.core.email import send_admin_new_application
 from src.core.exceptions import InvalidCredentialsError
 
 # LOGIC-B: the answers that grew (room may be null, validFrom, teacher of a lesson, ...) are the subclasses of ops_schemas, used under the old names.
@@ -181,9 +180,10 @@ from src.core.startup_guard import diagnostic_base_url, load_signing_secrets
 SECRET_KEY, JWT_SECRET = load_signing_secrets()
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TTL_MINUTES", "60"))
-REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TTL_DAYS", "30"))
+# K2-1 (D): the lifetime of a REMEMBERED session (14 days, sliding at every refresh); without the tick a session lives 12 h from the sign-in (user_sessions.SHORT_SESSION_HOURS)
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TTL_DAYS", "14"))
 DIAGNOSTIC_CODE_LENGTH = 8
-INVITE_CODE_LENGTH = 8
+INVITE_CODE_LENGTH = 20  # K2-1 (A1): the code in the e-mailed link is the proof of the mailbox, so it is a secret (36**20 values), not a shared 8-character word
 BASE_DIAGNOSTIC_URL = diagnostic_base_url()  # SV-27: logs an error in production/staging when DIAGNOSTIC_BASE_URL is missing
 # "cancelled" is deliberately absent: a cancelled invite never turns into "expired" when its time passes.
 _EXPIRABLE_DIAGNOSTIC_STATUSES = ("pending", "confirmed", "in_progress")
@@ -269,6 +269,7 @@ def create_access_token(
     org_id: Optional[str] = None,
     org_role: Optional[str] = None,
     expires_delta: Optional[timedelta] = None,
+    sid: Optional[str] = None,
 ) -> str:
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -284,6 +285,8 @@ def create_access_token(
         payload["org_id"] = org_id
     if org_role:
         payload["org_role"] = org_role
+    if sid:  # K2-1 (A5): the session this token belongs to; every protected request checks that the session is alive
+        payload["sid"] = sid
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
@@ -335,10 +338,17 @@ class _SchedulePreload:
 
 
 class AuthService:
-    def __init__(self, db: Session, client: Optional[user_sessions.SessionClient] = None):
+    def __init__(
+        self,
+        db: Session,
+        client: Optional[user_sessions.SessionClient] = None,
+        previous_refresh: Optional[str] = None,
+    ):
         self.db = db
         # Where the request came from (trusted address + user agent), recorded on the sessions this service creates.
         self.client = client
+        # The refresh cookie this browser held when it signed in (A3): the session it names ends with the new sign-in.
+        self.previous_refresh = previous_refresh
 
     # ─── Helpers ───
 
@@ -389,27 +399,37 @@ class AuthService:
             created_at=org.created_at.isoformat() if org.created_at else None,
         )
 
-    def _issue_token_pair(self, user: User) -> TokenPair:
-        """A fresh access + refresh JWT. Records nothing: the refresh token belongs to a session row, see below."""
+    def _issue_token_pair(self, user: User, session_id, remember: bool = False) -> TokenPair:
+        """A fresh access + refresh JWT of the session *session_id* (the access token carries it as ``sid``). Records nothing:
+        the refresh token belongs to a session row, see below. ``remember`` only tells the route how long the cookies live."""
         org_id, org_role, _ = self._get_user_org_info(user)
-        access = create_access_token(str(user.id), user.role, org_id, org_role)
+        access = create_access_token(str(user.id), user.role, org_id, org_role, sid=str(session_id))
         refresh = create_refresh_token(str(user.id))
         return TokenPair(
             access_token=access,
             refresh_token=refresh,
             expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            remember=bool(remember),
         )
 
-    def _create_tokens(self, user: User) -> TokenPair:
+    def _create_tokens(self, user: User, remember: bool = False) -> TokenPair:
         """A sign-in: a token pair and a NEW session of this user (one row per signed-in device); the user's other
-        sessions are not touched (#101)."""
-        tokens = self._issue_token_pair(user)
+        sessions are not touched (#101), except the one this very browser still held (A3). *remember* is the mode (D):
+        the default is the short session - a sign-in by a link (password, invitation) never asks for it."""
+        if self.previous_refresh:
+            # A3: the browser signs in again - the session its refresh cookie still names (of this user or of the person who used the
+            # computer before) is over. Unknown / old / already revoked tokens revoke nothing.
+            user_sessions.end_browser_session(self.db, hash_token(self.previous_refresh), user_sessions.REVOKE_NEW_LOGIN)
+        session_id = uuid4()
+        tokens = self._issue_token_pair(user, session_id, remember)
         user_sessions.issue(
             self.db,
             user.id,
             hash_token(tokens.refresh_token),
             timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
             self.client,
+            remember=remember,
+            session_id=session_id,
         )
         return tokens
 
@@ -477,20 +497,9 @@ class AuthService:
         self.db.commit()
 
         logger.info(
-            f"New org application ({'auto-activated' if auto_approve else 'pending'}): "
-            f"{org.name} by {user.email}"
+            "New org application (%s): org_id=%s owner_id=%s",
+            "auto-activated" if auto_approve else "pending", org.id, user.id,
         )
-
-        # Best-effort admin notification — does not block registration
-        try:
-            send_admin_new_application(
-                org_name=org.name,
-                org_id=str(org.id),
-                owner_email=user.email,
-                owner_name=f"{user.first_name} {user.last_name}".strip() or user.full_name,
-            )
-        except Exception:
-            logger.exception("Failed to send admin notification email")
 
         if auto_approve:
             return OrgApplicationPendingResponse(
@@ -549,63 +558,6 @@ class AuthService:
         }
 
     # ═══════════════════════════════════════════════════════════════════
-    # 1c. ACTIVATION — активация аккаунта по токену из письма
-    # ═══════════════════════════════════════════════════════════════════
-
-    def activate_account(self, token: str) -> AuthResponse:
-        """Activate an org + owner account using the emailed token."""
-        token_hash = hash_token(token)
-
-        org = (
-            self.db.query(Organization)
-            .filter(
-                Organization.activation_token == token_hash,
-                Organization.status.in_(["pending", "active"]),
-            )
-            .first()
-        )
-        if not org:
-            raise ValueError("Невалидная или уже использованная ссылка активации")
-        if org.blocked_at is not None:  # a centre blocked from the console is not activated by an old link
-            raise ValueError("Доступ центра приостановлен. Свяжитесь с ALGO")
-
-        # Check expiry
-        if org.activation_token_expires_at:
-            exp = (
-                org.activation_token_expires_at
-                if org.activation_token_expires_at.tzinfo
-                else org.activation_token_expires_at.replace(tzinfo=timezone.utc)
-            )
-            if exp < datetime.now(timezone.utc):
-                raise ValueError("Ссылка активации истекла. Обратитесь к администратору.")
-
-        # Activate org
-        org.status = "active"
-        org.activation_token = None
-        org.activation_token_expires_at = None
-
-        # Activate owner
-        owner = self.db.query(User).filter(User.id == org.owner_id).first()
-        if not owner:
-            raise ValueError("Владелец организации не найден")
-        if owner.platform_blocked_at is not None:
-            raise ValueError("Пользователь заблокирован командой ALGO")
-        owner.is_active = True
-        owner.is_verified = True
-
-        # Issue tokens
-        tokens = self._create_tokens(owner)
-        self.db.commit()
-
-        logger.info(f"Org activated: {org.name} by {owner.email}")
-
-        return AuthResponse(
-            user=self._build_user_response(owner),
-            tokens=tokens,
-            org=self._build_org_response(org),
-        )
-
-    # ═══════════════════════════════════════════════════════════════════
     # 2. LOGIN
     # ═══════════════════════════════════════════════════════════════════
 
@@ -617,16 +569,28 @@ class AuthService:
         password_ok = verify_password(request.password, user.password_hash if user else _DUMMY_PASSWORD_HASH)
         if not user or not user.is_active or not password_ok:
             raise InvalidCredentialsError()
+        if user.role == "superadmin":  # A4: the platform role has no cabinet - the answer of a wrong password, and a row in the journal
+            self._deny_superadmin_login(user)
         from .platform_blocks import ensure_login_allowed  # a console account / a blocked centre never gets a session
         ensure_login_allowed(self.db, user)
+
+        # F8 (sign-in || password set): a session issued by an OLD password must not survive the change. Both sides take the per-user session lock; here the
+        # lock is taken first and the password is re-read under it: a password set by a link / changed in the settings that committed while this
+        # request was verifying the old one is seen now (the sign-in is refused); one that commits later revokes the session issued here (revoke_all).
+        verified_hash = user.password_hash
+        user_sessions.lock_user(self.db, user.id)
+        self.db.refresh(user)
+        if not user.is_active or user.password_hash != verified_hash:
+            self.db.rollback()
+            raise InvalidCredentialsError()
 
         user.last_login_at = datetime.now(timezone.utc)
         user.login_count = (user.login_count or 0) + 1
 
-        tokens = self._create_tokens(user)
+        tokens = self._create_tokens(user, remember=bool(getattr(request, "remember_me", False)))
         self.db.commit()
 
-        logger.info(f"User logged in: {user.email}")
+        logger.info("User logged in: user_id=%s", user.id)
 
         org = None
         if user.default_org_id:
@@ -644,6 +608,19 @@ class AuthService:
             org=org,
         )
 
+    def _deny_superadmin_login(self, user: User) -> None:
+        """A4: ``superadmin`` is a role of the platform, it never signs in to a cabinet. The refusal is the ordinary «Неверная почта или
+        пароль» (it must not say that the password was right); the attempt is a ``platform_audit`` row (committed here: the caller raises)."""
+        from .platform_audit import record as audit_record
+
+        ip, user_agent = (self.client or user_sessions.SessionClient()).cleaned()
+        audit_record(
+            self.db, actor_id=None, action="login.superadmin_denied", target_type="user", target_id=user.id,
+            details={"where": "cabinet"}, ip=ip, user_agent=user_agent,
+        )
+        self.db.commit()
+        raise InvalidCredentialsError()
+
     # ═══════════════════════════════════════════════════════════════════
     # 3. TOKEN MANAGEMENT
     # ═══════════════════════════════════════════════════════════════════
@@ -654,7 +631,7 @@ class AuthService:
             raise ValueError("Невалидный refresh token")
 
         user = self.db.query(User).filter(User.id == payload.get("sub")).first()
-        if not user or not user.is_active:
+        if not user or not user.is_active or user.role == "superadmin":  # a platform account has no cabinet session (A4)
             raise ValueError("Пользователь не найден или заблокирован")
 
         # The session of THIS device (found by the hash of the token, rows locked); the user's other devices keep
@@ -666,19 +643,28 @@ class AuthService:
             self.db.commit()
             raise ValueError("Refresh token отозван")
 
-        tokens = self._issue_token_pair(user)
+        # the mode of the session (D) and its id (A5) come from the row: the refresh token carries neither
+        tokens = self._issue_token_pair(user, claim.session.id, claim.session.remember)
         user_sessions.rotate(self.db, claim, hash_token(tokens.refresh_token), ttl, self.client)
         self.db.commit()
         return tokens
 
-    def logout(self, user_id: str) -> None:
-        """Sign-out from an ACCESS token alone (no refresh token at hand): revokes nothing.
+    def logout(self, user_id: str, session_id: Optional[str] = None) -> None:
+        """Sign-out from an ACCESS token alone (no refresh token at hand).
 
-        An access JWT names the user, not the device, and a user may be signed in on several devices; revoking
-        "all of them" would sign out the other devices (the defect #101 fixed). The caller clears the browser's
-        cookies, and the access token itself dies within its lifetime. A request that carries the refresh cookie
-        is handled by ``logout_by_refresh_token``, which does revoke that device's session.
+        An access JWT names the user and, since K2-1, the session (``sid``): that one session is revoked, so the token stops working
+        at once. A token without ``sid`` names no device, and a user may be signed in on several devices - revoking "all of them" would
+        sign out the other devices (the defect #101 fixed) - so it revokes nothing. A request that carries the refresh cookie
+        is handled by ``logout_by_refresh_token``.
         """
+        if session_id:
+            try:
+                revoked = user_sessions.revoke_by_id(self.db, user_id, UUID(str(session_id)), user_sessions.REVOKE_LOGOUT)
+            except (ValueError, TypeError):
+                revoked = False
+            if revoked:
+                self.db.commit()
+            return
         logger.debug("logout without a refresh token: user %s, no session identified, none revoked", user_id)
 
     def logout_by_refresh_token(self, refresh_token: str) -> bool:
@@ -744,6 +730,10 @@ class AuthService:
 
     def list_invitations(self, org_id: str) -> list:
         return invites.Invites(self).list(org_id)
+
+    def resend_invitation(self, org_id: str, invite_id, creator_id: str, *, creator_role: Optional[str] = None) -> dict:
+        """«Отправить ещё раз» (K2-1, A1): a new code by letter, the old one is cancelled - ``invites.Invites``."""
+        return invites.Invites(self).resend(org_id, invite_id, creator_id, creator_role=creator_role)
 
     def revoke_invitation(self, org_id: str, invite_id: str) -> bool:
         invite = (

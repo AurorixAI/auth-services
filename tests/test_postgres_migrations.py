@@ -20,7 +20,7 @@ def legacy_add(db,model,**values):
     revisions: an ORM insert names EVERY mapped column, also the ones of revisions newer than the one the DB is at (the console pack added
     ``users.platform_block*`` and ``organizations.blocked_*``); Core names only what it is given."""
     db.execute(model.__table__.insert().values(**values))
-HEAD='k3a1b2c3d4e5'          # W1 (live day off range, restore audit) on top of pf1a2b3c4d5 (PAY-F) on top of cn1a2b3c4d5 (console pack «Консоль-1»)
+HEAD='k2a1b2c3d4e5'          # W1 (live day off range, restore audit) on top of pf1a2b3c4d5 (PAY-F) on top of cn1a2b3c4d5 (console pack «Консоль-1»)
 LOGICB2_HEAD='lb3c4d5e6f7'  # LOGIC-B2: exam release marker, substitution requests
 LOGICB2='lb2b3c4d5e6'       # LOGIC-B (2/2): group archive, member audit, invitations
 LOGICB1='lb1a2b3c4d5'       # LOGIC-B (1/2): marks version, lesson teachers, validFrom
@@ -775,7 +775,7 @@ def _check_n13_sessions_objects(engine,config,ids):
     names=set(inspect(engine).get_table_names())
     assert {'user_sessions','user_session_tokens'} <= names
     c={x['name']:x for x in inspect(engine).get_columns('user_sessions')}
-    assert set(c)=={'id','user_id','created_at','last_used_at','expires_at','revoked_at','revoke_reason','user_agent','ip'}
+    assert set(c)=={'id','user_id','created_at','last_used_at','expires_at','revoked_at','revoke_reason','user_agent','ip','remember'}  # remember: K2-1 (D)
     assert all(not c[n]['nullable'] for n in ('user_id','created_at','last_used_at','expires_at'))
     assert all(c[n]['nullable'] for n in ('revoked_at','revoke_reason','user_agent','ip'))
     assert c['revoke_reason']['type'].length==40 and c['user_agent']['type'].length==200 and c['ip']['type'].length==64

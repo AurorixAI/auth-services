@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from typing import Optional
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from .models import Organization, User, OrganizationMember
 from .service import (
@@ -19,7 +20,7 @@ from .service import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     REFRESH_TOKEN_EXPIRE_DAYS,
 )
-from .schemas import AuthResponse, UserResponse, TokenPair, OrgResponse
+from .schemas import AuthResponse, UserResponse, TokenPair, OrgResponse, SessionResponse
 from .cookies import set_auth_cookies
 from . import user_sessions
 
@@ -68,7 +69,7 @@ def _session_client(request: Optional[Request]) -> Optional[user_sessions.Sessio
     )
 
 
-@router.post("/dev-login", response_model=AuthResponse)
+@router.post("/dev-login", response_model=SessionResponse)
 def dev_login(
     role: str = Query(..., description="Role: owner, admin, teacher"),
     db: Session = Depends(get_db),
@@ -155,17 +156,20 @@ def dev_login(
     user.last_login_at = datetime.now(timezone.utc)
     user.login_count = (user.login_count or 0) + 1
 
+    session_id = uuid4()
     access = create_access_token(
-        str(user.id), user.role, str(org.id), config["org_role"]
+        str(user.id), user.role, str(org.id), config["org_role"], sid=str(session_id)
     )
     refresh = create_refresh_token(str(user.id))
-    # A new session per quick-login (several browsers can be signed in as the same dev user, #101).
+    # A new session per quick-login (several browsers can be signed in as the same dev user, #101). Remembered: a developer does not want to sign in every 12 h.
     user_sessions.issue(
         db,
         user.id,
         hash_token(refresh),
         timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
         _session_client(raw_request),
+        remember=True,
+        session_id=session_id,
     )
 
     db.commit()
@@ -203,14 +207,29 @@ def dev_login(
         created_at=org.created_at.isoformat() if org.created_at else None,
     )
 
-    auth = AuthResponse(
-        user=user_response,
-        tokens=tokens,
-        org=org_response,
-    )
-    body = auth.model_dump(mode="json")
+    body = SessionResponse(user=user_response, org=org_response).model_dump(mode="json")  # no token in the body (K2-1, A2)
     resp = JSONResponse(content=body)
 
-    # One cookie policy for every sign-in path (flags, domain, lifetimes).
-    set_auth_cookies(resp, tokens.access_token, tokens.refresh_token)
+    # One cookie policy for every sign-in path (flags, lifetimes).
+    set_auth_cookies(resp, tokens.access_token, tokens.refresh_token, True)
     return resp
+
+
+@router.get("/dev-invite-code")
+def dev_invite_code(email: str = Query(..., min_length=5, max_length=255), db: Session = Depends(get_db)):
+    """DEV ONLY (this router is mounted only when ``APP_ENV=development``): the code of the newest pending staff invitation for *email*.
+
+    K2-1 (A1): the product never hands the code to anybody - it travels in the letter - and a development stack has no mailbox, so the
+    end-to-end harness (``e2e/support/api.ts``) reads the code here to play the invited person.
+    """
+    from .models import Invitation
+
+    invite = (
+        db.query(Invitation)
+        .filter(Invitation.status == "pending", Invitation.email == email.strip().lower())
+        .order_by(Invitation.created_at.desc())
+        .first()
+    )
+    if invite is None:
+        raise HTTPException(status_code=404, detail="No pending invitation for this e-mail")
+    return {"code": invite.code}

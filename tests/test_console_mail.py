@@ -1,4 +1,4 @@
-"""The five letters: multipart/alternative with a text part, escaped user input, the links, no foreign domains, mobile / dark markup."""
+"""The six letters: multipart/alternative with a text part, escaped user input, the links, no foreign domains, mobile / dark markup."""
 import re
 from datetime import datetime, timedelta
 
@@ -41,12 +41,13 @@ def all_letters(**over):
         letters.render_application_declined(greeting=name, centre_name=centre, reason=over.get("reason", "Причина отказа")),
         letters.render_new_application(sample_request(contact_name=name, centre_name=centre, comment=over.get("comment", "Комментарий"))),
         letters.render_password_reset(greeting=name, token="RESET_abc-123", email="ivan@example.uz"),
+        letters.render_staff_invite(centre_name=centre, org_role="teacher", code="CODE_abc123XYZ45", expires_at=now + timedelta(days=7)),
     ]
 
 
-def test_there_are_five_letters_and_each_has_html_and_text():
+def test_there_are_six_letters_and_each_has_html_and_text():
     rendered = all_letters()
-    assert [r.letter for r in rendered] == list(render.LETTERS) == ["application_received", "welcome", "application_declined", "new_application", "password_reset"]
+    assert [r.letter for r in rendered] == list(render.LETTERS) == ["application_received", "welcome", "application_declined", "new_application", "password_reset", "staff_invite"]
     for r in rendered:
         assert r.subject and "\n" not in r.subject
         assert r.html.lstrip().lower().startswith("<!doctype html") and "</html>" in r.html

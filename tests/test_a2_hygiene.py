@@ -19,7 +19,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 import src.api.internal_router  # noqa: E402,F401  (import order: avoids a pre-existing router cycle)
 from src.api import main_v2  # noqa: E402
 from src.auth.dependencies import RoleChecker, get_current_active_user_payload, require_org_admin, require_superadmin  # noqa: E402
-from src.core import email as mail  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = main_v2.app
@@ -31,57 +30,8 @@ def http():
 
 
 # ------------------------------------------------------------------------------------------------------ LD-19
-EVIL = '<a href="http://evil.example/login">Подтвердите</a><script>alert(1)</script>'
-
-
-def test_the_admin_mail_escapes_what_the_applicant_typed(monkeypatch):
-    sent = []
-    monkeypatch.setattr(mail, "ADMIN_NOTIFICATION_EMAIL", "admin@algo.test")
-    monkeypatch.setattr(mail, "_send_raw", lambda to, subject, body: sent.append((to, subject, body)) or True)
-    assert mail.send_admin_new_application(EVIL, "id-1", 'x"><b>@example.com', EVIL)
-    _to, _subject, body = sent[0]
-    assert "<a href" not in body and "<script" not in body and "<b>" not in body
-    assert "&lt;a href=&quot;http://evil.example/login&quot;&gt;" in body and "&lt;script&gt;" in body
-
-
-def test_the_activation_mail_escapes_names_and_the_link(monkeypatch):
-    sent = []
-    monkeypatch.setattr(mail, "_send_raw", lambda to, subject, body: sent.append(body) or True)
-    mail.send_activation_email("o@example.com", EVIL, EVIL, 'tok"><img src=x onerror=alert(1)>')
-    body = sent[0]
-    assert "<script" not in body and "<img" not in body and 'href="http://evil' not in body
-    assert "&lt;script&gt;" in body and "tok%22%3E%3Cimg" in body
-
-
-def test_a_newline_in_the_org_name_cannot_start_a_mail_header(monkeypatch):
-    captured = {}
-
-    class FakeSMTP:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def ehlo(self): pass
-        def starttls(self): pass
-        def login(self, *a): pass
-        def sendmail(self, sender, rcpt, message): captured["rcpt"], captured["message"] = rcpt, message
-
-    monkeypatch.setattr(mail, "SMTP_HOST", "smtp.test"); monkeypatch.setattr(mail, "SMTP_USER", "u"); monkeypatch.setattr(mail, "SMTP_PASSWORD", "p")
-    monkeypatch.setattr(mail, "ADMIN_NOTIFICATION_EMAIL", "admin@algo.test")
-    monkeypatch.setattr(mail.smtplib, "SMTP", FakeSMTP)
-    assert mail.send_admin_new_application("Центр\r\nBcc: victim@example.com", "id-1", "o@example.com", "Имя")
-    headers = captured["message"].split("\n\n", 1)[0]
-    assert not re.search(r"(?mi)^Bcc:", headers) and captured["rcpt"] == ["admin@algo.test"]
-
-
-def test_without_smtp_the_body_is_logged_only_in_development(monkeypatch, caplog):
-    monkeypatch.setattr(mail, "SMTP_HOST", "")
-    for env, expect_body in (("testing", True), ("development", True), ("staging", False), ("production", False)):
-        monkeypatch.setenv("APP_ENV", env)
-        caplog.clear()
-        with caplog.at_level(logging.INFO, logger="src.core.email"):
-            mail._send_raw("a@b.test", "Тема", "<p>activate?token=SECRETTOKEN</p>")
-        assert ("SECRETTOKEN" in caplog.text) is expect_body, env
-        assert "Тема" in caplog.text
+# K2-1: the old mail module (src/core/email.py: admin / activation letters) is gone; the escaping, the header-injection guard and the "no body in a
+# deployed log" rules of the letters that remain are tested in tests/test_console_mail.py (src/mail).
 
 
 # ------------------------------------------------------------------------------------------------------ LD-30

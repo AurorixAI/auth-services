@@ -22,10 +22,31 @@ class MailConfig:
     console_url: str
     frontend_url: str
     site_url: str
+    # K2-1 (G): who may get a letter. ``allowlist`` = addresses ("a@b.uz") and domains ("b.uz" / "@b.uz"), lower-case; ``restrict`` = this stack
+    # is a stage: with an EMPTY list it sends nothing (safe default). A production stack has no list = no restriction.
+    allowlist: tuple = ()
+    restrict: bool = False
 
     @property
     def smtp_configured(self) -> bool:
         return bool(self.smtp_host and self.smtp_user and self.smtp_password)
+
+    def allows(self, address: str) -> bool:
+        """May a letter go to *address*? A non-empty ``allowlist`` always applies; an empty one means «anybody» on production and «nobody» on a stage."""
+        if not self.allowlist:
+            return not self.restrict
+        _, _, domain = (address or "").strip().lower().rpartition("@")
+        wanted = (address or "").strip().lower()
+        for entry in self.allowlist:
+            if entry.startswith("@"):
+                if domain and domain == entry[1:]:
+                    return True
+            elif "@" in entry:
+                if wanted == entry:
+                    return True
+            elif domain and domain == entry:
+                return True
+        return False
 
 
 def _url(name: str, default: str) -> str:
@@ -43,6 +64,20 @@ def localhost_urls(cfg: "MailConfig | None" = None) -> list:
     return bad
 
 
+# Both real stacks run APP_ENV=staging (stage and prod alike), so the environment name cannot say "this is the stage": the stage compose sets
+# MAIL_STAGE_MODE=true (an APP_ENV of stage / preview counts too).
+STAGE_ENVS = ("stage", "preview")
+
+
+def _allowlist(raw: str) -> tuple:
+    return tuple(sorted({item.strip().lower() for item in (raw or "").replace(";", ",").split(",") if item.strip()}))
+
+
+def _is_stage() -> bool:
+    flag = os.getenv("MAIL_STAGE_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+    return flag or os.getenv("APP_ENV", "").strip().lower() in STAGE_ENVS
+
+
 def load() -> MailConfig:
     return MailConfig(
         smtp_host=os.getenv("SMTP_HOST", "").strip(),
@@ -56,4 +91,6 @@ def load() -> MailConfig:
         console_url=_url("CONSOLE_URL", "https://console.algolab.me"),
         frontend_url=_url("FRONTEND_URL", DEFAULT_FRONTEND_URL),
         site_url=_url("SITE_URL", DEFAULT_SITE_URL),
+        allowlist=_allowlist(os.getenv("MAIL_ALLOWLIST", "")),
+        restrict=_is_stage(),
     )

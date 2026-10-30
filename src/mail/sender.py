@@ -9,8 +9,9 @@ import logging
 import re
 import smtplib
 import ssl
+from email import policy
 from email.message import EmailMessage
-from email.utils import formataddr, formatdate, make_msgid
+from email.utils import formataddr, formatdate, make_msgid, parseaddr
 
 from . import config as mail_config
 from .render import Rendered
@@ -27,6 +28,11 @@ def mask_address(address: str) -> str:
     return f"{local[:1]}***@{domain}" if domain else f"{local[:1]}***"
 
 
+# CPython 3.11 loses the space between two encoded words when it folds a long non-ASCII Subject (``_fold_as_ew``: «K3 тест прода» arrives as «K3 тестпрода»,
+# 2.5 % of random centre names). One long header line (RFC 5322 allows 998) is encoded in ONE pass and cannot be mangled (K2-1, G).
+POLICY = policy.default.clone(max_line_length=998)
+
+
 def _line(value: str) -> str:
     """A header value on one line: CR/LF in user-supplied text cannot start a new header."""
     return re.sub(r"[\r\n]+", " ", value or "").strip()
@@ -34,26 +40,34 @@ def _line(value: str) -> str:
 
 def build_message(to: str, rendered: Rendered, cfg: mail_config.MailConfig | None = None) -> EmailMessage:
     cfg = cfg or mail_config.load()
-    msg = EmailMessage()
+    msg = EmailMessage(policy=POLICY)
     msg["Subject"] = _line(rendered.subject)
     msg["From"] = formataddr((_line(cfg.from_name), _line(cfg.from_address)))
     msg["To"] = _line(to)
     if cfg.reply_to:
         msg["Reply-To"] = _line(cfg.reply_to)
-    msg["Date"] = formatdate(localtime=False)
+    msg["Date"] = formatdate(localtime=False, usegmt=True)  # UTC, written by the policy as «+0000» (not the old «-0000» = "local time unknown")
     msg["Message-ID"] = make_msgid(domain=_line(cfg.from_address).rsplit("@", 1)[-1] or "algolab.me")
     msg["Auto-Submitted"] = "auto-generated"
     msg["X-Auto-Response-Suppress"] = "OOF, AutoReply"
-    msg.set_content(rendered.text)  # text/plain first ...
-    msg.add_alternative(rendered.html, subtype="html")  # ... then text/html: multipart/alternative, the richest part last
+    # quoted-printable, never base64: a text/plain part in base64 is a spam-filter penalty (MIME_BASE64_TEXT) and unreadable in a raw view
+    msg.set_content(rendered.text, cte="quoted-printable")  # text/plain first ...
+    msg.add_alternative(rendered.html, subtype="html", cte="quoted-printable")  # ... then text/html: multipart/alternative, the richest part last
     msg.letter_kind = rendered.letter  # for the log only (a Python attribute, not a header of the letter)
     return msg
+
+
+def _allowed(to: str, cfg: mail_config.MailConfig) -> bool:
+    return cfg.allows(parseaddr(_line(to))[1] or _line(to))
 
 
 def deliver(msg: EmailMessage, cfg: mail_config.MailConfig | None = None) -> bool:
     cfg = cfg or mail_config.load()
     to = str(msg["To"])
     kind, who = getattr(msg, "letter_kind", "letter"), mask_address(to)  # the log keeps the kind and a masked address: no Subject (it carries the applicant's words)
+    if not _allowed(to, cfg):  # the last gate before the network (the same rule as in ``send``): nothing goes outside the allow-list of a stage
+        logger.info("Letter %s NOT sent: stage allow-list", kind)
+        return False
     if not cfg.smtp_configured:
         logger.info("SMTP not configured - letter %s to %s NOT sent", kind, who)
         return False
@@ -77,7 +91,11 @@ def deliver(msg: EmailMessage, cfg: mail_config.MailConfig | None = None) -> boo
 
 def send(to: str, rendered: Rendered) -> bool:
     try:
-        return deliver(build_message(to, rendered))
+        cfg = mail_config.load()
+        if not _allowed(to, cfg):  # K2-1 (G): a stage sends only to its allow-list (empty list = nothing); the log has no address
+            logger.info("Letter %s NOT sent: stage allow-list", rendered.letter)
+            return False
+        return deliver(build_message(to, rendered, cfg))
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to send a letter %s to %s: %s", rendered.letter, mask_address(to), type(exc).__name__)
         return False

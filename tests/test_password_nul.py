@@ -24,7 +24,6 @@ from src.auth.dependencies import get_current_active_user_payload  # noqa: E402
 from src.auth.schemas import (  # noqa: E402
     PASSWORD_NUL_MESSAGE,
     AcceptInviteRequest,
-    ActivateAccountRequest,
     ChangePasswordRequest,
     LoginRequest,
     OrgApplicationRequest,
@@ -101,6 +100,3 @@ def test_other_control_characters_and_unicode_are_still_fine():
 def test_a_login_attempt_with_a_nul_byte_is_not_a_validation_error():
     assert LoginRequest(email="a@x.kz", password=NUL_PASSWORD).password == NUL_PASSWORD  # the 401 path answers it
 
-
-def test_activation_takes_no_password():
-    assert "password" not in ActivateAccountRequest.model_fields

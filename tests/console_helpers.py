@@ -187,6 +187,15 @@ def letters_to(outbox, address):
     return [m for m in outbox if address in m["To"]]
 
 
+def invite_code_from_mail(outbox, address):
+    """K2-1 (A1): the code of a staff invitation is only in the link of the letter that went to *address* (no API answer carries it)."""
+    import re
+
+    msgs = letters_to(outbox, address)
+    assert msgs, f"no letter to {address}"
+    return re.search(r"/invite/([A-Za-z0-9_%-]+)", body_of(msgs[-1])).group(1)
+
+
 def body_of(msg, kind="plain"):
     part = msg.get_body(preferencelist=(kind,))
     return part.get_content() if part is not None else None

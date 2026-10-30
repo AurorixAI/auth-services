@@ -42,7 +42,7 @@ def test_setting_the_password_logs_in_and_burns_the_link(cw):
     r = c.post(f"{LINKS}/{token}", json={"password": NEW_PASSWORD, "password_confirm": NEW_PASSWORD})
     assert r.status_code == 200, r.text
     j = r.json()
-    assert j["user"]["email"] == owner.email and j["tokens"]["access_token"] and j["org"]["name"] == centre.org.name
+    assert j["user"]["email"] == owner.email and "tokens" not in j and j["org"]["name"] == centre.org.name
     assert c.cookies.get("algo_auth_token") and c.get("/api/v1/auth/me").status_code == 200       # signed in through the cookie
     assert cw.new_client(APP).post("/api/v1/auth/login", json={"email": owner.email, "password": NEW_PASSWORD}).status_code == 200
     # once only
@@ -117,7 +117,7 @@ def test_reset_by_the_console_ends_the_old_sessions_after_the_password_changes(c
     cabinet = cw.new_client(APP)
     login = cabinet.post("/api/v1/auth/login", json={"email": owner.email, "password": PASSWORD})
     assert login.status_code == 200
-    refresh = login.json()["tokens"]["refresh_token"]
+    refresh = cabinet.cookies.get("algo_refresh_token")
 
     support = cw.signed_in(cw.make_staff(["users.view", "users.manage"]))
     r = support.post(f"{API}/users/{owner.id}/send-reset")
@@ -134,7 +134,8 @@ def test_reset_by_the_console_ends_the_old_sessions_after_the_password_changes(c
     done = cw.new_client(APP).post(f"{LINKS}/{token}", json={"password": NEW_PASSWORD, "password_confirm": NEW_PASSWORD})
     assert done.status_code == 200
     stale = cw.new_client(APP)
-    assert stale.post("/api/v1/auth/refresh", json={"refresh_token": refresh}).status_code == 401      # the old device is signed out
+    stale.cookies.set("algo_refresh_token", refresh)
+    assert stale.post("/api/v1/auth/refresh", json={}).status_code == 401      # the old device is signed out
     cw.db.expire_all()
     assert cw.db.query(UserSession).filter(UserSession.user_id == owner.id, UserSession.revoke_reason == "password_changed").count() >= 1
     assert cw.new_client(APP).post("/api/v1/auth/login", json={"email": owner.email, "password": PASSWORD}).status_code == 401

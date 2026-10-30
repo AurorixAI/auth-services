@@ -17,6 +17,7 @@ BASE_URL = os.environ.get("A5_AUTH_MIGRATION_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
 
 REVISION, BEFORE = "k3a1b2c3d4e5", "p159a1b2c3d4"
+HEAD = "k2a1b2c3d4e5"   # K2-1 (the mode of a session) sits on top of this revision
 DB_NAME = "a5_auth_k3_migrations"
 NEW = {
     "org_type", "address", "branches_count", "position", "preferred_contact_time", "needs", "current_tool", "heard_from", "locale", "consent_at",
@@ -69,7 +70,7 @@ def test_the_revision_follows_159_and_is_the_head():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == [REVISION] and script.get_revision(REVISION).down_revision == BEFORE
+    assert script.get_heads() == [HEAD] and script.get_revision(REVISION).down_revision == BEFORE and script.get_revision(HEAD).down_revision == REVISION
 
 
 def test_up_down_up_old_rows_survive_and_the_columns_are_nullable(engine):
@@ -78,7 +79,7 @@ def test_up_down_up_old_rows_survive_and_the_columns_are_nullable(engine):
     assert not (NEW & set(columns(engine)))
     old_row(engine)
     command.upgrade(cfg, "head")
-    assert version(engine) == REVISION
+    assert version(engine) == HEAD
     cols = columns(engine)
     assert NEW <= set(cols) and all(cols[name]["nullable"] for name in NEW)
     with engine.connect() as c:
@@ -91,7 +92,7 @@ def test_up_down_up_old_rows_survive_and_the_columns_are_nullable(engine):
         assert c.execute(text("SELECT count(*) FROM demo_requests WHERE email = 'old@k3.test'")).scalar_one() == 1
     command.upgrade(cfg, "head")
     command.upgrade(cfg, "head")                                                                                           # repeated: harmless
-    assert version(engine) == REVISION and NEW <= set(columns(engine))
+    assert version(engine) == HEAD and NEW <= set(columns(engine))
 
 
 def test_request_id_is_unique_where_set_and_org_type_is_checked(engine):
@@ -122,4 +123,4 @@ def test_a_database_built_from_the_models_and_stamped_back_upgrades_without_fail
     cfg = config()
     command.stamp(cfg, BEFORE)
     command.upgrade(cfg, "head")
-    assert version(engine) == REVISION and NEW <= set(columns(engine))
+    assert version(engine) == HEAD and NEW <= set(columns(engine))

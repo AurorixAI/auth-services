@@ -11,6 +11,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
+from . import user_sessions
 from .cookies import AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME  # noqa: F401
 from .service import verify_access_token
 from src.core.database import get_db
@@ -86,6 +87,10 @@ def get_current_active_user_payload(
     organisation, or changing a role therefore takes effect immediately
     rather than waiting for token expiry. Downstream services use ``/auth/me``
     as their authority check, making this the single source of truth.
+
+    K2-1 (A5): the access token names its session (``sid``) and the session must be alive (not revoked, not expired): a sign-out, a password
+    set by a link, a blocked or removed employee end the token AT ONCE, not when its 60 minutes run out. One primary-key read, no cache.
+    A token without ``sid`` (issued before this rule) is refused: the client refreshes or signs in again.
     """
     try:
         user_id = UUID(str(payload.get("sub")))
@@ -104,6 +109,16 @@ def get_current_active_user_payload(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Учётная запись отключена или не найдена",
+        )
+
+    try:
+        session_id = UUID(str(payload.get("sid")))
+    except (TypeError, ValueError, AttributeError):
+        session_id = None
+    if not user_sessions.is_alive(db, user.id, session_id):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Сессия завершена. Войдите снова",
         )
 
     resolved = dict(payload)

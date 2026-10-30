@@ -349,11 +349,11 @@ put("c5_group_archive_release.json", "GroupArchiveReleaseOut", {"ok": True, "rel
 INV_CREATED_UTC = utc(datetime(2026, 11, 10, 14, 0))
 INV_EXPIRES = INV_CREATED_UTC + timedelta(days=7)
 assert INV_EXPIRES.isoformat() == "2026-11-17T09:00:00"
-put("c6_invitation_create.json", "InvitationOut", {
-    "id": uid("invitation-A"), "code": "AB12CD34", "org_role": "teacher", "email": "a.ivanov@algo.test",
-    "expires_at": INV_EXPIRES.isoformat() + "+00:00", "status": "pending", "created_at": None, "is_returning": True,
+# K2-1 (A1): the answer of «Пригласить» has no code and no link; the page of the link shows a MASKED address
+put("c6_invitation_create.json", "InvitationSentOut", {
+    "id": uid("invitation-A"), "email_masked": "a***@algo.test", "expires_at": INV_EXPIRES.isoformat() + "+00:00", "email_sent": True,
 })
-put("c6_invite_info_returning.json", "InviteInfoOut", {"org_name": "Алго Тест", "org_role": "teacher", "email": "a.ivanov@algo.test", "is_returning": True})
+put("c6_invite_info_returning.json", "InviteInfoOut", {"org_name": "Алго Тест", "org_role": "teacher", "email_masked": "a***@algo.test", "is_returning": True})
 put("c6_invite_mismatch.json", "-", error(400, "INVITE_EMAIL_MISMATCH", "Это приглашение выдано для другого email"))
 put("c6_after_accept.json", "-", {"user_id_unchanged": True, "user_is_active": True, "member_is_active": True,
                                   "member_audit_action": "reactivated_by_invite", "groups_returned": 0,

@@ -513,38 +513,6 @@
         "title": "AttendanceUpdatedBy",
         "type": "object"
       },
-      "AuthResponse": {
-        "properties": {
-          "org": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/OrgResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "tokens": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/TokenPair"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "user": {
-            "$ref": "#/components/schemas/UserResponse"
-          }
-        },
-        "required": [
-          "user"
-        ],
-        "title": "AuthResponse",
-        "type": "object"
-      },
       "Body_import_commit_api_v1_auth_org_import_commit_post": {
         "properties": {
           "file": {
@@ -2152,11 +2120,8 @@
         "type": "object"
       },
       "InvitationOut": {
+        "description": "A row of the list of invitations. K2-1 (A1): NO code and no link - the invitation reaches the person by letter only.",
         "properties": {
-          "code": {
-            "title": "Code",
-            "type": "string"
-          },
           "created_at": {
             "anyOf": [
               {
@@ -2209,7 +2174,6 @@
         },
         "required": [
           "id",
-          "code",
           "org_role",
           "expires_at",
           "status"
@@ -2217,18 +2181,42 @@
         "title": "InvitationOut",
         "type": "object"
       },
-      "InviteInfoOut": {
+      "InvitationSentOut": {
+        "description": "The answer to «Пригласить» and «Отправить ещё раз» (K2-1, A1): no code, no link, the address masked; ``email_sent`` says whether the letter left.",
         "properties": {
-          "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
+          "email_masked": {
+            "title": "Email Masked",
+            "type": "string"
+          },
+          "email_sent": {
+            "title": "Email Sent",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email_masked",
+          "expires_at",
+          "email_sent"
+        ],
+        "title": "InvitationSentOut",
+        "type": "object"
+      },
+      "InviteInfoOut": {
+        "description": "What the page of an invitation may show to anybody holding the link: the centre, the role and a MASKED address (``a***@x.uz``).",
+        "properties": {
+          "email_masked": {
+            "default": "",
+            "title": "Email Masked",
+            "type": "string"
           },
           "is_returning": {
             "default": false,
@@ -4192,6 +4180,29 @@
         "title": "ScheduleOccurrenceResponseB",
         "type": "object"
       },
+      "SessionResponse": {
+        "description": "The body of every sign-in / refresh answer: who signed in. No token of any kind (K2-1, A2).",
+        "properties": {
+          "org": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrgResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserResponse"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "title": "SessionResponse",
+        "type": "object"
+      },
       "StartAttendanceOut": {
         "properties": {
           "ok": {
@@ -4820,34 +4831,6 @@
         "title": "TeacherInactiveDetail",
         "type": "object"
       },
-      "TokenPair": {
-        "properties": {
-          "access_token": {
-            "title": "Access Token",
-            "type": "string"
-          },
-          "expires_in": {
-            "default": 3600,
-            "title": "Expires In",
-            "type": "integer"
-          },
-          "refresh_token": {
-            "title": "Refresh Token",
-            "type": "string"
-          },
-          "token_type": {
-            "default": "bearer",
-            "title": "Token Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "access_token",
-          "refresh_token"
-        ],
-        "title": "TokenPair",
-        "type": "object"
-      },
       "UserResponse": {
         "properties": {
           "created_at": {
@@ -5063,7 +5046,7 @@
   "paths": {
     "/invite/accept": {
       "post": {
-        "description": "Принять приглашение в организацию — создаёт аккаунт",
+        "description": "Принять приглашение в организацию — создаёт аккаунт; ссылка пришла письмом, поэтому почта считается подтверждённой. Вход — без «Запомнить меня».",
         "requestBody": {
           "content": {
             "application/json": {
@@ -5079,7 +5062,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthResponse"
+                  "$ref": "#/components/schemas/SessionResponse"
                 }
               }
             },
@@ -5104,7 +5087,7 @@
     },
     "/invite/{code}": {
       "get": {
-        "description": "Публичная информация о приглашении (орг + роль) — для экрана принятия.",
+        "description": "Публичная информация о приглашении (центр + роль + МАСКА почты ``a***@x.uz``) — для экрана принятия. Заменённое/отозванное — 410 ``link_revoked``.",
         "parameters": [
           {
             "in": "path",
@@ -6095,7 +6078,7 @@
         ]
       },
       "post": {
-        "description": "Создать приглашение (owner/admin → admin/teacher)",
+        "description": "Создать приглашение (owner/admin → admin/teacher): ссылка уходит ПИСЬМОМ на почту приглашённого. Ответ — без кода и без ссылки:\n``{id, email_masked, expires_at, email_sent}``.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -6111,7 +6094,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvitationOut"
+                  "$ref": "#/components/schemas/InvitationSentOut"
                 }
               }
             },
