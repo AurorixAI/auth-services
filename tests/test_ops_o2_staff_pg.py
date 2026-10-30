@@ -92,6 +92,8 @@ def test_r3_return_to_the_team_restores_login_but_not_the_groups(w):
     assert r.status_code == 200 and r.json() == {"member_id": mid(w, "A"), "is_active": True}
     w.db.expire_all()
     assert w.member("A").is_active and w.member("A").org_role == "teacher" and w.db.get(User, w.A.id).is_active
+    w.db.query(User).filter(User.id == w.A.id).update({"default_org_id": w.org.id})        # (K2-2, F: a sign-in needs a centre; the fixture user has none)
+    w.db.commit()
     assert w.svc.login(LoginRequest(email=w.A.email, password="secret-A")).user.email == w.A.email     # INV-O2-3
     assert w.db.query(Group).filter_by(teacher_id=w.A.id).count() == 0                                # the groups stay where they were put
     again = client(w, "owner").post(M.format(mid=mid(w, "A")) + "/restore")

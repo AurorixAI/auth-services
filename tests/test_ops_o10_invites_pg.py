@@ -195,6 +195,8 @@ def test_r9_active_member_removed_member_and_another_centre_chain6(w, clock):
     assert str(done.json()["user"]["id"]) == str(w.D.id) and user.is_active and user.first_name == "Тимур" and user.last_name == "Рахимов"
     member = w.member("D")
     assert member.is_active and member.org_role == "admin"
+    w.db.query(User).filter(User.id == w.D.id).update({"default_org_id": w.org.id})      # (K2-2, F: a sign-in needs a centre; the fixture user has none)
+    w.db.commit()
     assert w.svc.login(LoginRequest(email=w.D.email, password="brand-new-1")).user.email == w.D.email
     with pytest.raises(Exception):
         w.svc.login(LoginRequest(email=w.D.email, password="old-password"))
