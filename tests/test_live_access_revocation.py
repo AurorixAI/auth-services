@@ -94,7 +94,7 @@ def test_suspended_organisation_loses_access_before_jwt_expiry():
         _resolve(org=False)
 
     assert exc.value.status_code == 403
-    assert exc.value.detail == "Организация недоступна"
+    assert exc.value.detail == "Центр не активен. Обратитесь в ALGO"
 
 
 def test_org_checker_does_not_trust_a_global_admin_role_for_tenant_access():

@@ -155,7 +155,7 @@ def get_current_active_user_payload(
     if not organisation:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Организация недоступна",
+            detail="Центр не активен. Обратитесь в ALGO",
         )
 
     if organisation.blocked_at is not None:  # blocked from the platform console (pack «Консоль-1»)
