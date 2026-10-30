@@ -42,12 +42,19 @@ def all_letters(**over):
         letters.render_new_application(sample_request(contact_name=name, centre_name=centre, comment=over.get("comment", "Комментарий"))),
         letters.render_password_reset(greeting=name, token="RESET_abc-123", email="ivan@example.uz"),
         letters.render_staff_invite(centre_name=centre, org_role="teacher", code="CODE_abc123XYZ45", expires_at=now + timedelta(days=7)),
+        letters.render_password_changed(greeting=name, changed_at=now),
+        letters.render_email_change_confirm(greeting=name, centre_name=centre, token="CONFIRM_abc-123", expires_at=now + timedelta(hours=24)),
+        letters.render_email_change_notice(greeting=name, centre_name=centre, new_email_masked="n***@example.uz"),
+        letters.render_email_changed(greeting=name, new_email="new@example.uz"),
     ]
 
 
-def test_there_are_six_letters_and_each_has_html_and_text():
+def test_there_are_ten_letters_and_each_has_html_and_text():
     rendered = all_letters()
-    assert [r.letter for r in rendered] == list(render.LETTERS) == ["application_received", "welcome", "application_declined", "new_application", "password_reset", "staff_invite"]
+    assert [r.letter for r in rendered] == list(render.LETTERS) == [
+        "application_received", "welcome", "application_declined", "new_application", "password_reset", "staff_invite",
+        "password_changed", "email_change_confirm", "email_change_notice", "email_changed",
+    ]
     for r in rendered:
         assert r.subject and "\n" not in r.subject
         assert r.html.lstrip().lower().startswith("<!doctype html") and "</html>" in r.html

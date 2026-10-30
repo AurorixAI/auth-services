@@ -258,7 +258,7 @@ def test_m8_two_resends_at_once_leave_exactly_one_live_link_and_it_is_the_last_o
     def resend():
         db = new_session(cw)
         try:
-            outcomes.append(AuthService(db).resend_invitation(centre.org.id, first["id"], centre.owner.id, creator_role="owner")["email_sent"])
+            outcomes.append(AuthService(db).resend_invitation(centre.org.id, first["id"], centre.owner.id, creator_role="owner")["mail_status"] == "sent")
         except Exception as exc:  # noqa: BLE001
             outcomes.append(type(exc).__name__)
         finally:

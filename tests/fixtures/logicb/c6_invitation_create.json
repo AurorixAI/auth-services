@@ -1,6 +1,6 @@
 {
   "email": "a.ivanov@algo.test",
-  "email_sent": true,
   "expires_at": "2026-11-17T09:00:00+00:00",
-  "id": "43c596a1-8ee4-5229-9ed8-60e5d1c1fc86"
+  "id": "43c596a1-8ee4-5229-9ed8-60e5d1c1fc86",
+  "mail_status": "pending"
 }

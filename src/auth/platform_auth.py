@@ -31,6 +31,7 @@ from src.models.auth import User
 from src.models.platform import PlatformRole, PlatformSession, PlatformStaff
 
 from . import platform_audit as audit
+from . import password_rules
 from . import platform_permissions as perms
 from .platform_common import client_meta, iso, utcnow
 from .platform_errors import PlatformError, validation_error
@@ -43,11 +44,8 @@ LOCK_FAILURES = 5
 LOCK_SECONDS = 15 * 60
 TRUSTED_IP_DAYS = 30
 MIN_PASSWORD_LENGTH = 12
-MAX_PASSWORD_LENGTH = 128
-MAX_PASSWORD_BYTES = 72  # bcrypt reads no more than 72 bytes: a longer password would be silently cut, so it is refused out loud
 LOCKED_TEXT = "Слишком много попыток входа. Повторите через 15 минут."
 INVALID_TEXT = "Неверная почта или пароль"
-BYTES_TEXT = "Пароль слишком длинный: не более 72 байт (латиница — 72 символа, кириллица — 36)"
 _DUMMY_HASH = hash_password("console-dummy-password-for-timing")  # built at import: the first sign-in costs the same as every other
 
 
@@ -107,20 +105,8 @@ def verify_password_safely(plain: str, hashed: str) -> bool:
 
 
 def password_problem(password: object, *, min_length: int, email: str = "") -> Optional[str]:
-    """None when acceptable, else the Russian reason (one rule for every flow that sets a password through the console)."""
-    if not isinstance(password, str) or not password:
-        return "Укажите пароль"
-    if "\x00" in password:
-        return "Пароль содержит недопустимые символы"
-    if len(password) < min_length:
-        return f"Пароль не короче {min_length} символов"
-    if len(password) > MAX_PASSWORD_LENGTH:
-        return f"Пароль не длиннее {MAX_PASSWORD_LENGTH} символов"
-    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
-        return BYTES_TEXT
-    if email and password.strip().lower() == email.strip().lower():
-        return "Пароль не должен совпадать с почтой"
-    return None
+    """None when acceptable, else the Russian reason (one rule for every flow that sets a password: ``password_rules``, K2-2 F)."""
+    return password_rules.problem(password, min_length=min_length, email=email)
 
 
 def validate_new_password(password: object, email: str = "") -> Optional[str]:
@@ -195,8 +181,14 @@ def login(db: Session, request: Request, email_raw: str, password: str) -> tuple
         raise PlatformError(401, INVALID_TEXT, "invalid_credentials")
 
     if staff is None:
+        # K2-2 (F): a person of a cabinet who types HIS password here must not learn that it was right (an oracle with a budget of its own): the standard
+        # refusal, counted as a failure; only the journal knows the difference
+        scopes = _register_failure(staff, keys, now)
         _log(db, request, "console.login.forbidden", user, email, {"why": "not_staff"})
-        raise PlatformError(403, "Нет доступа к консоли", "not_staff")
+        if scopes:
+            _log(db, request, "console.login.locked", user, email, {"scopes": scopes, "minutes": LOCK_SECONDS // 60})
+            raise _locked_error(LOCK_SECONDS)
+        raise PlatformError(401, INVALID_TEXT, "invalid_credentials")
     if not staff.is_active:
         _log(db, request, "console.login.forbidden", user, email, {"why": "staff_inactive"})
         raise PlatformError(403, "Доступ к консоли отключён", "staff_inactive")

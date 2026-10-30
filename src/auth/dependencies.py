@@ -124,14 +124,6 @@ def get_current_active_user_payload(
     resolved = dict(payload)
     resolved["role"] = user.role
 
-    # Platform superadmins do not belong to a tenant organisation. Their
-    # current database role is still verified above; tenant RBAC below stays
-    # membership-based and cannot be bypassed by a stale JWT claim.
-    if user.role == "superadmin":
-        resolved.pop("org_id", None)
-        resolved.pop("org_role", None)
-        return resolved
-
     try:
         org_id = UUID(str(payload.get("org_id")))
     except (TypeError, ValueError, AttributeError) as exc:
@@ -200,18 +192,6 @@ class RoleChecker:
         role = payload.get("role")
         org_role = payload.get("org_role")
 
-        # Superadmin keeps its established platform-wide access semantics,
-        # but only after ``get_current_active_user_payload`` has checked that
-        # the account is currently active in the database.
-        if role == "superadmin":
-            # LD-30: a platform account has no tenant; a tenant route (check_org) says so instead of answering 404/empty or failing on a write
-            if self.check_org and not payload.get("org_id"):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Нужна организация: этот раздел доступен только сотрудникам центра",
-                )
-            return self._extract(payload)
-
         # Tenant permissions come solely from the fresh membership role.
         # ``users.role`` is a legacy/global convenience field and must not
         # grant administrator access in another organisation.
@@ -255,10 +235,7 @@ require_org_teacher = RoleChecker(["owner", "admin", "teacher"], check_org=True)
 require_org_member = RoleChecker(["owner", "admin", "teacher"], check_org=True)
 
 # Любой аутентифицированный (без проверки org)
-require_any_auth = RoleChecker(["owner", "admin", "teacher", "superadmin"])
-
-# Superadmin
-require_superadmin = RoleChecker(["superadmin"])
+require_any_auth = RoleChecker(["owner", "admin", "teacher"])
 
 
 # ─── Деньги (N13 P2) ───
@@ -317,7 +294,6 @@ def require_payroll_owner(user: dict = Depends(require_org_owner)) -> dict:
     """Every payroll endpoint.  The owner only - an admin is refused even with the right to payments."""
     if not user.get("org_id"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет организации")
-    # ``RoleChecker`` lets a superadmin through; a platform account is not the owner of the centre.
     if user.get("org_role") != "owner":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Зарплата доступна только владельцу центра")
     return user

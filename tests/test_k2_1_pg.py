@@ -115,8 +115,8 @@ def test_r10_the_invitation_goes_by_letter_and_the_answer_has_neither_a_code_nor
     r = invite(owner, address)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert set(body) == {"id", "email", "expires_at", "email_sent"}
-    assert body["email_sent"] is True and body["email"] == address        # the centre typed it: it sees the WHOLE address (a typo must be visible)
+    assert set(body) == {"id", "email", "expires_at", "mail_status"}
+    assert body["mail_status"] == "pending" and body["email"] == address        # the centre typed it: it sees the WHOLE address (a typo must be visible)
     assert "invite" not in r.text.lower()
     code = invitation_code(cw, address)                       # ... the letter has it
     assert len(code) == 20 and code not in r.text
@@ -188,7 +188,7 @@ def test_s4_sending_again_issues_a_new_link_by_letter_and_the_old_one_answers_41
     first = invite(owner, address).json()
     old_code = invitation_code(cw, address)
     again = owner.post(f"{AUTH}/org/invitations/{first['id']}/resend")
-    assert again.status_code == 200 and set(again.json()) == {"id", "email", "expires_at", "email_sent"} and again.json()["email_sent"] is True
+    assert again.status_code == 200 and set(again.json()) == {"id", "email", "expires_at", "mail_status"} and again.json()["mail_status"] == "pending"
     assert again.json()["id"] != first["id"]
     new_code = invitation_code(cw, address)
     assert new_code != old_code and len(letters_to(cw.outbox, address)) == 2
@@ -225,23 +225,22 @@ def test_r12_m4_a_letter_that_did_not_go_keeps_the_old_link_alive_and_makes_noth
     address = f"new-{uuid4().hex[:8]}@staff.test"
     first = invite(owner, address).json()
     old_code = invitation_code(cw, address)
-    assert first["email_sent"] is True
-    # the second letter does not go: the first link must still work, and no new invitation may exist
+    # the second letter does not go: the first link must still work, and no new invitation may exist (K2-2: the letter goes in the background, the list says «failed»)
     monkeypatch.setattr(sender, "deliver", lambda msg, cfg=None: False)
     again = owner.post(f"{AUTH}/org/invitations/{first['id']}/resend")
-    assert again.status_code == 200 and again.json()["email_sent"] is False and again.json()["id"] == first["id"] and again.json()["email"] == address
+    assert again.status_code == 200 and again.json()["mail_status"] == "pending" and again.json()["email"] == address
     cw.db.expire_all()
     rows = cw.db.query(Invitation).filter(Invitation.org_id == centre.org.id, Invitation.email == address).all()
-    assert [(r.status, str(r.id)) for r in rows] == [("pending", first["id"])]
+    assert [(r.status, str(r.id), r.mail_status) for r in rows] == [("pending", first["id"], "failed")]
     stranger = cw.new_client(host=HOST)
     assert stranger.get(f"{AUTH}/invite/{old_code}").status_code == 200                    # the first letter's link is alive
     # the same through «Пригласить» again for the same address
-    assert invite(owner, address).json()["email_sent"] is False
+    assert invite(owner, address).status_code == 200
     assert stranger.get(f"{AUTH}/invite/{old_code}").status_code == 200
     # when the mail works, the new letter replaces the old link
     monkeypatch.setattr(sender, "deliver", lambda msg, cfg=None: cw.outbox.append(msg) or True)
     ok = owner.post(f"{AUTH}/org/invitations/{first['id']}/resend")
-    assert ok.json()["email_sent"] is True and ok.json()["id"] != first["id"]
+    assert ok.status_code == 200 and ok.json()["id"] != first["id"]
     assert stranger.get(f"{AUTH}/invite/{old_code}").status_code == 410
     assert stranger.get(f"{AUTH}/invite/{invitation_code(cw, address)}").status_code == 200
 
@@ -254,17 +253,17 @@ def test_r12_a_first_invitation_whose_letter_did_not_go_is_kept_for_the_resend_f
     monkeypatch.setattr(sender, "deliver", lambda msg, cfg=None: False)
     address = f"new-{uuid4().hex[:8]}@staff.test"
     r = invite(owner, address)
-    assert r.status_code == 200 and r.json()["email_sent"] is False and "code" not in r.text
+    assert r.status_code == 200 and r.json()["mail_status"] == "pending" and "code" not in r.text
     listed = owner.get(f"{AUTH}/org/invitations").json()
-    assert [row["id"] for row in listed if row["email"] == address] == [r.json()["id"]]
+    assert [(row["id"], row["mail_status"]) for row in listed if row["email"] == address] == [(r.json()["id"], "failed")]
     monkeypatch.setattr(sender, "deliver", lambda msg, cfg=None: cw.outbox.append(msg) or True)
     again = owner.post(f"{AUTH}/org/invitations/{r.json()['id']}/resend")
-    assert again.json()["email_sent"] is True
+    assert again.status_code == 200
     assert cw.new_client(host=HOST).get(f"{AUTH}/invite/{invitation_code(cw, address)}").status_code == 200
 
 
 @needs_pg
-def test_f10_a_template_that_fails_gives_email_sent_false_and_a_normal_answer(cw, centre, monkeypatch):
+def test_f10_a_template_that_fails_gives_a_failed_status_and_a_normal_answer(cw, centre, monkeypatch):
     from src.mail import letters
 
     owner = signed_in(cw, centre.owner)
@@ -274,7 +273,7 @@ def test_f10_a_template_that_fails_gives_email_sent_false_and_a_normal_answer(cw
 
     monkeypatch.setattr(letters, "render_staff_invite", boom)
     r = invite(owner, f"new-{uuid4().hex[:8]}@staff.test")
-    assert r.status_code == 200 and r.json()["email_sent"] is False
+    assert r.status_code == 200 and cw.db.query(Invitation).order_by(Invitation.created_at.desc()).first().mail_status == "failed"
 
 
 @needs_pg
@@ -489,37 +488,6 @@ def test_a3_a_sign_in_in_another_browser_does_not_touch_the_first_one(cw, centre
 
 
 # ============================================================================================================ A4 / S1: superadmin
-
-
-@needs_pg
-def test_s1_a_superadmin_cannot_sign_in_to_the_cabinet_and_the_attempt_is_journalled(cw):
-    sup = cw.make_user(role="superadmin")
-    cw.db.commit()
-    client, bad = login(cw, sup, password="wrong-password-here")
-    assert bad.status_code == 401
-    _, good = login(cw, sup)
-    assert good.status_code == 401
-    assert good.json() == bad.json() and "set-cookie" not in good.headers                      # the answer of a wrong password
-    rows = audit_rows(cw.db, "login.superadmin_denied", target_id=str(sup.id))
-    assert len(rows) == 1 and rows[0].actor_user_id is None and rows[0].details == {"where": "cabinet"}
-    assert live_sessions(cw, sup) == []
-    # a normal user's wrong password leaves no such row
-    _, other = login(cw, cw.make_user(), password="nope")
-    assert len(audit_rows(cw.db, "login.superadmin_denied")) == 1
-
-
-@needs_pg
-def test_s1_an_old_session_of_a_superadmin_cannot_be_refreshed_and_the_console_is_untouched(cw):
-    sup = cw.make_user(role="superadmin")
-    cw.db.commit()
-    token = AuthService(cw.db)._create_tokens(sup)
-    cw.db.commit()
-    client = cw.new_client(host=HOST)
-    client.cookies.set(REFRESH_COOKIE_NAME, token.refresh_token)
-    assert client.post(f"{AUTH}/refresh", json={}).status_code == 401
-    # the console owner (a staff account, not a cabinet one) still signs in to the console
-    r = cw.new_client().post("/api/v1/platform/auth/login", json={"email": cw.owner.email, "password": cw.owner.password})
-    assert r.status_code == 200, r.text
 
 
 # ============================================================================================================ A5: the access token dies with its session
@@ -831,24 +799,6 @@ def test_the_dev_router_hands_the_invitation_code_to_the_e2e_harness_only(cw, ce
     assert client.get(f"{AUTH}/dev-invite-code", params={"email": address}).json() == {"code": invitation_code(cw, address)}
     assert client.get(f"{AUTH}/dev-invite-code", params={"email": "nobody@staff.test"}).status_code == 404
     assert "/api/v1/auth/dev-invite-code" not in main_v2.app.openapi()["paths"]      # not in the real application (APP_ENV=testing)
-
-
-@needs_pg
-def test_the_superadmin_count_script_reads_only_and_prints_no_address(cw):
-    import os
-    import subprocess
-    import sys
-
-    sup = cw.make_user(role="superadmin")
-    cw.db.commit()
-    out = subprocess.run([sys.executable, "scripts/count_superadmins.py"], env={**os.environ, "DATABASE_URL": os.environ["A2_AUTH_TEST_DATABASE_URL"]},
-                         capture_output=True, text=True, timeout=120)
-    assert out.returncode == 0, out.stderr[-300:]
-    assert re.search(r"superadmin users: \d+ \(active: \d+, with a console account: \d+\)", out.stdout)
-    assert str(sup.id) in out.stdout and "@" not in out.stdout
-
-
-# ============================================================================================================ T6, T7, T9, T11: the links of passwords
 
 
 def link_row(cw, link_id):

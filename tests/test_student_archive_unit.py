@@ -74,8 +74,6 @@ def test_the_stamp_is_empty_unless_archived_and_has_no_updated_at_fallback():
 def test_the_audit_role_is_always_one_the_check_accepts():
     assert actor_role_for_audit({"org_role": "owner", "role": "owner"}) == "owner"
     assert actor_role_for_audit({"org_role": "admin", "role": "teacher"}) == "admin"
-    assert actor_role_for_audit({"org_role": None, "role": "superadmin"}) == "superadmin"
-    assert actor_role_for_audit({"org_role": "teacher", "role": "superadmin"}) == "superadmin"
     assert actor_role_for_audit({}) == "admin"
 
 

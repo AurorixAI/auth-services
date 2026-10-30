@@ -940,8 +940,7 @@ def test_no_organisation_and_a_platform_account_are_refused(world):
     for client in (
         make_client(world, user=world.owner, org=None),                                  # a token without an organisation
         make_client(world, user=world.owner, org_role="admin"),                           # the live membership says admin
-        make_client(world, user=world.owner, role="superadmin", org_role="superadmin"),   # superadmin passes the role gate
-        make_client(world, user=world.owner, role="superadmin", org=None),                # ... even without an organisation
+        make_client(world, user=world.owner, role="owner", org=None),                     # (K2-2: no platform role exists any more) an owner without an organisation
     ):
         for method, url, body in endpoints(world, uuid4()):
             r = call(client, method, url, body)

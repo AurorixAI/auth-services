@@ -48,7 +48,6 @@
           },
           "password": {
             "maxLength": 128,
-            "minLength": 6,
             "title": "Password",
             "type": "string"
           }
@@ -2157,6 +2156,16 @@
             "title": "Is Returning",
             "type": "boolean"
           },
+          "mail_status": {
+            "default": "sent",
+            "enum": [
+              "pending",
+              "sent",
+              "failed"
+            ],
+            "title": "Mail Status",
+            "type": "string"
+          },
           "org_role": {
             "title": "Org Role",
             "type": "string"
@@ -2182,15 +2191,11 @@
         "type": "object"
       },
       "InvitationSentOut": {
-        "description": "The answer to «Пригласить» and «Отправить ещё раз» (K2-1, A1): no code, no link; the whole address (the centre typed it); ``email_sent`` says whether the letter left.",
+        "description": "The answer to «Пригласить» and «Отправить ещё раз» (K2-1, A1): no code, no link; the whole address (the centre typed it). K2-2 (G2): the letter goes in the\nbackground, the answer does not wait for it: ``mail_status`` is ``pending`` (the list shows the outcome: ``sent`` / ``failed``).",
         "properties": {
           "email": {
             "title": "Email",
             "type": "string"
-          },
-          "email_sent": {
-            "title": "Email Sent",
-            "type": "boolean"
           },
           "expires_at": {
             "title": "Expires At",
@@ -2199,13 +2204,22 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "mail_status": {
+            "default": "pending",
+            "enum": [
+              "pending",
+              "sent",
+              "failed"
+            ],
+            "title": "Mail Status",
+            "type": "string"
           }
         },
         "required": [
           "id",
           "email",
-          "expires_at",
-          "email_sent"
+          "expires_at"
         ],
         "title": "InvitationSentOut",
         "type": "object"
@@ -6078,7 +6092,7 @@
         ]
       },
       "post": {
-        "description": "Создать приглашение (owner/admin → admin/teacher): ссылка уходит ПИСЬМОМ на почту приглашённого. Ответ — без кода и без ссылки:\n``{id, email, expires_at, email_sent}`` (the whole address: the centre typed it and must see a typo). The limits of letters live in ``Invites._throttle``.",
+        "description": "Создать приглашение (owner/admin → admin/teacher): ссылка уходит ПИСЬМОМ на почту приглашённого, в фоне (ответ не ждёт SMTP). Ответ — без кода и без ссылки:\n``{id, email, expires_at, mail_status}`` (the whole address: the centre typed it and must see a typo); исход письма — ``mail_status`` в списке приглашений.\nThe limits of letters live in ``Invites._throttle``.",
         "requestBody": {
           "content": {
             "application/json": {

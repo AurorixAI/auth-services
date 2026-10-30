@@ -37,6 +37,6 @@ def journal(db, student, before: Dict[str, Any], actor_id: Optional[str], actor_
     if not changes or not actor_id:
         return None
     row = StudentAudit(org_id=student.org_id, student_id=student.id, actor_id=actor_id,
-                       actor_role=actor_role if actor_role in ("owner", "admin", "teacher", "superadmin") else "admin", action=ACTION, changes=changes)
+                       actor_role=actor_role if actor_role in ("owner", "admin", "teacher") else "admin", action=ACTION, changes=changes)
     db.add(row)
     return row

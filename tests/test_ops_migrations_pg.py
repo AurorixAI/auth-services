@@ -27,7 +27,7 @@ PAY2 = "e1f2a3b4c5d"
 B1 = "lb1a2b3c4d5"
 B2 = "lb2b3c4d5e6"
 B3 = "lb3c4d5e6f7"
-HEAD = "k2a1b2c3d4e5"   # the head of the chain (W1 on top of PAY-F, on top of the console pack cn1a2b3c4d5 and the IA fix pack sa1b2c3d4e5); B3 is the LOGIC-B2 revision before it
+HEAD = "k2b1b2c3d4e5"   # the head of the chain (W1 on top of PAY-F, on top of the console pack cn1a2b3c4d5 and the IA fix pack sa1b2c3d4e5); B3 is the LOGIC-B2 revision before it
 DB_NAME = "a5_auth_logb_migrations"
 
 

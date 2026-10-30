@@ -881,7 +881,7 @@ class TestAuthServiceExtended:
         user.password_hash = hash_password("good_password")
         user.to_dict.return_value = self._user_dict(user)
         db.query.return_value.filter.return_value.first.return_value = user
-        with patch("src.auth.platform_blocks.ensure_login_allowed"):  # the console account / blocked centre check has its own tests
+        with patch("src.auth.platform_blocks.ensure_login_allowed"), patch("src.auth.platform_blocks.ensure_centre_usable"):  # the console account / blocked centre / no centre checks have their own tests
             result = service.login(LoginRequest(email="u@t.kz", password="good_password"))
         assert isinstance(result, AuthResponse)
         assert result.tokens.access_token
@@ -968,7 +968,7 @@ class TestSchemaValidators:
         req = AcceptInviteRequest(
             code="ABCD1234",
             email="  UPPER@EXAMPLE.COM  ",
-            password="pass123",
+            password="pass1234",
             first_name="A",
             last_name="B",
         )

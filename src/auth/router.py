@@ -6,12 +6,13 @@ REST API: org application, login, invitations, students, diagnostics, groups
 import hashlib
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status, Query, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status, Query, UploadFile, File
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import Literal, Optional
+import logging
 from datetime import date, datetime, timezone
 from uuid import UUID
 
@@ -107,7 +108,6 @@ from .schemas import (
     OrgResponse,
     MessageResponse,
     OrgApplicationPendingResponse,
-    AdminApproveRequest,
     ScheduleLessonResponse,
     ScheduleOccurrenceResponse,
     CreateLessonRequest,
@@ -130,7 +130,6 @@ from .dependencies import (
     require_org_admin,
     require_org_teacher,
     require_org_member,
-    require_superadmin,
     ensure_payments_access,
     has_payments_access,
 )
@@ -141,6 +140,8 @@ from .attendance_excuses import ExcusePauseRefused
 from .payments_service import CONCURRENT_EDIT_MESSAGE, PaymentError, is_deadlock
 from src.core.database import get_db
 from src.api.internal_router import has_valid_internal_token, require_internal_service_token
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -349,28 +350,6 @@ def accept_invite(request: AcceptInviteRequestB, db: Session = Depends(get_db), 
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 
-@router.post("/admin/approve/{org_id}")
-def admin_approve_organization(
-    org_id: str,
-    request: AdminApproveRequest = AdminApproveRequest(),
-    admin: dict = Depends(require_superadmin),
-    db: Session = Depends(get_db),
-):
-    """
-    Одобрить или отклонить заявку организации (superadmin).
-    Письмо владельцу («Добро пожаловать» со ссылкой на пароль) отправляет консоль; здесь центр только активируется.
-    """
-    try:
-        result = _svc(db).approve_organization(
-            org_id,
-            action=request.action,
-            rejection_reason=request.rejection_reason,
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
-
-
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  DIAGNOSTIC — PUBLIC (ученик без JWT переходит по QR/ссылке)             ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
@@ -530,6 +509,7 @@ def update_profile(
 def change_password(
     request: ChangePasswordRequest,
     raw_request: Request,
+    background: BackgroundTasks,
     payload: dict = Depends(get_current_active_user_payload),
     db: Session = Depends(get_db),
 ):
@@ -555,6 +535,15 @@ def change_password(
         raise
     attempt.succeeded()
     resp = JSONResponse(content=MessageResponse(message="Пароль успешно изменён").model_dump())
+    try:
+        changed = _svc(db).get_user_by_id(payload["sub"])
+        if changed is not None:  # «Пароль изменён» goes to his mailbox in the background (K2-2, L9)
+            background.add_task(
+                _send_password_changed_letter, changed.email, " ".join(x for x in (changed.first_name, changed.patronymic) if x) or changed.first_name
+            )
+            resp.background = background
+    except Exception as exc:  # noqa: BLE001 - the password IS changed; the notice must never break the answer
+        logger.error("password changed: the letter was not queued %s", type(exc).__name__)
     # K2-1 M1: the other devices were signed out, THIS one stays: its cookies are renewed with the same mode (remember or not)
     refresh = raw_request.cookies.get(REFRESH_COOKIE_NAME)
     if refresh and sid is not None:
@@ -564,6 +553,15 @@ def change_password(
         except (ValueError, HTTPException):  # the session itself is fine (checked above); the old cookies keep working
             pass
     return resp
+
+
+def _send_password_changed_letter(to: str, greeting: str) -> None:
+    from src.mail import letters
+
+    try:
+        letters.send_password_changed(to, greeting=greeting, changed_at=datetime.now(timezone.utc))
+    except Exception as exc:  # noqa: BLE001 - the password is changed; a letter that did not go is only logged
+        logger.error("password changed: the letter failed %s", type(exc).__name__)
 
 
 def _is_cross_site_request(request: Request) -> bool:
@@ -724,13 +722,15 @@ def update_organization(
 @router.post("/org/invitations", response_model=InvitationSentOut)
 def create_invitation(
     request: InviteMemberRequestB,
+    background: BackgroundTasks,
     user: dict = Depends(require_org_admin),
     db: Session = Depends(get_db),
 ):
-    """Создать приглашение (owner/admin → admin/teacher): ссылка уходит ПИСЬМОМ на почту приглашённого. Ответ — без кода и без ссылки:
-    ``{id, email, expires_at, email_sent}`` (the whole address: the centre typed it and must see a typo). The limits of letters live in ``Invites._throttle``."""
+    """Создать приглашение (owner/admin → admin/teacher): ссылка уходит ПИСЬМОМ на почту приглашённого, в фоне (ответ не ждёт SMTP). Ответ — без кода и без ссылки:
+    ``{id, email, expires_at, mail_status}`` (the whole address: the centre typed it and must see a typo); исход письма — ``mail_status`` в списке приглашений.
+    The limits of letters live in ``Invites._throttle``."""
     try:
-        return _svc(db).create_invitation(user["org_id"], user["user_id"], request, creator_role=user.get("org_role"))
+        return _svc(db).create_invitation(user["org_id"], user["user_id"], request, creator_role=user.get("org_role"), background=background)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -738,6 +738,7 @@ def create_invitation(
 @router.post("/org/invitations/{invite_id}/resend", response_model=InvitationSentOut)
 def resend_invitation(
     invite_id: str,
+    background: BackgroundTasks,
     user: dict = Depends(require_org_admin),
     db: Session = Depends(get_db),
 ):
@@ -747,7 +748,9 @@ def resend_invitation(
     except ValueError:
         raise HTTPException(404, "Приглашение не найдено")
     try:
-        return _svc(db).resend_invitation(user["org_id"], invite_uuid, user["user_id"], creator_role=user.get("org_role"))
+        return _svc(db).resend_invitation(
+            user["org_id"], invite_uuid, user["user_id"], creator_role=user.get("org_role"), background=background
+        )
     except ValueError as e:
         raise HTTPException(404, str(e))
 
@@ -1386,25 +1389,6 @@ async def _read_import_upload(file: UploadFile) -> bytes:
     if len(data) > _MAX_IMPORT_BYTES:
         raise HTTPException(413, "Файл слишком большой (макс. 5 МБ).")
     return data
-
-
-# ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  ADMIN — superadmin endpoints                                            ║
-# ╚═══════════════════════════════════════════════════════════════════════════╝
-
-
-@router.get("/users", response_model=list[UserResponse])
-def list_users(
-    role: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
-    admin: dict = Depends(require_superadmin),
-    db: Session = Depends(get_db),
-):
-    """Список всех пользователей (superadmin)"""
-    svc = _svc(db)
-    users = svc.list_users(role=role, limit=limit, offset=offset)
-    return [svc._build_user_response(u) for u in users]
 
 
 # ═══════════════════════════════════════════════════════════════════

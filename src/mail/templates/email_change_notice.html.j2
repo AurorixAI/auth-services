@@ -1,0 +1,10 @@
+{% extends "_layout.html.j2" %}
+{% from "_macros.html.j2" import p, small %}
+{% block preheader %}Владелец центра меняет вашу почту для входа.{% endblock %}
+{% block title %}Вашу почту в ALGO меняют{% endblock %}
+{% block content %}
+{% call p() %}{% if greeting %}Здравствуйте, {{ greeting }}!{% else %}Здравствуйте!{% endif %}{% endcall %}
+{% call p() %}Владелец центра <strong class="ink" style="color:#0f172a;">«{{ centre_name }}»</strong> меняет вашу почту для входа в ALGO на <strong class="ink" style="color:#0f172a;">{{ new_email_masked }}</strong>. Пока новый адрес не подтверждён, вы входите с этой почтой, как обычно.{% endcall %}
+{% call small() %}Если это ошибка — свяжитесь с владельцем центра или напишите на <a class="link" href="mailto:{{ support_email }}" style="color:#2563eb;">{{ support_email }}</a>.{% endcall %}
+{% endblock %}
+{% block footer_reason %}Вы получили это письмо, потому что владелец центра запросил смену вашей почты в ALGO.{% endblock %}

@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import src.api.internal_router  # noqa: E402,F401  (import order: avoids a pre-existing router cycle)
 from src.api import main_v2  # noqa: E402
-from src.auth.dependencies import RoleChecker, get_current_active_user_payload, require_org_admin, require_superadmin  # noqa: E402
+from src.auth.dependencies import RoleChecker, get_current_active_user_payload, require_org_admin  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = main_v2.app
@@ -35,22 +35,20 @@ def http():
 
 
 # ------------------------------------------------------------------------------------------------------ LD-30
-def test_a_superadmin_on_a_tenant_route_gets_an_explicit_403(http):
-    superadmin = {"sub": str(uuid.uuid4()), "role": "superadmin", "type": "access"}      # what the live check returns: no org_id, no org_role
-    APP.dependency_overrides[get_current_active_user_payload] = lambda: superadmin
+def test_a_token_without_an_organisation_on_a_tenant_route_gets_a_403(http):
+    loner = {"sub": str(uuid.uuid4()), "role": "teacher", "type": "access"}      # a payload without org_id and org_role (K2-2: there is no platform role in a cabinet)
+    APP.dependency_overrides[get_current_active_user_payload] = lambda: loner
     try:
         tenant = http.get("/api/v1/auth/org/import/template")
-        assert tenant.status_code == 403 and "Нужна организация" in tenant.json()["detail"]
+        assert tenant.status_code == 403
     finally:
         APP.dependency_overrides.pop(get_current_active_user_payload, None)
 
 
-def test_a_superadmin_still_passes_the_platform_checkers_and_a_member_the_tenant_ones():
-    superadmin = {"sub": "s", "role": "superadmin"}
-    assert require_superadmin(superadmin)["role"] == "superadmin"
-    assert RoleChecker(["superadmin"], check_org=False)(superadmin)["org_id"] is None
+def test_a_member_passes_the_tenant_checkers_and_an_account_without_a_place_does_not():
+    loner = {"sub": "s", "role": "teacher"}
     with pytest.raises(HTTPException) as refused:
-        require_org_admin(superadmin)
+        require_org_admin(loner)
     assert refused.value.status_code == 403
     admin = {"sub": "a", "role": "admin", "org_id": "o1", "org_role": "admin"}
     assert require_org_admin(admin)["org_id"] == "o1"

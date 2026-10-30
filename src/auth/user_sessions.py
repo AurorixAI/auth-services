@@ -86,6 +86,7 @@ REVOKE_REFRESH_REUSE = "refresh_reuse"
 REVOKE_PASSWORD_CHANGED = "password_changed"
 REVOKE_USER_BLOCKED = "user_blocked"
 REVOKE_SESSION_CAP = "session_cap"
+REVOKE_EMAIL_CHANGED = "email_changed"  # the e-mail of the account was changed (K2-2, E): every session ends
 REVOKE_NEW_LOGIN = "new_login"  # the browser signed in again: the session its refresh cookie still named is over (A3)
 
 SHORT_SESSION_HOURS = 12  # a session WITHOUT «Запомнить меня»: at most this long from the sign-in, never extended

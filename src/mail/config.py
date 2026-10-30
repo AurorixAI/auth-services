@@ -26,6 +26,8 @@ class MailConfig:
     # is a stage: with an EMPTY list it sends nothing (safe default). A production stack has no list = no restriction.
     allowlist: tuple = ()
     restrict: bool = False
+    # K2-2: where a person writes when a letter is not about him («если это были не вы»); the same mailbox the replies go to
+    support_email: str = "support@algolab.me"
 
     @property
     def smtp_configured(self) -> bool:
@@ -93,4 +95,5 @@ def load() -> MailConfig:
         site_url=_url("SITE_URL", DEFAULT_SITE_URL),
         allowlist=_allowlist(os.getenv("MAIL_ALLOWLIST", "")),
         restrict=_is_stage(),
+        support_email=(os.getenv("MAIL_REPLY_TO") or "support@algolab.me").strip(),
     )

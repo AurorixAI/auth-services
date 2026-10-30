@@ -456,7 +456,7 @@ def check_override_input(amount: Optional[int], reason: Optional[str]) -> Tuple[
 
 def _audit_role(db: Session, org_id: UUID, actor: UUID) -> str:
     """The ``group_audit.actor_role`` of the author of a price write: his role in the centre (owner / admin - the
-    only ones the money guard lets in), a platform superadmin, else admin (like ``student_archive.actor_role_for_audit``)."""
+    only ones the money guard lets in), else admin (like ``student_archive.actor_role_for_audit``)."""
     role = (
         db.query(OrganizationMember.org_role)
         .filter(
@@ -468,7 +468,7 @@ def _audit_role(db: Session, org_id: UUID, actor: UUID) -> str:
     )
     if role in ("owner", "admin"):
         return role
-    return "superadmin" if db.query(User.role).filter(User.id == actor).scalar() == "superadmin" else "admin"
+    return "admin"
 
 
 def _add_audit(

@@ -2,7 +2,7 @@
 ALGO - Attendance excuses router (owner/admin only).
 
 Mounted under /api/v1/auth. Every handler is tenant-scoped by the org of the
-token; a superadmin without an organisation gets 403 instead of a 500.
+token; a user without an organisation gets 403 instead of a 500.
 """
 from typing import Optional
 from urllib.parse import quote

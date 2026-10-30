@@ -54,7 +54,7 @@ def test_teacher_never_has_it_even_when_admins_do(world):
 def test_nobody_without_a_centre_has_it(world):
     # a token without an organisation (a student account, a platform account)
     assert me(world, user=world.owner, org=None)["payments_access"] is False
-    assert me(world, user=world.admin, org=None, role="superadmin")["payments_access"] is False
+    assert me(world, user=world.admin, org=None, role="teacher")["payments_access"] is False
 
 
 @needs_pg

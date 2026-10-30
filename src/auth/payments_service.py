@@ -1303,7 +1303,7 @@ class PaymentService:
         self.db.add(
             GroupAudit(
                 org_id=UUID(str(org_id)), group_id=membership.group_id, actor_id=UUID(str(actor_id)),
-                actor_role=actor_role if actor_role in ("owner", "admin", "teacher", "superadmin") else "admin",
+                actor_role=actor_role if actor_role in ("owner", "admin", "teacher") else "admin",
                 action=action, snapshot=snapshot,
             )
         )

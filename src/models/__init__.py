@@ -45,6 +45,7 @@ from src.models.platform import (
     PlatformStaff,
     PlatformSession,
     PlatformAudit,
+    EmailChange,
     PasswordLink,
 )
 from src.models.analytics import (
@@ -95,6 +96,7 @@ __all__ = [
     "PlatformStaff",
     "PlatformSession",
     "PlatformAudit",
+    "EmailChange",
     "PasswordLink",
     # Analytics (skill states written by internal callback)
     "AnswerEvent",

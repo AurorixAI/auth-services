@@ -274,7 +274,9 @@ def test_block_closes_the_sign_in_and_the_open_sessions_and_unblock_reopens(cw):
     stale = cw.new_client(APP)
     stale.cookies.set("algo_refresh_token", refresh)
     assert stale.post("/api/v1/auth/refresh", json={}).status_code == 401
-    assert cabinet_login(cw, centre.teacher)[1].status_code == 401                             # the sign-in is closed
+    closed = cabinet_login(cw, centre.teacher)[1]
+    assert closed.status_code == 403 and "заблокирован" in closed.json()["detail"]             # the sign-in is closed (K2-2, F: the RIGHT password is told why)
+    assert cabinet_login(cw, centre.teacher, password="wrong-password")[1].status_code == 401   # a wrong one is told nothing
     assert friend.get("/api/v1/auth/me").status_code == 200                                    # a colleague is untouched
     cw.db.expire_all()
     assert cw.db.query(UserSession).filter(UserSession.user_id == centre.teacher.id, UserSession.revoked_at.is_(None)).count() == 0

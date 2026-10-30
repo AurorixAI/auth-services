@@ -205,12 +205,10 @@ def guard_generic_status_update(student: Student, requested_status: Optional[str
 
 
 def actor_role_for_audit(user: dict) -> str:
-    """The value ``group_audit.actor_role`` accepts (owner / admin / superadmin)."""
+    """The value ``group_audit.actor_role`` accepts (owner / admin)."""
     org_role = user.get("org_role")
     if org_role in ("owner", "admin"):
         return org_role
-    if user.get("role") == "superadmin":
-        return "superadmin"
     return "admin"
 
 

@@ -191,3 +191,26 @@ class PasswordLink(Base):
         CheckConstraint("purpose IN ('centre_invite', 'reset')", name="ck_password_links_purpose"),
         Index("ix_password_links_user", "user_id", "created_at"),
     )
+
+
+class EmailChange(Base):
+    """K2-2 (E): the pending change of an employee's e-mail. The owner asked; the new address has to confirm with the link of the letter (24 h);
+    until then the old address is the login. At most ONE live row per user (``uq_email_changes_live``); the token is stored as SHA-256."""
+
+    __tablename__ = "email_changes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    new_email = Column(String(255), nullable=False)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    requested_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime)
+    revoked_at = Column(DateTime)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=text("timezone('utc', now())"))
+
+    __table_args__ = (
+        Index("ix_email_changes_user", "user_id", "created_at"),
+        Index("uq_email_changes_live", "user_id", unique=True, postgresql_where=text("used_at IS NULL AND revoked_at IS NULL")),
+    )

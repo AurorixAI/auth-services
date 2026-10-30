@@ -30,9 +30,14 @@ SUBJECTS: Dict[str, str] = {
     "new_application": "[ALGO] Новая заявка: {centre_name}, {city}",
     "password_reset": "Сброс пароля ALGO",
     "staff_invite": "Приглашение в ALGO — {centre_name}",
+    "password_changed": "Пароль ALGO изменён",
+    "email_change_confirm": "Подтвердите новый адрес почты — ALGO",
+    "email_change_notice": "Вашу почту в ALGO меняют",
+    "email_changed": "Почта в ALGO изменена",
 }
 LETTERS = tuple(SUBJECTS)
 ROLE_TEXT = {"teacher": "преподаватель", "admin": "администратор"}
+INITIATOR_TEXT = {"owner": "Владелец", "admin": "Администратор"}
 
 STEPS = (
     ("1", "Знакомство", "Короткий звонок или сообщение: узнаем, как устроен ваш центр и что для вас важно."),
@@ -99,7 +104,7 @@ APPLICANT_WORDS_LETTERS = ("application_received", "welcome", "application_decli
 
 def _prepare(letter: str, ctx: dict) -> dict:
     out = dict(ctx)
-    for key in ("greeting", "centre_name", "city", "reason", "email"):
+    for key in ("greeting", "centre_name", "city", "reason", "email", "initiator_name", "new_email", "new_email_masked", "support_email"):
         if key in out:
             # the name and the centre came from the applicant's own form: in a letter he or the owner receives they must not turn into links
             inert = letter in APPLICANT_WORDS_LETTERS and key in ("greeting", "centre_name")
@@ -118,6 +123,20 @@ def _prepare(letter: str, ctx: dict) -> dict:
         out.setdefault("expires_phrase", "1 час")
         out.setdefault("greeting", "")
         out.setdefault("email", "")
+        out.setdefault("kind", "console")  # console (the team) / self («Забыли пароль») / staff (the owner or the administrator of the centre)
+        out.setdefault("centre_name", "")
+        out.setdefault("initiator_name", "")
+        out["initiator_text"] = INITIATOR_TEXT.get(out.get("initiator_role"), "Руководитель")
+        out["expires_text"] = tashkent_text(out.get("expires_at"))
+        out["requested_text"] = tashkent_text(out.get("requested_at"))
+    elif letter == "password_changed":
+        out.setdefault("greeting", "")
+        out["changed_text"] = tashkent_text(out.get("changed_at"))
+    elif letter == "email_change_confirm":
+        out.setdefault("greeting", "")
+        out["expires_text"] = tashkent_text(out.get("expires_at"))
+    elif letter in ("email_change_notice", "email_changed"):
+        out.setdefault("greeting", "")
     elif letter == "application_declined":
         out.setdefault("reason", "")
     elif letter == "new_application":

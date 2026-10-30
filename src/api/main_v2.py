@@ -39,6 +39,8 @@ from src.auth import platform_errors
 from src.auth.platform_router import router as platform_router
 from src.auth.demo_requests_router import router as demo_requests_router
 from src.auth.password_links_router import router as password_links_router
+from src.auth.password_reset_router import router as password_reset_router
+from src.auth.email_change_router import router as email_change_router
 
 # Настройка логирования через structlog
 from src.core.middleware import configure_logging, RequestIDMiddleware
@@ -231,6 +233,8 @@ platform_errors.register(app)  # PlatformError -> {"detail", "code"}; Russian 42
 app.include_router(platform_router, prefix="/api/v1")
 app.include_router(demo_requests_router, prefix="/api/v1")
 app.include_router(password_links_router, prefix="/api/v1")
+app.include_router(password_reset_router, prefix="/api/v1")
+app.include_router(email_change_router, prefix="/api/v1")
 # analytics_router removed — analytics live in diagnostic-service (port 8002)
 
 # ─── Dev Router (quick login) — dev environment only, never in staging/prod ───

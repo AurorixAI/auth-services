@@ -77,10 +77,15 @@ def test_a_new_link_revokes_the_old_one(cw):
     new_token, new = links.issue(cw.db, owner.id, "reset", created_by=None)
     cw.db.commit()
     c = cw.new_client(APP)
-    assert c.get(f"{LINKS}/{old_token}").json()["code"] == "link_revoked"
-    assert c.post(f"{LINKS}/{old_token}", json={"password": NEW_PASSWORD, "password_confirm": NEW_PASSWORD}).status_code == 410
-    assert c.get(f"{LINKS}/{new_token}").json()["purpose"] == "reset"
-    assert c.post(f"{LINKS}/{new_token}", json={"password": NEW_PASSWORD, "password_confirm": NEW_PASSWORD}).status_code == 200
+    assert c.get(f"{LINKS}/{old_token}").status_code == 200                                    # K2-2 (B): a reset does not kill the welcome link
+    again, _ = links.issue(cw.db, owner.id, "reset", created_by=None)                          # ... but a second reset replaces the first reset
+    cw.db.commit()
+    assert c.get(f"{LINKS}/{new_token}").json()["code"] == "link_revoked"
+    newer, _ = links.issue(cw.db, owner.id, "centre_invite", created_by=None)                  # a new welcome link revokes every live link
+    cw.db.commit()
+    assert c.get(f"{LINKS}/{old_token}").json()["code"] == "link_revoked" and c.get(f"{LINKS}/{again}").json()["code"] == "link_revoked"
+    assert c.get(f"{LINKS}/{newer}").json()["purpose"] == "centre_invite"
+    assert c.post(f"{LINKS}/{newer}", json={"password": NEW_PASSWORD, "password_confirm": NEW_PASSWORD}).status_code == 200
 
 
 def test_password_rules_are_in_russian_and_the_link_stays_valid(cw):

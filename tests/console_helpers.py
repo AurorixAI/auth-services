@@ -67,6 +67,9 @@ def cw(monkeypatch):
     from src.auth import demo_requests
 
     monkeypatch.setattr(demo_requests, "background_session", lambda: sessionmaker(engine, autoflush=False)())  # the outcome of the letters after the response
+    from src.auth import background
+
+    monkeypatch.setattr(background, "background_session", lambda: sessionmaker(engine, autoflush=False)())  # the tasks after the response (K2-2)
 
     def override():
         try:

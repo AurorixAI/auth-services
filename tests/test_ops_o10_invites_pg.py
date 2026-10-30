@@ -70,7 +70,7 @@ def pending(w):
 def test_r1_the_invitation_carries_the_email_and_the_account_gets_it(w):
     """[O10.R1]"""
     r = invite(w, "owner", f"  {em(w, 't').upper()} ")
-    assert r.status_code == 200 and set(r.json()) == {"id", "email", "expires_at", "email_sent"}
+    assert r.status_code == 200 and set(r.json()) == {"id", "email", "expires_at", "mail_status"}
     code = code_of_invitation(w, r)
     row = w.db.get(Invitation, r.json()["id"])
     assert row.email == em(w, "t") and row.status == "pending" and row.org_role == "teacher"
@@ -155,7 +155,7 @@ def test_r6_seven_days_from_the_creation_in_utc_chain6(w, clock):
     assert r.status_code == 200
     expected = w.ids.remap(fixture("c6_invitation_create.json"))
     out = r.json()
-    assert out["expires_at"] == expected["expires_at"] and set(out) == {"id", "email", "expires_at", "email_sent"} and out["email"] == w.D.email
+    assert out["expires_at"] == expected["expires_at"] and set(out) == {"id", "email", "expires_at", "mail_status"} and out["email"] == w.D.email
     row = w.db.get(Invitation, out["id"])
     assert row.status == "pending" and row.org_role == "teacher"
     info = client(w, "owner").get(f"{API}/invite/{code_of_invitation(w, r)}").json()

@@ -10,16 +10,18 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticCustomError
+from . import password_rules
 from .payments_schemas import OpeningIn
 
 PASSWORD_NUL_MESSAGE = "Пароль содержит недопустимый символ"
 
 
 def _password_without_nul(value: str) -> str:
-    """bcrypt cannot hash a NUL byte, so a password that is being SET must not contain one (a login attempt
-    with one is merely a wrong password: AuthService.verify_password answers False)."""
-    if "\x00" in value:
-        raise PydanticCustomError("password_nul", PASSWORD_NUL_MESSAGE)
+    """K2-2 (F): the ONE rule for a password that is being SET (``password_rules``: 8 characters, 72 bytes, no NUL); a login attempt
+    with a wrong one is merely a wrong password (AuthService.verify_password answers False)."""
+    reason = password_rules.problem(value)
+    if reason:
+        raise PydanticCustomError("password_nul" if "\x00" in value else "password_rule", reason)
     return value
 
 
@@ -42,7 +44,7 @@ class OrgApplicationRequest(BaseModel):
 
     # Владелец (первый пользователь)
     email: str = Field(..., min_length=5, max_length=255)
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., max_length=128)
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
     language: str = Field(default="ru")
@@ -94,7 +96,7 @@ class LoginRequest(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
-    new_password: str = Field(..., min_length=6, max_length=128)
+    new_password: str = Field(..., max_length=128)
 
     @field_validator("new_password")
     @classmethod
@@ -133,7 +135,7 @@ class AcceptInviteRequest(BaseModel):
 
     code: str = Field(..., min_length=4, max_length=20)
     email: str = Field(..., min_length=5, max_length=255)
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., max_length=128)
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
 
@@ -725,17 +727,3 @@ class OrgApplicationPendingResponse(BaseModel):
     org_name: str
     status: str = "pending"
     success: bool = True
-
-
-class AdminApproveRequest(BaseModel):
-    """Admin approves (or rejects) an organization application."""
-
-    action: str = Field(default="approve")  # "approve" or "reject"
-    rejection_reason: Optional[str] = None
-
-    @field_validator("action")
-    @classmethod
-    def validate_action(cls, v):
-        if v not in {"approve", "reject"}:
-            raise ValueError("action must be 'approve' or 'reject'")
-        return v

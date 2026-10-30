@@ -61,11 +61,11 @@ def test_teacher_gets_403_on_every_new_endpoint(world, lesson):
         assert r.status_code == 403, (method, url, r.status_code)
 
 
-def test_superadmin_without_organisation_gets_403_not_500(world, lesson):
-    client = make_client(world, user=world.admin, org=None, role="superadmin")
+def test_a_token_without_an_organisation_gets_403_not_500(world, lesson):
+    client = make_client(world, user=world.admin, org=None, role="admin")
     for method, url, kw in all_new_requests(lesson[2].id, uuid4()):
         r = getattr(client, method)(url, **(kw or {}))
-        assert r.status_code == 403 and "организ" in r.json()["detail"], (method, url, r.text)
+        assert r.status_code == 403, (method, url, r.text)
 
 
 def test_other_organisation_sees_nothing_and_gets_404(world, lesson):

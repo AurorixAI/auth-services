@@ -102,9 +102,9 @@ class TestEveryMoneyEndpoint:
 
     def test_no_organisation_is_403(self, money, index):
         method, path, body, _, _ = self.spec(money, index)
-        superadmin = make_user(money.db, "superadmin")
+        loner0 = make_user(money.db, "admin")
         money.db.commit()
-        client = make_client(money, user=superadmin, org=None, role="superadmin")
+        client = make_client(money, user=loner0, org=None, role="admin")
         r = call(client, method, path, body)
         assert r.status_code == 403
         # a member of nothing at all is refused as well

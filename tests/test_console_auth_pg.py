@@ -156,7 +156,7 @@ def test_a_lock_is_journaled_as_locked(cw):
 def test_a_cabinet_user_is_403_not_staff_and_a_disabled_staff_member_is_403(cw):
     centre = cw.make_centre()
     r = cw.login(cw.new_client(), centre.owner, centre.password)
-    assert r.status_code == 403 and r.json()["code"] == "not_staff" and r.json()["detail"] == "Нет доступа к консоли"
+    assert r.status_code == 401 and r.json()["code"] == "invalid_credentials" and r.json()["detail"] == "Неверная почта или пароль"   # K2-2 (F): no oracle «the password was right»
     off = cw.make_staff(["orgs.view"], active=False)
     r = cw.login(cw.new_client(), off)
     assert r.status_code == 403 and r.json()["code"] == "staff_inactive"

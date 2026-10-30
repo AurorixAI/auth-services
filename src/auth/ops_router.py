@@ -41,7 +41,7 @@ def _svc(db: Session):
 
 
 def _manager(user: dict = Depends(require_org_admin)) -> dict:
-    """Owner/admin OF THIS centre (a global role or a superadmin without a membership does not count)."""
+    """Owner/admin OF THIS centre (a global role without a membership does not count)."""
     if not user.get("org_id") or not is_org_manager(user):
         raise HTTPException(403, "Недостаточно прав. Требуется: owner, admin")
     return user

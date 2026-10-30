@@ -26,7 +26,7 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError  # noqa: E402
 
 import src.api.internal_router  # noqa: E402,F401  (import order: avoids a pre-existing router cycle)
 from src.api import main_v2  # noqa: E402
-from src.auth.dependencies import RoleChecker, get_current_active_user_payload, require_org_admin, require_superadmin  # noqa: E402
+from src.auth.dependencies import RoleChecker, get_current_active_user_payload, require_org_admin  # noqa: E402
 from src.auth.service import AuthService  # noqa: E402
 from src.core.database import get_db  # noqa: E402
 
@@ -97,7 +97,7 @@ def test_500_of_a_real_route_is_generic_too(http, monkeypatch):
         raise RuntimeError(SECRET_TEXT)
 
     monkeypatch.setattr(AuthService, "apply_organization", broken)
-    body = {"org_name": "Центр", "email": "o@example.com", "password": "secret1", "first_name": "А", "last_name": "Б"}
+    body = {"org_name": "Центр", "email": "o@example.com", "password": "secret12", "first_name": "А", "last_name": "Б"}
     r = http.post("/api/v1/auth/apply", json=body)
     assert r.status_code == 500 and r.json()["detail"] == "Внутренняя ошибка сервера" and "hunter2" not in r.text
 
@@ -142,7 +142,7 @@ APPLY = "/api/v1/auth/apply"
 
 
 def apply_body(email):
-    return {"org_name": "Центр", "email": email, "password": "secret1", "first_name": "А", "last_name": "Б"}
+    return {"org_name": "Центр", "email": email, "password": "secret12", "first_name": "А", "last_name": "Б"}
 
 
 @pytest.fixture

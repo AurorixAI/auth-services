@@ -1,0 +1,13 @@
+{% extends "_layout.html.j2" %}
+{% from "_macros.html.j2" import p, small, button, url_fallback %}
+{% block preheader %}Подтвердите новый адрес почты для входа в ALGO.{% endblock %}
+{% block title %}Подтвердите новый адрес почты{% endblock %}
+{% block content %}
+{% call p() %}{% if greeting %}Здравствуйте, {{ greeting }}!{% else %}Здравствуйте!{% endif %}{% endcall %}
+{% call p() %}Владелец центра <strong class="ink" style="color:#0f172a;">«{{ centre_name }}»</strong> указал этот адрес как вашу новую почту для входа в ALGO. Чтобы подтвердить, что письма приходят вам, нажмите кнопку.{% endcall %}
+{{ button(cta_url, "Подтвердить адрес") }}
+{% call small() %}Ссылка действует до {{ expires_text }} (по Ташкенту) и подтверждает адрес один раз. До подтверждения вы входите со старой почтой.{% endcall %}
+{% call small() %}Если вы не ждали этого письма — просто проигнорируйте его, ничего не изменится. Вопросы — <a class="link" href="mailto:{{ support_email }}" style="color:#2563eb;">{{ support_email }}</a>.{% endcall %}
+{{ url_fallback(cta_url) }}
+{% endblock %}
+{% block footer_reason %}Вы получили это письмо, потому что ваш адрес указан как новая почта сотрудника в ALGO.{% endblock %}

@@ -291,7 +291,7 @@ class LeaveService:
             settled = self.settle(org_id, [sg], body.settle if body else [], actor_id, actor_role, money=money)
             self.db.add(GroupAudit(
                 org_id=UUID(str(org_id)), group_id=group.id, actor_id=UUID(str(actor_id)),
-                actor_role=actor_role if actor_role in ("owner", "admin", "teacher", "superadmin") else "admin",
+                actor_role=actor_role if actor_role in ("owner", "admin", "teacher") else "admin",
                 action=AUDIT_LEFT, assigned_teacher_id=group.teacher_id,
                 snapshot={"student_id": str(student.id), "membership_id": str(sg.id), "reason": (body.reason if body else None),
                           "settled": [s.model_dump() for s in settled]}))

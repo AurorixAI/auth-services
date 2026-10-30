@@ -121,7 +121,7 @@ from .ops_schemas import (  # noqa: E402
     TeacherDashboardSummaryResponseB as TeacherDashboardSummaryResponse,
 )
 from . import attendance_rules, business_clock, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
-from . import staff_lifecycle, student_views  # noqa: E402
+from . import password_rules, staff_lifecycle, student_views  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -567,12 +567,17 @@ class AuthService:
         # user), so neither the message nor the response time says whether the account exists.
         user = self.db.query(User).filter(User.email == request.email).first()
         password_ok = verify_password(request.password, user.password_hash if user else _DUMMY_PASSWORD_HASH)
-        if not user or not user.is_active or not password_ok:
+        if not user or not password_ok:
             raise InvalidCredentialsError()
-        if user.role == "superadmin":  # A4: the platform role has no cabinet - the answer of a wrong password, and a row in the journal
-            self._deny_superadmin_login(user)
-        from .platform_blocks import ensure_login_allowed  # a console account / a blocked centre never gets a session
+        from .platform_blocks import account_closed_error, ensure_centre_usable, ensure_login_allowed, is_console_account  # a console account / a blocked centre never gets a session
+
+        if not user.is_active:
+            # K2-2 (F): the password was RIGHT, so saying why the door is shut tells a stranger nothing (a console account still gets the one standard refusal)
+            if is_console_account(self.db, user):
+                raise InvalidCredentialsError()
+            raise account_closed_error(user)
         ensure_login_allowed(self.db, user)
+        ensure_centre_usable(self.db, user)
 
         # F8 (sign-in || password set): a session issued by an OLD password must not survive the change. Both sides take the per-user session lock; here the
         # lock is taken first and the password is re-read under it: a password set by a link / changed in the settings that committed while this
@@ -586,6 +591,9 @@ class AuthService:
 
         user.last_login_at = datetime.now(timezone.utc)
         user.login_count = (user.login_count or 0) + 1
+        from . import password_links  # late: it pulls in the application package (a cycle at import time)
+
+        password_links.revoke_live_resets(self.db, user.id)  # he remembered the password: the «Забыли пароль» links still alive are over (K2-2, B)
 
         tokens = self._create_tokens(user, remember=bool(getattr(request, "remember_me", False)))
         self.db.commit()
@@ -608,19 +616,6 @@ class AuthService:
             org=org,
         )
 
-    def _deny_superadmin_login(self, user: User) -> None:
-        """A4: ``superadmin`` is a role of the platform, it never signs in to a cabinet. The refusal is the ordinary «Неверная почта или
-        пароль» (it must not say that the password was right); the attempt is a ``platform_audit`` row (committed here: the caller raises)."""
-        from .platform_audit import record as audit_record
-
-        ip, user_agent = (self.client or user_sessions.SessionClient()).cleaned()
-        audit_record(
-            self.db, actor_id=None, action="login.superadmin_denied", target_type="user", target_id=user.id,
-            details={"where": "cabinet"}, ip=ip, user_agent=user_agent,
-        )
-        self.db.commit()
-        raise InvalidCredentialsError()
-
     # ═══════════════════════════════════════════════════════════════════
     # 3. TOKEN MANAGEMENT
     # ═══════════════════════════════════════════════════════════════════
@@ -631,7 +626,7 @@ class AuthService:
             raise ValueError("Невалидный refresh token")
 
         user = self.db.query(User).filter(User.id == payload.get("sub")).first()
-        if not user or not user.is_active or user.role == "superadmin":  # a platform account has no cabinet session (A4)
+        if not user or not user.is_active:
             raise ValueError("Пользователь не найден или заблокирован")
         from .platform_blocks import ensure_login_allowed  # a blocked centre / a console account gets no new session either (K2-1, as the sign-in)
 
@@ -703,7 +698,13 @@ class AuthService:
             raise ValueError("Пользователь не найден")
         if not verify_password(old_password, user.password_hash):
             raise ValueError("Неверный текущий пароль")
+        reason = password_rules.problem(new_password, email=user.email)  # the one rule of the cabinets, with the e-mail of the account (K2-2, F)
+        if reason:
+            raise ValueError(reason)
         user.password_hash = hash_password(new_password)
+        from . import password_links  # late (see ``login``)
+
+        password_links.revoke_live_resets(self.db, user.id)  # a new password of his own ends the «Забыли пароль» links that are still alive (K2-2, B)
         # Every OTHER device signs in again with the new password; the session the person is using stays (K2-1 M1: the screen does not throw him out)
         user_sessions.revoke_all(self.db, user.id, user_sessions.REVOKE_PASSWORD_CHANGED, except_id=keep_session_id)
         user.must_change_password = False  # cleared once they set their own
@@ -725,10 +726,10 @@ class AuthService:
     # ═══════════════════════════════════════════════════════════════════
 
     def create_invitation(
-        self, org_id: str, creator_id: str, request: InviteMemberRequest, *, creator_role: Optional[str] = None
+        self, org_id: str, creator_id: str, request: InviteMemberRequest, *, creator_role: Optional[str] = None, background=None
     ) -> dict:
-        """Создать приглашение (owner/admin приглашает teacher, admin приглашает только владелец) - ``invites.Invites``."""
-        return invites.Invites(self).create(org_id, creator_id, request, creator_role=creator_role)
+        """Создать приглашение (owner/admin приглашает teacher, admin приглашает только владелец) - ``invites.Invites``; письмо уходит в фоне (``background``)."""
+        return invites.Invites(self).create(org_id, creator_id, request, creator_role=creator_role, background=background)
 
     def accept_invitation(self, request: AcceptInviteRequest) -> AuthResponse:
         """Принять приглашение - создать аккаунт (или вернуть удалённого сотрудника) и привязать к организации - ``invites.Invites``."""
@@ -737,9 +738,9 @@ class AuthService:
     def list_invitations(self, org_id: str) -> list:
         return invites.Invites(self).list(org_id)
 
-    def resend_invitation(self, org_id: str, invite_id, creator_id: str, *, creator_role: Optional[str] = None) -> dict:
+    def resend_invitation(self, org_id: str, invite_id, creator_id: str, *, creator_role: Optional[str] = None, background=None) -> dict:
         """«Отправить ещё раз» (K2-1, A1): a new code by letter, the old one is cancelled - ``invites.Invites``."""
-        return invites.Invites(self).resend(org_id, invite_id, creator_id, creator_role=creator_role)
+        return invites.Invites(self).resend(org_id, invite_id, creator_id, creator_role=creator_role, background=background)
 
     def revoke_invitation(self, org_id: str, invite_id: str) -> bool:
         invite = (
@@ -753,9 +754,12 @@ class AuthService:
         )
         if not invite:
             raise ValueError("Приглашение не найдено")
-        # "revoked" isn't a valid status per the DB check constraint — use
-        # "cancelled" (the constraint only allows pending/accepted/expired/cancelled).
+        # "revoked" isn't a valid status per the DB check constraint — use "cancelled".
         invite.status = "cancelled"
+        # a replacement whose letter is still on its way must not come back to life when it has gone (K2-2, G2)
+        self.db.query(Invitation).filter(
+            Invitation.org_id == org_id, func.lower(Invitation.email) == func.lower(invite.email or ""), Invitation.status == "queued"
+        ).update({"status": "cancelled"}, synchronize_session=False)
         self.db.commit()
         return True
 
@@ -3075,13 +3079,6 @@ class AuthService:
             "new_students": new_students,
             "no_group_students": student_views.count_no_group_students(self.db, org_id),
         }
-
-    def list_users(self, role: Optional[str] = None, limit: int = 50, offset: int = 0):
-        """Backward compatible — superadmin list"""
-        query = self.db.query(User).filter(User.is_active)
-        if role:
-            query = query.filter(User.role == role)
-        return query.order_by(User.created_at.desc()).offset(offset).limit(limit).all()
 
     # ═══════════════════════════════════════════════════════════════════
     # 10. SCHEDULE & ATTENDANCE

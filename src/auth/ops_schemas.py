@@ -528,15 +528,17 @@ class InvitationOut(BaseModel):
     status: Literal["pending", "accepted", "expired", "cancelled"]
     created_at: Optional[str] = None
     is_returning: bool = False
+    mail_status: Literal["pending", "sent", "failed"] = "sent"  # K2-2 (G2): where the letter is; «failed» = «Письмо не ушло — отправьте ещё раз»
 
 
 class InvitationSentOut(BaseModel):
-    """The answer to «Пригласить» and «Отправить ещё раз» (K2-1, A1): no code, no link; the whole address (the centre typed it); ``email_sent`` says whether the letter left."""
+    """The answer to «Пригласить» and «Отправить ещё раз» (K2-1, A1): no code, no link; the whole address (the centre typed it). K2-2 (G2): the letter goes in the
+    background, the answer does not wait for it: ``mail_status`` is ``pending`` (the list shows the outcome: ``sent`` / ``failed``)."""
 
     id: str
     email: str
     expires_at: str
-    email_sent: bool
+    mail_status: Literal["pending", "sent", "failed"] = "pending"
 
 
 class InviteInfoOut(BaseModel):

@@ -5,6 +5,9 @@
 * expired invitations become ``expired`` when they are read (list, info, accept): ``UPDATE ... WHERE status = 'pending' AND expires_at <= now``;
 * accepting is atomic (the invitation row is locked ``FOR UPDATE``): one code makes at most one account / reactivation;
 * the e-mail of the account is the e-mail of the invitation (a different one sent = 400 ``INVITE_EMAIL_MISMATCH``);
+* K2-2 (G2): the letter is sent IN THE BACKGROUND (the answer does not wait for SMTP) and ``mail_status`` follows it: ``pending`` -> ``sent`` | ``failed``.
+  A replacement (a second invitation to the same address) is first ``queued``: the older pending invitation keeps working until the new letter has gone,
+  then the older one is cancelled and the new one becomes ``pending`` (K2-1 m4, kept under the background).
 * K2-1 (A1): the invitation goes to the invited person BY LETTER (``mail.letters.send_staff_invite``) and nowhere else: the code is the secret of the
   link in that letter and is never returned by an API, never listed, never logged (log lines carry the invitation id); ``GET /auth/invite/{code}`` shows the
   centre, the role and a MASKED e-mail; accepting by the link proves the mailbox (``is_verified``); «send again» (``resend``) = a new code by letter,
@@ -25,7 +28,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from . import business_clock as bc
-from . import user_sessions
+from . import password_rules, user_sessions
 from .models import Invitation, MemberAudit, Organization, OrganizationMember, User
 from .ops_rules import ERROR_CATALOGUE, OpsError, conflict, forbidden, unprocessable
 from .platform_errors import PlatformError
@@ -33,6 +36,7 @@ from .platform_errors import PlatformError
 logger = logging.getLogger(__name__)
 
 INVITE_TTL_DAYS = 7
+MAIL_STALE_SECONDS = 120   # a letter that is still «pending» after this long was lost (the process stopped): the list shows it as «failed»
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 def _hash_code(code: str) -> str:
@@ -76,6 +80,15 @@ class Invites:
         count = q.update({Invitation.status: "expired"}, synchronize_session=False)
         return count
 
+    def _lock_address(self, org_id: Any, email: str) -> None:
+        """Serialise the creators and the background deliveries of ONE address of ONE centre (a transaction-level lock): two replacements that finish at the
+        same time then promote one after the other, each cancelling the one before, instead of meeting on the unique index of the pending invitation."""
+        if self.db.get_bind().dialect.name != "postgresql":
+            return
+        from sqlalchemy import text
+
+        self.db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"invite:{org_id}:{email}"})
+
     def _member_of_org(self, org_id: Any, email: str) -> Optional[Any]:
         return (
             self.db.query(OrganizationMember, User)
@@ -95,6 +108,8 @@ class Invites:
     def _out(invite: Invitation, *, returning: bool, aware: bool = False) -> Dict[str, Any]:
         d = invite.to_dict()
         d["is_returning"] = returning
+        stale = invite.mail_status_at is not None and (bc.utc_now() - invite.mail_status_at).total_seconds() > MAIL_STALE_SECONDS
+        d["mail_status"] = "failed" if (invite.mail_status == "pending" and stale) else (invite.mail_status or "sent")
         if aware and invite.expires_at is not None:
             d["expires_at"] = invite.expires_at.replace(tzinfo=timezone.utc).isoformat()
         return d
@@ -118,11 +133,16 @@ class Invites:
             if count > limit:
                 raise PlatformError(429, TOO_MANY_TEXT, "rate_limited", retry_after=left)
 
-    def create(self, org_id: Any, creator_id: Any, request, *, creator_role: Optional[str]) -> Dict[str, Any]:
-        """Create (or replace) the invitation and send the letter. The older pending invitation of the same e-mail is cancelled IN THE SAME TRANSACTION as the
-        new one is made, and the transaction is committed only when the letter went: if it did not, the old link stays alive and no new row exists
-        (the answer says ``email_sent: false`` and names the old invitation). A first invitation whose letter did not go is kept, so «Отправить ещё раз»
-        from the list can send it again."""
+    def create(
+        self, org_id: Any, creator_id: Any, request, *, creator_role: Optional[str], background=None
+    ) -> Dict[str, Any]:
+        """Create (or replace) the invitation; the letter goes in the BACKGROUND (``background`` = FastAPI ``BackgroundTasks``; without one the letter is
+        sent right here, for a direct call of the service). The answer does not wait for SMTP: ``mail_status: "pending"``.
+
+        A first invitation is ``pending`` at once. A replacement (the address has a pending invitation) is ``queued``: the older invitation keeps working
+        and shows «sending» until the new letter has gone; then the older one is cancelled and the new one becomes ``pending`` (K2-1 m4). If the letter
+        does not go, the replacement is dropped, the older invitation stays and says ``failed``; a first invitation whose letter did not go stays,
+        marked ``failed``, so «Отправить ещё раз» from the list can send it again."""
         email = normalize_email(request.email)
         if email is None:
             raise unprocessable("EMAIL_REQUIRED", ERROR_CATALOGUE["EMAIL_REQUIRED"][1])
@@ -138,6 +158,7 @@ class Invites:
 
         for attempt in (1, 2):
             raw = generate_code(INVITE_CODE_LENGTH, digits_only=False)
+            self._lock_address(org_id, normalize_email(email))
             # lock the pending invitations of this e-mail first (two creators in a row do not both see "none"; an accept in flight holds the row)
             previous = (
                 self.db.query(Invitation)
@@ -149,12 +170,13 @@ class Invites:
             if row is not None and row[0].is_active:
                 self.db.rollback()
                 raise conflict("ALREADY_MEMBER", ERROR_CATALOGUE["ALREADY_MEMBER"][1])
-            kept = [(p.id, p.expires_at) for p in previous]
-            for p in previous:
-                p.status = "cancelled"
+            now = bc.utc_now()
+            for p in previous:                                     # the older invitation keeps working; it shows «sending» until the new letter has gone
+                p.mail_status, p.mail_status_at = "pending", now
             invite = Invitation(
                 org_id=org_id, invited_by=creator_id, email=email, org_role=request.org_role, code_hash=_hash_code(raw),
-                expires_at=bc.utc_now() + timedelta(days=INVITE_TTL_DAYS), status="pending", created_at=bc.utc_now(),
+                expires_at=now + timedelta(days=INVITE_TTL_DAYS), status="queued" if previous else "pending", created_at=now,
+                mail_status="pending", mail_status_at=now,
             )
             self.db.add(invite)
             try:
@@ -164,14 +186,6 @@ class Invites:
                 if attempt == 2:
                     raise
                 continue
-            sent = self._send_letter(invite, raw)
-            if not sent and kept:                                  # the letter did not go: the old link must keep working, nothing new is made
-                self.db.rollback()
-                logger.info("Invitation letter failed, the previous invitation stays: id=%s org=%s", kept[0][0], org_id)
-                return {
-                    "id": str(kept[0][0]), "email": email, "email_sent": False,
-                    "expires_at": kept[0][1].replace(tzinfo=timezone.utc).isoformat(),
-                }
             self.db.commit()
             break
         logger.info("Invitation created: id=%s role=%s org=%s", invite.id, request.org_role, org_id)
@@ -179,7 +193,15 @@ class Invites:
             from .dev_router import remember_code
 
             remember_code(email, raw)
-        return self._sent(invite, sent)
+        answer = self._sent(invite)
+        invite_id = str(invite.id)
+        if background is not None:
+            background.add_task(deliver_in_background, invite_id, raw)
+        else:
+            self.deliver(invite_id, raw)
+            self.db.expire_all()
+            answer = self._sent(self.db.query(Invitation).filter(Invitation.id == invite.id).one())
+        return answer
 
     def _send_letter(self, invite: Invitation, code: str) -> bool:
         """The letter with the link (*code* is the plain code, which exists only here and in the letter). A failure never breaks the request."""
@@ -196,18 +218,58 @@ class Invites:
             logger.error("Invitation letter failed: invitation=%s %s", invite.id, type(exc).__name__)
             return False
 
+    def deliver(self, invite_id: str, code: str) -> bool:
+        """The background half of ``create``: send the letter (no lock held while SMTP works), then record the outcome. Returns whether the letter went."""
+        invite = self.db.query(Invitation).filter(Invitation.id == invite_id).first()
+        if invite is None or invite.status not in ("pending", "queued"):
+            return False                                           # cancelled / accepted meanwhile: nothing to send
+        sent = self._send_letter(invite, code)
+        org_id, email, my_id = invite.org_id, normalize_email(invite.email), invite.id
+        self.db.rollback()                                         # end the read transaction before the locking one
+        self._lock_address(org_id, email)
+        mine = self.db.query(Invitation).filter(Invitation.id == my_id).with_for_update().populate_existing().first()
+        if mine is None or mine.status not in ("pending", "queued"):
+            self.db.rollback()
+            return sent
+        others = (
+            self.db.query(Invitation)
+            .filter(Invitation.org_id == org_id, func.lower(Invitation.email) == email, Invitation.status == "pending", Invitation.id != my_id)
+            .with_for_update()
+            .all()
+        )
+        now = bc.utc_now()
+        if sent:
+            row = self._member_of_org(org_id, email)
+            if row is not None and row[0].is_active:               # he joined by the older link meanwhile: the new link has nothing to do
+                mine.status, mine.mail_status = "cancelled", "sent"
+            else:
+                for o in others:
+                    o.status = "cancelled"                         # the new letter has gone: now the older link may die (K2-1 m4)
+                self.db.flush()                                    # the older one is cancelled BEFORE this one becomes pending (the unique index of pending is checked per statement)
+                mine.status, mine.mail_status = "pending", "sent"
+            mine.mail_status_at = now
+        else:
+            if mine.status == "queued":                            # a replacement that did not go is dropped without a trace; the older invitation stays, marked failed
+                for o in others:
+                    o.mail_status, o.mail_status_at = "failed", now
+                self.db.delete(mine)
+            else:
+                mine.mail_status, mine.mail_status_at = "failed", now
+        self.db.commit()
+        return sent
+
     @staticmethod
-    def _sent(invite: Invitation, email_sent: bool) -> Dict[str, Any]:
-        """The answer for the CENTRE that typed the address: the whole address (it must see a typo), no code, no link."""
+    def _sent(invite: Invitation) -> Dict[str, Any]:
+        """The answer for the CENTRE that typed the address: the whole address (it must see a typo), no code, no link; ``mail_status`` follows the letter."""
         return {
             "id": str(invite.id),
             "email": invite.email or "",
             "expires_at": invite.expires_at.replace(tzinfo=timezone.utc).isoformat(),
-            "email_sent": email_sent,
+            "mail_status": invite.mail_status or "sent",
         }
 
     # -------------------------------------------------------------------------------------------- resend
-    def resend(self, org_id: Any, invite_id: Any, creator_id: Any, *, creator_role: Optional[str]) -> Dict[str, Any]:
+    def resend(self, org_id: Any, invite_id: Any, creator_id: Any, *, creator_role: Optional[str], background=None) -> Dict[str, Any]:
         """«Отправить ещё раз»: a NEW code by letter; the old one is cancelled (410 ``link_revoked``). Only a pending or an expired invitation of this centre."""
         from .schemas import InviteMemberRequest
 
@@ -225,7 +287,7 @@ class Invites:
         if invite is None:
             raise ValueError("Приглашение не найдено")
         return self.create(
-            org_id, creator_id, InviteMemberRequest(email=invite.email, org_role=invite.org_role), creator_role=creator_role
+            org_id, creator_id, InviteMemberRequest(email=invite.email, org_role=invite.org_role), creator_role=creator_role, background=background
         )
 
     # --------------------------------------------------------------------------------------------- list
@@ -233,7 +295,7 @@ class Invites:
         if self.expire_due(org_id=org_id):
             self.db.commit()
         invites = (
-            self.db.query(Invitation).filter(Invitation.org_id == org_id).order_by(Invitation.created_at.desc()).limit(100).all()
+            self.db.query(Invitation).filter(Invitation.org_id == org_id, Invitation.status != "queued").order_by(Invitation.created_at.desc()).limit(100).all()
         )
         emails = {normalize_email(i.email) for i in invites if i.email}
         removed = set()
@@ -291,6 +353,10 @@ class Invites:
         if email is None:
             self.db.rollback()
             raise ValueError("В приглашении не указан email")
+        reason = password_rules.problem(request.password, email=email)  # the one rule of the cabinets, with the e-mail of the account (K2-2, F)
+        if reason:
+            self.db.rollback()
+            raise ValueError(reason)
         sent = normalize_email(getattr(request, "email", None))
         if sent is not None and invite.email and sent != normalize_email(invite.email):
             self.db.rollback()
@@ -327,6 +393,9 @@ class Invites:
             existing.is_active = True
             existing.is_verified = True  # the link came by letter: the mailbox is proven (K2-1, A1)
             existing.must_change_password = False
+            from . import password_links  # late: it pulls in the application package
+
+            password_links.revoke_live_resets(self.db, existing.id)  # his new password ends the reset links that are still alive
             existing.role = invite.org_role
             own.is_active = True
             own.org_role = invite.org_role
@@ -358,3 +427,18 @@ class Invites:
         from .schemas import AuthResponse
 
         return AuthResponse(user=self.svc._build_user_response(user), tokens=tokens, org=self.svc._build_org_response(org))
+
+
+def deliver_in_background(invite_id: str, code: str) -> None:
+    """The task that runs after the response of «Пригласить» / «Отправить ещё раз»: a session of its own, the letter, the recorded outcome. Never raises."""
+    from .background import background_session
+    from .service import AuthService
+
+    db = background_session()
+    try:
+        Invites(AuthService(db)).deliver(invite_id, code)
+    except Exception as exc:  # noqa: BLE001 - the row then stays «pending» and the list shows it as «failed» after two minutes
+        logger.error("Invitation delivery failed: invitation=%s %s", invite_id, type(exc).__name__)
+        db.rollback()
+    finally:
+        db.close()

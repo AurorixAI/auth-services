@@ -167,6 +167,14 @@ def get_user(user_id: str, p: Principal = Depends(require_platform("users.view")
     return out
 
 
+def _ensure_can_get_a_link(user: User) -> None:
+    """A link goes to an active account only; the refusal tells «blocked by the platform» from «removed by his centre» (K2-2, U2)."""
+    if user.platform_blocked_at is not None:
+        raise PlatformError(409, "Пользователь заблокирован", "user_blocked")
+    if not user.is_active:
+        raise PlatformError(409, "Сотрудник удалён из центра", "user_removed")
+
+
 def _first_org(db: Session, user: User) -> Optional[Organization]:
     return db.get(Organization, user.default_org_id) if user.default_org_id else None
 
@@ -176,8 +184,7 @@ def resend_invite(
     user_id: str, request: Request, p: Principal = Depends(require_platform("users.manage")), db: Session = Depends(get_db)
 ):
     user = _get(db, user_id, lock=True)
-    if user.platform_blocked_at is not None or not user.is_active:
-        raise PlatformError(409, "Пользователь заблокирован", "user_blocked")
+    _ensure_can_get_a_link(user)
     is_owner = db.query(OrganizationMember.id).filter(OrganizationMember.user_id == user.id, OrganizationMember.org_role == "owner").first()
     if is_owner is None:
         raise PlatformError(409, "Приглашение «Задать пароль» отправляется только владельцам центров", "not_owner")
@@ -204,8 +211,7 @@ def send_reset(
     user_id: str, request: Request, p: Principal = Depends(require_platform("users.manage")), db: Session = Depends(get_db)
 ):
     user = _get(db, user_id, lock=True)
-    if user.platform_blocked_at is not None or not user.is_active:
-        raise PlatformError(409, "Пользователь заблокирован", "user_blocked")
+    _ensure_can_get_a_link(user)
     token, link = links.issue(db, user.id, "reset", created_by=p.user.id)
     entry = audit.record(
         db, actor_id=p.user.id, action="user.reset_sent", target_type="user", target_id=user.id,

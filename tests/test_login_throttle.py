@@ -400,10 +400,15 @@ def test_unknown_inactive_and_wrong_password_get_the_same_401_through_the_real_s
     for name, user in cases.items():
         db = MagicMock()
         db.query.return_value.filter.return_value.first.return_value = user
-        r = post_login(TestClient(make_app(db)), f"who-{len(answers)}@x.kz", "the-right-one" if name == "inactive" else "nope")
+        r = post_login(TestClient(make_app(db)), f"who-{len(answers)}@x.kz", "nope")
         answers[name] = (r.status_code, r.json())
     expected = (401, {"detail": {"code": "INVALID_CREDENTIALS", "message": "Неверная почта или пароль"}})
     assert answers == {"unknown": expected, "inactive": expected, "wrong password": expected}
+    # K2-2 (F): the RIGHT password of a switched-off account is told why (a stranger who does not know the password learns nothing)
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = cases["inactive"]
+    told = post_login(TestClient(make_app(db)), "who-3@x.kz", "the-right-one")
+    assert told.status_code == 403 and "Доступ закрыт центром" in told.json()["detail"]
 
 
 def test_a_success_resets_the_account_through_the_endpoint(monkeypatch, clock):

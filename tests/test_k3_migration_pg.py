@@ -17,7 +17,7 @@ BASE_URL = os.environ.get("A5_AUTH_MIGRATION_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
 
 REVISION, BEFORE = "k3a1b2c3d4e5", "p159a1b2c3d4"
-HEAD = "k2a1b2c3d4e5"   # K2-1 (the mode of a session) sits on top of this revision
+HEAD = "k2b1b2c3d4e5"   # K2-1 (the mode of a session) sits on top of this revision
 DB_NAME = "a5_auth_k3_migrations"
 NEW = {
     "org_type", "address", "branches_count", "position", "preferred_contact_time", "needs", "current_tool", "heard_from", "locale", "consent_at",
@@ -70,7 +70,7 @@ def test_the_revision_follows_159_and_is_the_head():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == [HEAD] and script.get_revision(REVISION).down_revision == BEFORE and script.get_revision(HEAD).down_revision == REVISION
+    assert script.get_heads() == [HEAD] and script.get_revision(REVISION).down_revision == BEFORE and script.get_revision('k2a1b2c3d4e5').down_revision == REVISION
 
 
 def test_up_down_up_old_rows_survive_and_the_columns_are_nullable(engine):

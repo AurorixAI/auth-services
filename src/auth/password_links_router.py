@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -14,11 +14,11 @@ from src.core.security import hash_password
 from src.models.auth import Organization, User
 
 from . import password_links as links
+from . import password_rules
 from . import user_sessions
 from .cookies import set_auth_cookies
 from .platform_audit import record as audit_record
-from .platform_auth import password_problem
-from .platform_blocks import ORG_BLOCKED_TEXT, ensure_login_allowed
+from .platform_blocks import ORG_BLOCKED_TEXT, ensure_centre_usable, ensure_login_allowed
 from .platform_common import iso, utcnow
 from .platform_errors import PlatformError, validation_error
 from .platform_validation import Form
@@ -36,13 +36,22 @@ MIN_PASSWORD = 8
 NOT_FOUND = PlatformError(404, "Ссылка недействительна. Запросите новую.", "link_not_found")
 
 
-def _problem(status: str) -> PlatformError:
+EXPIRED_RESET_TEXT = "Срок действия ссылки истёк. Запросите новую на странице входа."
+EXPIRED_INVITE_TEXT = "Срок действия ссылки истёк. Напишите нам — пришлём новую."
+USER_CLOSED_BY_CENTRE = "Вашу учётную запись отключил центр. Обратитесь к руководству центра."
+USER_CLOSED_BY_ALGO = "Доступ приостановлен. Свяжитесь с ALGO"
+
+
+def _problem(status: str, link=None) -> PlatformError:
+    """The refusal of a dead link. ``purpose`` tells the page what to offer next: «Запросить новую ссылку» for a ``reset``, «напишите нам» for a welcome link."""
+    extra = {"purpose": link.purpose} if link is not None else None
     if status == links.USED:
-        return PlatformError(410, "Эта ссылка уже использована. Если нужно, запросите новую.", "link_used")
+        return PlatformError(410, "Эта ссылка уже использована. Если нужно, запросите новую.", "link_used", extra=extra)
     if status == links.REVOKED:
-        return PlatformError(410, "Выдана новая ссылка — используйте её из последнего письма.", "link_revoked")
+        return PlatformError(410, "Выдана новая ссылка — используйте её из последнего письма.", "link_revoked", extra=extra)
     if status == links.EXPIRED:
-        return PlatformError(410, "Срок действия ссылки истёк. Запросите новую — ответьте на письмо с приглашением.", "link_expired")
+        text = EXPIRED_RESET_TEXT if link is not None and link.purpose == "reset" else EXPIRED_INVITE_TEXT
+        return PlatformError(410, text, "link_expired", extra=extra)
     return PlatformError(404, "Ссылка недействительна. Запросите новую.", "link_not_found")
 
 
@@ -55,7 +64,7 @@ def _first_name_greeting(user: User) -> str:
 def link_info(token: str, db: Session = Depends(get_db)):
     status, link = links.lookup(db, token)
     if status != links.OK:
-        raise _problem(status)
+        raise _problem(status, link)
     user = db.get(User, link.user_id)
     if user is None:
         raise _problem(links.MISSING)
@@ -73,28 +82,38 @@ def link_info(token: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{token}", dependencies=[Depends(rate_limit(LINK_LIMIT, endpoint=LINK_RATE_ENDPOINT))])
-def set_password(token: str, request: Request, body: dict = Body(default=None), db: Session = Depends(get_db)):
+def set_password(
+    token: str, request: Request, background: BackgroundTasks, body: dict = Body(default=None), db: Session = Depends(get_db)
+):
     form = Form(body)
     password = form.data.get("password")
     confirm = form.data.get("password_confirm")
-    problem = password_problem(password, min_length=MIN_PASSWORD)
+    problem = password_rules.problem(password, min_length=MIN_PASSWORD)
     if problem:
         form.fail("password", problem)
     if "password" not in form.errors and confirm != password:
         form.fail("password_confirm", "Пароли не совпадают")
-    status, link = links.lookup(db, token, for_update=True)
+    owner = links.owner_of(db, token)
+    if owner is None:
+        raise _problem(links.MISSING)
+    user_sessions.lock_user(db, owner)  # lock order: the per-user lock -> the link row -> the user row (an issue, a sign-in, a confirmation follow it too)
+    status, link = links.lookup(db, token, for_update=True, grace=True)  # a ``reset`` link has 5 more minutes for the POST than the page shows
     if status != links.OK:
-        raise _problem(status)
+        raise _problem(status, link)
     form.done()
     user = db.get(User, link.user_id)
     if user is None:
         raise _problem(links.MISSING)
+    again = password_rules.problem(password, email=user.email, min_length=MIN_PASSWORD)  # the one rule, now with the e-mail of the account
+    if again:
+        raise validation_error({"password": again})
     if not user.is_active:
-        raise PlatformError(403, "Доступ приостановлен. Свяжитесь с ALGO", "user_blocked")
+        raise PlatformError(403, USER_CLOSED_BY_ALGO if user.platform_blocked_at is not None else USER_CLOSED_BY_CENTRE, "user_blocked")
     try:
         ensure_login_allowed(db, user)
-    except HTTPException:  # the centre is blocked: the password stays unset, the link stays valid
-        raise PlatformError(403, ORG_BLOCKED_TEXT, "org_blocked") from None
+        ensure_centre_usable(db, user)
+    except HTTPException as exc:  # the centre is blocked / not active: the password stays unset, the link stays valid
+        raise PlatformError(403, str(exc.detail) if exc.detail else ORG_BLOCKED_TEXT, "org_blocked") from None
     except InvalidCredentialsError:  # a console account has no cabinet
         raise _problem(links.MISSING) from None
 
@@ -112,5 +131,20 @@ def set_password(token: str, request: Request, body: dict = Body(default=None), 
                  details={"purpose": link.purpose}, request=request)
     db.commit()
 
+    mail = dict(to=user.email, greeting=_first_name_greeting(user), changed_at=now) if link.purpose == "reset" else None
     result = _svc(db, request).login(LoginRequest(email=user.email, password=password))
-    return _auth_response_with_cookies(result)
+    response = _auth_response_with_cookies(result)
+    if mail is not None:  # «Пароль изменён» goes to the mailbox in the background (L9)
+        background.add_task(_send_changed_letter, mail)
+    response.background = background  # a Response returned by hand carries its own background tasks
+    return response
+
+
+def _send_changed_letter(job: dict) -> None:
+    from src.mail import letters
+
+    to = job.pop("to")
+    try:
+        letters.send_password_changed(to, **job)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("password changed: the letter failed %s", type(exc).__name__)

@@ -29,8 +29,9 @@ class DiagnosticCapabilityLogFilter(logging.Filter):
     _path = re.compile(r'(/(?:api/v1/)?(?:auth/|internal/)?diagnostic/)(?!sessions(?:/|\b))[^/?\s\"\x27]+')
     _query = re.compile(r'([?&]invite_code=)[^&\s\"\x27]+')
     # «Задать пароль» / «Сброс пароля»: the token in the path IS the credential (one-time, but valid for 72 h / 1 h) - never in a log line
+    # K2-2 (E): the token of an e-mail change (``/auth/email-change/{token}``, the page ``/confirm-email/{token}``) is the same kind of secret
     # K2-1 (A1): the code of a staff invitation (``/auth/invite/{code}``) is the same kind of secret; ``/auth/invite/accept`` is a route, not a code
-    _links = re.compile(r'(/(?:api/v1/)?(?:auth/password-links|set-password|auth/invite)/)(?!accept(?:[/?\s\"\x27]|$))[^/?\s\"\x27]+')
+    _links = re.compile(r'(/(?:api/v1/)?(?:auth/password-links|set-password|auth/invite|auth/email-change|confirm-email)/)(?!accept(?:[/?\s\"\x27]|$))[^/?\s\"\x27]+')
 
     # Personal data in a query string (the console searches requests by e-mail: ``?q=lead%40mail.com``): the values of these keys, and of ANY key whose value looks like
     # an e-mail address or a phone number, never reach a log line.  The path stays (nginx hides the tokens of paths).

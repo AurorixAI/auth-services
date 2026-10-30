@@ -172,7 +172,7 @@ class User(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("role IN ('owner', 'admin', 'teacher', 'superadmin')"),
+        CheckConstraint("role IN ('owner', 'admin', 'teacher')", name="users_role_check"),
         Index("idx_users_role", "role"),
         Index("idx_users_active", "is_active"),
         Index("idx_users_org", "default_org_id"),
@@ -332,12 +332,17 @@ class Invitation(Base):
     accepted_at = Column(DateTime)
     accepted_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at = Column(DateTime, default=func.now())
+    # K2-2 (G2): the letter goes in the background; ``mail_status`` says where it is (pending -> sent | failed), ``mail_status_at`` when that was set
+    mail_status = Column(String(10), nullable=False, default="sent", server_default="sent")
+    mail_status_at = Column(DateTime)
 
     organization = relationship("Organization", back_populates="invitations")
 
     __table_args__ = (
         CheckConstraint("org_role IN ('admin', 'teacher')"),
-        CheckConstraint("status IN ('pending', 'accepted', 'expired', 'cancelled')"),
+        # ``queued`` = a replacement whose letter has not gone yet (the older pending invitation keeps working until it has)
+        CheckConstraint("status IN ('pending', 'queued', 'accepted', 'expired', 'cancelled')", name="invitations_status_check"),
+        CheckConstraint("mail_status IN ('pending', 'sent', 'failed')", name="ck_invitations_mail_status"),
         # LOGIC-B O10: one pending invitation per e-mail and centre (a new one cancels the previous).
         Index(
             "uq_invitations_pending_email",
@@ -354,6 +359,7 @@ class Invitation(Base):
             "email": self.email,
             "org_role": self.org_role,
             "status": self.status,
+            "mail_status": self.mail_status or "sent",
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
@@ -535,7 +541,7 @@ class StudentAudit(Base):
     created_at = Column(DateTime, nullable=False, server_default=text("timezone('utc', now())"))
 
     __table_args__ = (
-        CheckConstraint("actor_role IN ('owner', 'admin', 'teacher', 'superadmin')", name="ck_student_audit_actor_role"),
+        CheckConstraint("actor_role IN ('owner', 'admin', 'teacher')", name="ck_student_audit_actor_role"),
         Index("idx_student_audit_student", "student_id", "created_at"),
     )
 
@@ -578,7 +584,7 @@ class GroupAudit(Base):
             name="ck_group_audit_action",
         ),
         CheckConstraint(
-            "actor_role IN ('owner', 'admin', 'teacher', 'superadmin')",
+            "actor_role IN ('owner', 'admin', 'teacher')",
             name="ck_group_audit_actor_role",
         ),
         Index("idx_group_audit_group", "group_id", "created_at"),
@@ -1315,7 +1321,8 @@ class MemberAudit(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "action IN ('removed', 'restored', 'reactivated_by_invite', 'role_changed')",
+            "action IN ('removed', 'restored', 'reactivated_by_invite', 'role_changed', 'password_link_sent', "
+            "'email_change_started', 'email_changed')",
             name="ck_member_audit_action",
         ),
         Index("idx_member_audit_org", "org_id", "created_at"),

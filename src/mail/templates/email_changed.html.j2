@@ -1,0 +1,10 @@
+{% extends "_layout.html.j2" %}
+{% from "_macros.html.j2" import p, small %}
+{% block preheader %}Почта для входа в ALGO изменена.{% endblock %}
+{% block title %}Почта изменена{% endblock %}
+{% block content %}
+{% call p() %}{% if greeting %}Здравствуйте, {{ greeting }}!{% else %}Здравствуйте!{% endif %}{% endcall %}
+{% call p() %}Почта для входа в ALGO изменена на <strong class="ink" style="color:#0f172a;">{{ new_email }}</strong>. Все прежние входы закрыты — войдите с новой почтой и прежним паролем.{% endcall %}
+{% call small() %}Если вы не подтверждали этот адрес — сразу напишите на <a class="link" href="mailto:{{ support_email }}" style="color:#2563eb;">{{ support_email }}</a>.{% endcall %}
+{% endblock %}
+{% block footer_reason %}Вы получили это письмо, потому что у вашей учётной записи ALGO изменена почта.{% endblock %}

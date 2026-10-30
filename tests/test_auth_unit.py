@@ -233,12 +233,6 @@ class TestRBAC:
         """Call RoleChecker with a mock payload dependency"""
         return checker(payload=payload)
 
-    def test_superadmin_passes_any_checker(self):
-        from src.auth.dependencies import require_org_owner
-        payload = self._make_payload("superadmin", org_id="org-1")
-        result = self._run_checker(require_org_owner, payload)
-        assert result["role"] == "superadmin"
-
     def test_owner_passes_owner_checker(self):
         from src.auth.dependencies import require_org_owner
         payload = self._make_payload("owner", org_role="owner", org_id="org-1")
