@@ -368,6 +368,9 @@ class Invites:
         if org.blocked_at is not None:                          # a centre blocked from the console takes nobody in
             self.db.rollback()
             raise OpsError(403, "ORG_BLOCKED", "Доступ центра приостановлен. Свяжитесь с ALGO")
+        known = self.db.query(User.id).filter(func.lower(User.email) == email).scalar()
+        if known is not None:
+            user_sessions.lock_user(self.db, known)  # lock order: the per-user lock FIRST, then the links, then the user row (LESSONS 69; K2-2 R3, 3)
         existing = self.db.query(User).filter(func.lower(User.email) == email).with_for_update().first()
         now = bc.utc_now()
         if existing is not None:

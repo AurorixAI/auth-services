@@ -296,6 +296,7 @@ class StaffLifecycle:
         return released, closed_requests, reopened
 
     def remove(self, org_id: Any, member_id: Any, *, actor_id: Any) -> Dict[str, Any]:
+        user_sessions.lock_user(self.db, self._member(org_id, member_id).user_id)  # the per-user lock FIRST (LESSONS 69; K2-2 R3, 3), then the member, the groups, the user
         member = self._member(org_id, member_id, lock=True)
         if member.org_role == "owner":
             raise ValueError("Нельзя удалить владельца")

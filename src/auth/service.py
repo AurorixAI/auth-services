@@ -693,6 +693,7 @@ class AuthService:
     def change_password(
         self, user_id: str, old_password: str, new_password: str, keep_session_id=None
     ) -> bool:
+        user_sessions.lock_user(self.db, user_id)  # lock order: the per-user lock FIRST, then the links, then the user row (LESSONS 69; K2-2 R3, 3)
         user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
             raise ValueError("Пользователь не найден")

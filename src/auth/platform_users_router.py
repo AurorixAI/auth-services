@@ -79,6 +79,7 @@ def _get(db: Session, user_id_text: str, *, lock: bool = False) -> User:
     uid = parse_uuid_or_404(user_id_text, "Пользователь")
     q = db.query(User).filter(User.id == uid, ~User.id.in_(db.query(PlatformStaff.user_id)))
     if lock:
+        user_sessions.lock_user(db, uid)  # lock order: the per-user lock FIRST, then the user row (LESSONS 69; K2-2 R3, 3)
         q = q.with_for_update()
     user = q.first()
     if user is None:

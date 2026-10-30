@@ -923,3 +923,193 @@ def test_inv5_the_token_of_a_reset_is_in_no_answer_no_log_no_journal_no_list(cw,
         assert address not in logs, address                                           # no whole address in a log line
     stored = {row.token_hash for row in cw.db.query(PasswordLink)}
     assert hash_token(token_self) in stored and token_self not in stored            # the database keeps the hash only
+
+
+# ============================================================================================================ LESSONS 69: one lock order on EVERY path (K2-2 R3, 3)
+
+
+def _parallel(maker, jobs, barrier_size=None):
+    """Run each ``job(db)`` in its own thread and session at the same moment; returns {name: 'ok' | the error class | the status code}."""
+    barrier = threading.Barrier(barrier_size or len(jobs))
+    outcome = {}
+
+    def run(name, job):
+        db = maker()
+        try:
+            barrier.wait(timeout=10)
+            job(db)
+            outcome[name] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            outcome[name] = getattr(exc, "status_code", type(exc).__name__)
+            db.rollback()
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=run, args=item) for item in jobs.items()]
+    [t.start() for t in threads]
+    [t.join(60) for t in threads]
+    return outcome
+
+
+@needs_pg
+def test_lock_order_every_path_that_changes_links_sessions_or_the_password_of_one_user_at_once(cw, centre):
+    """A sign-in, a link that sets the password, a new link, a change of the password in the settings (twice), a block from the console and a removal of the
+    employee all touch the same user: no deadlock, nobody is aborted by the database."""
+    from src.auth import platform_users_router as console_users
+    from src.auth.schemas import LoginRequest
+
+    forgot(anonymous(cw), centre.teacher.email)
+    token = link_token(cw, centre.teacher.email)
+    maker = sessionmaker(cw.db.get_bind(), autoflush=False)
+    scope = {"type": "http", "method": "POST", "path": "/", "headers": [], "client": ("203.0.113.9", 4000), "query_string": b""}
+    teacher_id, org_id, member_id = centre.teacher.id, centre.org.id, member_of(cw, centre.teacher).id
+
+    def sign_in(db):
+        AuthService(db).login(LoginRequest(email=centre.teacher.email, password=PASSWORD))
+
+    def consume(db):
+        from src.auth.password_links_router import set_password
+
+        set_password(token, Request(scope), BackgroundTasks(), {"password": NEW_PASSWORD, "password_confirm": NEW_PASSWORD}, db)
+
+    def issue(db):
+        links.issue(db, teacher_id, "reset")
+        db.commit()
+
+    def change(db):
+        AuthService(db).change_password(str(teacher_id), PASSWORD, "changed-in-settings-1")
+
+    def change_again(db):
+        AuthService(db).change_password(str(teacher_id), PASSWORD, "changed-in-settings-2")
+
+    def console_block(db):
+        user = console_users._get(db, str(teacher_id), lock=True)
+        user_sessions.revoke_all(db, user.id, user_sessions.REVOKE_USER_BLOCKED)
+        db.commit()
+
+    def remove(db):
+        AuthService(db).remove_member(org_id, member_id, actor_id=str(centre.owner.id))
+
+    outcome = _parallel(maker, {"sign_in": sign_in, "consume": consume, "issue": issue, "change": change, "change_again": change_again, "block": console_block, "remove": remove})
+    assert outcome["issue"] == "ok" and outcome["block"] == "ok", outcome
+    assert not [name for name, result in outcome.items() if result in ("OperationalError", "DBAPIError", "InternalError")], outcome   # nobody was aborted by a deadlock
+
+
+@needs_pg
+def test_lock_order_a_returning_employee_who_accepts_an_invitation_while_links_are_issued_and_the_console_looks(cw, centre):
+    from src.auth import platform_users_router as console_users
+
+    owner = signed_in(cw, centre.owner)
+    returning = add_member(cw, centre, "teacher", first="Возврат")
+    owner.delete(f"{AUTH}/org/members/{member_of(cw, returning).id}")
+    invite(owner, returning.email)
+    from tests.test_k2_1_pg import invitation_code
+
+    code = invitation_code(cw, returning.email)
+    maker = sessionmaker(cw.db.get_bind(), autoflush=False)
+
+    def accept_it(db):
+        from src.auth.schemas import AcceptInviteRequest
+
+        AuthService(db).accept_invitation(AcceptInviteRequest(code=code, email=returning.email, password="returning-pa55", first_name="Т", last_name="Т"))
+
+    def issue(db):
+        links.issue(db, returning.id, "reset")
+        db.commit()
+
+    def console_look(db):
+        console_users._get(db, str(returning.id), lock=True)
+        user_sessions.revoke_all(db, returning.id, user_sessions.REVOKE_USER_BLOCKED)
+        db.commit()
+
+    outcome = _parallel(maker, {"accept": accept_it, "issue": issue, "console": console_look})
+    assert outcome["issue"] == "ok" and outcome["console"] == "ok", outcome
+    assert outcome["accept"] in ("ok", "ValueError") and not [r for r in outcome.values() if r in ("OperationalError", "DBAPIError", "InternalError")], outcome
+
+
+def _against_a_holder_of_the_user_lock(cw, user_id, job, *, pause=0.8, autoflush=True):
+    """The deterministic form of the deadlock: A (a sign-in: the per-user lock, then an UPDATE of the user row) holds the lock; B runs *job* meanwhile. With the
+    order «user row first, lock second» B has updated the row and waits for the lock, A then waits for the row: the database aborts one of them."""
+    import time
+
+    from sqlalchemy import text
+
+    maker = sessionmaker(cw.db.get_bind(), autoflush=autoflush)       # (autoflush on: the pending UPDATE of the user row goes out at the first query - the strictest case)
+    holding, result = threading.Event(), {}
+
+    def holder():
+        db = maker()
+        try:
+            user_sessions.lock_user(db, user_id)
+            holding.set()
+            time.sleep(pause)                                                # B starts and reaches its own UPDATE / lock meanwhile
+            db.execute(text("UPDATE users SET login_count = coalesce(login_count, 0) + 1 WHERE id = :u"), {"u": user_id})
+            db.commit()
+            result["holder"] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            result["holder"] = type(exc).__name__
+            db.rollback()
+        finally:
+            db.close()
+
+    def other():
+        db = maker()
+        try:
+            holding.wait(10)
+            job(db)
+            result["job"] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            result["job"] = type(exc).__name__ if not hasattr(exc, "status_code") else f"http {exc.status_code}"
+            db.rollback()
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=holder), threading.Thread(target=other)]
+    [t.start() for t in threads]
+    [t.join(60) for t in threads]
+    return result
+
+
+DEADLOCK_CLASSES = ("OperationalError", "DBAPIError", "InternalError", "DeadlockDetected")
+
+
+@needs_pg
+def test_lock_order_change_password_waits_for_the_lock_before_it_touches_the_row(cw, centre):
+    r = _against_a_holder_of_the_user_lock(cw, centre.teacher.id, lambda db: AuthService(db).change_password(str(centre.teacher.id), PASSWORD, "changed-in-settings-1"))
+    assert r == {"holder": "ok", "job": "ok"}, r
+
+
+@needs_pg
+def test_lock_order_a_returning_employee_accepting_waits_for_the_lock_before_it_touches_the_row(cw, centre):
+    from tests.test_k2_1_pg import invitation_code
+
+    owner = signed_in(cw, centre.owner)
+    returning = add_member(cw, centre, "teacher", first="Возврат2")
+    owner.delete(f"{AUTH}/org/members/{member_of(cw, returning).id}")
+    invite(owner, returning.email)
+    code = invitation_code(cw, returning.email)
+
+    def accept_it(db):
+        from src.auth.schemas import AcceptInviteRequest
+
+        AuthService(db).accept_invitation(AcceptInviteRequest(code=code, email=returning.email, password="returning-pa55", first_name="Т", last_name="Т"))
+
+    r = _against_a_holder_of_the_user_lock(cw, returning.id, accept_it)
+    assert r == {"holder": "ok", "job": "ok"}, r
+
+
+@needs_pg
+def test_lock_order_the_console_block_and_the_removal_of_an_employee_wait_for_the_lock_first(cw, centre):
+    from src.auth import platform_users_router as console_users
+
+    def block(db):
+        user = console_users._get(db, str(centre.teacher.id), lock=True)
+        user_sessions.revoke_all(db, user.id, user_sessions.REVOKE_USER_BLOCKED)
+        db.commit()
+
+    r = _against_a_holder_of_the_user_lock(cw, centre.teacher.id, block)
+    assert r == {"holder": "ok", "job": "ok"}, r
+    other = add_member(cw, centre, "teacher", first="Удаляемый")
+    mid = member_of(cw, other).id
+    r = _against_a_holder_of_the_user_lock(cw, other.id, lambda db: AuthService(db).remove_member(centre.org.id, mid, actor_id=str(centre.owner.id)))
+    assert r == {"holder": "ok", "job": "ok"}, r
