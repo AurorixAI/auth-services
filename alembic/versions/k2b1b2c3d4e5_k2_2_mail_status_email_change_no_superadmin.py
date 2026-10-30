@@ -35,6 +35,15 @@ def _drop_checks_like(table: str, *needles: str) -> str:
     """
 
 
+def _add_check(table: str, name: str, expression: str) -> str:
+    """LESSONS 26: a new CHECK is added ``NOT VALID`` (no scan of the table under the strong lock) and then validated (a weaker lock)."""
+    return f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK ({expression}) NOT VALID"
+
+
+def _validate(table: str, name: str) -> str:
+    return f"ALTER TABLE {table} VALIDATE CONSTRAINT {name}"
+
+
 def upgrade() -> None:
     op.execute("SET LOCAL lock_timeout = '5s'")
 
@@ -50,28 +59,32 @@ def upgrade() -> None:
         """
     )
     op.execute(_drop_checks_like("users", "role", "owner", "teacher"))
-    op.execute("ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('owner', 'admin', 'teacher'))")
+    op.execute(_add_check("users", "users_role_check", "role IN ('owner', 'admin', 'teacher')"))
+    op.execute(_validate("users", "users_role_check"))
     for table, name in (("student_audit", "ck_student_audit_actor_role"), ("group_audit", "ck_group_audit_actor_role")):
         op.execute(_drop_checks_like(table, "actor_role"))
-        op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK (actor_role IN ('owner', 'admin', 'teacher'))")
+        op.execute(_add_check(table, name, "actor_role IN ('owner', 'admin', 'teacher')"))
+        op.execute(_validate(table, name))
 
     # ---- G2: the status of the letter of an invitation
     op.execute("ALTER TABLE invitations ADD COLUMN IF NOT EXISTS mail_status VARCHAR(10) NOT NULL DEFAULT 'sent'")
     op.execute("ALTER TABLE invitations ADD COLUMN IF NOT EXISTS mail_status_at TIMESTAMP")
     op.execute(_drop_checks_like("invitations", "mail_status"))
-    op.execute("ALTER TABLE invitations ADD CONSTRAINT ck_invitations_mail_status CHECK (mail_status IN ('pending', 'sent', 'failed'))")
+    op.execute(_add_check("invitations", "ck_invitations_mail_status", "mail_status IN ('pending', 'sent', 'failed')"))
+    op.execute(_validate("invitations", "ck_invitations_mail_status"))
     op.execute(_drop_checks_like("invitations", "status", "cancelled", "pending", "accepted"))
-    op.execute(
-        "ALTER TABLE invitations ADD CONSTRAINT invitations_status_check "
-        "CHECK (status IN ('pending', 'queued', 'accepted', 'expired', 'cancelled'))"
-    )
+    op.execute(_add_check("invitations", "invitations_status_check", "status IN ('pending', 'queued', 'accepted', 'expired', 'cancelled')"))
+    op.execute(_validate("invitations", "invitations_status_check"))
 
     # ---- journal actions
     op.execute("ALTER TABLE member_audit DROP CONSTRAINT IF EXISTS ck_member_audit_action")
     op.execute(
-        "ALTER TABLE member_audit ADD CONSTRAINT ck_member_audit_action CHECK (action IN ('removed', 'restored', 'reactivated_by_invite', "
-        "'role_changed', 'password_link_sent', 'email_change_started', 'email_changed'))"
+        _add_check(
+            "member_audit", "ck_member_audit_action",
+            "action IN ('removed', 'restored', 'reactivated_by_invite', 'role_changed', 'password_link_sent', 'email_change_started', 'email_changed')",
+        )
     )
+    op.execute(_validate("member_audit", "ck_member_audit_action"))
 
     # ---- E: the pending change of an e-mail
     op.execute(
@@ -101,17 +114,19 @@ def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS email_changes")
     op.execute("ALTER TABLE member_audit DROP CONSTRAINT IF EXISTS ck_member_audit_action")
     op.execute("DELETE FROM member_audit WHERE action IN ('password_link_sent', 'email_change_started', 'email_changed')")
-    op.execute(
-        "ALTER TABLE member_audit ADD CONSTRAINT ck_member_audit_action CHECK (action IN ('removed', 'restored', 'reactivated_by_invite', 'role_changed'))"
-    )
+    op.execute(_add_check("member_audit", "ck_member_audit_action", "action IN ('removed', 'restored', 'reactivated_by_invite', 'role_changed')"))
+    op.execute(_validate("member_audit", "ck_member_audit_action"))
     op.execute("UPDATE invitations SET status = 'cancelled' WHERE status = 'queued'")
     op.execute("ALTER TABLE invitations DROP CONSTRAINT IF EXISTS invitations_status_check")
-    op.execute("ALTER TABLE invitations ADD CONSTRAINT invitations_status_check CHECK (status IN ('pending', 'accepted', 'expired', 'cancelled'))")
+    op.execute(_add_check("invitations", "invitations_status_check", "status IN ('pending', 'accepted', 'expired', 'cancelled')"))
+    op.execute(_validate("invitations", "invitations_status_check"))
     op.execute("ALTER TABLE invitations DROP CONSTRAINT IF EXISTS ck_invitations_mail_status")
     op.execute("ALTER TABLE invitations DROP COLUMN IF EXISTS mail_status_at")
     op.execute("ALTER TABLE invitations DROP COLUMN IF EXISTS mail_status")
     op.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check")
-    op.execute("ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('owner', 'admin', 'teacher', 'superadmin'))")
+    op.execute(_add_check("users", "users_role_check", "role IN ('owner', 'admin', 'teacher', 'superadmin')"))
+    op.execute(_validate("users", "users_role_check"))
     for table, name in (("student_audit", "ck_student_audit_actor_role"), ("group_audit", "ck_group_audit_actor_role")):
         op.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {name}")
-        op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK (actor_role IN ('owner', 'admin', 'teacher', 'superadmin'))")
+        op.execute(_add_check(table, name, "actor_role IN ('owner', 'admin', 'teacher', 'superadmin')"))
+        op.execute(_validate(table, name))
