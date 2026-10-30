@@ -6,6 +6,8 @@ response (a preflight included), and nothing the console says may be cached by a
 """
 from __future__ import annotations
 
+from fastapi import Response
+
 PREFIX = "/api/v1/platform"
 
 
@@ -30,3 +32,10 @@ class PlatformResponseHeaders:
             await send(message)
 
         await self.app(scope, receive, wrapped)
+
+
+def no_store(response: "Response") -> None:
+    """A dependency of the GET of a page of a one-time token (a reset link, a new address, an invitation): the answer names the person / the address and must not be
+    kept by a browser or a proxy (K2-2 R3, 9)."""
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"

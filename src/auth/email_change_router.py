@@ -10,6 +10,7 @@ from src.core.database import get_db
 from . import email_change as change
 from .dependencies import require_org_owner
 from .platform_errors import PlatformError
+from .platform_http import no_store
 from .router import refuse_cross_site
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -34,7 +35,7 @@ def start_email_change(
     return change.start(db, org_id=user["org_id"], actor=user, member_id=member_id, new_email_raw=body.get("email"), background=background)
 
 
-@router.get("/email-change/{token}", dependencies=[Depends(rate_limit(LINK_LIMIT, endpoint=RATE_ENDPOINT))])
+@router.get("/email-change/{token}", dependencies=[Depends(rate_limit(LINK_LIMIT, endpoint=RATE_ENDPOINT)), Depends(no_store)])
 def email_change_info(token: str, db: Session = Depends(get_db)):
     """Страница «Подтвердить новый адрес»: GET ничего не расходует (почтовые сканеры открывают ссылки)."""
     return change.info(db, token)

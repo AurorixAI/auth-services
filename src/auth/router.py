@@ -73,6 +73,7 @@ from src.core.config import get_settings
 from src.core.exceptions import InvalidCredentialsError
 from . import login_throttle
 from .user_sessions import SessionClient
+from .platform_http import no_store
 from .cookies import (
     AUTH_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
@@ -318,7 +319,7 @@ def refresh_tokens(
 @router.get(
     "/invite/{code}",
     response_model=InviteInfoOut,
-    dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint=INVITE_INFO_RATE_ENDPOINT))],
+    dependencies=[Depends(rate_limit(SECRET_LOOKUP_IP_LIMIT, endpoint=INVITE_INFO_RATE_ENDPOINT)), Depends(no_store)],
 )
 def get_invite_info(code: str, db: Session = Depends(get_db)):
     """Публичная информация о приглашении (центр + роль + МАСКА почты ``a***@x.uz``) — для экрана принятия. Заменённое/отозванное — 410 ``link_revoked``."""

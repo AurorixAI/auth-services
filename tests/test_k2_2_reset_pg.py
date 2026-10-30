@@ -1236,3 +1236,22 @@ def test_m1_r3_no_transaction_and_no_connection_is_held_while_the_mail_server_wo
     assert invite(owner, address).status_code == 200
     assert seen["in_transaction"] is False, seen                                       # no open transaction while the letter is handed to SMTP
     assert seen["connections_out"] <= 1, seen                                           # (the pool of the test engine: only the test's own session may hold one)
+
+
+@needs_pg
+def test_the_pages_of_a_token_are_not_cached_by_a_browser_or_a_proxy(cw, centre):
+    owner = signed_in(cw, centre.owner)
+    forgot(anonymous(cw), centre.teacher.email)
+    reset_token = link_token(cw, centre.teacher.email)
+    address = f"nocache-{uuid4().hex[:6]}@staff.test"
+    invite(owner, address)
+    from tests.test_k2_1_pg import invitation_code
+
+    code = invitation_code(cw, address)
+    new = f"nocache-new-{uuid4().hex[:6]}@staff.test"
+    owner.post(f"{AUTH}/org/members/{member_of(cw, centre.admin).id}/email-change", json={"email": new})
+    change_token = re.findall(r"/confirm-email/([A-Za-z0-9_%-]+)", body_of(letters_to(cw.outbox, new)[-1]))[0]
+    c = anonymous(cw)
+    for url in (f"{LINKS}/{reset_token}", f"{AUTH}/invite/{code}", f"{AUTH}/email-change/{change_token}"):
+        r = c.get(url)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-store", (url, dict(r.headers))

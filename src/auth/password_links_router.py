@@ -20,6 +20,7 @@ from .cookies import set_auth_cookies
 from .platform_audit import record as audit_record
 from .platform_blocks import ORG_BLOCKED_TEXT, ensure_centre_usable, ensure_login_allowed
 from .platform_common import iso, utcnow
+from .platform_http import no_store
 from .platform_errors import PlatformError, validation_error
 from .platform_validation import Form
 from .router import _auth_response_with_cookies, _svc
@@ -60,7 +61,7 @@ def _first_name_greeting(user: User) -> str:
     return " ".join(p for p in parts if p) or user.first_name
 
 
-@router.get("/{token}", dependencies=[Depends(rate_limit(LINK_LIMIT, endpoint=LINK_RATE_ENDPOINT))])
+@router.get("/{token}", dependencies=[Depends(rate_limit(LINK_LIMIT, endpoint=LINK_RATE_ENDPOINT)), Depends(no_store)])
 def link_info(token: str, db: Session = Depends(get_db)):
     status, link = links.lookup(db, token)
     if status != links.OK:
