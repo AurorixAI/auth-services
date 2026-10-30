@@ -246,23 +246,6 @@ class TestAuthDependencies:
             get_current_user_payload(request, creds)
         assert exc.value.status_code == 401
 
-    def test_optional_user_no_token_returns_none(self):
-        from src.auth.dependencies import get_optional_user
-        request = self._make_request()
-        result = get_optional_user(request, None)
-        assert result is None
-
-    def test_optional_user_valid_token_returns_payload(self):
-        from src.auth.service import create_access_token
-        from src.auth.dependencies import get_optional_user
-        token = create_access_token("user-3", "admin")
-
-        request = self._make_request()
-        creds = self._make_credentials(token)
-        result = get_optional_user(request, creds)
-        assert result is not None
-        assert result["sub"] == "user-3"
-
     def test_cookie_takes_priority_over_header(self):
         """Cookie token should be used if both cookie and header are present"""
         from src.auth.service import create_access_token
@@ -631,7 +614,7 @@ class TestAuthServiceExtended:
             result = service.change_password("uid", "old_pass", "new_pass_valid")
         assert result is True
         assert verify_password("new_pass_valid", user.password_hash)
-        revoke_all.assert_called_once_with(db, user.id, "password_changed")  # every device signs in again
+        revoke_all.assert_called_once_with(db, user.id, "password_changed", except_id=None)  # every OTHER device signs in again (K2-1 M1)
         db.commit.assert_called()
 
     # ─── update_profile ─────────────────────────────────────────────────
@@ -742,7 +725,7 @@ class TestAuthServiceExtended:
         token = create_refresh_token("user-1")
         user = self._mock_user(is_active=True)
         db.query.return_value.filter.return_value.first.return_value = user
-        with patch("src.auth.service.user_sessions.claim", return_value=None) as claim:
+        with patch("src.auth.platform_blocks.ensure_login_allowed"), patch("src.auth.service.user_sessions.claim", return_value=None) as claim:
             with pytest.raises(ValueError, match="[Оо]тозван"):
                 service.refresh_tokens(token)
         assert claim.call_args.args[1:] == (user.id, hash_token(token))  # looked up by the hash of the token
@@ -914,7 +897,7 @@ class TestAuthServiceExtended:
         user = self._mock_user(is_active=True, role="teacher", default_org_id=None)
         db.query.return_value.filter.return_value.first.return_value = user
         claimed = MagicMock(graced=False)
-        with patch("src.auth.service.user_sessions.claim", return_value=claimed):
+        with patch("src.auth.platform_blocks.ensure_login_allowed"), patch("src.auth.service.user_sessions.claim", return_value=claimed):
             with patch("src.auth.service.user_sessions.rotate") as rotate:
                 result = service.refresh_tokens(token)
         assert isinstance(result, TokenPair)

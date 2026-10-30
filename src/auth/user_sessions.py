@@ -419,12 +419,16 @@ def is_alive(db: Session, user_id, session_id) -> bool:
     return row is not None
 
 
-def revoke_all(db: Session, user_id, reason: str) -> int:
-    """Revoke every live session of the user (password changed, account blocked). Not committed. Returns how many."""
+def revoke_all(db: Session, user_id, reason: str, except_id=None) -> int:
+    """Revoke every live session of the user (password changed, account blocked); *except_id* keeps ONE session alive - the one the person is using
+    when he changes his own password in the settings (K2-1 M1). Not committed. Returns how many."""
     _lock_user_sessions(db, user_id)
+    where = [UserSession.user_id == user_id, UserSession.revoked_at.is_(None)]
+    if except_id is not None:
+        where.append(UserSession.id != except_id)
     result = db.execute(
         update(UserSession)
-        .where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
+        .where(*where)
         .values(revoked_at=_now(), revoke_reason=reason)
         .execution_options(synchronize_session="fetch")
     )

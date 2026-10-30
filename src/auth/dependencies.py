@@ -177,18 +177,6 @@ def get_current_active_user_payload(
     return resolved
 
 
-def get_optional_user(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-) -> Optional[dict]:
-    """Опциональная аутентификация — не падает если токена нет или он просрочен"""
-    for token in _credential_tokens(request, credentials):
-        payload = verify_access_token(token)
-        if payload:
-            return payload
-    return None
-
-
 # ============================================================================
 # RBAC — Role-Based Access Control
 # ============================================================================

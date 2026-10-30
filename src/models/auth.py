@@ -61,8 +61,6 @@ class Organization(Base):
     approved_at = Column(DateTime)
     rejection_reason = Column(Text)
 
-    activation_token = Column(String(500), nullable=True)
-    activation_token_expires_at = Column(DateTime, nullable=True)
 
     settings = Column(JSONB, default={})
     max_students = Column(Integer, default=500)
@@ -327,7 +325,8 @@ class Invitation(Base):
     invited_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     email = Column(String(255))
     org_role = Column(String(20), nullable=False, default="teacher")
-    code = Column(String(20), nullable=False, unique=True)
+    # K2-1: SHA-256 (hex) of the code in the letter's link; the code itself is never stored (a dump of the database holds no live link)
+    code_hash = Column(String(64), nullable=False, unique=True)
     status = Column(String(20), nullable=False, default="pending")
     expires_at = Column(DateTime, nullable=False)
     accepted_at = Column(DateTime)
@@ -352,7 +351,6 @@ class Invitation(Base):
     def to_dict(self) -> dict:
         return {
             "id": str(self.id),
-            "code": self.code,
             "email": self.email,
             "org_role": self.org_role,
             "status": self.status,

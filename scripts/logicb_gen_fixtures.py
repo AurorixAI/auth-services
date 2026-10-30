@@ -349,9 +349,9 @@ put("c5_group_archive_release.json", "GroupArchiveReleaseOut", {"ok": True, "rel
 INV_CREATED_UTC = utc(datetime(2026, 11, 10, 14, 0))
 INV_EXPIRES = INV_CREATED_UTC + timedelta(days=7)
 assert INV_EXPIRES.isoformat() == "2026-11-17T09:00:00"
-# K2-1 (A1): the answer of «Пригласить» has no code and no link; the page of the link shows a MASKED address
+# K2-1 (A1): the answer of «Пригласить» has no code and no link, and the whole address (the centre typed it); the PUBLIC page of the link shows a MASKED one
 put("c6_invitation_create.json", "InvitationSentOut", {
-    "id": uid("invitation-A"), "email_masked": "a***@algo.test", "expires_at": INV_EXPIRES.isoformat() + "+00:00", "email_sent": True,
+    "id": uid("invitation-A"), "email": "a.ivanov@algo.test", "expires_at": INV_EXPIRES.isoformat() + "+00:00", "email_sent": True,
 })
 put("c6_invite_info_returning.json", "InviteInfoOut", {"org_name": "Алго Тест", "org_role": "teacher", "email_masked": "a***@algo.test", "is_returning": True})
 put("c6_invite_mismatch.json", "-", error(400, "INVITE_EMAIL_MISMATCH", "Это приглашение выдано для другого email"))

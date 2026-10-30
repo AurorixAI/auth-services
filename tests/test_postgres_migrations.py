@@ -835,7 +835,8 @@ def _check_n13_sessions_objects(engine,config,ids):
     # --- the backfill: ONE session with ONE live token per user that had a token, nothing for the others
     for uid,token in ((u_legacy,real_token),(u_other,other_token)):
         (row,)=sessions_of(uid)
-        assert row.revoked_at is None and row.revoke_reason is None and row.user_agent is None and row.ip is None
+        # K2-1 (m2): the cut-over of the cookies revokes every session that is live when ``upgrade head`` runs (the backfilled ones included)
+        assert row.revoked_at is not None and row.revoke_reason=='k2_cookie_switch' and row.user_agent is None and row.ip is None
         assert row.created_at==row.last_used_at and row.expires_at-row.created_at==timedelta(days=30)
         assert abs((row.created_at-datetime.utcnow()).total_seconds())<600   # naive UTC "now"
         (tok,)=tokens_of(uid)
@@ -843,21 +844,18 @@ def _check_n13_sessions_objects(engine,config,ids):
     assert sessions_of(u_none)==[] and sessions_of(u_empty)==[] and tokens_of(u_none)==[]
     with engine.connect() as conn:   # the legacy column is kept as it was
         assert conn.execute(text('SELECT refresh_token_hash FROM users WHERE id=:u'),{'u':u_legacy}).scalar_one()==hash_token(real_token)
-    # --- a token issued BEFORE the migration works after it, and rotates only its own session
+    # --- a token issued BEFORE the migration is refused after it: the revoked session cannot be refreshed under the new cookie name either
     with Session(engine) as db:
-        pair=AuthService(db).refresh_tokens(real_token)
-    assert pair.refresh_token!=real_token
-    assert live_of(u_legacy)=={hash_token(pair.refresh_token)} and len(tokens_of(u_legacy))==2   # the old one is superseded, kept for the replay check
-    assert live_of(u_other)=={hash_token(other_token)} and len(tokens_of(u_other))==1               # the other user's session did not move
-    with Session(engine) as db:
-        pair=AuthService(db).refresh_tokens(pair.refresh_token)    # and the new token keeps rotating
+        with pytest.raises(ValueError):
+            AuthService(db).refresh_tokens(real_token)
+    assert live_of(u_legacy)=={hash_token(real_token)} and live_of(u_other)=={hash_token(other_token)}   # the tokens are untouched, their sessions are revoked
     # --- idempotent: the same revision again (stamped back) adds nothing - the legacy column still holds the hash of the
     #     FIRST token, which has been superseded since, and it must not come back to life as a session of its own
     before=(count('user_sessions'),count('user_session_tokens'))
     command.stamp(config,PERIODS)
     command.upgrade(config,'head')
     assert (count('user_sessions'),count('user_session_tokens'))==before
-    assert live_of(u_legacy)=={hash_token(pair.refresh_token)}
+    assert live_of(u_legacy)=={hash_token(real_token)}
     # --- the downgrade makes the legacy column true again: per user the newest LIVE token of the live session used last;
     #     a stale hash never revives a signed-out or superseded token; users without a live session get NULL
     u_multi,u_dead=user('multi'),user('dead',hash_token('stale-legacy-hash'))
@@ -868,6 +866,8 @@ def _check_n13_sessions_objects(engine,config,ids):
     s_dead=insert_session(u_dead,'2026-10-01 10:00:00',revoked=True); insert_token(s_dead,'dead-revoked')
     with engine.begin() as conn:
         conn.execute(text("UPDATE users SET refresh_token_hash='stale-legacy-hash' WHERE id=:u"),{'u':u_multi})
+    with engine.begin() as conn:   # (K2-1 revoked them at the upgrade above: revive these two so that the downgrade has live sessions to write back)
+        conn.execute(text("UPDATE user_sessions SET revoked_at=NULL, revoke_reason=NULL WHERE user_id IN (:a,:b)"),{'a':u_legacy,'b':u_other})
     live_other=next(iter(live_of(u_other))); live_legacy=next(iter(live_of(u_legacy)))
     command.downgrade(config,PERIODS)
     assert not {'user_sessions','user_session_tokens'} & set(inspect(engine).get_table_names())

@@ -39,7 +39,7 @@ from src.auth.cookies import (  # noqa: E402
     access_cookie_max_age,
     refresh_cookie_max_age,
 )
-from src.auth.dependencies import get_current_user_payload, get_optional_user  # noqa: E402
+from src.auth.dependencies import get_current_user_payload  # noqa: E402
 from src.auth.payments_router import router as payments_router  # noqa: E402
 from src.auth.service import (  # noqa: E402
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -210,12 +210,13 @@ def test_the_module_reads_the_environment_the_deploy_really_sets():
 def test_set_and_delete_cookies_carry_the_same_secure_flag(monkeypatch, secure):
     monkeypatch.setattr(cookies_module, "_IS_PROD", secure)
     names = cookies_module.cookie_names(secure)
-    for response in (
-        cookies_module.set_auth_cookies(JSONResponse({}), "a", "r"),
-        cookies_module.clear_auth_cookies(JSONResponse({})),
+    legacy = {"algo_auth_token", "algo_refresh_token"} if secure else set()      # a secure sign-out also deletes the cookies of before K2-1
+    for response, expected in (
+        (cookies_module.set_auth_cookies(JSONResponse({}), "a", "r"), set(names)),
+        (cookies_module.clear_auth_cookies(JSONResponse({})), set(names) | legacy),
     ):
         jar = set_cookies(response)
-        assert set(jar) == set(names)
+        assert set(jar) == expected
         for morsel in jar.values():
             assert bool(morsel["secure"]) is secure and morsel["httponly"] is True
             assert morsel["samesite"].lower() == "lax"
@@ -332,8 +333,6 @@ def test_valid_bearer_wins_over_a_stale_cookie_but_no_header_stays_401():
     creds.credentials = fresh
 
     assert get_current_user_payload(request, creds)["sub"] == "fresh-user"
-    assert get_optional_user(request, creds)["sub"] == "fresh-user"
-    assert get_optional_user(request, None) is None
 
     from fastapi import HTTPException
 

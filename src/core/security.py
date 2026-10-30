@@ -2,7 +2,7 @@
 ALGO V1 — Security Utilities  (JWT + password hashing)
 
 Extracted from src/auth/service.py — pure functions, no DB dependency.
-auth_service.py calls these; core/dependencies.py uses decode_token() for middleware.
+auth_service.py calls these; (core/dependencies.py is gone, K2-1).
 
 Unit tests can import and call these without a running DB or FastAPI app.
 """

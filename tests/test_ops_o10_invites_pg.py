@@ -2,11 +2,13 @@
 Matrix rows [O10.R1] ... [O10.R9]; chain 6."""
 from datetime import datetime, timedelta
 
+import re
+
 import pytest
 from sqlalchemy import text
 
 from src.auth.schemas import LoginRequest
-from src.auth.service import hash_password
+from src.auth.service import hash_password, hash_token
 from src.models.auth import Invitation, MemberAudit, OrganizationMember, User
 
 from tests.ops_helpers import (  # noqa: F401  (fixtures)
@@ -18,9 +20,14 @@ API = "/api/v1/auth"
 
 
 @pytest.fixture
-def w(pg_session, clock):
+def w(pg_session, clock, monkeypatch):
+    from src.mail import sender
+
     clock.set("2026-10-21 14:00")
-    return build_d0(pg_session)
+    world = build_d0(pg_session)
+    world.outbox = []
+    monkeypatch.setattr(sender, "deliver", lambda msg, cfg=None: world.outbox.append(msg) or True)   # the letters of the invitations (no SMTP)
+    return world
 
 
 def em(w, name):
@@ -33,10 +40,18 @@ def invite(w, who, email, role="teacher"):
 
 
 def code_of_invitation(w, response):
-    """K2-1 (A1): no answer carries the code (it travels in the letter); the test reads it from the row the answer names."""
+    """K2-1 (A1): no answer carries the code and the database keeps only its hash (it travels in the letter); the test reads it from the letter that went."""
     assert response.status_code == 200, response.text
     w.db.expire_all()
-    return w.db.get(Invitation, response.json()["id"]).code
+    address = w.db.get(Invitation, response.json()["id"]).email
+    mails = [m for m in w.outbox if address in str(m["To"])]
+    assert mails, f"no letter to {address}"
+    return re.search(r"/invite/([A-Za-z0-9_%-]+)", mails[-1].get_body(preferencelist=("plain",)).get_content()).group(1)
+
+
+def row_of(w, code):
+    w.db.expire_all()
+    return w.db.query(Invitation).filter_by(code_hash=hash_token(code)).one()
 
 
 def invite_code(w, who, email, role="teacher"):
@@ -55,7 +70,7 @@ def pending(w):
 def test_r1_the_invitation_carries_the_email_and_the_account_gets_it(w):
     """[O10.R1]"""
     r = invite(w, "owner", f"  {em(w, 't').upper()} ")
-    assert r.status_code == 200 and set(r.json()) == {"id", "email_masked", "expires_at", "email_sent"}
+    assert r.status_code == 200 and set(r.json()) == {"id", "email", "expires_at", "email_sent"}
     code = code_of_invitation(w, r)
     row = w.db.get(Invitation, r.json()["id"])
     assert row.email == em(w, "t") and row.status == "pending" and row.org_role == "teacher"
@@ -84,7 +99,7 @@ def test_r2_two_accepts_one_account_and_a_new_invitation_cancels_the_old(w):
     first = invite_code(w, "owner", em(w, "q"))
     second = invite_code(w, "owner", em(w, "q"))
     w.db.expire_all()
-    assert w.db.query(Invitation).filter_by(code=first).one().status == "cancelled" and w.db.query(Invitation).filter_by(code=second).one().status == "pending"
+    assert row_of(w, first).status == "cancelled" and row_of(w, second).status == "pending"
 
 
 def test_r3_revoke(w):
@@ -119,7 +134,7 @@ def test_r5_expired_at_the_first_read_and_the_boundary(w, clock):
     assert gone.status_code == 404 and "истекло" in gone.json()["detail"]
     listing = client(w, "owner").get(f"{API}/org/invitations").json()
     assert all("code" not in i for i in listing)
-    expired_row = w.db.query(Invitation).filter_by(code=code).one()
+    expired_row = row_of(w, code)
     assert [i["status"] for i in listing if i["id"] == str(expired_row.id)] == ["expired"]
     w.db.expire_all()
     assert not [i for i in w.db.query(Invitation).filter_by(org_id=w.org.id) if i.status == "pending" and i.expires_at <= datetime(2026, 10, 28, 9, 0)]
@@ -140,10 +155,10 @@ def test_r6_seven_days_from_the_creation_in_utc_chain6(w, clock):
     assert r.status_code == 200
     expected = w.ids.remap(fixture("c6_invitation_create.json"))
     out = r.json()
-    assert out["expires_at"] == expected["expires_at"] and set(out) == {"id", "email_masked", "expires_at", "email_sent"}
+    assert out["expires_at"] == expected["expires_at"] and set(out) == {"id", "email", "expires_at", "email_sent"} and out["email"] == w.D.email
     row = w.db.get(Invitation, out["id"])
     assert row.status == "pending" and row.org_role == "teacher"
-    info = client(w, "owner").get(f"{API}/invite/{row.code}").json()
+    info = client(w, "owner").get(f"{API}/invite/{code_of_invitation(w, r)}").json()
     assert info == {"org_name": "Алго Тест", "org_role": "teacher", "email_masked": f"{w.D.email[0]}***@{w.D.email.split('@')[1]}", "is_returning": True}
 
 

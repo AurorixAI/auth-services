@@ -115,9 +115,9 @@ def test_r10_the_invitation_goes_by_letter_and_the_answer_has_neither_a_code_nor
     r = invite(owner, address)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert set(body) == {"id", "email_masked", "expires_at", "email_sent"}
-    assert body["email_sent"] is True and body["email_masked"] == f"{address[0]}***@staff.test"
-    assert address not in r.text and "invite" not in r.text.lower()
+    assert set(body) == {"id", "email", "expires_at", "email_sent"}
+    assert body["email_sent"] is True and body["email"] == address        # the centre typed it: it sees the WHOLE address (a typo must be visible)
+    assert "invite" not in r.text.lower()
     code = invitation_code(cw, address)                       # ... the letter has it
     assert len(code) == 20 and code not in r.text
     msg = letters_to(cw.outbox, address)[-1]
@@ -176,7 +176,9 @@ def test_s4_no_list_of_invitations_shows_a_code_to_the_owner_or_the_admin(cw, ce
     # the other ways to see an invitation hand out no code either
     assert not any(code in owner.get(f"{AUTH}/org/members").text for code in codes)
     rows = cw.db.query(Invitation).filter(Invitation.org_id == centre.org.id).all()
-    assert {row.code for row in rows} >= codes                 # (the database has them: the letter's link needs them)
+    stored = {row.code_hash for row in rows}
+    assert {hash_token(code) for code in codes} <= stored      # the database keeps the HASH of the code ...
+    assert not (codes & stored) and not hasattr(Invitation, "code")     # ... never the code itself (a dump holds no live link)
 
 
 @needs_pg
@@ -186,7 +188,7 @@ def test_s4_sending_again_issues_a_new_link_by_letter_and_the_old_one_answers_41
     first = invite(owner, address).json()
     old_code = invitation_code(cw, address)
     again = owner.post(f"{AUTH}/org/invitations/{first['id']}/resend")
-    assert again.status_code == 200 and set(again.json()) == {"id", "email_masked", "expires_at", "email_sent"} and again.json()["email_sent"] is True
+    assert again.status_code == 200 and set(again.json()) == {"id", "email", "expires_at", "email_sent"} and again.json()["email_sent"] is True
     assert again.json()["id"] != first["id"]
     new_code = invitation_code(cw, address)
     assert new_code != old_code and len(letters_to(cw.outbox, address)) == 2
@@ -216,7 +218,36 @@ def test_s4_resend_is_for_the_own_centre_only_and_by_the_right_roles(cw, centre)
 
 
 @needs_pg
-def test_r12_a_letter_that_did_not_go_is_said_so_and_resend_issues_a_new_link(cw, centre, monkeypatch):
+def test_r12_m4_a_letter_that_did_not_go_keeps_the_old_link_alive_and_makes_nothing_new(cw, centre, monkeypatch):
+    from src.mail import sender
+
+    owner = signed_in(cw, centre.owner)
+    address = f"new-{uuid4().hex[:8]}@staff.test"
+    first = invite(owner, address).json()
+    old_code = invitation_code(cw, address)
+    assert first["email_sent"] is True
+    # the second letter does not go: the first link must still work, and no new invitation may exist
+    monkeypatch.setattr(sender, "deliver", lambda msg, cfg=None: False)
+    again = owner.post(f"{AUTH}/org/invitations/{first['id']}/resend")
+    assert again.status_code == 200 and again.json()["email_sent"] is False and again.json()["id"] == first["id"] and again.json()["email"] == address
+    cw.db.expire_all()
+    rows = cw.db.query(Invitation).filter(Invitation.org_id == centre.org.id, Invitation.email == address).all()
+    assert [(r.status, str(r.id)) for r in rows] == [("pending", first["id"])]
+    stranger = cw.new_client(host=HOST)
+    assert stranger.get(f"{AUTH}/invite/{old_code}").status_code == 200                    # the first letter's link is alive
+    # the same through «Пригласить» again for the same address
+    assert invite(owner, address).json()["email_sent"] is False
+    assert stranger.get(f"{AUTH}/invite/{old_code}").status_code == 200
+    # when the mail works, the new letter replaces the old link
+    monkeypatch.setattr(sender, "deliver", lambda msg, cfg=None: cw.outbox.append(msg) or True)
+    ok = owner.post(f"{AUTH}/org/invitations/{first['id']}/resend")
+    assert ok.json()["email_sent"] is True and ok.json()["id"] != first["id"]
+    assert stranger.get(f"{AUTH}/invite/{old_code}").status_code == 410
+    assert stranger.get(f"{AUTH}/invite/{invitation_code(cw, address)}").status_code == 200
+
+
+@needs_pg
+def test_r12_a_first_invitation_whose_letter_did_not_go_is_kept_for_the_resend_from_the_list(cw, centre, monkeypatch):
     from src.mail import sender
 
     owner = signed_in(cw, centre.owner)
@@ -224,12 +255,11 @@ def test_r12_a_letter_that_did_not_go_is_said_so_and_resend_issues_a_new_link(cw
     address = f"new-{uuid4().hex[:8]}@staff.test"
     r = invite(owner, address)
     assert r.status_code == 200 and r.json()["email_sent"] is False and "code" not in r.text
-    first_id = r.json()["id"]
-    first_code = cw.db.query(Invitation).filter(Invitation.id == first_id).one().code
+    listed = owner.get(f"{AUTH}/org/invitations").json()
+    assert [row["id"] for row in listed if row["email"] == address] == [r.json()["id"]]
     monkeypatch.setattr(sender, "deliver", lambda msg, cfg=None: cw.outbox.append(msg) or True)
-    again = owner.post(f"{AUTH}/org/invitations/{first_id}/resend")
+    again = owner.post(f"{AUTH}/org/invitations/{r.json()['id']}/resend")
     assert again.json()["email_sent"] is True
-    assert cw.new_client(host=HOST).get(f"{AUTH}/invite/{first_code}").status_code == 410
     assert cw.new_client(host=HOST).get(f"{AUTH}/invite/{invitation_code(cw, address)}").status_code == 200
 
 
@@ -398,8 +428,16 @@ def test_a3_the_secure_cookies_are_host_prefixed_root_path_no_domain_lax(monkeyp
             assert morsel["samesite"].lower() == "lax"
             assert bool(morsel["max-age"]) is remember and not morsel["expires"]
     cleared = cookies_module.clear_auth_cookies(JSONResponse({}), secure=True)
-    names = {raw.split("=", 1)[0] for raw in cleared.headers.getlist("set-cookie")}
-    assert names == {"__Host-algo_auth_token", "__Host-algo_refresh_token"}
+    jar = {}
+    for raw in cleared.headers.getlist("set-cookie"):
+        parsed = SimpleCookie()
+        parsed.load(raw)
+        jar.update(parsed)
+    # a sign-out deletes the current cookies AND the old-named ones of before K2-1 (m1), each on the path it was set on
+    assert set(jar) == {"__Host-algo_auth_token", "__Host-algo_refresh_token", "algo_auth_token", "algo_refresh_token"}
+    assert all(m["max-age"] == "0" for m in jar.values())
+    assert jar["algo_auth_token"]["path"] == "/" and jar["algo_refresh_token"]["path"] == "/api/v1/auth"
+    assert jar["__Host-algo_refresh_token"]["path"] == "/"
 
 
 def test_a3_http_development_keeps_the_plain_names_without_secure():
@@ -580,12 +618,13 @@ def test_a5_a_revoked_session_is_refused_by_a_business_route_too_not_only_by_me(
     assert owner.get(f"{AUTH}/org/members").status_code == 401
 
 
-def test_a5_the_session_check_is_one_primary_key_read():
-    """Measured on the disposable database: the check costs one indexed read; no cache is needed (and no cache means a revocation is instant)."""
+def test_a5_the_session_check_has_no_cache():
+    """No cache of a verdict anywhere in the check: a revocation is seen by the very next request. (The count of statements per request is
+    ``test_live_access_revocation.py::test_pg_the_session_check_is_exactly_one_read_of_user_sessions_per_request``; the time, measured once on a local Postgres: 1.5 ms.)"""
     import inspect
 
-    source = inspect.getsource(user_sessions.is_alive)
-    assert source.count("db.execute") == 1 and "cache" not in source.lower().replace("no cache", "")
+    source = inspect.getsource(user_sessions.is_alive) + inspect.getsource(dependencies.get_current_active_user_payload)
+    assert not any(word in source.lower() for word in ("lru_cache", "ttl", "cache["))
 
 
 # ============================================================================================================ D: «Запомнить меня»
@@ -772,7 +811,7 @@ def test_f8_a_sign_in_that_lands_first_is_revoked_by_the_password_change_that_fo
 
 
 @needs_pg
-def test_the_dev_router_hands_the_invitation_code_to_the_e2e_harness_only(cw, centre):
+def test_the_dev_router_hands_the_invitation_code_to_the_e2e_harness_only(cw, centre, monkeypatch):
     """``/auth/dev-invite-code`` exists only in the router that is mounted when APP_ENV=development (the e2e stack has no mailbox)."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -782,7 +821,9 @@ def test_the_dev_router_hands_the_invitation_code_to_the_e2e_harness_only(cw, ce
 
     owner = signed_in(cw, centre.owner)
     address = f"dev-{uuid4().hex[:6]}@staff.test"
+    monkeypatch.setenv("APP_ENV", "development")             # only then does the service hand the plain code to the dev router (in this process)
     invite(owner, address)
+    monkeypatch.setenv("APP_ENV", "testing")
     app = FastAPI()
     app.include_router(dev_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = lambda: cw.db

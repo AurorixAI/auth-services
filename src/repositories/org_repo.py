@@ -48,8 +48,11 @@ class InvitationRepo(BaseRepository[Invitation]):
     model = Invitation
 
     def get_by_code(self, code: str) -> Optional[Invitation]:
+        """The pending invitation of the *plain* code of a letter's link: only its SHA-256 is stored (K2-1)."""
+        import hashlib
+
         stmt = select(Invitation).where(
-            Invitation.code == code, Invitation.status == "pending"
+            Invitation.code_hash == hashlib.sha256(code.encode()).hexdigest(), Invitation.status == "pending"
         )
         return self.session.scalar(stmt)
 

@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import timedelta, timezone
 from typing import Any, Dict, Optional
@@ -33,6 +34,18 @@ logger = logging.getLogger(__name__)
 
 INVITE_TTL_DAYS = 7
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+def _hash_code(code: str) -> str:
+    """SHA-256 of the code of the letter's link: the database keeps only this, so a dump or a backup holds no live link (K2-1, n3)."""
+    from .service import hash_token
+
+    return hash_token(code)
+
+
+INVITE_MAIL_PER_PAIR = 10          # letters per hour to one mailbox from ONE centre
+INVITE_MAIL_PER_EMAIL_DAY = 20     # ... and to one mailbox from ALL centres together, per day
+INVITE_MAIL_PER_ORG = 100          # ... and letters of one centre per hour
+TOO_MANY_TEXT = "Слишком много приглашений на этот адрес. Повторите попытку позже."
 
 NOT_FOUND = "Приглашение не найдено или уже использовано"
 EXPIRED = "Приглашение истекло"
@@ -59,7 +72,7 @@ class Invites:
         if org_id is not None:
             q = q.filter(Invitation.org_id == org_id)
         if code is not None:
-            q = q.filter(Invitation.code == code)
+            q = q.filter(Invitation.code_hash == _hash_code(code))
         count = q.update({Invitation.status: "expired"}, synchronize_session=False)
         return count
 
@@ -81,14 +94,35 @@ class Invites:
     @staticmethod
     def _out(invite: Invitation, *, returning: bool, aware: bool = False) -> Dict[str, Any]:
         d = invite.to_dict()
-        d.pop("code", None)  # K2-1 (A1): the code is the secret of the letter's link - no list and no answer carries it
         d["is_returning"] = returning
         if aware and invite.expires_at is not None:
             d["expires_at"] = invite.expires_at.replace(tzinfo=timezone.utc).isoformat()
         return d
 
     # ------------------------------------------------------------------------------------------- create
+    def _throttle(self, org_id: Any, email: str) -> None:
+        """429 once a mailbox or a centre has spent its budget of invitation letters. Counted AFTER the validation and the role check (a refused request
+        spends nothing). The pair (centre, mailbox) has its own hourly budget, so another centre cannot shut a mailbox out for this one; the mailbox has
+        a daily budget over all centres (a letter to a stranger is the abuse to stop)."""
+        import hashlib
+
+        from src.api.rate_limit import hit_window
+
+        digest = hashlib.sha256(email.encode("utf-8")).hexdigest()[:32]  # no address in a Redis key
+        for key, limit, window in (
+            (f"rl:invite_mail_pair:{org_id}:{digest}", INVITE_MAIL_PER_PAIR, 3600),
+            (f"rl:invite_mail_email_day:{digest}", INVITE_MAIL_PER_EMAIL_DAY, 86400),
+            (f"rl:invite_mail_org:{org_id}", INVITE_MAIL_PER_ORG, 3600),
+        ):
+            count, left = hit_window(key, window)
+            if count > limit:
+                raise PlatformError(429, TOO_MANY_TEXT, "rate_limited", retry_after=left)
+
     def create(self, org_id: Any, creator_id: Any, request, *, creator_role: Optional[str]) -> Dict[str, Any]:
+        """Create (or replace) the invitation and send the letter. The older pending invitation of the same e-mail is cancelled IN THE SAME TRANSACTION as the
+        new one is made, and the transaction is committed only when the letter went: if it did not, the old link stays alive and no new row exists
+        (the answer says ``email_sent: false`` and names the old invitation). A first invitation whose letter did not go is kept, so «Отправить ещё раз»
+        from the list can send it again."""
         email = normalize_email(request.email)
         if email is None:
             raise unprocessable("EMAIL_REQUIRED", ERROR_CATALOGUE["EMAIL_REQUIRED"][1])
@@ -99,43 +133,63 @@ class Invites:
         row = self._member_of_org(org_id, email)
         if row is not None and row[0].is_active:
             raise conflict("ALREADY_MEMBER", ERROR_CATALOGUE["ALREADY_MEMBER"][1])
+        self._throttle(org_id, email)
         from .service import INVITE_CODE_LENGTH, generate_code
 
         for attempt in (1, 2):
-            # the pending invitation of the same e-mail is cancelled (locked first: two creators in a row do not both see "none")
-            self.db.query(Invitation).filter(
-                Invitation.org_id == org_id, func.lower(Invitation.email) == email, Invitation.status == "pending"
-            ).with_for_update().all()
-            self.db.query(Invitation).filter(
-                Invitation.org_id == org_id, func.lower(Invitation.email) == email, Invitation.status == "pending"
-            ).update({Invitation.status: "cancelled"}, synchronize_session=False)
+            raw = generate_code(INVITE_CODE_LENGTH, digits_only=False)
+            # lock the pending invitations of this e-mail first (two creators in a row do not both see "none"; an accept in flight holds the row)
+            previous = (
+                self.db.query(Invitation)
+                .filter(Invitation.org_id == org_id, func.lower(Invitation.email) == email, Invitation.status == "pending")
+                .with_for_update()
+                .all()
+            )
+            row = self._member_of_org(org_id, email)             # read again UNDER the lock: an accept that won the race has made him a member
+            if row is not None and row[0].is_active:
+                self.db.rollback()
+                raise conflict("ALREADY_MEMBER", ERROR_CATALOGUE["ALREADY_MEMBER"][1])
+            kept = [(p.id, p.expires_at) for p in previous]
+            for p in previous:
+                p.status = "cancelled"
             invite = Invitation(
-                org_id=org_id, invited_by=creator_id, email=email, org_role=request.org_role,
-                code=generate_code(INVITE_CODE_LENGTH, digits_only=False), expires_at=bc.utc_now() + timedelta(days=INVITE_TTL_DAYS),
-                status="pending", created_at=bc.utc_now(),
+                org_id=org_id, invited_by=creator_id, email=email, org_role=request.org_role, code_hash=_hash_code(raw),
+                expires_at=bc.utc_now() + timedelta(days=INVITE_TTL_DAYS), status="pending", created_at=bc.utc_now(),
             )
             self.db.add(invite)
             try:
-                self.db.commit()
-                break
+                self.db.flush()
             except IntegrityError:
                 self.db.rollback()
                 if attempt == 2:
                     raise
+                continue
+            sent = self._send_letter(invite, raw)
+            if not sent and kept:                                  # the letter did not go: the old link must keep working, nothing new is made
+                self.db.rollback()
+                logger.info("Invitation letter failed, the previous invitation stays: id=%s org=%s", kept[0][0], org_id)
+                return {
+                    "id": str(kept[0][0]), "email": email, "email_sent": False,
+                    "expires_at": kept[0][1].replace(tzinfo=timezone.utc).isoformat(),
+                }
+            self.db.commit()
+            break
         logger.info("Invitation created: id=%s role=%s org=%s", invite.id, request.org_role, org_id)
-        return self._sent(invite, self._send_letter(invite))
+        if os.getenv("APP_ENV") == "development":  # the e2e harness of a development stack has no mailbox: it asks for the code (dev_router)
+            from .dev_router import remember_code
 
-    def _send_letter(self, invite: Invitation) -> bool:
-        """The letter with the link, after the commit. A failure never breaks the request: the caller says ``email_sent: false`` and the
-        owner presses «Отправить ещё раз» (the link is never shown to him)."""
+            remember_code(email, raw)
+        return self._sent(invite, sent)
+
+    def _send_letter(self, invite: Invitation, code: str) -> bool:
+        """The letter with the link (*code* is the plain code, which exists only here and in the letter). A failure never breaks the request."""
         from src.mail import letters  # late: the mail package imports src.auth modules
 
         try:
             org = self.db.query(Organization).filter(Organization.id == invite.org_id).first()
             return bool(
                 letters.send_staff_invite(
-                    invite.email, centre_name=org.name if org else "", org_role=invite.org_role, code=invite.code,
-                    expires_at=invite.expires_at,
+                    invite.email, centre_name=org.name if org else "", org_role=invite.org_role, code=code, expires_at=invite.expires_at,
                 )
             )
         except Exception as exc:  # noqa: BLE001
@@ -144,11 +198,10 @@ class Invites:
 
     @staticmethod
     def _sent(invite: Invitation, email_sent: bool) -> Dict[str, Any]:
-        from src.mail.sender import mask_address
-
+        """The answer for the CENTRE that typed the address: the whole address (it must see a typo), no code, no link."""
         return {
             "id": str(invite.id),
-            "email_masked": mask_address(invite.email or ""),
+            "email": invite.email or "",
             "expires_at": invite.expires_at.replace(tzinfo=timezone.utc).isoformat(),
             "email_sent": email_sent,
         }
@@ -198,7 +251,7 @@ class Invites:
     def info(self, code: str) -> Dict[str, Any]:
         if self.expire_due(code=code):
             self.db.commit()
-        invite = self.db.query(Invitation).filter(Invitation.code == code).first()
+        invite = self.db.query(Invitation).filter(Invitation.code_hash == _hash_code(code)).first()
         if invite is not None and invite.status == "cancelled":
             raise revoked_error()
         if invite is None or invite.status not in ("pending", "expired"):
@@ -220,7 +273,7 @@ class Invites:
         from .schemas import AuthResponse  # noqa: F401  (typing only)
         from .service import hash_password
 
-        invite = self.db.query(Invitation).filter(Invitation.code == request.code).with_for_update().populate_existing().first()
+        invite = self.db.query(Invitation).filter(Invitation.code_hash == _hash_code(request.code)).with_for_update().populate_existing().first()
         if invite is not None and invite.status == "cancelled":
             self.db.rollback()
             raise revoked_error()

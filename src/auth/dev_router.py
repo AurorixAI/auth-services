@@ -215,21 +215,23 @@ def dev_login(
     return resp
 
 
+# The newest plain invitation code per e-mail, kept in THIS process only (the database holds a hash, K2-1). Filled by ``invites.Invites.create`` when
+# APP_ENV=development, which is also the only case in which this router is mounted.
+_DEV_CODES: dict = {}
+
+
+def remember_code(email: str, code: str) -> None:
+    _DEV_CODES[(email or "").strip().lower()] = code
+
+
 @router.get("/dev-invite-code")
-def dev_invite_code(email: str = Query(..., min_length=5, max_length=255), db: Session = Depends(get_db)):
-    """DEV ONLY (this router is mounted only when ``APP_ENV=development``): the code of the newest pending staff invitation for *email*.
+def dev_invite_code(email: str = Query(..., min_length=5, max_length=255)):
+    """DEV ONLY (this router is mounted only when ``APP_ENV=development``): the code of the newest staff invitation made for *email* by this process.
 
     K2-1 (A1): the product never hands the code to anybody - it travels in the letter - and a development stack has no mailbox, so the
     end-to-end harness (``e2e/support/api.ts``) reads the code here to play the invited person.
     """
-    from .models import Invitation
-
-    invite = (
-        db.query(Invitation)
-        .filter(Invitation.status == "pending", Invitation.email == email.strip().lower())
-        .order_by(Invitation.created_at.desc())
-        .first()
-    )
-    if invite is None:
-        raise HTTPException(status_code=404, detail="No pending invitation for this e-mail")
-    return {"code": invite.code}
+    code = _DEV_CODES.get(email.strip().lower())
+    if code is None:
+        raise HTTPException(status_code=404, detail="No invitation made for this e-mail")
+    return {"code": code}

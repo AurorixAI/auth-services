@@ -37,6 +37,10 @@ HOST_PREFIX = "__Host-"
 AUTH_COOKIE_PATH = "/"
 REFRESH_COOKIE_PATH = "/"
 
+# The cookies of the cabinet before K2-1 (the names without the prefix; the refresh cookie lived on the auth path only). On a secure stack a sign-in and a
+# sign-out delete them, so a browser does not carry a dead 30-day cookie that the front end could mistake for a sign-in.
+LEGACY_REFRESH_PATH = "/api/v1/auth"
+
 
 def cookies_are_secure(env: Mapping[str, str] = os.environ) -> bool:
     """Whether the auth cookies carry ``Secure``: on every real stack, i.e. behind https.
@@ -104,9 +108,20 @@ def set_auth_cookies(
     return response
 
 
-def clear_auth_cookies(response: R, *, secure: Optional[bool] = None) -> R:
-    """Delete both browser cookies (same path they were set with, no domain)."""
+def clear_legacy_cookies(response: R, *, secure: Optional[bool] = None) -> R:
+    """Delete the cookies under the OLD names (``algo_auth_token`` on ``/``, ``algo_refresh_token`` on ``/api/v1/auth``). Only where the names differ
+    from the current ones, i.e. on a secure stack; on plain-http development the old names ARE the current ones."""
     secure = _IS_PROD if secure is None else secure
+    if secure:
+        response.delete_cookie(PLAIN_AUTH_COOKIE, path=AUTH_COOKIE_PATH, secure=True, httponly=True, samesite="lax")
+        response.delete_cookie(PLAIN_REFRESH_COOKIE, path=LEGACY_REFRESH_PATH, secure=True, httponly=True, samesite="lax")
+    return response
+
+
+def clear_auth_cookies(response: R, *, secure: Optional[bool] = None) -> R:
+    """Delete both browser cookies (same path they were set with, no domain), and the old-named ones of before K2-1."""
+    secure = _IS_PROD if secure is None else secure
+    clear_legacy_cookies(response, secure=secure)
     # The deleting Set-Cookie carries the same flags as the one that set the cookie (Secure included).
     auth_name, refresh_name = cookie_names(secure)
     response.delete_cookie(auth_name, path=AUTH_COOKIE_PATH, secure=secure, httponly=True, samesite="lax")

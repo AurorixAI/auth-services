@@ -2182,10 +2182,10 @@
         "type": "object"
       },
       "InvitationSentOut": {
-        "description": "The answer to «Пригласить» and «Отправить ещё раз» (K2-1, A1): no code, no link, the address masked; ``email_sent`` says whether the letter left.",
+        "description": "The answer to «Пригласить» and «Отправить ещё раз» (K2-1, A1): no code, no link; the whole address (the centre typed it); ``email_sent`` says whether the letter left.",
         "properties": {
-          "email_masked": {
-            "title": "Email Masked",
+          "email": {
+            "title": "Email",
             "type": "string"
           },
           "email_sent": {
@@ -2203,7 +2203,7 @@
         },
         "required": [
           "id",
-          "email_masked",
+          "email",
           "expires_at",
           "email_sent"
         ],
@@ -6078,7 +6078,7 @@
         ]
       },
       "post": {
-        "description": "Создать приглашение (owner/admin → admin/teacher): ссылка уходит ПИСЬМОМ на почту приглашённого. Ответ — без кода и без ссылки:\n``{id, email_masked, expires_at, email_sent}``.",
+        "description": "Создать приглашение (owner/admin → admin/teacher): ссылка уходит ПИСЬМОМ на почту приглашённого. Ответ — без кода и без ссылки:\n``{id, email, expires_at, email_sent}`` (the whole address: the centre typed it and must see a typo). The limits of letters live in ``Invites._throttle``.",
         "requestBody": {
           "content": {
             "application/json": {

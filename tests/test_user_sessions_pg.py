@@ -583,22 +583,26 @@ def test_a_refresh_prunes_the_old_superseded_tokens_of_its_own_session(session_w
 
 
 @needs_pg
-def test_a_password_change_signs_out_every_device(session_world):
+def test_a_password_change_signs_out_every_other_device_and_keeps_this_one(session_world):
+    """K2-1 M1: the device that changes the password stays signed in (its cookies are renewed); every other one signs in again."""
     w = session_world
     a, b = Device(w).login(), Device(w).login()
     r = a.client.post(
         f"{API}/change-password",
         json={"old_password": PASSWORD, "new_password": "Another-Pass-1!"},
-        headers=cookie_header(access=a.access),
+        headers=cookie_header(access=a.access, refresh=a.refresh),
     )
     assert r.status_code == 200, r.text
-    assert a.status_of_refresh() == 401 and b.status_of_refresh() == 401
-    assert len(live(w)) == 0
-    assert {s.revoke_reason for s in sessions(w)} == {"password_changed"}
+    assert b.status_of_refresh() == 401
+    assert len(live(w)) == 1
+    assert [s.revoke_reason for s in sessions(w)] == [None, "password_changed"]
+    # this device keeps working with the renewed cookies
+    jar = set_cookies(r)
+    assert jar[AUTH_COOKIE_NAME].value and a.client.get(f"{API}/me").status_code == 200
     # signing in with the new password starts a fresh session
     c = Device(w)
     c.client.post(f"{API}/login", json={"email": w.owner.email, "password": "Another-Pass-1!"})
-    assert len(live(w)) == 1
+    assert len(live(w)) == 2
 
 
 @needs_pg
@@ -716,7 +720,7 @@ def test_invitation_accept_creates_a_session(session_world):
     invited_email = f"{uuid4()}@n13.invalid"          # LOGIC-B O10: the account gets the e-mail of the invitation
     w.db.add(
         Invitation(
-            org_id=w.org.id, invited_by=w.owner.id, email=invited_email, org_role="teacher", code=code,
+            org_id=w.org.id, invited_by=w.owner.id, email=invited_email, org_role="teacher", code_hash=hash_token(code),
             expires_at=user_sessions._now() + timedelta(days=3),
         )
     )

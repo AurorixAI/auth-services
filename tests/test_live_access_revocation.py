@@ -52,7 +52,10 @@ def _resolve(*, token_role="admin", user_role="admin", member_role="admin", memb
         _query_with(current_member),
         _query_with(current_org),
     ]
-    return get_current_active_user_payload(payload=payload, db=db), db
+    # This unit isolates the ROLE / MEMBERSHIP logic: the session check (K2-1, A5) is stated alive here and is exercised against a real database in the
+    # ``_pg`` tests below (revoked, expired, someone else's session, no ``sid``).
+    with patch("src.auth.user_sessions.is_alive", return_value=True):
+        return get_current_active_user_payload(payload=payload, db=db), db
 
 
 def test_live_membership_role_overrides_stale_jwt_claim():
@@ -156,3 +159,113 @@ def test_removing_member_revokes_its_refresh_token():
     assert user.is_active is False
     revoke_all.assert_called_once_with(db, user.id, "user_blocked")  # every session of the removed user ends
     db.commit.assert_called_once()
+
+
+# ---- the same dependency against a REAL database: the session named by ``sid`` decides (K2-1, A5) ----
+
+from datetime import timedelta  # noqa: E402
+
+from tests.pg_world import make_member, make_org, make_user, needs_pg, pg_session  # noqa: E402,F401  (fixtures)
+
+
+def _live_world(db):
+    from src.auth import user_sessions
+    from src.auth.dependencies import get_current_active_user_payload
+
+    org = make_org(db)
+    user = make_user(db, "teacher")
+    user.default_org_id = org.id
+    make_member(db, org, user, "teacher")
+    sid = uuid4()
+    user_sessions.issue(db, user.id, f"hash-{sid}", timedelta(days=14), remember=True, session_id=sid)
+    db.commit()
+
+    def resolve(session_id=sid, who=user):
+        payload = {"sub": str(who.id), "role": "teacher", "org_id": str(org.id), "org_role": "teacher", "type": "access"}
+        if session_id is not None:
+            payload["sid"] = str(session_id)
+        return get_current_active_user_payload(payload=payload, db=db)
+
+    return SimpleNamespace(db=db, org=org, user=user, sid=sid, resolve=resolve)
+
+
+@needs_pg
+def test_pg_a_live_session_passes_and_keeps_the_org_and_role(pg_session):
+    w = _live_world(pg_session)
+    resolved = w.resolve()
+    assert resolved["org_id"] == str(w.org.id) and resolved["org_role"] == "teacher"
+
+
+@needs_pg
+def test_pg_a_revoked_expired_foreign_or_missing_session_is_a_401(pg_session):
+    from src.auth import user_sessions
+    from src.models.auth import UserSession
+
+    w = _live_world(pg_session)
+    other = make_user(pg_session, "teacher")
+    pg_session.commit()
+    for label, kwargs in (("no sid", {"session_id": None}), ("unknown sid", {"session_id": uuid4()}), ("another user's session", {"who": other})):
+        with pytest.raises(HTTPException) as exc:
+            w.resolve(**kwargs)
+        assert exc.value.status_code == 401, label
+    row = pg_session.get(UserSession, w.sid)
+    row.expires_at = user_sessions._now() - timedelta(seconds=1)
+    pg_session.commit()
+    with pytest.raises(HTTPException) as exc:
+        w.resolve()
+    assert exc.value.status_code == 401                                      # expired
+    row.expires_at = user_sessions._now() + timedelta(days=1)
+    pg_session.commit()
+    assert w.resolve()["org_id"]
+    user_sessions.revoke_by_id(pg_session, w.user.id, w.sid)
+    pg_session.commit()
+    with pytest.raises(HTTPException) as exc:
+        w.resolve()
+    assert exc.value.status_code == 401                                      # revoked: refused at once, no cache
+
+
+@needs_pg
+def test_pg_the_membership_and_the_centre_are_still_checked_live_after_the_session(pg_session):
+    from src.models.auth import Organization, OrganizationMember
+
+    w = _live_world(pg_session)
+    member = pg_session.query(OrganizationMember).filter_by(user_id=w.user.id).one()
+    member.is_active = False
+    pg_session.commit()
+    with pytest.raises(HTTPException) as exc:
+        w.resolve()
+    assert exc.value.status_code == 403
+    member.is_active = True
+    pg_session.get(Organization, w.org.id).blocked_at = user_sessions_now()
+    pg_session.commit()
+    with pytest.raises(HTTPException) as exc:
+        w.resolve()
+    assert exc.value.status_code == 403 and "приостановлен" in exc.value.detail
+
+
+def user_sessions_now():
+    from src.auth import user_sessions
+
+    return user_sessions._now()
+
+
+@needs_pg
+def test_pg_the_session_check_is_exactly_one_read_of_user_sessions_per_request(pg_session):
+    """Counted, not asserted from the source: the statements the dependency sends that touch ``user_sessions``."""
+    from sqlalchemy import event
+
+    w = _live_world(pg_session)
+    seen = []
+
+    def count(conn, cursor, statement, parameters, context, executemany):
+        if "user_sessions" in statement:
+            seen.append(statement.split()[0].upper())
+
+    engine = pg_session.get_bind()
+    event.listen(engine, "before_cursor_execute", count)
+    try:
+        for _ in range(3):
+            w.resolve()
+    finally:
+        event.remove(engine, "before_cursor_execute", count)
+    assert seen == ["SELECT"] * 3

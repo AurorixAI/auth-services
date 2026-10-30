@@ -1,5 +1,5 @@
 """
-Tests for repositories (base + user/org/student/group) and core/dependencies
+Tests for repositories (base + user/org/student/group) (core/dependencies.py is gone: K2-1, the access checks all go through the live session)
 Brings coverage toward ≥70%
 
 Run:
@@ -250,94 +250,6 @@ class TestOrgMemberRepo:
         session.scalars.return_value = iter(fake_members)
         result = repo.list_org_members(uuid4())
         assert result == fake_members
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# core/dependencies.py — JWT + RBAC functions
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestCoreDependencies:
-    def _make_request(self, cookie_token=None, header_token=None):
-        request = MagicMock()
-        request.cookies.get = lambda key, default=None: cookie_token if key == "algo_auth_token" else default
-        creds = None
-        if header_token:
-            creds = MagicMock()
-            creds.credentials = header_token
-        return request, creds
-
-    def _valid_token(self):
-        from src.core.security import create_access_token
-        return create_access_token({"sub": "user-1", "role": "teacher"})
-
-    def test_get_current_user_valid_bearer(self):
-        from src.core.dependencies import get_current_user
-        token = self._valid_token()
-        request, creds = self._make_request(header_token=token)
-        payload = get_current_user(request, creds)
-        assert payload["sub"] == "user-1"
-
-    def test_get_current_user_valid_cookie(self):
-        from src.core.dependencies import get_current_user
-        token = self._valid_token()
-        request, _ = self._make_request(cookie_token=token)
-        payload = get_current_user(request, None)
-        assert payload["sub"] == "user-1"
-
-    def test_get_current_user_no_token_raises_401(self):
-        from src.core.dependencies import get_current_user
-        from fastapi import HTTPException
-        request, _ = self._make_request()
-        with pytest.raises(HTTPException) as exc:
-            get_current_user(request, None)
-        assert exc.value.status_code == 401
-
-    def test_get_current_user_bad_token_raises_401(self):
-        from src.core.dependencies import get_current_user
-        from fastapi import HTTPException
-        request, creds = self._make_request(header_token="bad.token")
-        with pytest.raises(HTTPException) as exc:
-            get_current_user(request, creds)
-        assert exc.value.status_code == 401
-
-    def test_get_optional_user_returns_none_without_token(self):
-        from src.core.dependencies import get_optional_user
-        request, _ = self._make_request()
-        result = get_optional_user(request, None)
-        assert result is None
-
-    def test_get_optional_user_returns_payload_with_token(self):
-        from src.core.dependencies import get_optional_user
-        token = self._valid_token()
-        request, creds = self._make_request(header_token=token)
-        result = get_optional_user(request, creds)
-        assert result is not None
-        assert result["sub"] == "user-1"
-
-    def test_require_roles_passes_for_correct_role(self):
-        from src.core.dependencies import require_roles
-        from src.core.security import create_access_token
-        token = create_access_token({"sub": "u1", "role": "admin"})
-        user = {"sub": "u1", "role": "admin"}
-        checker = require_roles("admin", "owner")
-        result = checker(user=user)
-        assert result["role"] == "admin"
-
-    def test_require_roles_blocks_wrong_role(self):
-        from src.core.dependencies import require_roles
-        from fastapi import HTTPException
-        user = {"sub": "u1", "role": "teacher"}
-        checker = require_roles("admin", "owner")
-        with pytest.raises(HTTPException) as exc:
-            checker(user=user)
-        assert exc.value.status_code == 403
-
-    def test_require_any_auth_returns_user(self):
-        from src.core.dependencies import require_any_auth
-        user = {"sub": "u1", "role": "teacher"}
-        result = require_any_auth(user=user)
-        assert result is user
 
 
 # ═══════════════════════════════════════════════════════════════════════════

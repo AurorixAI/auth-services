@@ -144,8 +144,12 @@ def test_logicb_migrations_on_stage_like_data(engine):
         assert c.execute(text("SELECT inactive_intervals FROM groups WHERE id=:g"), {"g": ids["g_archived"]}).scalar_one() == [{"from": "2026-10-05T07:30:15", "to": None}]
         assert c.execute(text("SELECT inactive_intervals FROM groups WHERE id=:g"), {"g": ids["g_slots"]}).scalar_one() == []
         # O10: no e-mail -> expired; of the duplicates only the newest stays pending
-        status = {r[0]: r[1] for r in c.execute(text("SELECT code, status FROM invitations")).fetchall()}
-        assert status == {"CODE0001": "expired", "CODE0002": "cancelled", "CODE0003": "pending"}
+        # (K2-1: at head the code is a hash and every invitation still pending is cancelled - its plain code is gone: the newest of the duplicates ends "cancelled" too)
+        import hashlib
+
+        status = {r[0]: r[1] for r in c.execute(text("SELECT code_hash, status FROM invitations")).fetchall()}
+        h = lambda code: hashlib.sha256(code.encode()).hexdigest()  # noqa: E731
+        assert status == {h("CODE0001"): "expired", h("CODE0002"): "cancelled", h("CODE0003"): "cancelled"}
         # O15: new / diagnosed students of a live group are active; archived group / no group: untouched
         st = {r[0]: r[1] for r in c.execute(text("SELECT last_name, status FROM students")).fetchall()}
         assert st == {"s_new": "active", "s_diag": "active", "s_arch": "new", "s_none": "new"}
@@ -185,12 +189,14 @@ def test_logicb_migrations_on_stage_like_data(engine):
     run(asg, o=ids["org"], g=ids["g_slots"], u=ids["owner"], c=datetime(2026, 10, 21))       # a cancelled one next to the active one: fine
     with pytest.raises(IntegrityError):                                                        # a second active one: not
         run(asg, o=ids["org"], g=ids["g_slots"], u=ids["owner"], c=None)
+    run("INSERT INTO invitations (id,org_id,invited_by,email,org_role,code_hash,status,expires_at) VALUES (gen_random_uuid(),:o,:u,'t@x.uz','teacher','CODE0008','pending','2026-12-01')",
+        o=ids["org"], u=ids["owner"])                                                          # (K2-1: the pending ones of the old data were cancelled, so one is made here first)
     with pytest.raises(IntegrityError):                                                        # one pending per e-mail and centre
-        run("INSERT INTO invitations (id,org_id,invited_by,email,org_role,code,status,expires_at) VALUES (gen_random_uuid(),:o,:u,'T@X.UZ','teacher','CODE0009','pending','2026-12-01')",
+        run("INSERT INTO invitations (id,org_id,invited_by,email,org_role,code_hash,status,expires_at) VALUES (gen_random_uuid(),:o,:u,'T@X.UZ','teacher','CODE0009','pending','2026-12-01')",
             o=ids["org"], u=ids["owner"])
-    run("INSERT INTO invitations (id,org_id,invited_by,email,org_role,code,status,expires_at) VALUES (gen_random_uuid(),:o,:u,'T@X.UZ','teacher','CODE0010','cancelled','2026-12-01')",
+    run("INSERT INTO invitations (id,org_id,invited_by,email,org_role,code_hash,status,expires_at) VALUES (gen_random_uuid(),:o,:u,'T@X.UZ','teacher','CODE0010','cancelled','2026-12-01')",
         o=ids["org"], u=ids["owner"])
-    run("INSERT INTO invitations (id,org_id,invited_by,email,org_role,code,status,expires_at) VALUES (gen_random_uuid(),:o,:u,'t@x.uz','teacher','CODE0011','pending','2026-12-01')",
+    run("INSERT INTO invitations (id,org_id,invited_by,email,org_role,code_hash,status,expires_at) VALUES (gen_random_uuid(),:o,:u,'t@x.uz','teacher','CODE0011','pending','2026-12-01')",
         o=ids["org2"], u=ids["owner"])                                                        # another centre: fine
 
     # LOGIC-B2 (lb3c4d5e6f7): the request / event tables, the CHECKs, the partial unique index of INV-B2-1
@@ -252,7 +258,7 @@ def _data_snapshot(eng):
     with eng.connect() as c:
         return (
             [tuple(r) for r in c.execute(text("SELECT id, schedule::text, inactive_intervals::text, status FROM groups ORDER BY id")).fetchall()],
-            [tuple(r) for r in c.execute(text("SELECT code, status FROM invitations ORDER BY code")).fetchall()],
+            [tuple(r) for r in c.execute(text("SELECT code_hash, status FROM invitations ORDER BY code_hash")).fetchall()],
             [tuple(r) for r in c.execute(text("SELECT id, status FROM students ORDER BY id")).fetchall()],
             [tuple(r) for r in c.execute(text("SELECT id, payload::text FROM group_schedule_one_off_lessons ORDER BY id")).fetchall()],
         )

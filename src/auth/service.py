@@ -633,6 +633,12 @@ class AuthService:
         user = self.db.query(User).filter(User.id == payload.get("sub")).first()
         if not user or not user.is_active or user.role == "superadmin":  # a platform account has no cabinet session (A4)
             raise ValueError("Пользователь не найден или заблокирован")
+        from .platform_blocks import ensure_login_allowed  # a blocked centre / a console account gets no new session either (K2-1, as the sign-in)
+
+        try:
+            ensure_login_allowed(self.db, user)
+        except InvalidCredentialsError:
+            raise ValueError("Пользователь не найден или заблокирован") from None
 
         # The session of THIS device (found by the hash of the token, rows locked); the user's other devices keep
         # their own sessions (#101, user_sessions.py). A replayed old token revokes its session, and that
@@ -690,7 +696,7 @@ class AuthService:
         return self.db.query(User).filter(User.id == user_id).first()
 
     def change_password(
-        self, user_id: str, old_password: str, new_password: str
+        self, user_id: str, old_password: str, new_password: str, keep_session_id=None
     ) -> bool:
         user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
@@ -698,8 +704,8 @@ class AuthService:
         if not verify_password(old_password, user.password_hash):
             raise ValueError("Неверный текущий пароль")
         user.password_hash = hash_password(new_password)
-        # Every device signs in again with the new password.
-        user_sessions.revoke_all(self.db, user.id, user_sessions.REVOKE_PASSWORD_CHANGED)
+        # Every OTHER device signs in again with the new password; the session the person is using stays (K2-1 M1: the screen does not throw him out)
+        user_sessions.revoke_all(self.db, user.id, user_sessions.REVOKE_PASSWORD_CHANGED, except_id=keep_session_id)
         user.must_change_password = False  # cleared once they set their own
         self.db.commit()
         return True

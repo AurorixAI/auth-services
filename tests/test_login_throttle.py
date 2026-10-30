@@ -930,7 +930,7 @@ def test_retry_after_survives_the_cors_error_handler(clock):
 
 
 def password_app(monkeypatch, user_id="user-1"):
-    def wrong_old_password(self, uid, old, new):
+    def wrong_old_password(self, uid, old, new, **kw):
         if old != GOOD:
             raise ValueError("Неверный текущий пароль")
         return True

@@ -531,10 +531,10 @@ class InvitationOut(BaseModel):
 
 
 class InvitationSentOut(BaseModel):
-    """The answer to «Пригласить» and «Отправить ещё раз» (K2-1, A1): no code, no link, the address masked; ``email_sent`` says whether the letter left."""
+    """The answer to «Пригласить» and «Отправить ещё раз» (K2-1, A1): no code, no link; the whole address (the centre typed it); ``email_sent`` says whether the letter left."""
 
     id: str
-    email_masked: str
+    email: str
     expires_at: str
     email_sent: bool
 

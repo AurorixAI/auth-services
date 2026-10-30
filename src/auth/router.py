@@ -76,6 +76,7 @@ from .cookies import (
     AUTH_COOKIE_NAME,
     REFRESH_COOKIE_NAME,
     clear_auth_cookies,
+    clear_legacy_cookies,
     set_auth_cookies,
 )
 from .dependencies import security
@@ -172,6 +173,7 @@ def _auth_response_with_cookies(auth: AuthResponse) -> JSONResponse:
     body = SessionResponse(user=auth.user, org=auth.org).model_dump(mode="json")
     resp = JSONResponse(content=body)
     set_auth_cookies(resp, auth.tokens.access_token, auth.tokens.refresh_token, auth.tokens.remember)
+    clear_legacy_cookies(resp)  # a sign-in also removes the cookies of before K2-1 (old names, old path)
     return resp
 
 
@@ -538,8 +540,12 @@ def change_password(
         login_throttle.SCOPE_CHANGE_PASSWORD, str(payload["sub"]), client_bucket(raw_request)
     )
     try:
+        sid = UUID(str(payload.get("sid"))) if payload.get("sid") else None
+    except ValueError:
+        sid = None
+    try:
         _svc(db).change_password(
-            payload["sub"], request.old_password, request.new_password
+            payload["sub"], request.old_password, request.new_password, keep_session_id=sid
         )
     except ValueError as e:
         attempt.failed()
@@ -548,7 +554,16 @@ def change_password(
         attempt.aborted()
         raise
     attempt.succeeded()
-    return MessageResponse(message="Пароль успешно изменён")
+    resp = JSONResponse(content=MessageResponse(message="Пароль успешно изменён").model_dump())
+    # K2-1 M1: the other devices were signed out, THIS one stays: its cookies are renewed with the same mode (remember or not)
+    refresh = raw_request.cookies.get(REFRESH_COOKIE_NAME)
+    if refresh and sid is not None:
+        try:
+            tokens = _svc(db, raw_request).refresh_tokens(refresh)
+            set_auth_cookies(resp, tokens.access_token, tokens.refresh_token, tokens.remember)
+        except (ValueError, HTTPException):  # the session itself is fine (checked above); the old cookies keep working
+            pass
+    return resp
 
 
 def _is_cross_site_request(request: Request) -> bool:
@@ -706,24 +721,6 @@ def update_organization(
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 
-INVITE_MAIL_PER_EMAIL = 10   # K2-1 (A1): letters to ONE mailbox per hour, however many centres ask (an invitation is a letter to a stranger)
-INVITE_MAIL_PER_ORG = 100    # ... and letters of ONE centre per hour
-INVITE_MAIL_WINDOW = 3600
-
-
-def _throttle_invite_mail(org_id, email: Optional[str]) -> None:
-    """429 once a mailbox or a centre has spent its hourly budget of invitation letters (counted before anything is created or sent)."""
-    digest = hashlib.sha256((email or "").strip().lower().encode("utf-8")).hexdigest()[:32]  # no e-mail in a Redis key
-    for key, limit in ((f"rl:invite_mail_email:{digest}", INVITE_MAIL_PER_EMAIL), (f"rl:invite_mail_org:{org_id}", INVITE_MAIL_PER_ORG)):
-        count, left = hit_window(key, INVITE_MAIL_WINDOW)
-        if count > limit:
-            raise HTTPException(
-                status.HTTP_429_TOO_MANY_REQUESTS,
-                "Слишком много приглашений на этот адрес. Повторите попытку позже.",
-                headers={"Retry-After": str(left)},
-            )
-
-
 @router.post("/org/invitations", response_model=InvitationSentOut)
 def create_invitation(
     request: InviteMemberRequestB,
@@ -731,8 +728,7 @@ def create_invitation(
     db: Session = Depends(get_db),
 ):
     """Создать приглашение (owner/admin → admin/teacher): ссылка уходит ПИСЬМОМ на почту приглашённого. Ответ — без кода и без ссылки:
-    ``{id, email_masked, expires_at, email_sent}``."""
-    _throttle_invite_mail(user["org_id"], request.email)
+    ``{id, email, expires_at, email_sent}`` (the whole address: the centre typed it and must see a typo). The limits of letters live in ``Invites._throttle``."""
     try:
         return _svc(db).create_invitation(user["org_id"], user["user_id"], request, creator_role=user.get("org_role"))
     except ValueError as e:
@@ -750,10 +746,6 @@ def resend_invitation(
         invite_uuid = UUID(str(invite_id))
     except ValueError:
         raise HTTPException(404, "Приглашение не найдено")
-    row = db.query(Invitation.email).filter(Invitation.id == invite_uuid, Invitation.org_id == user["org_id"]).first()
-    if row is None:
-        raise HTTPException(404, "Приглашение не найдено")
-    _throttle_invite_mail(user["org_id"], row[0])
     try:
         return _svc(db).resend_invitation(user["org_id"], invite_uuid, user["user_id"], creator_role=user.get("org_role"))
     except ValueError as e:
