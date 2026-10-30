@@ -1182,3 +1182,57 @@ def test_ts1_r3_only_a_network_failure_lets_a_request_through_and_the_log_speaks
         assert turnstile.verify("t", None, action="forgot_password") is False
     r = forgot(anonymous(cw), centre.teacher.email, token="x")
     assert r.status_code == 400                                                                # the page of «Забыли пароль» too
+
+
+@needs_pg
+def test_m1_r3_a_replacement_that_has_waited_ten_minutes_for_its_letter_is_closed(cw, centre, monkeypatch):
+    from src.auth import router as auth_router
+    from src.auth.ops_schemas import InviteMemberRequestB
+
+    owner = signed_in(cw, centre.owner)
+    address = f"stuck-{uuid4().hex[:6]}@staff.test"
+    first = invite(owner, address).json()
+    user = {"org_id": str(centre.org.id), "user_id": str(centre.owner.id), "org_role": "owner", "role": "owner"}
+    auth_router.resend_invitation(first["id"], BackgroundTasks(), user, cw.db)             # the task is never run: the process "stopped"
+    cw.db.expire_all()
+    assert sorted(i.status for i in cw.db.query(Invitation).filter(Invitation.email == address)) == ["pending", "queued"]
+    owner.get(f"{AUTH}/org/invitations")                                                    # inside the 10 minutes it waits
+    cw.db.expire_all()
+    assert cw.db.query(Invitation).filter(Invitation.email == address, Invitation.status == "queued").count() == 1
+    queued = cw.db.query(Invitation).filter(Invitation.email == address, Invitation.status == "queued").one()
+    queued.created_at = queued.created_at - timedelta(minutes=11)
+    cw.db.commit()
+    rows = owner.get(f"{AUTH}/org/invitations").json()
+    cw.db.expire_all()
+    assert cw.db.query(Invitation).filter(Invitation.email == address, Invitation.status == "queued").count() == 0
+    assert [(r["id"], r["status"]) for r in rows if r["email"] == address] == [(first["id"], "pending")]     # the older invitation is untouched
+
+
+@needs_pg
+def test_m1_r3_no_transaction_and_no_connection_is_held_while_the_mail_server_works(cw, centre, monkeypatch):
+    from src.auth import background
+    from src.mail import sender
+
+    owner = signed_in(cw, centre.owner)
+    address = f"conn-{uuid4().hex[:6]}@staff.test"
+    delivering, seen = [], {}
+    original = background.background_session
+
+    def watched():
+        db = original()
+        delivering.append(db)
+        return db
+
+    def slow_deliver(msg, cfg=None):
+        db = delivering[-1]
+        seen["in_transaction"] = db.in_transaction()                                  # the session of the delivery task
+        seen["connections_out"] = db.get_bind().pool.checkedout()
+        cw.outbox.append(msg)
+        return True
+
+    monkeypatch.setattr(background, "background_session", watched)
+    monkeypatch.setattr(sender, "deliver", slow_deliver)
+    cw.db.rollback()                                                                    # (the shared session of the test holds nothing either)
+    assert invite(owner, address).status_code == 200
+    assert seen["in_transaction"] is False, seen                                       # no open transaction while the letter is handed to SMTP
+    assert seen["connections_out"] <= 1, seen                                           # (the pool of the test engine: only the test's own session may hold one)

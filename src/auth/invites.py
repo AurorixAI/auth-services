@@ -36,6 +36,7 @@ from .platform_errors import PlatformError
 logger = logging.getLogger(__name__)
 
 INVITE_TTL_DAYS = 7
+QUEUED_MAX_MINUTES = 10    # a replacement still «queued» after this long is closed by ``expire_due``
 MAIL_STALE_SECONDS = 120   # a letter that is still «pending» after this long was lost (the process stopped): the list shows it as «failed»
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -78,6 +79,12 @@ class Invites:
         if code is not None:
             q = q.filter(Invitation.code_hash == _hash_code(code))
         count = q.update({Invitation.status: "expired"}, synchronize_session=False)
+        # a replacement that has waited for its letter for more than 10 minutes was lost (the process stopped between the answer and the delivery): it is closed
+        # without a trace, the older invitation (marked «failed» by the list after 2 minutes) stays (K2-2 R3, 6)
+        stuck = self.db.query(Invitation).filter(Invitation.status == "queued", Invitation.created_at <= bc.utc_now() - timedelta(minutes=QUEUED_MAX_MINUTES))
+        if org_id is not None:
+            stuck = stuck.filter(Invitation.org_id == org_id)
+        count += stuck.delete(synchronize_session=False)
         return count
 
     def _lock_address(self, org_id: Any, email: str) -> None:
@@ -203,19 +210,20 @@ class Invites:
             answer = self._sent(self.db.query(Invitation).filter(Invitation.id == invite.id).one())
         return answer
 
-    def _send_letter(self, invite: Invitation, code: str) -> bool:
-        """The letter with the link (*code* is the plain code, which exists only here and in the letter). A failure never breaks the request."""
+    def _letter_args(self, invite: Invitation, code: str) -> dict:
+        """What the letter needs, as plain values (read inside a short transaction that is closed BEFORE the mail server is called)."""
+        org = self.db.query(Organization).filter(Organization.id == invite.org_id).first()
+        return {"to": invite.email, "centre_name": org.name if org else "", "org_role": invite.org_role, "code": code, "expires_at": invite.expires_at}
+
+    @staticmethod
+    def _send_letter(letter: dict, invite_id: Any) -> bool:
+        """The letter with the link (the plain code exists only here and in the letter). Needs no database. A failure never breaks anything."""
         from src.mail import letters  # late: the mail package imports src.auth modules
 
         try:
-            org = self.db.query(Organization).filter(Organization.id == invite.org_id).first()
-            return bool(
-                letters.send_staff_invite(
-                    invite.email, centre_name=org.name if org else "", org_role=invite.org_role, code=code, expires_at=invite.expires_at,
-                )
-            )
+            return bool(letters.send_staff_invite(letter["to"], **{k: v for k, v in letter.items() if k != "to"}))
         except Exception as exc:  # noqa: BLE001
-            logger.error("Invitation letter failed: invitation=%s %s", invite.id, type(exc).__name__)
+            logger.error("Invitation letter failed: invitation=%s %s", invite_id, type(exc).__name__)
             return False
 
     def deliver(self, invite_id: str, code: str) -> bool:
@@ -223,9 +231,11 @@ class Invites:
         invite = self.db.query(Invitation).filter(Invitation.id == invite_id).first()
         if invite is None or invite.status not in ("pending", "queued"):
             return False                                           # cancelled / accepted meanwhile: nothing to send
-        sent = self._send_letter(invite, code)
+        letter = self._letter_args(invite, code)
         org_id, email, my_id = invite.org_id, normalize_email(invite.email), invite.id
-        self.db.rollback()                                         # end the read transaction before the locking one
+        self.db.rollback()                                         # the transaction ends and the connection goes back to the pool BEFORE the mail server is called (K2-2 R3, 7)
+        sent = self._send_letter(letter, my_id)                    # no transaction, no connection, no lock while SMTP works (up to the 15 s time-out per step)
+        # a new short transaction records the outcome:
         self._lock_address(org_id, email)
         mine = self.db.query(Invitation).filter(Invitation.id == my_id).with_for_update().populate_existing().first()
         if mine is None or mine.status not in ("pending", "queued"):

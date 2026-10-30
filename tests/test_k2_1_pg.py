@@ -272,8 +272,10 @@ def test_f10_a_template_that_fails_gives_a_failed_status_and_a_normal_answer(cw,
         raise KeyError("StrictUndefined")
 
     monkeypatch.setattr(letters, "render_staff_invite", boom)
-    r = invite(owner, f"new-{uuid4().hex[:8]}@staff.test")
-    assert r.status_code == 200 and cw.db.query(Invitation).order_by(Invitation.created_at.desc()).first().mail_status == "failed"
+    address = f"new-{uuid4().hex[:8]}@staff.test"
+    r = invite(owner, address)
+    cw.db.expire_all()
+    assert r.status_code == 200 and cw.db.query(Invitation).filter(Invitation.email == address).one().mail_status == "failed"
 
 
 @needs_pg
