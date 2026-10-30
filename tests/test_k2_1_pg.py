@@ -1,7 +1,7 @@
 """K2-1 (access and letters) on the real application and the disposable ``a2_auth`` PostgreSQL.
 
 A1 invitation by letter only (R10, R12, S4, F10, T11), A2 no token in any answer (S3), A3 ``__Host-`` cookies and the sign-in that ends the
-browser's previous session, A4 superadmin (S1), A5 the access token dies with its session (U9, S2, invariant 4), D «Запомнить меня» (K1, K2, K4-K8,
+browser's previous session, A4 (the platform role in the cabinet; removed in K2-2, H), A5 the access token dies with its session (U9, S2, invariant 4), D «Запомнить меня» (K1, K2, K4-K8,
 invariant 11), F8 (sign-in || password set).
 """
 import json
@@ -489,7 +489,7 @@ def test_a3_a_sign_in_in_another_browser_does_not_touch_the_first_one(cw, centre
     assert a.post(f"{AUTH}/refresh", json={}).status_code == 200
 
 
-# ============================================================================================================ A4 / S1: superadmin
+# ============================================================================================================ A4 / S1: (the platform role was removed in K2-2, H: see test_k2_2_reset_pg.py::test_h1_*)
 
 
 # ============================================================================================================ A5: the access token dies with its session

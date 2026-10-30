@@ -1,4 +1,4 @@
-"""Pack A2 - hygiene: LD-19 (html.escape in the mails, no header injection, no body in a deployed log), LD-30 (superadmin on a tenant route -> explicit
+"""Pack A2 - hygiene: LD-19 (html.escape in the mails, no header injection, no body in a deployed log), LD-30 (a token without an organisation on a tenant route -> explicit
 403), LD-09 / LD-10 (dev compose without a default internal token, loopback ports; .env.example names what the service reads).  No database."""
 import logging
 import os
