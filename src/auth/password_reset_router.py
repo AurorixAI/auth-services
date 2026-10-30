@@ -15,6 +15,7 @@ from . import turnstile
 from .dependencies import require_org_member
 from .platform_errors import PlatformError
 from .platform_validation import EMAIL_RE
+from .router import refuse_cross_site
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +52,12 @@ def forgot_password(request: Request, background: BackgroundTasks, body: dict = 
 @router.post("/org/members/{member_id}/password-link")
 def send_password_link(
     member_id: str,
+    request: Request,
     background: BackgroundTasks,
     user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
     """«Сотрудники → ⋯ → Отправить ссылку для смены пароля»: владелец → админ / преподаватель своего центра, админ → преподаватель; всё остальное — один и тот же 404.
-    Письмо уходит СОТРУДНИКУ (называет отправителя); пароль не меняется, пока сотрудник сам не задаст новый."""
+    Письмо уходит СОТРУДНИКУ (называет отправителя); пароль не меняется, пока сотрудник сам не задаст новый. Чужой Origin — 403 (K2-2 R3, 4)."""
+    refuse_cross_site(request)
     return reset.send_to_member(db, org_id=user["org_id"], actor=user, member_id=member_id, background=background)

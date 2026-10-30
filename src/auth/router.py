@@ -581,6 +581,12 @@ def _is_cross_site_request(request: Request) -> bool:
     return False
 
 
+def refuse_cross_site(request: Request) -> None:
+    """403 for a request that another site started (the same text as the sign-out): the check of every mutating route of K2-2 that works on the cookies."""
+    if _is_cross_site_request(request):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Запрос выхода должен приходить с сайта ALGO")
+
+
 def _access_subject(
     request: Request, credentials: Optional[HTTPAuthorizationCredentials]
 ) -> tuple:
@@ -644,8 +650,7 @@ def logout(
       in a small (<= 4 KB) JSON body (the cookie wins when both are present). A request with an access token only
       revokes the session that token names (``sid``, K2-1 A5): the token stops working at once.
     """
-    if _is_cross_site_request(request):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Запрос выхода должен приходить с сайта ALGO")
+    refuse_cross_site(request)
 
     refresh = request.cookies.get(REFRESH_COOKIE_NAME) or body_refresh
     has_credential = bool(

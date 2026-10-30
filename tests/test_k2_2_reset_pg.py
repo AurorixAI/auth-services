@@ -1113,3 +1113,25 @@ def test_lock_order_the_console_block_and_the_removal_of_an_employee_wait_for_th
     mid = member_of(cw, other).id
     r = _against_a_holder_of_the_user_lock(cw, other.id, lambda db: AuthService(db).remove_member(centre.org.id, mid, actor_id=str(centre.owner.id)))
     assert r == {"holder": "ok", "job": "ok"}, r
+
+
+# ============================================================================================================ CSRF of the new mutating routes (K2-2 R3, 4)
+
+
+@needs_pg
+def test_csrf_the_new_routes_of_the_cabinet_refuse_a_request_that_another_site_started(cw, centre):
+    from src.core.config import get_settings
+
+    own = get_settings().cors_origins[0]
+    owner = signed_in(cw, centre.owner)
+    mid = member_of(cw, centre.teacher).id
+    calls = (
+        (f"{AUTH}/org/members/{mid}/password-link", None),
+        (f"{AUTH}/org/members/{mid}/email-change", {"email": f"csrf-{uuid4().hex[:6]}@staff.test"}),
+    )
+    for url, body in calls:
+        for headers in ({"Origin": "https://evil.example"}, {"Sec-Fetch-Site": "cross-site"}, {"Origin": own, "Sec-Fetch-Site": "cross-site"}):
+            r = owner.post(url, json=body, headers=headers)
+            assert r.status_code == 403 and r.json()["detail"] == "Запрос выхода должен приходить с сайта ALGO", (url, headers, r.text)
+        assert owner.post(url, json=body, headers={"Origin": own}).status_code == 200, url          # the own Origin passes
+    assert len(letters_to(cw.outbox, centre.teacher.email)) == 2                                    # nothing went for the refused ones: one link, one notice
