@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+TURNSTILE_ACTION = "forgot_password"  # the same string the widget of the page is rendered with (``forgot-password-page.tsx``)
 CAPTCHA_TEXT = "Не удалось пройти проверку. Обновите страницу и попробуйте ещё раз."
 FORGOT_IP_BURST = "30/minute"  # a generous guard per client address (the hourly budgets are counted after the check)
 FORGOT_RATE_ENDPOINT = "auth-password-forgot"
@@ -39,7 +40,7 @@ def forgot_password(request: Request, background: BackgroundTasks, body: dict = 
     Проверка Turnstile (одинаково для любой почты) → счётчики: ящик 3/ч, адрес клиента 10/ч, домен 30/ч (при превышении — тот же ответ, письма нет)."""
     if not isinstance(body, dict):
         raise PlatformError(422, "Некорректный запрос", "invalid_body")
-    if not turnstile.verify(body.get("turnstile_token"), client_ip(request)):
+    if not turnstile.verify(body.get("turnstile_token"), client_ip(request), action=TURNSTILE_ACTION):
         raise PlatformError(400, CAPTCHA_TEXT, "captcha_failed")
     email = reset.normalize(body.get("email"))
     shaped = bool(email) and len(email) <= 255 and bool(EMAIL_RE.match(email)) and ".." not in email

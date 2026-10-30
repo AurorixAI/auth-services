@@ -339,7 +339,7 @@ def test_ts1_the_server_asks_cloudflare_the_same_way_for_every_address(cw, centr
 
     def fake(secret_key, token, remote_ip=None):
         asked.append(token)
-        return {"success": token == "good", "hostname": "app.test"}
+        return {"success": token == "good", "hostname": "app.test", "action": "forgot_password"}
 
     monkeypatch.setattr(turnstile, "_siteverify", fake)
     for address in (centre.teacher.email, "nobody@staff.test"):
@@ -1135,3 +1135,50 @@ def test_csrf_the_new_routes_of_the_cabinet_refuse_a_request_that_another_site_s
             assert r.status_code == 403 and r.json()["detail"] == "Запрос выхода должен приходить с сайта ALGO", (url, headers, r.text)
         assert owner.post(url, json=body, headers={"Origin": own}).status_code == 200, url          # the own Origin passes
     assert len(letters_to(cw.outbox, centre.teacher.email)) == 2                                    # nothing went for the refused ones: one link, one notice
+
+
+# ============================================================================================================ Turnstile: outage and action (K2-2 R3, 5)
+
+
+@needs_pg
+def test_ts1_r3_the_action_of_the_token_must_be_the_one_of_this_form(cw, centre, monkeypatch):
+    monkeypatch.setenv("TURNSTILE_SECRET_KEY", "secret")
+    answers = {"forgot": {"success": True, "hostname": "app.test", "action": "forgot_password"}, "landing": {"success": True, "hostname": "app.test", "action": "demo_request"},
+               "none": {"success": True, "hostname": "app.test"}, "testing": {"success": True, "hostname": "example.com", "metadata": {"result_with_testing_key": True}}}
+    monkeypatch.setattr(turnstile, "_siteverify", lambda secret_key, token, remote_ip=None: answers[token])
+    results = {name: forgot(anonymous(cw), centre.teacher.email, token=name).status_code for name in answers}
+    assert results == {"forgot": 200, "landing": 400, "none": 400, "testing": 200}, results   # a token of the landing's form (or without an action) is refused; the Cloudflare TEST key has no action
+    assert turnstile.verify("landing", None) is True                                          # a caller that names no action (the demo form) is as before
+
+
+@needs_pg
+def test_ts1_r3_only_a_network_failure_lets_a_request_through_and_the_log_speaks_once_in_ten_minutes(cw, centre, monkeypatch, caplog):
+    import httpx
+
+    monkeypatch.setenv("TURNSTILE_SECRET_KEY", "secret")
+    monkeypatch.setattr(turnstile, "_outage_state", {"last_log": None, "skipped": 0})
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(turnstile.time, "monotonic", lambda: clock["now"])
+    caplog.set_level(logging.WARNING)
+
+    def down(secret_key, token, remote_ip=None):
+        raise httpx.ConnectError("no network")
+
+    monkeypatch.setattr(turnstile, "_siteverify", down)
+    assert [turnstile.verify("t", None, action="forgot_password") for _ in range(5)] == [True] * 5
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR and "unreachable" in r.getMessage()]
+    assert len(errors) == 1 and "1 unchecked" in errors[0].getMessage()                       # the first line at once, the other four are only counted
+    clock["now"] += 601
+    assert turnstile.verify("t", None) is True
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR and "unreachable" in r.getMessage()]
+    assert len(errors) == 2 and "5 unchecked" in errors[1].getMessage()                       # ... and the next line (10 minutes later) carries the number
+    # an answer with an error status, a broken body: refused, not let through
+    request = httpx.Request("POST", "https://x.invalid")
+    for failure in (httpx.HTTPStatusError("500", request=request, response=httpx.Response(500, request=request)), ValueError("not json")):
+        def broken(secret_key, token, remote_ip=None, failure=failure):
+            raise failure
+
+        monkeypatch.setattr(turnstile, "_siteverify", broken)
+        assert turnstile.verify("t", None, action="forgot_password") is False
+    r = forgot(anonymous(cw), centre.teacher.email, token="x")
+    assert r.status_code == 400                                                                # the page of «Забыли пароль» too
