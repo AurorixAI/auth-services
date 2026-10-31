@@ -51,10 +51,11 @@ def all_letters(**over):
 
 def test_there_are_ten_letters_and_each_has_html_and_text():
     rendered = all_letters()
-    assert [r.letter for r in rendered] == list(render.LETTERS) == [
+    assert [r.letter for r in rendered] == list(render.LETTERS)[:10] == [
         "application_received", "welcome", "application_declined", "new_application", "password_reset", "staff_invite",
         "password_changed", "email_change_confirm", "email_change_notice", "email_changed",
     ]
+    assert list(render.LETTERS)[10:] == ["support_new", "support_author_reply", "support_reply"]       # K4a: their own tests are in test_k4a_support_unit.py (the answer to the author has no Reply-To)
     for r in rendered:
         assert r.subject and "\n" not in r.subject
         assert r.html.lstrip().lower().startswith("<!doctype html") and "</html>" in r.html
