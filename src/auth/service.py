@@ -593,7 +593,7 @@ class AuthService:
         user.login_count = (user.login_count or 0) + 1
         from . import password_links  # late: it pulls in the application package (a cycle at import time)
 
-        password_links.revoke_live_resets(self.db, user.id)  # he remembered the password: the «Забыли пароль» links still alive are over (K2-2, B)
+        password_links.revoke_live_resets(self.db, user.id, self_requested_only=True)  # he remembered the password: the «Забыли пароль» links HE asked for are over (K2-2, B); a link sent by the leadership lives on
 
         tokens = self._create_tokens(user, remember=bool(getattr(request, "remember_me", False)))
         self.db.commit()

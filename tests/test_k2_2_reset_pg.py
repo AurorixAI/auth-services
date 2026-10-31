@@ -1255,3 +1255,57 @@ def test_the_pages_of_a_token_are_not_cached_by_a_browser_or_a_proxy(cw, centre)
     for url in (f"{LINKS}/{reset_token}", f"{AUTH}/invite/{code}", f"{AUTH}/email-change/{change_token}"):
         r = c.get(url)
         assert r.status_code == 200 and r.headers["cache-control"] == "no-store", (url, dict(r.headers))
+
+
+# ============================================================================================================ the walk of stage: a sign-in does not cancel the request of the leadership
+
+
+@needs_pg
+def test_c_a_link_sent_by_the_leadership_survives_an_ordinary_sign_in_of_the_employee_and_still_sets_the_password(cw, centre):
+    owner = signed_in(cw, centre.owner)
+    assert owner.post(f"{AUTH}/org/members/{member_of(cw, centre.teacher).id}/password-link").status_code == 200
+    token = link_token(cw, centre.teacher.email)
+    assert login(cw, centre.teacher)[1].status_code == 200                              # the teacher signs in as usual in the morning (the role chosen on the page does not matter: it is the same sign-in)
+    assert len(live_resets(cw, centre.teacher)) == 1 and live_resets(cw, centre.teacher)[0].created_by is not None
+    page = anonymous(cw).get(f"{LINKS}/{token}")
+    assert page.status_code == 200 and page.json()["purpose"] == "reset"                # then he opens the letter: the link is alive
+    assert set_by_link(anonymous(cw), token).status_code == 200
+    assert login(cw, centre.teacher, password=NEW_PASSWORD)[1].status_code == 200
+
+
+@needs_pg
+def test_b_a_link_he_asked_for_himself_is_cancelled_by_his_sign_in_with_the_old_password(cw, centre):
+    forgot(anonymous(cw), centre.teacher.email)
+    token = link_token(cw, centre.teacher.email)
+    assert live_resets(cw, centre.teacher)[0].created_by is None
+    assert login(cw, centre.teacher)[1].status_code == 200
+    assert not live_resets(cw, centre.teacher)
+    gone = anonymous(cw).get(f"{LINKS}/{token}")
+    assert gone.status_code == 410 and gone.json()["code"] == "link_revoked"
+
+
+@needs_pg
+@pytest.mark.parametrize("how", ["settings", "newer link", "e-mail changed", "another link sets the password"])
+def test_t_every_way_a_live_link_dies_answers_link_revoked_so_the_page_may_say_so(cw, centre, how):
+    """The texts of a dead link («после этого письма пароль уже меняли, вы вошли… или пришла более новая ссылка») rest on this: the API says ``revoked`` in all of them."""
+    from tests.test_k2_2_email_pg import confirm_token, new_address
+
+    owner = signed_in(cw, centre.owner)
+    owner.post(f"{AUTH}/org/members/{member_of(cw, centre.teacher).id}/password-link")
+    token = link_token(cw, centre.teacher.email)
+    if how == "settings":
+        client, _ = login(cw, centre.teacher)
+        assert client.post(f"{AUTH}/change-password", json={"old_password": PASSWORD, "new_password": NEW_PASSWORD}).status_code == 200
+    elif how == "newer link":
+        forgot(anonymous(cw), centre.teacher.email)
+    elif how == "e-mail changed":
+        new = new_address()
+        owner.post(f"{AUTH}/org/members/{member_of(cw, centre.teacher).id}/email-change", json={"email": new})
+        assert anonymous(cw).post(f"{AUTH}/email-change/{confirm_token(cw, new)}").status_code == 200
+    else:
+        welcome, _ = links.issue(cw.db, centre.teacher.id, "centre_invite")           # a welcome link issued later revokes every live link; setting the password by it ends the rest
+        cw.db.commit()
+        assert set_by_link(anonymous(cw), welcome).status_code == 200
+    r = anonymous(cw).get(f"{LINKS}/{token}")
+    assert r.status_code == 410 and r.json()["code"] == "link_revoked", (how, r.text)
+    assert r.json()["purpose"] == "reset"

@@ -92,12 +92,15 @@ def owner_of(db: Session, raw: str):
     return db.query(PasswordLink.user_id).filter(PasswordLink.token_hash == hash_token(raw)).scalar()
 
 
-def revoke_live_resets(db: Session, user_id) -> int:
-    """A sign-in with the password, or a password changed in the settings, ends the live ``reset`` links of the user (he remembered it, or set a new one).
+def revoke_live_resets(db: Session, user_id, *, self_requested_only: bool = False) -> int:
+    """A new password of the person (settings, a link, an invitation) ends every live ``reset`` link of his. A plain SIGN-IN (``self_requested_only=True``) ends only
+    the links he asked for himself on the page «Забыли пароль» (``created_by IS NULL``: he remembered the password): a link that the leadership of the centre
+    sent (``created_by`` is set) is a request to change the password and lives on until it expires, is replaced, or the password / the e-mail changes.
     Rows that another transaction holds (a POST that is consuming one right now) are skipped: that POST ends them itself. Not committed."""
-    ids = [
-        row_id for (row_id,) in _live(db, user_id, "reset").with_entities(PasswordLink.id).with_for_update(skip_locked=True).all()
-    ]
+    query = _live(db, user_id, "reset")
+    if self_requested_only:
+        query = query.filter(PasswordLink.created_by.is_(None))
+    ids = [row_id for (row_id,) in query.with_entities(PasswordLink.id).with_for_update(skip_locked=True).all()]
     if not ids:
         return 0
     return db.query(PasswordLink).filter(PasswordLink.id.in_(ids)).update({"revoked_at": utcnow()}, synchronize_session=False)
