@@ -99,10 +99,13 @@ def create_substitution_requests(request: CreateSubstitutionRequest, user: dict 
 
 @router.get("/org/substitutions/mine", response_model=MineOut)
 def my_substitution_requests(
-    status: Literal["pending", "all"] = Query("all"), user: dict = Depends(_member), db: Session = Depends(get_db)
+    status: Literal["pending", "all"] = Query("all"),
+    past_days: int = Query(0, ge=0, le=14, description="`assignedToMe` also holds the lessons of the last N days (0 = from today, as before); exam-service asks for 7"),
+    user: dict = Depends(_member),
+    db: Session = Depends(get_db),
 ):
     """Мои запросы и уроки, где меня назначили заменяющим.  W1 round 2: only a teacher leads lessons, so for an owner / admin everything is empty (they ask nothing and are nobody's substitute)."""
-    return _subs(db).mine(user["org_id"], user["user_id"], status)
+    return _subs(db).mine(user["org_id"], user["user_id"], status, past_days)
 
 
 @router.get("/org/substitutions/colleagues", response_model=list[ColleagueOut])

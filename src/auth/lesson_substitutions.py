@@ -596,7 +596,7 @@ class SubstitutionsBase:
         return {"dateFrom": d_from.isoformat(), "dateTo": d_to.isoformat(), "lessons": out}
 
     # ====================================================================================================== mine
-    def mine(self, org_id: Any, actor_id: Any, status: str) -> Dict[str, Any]:
+    def mine(self, org_id: Any, actor_id: Any, status: str, past_days: int = 0) -> Dict[str, Any]:
         actor = _uuid(actor_id)
         q = self.db.query(Req).filter(Req.org_id == org_id, Req.requester_id == actor)
         if status == "pending":
@@ -609,7 +609,7 @@ class SubstitutionsBase:
         for r in reqs:
             self.db.refresh(r)
         pending_total = sum(1 for r in reqs if r.status == PENDING)
-        return {"items": self.items(reqs, actor), "pendingTotal": pending_total, "assignedToMe": self._assigned_to(org_id, actor), "clearedForMe": self._cleared_for(org_id, actor)}
+        return {"items": self.items(reqs, actor), "pendingTotal": pending_total, "assignedToMe": self._assigned_to(org_id, actor, past_days), "clearedForMe": self._cleared_for(org_id, actor)}
 
     def _cleared_for(self, org_id: Any, actor: UUID) -> List[Dict[str, Any]]:
         """W1 S22 (D30): the lessons where the actor WAS the substitute and the assignment was taken off in the last 14 days - who took it off and when (the substitute used to just lose it)."""
@@ -629,13 +629,14 @@ class SubstitutionsBase:
                         "clearedBy": self._author(ctx, asg.cancelled_by) if asg.cancelled_by else None})
         return out
 
-    def _assigned_to(self, org_id: Any, actor: UUID) -> List[Dict[str, Any]]:
+    def _assigned_to(self, org_id: Any, actor: UUID, past_days: int = 0) -> List[Dict[str, Any]]:
+        """The lessons where the actor is the substitute: from today (``past_days`` = 0, the «Замены» screens) or from ``today - past_days`` (exam-service: the exam of a lesson he led yesterday is still his)."""
         today = bc.business_today()
         rows = (
             self.db.query(LessonTeacherAssignment, Group)
             .join(Group, Group.id == LessonTeacherAssignment.group_id)
             .filter(LessonTeacherAssignment.org_id == org_id, LessonTeacherAssignment.teacher_id == actor, LessonTeacherAssignment.cancelled_at.is_(None),
-                    LessonTeacherAssignment.lesson_date >= today.isoformat(),
+                    LessonTeacherAssignment.lesson_date >= (today - timedelta(days=past_days)).isoformat(),
                     LessonTeacherAssignment.lesson_date <= (today + timedelta(days=ASSIGNED_AHEAD_DAYS)).isoformat(), Group.status == "active")
             .order_by(LessonTeacherAssignment.lesson_date).all()
         )

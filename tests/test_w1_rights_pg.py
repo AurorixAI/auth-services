@@ -145,6 +145,59 @@ def test_s13_an_owner_or_admin_leads_no_lesson_and_reads_an_empty_mine(w):
     assert make_client(w, user=w.foreign_admin, org="other", org_role="admin", role="admin").get(f"{SUB}/mine").json()["assignedToMe"] == []
 
 
+# ===================================================================================================== WB P1: /mine?past_days
+def _d_substitutes_monday(w):
+    """The administrator puts D on the lesson of Monday 2026-10-26 (while it is still ahead: Wednesday 21.10); A is the teacher of the group, B teaches another one."""
+    put = client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher", json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "teacherId": str(w.D.id), "reason": "Болезнь"})
+    assert put.status_code == 200, put.text
+
+
+def _lessons(w, who, **params):
+    r = client(w, who).get(f"{SUB}/mine", params=params)
+    assert r.status_code == 200, r.text
+    return [(a["groupId"], a["lessonId"], a["lessonDate"]) for a in r.json()["assignedToMe"]]
+
+
+def test_wb_p1_mine_with_past_days_lists_yesterdays_approved_substitution(w, clock):
+    """exam-service asks ``mine?past_days=7``: the substitute still sees the exam of the lesson he led yesterday (what ``lesson-access`` allows for 7 days)."""
+    _d_substitutes_monday(w)
+    mine = (str(w.G1.id), "lesson-l1", "2026-10-26")
+    assert _lessons(w, "D") == [mine]                                         # ahead: as always
+    clock.set("2026-10-27 14:00")                                             # Tuesday: the lesson was yesterday
+    assert _lessons(w, "D") == []                                             # no parameter - the answer the Замены screens always had (from today)
+    assert _lessons(w, "D", past_days=0) == []
+    assert _lessons(w, "D", past_days=1) == [mine]
+    assert _lessons(w, "D", past_days=7) == [mine]
+    full = client(w, "D").get(f"{SUB}/mine", params={"past_days": 7}).json()["assignedToMe"][0]
+    assert set(full) == {"groupId", "groupName", "lessonId", "lessonDate", "startTime", "endTime", "replacing", "assignedAt"}   # the same row, nothing new
+    clock.set("2026-11-03 14:00")                                             # 8 days later: outside 7, inside 14
+    assert _lessons(w, "D", past_days=7) == []
+    assert _lessons(w, "D", past_days=14) == [mine]
+
+
+def test_wb_p1_mine_without_the_parameter_is_the_old_answer(w, clock):
+    _d_substitutes_monday(w)
+    clock.set("2026-10-26 09:00")                                             # the day of the lesson: today is "from today"
+    plain = client(w, "D").get(f"{SUB}/mine").json()
+    assert plain == client(w, "D").get(f"{SUB}/mine", params={"past_days": 0}).json()
+    assert [a["lessonDate"] for a in plain["assignedToMe"]] == ["2026-10-26"]
+    assert set(plain) == {"items", "pendingTotal", "assignedToMe", "clearedForMe"}
+
+
+def test_wb_p1_past_days_shows_nobody_elses_substitution(w, clock):
+    _d_substitutes_monday(w)
+    clock.set("2026-10-27 14:00")
+    for who in ("A", "B", "admin", "owner"):                                  # the group's teacher, another teacher, the managers: not the substitute
+        assert _lessons(w, who, past_days=7) == [], who
+    assert make_client(w, user=w.foreign_admin, org="other", org_role="admin", role="admin").get(f"{SUB}/mine", params={"past_days": 7}).json()["assignedToMe"] == []
+
+
+@pytest.mark.parametrize("bad", [15, 100, -1, "x"])
+def test_wb_p1_past_days_is_0_to_14(w, bad):
+    assert client(w, "D").get(f"{SUB}/mine", params={"past_days": bad}).status_code == 422
+    assert client(w, "D").get(f"{SUB}/mine", params={"past_days": 14}).status_code == 200
+
+
 # ===================================================================================================== F5: «Ставка не задана» in every window
 def test_rate_missing_is_a_yes_no_for_the_admin_in_both_assignment_windows(w):
     """D3: the lesson sheet's candidates and the decision's candidates both say who has no rate for the type of the group in the month (D has none in D2); rates stay the owner's."""

@@ -3003,6 +3003,20 @@
               "title": "Status",
               "type": "string"
             }
+          },
+          {
+            "description": "`assignedToMe` also holds the lessons of the last N days (0 = from today, as before); exam-service asks for 7",
+            "in": "query",
+            "name": "past_days",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "`assignedToMe` also holds the lessons of the last N days (0 = from today, as before); exam-service asks for 7",
+              "maximum": 14,
+              "minimum": 0,
+              "title": "Past Days",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
