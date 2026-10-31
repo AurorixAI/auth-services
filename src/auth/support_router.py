@@ -49,11 +49,19 @@ def list_tickets(user: dict = Depends(require_org_teacher), db: Session = Depend
     return {"items": svc.list_own(db, user)}
 
 
+@router.get("/unread")
+def unread(user: dict = Depends(require_org_teacher), db: Session = Depends(get_db)):
+    """The badge of «Мои обращения»: how many of MY tickets have an answer of the team that I have not opened yet.  One light query; the page asks at sign-in and every two minutes."""
+    return {"count": svc.unread_count(db, user)}
+
+
 @router.get("/tickets/{ticket_id}")
 def get_ticket(ticket_id: str, user: dict = Depends(require_org_teacher), db: Session = Depends(get_db)):
     ticket = svc.own_ticket(db, user, ticket_id)
     svc.sweep_waiting(db, ticket_id=ticket.id)
     db.refresh(ticket)
+    svc.mark_seen(db, ticket)  # opening the card is the look
+    db.commit()
     return svc.author_card(db, ticket)
 
 

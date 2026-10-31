@@ -46,6 +46,11 @@ class Form:
             self.fail(key, f"{label}: нужен текст")
             return None
         value = strip_format_controls(value)
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:  # a lone surrogate (JSON «\ud800»): it cannot be written to the database - 422, not 500
+            self.fail(key, "Недопустимые символы в тексте")
+            return None
         if strip:
             value = value.strip()
         if _CONTROL.search(value) or (not multiline and re.search(r"[\r\n\t]", value)):

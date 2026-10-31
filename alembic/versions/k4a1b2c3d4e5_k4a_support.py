@@ -44,9 +44,14 @@ def upgrade() -> None:
             last_staff_reply_at TIMESTAMP,
             resolved_at TIMESTAMP,
             resolved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+            resolved_kind VARCHAR(10),
+            author_seen_at TIMESTAMP,
+            team_mail_at TIMESTAMP,
+            author_mail_at TIMESTAMP,
             CONSTRAINT ck_support_tickets_status CHECK (status IN ('new', 'in_progress', 'waiting', 'resolved')),
+            CONSTRAINT ck_support_tickets_resolved_kind CHECK (resolved_kind IS NULL OR resolved_kind IN ('manual', 'auto')),
             CONSTRAINT ck_support_tickets_author_role CHECK (author_role IN ('owner', 'admin', 'teacher')),
-            CONSTRAINT ck_support_tickets_mail_status CHECK (team_mail_status IS NULL OR team_mail_status IN ('pending', 'sent', 'failed', 'skipped'))
+            CONSTRAINT ck_support_tickets_mail_status CHECK (team_mail_status IS NULL OR team_mail_status IN ('pending', 'sent', 'failed', 'skipped', 'throttled'))
         )
         """
     )
@@ -68,7 +73,7 @@ def upgrade() -> None:
             mail_status VARCHAR(10),
             mail_status_at TIMESTAMP,
             CONSTRAINT ck_support_messages_author_kind CHECK (author_kind IN ('user', 'staff')),
-            CONSTRAINT ck_support_messages_mail_status CHECK (mail_status IS NULL OR mail_status IN ('pending', 'sent', 'failed', 'skipped'))
+            CONSTRAINT ck_support_messages_mail_status CHECK (mail_status IS NULL OR mail_status IN ('pending', 'sent', 'failed', 'skipped', 'throttled'))
         )
         """
     )

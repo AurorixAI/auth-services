@@ -28,7 +28,7 @@ from src.models.base import Base
 
 SUPPORT_STATUSES = ("new", "in_progress", "waiting", "resolved")
 SUPPORT_AUTHOR_KINDS = ("user", "staff")
-SUPPORT_MAIL_STATUSES = ("pending", "sent", "failed", "skipped")
+SUPPORT_MAIL_STATUSES = ("pending", "sent", "failed", "skipped", "throttled")  # throttled: not sent on purpose - this ticket had a letter of this kind recently
 SUPPORT_MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024
 TICKET_NUMBER_SEQUENCE = "support_ticket_number_seq"
 
@@ -54,12 +54,17 @@ class SupportTicket(Base):
     last_author_reply_at = Column(DateTime)
     last_staff_reply_at = Column(DateTime)
     resolved_at = Column(DateTime)
-    resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))  # NULL + resolved_at = closed by the clock
+    resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))  # SET NULL when the employee of the console is deleted: «who» is lost, «how» is not
+    resolved_kind = Column(String(10))  # manual (a person of the team) / auto (14 days without an answer); NULL while not resolved
+    author_seen_at = Column(DateTime)  # the author opened the card at this moment: an answer of the team newer than this is «unread» (the badge of the menu)
+    team_mail_at = Column(DateTime)  # the last letter to the team about this ticket (at most one an hour)
+    author_mail_at = Column(DateTime)  # the last letter «есть ответ» to the author about this ticket (at most one in 30 minutes)
 
     __table_args__ = (
         CheckConstraint("status IN ('new', 'in_progress', 'waiting', 'resolved')", name="ck_support_tickets_status"),
         CheckConstraint("author_role IN ('owner', 'admin', 'teacher')", name="ck_support_tickets_author_role"),
-        CheckConstraint("team_mail_status IS NULL OR team_mail_status IN ('pending', 'sent', 'failed', 'skipped')", name="ck_support_tickets_mail_status"),
+        CheckConstraint("team_mail_status IS NULL OR team_mail_status IN ('pending', 'sent', 'failed', 'skipped', 'throttled')", name="ck_support_tickets_mail_status"),
+        CheckConstraint("resolved_kind IS NULL OR resolved_kind IN ('manual', 'auto')", name="ck_support_tickets_resolved_kind"),
         Index("ix_support_tickets_author", "author_user_id", "created_at"),
         Index("ix_support_tickets_org", "org_id", "created_at"),
         Index("ix_support_tickets_status", "status", "updated_at"),
@@ -81,7 +86,7 @@ class SupportMessage(Base):
 
     __table_args__ = (
         CheckConstraint("author_kind IN ('user', 'staff')", name="ck_support_messages_author_kind"),
-        CheckConstraint("mail_status IS NULL OR mail_status IN ('pending', 'sent', 'failed', 'skipped')", name="ck_support_messages_mail_status"),
+        CheckConstraint("mail_status IS NULL OR mail_status IN ('pending', 'sent', 'failed', 'skipped', 'throttled')", name="ck_support_messages_mail_status"),
         Index("ix_support_messages_ticket", "ticket_id", "created_at"),
     )
 

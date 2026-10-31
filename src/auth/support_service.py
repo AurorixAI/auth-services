@@ -62,6 +62,7 @@ def sweep_waiting(db: Session, *, author_user_id=None, ticket_id=None, commit: b
         ticket.status = "resolved"
         ticket.resolved_at = ticket.updated_at + timedelta(days=rules.WAITING_AUTO_RESOLVE_DAYS)
         ticket.resolved_by = None
+        ticket.resolved_kind = "auto"
         ticket.updated_at = ticket.resolved_at
         closed += 1
     if closed and commit:
@@ -159,6 +160,24 @@ def author_item(t: SupportTicket) -> dict:
     }
 
 
+def mark_seen(db: Session, ticket: SupportTicket) -> None:
+    """The author opened the card: every answer of the team up to now is read (the badge of «Мои обращения»)."""
+    ticket.author_seen_at = now()
+
+
+def unread_count(db: Session, user: dict) -> int:
+    """Tickets of this person whose last answer of the team is newer than the last look of the author (one light query)."""
+    author_id = UUID(str(user["user_id"]))
+    return (
+        db.query(func.count(SupportTicket.id))
+        .filter(
+            SupportTicket.author_user_id == author_id, SupportTicket.last_staff_reply_at.isnot(None),
+            or_(SupportTicket.author_seen_at.is_(None), SupportTicket.last_staff_reply_at > SupportTicket.author_seen_at),
+        )
+        .scalar()
+    )
+
+
 def list_own(db: Session, user: dict) -> List[dict]:
     author_id = UUID(str(user["user_id"]))
     sweep_waiting(db, author_user_id=author_id)
@@ -190,6 +209,9 @@ def add_author_reply(db: Session, user: dict, ticket_id: str, body: Any) -> tupl
     form = Form(body)
     text_ = form.text("text", "Ответ", min_len=rules.REPLY_MIN, max_len=rules.REPLY_MAX, multiline=True)
     form.done()
+    author_id, org_id = UUID(str(user["user_id"])), UUID(str(user["org_id"]))
+    _advisory(db, f"support:user:{author_id}")  # the same order as in create_ticket: the person, then the centre, then the row of the ticket
+    _advisory(db, f"support:org:{org_id}")
     ticket = own_ticket(db, user, ticket_id, lock=True)
     sweep_waiting(db, ticket_id=ticket.id, commit=False)  # inside this transaction: the lock of the ticket is kept until the reply is written
     db.refresh(ticket)
@@ -204,13 +226,21 @@ def add_author_reply(db: Session, user: dict, ticket_id: str, body: Any) -> tupl
     )
     if same is not None:  # the double click: the same words a moment ago
         return ticket, same, False
-    recent = [t for (t,) in db.query(SupportMessage.created_at).filter(SupportMessage.ticket_id == ticket.id, SupportMessage.author_kind == "user", SupportMessage.created_at > moment - timedelta(days=1))]
-    if len(recent) >= rules.AUTHOR_REPLIES_PER_TICKET_DAY:
-        raise _too_many(recent, rules.TOO_MANY_REPLIES_TEXT)
+    since = moment - timedelta(days=1)
+    mine = db.query(SupportMessage.created_at, SupportMessage.ticket_id).filter(SupportMessage.author_kind == "user", SupportMessage.author_user_id == author_id, SupportMessage.created_at > since).all()
+    on_ticket = [t for t, tid in mine if tid == ticket.id]
+    if len(on_ticket) >= rules.AUTHOR_REPLIES_PER_TICKET_DAY:
+        raise _too_many(on_ticket, rules.TOO_MANY_REPLIES_TEXT)
+    if len(mine) >= rules.AUTHOR_REPLIES_PER_AUTHOR_DAY:
+        raise _too_many([t for t, _ in mine], rules.TOO_MANY_REPLIES_TEXT)
+    centre = [t for (t,) in db.query(SupportMessage.created_at).join(SupportTicket, SupportTicket.id == SupportMessage.ticket_id)
+              .filter(SupportMessage.author_kind == "user", SupportTicket.org_id == org_id, SupportMessage.created_at > since)]
+    if len(centre) >= rules.AUTHOR_REPLIES_PER_ORG_DAY:
+        raise _too_many(centre, rules.TOO_MANY_REPLIES_TEXT)
     message = SupportMessage(ticket_id=ticket.id, author_kind="user", author_user_id=UUID(str(user["user_id"])), text=text_, created_at=moment, mail_status="pending")
     db.add(message)
     if ticket.status == "resolved":      # opened again by the author: the team sees it as new
-        ticket.status, ticket.resolved_at, ticket.resolved_by = "new", None, None
+        ticket.status, ticket.resolved_at, ticket.resolved_by, ticket.resolved_kind = "new", None, None, None
     elif ticket.status == "waiting":
         ticket.status = "in_progress"
     ticket.last_author_reply_at = ticket.updated_at = moment
@@ -229,10 +259,19 @@ def add_attachment(db: Session, user: dict, ticket: SupportTicket, data: bytes) 
     kind = rules.sniff_image(data)
     if kind is None:
         raise PlatformError(415, rules.FILE_TYPE_TEXT, "file_type")
+    size = rules.image_size(data, kind)
+    if size is None:
+        raise PlatformError(415, rules.FILE_BROKEN_TEXT, "file_broken")
+    if size[0] > rules.MAX_IMAGE_SIDE or size[1] > rules.MAX_IMAGE_SIDE or size[0] * size[1] > rules.MAX_IMAGE_PIXELS:  # a small file may unpack into a gigabyte of pixels in the tab of the team
+        raise PlatformError(415, rules.FILE_PIXELS_TEXT, "file_pixels")
+    digest = hashlib.sha256(data).hexdigest()
+    same = db.query(SupportAttachment).filter(SupportAttachment.ticket_id == ticket.id, SupportAttachment.sha256 == digest).first()
+    if same is not None:  # the same file again (a repeated request, a second window): the record that is there, not a second slot
+        return same
     if db.query(func.count(SupportAttachment.id)).filter(SupportAttachment.ticket_id == ticket.id).scalar() >= rules.MAX_ATTACHMENTS:
         raise PlatformError(409, rules.FILE_LIMIT_TEXT, "too_many_files")
     row = SupportAttachment(
-        ticket_id=ticket.id, uploaded_by_user_id=UUID(str(user["user_id"])), content_type=kind, size=len(data), sha256=hashlib.sha256(data).hexdigest(), data=data, created_at=now(),
+        ticket_id=ticket.id, uploaded_by_user_id=UUID(str(user["user_id"])), content_type=kind, size=len(data), sha256=digest, data=data, created_at=now(),
     )
     db.add(row)
     db.flush()
@@ -327,7 +366,7 @@ def team_card(db: Session, t: SupportTicket, history: List[dict]) -> dict:
     item.update(
         {
             "text": t.text, "page_template": t.page_template, "browser": t.browser, "client_errors": list(t.client_errors or []),
-            "resolved_at": pc.iso(t.resolved_at), "resolved_by": ({"id": str(resolver.id), "name": full_name(resolver)} if resolver else None),
+            "resolved_at": pc.iso(t.resolved_at), "resolved_kind": t.resolved_kind, "resolved_by": ({"id": str(resolver.id), "name": full_name(resolver)} if resolver else None),
             "attachments": attachments_of(db, [t.id])[t.id],
             "messages": [
                 {
@@ -375,23 +414,27 @@ def add_staff_reply(db: Session, staff_user_id, ticket: SupportTicket, body: Any
     db.add(message)
     ticket.status = "waiting"
     ticket.last_staff_reply_at = ticket.updated_at = moment
-    ticket.resolved_at = ticket.resolved_by = None
+    ticket.resolved_at = ticket.resolved_by = ticket.resolved_kind = None
     db.flush()
     return message, True, has_access
 
 
 def set_status(db: Session, staff_user_id, ticket: SupportTicket, new_status: str) -> Optional[str]:
-    """The previous status when it changed, None when it was the same."""
+    """The previous status when it changed, None when it was the same.  «Ждём ответа» is the turn of the AUTHOR: it needs a last word of the team in the thread (409 otherwise)."""
     old = ticket.status
     if old == new_status:
         return None
+    if new_status == "waiting":
+        last = db.query(SupportMessage.author_kind).filter(SupportMessage.ticket_id == ticket.id).order_by(SupportMessage.created_at.desc(), SupportMessage.id.desc()).first()
+        if last is None or last[0] != "staff":
+            raise PlatformError(409, rules.REPLY_FIRST_TEXT, "reply_first")
     moment = now()
     ticket.status = new_status
     ticket.updated_at = moment
     if new_status == "resolved":
-        ticket.resolved_at, ticket.resolved_by = moment, staff_user_id
+        ticket.resolved_at, ticket.resolved_by, ticket.resolved_kind = moment, staff_user_id, "manual"
     else:
-        ticket.resolved_at = ticket.resolved_by = None
+        ticket.resolved_at = ticket.resolved_by = ticket.resolved_kind = None
     db.flush()
     return old
 

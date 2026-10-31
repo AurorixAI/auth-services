@@ -21,12 +21,22 @@ STAFF_REPLY_MAX = 4000
 TICKETS_PER_AUTHOR_DAY = 5
 TICKETS_PER_ORG_DAY = 20
 AUTHOR_REPLIES_PER_TICKET_DAY = 30
+AUTHOR_REPLIES_PER_AUTHOR_DAY = 30  # LESSONS 72: the limit of the one who may attack is per PERSON (and per centre), not only per ticket
+AUTHOR_REPLIES_PER_ORG_DAY = 100
 MAX_ATTACHMENTS = 3
 MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024
 WAITING_AUTO_RESOLVE_DAYS = 14
 REOPEN_DAYS = 14
-SUPPORT_MAIL_PER_DAY = 50  # letters of the support for the whole platform; the «Забыли пароль» budget (150) is separate
-SUPPORT_MAIL_KEY = "rl:support_mail_platform_day"
+# Two SEPARATE budgets (LESSONS 72): what a noisy author spends (the letters to the team) must not touch the letters «есть ответ» to the authors of other centres.
+# Both are separate from the «Забыли пароль» budget (150).
+TEAM_MAIL_PER_DAY = 30  # letters to the mailbox of the support, the whole platform
+TEAM_MAIL_KEY = "rl:support_team_mail_day"
+TEAM_MAIL_PER_TICKET_SECONDS = 3600  # one letter an hour about one ticket: the next reply of the author inside the hour sends none (the console shows it as new / in work anyway)
+AUTHOR_MAIL_PER_DAY = 50  # letters «есть ответ» to the authors, the whole platform (only the team spends it)
+AUTHOR_MAIL_KEY = "rl:support_author_mail_day"
+AUTHOR_MAIL_PER_TICKET_SECONDS = 1800
+MAX_IMAGE_SIDE = 8000
+MAX_IMAGE_PIXELS = 40_000_000
 PREVIEW_LENGTH = 300
 PENDING_MAIL_SHOWN_FAILED_AFTER_SECONDS = 120  # a letter «pending» for longer than this was lost with the process: the console shows it as failed
 DEDUP_REPLY_SECONDS = 30  # the same text from the same person in the same thread within this time is the double click, not a second reply
@@ -38,12 +48,20 @@ TOO_MANY_TEXT = "Слишком много обращений за сутки �
 TOO_MANY_REPLIES_TEXT = "Слишком много ответов за сутки. Подождите или напишите на support@algolab.me"
 FILE_TOO_BIG_TEXT = "Снимок слишком большой (макс. 2 МБ)."
 FILE_TYPE_TEXT = "Нужен снимок в формате JPEG или PNG."
+FILE_PIXELS_TEXT = "Изображение слишком большое."
+FILE_BROKEN_TEXT = "Не удалось прочитать изображение."
+TEXT_CHARS_TEXT = "Недопустимые символы в тексте"
+REPLY_FIRST_TEXT = "Сначала ответьте автору."
 FILE_LIMIT_TEXT = "К обращению можно приложить не больше 3 снимков."
 NOT_FOUND_TEXT = "Обращение не найдено"
 
 # ── the cleaning of the page and of the errors ─────────────────────────────────────────────────────
-_STATIC_SEGMENT = re.compile(r"^(?:[a-z][a-z-]{0,23}|v[0-9]{1,2})$")  # the names of pages and of API routes: lower-case words with a hyphen (a long run of letters is a token, not a word: at most 24), the version «v1»; anything else may be an id or a code
-_TOKEN_PREFIXES = frozenset({"d", "e", "invite", "diagnostic", "set-password", "confirm-email", "support-login", "reset", "by-code", "session-status"})  # the segment after these is a one-time code
+_STATIC_SEGMENT = re.compile(r"(?:[a-z][a-z-]{0,23}|v[0-9]{1,2})")  # the names of pages and of API routes: lower-case words with a hyphen (a long run of letters is a token, not a word: at most 24), the version «v1»; anything else may be an id or a code
+# The segment after these is a one-time code or a token.  The SAME words as the front (src/lib/public-pages.ts) and the masks of nginx: change together (LESSONS 77; the tests
+# tests/test_k4a_support_unit.py and algo-infrastructure/tests/test_k4a_token_masks.py compare the lists).
+_TOKEN_PREFIXES = frozenset({
+    "d", "e", "invite", "diagnostic", "set-password", "confirm-email", "password-links", "email-change", "by-code", "session-status", "support-login", "reset",
+})
 _MAX_SEGMENTS = 8
 _METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 MAX_ERRORS = 5
@@ -63,7 +81,7 @@ def page_template(value: Any) -> str:
     out: List[str] = []
     after_token_prefix = False
     for segment in segments[:_MAX_SEGMENTS]:
-        keep = _STATIC_SEGMENT.match(segment) is not None and not after_token_prefix
+        keep = _STATIC_SEGMENT.fullmatch(segment) is not None and not after_token_prefix
         out.append(segment if keep else ID)
         after_token_prefix = keep and segment in _TOKEN_PREFIXES
     return "/" + "/".join(out) if out else "/"
@@ -112,6 +130,39 @@ def sniff_image(data: bytes) -> Optional[str]:
     """JPEG / PNG by the first bytes (the name and the type the client gave are ignored); a PDF or anything else is None here."""
     kind = _sniff_any(data)
     return kind if kind in ("image/jpeg", "image/png") else None
+
+
+def image_size(data: bytes, kind: str) -> Optional[tuple]:
+    """(width, height) from the header of a PNG (IHDR) or a JPEG (the first SOFn marker), without decoding a pixel; None when the header cannot be read."""
+    import struct
+
+    try:
+        if kind == "image/png":
+            if data[12:16] != b"IHDR":
+                return None
+            return struct.unpack(">II", data[16:24])
+        i, n = 2, len(data)
+        while i + 4 <= n:
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker == 0xFF:
+                i += 1
+                continue
+            if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            length = struct.unpack(">H", data[i + 2:i + 4])[0]
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                height, width = struct.unpack(">HH", data[i + 5:i + 9])
+                return width, height
+            if marker == 0xDA:
+                return None
+            i += 2 + length
+    except (struct.error, IndexError):
+        return None
+    return None
 
 
 def download_headers(content_type: str, number: int, index: int) -> dict:
