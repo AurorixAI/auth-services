@@ -221,6 +221,13 @@ def test_open_actions_missed_lessons_start_on_the_first_of_the_previous_month(wo
     from datetime import datetime
 
     from src.auth.service import BUSINESS_TIMEZONE
+    from src.models.auth import StudentGroup, StudentGroupPeriod
+
+    # The world's student joined «60 days before the real clock» (StudentGroup and its period): on 31.10 late enough that is 01.09 after the lesson began, and the
+    # lesson of 01.09 is rightly not «missed» (no student at its start). The window under test needs a student from before both windows.
+    world.db.query(StudentGroup).update({"joined_at": datetime(2026, 8, 1)})
+    world.db.query(StudentGroupPeriod).update({"joined_at": datetime(2026, 8, 1)})
+    world.db.flush()
 
     def missed_dates(now):
         items = world.svc.get_open_attendance_actions(
