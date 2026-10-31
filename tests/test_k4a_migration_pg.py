@@ -29,6 +29,9 @@ def test_up_down_up_the_tables_the_checks_and_the_sequence(engine):
     assert version(engine) == REVISION and TABLES <= set(inspect(engine).get_table_names())
     assert {"ck_support_tickets_status", "ck_support_tickets_author_role", "ck_support_tickets_mail_status"} <= set(checks(engine, "support_tickets"))
     assert "'resolved'" in checks(engine, "support_tickets")["ck_support_tickets_status"]
+    assert "'throttled'" in checks(engine, "support_tickets")["ck_support_tickets_mail_status"] and "'throttled'" in checks(engine, "support_messages")["ck_support_messages_mail_status"]
+    assert "'manual'" in checks(engine, "support_tickets")["ck_support_tickets_resolved_kind"]
+    assert {"resolved_kind", "author_seen_at", "team_mail_at", "author_mail_at"} <= {c["name"] for c in inspect(engine).get_columns("support_tickets")}
     assert {"ck_support_messages_author_kind", "ck_support_messages_mail_status"} <= set(checks(engine, "support_messages"))
     assert {"ck_support_attachments_size", "ck_support_attachments_type"} <= set(checks(engine, "support_attachments"))
     with engine.begin() as c:                                   # the numbers run on from the sequence even for a raw insert
@@ -37,6 +40,8 @@ def test_up_down_up_the_tables_the_checks_and_the_sequence(engine):
             c.execute(text("INSERT INTO support_tickets (id, org_id, author_role, text) VALUES (gen_random_uuid(), '00000000-0000-0000-0000-0000000000a1', 'teacher', 'text of the ticket')"))
         numbers = [r[0] for r in c.execute(text("SELECT number FROM support_tickets ORDER BY number"))]
         assert numbers == [numbers[0], numbers[0] + 1]
+    with engine.begin() as c, pytest.raises(Exception):         # a kind of closing that is not one
+        c.execute(text("INSERT INTO support_tickets (id, org_id, author_role, resolved_kind, text) VALUES (gen_random_uuid(), '00000000-0000-0000-0000-0000000000a1', 'teacher', 'robot', 'x')"))
     with engine.begin() as c, pytest.raises(Exception):         # the CHECKs hold
         c.execute(text("INSERT INTO support_tickets (id, org_id, author_role, status, text) VALUES (gen_random_uuid(), '00000000-0000-0000-0000-0000000000a1', 'teacher', 'bogus', 'x')"))
     with engine.begin() as c, pytest.raises(Exception):

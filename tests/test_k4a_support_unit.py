@@ -63,10 +63,12 @@ def test_the_three_letters_are_registered_and_have_both_parts():
 def test_the_limits_are_the_numbers_of_the_spec():
     assert (rules.TEXT_MIN, rules.TEXT_MAX, rules.MAX_ATTACHMENTS, rules.MAX_ATTACHMENT_BYTES) == (10, 2000, 3, 2 * 1024 * 1024)
     assert (rules.TICKETS_PER_AUTHOR_DAY, rules.TICKETS_PER_ORG_DAY, rules.AUTHOR_REPLIES_PER_TICKET_DAY) == (5, 20, 30)
-    assert (rules.WAITING_AUTO_RESOLVE_DAYS, rules.REOPEN_DAYS, rules.SUPPORT_MAIL_PER_DAY) == (14, 14, 50)
+    assert (rules.WAITING_AUTO_RESOLVE_DAYS, rules.REOPEN_DAYS) == (14, 14)
+    assert (rules.TEAM_MAIL_PER_DAY, rules.AUTHOR_MAIL_PER_DAY, rules.TEAM_MAIL_PER_TICKET_SECONDS, rules.AUTHOR_MAIL_PER_TICKET_SECONDS) == (30, 50, 3600, 1800)
+    assert (rules.AUTHOR_REPLIES_PER_AUTHOR_DAY, rules.AUTHOR_REPLIES_PER_ORG_DAY) == (30, 100)
     from src.auth import password_reset
 
-    assert rules.SUPPORT_MAIL_KEY != "rl:forgot_platform_day" and password_reset.PER_PLATFORM_DAY == 150          # two budgets, two counters
+    assert len({rules.TEAM_MAIL_KEY, rules.AUTHOR_MAIL_KEY, "rl:forgot_platform_day"}) == 3 and password_reset.PER_PLATFORM_DAY == 150          # three budgets, three counters
 
 
 def test_the_png_and_jpeg_signatures_and_nothing_else():
@@ -84,3 +86,39 @@ def test_the_download_headers():
 
 def test_the_browser_is_cut_to_200_and_has_no_control_characters():
     assert rules.browser_of("A" * 500) == "A" * 200 and rules.browser_of(None) == "" and rules.browser_of("a\x00b\r\nc") == "abc"
+
+
+# ---- R3-4: the list of the token words is ONE list on three sides ----------------------------------------------------------------------
+# Change TOGETHER with algo-front-p154/src/lib/public-pages.ts (TOKEN_SEGMENTS) and the masks of nginx (algo-infrastructure/tests/test_k4a_token_masks.py): LESSONS 77.
+TOKEN_WORDS_MASKED_BY_NGINX = {"invite", "set-password", "confirm-email", "d", "e", "diagnostic", "password-links", "email-change", "by-code"}
+TOKEN_WORDS_OF_THE_SUPPORT_ONLY = {"session-status", "support-login", "reset"}
+
+
+def test_the_token_prefixes_are_the_agreed_list_and_each_one_masks_its_next_segment():
+    assert rules._TOKEN_PREFIXES == TOKEN_WORDS_MASKED_BY_NGINX | TOKEN_WORDS_OF_THE_SUPPORT_ONLY
+    for word in sorted(rules._TOKEN_PREFIXES):
+        assert rules.page_template(f"/{word}/onlylowercase") == f"/{word}/[id]", word
+        assert rules.page_template(f"/api/v1/auth/{word}/abc/more") == f"/api/v1/auth/{word}/[id]/more", word
+    assert rules.page_template("/api/v1/auth/password-links/abc") == "/api/v1/auth/password-links/[id]"
+    assert rules.page_template("/api/v1/auth/email-change/abc") == "/api/v1/auth/email-change/[id]"
+
+
+def test_a_segment_is_a_word_only_as_a_whole_the_trailing_newline_is_not_a_word():
+    assert rules.page_template("/teacher/word\n/x") == "/teacher/[id]/x"
+    assert rules.page_template("/teacher/word\n\n/a/b") == "/teacher/[id]/a/b"
+    assert rules.page_template("/teacher/word") == "/teacher/word"
+
+
+def test_the_size_of_a_picture_is_read_from_its_header():
+    import struct, zlib
+
+    def png(w, h):
+        body = struct.pack(">II", w, h) + b"\x08\x02\x00\x00\x00"
+        return b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + body + struct.pack(">I", zlib.crc32(b"IHDR" + body))
+
+    assert rules.image_size(png(640, 480), "image/png") == (640, 480)
+    assert rules.image_size(b"\x89PNG\r\n\x1a\n" + b"\x00" * 30, "image/png") is None
+    jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xc0\x00\x11\x08\x04\x00\x06\x00\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xd9"
+    assert rules.image_size(jpeg, "image/jpeg") == (1536, 1024)
+    assert rules.image_size(jpeg[:14], "image/jpeg") is None and rules.image_size(b"\xff\xd8", "image/jpeg") is None
+    assert rules.image_size(b"\xff\xd8" + b"\xff" * 5000, "image/jpeg") is None                       # a header made of padding does not loop forever

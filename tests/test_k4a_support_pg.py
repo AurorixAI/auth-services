@@ -6,7 +6,9 @@ The numbers of the tests are the numbers of the scenarios: ``test_s01_...`` is s
 import hashlib
 import json
 import re
+import struct
 import threading
+import zlib
 from datetime import datetime, timedelta
 from uuid import uuid4
 
@@ -26,8 +28,24 @@ from tests.test_k2_2_reset_pg import add_member, anonymous, member_of
 SUPPORT = f"{AUTH}/support"
 CONSOLE = "/api/v1/platform/support"
 SUPPORT_BOX = "hello@example.test"  # the fixture sets MAIL_REPLY_TO: the mailbox of the support is the one the replies go to
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 200
-JPG = b"\xff\xd8\xff\xe0" + b"\x00" * 200
+
+
+def png_bytes(width=8, height=8, pad=0):
+    """A PNG with a REAL header (the server reads the size from IHDR); the pixels are not there: only the header matters to it."""
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(b"\x00" * 40)) + chunk(b"IEND", b"") + b"\x00" * pad
+
+
+def jpeg_bytes(width=8, height=8, pad=0, progressive=False):
+    app0 = b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+    sof = (b"\xff\xc2" if progressive else b"\xff\xc0") + struct.pack(">HBHHB", 17, 8, height, width, 3) + b"\x01\x22\x00\x02\x11\x01\x03\x11\x01"
+    return b"\xff\xd8" + app0 + sof + b"\xff\xd9" + b"\x00" * pad
+
+
+PNG = png_bytes()
+JPG = jpeg_bytes()
 LONG = "Не открывается журнал группы: страница белая после входа, ошибка. " * 3
 
 
@@ -213,7 +231,7 @@ def test_s04_the_size_the_content_and_the_count_of_screenshots(cw, centre):
     assert attach(teacher, t, b"").status_code == 422
     assert attach(teacher, t, PNG + b"\x00" * (rules.MAX_ATTACHMENT_BYTES - len(PNG))).status_code == 200      # exactly 2 MB goes
     assert attach(teacher, t, JPG).status_code == 200 and attach(teacher, t, PNG).status_code == 200
-    fourth = attach(teacher, t, PNG)
+    fourth = attach(teacher, t, PNG + b"the fourth")                                                              # a DIFFERENT file: the same one would be the same record (R3-12)
     assert fourth.status_code == 409 and fourth.json()["code"] == "too_many_files" and "не больше 3" in fourth.json()["detail"]
     cw.db.expire_all()
     assert cw.db.query(SupportAttachment).filter(SupportAttachment.ticket_id == __import__("uuid").UUID(t)).count() == 3
@@ -292,15 +310,49 @@ def test_s05_a_refused_ticket_spends_nobody_s_budget_and_a_repeat_with_the_same_
 
 
 @needs_pg
-def test_s05_replies_of_the_author_are_limited_to_thirty_a_day_per_ticket(cw, centre):
+def test_s05_replies_of_the_author_are_limited_to_thirty_a_day_per_ticket_and_per_person(cw, centre, monkeypatch):
     teacher = signed_in(cw, centre.teacher)
     t = make(teacher)["id"]
     for i in range(30):
         assert teacher.post(f"{SUPPORT}/tickets/{t}/messages", json={"text": f"ответ {i}"}).status_code == 201
     r = teacher.post(f"{SUPPORT}/tickets/{t}/messages", json={"text": "тридцать первый"})
-    assert r.status_code == 429 and r.json()["code"] == "rate_limited"
+    assert r.status_code == 429 and r.json()["code"] == "rate_limited" and int(r.headers["Retry-After"]) > 0
     other = make(teacher)["id"]
-    assert teacher.post(f"{SUPPORT}/tickets/{other}/messages", json={"text": "в другом обращении можно"}).status_code == 201
+    assert teacher.post(f"{SUPPORT}/tickets/{other}/messages", json={"text": "в другом обращении тоже нельзя: лимит на человека"}).status_code == 429
+    advance_clock(monkeypatch, 86400 + 60)
+    assert teacher.post(f"{SUPPORT}/tickets/{other}/messages", json={"text": "через сутки можно"}).status_code == 201
+
+
+@needs_pg
+def test_s05_the_limit_of_replies_is_per_person_not_only_per_ticket(cw, centre):
+    """R3-3: five tickets a day, each with its own 30 replies, would be 150 replies a day for one person: the limit of the one who may attack is per person."""
+    teacher = signed_in(cw, centre.teacher)
+    first, second = make(teacher)["id"], make(teacher)["id"]
+    for i in range(15):
+        assert teacher.post(f"{SUPPORT}/tickets/{first}/messages", json={"text": f"первое {i}"}).status_code == 201
+        assert teacher.post(f"{SUPPORT}/tickets/{second}/messages", json={"text": f"второе {i}"}).status_code == 201
+    r = teacher.post(f"{SUPPORT}/tickets/{second}/messages", json={"text": "тридцать первый на человека"})
+    assert r.status_code == 429 and r.json()["code"] == "rate_limited"                                            # neither ticket has 30 yet
+    cw.db.expire_all()
+    assert cw.db.query(SupportMessage).filter(SupportMessage.author_user_id == centre.teacher.id).count() == 30
+    assert signed_in(cw, centre.admin).post(f"{SUPPORT}/tickets/{make(signed_in(cw, centre.admin))['id']}/messages", json={"text": "у другого человека свой лимит"}).status_code == 201
+
+
+@needs_pg
+def test_s05_the_limit_of_replies_is_per_centre_too(cw, centre):
+    people = [centre.owner, centre.admin, centre.teacher, team_member(cw, centre, "teacher", first="Четвёртый")]
+    for person in people:
+        client = signed_in(cw, person)
+        t = make(client)["id"]
+        for i in range(25):
+            assert client.post(f"{SUPPORT}/tickets/{t}/messages", json={"text": f"ответ {i}"}).status_code == 201     # 4 people x 25 = 100: nobody is over his own 30
+    fifth = signed_in(cw, team_member(cw, centre, "teacher", first="Пятый"))
+    t5 = make(fifth)["id"]
+    r = fifth.post(f"{SUPPORT}/tickets/{t5}/messages", json={"text": "сто первый ответ центра"})
+    assert r.status_code == 429 and r.json()["code"] == "rate_limited"
+    other = cw.make_centre()
+    o = signed_in(cw, other.teacher)
+    assert o.post(f"{SUPPORT}/tickets/{make(o)['id']}/messages", json={"text": "другой центр не затронут"}).status_code == 201
 
 
 # ============================================================================================================ 6
@@ -332,10 +384,9 @@ def test_s06_the_team_answers_the_ticket_waits_the_author_gets_a_letter_without_
     sent_before = len(letters_to(cw.outbox, SUPPORT_BOX))
     r = teacher.post(f"{SUPPORT}/tickets/{t['id']}/messages", json={"text": "Спасибо, теперь работает. Но завис отчёт по оплатам."})
     assert r.status_code == 201 and r.json()["status"] == "in_progress" and r.json()["messages"][-1]["from"] == "me"
-    box = letters_to(cw.outbox, SUPPORT_BOX)
-    assert len(box) == sent_before + 1 and "завис отчёт" in body_of(box[-1]) and f"№{t['number']}" in box[-1]["Subject"]
+    assert len(letters_to(cw.outbox, SUPPORT_BOX)) == sent_before                                                 # the letter about this ticket went a moment ago: one an hour (R3-2)
     cd = card(console, t["id"])
-    assert cd["status"] == "in_progress" and [m["from"] for m in cd["messages"]] == ["staff", "author"] and cd["messages"][1]["mail"] == "sent"
+    assert cd["status"] == "in_progress" and [m["from"] for m in cd["messages"]] == ["staff", "author"] and cd["messages"][1]["mail"] == "throttled"
 
 
 @needs_pg
@@ -617,6 +668,7 @@ def test_s11_the_template_of_a_page_has_no_ids_no_codes_no_tokens_no_query():
         "https://app.algolab.me/admin/staff?x=1#y": "/admin/staff",
         "/owner/students/[id]": "/owner/students/[id]",
         "/teacher/Students/Иван": "/teacher/[id]/[id]",
+        "/teacher/word\n/x": "/teacher/[id]/x",                                                                     # «$» would take «word\n» for a word (R3-5)
         "": "",
         None: "",
         12: "",
@@ -715,6 +767,34 @@ def test_s12_parallel_sends_without_a_key_cannot_pass_the_daily_limit_together(c
 
 
 @needs_pg
+def test_s12_parallel_sends_of_several_people_of_one_centre_cannot_pass_the_limit_of_the_centre_together(cw, centre):
+    people = [centre.owner, centre.admin, centre.teacher] + [team_member(cw, centre, "teacher", first=f"П{i}") for i in range(2)]
+    maker = sessionmaker(cw.db.get_bind(), autoflush=False)
+    barrier = threading.Barrier(25)
+    outcome = []
+
+    def go(person):
+        db = maker()
+        try:
+            barrier.wait(timeout=20)
+            svc.create_ticket(db, {"user_id": str(person.id), "org_id": str(centre.org.id), "org_role": "teacher"}, {"text": LONG}, "ua")
+            db.commit()
+            outcome.append("ok")
+        except Exception as exc:  # noqa: BLE001
+            outcome.append(getattr(exc, "code", repr(exc)))
+            db.rollback()
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=go, args=(p,)) for p in people for _ in range(5)]          # 5 people x 5 = 25 requests, each within his own 5, over the 20 of the centre
+    [t.start() for t in threads]
+    [t.join(60) for t in threads]
+    assert sorted(outcome) == ["ok"] * 20 + ["rate_limited"] * 5, outcome
+    cw.db.expire_all()
+    assert cw.db.query(SupportTicket).filter(SupportTicket.org_id == centre.org.id).count() == 20
+
+
+@needs_pg
 def test_s12_a_key_belongs_to_its_author(cw, centre):
     key = str(uuid4())
     a, b = signed_in(cw, centre.teacher), signed_in(cw, centre.admin)
@@ -724,42 +804,92 @@ def test_s12_a_key_belongs_to_its_author(cw, centre):
 
 # ============================================================================================================ 13
 @needs_pg
-def test_s13_over_fifty_letters_a_day_the_letter_is_skipped_and_the_answer_is_in_the_cabinet(cw, centre):
+def test_s13_two_budgets_the_letters_to_the_team_30_a_day_the_letters_to_the_authors_50_and_neither_touches_the_other_nor_the_forgot_password(cw, centre):
+    from src.api import rate_limit
     from src.api.rate_limit import hit_window
     from src.auth import password_reset
 
-    for _ in range(rules.SUPPORT_MAIL_PER_DAY):
-        hit_window(rules.SUPPORT_MAIL_KEY, 86400)                                                                     # 50 letters of the day are spent
+    for _ in range(rules.TEAM_MAIL_PER_DAY):
+        hit_window(rules.TEAM_MAIL_KEY, 86400)                                                                        # the 30 letters of the day to the team are spent
     teacher = signed_in(cw, centre.teacher)
     t = make(teacher)
     console = support_staff(cw)
     assert card(console, t["id"])["team_mail"] == "skipped" and not letters_to(cw.outbox, SUPPORT_BOX)
-    r = reply_staff(console, t["id"], "Ответ, когда письма кончились")
-    assert r.status_code == 201 and card(console, t["id"])["messages"][0]["mail"] == "skipped" and not letters_to(cw.outbox, centre.teacher.email)
-    assert teacher.get(f"{SUPPORT}/tickets/{t['id']}").json()["messages"][0]["text"] == "Ответ, когда письма кончились"
-    teacher.post(f"{SUPPORT}/tickets/{t['id']}/messages", json={"text": "Ответ автора"})
-    assert card(console, t["id"])["messages"][1]["mail"] == "skipped"
-    from src.api import rate_limit
-
+    r = reply_staff(console, t["id"], "Ответ, когда письма команде кончились")
+    assert r.status_code == 201
+    assert card(console, t["id"])["messages"][0]["mail"] == "sent" and len(letters_to(cw.outbox, centre.teacher.email)) == 1   # the author's budget is its own
+    assert teacher.get(f"{SUPPORT}/tickets/{t['id']}").json()["messages"][0]["text"] == "Ответ, когда письма команде кончились"
+    for _ in range(rules.AUTHOR_MAIL_PER_DAY):
+        hit_window(rules.AUTHOR_MAIL_KEY, 86400)                                                                      # now the 50 letters to the authors are spent too
+    t2 = make(teacher)
+    reply_staff(console, t2["id"], "Ответ, когда письма авторам кончились")
+    assert card(console, t2["id"])["messages"][0]["mail"] == "skipped" and len(letters_to(cw.outbox, centre.teacher.email)) == 1
     assert rate_limit.peek_window("rl:forgot_platform_day")[0] == 0                                                   # the budget of «Забыли пароль» is not touched
     assert password_reset.platform_has_room() is True
 
 
 @needs_pg
-def test_s13_fifty_one_tickets_from_several_centres_the_last_one_is_skipped(cw):
-    centres = [cw.make_centre(members=("teacher",)) for _ in range(11)]
+def test_s13_thirty_one_tickets_from_several_centres_the_last_letter_is_skipped(cw):
+    centres = [cw.make_centre(members=("teacher",)) for _ in range(7)]
     statuses = []
     for c in centres:
         client = signed_in(cw, c.teacher)
         for _ in range(5):
-            t = make(client)
-            statuses.append(ticket_row(cw, t["id"]).team_mail_status)
-            if len(statuses) == 51:
+            statuses.append(ticket_row(cw, make(client)["id"]).team_mail_status)
+            if len(statuses) == 31:
                 break
-        if len(statuses) == 51:
+        if len(statuses) == 31:
             break
-    assert statuses[:50] == ["sent"] * 50 and statuses[50] == "skipped"
-    assert len(letters_to(cw.outbox, SUPPORT_BOX)) == 50
+    assert statuses[:30] == ["sent"] * 30 and statuses[30] == "skipped"
+    assert len(letters_to(cw.outbox, SUPPORT_BOX)) == 30
+
+
+@needs_pg
+def test_s13_one_noisy_author_cannot_eat_the_letters_to_the_authors_of_another_centre(cw, centre, monkeypatch):
+    """R3-2 (LESSONS 72): 5 tickets x many replies of one author used to burn the whole day's budget of the platform; now at most one letter an hour about one ticket goes to the team and
+    the letters «есть ответ» are a budget that only the team spends."""
+    noisy = signed_in(cw, centre.teacher)
+    tickets = [make(noisy)["id"] for _ in range(5)]
+    for t in tickets:
+        for i in range(5):
+            assert noisy.post(f"{SUPPORT}/tickets/{t}/messages", json={"text": f"шум {i}"}).status_code == 201     # 25 replies, the limit of the person is 30
+    assert len(letters_to(cw.outbox, SUPPORT_BOX)) == 5                                                            # one per ticket, not 30
+    victim_centre = cw.make_centre()
+    victim = signed_in(cw, victim_centre.teacher)
+    v = make(victim)
+    assert len(letters_to(cw.outbox, SUPPORT_BOX)) == 6
+    console = support_staff(cw)
+    reply_staff(console, v["id"], "Ответ автору другого центра")
+    assert len(letters_to(cw.outbox, victim_centre.teacher.email)) == 1 and card(console, v["id"])["messages"][0]["mail"] == "sent"
+    cw.db.expire_all()
+    from src.auth.support_rules import TEAM_MAIL_KEY
+    from src.api import rate_limit
+
+    assert rate_limit.peek_window(TEAM_MAIL_KEY)[0] == 6                                                           # the platform's count is the letters that WENT
+    advance_clock(monkeypatch, 3600 + 5)                                                                           # an hour later the next reply of the noisy author goes
+    noisy.post(f"{SUPPORT}/tickets/{tickets[0]}/messages", json={"text": "через час"})
+    assert len(letters_to(cw.outbox, SUPPORT_BOX)) == 7
+
+
+@needs_pg
+def test_s13_about_one_ticket_the_team_gets_one_letter_an_hour_and_the_author_one_in_thirty_minutes(cw, centre, monkeypatch):
+    teacher = signed_in(cw, centre.teacher)
+    t = make(teacher)["id"]
+    console = support_staff(cw)
+    reply_staff(console, t, "Первый ответ")
+    reply_staff(console, t, "Второй ответ через миг")
+    assert len(letters_to(cw.outbox, centre.teacher.email)) == 1
+    assert [m["mail"] for m in card(console, t)["messages"]] == ["sent", "throttled"]
+    advance_clock(monkeypatch, 31 * 60)
+    console = cw.signed_in(cw.console_staff)
+    reply_staff(console, t, "Третий ответ через 31 минуту")
+    assert len(letters_to(cw.outbox, centre.teacher.email)) == 2
+    assert card(console, t)["messages"][2]["mail"] == "sent"
+    teacher.post(f"{SUPPORT}/tickets/{t}/messages", json={"text": "Ответ автора"})
+    assert len(letters_to(cw.outbox, SUPPORT_BOX)) == 1                                                            # the ticket's first letter was 31 minutes ago: not yet an hour
+    advance_clock(monkeypatch, 61 * 60)
+    teacher.post(f"{SUPPORT}/tickets/{t}/messages", json={"text": "Ещё ответ автора"})
+    assert len(letters_to(cw.outbox, SUPPORT_BOX)) == 2
 
 
 # ============================================================================================================ the rest: what the author must never see; the list of the team
@@ -885,3 +1015,133 @@ def test_the_console_answer_carries_no_cors_and_no_cache(cw, centre):
     r = support_staff(cw).get(f"{CONSOLE}/tickets/{t['id']}", headers={"origin": "https://console.stage.algolab.me"})
     assert r.headers["cache-control"] == "no-store" and "access-control-allow-origin" not in r.headers
     assert support_staff(cw).get(f"{CONSOLE}/tickets", headers={"origin": "https://evil.example"}).status_code == 403
+
+
+# ============================================================================================================ the round of R3
+@needs_pg
+def test_r3_01_the_badge_of_my_tickets_appears_after_an_answer_of_the_team_and_goes_when_the_card_is_opened(cw, centre):
+    teacher, other = signed_in(cw, centre.teacher), signed_in(cw, centre.admin)
+    t = make(teacher)["id"]
+    make(other)
+    assert teacher.get(f"{SUPPORT}/unread").json() == {"count": 0}                                                # nothing yet: his own words are not «unread»
+    console = support_staff(cw)
+    reply_staff(console, t, "Ответ команды")
+    assert teacher.get(f"{SUPPORT}/unread").json() == {"count": 1} and other.get(f"{SUPPORT}/unread").json() == {"count": 0}
+    assert mine(teacher)[0]["status"] == "waiting" and teacher.get(f"{SUPPORT}/unread").json() == {"count": 1}   # the LIST is not a look: the card is
+    assert teacher.get(f"{SUPPORT}/tickets/{t}").status_code == 200
+    assert teacher.get(f"{SUPPORT}/unread").json() == {"count": 0}
+    reply_staff(console, t, "Ещё один ответ команды, другой текст")
+    assert teacher.get(f"{SUPPORT}/unread").json() == {"count": 1}                                                # a newer answer than the last look
+    assert anonymous(cw).get(f"{SUPPORT}/unread").status_code == 401
+    assert signed_in(cw, centre.owner).get(f"{SUPPORT}/unread").json() == {"count": 0}                            # the owner of the centre does not count the teacher's tickets
+
+
+@needs_pg
+def test_r3_01_two_tickets_with_answers_count_two_and_opening_one_leaves_one(cw, centre):
+    teacher = signed_in(cw, centre.teacher)
+    a, b = make(teacher)["id"], make(teacher)["id"]
+    console = support_staff(cw)
+    reply_staff(console, a, "Ответ на первое")
+    reply_staff(console, b, "Ответ на второе")
+    assert teacher.get(f"{SUPPORT}/unread").json() == {"count": 2}
+    teacher.get(f"{SUPPORT}/tickets/{a}")
+    assert teacher.get(f"{SUPPORT}/unread").json() == {"count": 1}
+
+
+@needs_pg
+def test_r3_08_waiting_needs_the_last_word_of_the_team(cw, centre):
+    teacher, console = signed_in(cw, centre.teacher), support_staff(cw)
+    t = make(teacher)["id"]
+    r = console.patch(f"{CONSOLE}/tickets/{t}/status", json={"status": "waiting"})
+    assert r.status_code == 409 and r.json() == {"detail": "Сначала ответьте автору.", "code": "reply_first"}
+    assert card(console, t)["status"] == "new"
+    reply_staff(console, t)                                                                                          # the answer itself makes it «waiting»
+    teacher.post(f"{SUPPORT}/tickets/{t}/messages", json={"text": "Ответ автора"})
+    assert card(console, t)["status"] == "in_progress"
+    assert console.patch(f"{CONSOLE}/tickets/{t}/status", json={"status": "waiting"}).status_code == 409           # the last word is the author's
+    reply_staff(console, t, "Ответ команды после автора")
+    assert card(console, t)["status"] == "waiting"
+    assert console.patch(f"{CONSOLE}/tickets/{t}/status", json={"status": "in_progress"}).status_code == 200
+    assert console.patch(f"{CONSOLE}/tickets/{t}/status", json={"status": "waiting"}).status_code == 200            # the last message is the team's again
+    rows = audit_rows(cw.db, "support.status_changed", target_id=t)
+    assert [r.details["to"] for r in rows] == ["in_progress", "waiting"]                                              # the refused changes left no row
+
+
+@needs_pg
+def test_r3_09_how_it_was_closed_is_kept_and_does_not_depend_on_who_closed_it(cw, centre, monkeypatch):
+    teacher = signed_in(cw, centre.teacher)
+    staff = cw.make_staff(["support.manage"])
+    console = cw.signed_in(staff)
+    manual, auto = make(teacher)["id"], make(teacher)["id"]
+    console.patch(f"{CONSOLE}/tickets/{manual}/status", json={"status": "resolved"})
+    reply_staff(console, auto)
+    cw.db.expire_all()
+    assert ticket_row(cw, manual).resolved_kind == "manual"
+    cw.db.delete(cw.db.get(User, staff.user.id))                                                                     # the employee of the console is deleted: resolved_by -> NULL
+    cw.db.commit()
+    advance_clock(monkeypatch, 15 * 86400)
+    other = cw.signed_in(cw.make_staff(["support.manage"]))
+    c = card(other, manual)
+    assert c["resolved_by"] is None and c["resolved_kind"] == "manual" and c["status"] == "resolved"                  # «who» is lost, «how» is not: the screen must not say «автоматически»
+    c2 = card(other, auto)
+    assert c2["resolved_kind"] == "auto" and c2["resolved_by"] is None and c2["status"] == "resolved"
+    teacher.post(f"{SUPPORT}/tickets/{auto}/messages", json={"text": "Открываю снова"})
+    c3 = card(other, auto)
+    assert c3["status"] == "new" and c3["resolved_kind"] is None and c3["resolved_at"] is None
+
+
+@needs_pg
+def test_r3_06_a_lone_surrogate_in_a_text_is_a_422_not_a_500(cw, centre):
+    teacher, console = signed_in(cw, centre.teacher), support_staff(cw)
+    r = teacher.post(f"{SUPPORT}/tickets", content=json.dumps({"text": "Текст с плохим символом \ud800 в середине"}), headers={"content-type": "application/json"})
+    assert r.status_code == 422 and r.json()["fields"]["text"] == "Недопустимые символы в тексте"
+    t = make(teacher)["id"]
+    r = teacher.post(f"{SUPPORT}/tickets/{t}/messages", content=json.dumps({"text": "ответ \udfff"}), headers={"content-type": "application/json"})
+    assert r.status_code == 422 and r.json()["fields"]["text"] == "Недопустимые символы в тексте"
+    r = console.post(f"{CONSOLE}/tickets/{t}/messages", content=json.dumps({"text": "ответ команды \ud83d"}), headers={"content-type": "application/json"})
+    assert r.status_code == 422
+    assert make(teacher, "Нормальный текст с эмодзи 😀 целиком")["number"]                                           # a whole pair is fine
+    assert len(mine(teacher)) == 2
+
+
+@needs_pg
+def test_r3_11_an_image_bomb_a_small_file_with_a_huge_declared_size_is_415(cw, centre):
+    teacher = signed_in(cw, centre.teacher)
+    t = make(teacher)["id"]
+    bombs = {
+        "png 30000x30000": png_bytes(30000, 30000), "png 9000x100 (the side)": png_bytes(9000, 100), "png 7000x7000 (49 Mpx)": png_bytes(7000, 7000),
+        "jpeg 20000x20000": jpeg_bytes(20000, 20000), "jpeg progressive 7000x7000": jpeg_bytes(7000, 7000, progressive=True), "jpeg 100x9000": jpeg_bytes(100, 9000),
+    }
+    for name, data in bombs.items():
+        assert len(data) < 1000, name                                                                                # the point: the FILE is tiny
+        r = attach(teacher, t, data)
+        assert r.status_code == 415 and r.json() == {"detail": "Изображение слишком большое.", "code": "file_pixels"}, (name, r.text)
+    for name, data in {"png 6000x6000 (36 Mpx)": png_bytes(6000, 6000, pad=1), "png 8000x5000 (40 Mpx)": png_bytes(8000, 5000, pad=2), "jpeg 2560x1440": jpeg_bytes(2560, 1440)}.items():
+        assert attach(teacher, t, data).status_code in (200, 409), name                                              # inside the limits (the third may meet the limit of 3 files)
+    cw.db.expire_all()
+    assert cw.db.query(SupportAttachment).filter(SupportAttachment.ticket_id == __import__("uuid").UUID(t)).count() == 3
+
+
+@needs_pg
+def test_r3_11_a_file_with_the_signature_but_without_a_readable_header_is_415(cw, centre):
+    teacher = signed_in(cw, centre.teacher)
+    t = make(teacher)["id"]
+    for data in (b"\x89PNG\r\n\x1a\n" + b"\x00" * 100, b"\xff\xd8\xff\xe0" + b"\x00" * 100, b"\xff\xd8" + b"\xff\xe0\x00\x10JFIF" + b"\x00" * 10):
+        r = attach(teacher, t, data)
+        assert r.status_code == 415 and r.json()["code"] == "file_broken" and r.json()["detail"] == "Не удалось прочитать изображение.", data[:12]
+
+
+@needs_pg
+def test_r3_12_the_same_file_again_returns_the_record_that_is_there(cw, centre):
+    teacher = signed_in(cw, centre.teacher)
+    t = make(teacher)["id"]
+    first = attach(teacher, t, PNG)
+    again = attach(teacher, t, PNG)
+    assert first.status_code == again.status_code == 200 and first.json()["id"] == again.json()["id"]
+    assert attach(teacher, t, JPG).status_code == 200 and attach(teacher, t, PNG + b"2").status_code == 200       # two more different ones still fit (3 slots)
+    assert attach(teacher, t, PNG).json()["id"] == first.json()["id"]                                              # even at the limit the same file is not a 409
+    assert attach(teacher, t, PNG + b"3").status_code == 409
+    cw.db.expire_all()
+    assert cw.db.query(SupportAttachment).filter(SupportAttachment.ticket_id == __import__("uuid").UUID(t)).count() == 3
+    other = make(teacher)["id"]
+    assert attach(teacher, other, PNG).json()["id"] != first.json()["id"]                                          # the same file in ANOTHER ticket is its own record
