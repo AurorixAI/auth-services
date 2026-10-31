@@ -11,7 +11,7 @@ from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-NEW_PREFIXES = ("/api/v1/platform", "/api/v1/public/demo-requests", "/api/v1/auth/password-links", "/api/v1/auth/password/forgot", "/api/v1/auth/email-change")
+NEW_PREFIXES = ("/api/v1/platform", "/api/v1/public/demo-requests", "/api/v1/auth/password-links", "/api/v1/auth/password/forgot", "/api/v1/auth/email-change", "/api/v1/auth/support")
 
 VALIDATION_TEXT = "Проверьте заполнение формы"
 

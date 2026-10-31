@@ -41,6 +41,7 @@ from src.auth.demo_requests_router import router as demo_requests_router
 from src.auth.password_links_router import router as password_links_router
 from src.auth.password_reset_router import router as password_reset_router
 from src.auth.email_change_router import router as email_change_router
+from src.auth.support_router import router as support_router
 
 # Настройка логирования через structlog
 from src.core.middleware import configure_logging, RequestIDMiddleware
@@ -143,12 +144,14 @@ from src.core.config import get_settings as _get_settings
 _allowed_origins = _get_settings().cors_origins
 # DM-001: an import file declared larger than the limit is refused (413) before its body is read; no Content-Length at all -> 411
 from src.auth.import_limits import MAX_IMPORT_BYTES as _MAX_IMPORT_BYTES
+from src.auth.support_rules import MAX_ATTACHMENT_BYTES as _SUPPORT_MAX_BYTES
 from src.core.upload_limit import UploadSizeLimitMiddleware
 app.add_middleware(
     UploadSizeLimitMiddleware,
     limits={
         "/org/import/preview": (_MAX_IMPORT_BYTES, "5 МБ"),
         "/org/import/commit": (_MAX_IMPORT_BYTES, "5 МБ"),
+        "/attachments": (_SUPPORT_MAX_BYTES, "2 МБ"),  # K4a: one screenshot per request, POST …/support/tickets/{id}/attachments
     },
 )
 app.add_middleware(RequestIDMiddleware)  # wraps the upload limit: its 411/413 carry X-Request-ID too
@@ -235,6 +238,7 @@ app.include_router(demo_requests_router, prefix="/api/v1")
 app.include_router(password_links_router, prefix="/api/v1")
 app.include_router(password_reset_router, prefix="/api/v1")
 app.include_router(email_change_router, prefix="/api/v1")
+app.include_router(support_router, prefix="/api/v1")
 # analytics_router removed — analytics live in diagnostic-service (port 8002)
 
 # ─── Dev Router (quick login) — dev environment only, never in staging/prod ───

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from src.models.auth import Organization, User
 from src.models.platform import DemoRequest, PlatformAudit, PlatformRole
+from src.models.support import SupportTicket
 
 from .platform_common import client_meta, iso
 
@@ -44,10 +45,12 @@ ACTION_LABELS: Dict[str, str] = {
     "role.created": "Роль создана",
     "role.updated": "Роль изменена",
     "role.deleted": "Роль удалена",
+    "support.status_changed": "Статус обращения изменён",
+    "support.replied": "Ответ команды на обращение",
 }
 
 _SECRET_MARKERS = ("password", "token", "secret", "hash", "passwd")
-TARGET_TYPES = ("demo_request", "org", "user", "staff", "role", "console")
+TARGET_TYPES = ("demo_request", "org", "user", "staff", "role", "console", "support_ticket")
 
 
 def _scrub(value: Any, depth: int = 0) -> Any:
@@ -131,6 +134,9 @@ def _target_labels(db: Session, rows: List[PlatformAudit]) -> Dict[tuple, str]:
     if ids := uuids("role"):
         for r in db.query(PlatformRole.id, PlatformRole.name).filter(PlatformRole.id.in_(ids)):
             labels[("role", str(r.id))] = r.name
+    if ids := uuids("support_ticket"):
+        for r in db.query(SupportTicket.id, SupportTicket.number).filter(SupportTicket.id.in_(ids)):
+            labels[("support_ticket", str(r.id))] = f"Обращение №{r.number}"
     user_ids = uuids("user") + uuids("staff")
     if user_ids:
         for r in db.query(User.id, User.email).filter(User.id.in_(user_ids)):

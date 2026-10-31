@@ -1,0 +1,16 @@
+{% extends "_layout.html.j2" %}
+{% from "_macros.html.j2" import button %}
+{% block preheader %}{{ headline }} — {{ centre_name }}.{% endblock %}
+{% block title %}{{ headline }}{% endblock %}
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel" style="margin:4px 0 8px 0;background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;">
+  {% for label, value in rows %}
+  <tr>
+    <td class="muted stack lbl" valign="top" style="padding:{{ '16px' if loop.first else '8px' }} 8px {{ '16px' if loop.last else '8px' }} 22px;width:130px;font-family:Inter,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:21px;color:#64748b;">{{ label }}</td>
+    <td class="ink stack val" valign="top" style="padding:{{ '16px' if loop.first else '8px' }} 22px {{ '16px' if loop.last else '8px' }} 8px;font-family:Inter,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:21px;color:#0f172a;font-weight:600;white-space:pre-line;">{{ value }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{{ button(console_link, "Открыть в консоли") }}
+{% endblock %}
+{% block footer_reason %}Вы получили это письмо, потому что ваш адрес — адрес обращений в поддержку ALGO.{% endblock %}

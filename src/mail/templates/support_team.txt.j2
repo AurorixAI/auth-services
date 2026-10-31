@@ -1,0 +1,10 @@
+{% extends "_layout.txt.j2" %}
+{% block body %}{{ headline }}
+
+{% for label, value in rows %}
+{{ label }}: {{ value }}
+{%- endfor %}
+
+Открыть в консоли:
+{{ console_link }}{% endblock %}
+{% block footer_reason %}Вы получили это письмо, потому что ваш адрес — адрес обращений в поддержку ALGO.{% endblock %}

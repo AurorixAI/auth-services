@@ -33,6 +33,17 @@ def console_request_url(request_id: str, cfg: mail_config.MailConfig | None = No
     return f"{cfg.console_url}/requests?id={quote(str(request_id), safe='')}"
 
 
+def console_support_url(ticket_id: str, cfg: mail_config.MailConfig | None = None) -> str:
+    cfg = cfg or mail_config.load()
+    return f"{cfg.console_url}/support?id={quote(str(ticket_id), safe='')}"
+
+
+def cabinet_support_url(org_role: str, cfg: mail_config.MailConfig | None = None) -> str:
+    """«Мои обращения» of the author's own cabinet (a page, never a link with a token)."""
+    cfg = cfg or mail_config.load()
+    return f"{cfg.frontend_url}/{org_role if org_role in ('owner', 'admin', 'teacher') else 'teacher'}/support"
+
+
 def render_application_received(*, contact_name: str, centre_name: str) -> Rendered:
     return render("application_received", {"greeting": contact_name, "centre_name": centre_name})
 
@@ -98,6 +109,26 @@ def render_email_changed(*, greeting: str, new_email: str, cfg: mail_config.Mail
     return render("email_changed", {"greeting": greeting, "new_email": new_email, "support_email": cfg.support_email})
 
 
+def render_support_new(*, ticket_id: str, number: int, centre_name: str, author_role: str, text: str) -> Rendered:
+    """To the team (the mailbox of the support): a new request - the number, the centre, the role, the first 300 characters, the link to the card."""
+    return render(
+        "support_new",
+        {"number": number, "centre_name": centre_name, "author_role": author_role, "text": text, "console_link": console_support_url(ticket_id)},
+    )
+
+
+def render_support_author_reply(*, ticket_id: str, number: int, centre_name: str, author_role: str, text: str) -> Rendered:
+    return render(
+        "support_author_reply",
+        {"number": number, "centre_name": centre_name, "author_role": author_role, "text": text, "console_link": console_support_url(ticket_id)},
+    )
+
+
+def render_support_reply(*, greeting: str, number: int, org_role: str) -> Rendered:
+    """To the author: «there is an answer», WITHOUT the text of the answer (it stays in the system) and without Reply-To (the answer is given in the cabinet)."""
+    return render("support_reply", {"greeting": greeting, "number": number, "cabinet_url": cabinet_support_url(org_role)})
+
+
 def render_staff_invite(*, centre_name: str, org_role: str, code: str, expires_at: datetime) -> Rendered:
     return render(
         "staff_invite", {"centre_name": centre_name, "org_role": org_role, "cta_url": invite_url(code), "expires_at": expires_at}
@@ -122,6 +153,18 @@ def send_new_application(request: dict) -> bool:
         logger.warning("ADMIN_NOTIFICATION_EMAIL is not set - the owner is not told about the new request")
         return False
     return sender.send(to, render_new_application(request))
+
+
+def send_support_new(to: str, **kw) -> bool:
+    return sender.send(to, render_support_new(**kw))
+
+
+def send_support_author_reply(to: str, **kw) -> bool:
+    return sender.send(to, render_support_author_reply(**kw))
+
+
+def send_support_reply(to: str, **kw) -> bool:
+    return sender.send(to, render_support_reply(**kw))
 
 
 def send_staff_invite(to: str, **kw) -> bool:

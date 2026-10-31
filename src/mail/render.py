@@ -34,7 +34,13 @@ SUBJECTS: Dict[str, str] = {
     "email_change_confirm": "Подтвердите новый адрес почты — ALGO",
     "email_change_notice": "Вашу почту в ALGO меняют",
     "email_changed": "Почта в ALGO изменена",
+    "support_new": "[ALGO] Обращение №{number}: {centre_name}",
+    "support_author_reply": "[ALGO] Ответ автора по обращению №{number}: {centre_name}",
+    "support_reply": "Есть ответ на обращение №{number} — ALGO",
 }
+# the letters that share a template file
+TEMPLATE_OF: Dict[str, str] = {"support_new": "support_team", "support_author_reply": "support_team"}
+ROLE_WORDS = {"owner": "владелец", "admin": "администратор", "teacher": "преподаватель"}
 LETTERS = tuple(SUBJECTS)
 ROLE_TEXT = {"teacher": "преподаватель", "admin": "администратор"}
 INITIATOR_TEXT = {"owner": "Владелец", "admin": "Администратор"}
@@ -139,6 +145,17 @@ def _prepare(letter: str, ctx: dict) -> dict:
         out.setdefault("greeting", "")
     elif letter == "application_declined":
         out.setdefault("reason", "")
+    elif letter in ("support_new", "support_author_reply"):
+        # the words of the author are cut short and defanged (no mail client makes a link of them); the full text stays in the console
+        out["headline"] = "Новое обращение" if letter == "support_new" else "Ответ автора"
+        out["rows"] = [
+            ("Номер", f"№{out['number']}"),
+            ("Центр", out.get("centre_name", "")),
+            ("Роль", ROLE_WORDS.get(out.get("author_role"), "")),
+            ("Текст" if letter == "support_new" else "Ответ", _inert(out.get("text"), 300)),
+        ]
+    elif letter == "support_reply":
+        out.setdefault("greeting", "")
     elif letter == "new_application":
         r = out["request"]
         branches = r.get("branches_count")
@@ -175,8 +192,9 @@ def render(letter: str, ctx: dict) -> Rendered:
         raise KeyError(letter)
     data = _prepare(letter, ctx)
     data.setdefault("site_url", "https://algolab.me")
-    subject = SUBJECTS[letter].format(**{k: data.get(k, "") for k in ("centre_name", "city")}) if "{" in SUBJECTS[letter] else SUBJECTS[letter]
+    subject = SUBJECTS[letter].format(**{k: data.get(k, "") for k in ("centre_name", "city", "number")}) if "{" in SUBJECTS[letter] else SUBJECTS[letter]
     data["subject"] = subject
-    html = _html.get_template(f"{letter}.html.j2").render(**data)
-    text = re.sub(r"\n{3,}", "\n\n", _text.get_template(f"{letter}.txt.j2").render(**data))
+    template = TEMPLATE_OF.get(letter, letter)
+    html = _html.get_template(f"{template}.html.j2").render(**data)
+    text = re.sub(r"\n{3,}", "\n\n", _text.get_template(f"{template}.txt.j2").render(**data))
     return Rendered(letter=letter, subject=subject, html=html, text=text)

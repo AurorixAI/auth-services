@@ -28,6 +28,9 @@ def mask_address(address: str) -> str:
     return f"{local[:1]}***@{domain}" if domain else f"{local[:1]}***"
 
 
+# K4a (Б1): a reply to the letter «есть ответ на обращение» would land in the Zoho mailbox, outside the system: the answer is given in the cabinet, the letter has no Reply-To
+NO_REPLY_TO = frozenset({"support_reply"})
+
 # CPython 3.11 loses the space between two encoded words when it folds a long non-ASCII Subject (``_fold_as_ew``: «K3 тест прода» arrives as «K3 тестпрода»,
 # 2.5 % of random centre names). One long header line (RFC 5322 allows 998) is encoded in ONE pass and cannot be mangled (K2-1, G).
 POLICY = policy.default.clone(max_line_length=998)
@@ -44,7 +47,7 @@ def build_message(to: str, rendered: Rendered, cfg: mail_config.MailConfig | Non
     msg["Subject"] = _line(rendered.subject)
     msg["From"] = formataddr((_line(cfg.from_name), _line(cfg.from_address)))
     msg["To"] = _line(to)
-    if cfg.reply_to:
+    if cfg.reply_to and rendered.letter not in NO_REPLY_TO:
         msg["Reply-To"] = _line(cfg.reply_to)
     msg["Date"] = formatdate(localtime=False, usegmt=True)  # UTC, written by the policy as «+0000» (not the old «-0000» = "local time unknown")
     msg["Message-ID"] = make_msgid(domain=_line(cfg.from_address).rsplit("@", 1)[-1] or "algolab.me")

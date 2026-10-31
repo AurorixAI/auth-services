@@ -1,0 +1,11 @@
+{% extends "_layout.html.j2" %}
+{% from "_macros.html.j2" import p, small, button %}
+{% block preheader %}Есть ответ на обращение №{{ number }}.{% endblock %}
+{% block title %}Есть ответ на обращение №{{ number }}{% endblock %}
+{% block content %}
+{% call p() %}{% if greeting %}Здравствуйте, {{ greeting }}!{% else %}Здравствуйте!{% endif %}{% endcall %}
+{% call p() %}Команда ALGO ответила на ваше обращение №{{ number }}. Откройте «Мои обращения» в кабинете — ответ там.{% endcall %}
+{{ button(cabinet_url, "Открыть «Мои обращения»") }}
+{% call small() %}Ответить можно только в кабинете ALGO: ответ на это письмо до нас не дойдёт.{% endcall %}
+{% endblock %}
+{% block footer_reason %}Вы получили это письмо, потому что писали в поддержку ALGO.{% endblock %}

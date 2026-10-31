@@ -1,7 +1,7 @@
 """Permissions of the platform console, as DATA: the catalogue, the template roles, and the lookups the checks use.
 
 A role is a row of ``platform_roles`` with a JSON list of the keys below. The owner of the platform (``platform_staff.is_owner``)
-may do everything whatever his role says. The keys marked ``active=False`` are reserved for the later packs (support, «Войти как»,
+may do everything whatever his role says. The keys marked ``active=False`` are reserved for the later packs («Войти как»,
 content, finance, AI costs, analytics): a role may already carry them, nothing opens behind them yet.
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ CATALOG: tuple[Permission, ...] = (
     Permission("users.block", "Пользователи: блокировка", "Пользователи"),
     Permission("audit.view", "Журнал платформы", "Журнал"),
     Permission(TEAM_MANAGE, "Команда и роли (только владелец)", "Команда"),
-    Permission("support.manage", "Поддержка: обращения", "Поддержка", active=False),
+    Permission("support.manage", "Поддержка: обращения", "Поддержка"),
     Permission("impersonate.view", "«Войти как»: просмотр", "Поддержка", active=False),
     Permission("impersonate.write", "«Войти как»: с изменениями", "Поддержка", active=False),
     Permission("content.view", "Контент", "Контент", active=False),
