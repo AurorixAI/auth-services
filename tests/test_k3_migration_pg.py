@@ -17,7 +17,7 @@ BASE_URL = os.environ.get("A5_AUTH_MIGRATION_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
 
 REVISION, BEFORE = "k3a1b2c3d4e5", "p159a1b2c3d4"
-HEAD = "k2b1b2c3d4e5"   # K2-1 (the mode of a session) sits on top of this revision
+HEAD = "k4a1b2c3d4e5"   # K4a (the support) sits on top of K2-2, which sits on K2-1 (the mode of a session) on top of this revision
 DB_NAME = "a5_auth_k3_migrations"
 NEW = {
     "org_type", "address", "branches_count", "position", "preferred_contact_time", "needs", "current_tool", "heard_from", "locale", "consent_at",

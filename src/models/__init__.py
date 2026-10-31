@@ -48,6 +48,7 @@ from src.models.platform import (
     EmailChange,
     PasswordLink,
 )
+from src.models.support import SupportAttachment, SupportMessage, SupportTicket
 from src.models.analytics import (
     AnswerEvent,
     SessionSummary,
@@ -98,6 +99,9 @@ __all__ = [
     "PlatformAudit",
     "EmailChange",
     "PasswordLink",
+    "SupportTicket",
+    "SupportMessage",
+    "SupportAttachment",
     # Analytics (skill states written by internal callback)
     "AnswerEvent",
     "SessionSummary",

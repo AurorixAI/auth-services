@@ -18,7 +18,7 @@ def checks(engine, table):
 
 def test_up_down_up_the_checks_are_validated_and_the_role_comes_and_goes(engine):
     cfg = config()
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     assert version(engine) == REVISION
     for table, name, needle in (("users", "users_role_check", "'teacher'"), ("student_audit", "ck_student_audit_actor_role", "'teacher'"), ("group_audit", "ck_group_audit_actor_role", "'teacher'"),
                                 ("invitations", "ck_invitations_mail_status", "'failed'"), ("invitations", "invitations_status_check", "'queued'"),
@@ -32,9 +32,9 @@ def test_up_down_up_the_checks_are_validated_and_the_role_comes_and_goes(engine)
     assert "superadmin" in checks(engine, "users")["users_role_check"][1] and "email_changes" not in inspect(engine).get_table_names()
     assert "mail_status" not in {c["name"] for c in inspect(engine).get_columns("invitations")}
     assert checks(engine, "users")["users_role_check"][0] is True                                   # validated after the downgrade too
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     assert version(engine) == REVISION and "superadmin" not in checks(engine, "users")["users_role_check"][1]
-    command.upgrade(cfg, "head")                                                                     # repeating is harmless
+    command.upgrade(cfg, REVISION)                                                                     # repeating is harmless
 
 
 def test_a_superadmin_in_the_database_stops_the_upgrade_with_a_clear_text(engine):
@@ -44,5 +44,5 @@ def test_a_superadmin_in_the_database_stops_the_upgrade_with_a_clear_text(engine
         c.execute(text("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check"))
         c.execute(text("INSERT INTO users (id, email, password_hash, first_name, last_name, role, must_change_password) VALUES (gen_random_uuid(), 'sa@x.test', 'x', 'A', 'B', 'superadmin', false)"))
     with pytest.raises(Exception) as stopped:
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REVISION)
     assert "superadmin" in str(stopped.value) and version(engine) == BEFORE

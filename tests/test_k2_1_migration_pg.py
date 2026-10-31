@@ -94,7 +94,7 @@ def test_the_revision_follows_k3_and_k2_2_follows_it():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == ["k2b1b2c3d4e5"] and script.get_revision("k2b1b2c3d4e5").down_revision == REVISION
+    assert script.get_heads() == ["k4a1b2c3d4e5"] and script.get_revision("k2b1b2c3d4e5").down_revision == REVISION and script.get_revision("k4a1b2c3d4e5").down_revision == "k2b1b2c3d4e5"
     assert script.get_revision(REVISION).down_revision == BEFORE
 
 
@@ -104,7 +104,7 @@ def test_up_down_up_an_old_session_gets_false_and_the_column_is_not_null_with_a_
     assert "remember" not in session_columns(engine)
     session = old_session(engine)
     command.upgrade(cfg, "head")
-    assert version(engine) == "k2b1b2c3d4e5"
+    assert version(engine) == "k4a1b2c3d4e5"
     column = session_columns(engine)["remember"]
     assert column["nullable"] is False and "false" in str(column["default"]).lower()
     with engine.connect() as c:
@@ -116,7 +116,7 @@ def test_up_down_up_an_old_session_gets_false_and_the_column_is_not_null_with_a_
         assert c.execute(text("SELECT count(*) FROM user_sessions WHERE id = :i"), {"i": session}).scalar_one() == 1
     command.upgrade(cfg, "head")
     command.upgrade(cfg, "head")                                                                # repeated: harmless
-    assert version(engine) == "k2b1b2c3d4e5" and "remember" in session_columns(engine)
+    assert version(engine) == "k4a1b2c3d4e5" and "remember" in session_columns(engine)
 
 
 def test_m2_every_live_session_is_revoked_by_the_cookie_cut_over_and_an_old_revocation_is_kept(engine):
@@ -171,4 +171,4 @@ def test_a_database_built_from_the_models_and_stamped_back_upgrades_without_fail
     cfg = config()
     command.stamp(cfg, BEFORE)
     command.upgrade(cfg, "head")
-    assert version(engine) == "k2b1b2c3d4e5" and "remember" in session_columns(engine)
+    assert version(engine) == "k4a1b2c3d4e5" and "remember" in session_columns(engine)

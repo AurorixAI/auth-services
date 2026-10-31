@@ -33,7 +33,7 @@ CONSOLE_HOST = "console.algolab.me"
 CONSOLE = f"http://{CONSOLE_HOST}"
 API = "/api/v1/platform"
 PASSWORD = "correct-horse-battery-staple"
-CONSOLE_TABLES = "password_links, demo_request_notes, demo_requests, platform_audit, platform_sessions, platform_staff, platform_roles"
+CONSOLE_TABLES = "support_attachments, support_messages, support_tickets, password_links, demo_request_notes, demo_requests, platform_audit, platform_sessions, platform_staff, platform_roles"
 
 
 @pytest.fixture
