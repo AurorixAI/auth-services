@@ -8,7 +8,7 @@ from src.auth import payment_status as ps
 from src.auth.excuse_deadline import effective_threshold, excuse_deadline, month_end
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    business_today, excused_lesson, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save, world,
+    ENROLLED_SINCE, business_today, excused_lesson, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save, world,
 )
 from tests.pg_world import set_paid_through
 from tests.test_pay2_api_pg import fixed_today, membership, stay  # noqa: F401  (fixture + helpers)
@@ -380,7 +380,7 @@ def test_payment_of_another_group_membership_is_ignored(world):
     world.db.commit()
     from src.models.auth import StudentGroup
     world.db.add(StudentGroup(student_id=world.students[0].id, group_id=other.id, is_active=True,
-                              joined_at=__import__("datetime").datetime.now() - timedelta(days=60)))
+                              joined_at=ENROLLED_SINCE))
     world.db.commit()
     pay(world, world.students[0], group=other, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))
     assert deadline_of(world)["date"] == month_end(business_today() - timedelta(days=3)).isoformat()

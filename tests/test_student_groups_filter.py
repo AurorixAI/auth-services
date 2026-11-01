@@ -38,7 +38,7 @@ def test_group_tabs_partition_the_non_archived_students_and_match_the_dashboard_
     left = make_student(w.db, w.org, w.group, "Ушёл", "Из-группы", "N13-011")
     membership = w.db.query(StudentGroup).filter_by(student_id=left.id).one()
     membership.is_active = False
-    membership.left_at = datetime.now(timezone.utc)
+    membership.left_at = datetime(2026, 6, 1, 6, 0)
     left.group_id = None
     # archived students: one with a group, one without - in neither tab.
     archived_loose = _loose(w, "Архив", "Безгруппов", status="archived")

@@ -33,9 +33,13 @@ from src.models.auth import (  # noqa: E402
     StudentGroup,
     User,
 )
+from tests.dbguard import is_a2_db as _is_a2_db  # noqa: E402
 
 DB_URL = os.getenv("A2_AUTH_TEST_DATABASE_URL")
 needs_pg = pytest.mark.skipif(not DB_URL, reason="Requires disposable A2 auth PostgreSQL")
+
+# Every student of the world is enrolled long before any lesson a test builds from the real or the pinned clock.
+ENROLLED_SINCE = datetime(2026, 1, 1, 6, 0)
 
 # A 24-hour slot makes "start lesson today" independent of the wall clock.
 LIVE_SLOT = "live-today"
@@ -104,7 +108,7 @@ def make_student(db, org, group, first="Алия", last="Каримова", disp
             student_id=student.id,
             group_id=group.id,
             is_active=True,
-            joined_at=datetime.now() - timedelta(days=60),
+            joined_at=ENROLLED_SINCE,          # LESSONS 76: a fixed day, not «now - 60 days» (that falls inside the previous month at the end of a month and after any pinned date later)
         )
     )
     db.flush()
@@ -113,7 +117,7 @@ def make_student(db, org, group, first="Алия", last="Каримова", disp
 
 @pytest.fixture
 def pg_session():
-    assert DB_URL and DB_URL.endswith("/a2_auth"), "Use only the disposable a2_auth database"
+    assert DB_URL and _is_a2_db(DB_URL), "Use only the disposable a2_auth database"
     engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
     Organization.metadata.create_all(engine)
     # autoflush=False like production (src/core/database.py): a test must flush what its next query has to see, or the code under test must

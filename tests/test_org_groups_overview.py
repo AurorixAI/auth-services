@@ -5,7 +5,7 @@ from sqlalchemy import event
 
 from src.models.auth import StudentDiagnosticResult
 
-from tests.pg_world import make_client, make_group, make_student, needs_pg, pg_session, world  # noqa: F401
+from tests.pg_world import ENROLLED_SINCE, make_client, make_group, make_student, needs_pg, pg_session, world  # noqa: F401
 
 pytestmark = needs_pg
 
@@ -84,7 +84,7 @@ def test_org_average_counts_a_student_of_two_groups_once(world):
     s0, s1, _ = world.students
     second = make_group(world.db, world.org, world.teacher, "Вторая группа")
     world.db.add(StudentGroup(student_id=s0.id, group_id=second.id, is_active=True,
-                              joined_at=datetime.utcnow() - timedelta(days=30)))
+                              joined_at=ENROLLED_SINCE + timedelta(days=30)))
     world.db.commit()
     result(world, s0, 1.0)     # in both groups
     result(world, s1, -1.0)    # in the first group only

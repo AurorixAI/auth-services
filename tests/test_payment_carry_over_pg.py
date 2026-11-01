@@ -11,7 +11,7 @@ from src.auth.schemas import SaveAttendanceRequest, StartAttendanceRequest
 from src.models.auth import GroupAttendance, Organization, Student, StudentGroup, StudentPayment
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    LIVE_SLOT, business_today, give_group_price, give_price, make_client, make_group, make_student, needs_pg,
+    ENROLLED_SINCE, LIVE_SLOT, business_today, give_group_price, give_price, make_client, make_group, make_student, needs_pg,
     pg_session, reconcile, world,
 )
 from tests.test_payments_service_pg import (  # noqa: F401
@@ -228,7 +228,7 @@ def test_an_individual_price_given_with_the_transfer_wins_for_the_new_membership
 def test_a_returning_membership_keeps_its_own_history_of_prices(two):
     s0, s1 = two.students[:2]
     two.db.add(StudentGroup(student_id=s0.id, group_id=two.second.id, is_active=False,
-                            joined_at=datetime.now() - timedelta(days=90)))
+                            joined_at=ENROLLED_SINCE - timedelta(days=30)))
     two.db.commit()
     give_price(two.db, membership(two, two.second, s0), 777000, reason="прежняя договорённость")
     give_group_price(two.db, two.second, 500000)

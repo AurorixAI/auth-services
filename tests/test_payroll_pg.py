@@ -15,7 +15,7 @@ from src.models.auth import (
 )
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    business_today, give_group_price, give_price, make_client, make_group, make_member, make_student, make_user,
+    ENROLLED_SINCE, business_today, give_group_price, give_price, make_client, make_group, make_member, make_student, make_user,
     needs_pg, pg_session, world,
 )
 
@@ -407,7 +407,7 @@ def test_lines_per_group_and_the_kind_of_lessons_set_the_percent(world):
     s0 = world.students[0]
     second = make_group(world.db, world.org, world.teacher, "Парные")
     second.lesson_type = "pair"
-    world.db.add(StudentGroup(student_id=s0.id, group_id=second.id, is_active=True, joined_at=datetime.utcnow() - timedelta(days=60)))
+    world.db.add(StudentGroup(student_id=s0.id, group_id=second.id, is_active=True, joined_at=ENROLLED_SINCE))
     world.db.commit()
     for n in range(1, 5):
         lesson(world, m.d(n), {s0: "present"})

@@ -13,7 +13,7 @@ from src.auth.payments_schemas import LeaveRequest, OpeningPut, PauseCreate, Pay
 from src.auth.payments_service import PaymentError, PaymentService, is_deadlock
 from src.models.auth import MembershipPause, StudentGroup, StudentPayment, StudentRefund
 
-from tests.pg_world import give_group_price, needs_pg, pg_session, world  # noqa: F401  (fixtures)
+from tests.pg_world import business_today, give_group_price, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_payment_carry_over_pg import engine, run_in_thread  # noqa: F401  (engine = fixture)
 from tests.test_pay2_api_pg import D, membership, settings_block, stay
 
@@ -136,7 +136,7 @@ def test_two_payouts_in_parallel_are_both_kept_and_a_payout_does_not_wait_for_a_
     m, s1, s2 = g_pay_world(world)
     sheet = save_sheet(world, m)
     org, actor = str(world.org.id), str(world.owner.id)
-    body = lambda amount: PayoutCreate(amount=amount, paid_on=date.today(), method="cash")
+    body = lambda amount: PayoutCreate(amount=amount, paid_on=business_today(), method="cash")
     fresh = lambda s: (lambda row: PayrollService(s)._fresh_total(org, row))
     import uuid
 

@@ -4,13 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.auth.business_clock import utc_now
 from src.auth.schemas import SaveAttendanceRequest
 from src.models.auth import (
     DiagnosticInvite, Group, MembershipPriceOverride, Student, StudentDiagnosticResult, StudentGroup,
 )
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    business_today, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save, world,
+    ENROLLED_SINCE, business_today, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save, world,
 )
 
 pytestmark = needs_pg
@@ -180,8 +181,8 @@ def test_removing_the_primary_group_moves_primary_to_the_earliest_remaining(two)
     first, second = (
         two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=g.id).one() for g in (two.second, third)
     )
-    first.joined_at = datetime.now() - timedelta(days=5)
-    second.joined_at = datetime.now() - timedelta(days=2)
+    first.joined_at = ENROLLED_SINCE + timedelta(days=40)         # fixed days (LESSONS 76/82): only the ORDER of the two joins matters
+    second.joined_at = ENROLLED_SINCE + timedelta(days=70)
     two.db.commit()
     two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id))
     assert primary(two) == two.second.id
@@ -204,7 +205,7 @@ def test_successor_prefers_a_live_group(two):
     add(two, archived, mode="add")
     add(two, two.second, mode="add")
     two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=archived.id).update(
-        {"joined_at": datetime.now() - timedelta(days=9)}
+        {"joined_at": ENROLLED_SINCE + timedelta(days=40)}
     )
     archived.status = "archived"
     two.db.commit()
@@ -277,7 +278,7 @@ def test_add_mode_produces_no_false_transferred_label(two):
 def test_removal_followed_by_a_later_add_is_not_a_transfer(two):
     two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id))
     two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.group.id).update(
-        {"left_at": datetime.now() - timedelta(minutes=3)}  # inside the old 5-minute window
+        {"left_at": utc_now() - timedelta(minutes=3)}  # inside the old 5-minute window
     )
     two.db.commit()
     add(two, two.second, mode="add")
@@ -300,7 +301,7 @@ def test_leaving_one_group_while_staying_in_another_is_not_a_transfer(two):
     completed_lesson(two, two.group)
     add(two, two.second, mode="add")
     two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.second.id).update(
-        {"joined_at": datetime.now() - timedelta(minutes=1)}  # separate requests, not one transfer
+        {"joined_at": utc_now() - timedelta(minutes=1)}  # separate requests, not one transfer
     )
     two.db.commit()
     two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id))
@@ -314,12 +315,12 @@ def test_diagnostic_notice_is_shown_in_the_primary_group_only(two):
     invite = DiagnosticInvite(
         org_id=two.org.id, student_id=two.student.id, created_by=two.owner.id, code="N13P2TEST",
         class_level=9, diagnostic_type="initial", status="completed",
-        expires_at=datetime.now() + timedelta(days=30),
+        expires_at=utc_now() + timedelta(days=30),
     )
     two.db.add(invite); two.db.flush()
     two.db.add(StudentDiagnosticResult(
         student_id=two.student.id, org_id=two.org.id, invite_id=invite.id, diagnostic_type="initial",
-        diagnosed_at=datetime.now() - timedelta(days=70),
+        diagnosed_at=ENROLLED_SINCE - timedelta(days=10),       # diagnosed BEFORE the enrolment (the notice is for a student who joined after his test)
     ))
     two.db.commit()
     notices = lambda g: [n["student_id"] for n in journal(two, g).diagnosticReportNotices]
@@ -409,7 +410,7 @@ def test_transfer_into_a_group_the_student_already_has_is_labelled_a_transfer(tw
     add(two, two.second, mode="add")
     original = two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.second.id).one()
     # the second membership is old: its joined_at must survive (rosters of past lessons need it)
-    long_ago = datetime.now() - timedelta(days=30)
+    long_ago = ENROLLED_SINCE + timedelta(days=40)
     original.joined_at = long_ago
     two.db.commit()
     add(two, two.second)  # transfer: closes the first group, the second becomes the only one
@@ -427,7 +428,7 @@ def test_transfer_into_a_group_the_student_already_has_is_labelled_a_transfer(tw
 def test_removing_the_primary_group_is_not_a_transfer_into_the_old_membership(two):
     add(two, two.second, mode="add")
     two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.second.id).update(
-        {"joined_at": datetime.now() - timedelta(days=30)}
+        {"joined_at": ENROLLED_SINCE + timedelta(days=40)}
     )
     two.db.commit()
     two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id))

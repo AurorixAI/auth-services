@@ -8,6 +8,7 @@ from src.models.auth import Group
 from tests.ops_helpers import (  # noqa: F401  (fixtures)
     build_d0, clock, client, code_of, exams, fixture, history_row, needs_pg, new_group, new_slot, new_student, pg_session, run_parallel,
 )
+from tests.pg_world import business_today
 
 pytestmark = needs_pg
 G = "/api/v1/auth/org/groups/{gid}"
@@ -56,7 +57,7 @@ def test_open_interval_on_an_active_group_is_closed_and_restore_without_interval
     assert ivs[0][1] is not None and ivs[0][1] >= ivs[0][0]
     # the interval is closed at the row's last update (the real wall clock, not the test clock): ask for two Mondays safely AFTER it, so the
     # test does not depend on the day it runs (it failed on 27.10 when 26.10 had become the past)
-    first = date.today() + timedelta(days=7)
+    first = business_today() + timedelta(days=7)
     first += timedelta(days=(7 - first.weekday()) % 7)                       # the first Monday a week or more ahead
     days = [o["occurrenceDate"] for o in w.svc._resolved_occurrences_for_group(g, date_from=first, date_to=first + timedelta(days=7))]
     assert days == [first.isoformat(), (first + timedelta(days=7)).isoformat()]

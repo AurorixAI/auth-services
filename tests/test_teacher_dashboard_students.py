@@ -6,7 +6,7 @@ import pytest
 from src.models.auth import Group, Student, StudentGroup
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    make_client, make_group, make_student, needs_pg, pg_session, world,
+    ENROLLED_SINCE, make_client, make_group, make_student, needs_pg, pg_session, world,
 )
 
 pytestmark = needs_pg
@@ -23,7 +23,7 @@ def summary(w, teacher=None):
 
 def seat(w, student, group, **kw):
     w.db.add(StudentGroup(student_id=student.id, group_id=group.id, is_active=True,
-                          joined_at=datetime.now() - timedelta(days=5), **kw))
+                          joined_at=ENROLLED_SINCE, **kw))
     w.db.commit()
 
 
@@ -74,7 +74,7 @@ def test_a_left_membership_does_not_count(two_groups):
     seat(w, w.students[0], w.second)
     row = w.db.query(StudentGroup).filter_by(student_id=w.students[1].id, group_id=w.group.id).one()
     row.is_active = False
-    row.left_at = datetime.now()
+    row.left_at = ENROLLED_SINCE + timedelta(days=30)
     w.db.commit()
 
     data = summary(w)

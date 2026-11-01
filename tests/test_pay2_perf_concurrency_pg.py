@@ -13,7 +13,7 @@ from src.auth.payments_service import PaymentError, PaymentService
 from src.models.auth import GroupAudit, StudentGroup, StudentPayment, StudentRefund
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    give_group_price, make_client, make_group, make_student, needs_pg, pg_session, world,
+    business_today, give_group_price, make_client, make_group, make_student, needs_pg, pg_session, world,
 )
 from tests.test_payment_carry_over_pg import engine, run_in_thread  # noqa: F401  (engine = fixture)
 from tests.test_pay2_api_pg import API, D, membership, owner, seed_payment, settings_block, stay
@@ -130,7 +130,7 @@ def prepared(world):
 
 
 def body(amount, **kw):
-    return PaymentCreate(amount=amount, paid_on=date.today(), method="cash", **kw)
+    return PaymentCreate(amount=amount, paid_on=business_today(), method="cash", **kw)
 
 
 def test_parallel_payments_to_one_membership_add_up_with_distinct_receipt_numbers(world, engine):
@@ -147,7 +147,7 @@ def test_parallel_payments_to_one_membership_add_up_with_distinct_receipt_number
     assert sorted(int(r.amount) for r in rows) == [100_000, 200_000, 300_000, 400_000]
     assert len({r.receipt_no for r in rows}) == 4
     assert PaymentService(world.db)._row(org, m.id).last_payment is not None
-    entry = ls.LedgerLoader(world.db, org, date.today()).run([m.id])[0]
+    entry = ls.LedgerLoader(world.db, org, business_today()).run([m.id])[0]
     assert entry.ledger.paid == 1_000_000 and entry.ledger.reconciles
 
 
@@ -159,7 +159,7 @@ def test_a_refund_and_a_void_of_its_payment_never_both_win(world, engine):
     service = PaymentService(world.db)
     created = service.create_payment(org, m.id, actor, body(12_000_000))
     pid = created.payment.id
-    stay(world, m, D(2026, 1, 5), date.today())                        # he left: the whole advance is refundable
+    stay(world, m, D(2026, 1, 5), business_today())                        # he left: the whole advance is refundable
     refundable = service._row(org, m.id).refundable
     assert refundable > 0
     t1, o1 = run_in_thread(engine, service_call(org, lambda s: s.create_refund(
@@ -172,7 +172,7 @@ def test_a_refund_and_a_void_of_its_payment_never_both_win(world, engine):
     refund_done, void_done = "value" in o1, "value" in o2
     assert not (refund_done and void_done)
     world.db.expire_all()
-    entry = ls.LedgerLoader(world.db, org, date.today()).run([m.id])[0]
+    entry = ls.LedgerLoader(world.db, org, business_today()).run([m.id])[0]
     assert bl.F_OUTFLOW_EXCEEDS not in entry.ledger.flags and entry.ledger.reconciles
 
 
@@ -195,8 +195,8 @@ def test_a_payment_and_a_transfer_of_the_same_student_do_not_deadlock(world, eng
 
         assert "error" not in o or isinstance(o["error"], PaymentError) or is_deadlock(o["error"]), o.get("error")
     world.db.expire_all()
-    ids = [e.membership.id for e in ls.LedgerLoader(world.db, org, date.today()).load(student_id=world.students[0].id, scope="all")]
-    entries = ls.LedgerLoader(world.db, org, date.today()).run(ids)
+    ids = [e.membership.id for e in ls.LedgerLoader(world.db, org, business_today()).load(student_id=world.students[0].id, scope="all")]
+    entries = ls.LedgerLoader(world.db, org, business_today()).run(ids)
     assert all(e.ledger.reconciles for e in entries)
     assert sum(e.ledger.transferred_out for e in entries) == sum(e.ledger.transferred_in for e in entries)
 

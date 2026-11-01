@@ -3,7 +3,7 @@ from src.auth.schemas import GroupUpdateRequest
 from src.auth.service import AuthService
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    business_today, excused_lesson, make_client, needs_pg, pg_session, reconcile, world,
+    ENROLLED_SINCE, business_today, excused_lesson, make_client, needs_pg, pg_session, reconcile, world,
 )
 
 pytestmark = needs_pg
@@ -225,8 +225,11 @@ def test_open_actions_missed_lessons_start_on_the_first_of_the_previous_month(wo
 
     # The world's student joined «60 days before the real clock» (StudentGroup and its period): on 31.10 late enough that is 01.09 after the lesson began, and the
     # lesson of 01.09 is rightly not «missed» (no student at its start). The window under test needs a student from before both windows.
-    world.db.query(StudentGroup).update({"joined_at": datetime(2026, 8, 1)})
-    world.db.query(StudentGroupPeriod).update({"joined_at": datetime(2026, 8, 1)})
+    # Only the memberships of THIS world: the test database also holds the rows of every test that ran before (a global UPDATE broke the CHECK
+    # joined_at <= left_at of an earlier test's period as soon as two tests shared a database in one worker).
+    mine = [m.id for m in world.db.query(StudentGroup).filter_by(group_id=world.group.id)]
+    world.db.query(StudentGroup).filter(StudentGroup.id.in_(mine)).update({"joined_at": datetime(2026, 8, 1)}, synchronize_session=False)
+    world.db.query(StudentGroupPeriod).filter(StudentGroupPeriod.membership_id.in_(mine)).update({"joined_at": datetime(2026, 8, 1)}, synchronize_session=False)
     world.db.flush()
 
     def missed_dates(now):
@@ -302,7 +305,7 @@ def test_in_progress_lesson_stays_reported_after_the_roster_became_empty(world):
     from src.auth.schemas import StartAttendanceRequest
     from src.models.auth import StudentGroup
 
-    group = _weekday_group(world, "Начатая", [(datetime.now() - timedelta(days=90), None)])
+    group = _weekday_group(world, "Начатая", [(ENROLLED_SINCE, None)])
     day, lesson_id = past_lesson_for_test()
     world.svc.reconcile_missed_group_attendance(
         str(world.org.id), str(group.id), StartAttendanceRequest(lessonDate=day, lessonId=lesson_id),
@@ -347,7 +350,7 @@ def test_missed_lessons_stop_after_the_last_student_left(world):
     left_day = today - timedelta(days=5)
     # 11:00 Tashkent = 06:00 UTC: AFTER the lesson start, so that day's lesson still had a student.
     left = datetime(left_day.year, left_day.month, left_day.day, 6, 0)
-    group = _weekday_group(world, "Выбыли", [(datetime.now() - timedelta(days=90), left)])
+    group = _weekday_group(world, "Выбыли", [(ENROLLED_SINCE, left)])
     dates = _missed_for(world, group, _noon(today))
     assert dates[-1] == left_day.isoformat()
     assert (left_day + timedelta(days=1)).isoformat() not in dates
@@ -357,8 +360,8 @@ def test_a_second_student_keeps_the_lesson_after_the_first_one_left(world):
     from datetime import datetime, timedelta
 
     today = business_today()
-    early = datetime.now() - timedelta(days=90)
-    gone = datetime.now() - timedelta(days=20)
+    early = ENROLLED_SINCE
+    gone = datetime(today.year, today.month, today.day, 6, 0) - timedelta(days=20)      # left 20 days ago (a fixed hour of the business day)
     group = _weekday_group(world, "Один остался", [(early, gone), (early, None)])
     assert _missed_for(world, group, _noon(today))[-1] == today.isoformat()
 
@@ -391,7 +394,7 @@ def test_empty_roster_check_keeps_the_query_count_constant(world):
 
     from tests.pg_world import make_group  # noqa: F401
 
-    joined = datetime.now() - timedelta(days=90)
+    joined = ENROLLED_SINCE
 
     def add(count, start):
         for i in range(count):
@@ -436,7 +439,7 @@ def test_reconcile_with_an_empty_roster_is_refused_with_400(world):
 def test_reconcile_with_a_student_who_joined_before_the_lesson_works(world):
     from datetime import datetime, timedelta
 
-    group = _weekday_group(world, "С учеником", [(datetime.now() - timedelta(days=90), None)])
+    group = _weekday_group(world, "С учеником", [(ENROLLED_SINCE, None)])
     day, _ = past_lesson_for_test()
     r = _reconcile_request(world, group, day)
     assert r.status_code == 200, r.text

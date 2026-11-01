@@ -1,6 +1,6 @@
 """N13 P2: who may touch money, and that money never leaks into other payloads (PostgreSQL)."""
 import json
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -123,7 +123,7 @@ def test_admin_with_the_switch_can_do_the_whole_flow_and_is_recorded(money):
     allow_admin(money)
     admin = make_client(money, user=money.admin)
     r = admin.post(f"{API}/org/memberships/{money.membership_id}/payments",
-                   json={"amount": 100, "paid_on": business_today().isoformat(), "valid_to": date.today().replace(year=date.today().year + 1).isoformat()})
+                   json={"amount": 100, "paid_on": business_today().isoformat(), "valid_to": (business_today() + timedelta(days=365)).isoformat()})
     assert r.status_code == 201 and r.json()["payment"]["created_by"] == str(money.admin.id)
 
 

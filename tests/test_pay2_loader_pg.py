@@ -19,7 +19,7 @@ from src.models.auth import (
 )
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    give_group_price, make_group, make_student, needs_pg, pg_session, world,
+    business_today, give_group_price, make_group, make_student, needs_pg, pg_session, world,
 )
 
 pytestmark = needs_pg
@@ -213,7 +213,7 @@ def test_lessons_mode_counts_held_lessons(world):
         day, lesson_id = reconcile(world, offset)
         save(world, day, lesson_id, [(s1, "present"), (s2, "present"), (s3, "absent")], status="completed")
     m = membership_of(db, s1, world.group)
-    today = datetime.utcnow().date() + timedelta(days=1)
+    today = business_today() + timedelta(days=1)
     lo = ls.LedgerLoader(db, str(world.org.id), today)
     (row,) = lo.load(membership_id=m.id)
     assert row.ledger.mode == bl.LESSONS and row.ledger.lessons.used == 2

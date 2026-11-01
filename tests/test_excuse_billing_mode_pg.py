@@ -7,7 +7,7 @@ from sqlalchemy import event
 
 from src.auth import payment_status as ps
 
-from tests.pg_world import business_today, make_client, needs_pg, pg_session, world  # noqa: F401  (fixtures)
+from tests.pg_world import ENROLLED_SINCE, business_today, make_client, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_attendance_excuses import journal, key_of
 from tests.test_excuse_deadline import API, lesson_marks, listing
 from tests.test_payments_service_pg import day, owner, pay, set_settings
@@ -190,7 +190,7 @@ def test_a_voided_payment_does_not_count_and_another_group_says_nothing(world):
 
     other = make_group(world.db, world.org, world.teacher, "Вторая")
     world.db.commit()
-    world.db.add(StudentGroup(student_id=s2.id, group_id=other.id, is_active=True, joined_at=datetime.now() - timedelta(days=60)))
+    world.db.add(StudentGroup(student_id=s2.id, group_id=other.id, is_active=True, joined_at=ENROLLED_SINCE))
     world.db.commit()
     pay(world, s2, group=other, paid_on=day(-3), valid_to=day(20))
     assert modes(world)[str(s2.id)] is None                                       # money in ANOTHER group says nothing about this one
