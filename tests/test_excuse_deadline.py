@@ -2,6 +2,8 @@
 import json
 from datetime import date, timedelta
 
+import pytest
+
 from src.auth import payment_status as ps
 from src.auth.excuse_deadline import effective_threshold, excuse_deadline, month_end
 
@@ -9,6 +11,7 @@ from tests.pg_world import (  # noqa: F401  (fixtures)
     business_today, excused_lesson, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save, world,
 )
 from tests.pg_world import set_paid_through
+from tests.test_pay2_api_pg import fixed_today  # noqa: F401  (fixture)
 from tests.test_payments_service_pg import day, mid, owner, pay, set_settings
 
 API = "/api/v1/auth"
@@ -339,13 +342,23 @@ def test_deadline_days_come_from_the_settings(world):
     assert deadline_of(world)["date"] == day(20).isoformat()
 
 
+@pytest.mark.parametrize("today, offset, last_day, overdue, days_left", [
+    (date(2026, 10, 20), 2, date(2026, 10, 31), False, 11),   # mid-month: the lesson of the 18th, the month end is ahead
+    (date(2026, 10, 31), 2, date(2026, 10, 31), False, 0),    # the last day of the month is still on time
+    (date(2026, 11, 1), 2, date(2026, 10, 31), True, -1),     # the 1st: the lesson of 30.10 is October's, its month ended yesterday
+    (date(2026, 12, 1), 1, date(2026, 11, 30), True, -1),     # 30.11 -> the 1st of the next month
+    (date(2027, 1, 1), 1, date(2026, 12, 31), True, -1),      # across the year
+])
 @needs_pg
-def test_no_payment_means_the_last_day_of_the_lesson_month(world):
-    day_, _ = excused_lesson(world, offset_days=2)
-    expected = month_end(day_)
-    result = deadline_of(world)
-    assert result["kind"] == "date" and result["date"] == expected.isoformat()
-    assert result["overdue"] is False and result["days_left"] == (expected - business_today()).days
+def test_no_payment_means_the_last_day_of_the_lesson_month(world, fixed_today, monkeypatch, today, offset, last_day, overdue, days_left):
+    # LESSONS 76: «today» is fixed, not the real clock - on the 1st a lesson of 2 days ago belongs to the month that has ended
+    from src.auth import attendance_excuses as ae
+
+    fixed_today(today)                                               # ps.business_today, business_clock and the datetime of the service modules
+    monkeypatch.setattr(ae, "_business_today", lambda: today)       # the excuse list reads its own clock
+    day_, _ = excused_lesson(world, offset_days=offset)
+    assert month_end(day_) == last_day
+    assert deadline_of(world) == {"kind": "date", "date": last_day.isoformat(), "overdue": overdue, "days_left": days_left}
 
 
 @needs_pg
