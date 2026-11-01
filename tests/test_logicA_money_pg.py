@@ -240,6 +240,8 @@ def test_f12_the_running_period_is_not_cut_and_the_dry_run_says_who_switches(wor
     settings_block(world, accounting_start_date="2026-09-01")                  # payment_date
     give_group_price(world.db, world.group, 600_000, valid_from=D(2026, 1, 1))
     m = membership(world); stay(world, m, D(2026, 10, 15)); seed_payment(world, m, 600_000, D(2026, 10, 15))
+    for other in world.students[1:]:                                           # LESSONS 76: the fixture enrols them at the REAL «now - 60 days» (02.09 on 01.11 -> their period ends 01.11, the switch is 02.11)
+        stay(world, membership(world, other), D(2026, 9, 1))                   # fixed: a period of the whole month, the switch is the 1st
     c = owner(world)
     r = c.put(f"{API}/org/settings/payments", params={"dry_run": True}, json={"period_mode": "lessons", "lessons_per_payment": 12})
     assert r.status_code == 200, r.text
