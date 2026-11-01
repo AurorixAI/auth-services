@@ -119,10 +119,24 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("Failed to verify/create database tables: %s", e)
 
+    # R3 4 (LD-23): the background retry of the release of exams (every 15 minutes, one executor among the workers); stops with the application
+    import asyncio
+
+    from src.auth import exam_release_worker
+
+    sweep_stop = asyncio.Event()
+    sweep_task = asyncio.create_task(exam_release_worker.run_forever(sweep_stop)) if exam_release_worker.enabled() else None
+
     yield
 
     # Shutdown
     logger.info("Shutting down ALGO Auth Service...")
+    if sweep_task is not None:
+        sweep_stop.set()
+        try:
+            await asyncio.wait_for(sweep_task, timeout=10)
+        except (asyncio.TimeoutError, Exception):      # a round that is waiting for exam-service is abandoned; the markers stay for the next start
+            sweep_task.cancel()
 
 
 # ============================================================================

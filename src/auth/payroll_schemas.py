@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, StrictInt, field_validator, model_validator
+from pydantic import BaseModel, Field, StrictBool, StrictInt, field_validator, model_validator
 
 from . import payroll_engine as engine
 
@@ -428,7 +428,10 @@ class PayoutCreate(BaseModel):
     paid_on: Optional[date] = None
     method: Optional[PayoutMethod] = None
     note: Optional[str] = Field(None, max_length=500)
-    confirm_overpay: bool = False  # MN-32: without it a payout above the balance is 409 ``OVERPAY_CONFIRM_REQUIRED`` (``overpay`` = by how much)
+    # MN-32: a payout above the balance is 409 ``OVERPAY_CONFIRM_REQUIRED`` (``overpay`` = by how much) until the owner confirms THE SUM HE WAS SHOWN: ``confirm_overpay`` = true AND
+    # ``overpay`` = that sum (R3 7).  If the real overpay is another one meanwhile (a payout from another tab), the answer is the 409 again with the new sum.
+    confirm_overpay: StrictBool = False
+    overpay: Optional[StrictInt] = None
 
 
 class PayoutVoidRequest(BaseModel):
@@ -473,6 +476,11 @@ class PayoutState(BaseModel):
     basis: Literal["fresh", "saved"] = "saved"
     text: str
     items: List[PayoutOut] = Field(default_factory=list)  # live and voided, oldest first
+    # R3 3 (the advance is carried): ``carry_in`` = the advance of the previous months of this teacher (an overpaid month hands its excess on), ``carry_used`` = the part of it that
+    # this month's total took (``target`` is the total AFTER it), ``advance_out`` = what this month hands on to the next one (the overpay + the unused part of ``carry_in``).
+    carry_in: int = 0
+    carry_used: int = 0
+    advance_out: int = 0
 
 
 class PayoutCreated(BaseModel):

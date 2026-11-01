@@ -142,7 +142,18 @@ def _balance(payout: Optional[Mapping[str, Any]], total: int) -> Tuple[int, int,
     if not payout:
         return int(total), 0, int(total), BLOCK_HEADERS[2]
     balance = int(payout["balance"])
-    return int(payout["target"]), int(payout["paid"]), abs(balance), "Переплачено" if balance < 0 else BLOCK_HEADERS[2]
+    # R3 3: ``target`` is the total AFTER the advance of the earlier months; «Заработано» stays the whole earned sum, the advance is a line of its own (``advance_lines``)
+    return int(payout["target"]) + int(payout.get("carry_used") or 0), int(payout["paid"]), abs(balance), "Переплачено" if balance < 0 else BLOCK_HEADERS[2]
+
+
+def advance_lines(payout: Optional[Mapping[str, Any]]) -> List[str]:
+    """R3 3: the lines about the advance under the blue block: what was taken off this month, what goes on to the next one."""
+    lines: List[str] = []
+    if payout and int(payout.get("carry_used") or 0):
+        lines.append(f"Аванс прошлого месяца: {int(payout['carry_used']):,}".replace(",", " ") + " сум — зачтён, «К выплате» уменьшена на него")
+    if payout and int(payout.get("advance_out") or 0):
+        lines.append(f"Аванс {int(payout['advance_out']):,}".replace(",", " ") + " сум зачтётся в выплате следующего месяца")
+    return lines
 
 
 def _earned_words(sheet: Mapping[str, Any]) -> str:
@@ -274,6 +285,9 @@ def write_sheet(ws, sheet: Mapping[str, Any]) -> None:
         xs.header_cell(ws, row, 1 + i, header)
     row += 1
     xs.total_row(ws, row, "", dict(zip((1, 2, 3), (earned, paid, to_pay) if payout else (earned,))), 3 if payout else 1, label_col=1)
+    for line in advance_lines(payout):
+        row += 1
+        _put(ws, row, 1, line, font=xs.FONT_NOTE)
     if payout and payout.get("basis") == "fresh":
         row += 1
         _put(ws, row, 1, "Расчёт по актуальным данным: ведомость изменилась после сохранения", font=xs.FONT_NOTE)
@@ -319,6 +333,9 @@ def write_month_summary(ws, month: str, sheets: Sequence[Mapping[str, Any]], tit
     for sheet in sheets:
         earned, paid, to_pay, word = _balance(sheet.get("payout"), sheet["total_amount"])
         note = f"переплачено на {to_pay:,}".replace(",", " ") if word == "Переплачено" else ""
+        used = int((sheet.get("payout") or {}).get("carry_used") or 0)
+        if used:                                                            # R3 3: the earned sum is whole, the advance of the earlier months is told in the note
+            note = (note + " · " if note else "") + f"зачтён аванс прошлого месяца {used:,}".replace(",", " ")
         shown_to_pay = 0 if word == "Переплачено" else to_pay
         values = (len({line["group_id"] for line in sheet["lines"]}), _lessons_held(sheet), earned, paid, shown_to_pay)
         rows.append((sheet.get("teacher_name") or "Преподаватель", values, note))

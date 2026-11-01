@@ -259,6 +259,9 @@
     "state": "unpaid",
     "basis": "saved",
     "text": "Не выплачено",
-    "items": []
+    "items": [],
+    "carry_in": 0,
+    "carry_used": 0,
+    "advance_out": 0
   }
 }

@@ -20,6 +20,11 @@ def index_definition(engine):
         return c.execute(text("SELECT indexdef FROM pg_indexes WHERE indexname = :n"), {"n": INDEX}).scalar()
 
 
+def audit_actions(engine):
+    with engine.connect() as c:
+        return c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_group_audit_action'")).scalar()
+
+
 def test_the_revision_follows_k4a_and_is_the_head():
     from alembic.script import ScriptDirectory
 
@@ -34,8 +39,10 @@ def test_up_down_up_the_column_and_the_partial_index(engine):
     column = columns(engine)["exam_release_pending"]
     assert column["nullable"] is False and "false" in str(column["default"]).lower()
     assert "WHERE exam_release_pending" in index_definition(engine) or "WHERE (exam_release_pending)" in index_definition(engine)
+    assert "'exam_release_pending'" in audit_actions(engine) and "'exam_release_done'" in audit_actions(engine), "the trail of the owner (R3 5)"
     command.downgrade(cfg, BEFORE)
     assert version(engine) == BEFORE and "exam_release_pending" not in columns(engine) and index_definition(engine) is None
+    assert "'exam_release_done'" not in audit_actions(engine) and "'lesson_cancelled'" in audit_actions(engine)
     command.upgrade(cfg, "head")
     command.upgrade(cfg, "head")                                # repeating is harmless
     assert version(engine) == REVISION and "exam_release_pending" in columns(engine)

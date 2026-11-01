@@ -10,7 +10,7 @@ from datetime import date as date_type
 from typing import List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 from .payments_schemas import PayErrorDetail, PayModel, PeriodMode, PriceOut
 
@@ -136,9 +136,9 @@ class OpeningBatchItem(BaseModel):
     membership_id: str
     version: str = Field(..., max_length=64)
     paid_until: Optional[date_type] = None
-    debt_amount: Optional[int] = None
+    debt_amount: Optional[StrictInt] = None   # R3 2: ``true`` / "100000" are 422 (the Excel import builds the item with a real int)
     debt_on: Optional[date_type] = None
-    lessons_left: Optional[int] = None
+    lessons_left: Optional[StrictInt] = None
     clear: bool = False
 
 

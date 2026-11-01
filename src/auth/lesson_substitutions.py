@@ -1093,6 +1093,17 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         return {"kind": "reject"}
 
     # ------------------------------------------------------------------------------------- exam (fail-closed)
+    def lesson_rights_precheck(self, group: Group, lesson_id: str, day: date, *, actor_id: Any, is_org_admin: bool) -> Optional[GroupAttendance]:
+        """R3 1 (LESSONS 16): the rights on the lesson are judged BEFORE exam-service is asked, so that nobody learns the exams of a group he has nothing to do with from the answer of the check.
+        Reads without a lock (the same checks are made again under the lock); raises what the road would raise (403 ``NOT_LESSON_TEACHER`` ...); returns the journal row of the lesson (or ``None``)."""
+        from .attendance_rules import AttendanceRules      # lazy: it imports the service layer
+
+        iso = day.isoformat()
+        att = self.db.query(GroupAttendance).filter(GroupAttendance.group_id == group.id, GroupAttendance.lesson_id == lesson_id, GroupAttendance.lesson_date == iso).first()
+        occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == lesson_id), None)
+        AttendanceRules(self.svc).assert_lesson_rights(group, att, occ, day, lesson_id, actor_id=actor_id, is_org_admin=is_org_admin)
+        return att
+
     def exam_preflight(self, org_id: Any, group_id: Any, lesson_id: str, lesson_date: Any, reason: str) -> None:
         """Wave B P4 (SV-15): the check of exam-service for a cancellation / a move, asked BEFORE the first lock of the road (a slow exam-service no longer holds the group).
         Still fail-closed (503 ``EXAM_SERVICE_UNAVAILABLE`` / 409 ``LESSON_HAS_LIVE_EXAM``).  Remembered per request (``svc``): ``_exam_check`` inside the locks then does not ask again."""
@@ -1532,7 +1543,14 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         follow without a second code path.  The author is the decider (``decided_by``) and ``decided_via`` says whether he moved it as the teacher."""
         actor, gid = _uuid(actor_id), _uuid(group_id)
         if gid:
-            self.exam_preflight(org_id, gid, body.lessonId, body.lessonDate.isoformat(), (body.reason or "").strip()[:500])       # Wave B P4 (SV-15): before the group is locked
+            # Wave B P4 (SV-15): exam-service is asked before the group is locked - and (R3 1, LESSONS 16) only after the group exists and the teacher may move THIS lesson
+            probe = self.db.query(Group).filter(Group.id == gid, Group.org_id == org_id).first()
+            if probe is None:
+                self.db.rollback()
+                raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
+            if self._via(actor_role) == TEACHER_MOVE:
+                self._teacher_gate(probe, body.lessonId, body.lessonDate, actor)
+            self.exam_preflight(org_id, gid, body.lessonId, body.lessonDate.isoformat(), (body.reason or "").strip()[:500])
         group = self._group_locked(org_id, gid) if gid else None
         if group is None:
             self.db.rollback()

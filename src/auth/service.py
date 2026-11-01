@@ -119,7 +119,7 @@ from .ops_schemas import (  # noqa: E402
     StudentResponseB as StudentResponse,
     TeacherDashboardSummaryResponseB as TeacherDashboardSummaryResponse,
 )
-from . import attendance_rules, business_clock, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
+from . import attendance_rules, business_clock, exam_release, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
 from . import password_rules, staff_lifecycle, student_views  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -5441,7 +5441,9 @@ class AuthService:
         )
         from .lesson_substitutions import Substitutions
         # Wave B P4 (SV-15): exam-service is asked (fail-closed) BEFORE the group is locked; the release is asked after the commit
-        Substitutions(self).exam_preflight(org_id, group_id, req.lessonId, req.lessonDate.isoformat(), req.cancellationReason or "")
+        subs = Substitutions(self)
+        subs.lesson_rights_precheck(group, req.lessonId, req.lessonDate, actor_id=cancelled_by, is_org_admin=is_org_admin)   # R3 1 (LESSONS 16): rights first, then exam-service
+        subs.exam_preflight(org_id, group_id, req.lessonId, req.lessonDate.isoformat(), req.cancellationReason or "")
         locked_group = (
             self.db.query(Group)
             .filter(Group.id == group.id, Group.org_id == org_id)
@@ -5724,7 +5726,10 @@ class AuthService:
         if is_cancellation and req.cancellationReason:
             from .lesson_substitutions import Substitutions
             # Wave B P4 (SV-15): exam-service is asked (fail-closed) BEFORE the group is locked; the release is asked after the commit
-            Substitutions(self).exam_preflight(org_id, group_id, target_lesson_id, lesson_date.isoformat(), req.cancellationReason)
+            subs = Substitutions(self)
+            att0 = subs.lesson_rights_precheck(group, target_lesson_id, lesson_date, actor_id=marked_by, is_org_admin=is_org_admin)   # R3 1 (LESSONS 16): rights first, then exam-service
+            if manager or self._empty_started_lesson(att0) or self._own_future_one_off(group_id, target_lesson_id, lesson_date, marked_by, att0):   # the cases a teacher may cancel (below: 403 for the rest, no call to exam)
+                subs.exam_preflight(org_id, group_id, target_lesson_id, lesson_date.isoformat(), req.cancellationReason)
         if is_cancellation:
             # W1 S6: the lock of the group comes first (the order of the move and of every other writer of the lesson); the cancellation re-takes it
             self.db.query(Group).filter(Group.id == group.id, Group.org_id == org_id).with_for_update().populate_existing().first()
@@ -6059,7 +6064,7 @@ class AuthService:
                 response.status_code,
                 response.text[:500],
             )
-            raise RuntimeError("Не удалось синхронизировать отмену урока с экзаменом")
+            raise exam_release.ExamAnswerError(response.status_code, "Не удалось синхронизировать отмену урока с экзаменом")   # R3 6: a status of its own, not "no answer"
 
     def _fetch_exam_recurring_end_impact(
         self,

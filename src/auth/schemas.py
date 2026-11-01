@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictInt, field_validator
 from pydantic_core import PydanticCustomError
 from . import password_rules
 from .payments_schemas import OpeningIn
@@ -323,7 +323,7 @@ MAX_MONEY = 10_000_000_000
 class PriceOverrideInput(BaseModel):
     """An individual price given together with the enrolment (ROADMAP #105): a sum and the reason, both mandatory."""
 
-    amount: int = Field(..., ge=0, le=MAX_MONEY)
+    amount: StrictInt = Field(..., ge=0, le=MAX_MONEY)   # R3 2: true / "500000" are 422
     reason: str = Field(..., max_length=200)
 
     @field_validator("reason")

@@ -286,3 +286,36 @@ def test_the_missed_lesson_road_with_exam_service_down_at_the_release_keeps_the_
     assert r.status_code == 200, r.text
     assert [x["code"] for x in r.json()["warnings"]] == ["EXAM_RELEASE_PENDING"]
     assert missed_row(w).exam_release_pending is True
+
+
+# ---- R3 1: the rights come BEFORE exam-service (LESSONS 16) ---------------------------------------------------------------------------------------------------
+
+
+def test_a_stranger_teacher_gets_403_and_exam_service_is_never_asked_on_every_road(w, exam):
+    """Teacher B leads nothing of G1: the move, the cancellation from the sheet and «Урока не было» are refused (403) and exam-service - whose answer would name the live exams
+    of the group - is not called at all."""
+    stranger = client(w, "B")
+    moved = stranger.post(f"{API}/org/groups/{w.G1.id}/lesson-move", json={"lessonId": LESSON, "lessonDate": DAY, "newDate": "2026-10-28", "startTime": "14:00", "endTime": "15:30", "reason": "Хочу"})
+    assert moved.status_code == 403, moved.text
+    sheet = stranger.post(f"{API}/org/groups/{w.G1.id}/attendance", json={"lessonDate": DAY, "lessonId": LESSON, "status": "cancelled", "cancellationReason": "Не мой", "records": {}})
+    assert sheet.status_code in (403, 404), sheet.text
+    missed = stranger.post(f"{API}/org/groups/{w.G1.id}/attendance/reconcile/cancel", json={"lessonDate": "2026-10-19", "lessonId": LESSON, "cancellationReason": "Не мой"})
+    assert missed.status_code in (403, 404), missed.text
+    assert exam.calls == [], "no call to exam-service before the rights are proven"
+    for r in (moved, sheet, missed):
+        assert "Контрольная" not in r.text and "экзамен" not in r.text.lower()
+
+
+def test_a_group_that_does_not_exist_is_404_without_a_call_to_exam_service(w, exam):
+    ghost = "00000000-0000-4000-8000-0000000000aa"
+    moved = client(w, "admin").post(f"{API}/org/groups/{ghost}/lesson-move", json={"lessonId": LESSON, "lessonDate": DAY, "newDate": "2026-10-28", "startTime": "14:00", "endTime": "15:30", "reason": "Нет такой"})
+    assert moved.status_code == 404
+    sheet = client(w, "admin").post(f"{API}/org/groups/{ghost}/attendance", json={"lessonDate": DAY, "lessonId": LESSON, "status": "cancelled", "cancellationReason": "Нет", "records": {}})
+    assert sheet.status_code in (400, 403, 404)
+    assert exam.calls == []
+
+
+def test_the_teacher_who_leads_the_lesson_still_moves_it_after_the_rights_were_proven(w, exam):
+    r = client(w, "A").post(f"{API}/org/groups/{w.G1.id}/lesson-move", json={"lessonId": LESSON, "lessonDate": DAY, "newDate": "2026-10-28", "startTime": "14:00", "endTime": "15:30", "reason": "Мой урок"})
+    assert r.status_code == 200, r.text
+    assert [p for p, _ in exam.seen] == ["cancellation-check", "release"]

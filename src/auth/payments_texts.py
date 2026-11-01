@@ -214,8 +214,11 @@ def price_change_warning(start: date, end: date, amount: int, current: int) -> s
 # ---- LOGIC-A: payroll payouts (decision 6) ------------------------------------------------------------------
 
 
-def payout_text(*, state: str, saved_total: int, fresh_total: Optional[int], target: int, paid: int, balance: int) -> str:
-    """The sentence of ``PayoutState.text`` (spec §5.8).  A sheet is "stale" when the fresh total differs from the saved one."""
+def payout_text(*, state: str, saved_total: int, fresh_total: Optional[int], target: int, paid: int, balance: int, carry_used: int = 0) -> str:
+    """The sentence of ``PayoutState.text`` (spec §5.8).  A sheet is "stale" when the fresh total differs from the saved one.
+    ``carry_used`` (R3 3): a month that the advance of the earlier months covers whole is «Закрыто авансом»; otherwise the sentence is the old one (the advance has its own line)."""
+    if state == "settled" and paid == 0 and carry_used:
+        return f"Закрыто авансом прошлого месяца {num(carry_used)}"
     if state == "unpaid":
         return "Не выплачено"
     if state == "settled":

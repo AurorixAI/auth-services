@@ -301,15 +301,15 @@ def test_payout_matrix_errors_idempotency_rights_and_listing(world):
     # P: partial -> due; O: overpay is allowed
     part = payout(world, sheet, 300_000)
     assert part["state"]["state"] == "due" and part["state"]["text"] == "Выплачено 300 000 из 475 000 · осталось 175 000"
-    assert payout(world, sheet, 200_000, confirm_overpay=True)["state"]["state"] == "overpaid"
+    assert payout(world, sheet, 200_000, confirm_overpay=True, overpay=25_000)["state"]["state"] == "overpaid"
     # R: the same idempotency key twice
     key = str(__import__("uuid").uuid4())
-    r1 = c.post(f"{API}/org/payroll/sheets/{sheet['id']}/payouts", json={**base, "amount": 7, "confirm_overpay": True}, headers={"Idempotency-Key": key})
+    r1 = c.post(f"{API}/org/payroll/sheets/{sheet['id']}/payouts", json={**base, "amount": 7, "confirm_overpay": True, "overpay": 7}, headers={"Idempotency-Key": key})
     r2 = c.post(f"{API}/org/payroll/sheets/{sheet['id']}/payouts", json={**base, "amount": 7, "confirm_overpay": True}, headers={"Idempotency-Key": key})
     assert r1.status_code == 201 and r2.status_code == 409 and r2.json()["detail"]["code"] == "DUPLICATE_PAYOUT"
     assert r2.json()["detail"]["payout_id"] == r1.json()["payout"]["id"]
     # B: a payout dated in the past is fine; M: it belongs to the sheet's month
-    old = payout(world, sheet, 3, confirm_overpay=True, paid_on=(_today() - timedelta(days=400)).isoformat())
+    old = payout(world, sheet, 3, confirm_overpay=True, overpay=3, paid_on=(_today() - timedelta(days=400)).isoformat())
     assert old["payout"]["month"] == m.label
     listing = c.get(f"{API}/org/payroll/payouts", params={"month": m.label, "teacher_id": str(world.teacher.id)}).json()
     assert len(listing) == 4 and all(p["month"] == m.label for p in listing)

@@ -582,7 +582,6 @@ class DaysOffService:
             subs.cancel_lesson(org_id, actor_id, group.id, occurrence["id"], date.fromisoformat(occurrence["occurrenceDate"]),
                                reason=lesson_reason_text(reason), kind=HOLIDAY, day_off_id=day_off_id)
             self.db.commit()
-            exam_release.release_pending(self.svc, org_id, group.id)          # AFTER the commit; a failure is retried by the next write to the group
         except RuntimeError:
             self.db.rollback()
             return EXAM_DOWN
@@ -601,6 +600,11 @@ class DaysOffService:
             self.db.rollback()
             logger.exception("day off: lesson %s of group %s was not cancelled", occurrence.get("id"), group.id)
             return "Не удалось отменить урок"
+        try:             # R3 11: AFTER the commit and OUTSIDE the try above - whatever happens here never turns a committed cancellation into «Не удалось отменить урок»
+            exam_release.release_pending(self.svc, org_id, group.id)        # a failure is retried by the background task / the next write to the group
+        except Exception:
+            self.db.rollback()
+            logger.exception("day off: the release of the exams of lesson %s of group %s is left for the retry", occurrence.get("id"), group.id)
         return None
 
     # ---------------------------------------------------------------------------------------------- void

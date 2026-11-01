@@ -493,7 +493,7 @@ class PriceImpact(BaseModel):
 
 
 class GroupPriceUpdate(BaseModel):
-    amount: int = Field(..., ge=0, le=MAX_MONEY)
+    amount: StrictInt = Field(..., ge=0, le=MAX_MONEY)   # R3 2: ``true`` / "500000" are 422
     valid_from: Optional[date_type] = None  # default: today (Tashkent); a past day is allowed
     note: Optional[str] = Field(None, max_length=200)
 
@@ -564,7 +564,7 @@ class PriceOverrideUpdate(BaseModel):
     """``amount`` a sum: the individual price from ``valid_from`` (``reason`` 3..200 characters is mandatory);
     ``amount`` null: from that day the price of the group again (``reason`` optional)."""
 
-    amount: Optional[int] = Field(None, ge=0, le=MAX_MONEY)
+    amount: Optional[StrictInt] = Field(None, ge=0, le=MAX_MONEY)   # R3 2
     valid_from: Optional[date_type] = None
     reason: Optional[str] = Field(None, max_length=200)
 
@@ -1246,7 +1246,7 @@ class OpeningIn(BaseModel):
     """The opening balance of a membership: «оплачено до» and / or «долг X на дату T» (the debt needs its date)."""
 
     paid_until: Optional[date_type] = None
-    debt_amount: Optional[int] = None  # 1..10^10
+    debt_amount: Optional[StrictInt] = None  # 1..10^10; R3 2: ``true`` / "100000" are 422
     debt_on: Optional[date_type] = None  # not after the first day of the stay; default in an import: the day before
     reason: Optional[str] = Field(None, max_length=500)  # m13: required (3..500) when the opening it replaces sits on a membership that has money
 
@@ -1380,8 +1380,8 @@ class LeavePreview(PayModel):
 class SettleItem(BaseModel):
     membership_id: str
     action: SettleAction = "keep"
-    expected_refundable: Optional[int] = None  # refund
-    expected_debt: Optional[int] = None  # writeoff
+    expected_refundable: Optional[StrictInt] = None  # refund (R3 2)
+    expected_debt: Optional[StrictInt] = None  # writeoff (R3 2)
     method: Optional[NewPaymentMethod] = None  # refund: mandatory
     reason: Optional[str] = Field(None, max_length=500)  # writeoff: mandatory (3..500)
 

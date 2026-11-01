@@ -5,6 +5,11 @@ A payout is a FACT against a SAVED sheet (append-only, cancelled by ``voided_*``
 computed from the live payouts of the teacher and month against a TARGET - the fresh total when the sheet is stale, else the saved total.
 Whatever happens to the data afterwards, what was paid is never rewritten: the balance says «доплатить» or «переплачено».  A payout never
 changes the sheet (total, lines, fingerprint).
+
+THE ADVANCE IS CARRIED (R3 3, decision of the lead 02.11): what a month is overpaid by (an advance the owner confirmed) is NOT lost: it is taken off the same teacher's NEXT month
+(``PayoutState.carry_in`` / ``carry_used``: «Аванс прошлого месяца»; ``target`` is the total after it); an advance larger than the next total goes on to the month after
+(``advance_out``).  The chain is computed from what is FROZEN: the SAVED totals of the earlier months and their LIVE payouts - a stale sheet of a past month never changes the
+next month behind the owner's back, the sheet of a past month is not touched, and voiding an advance payout takes the carry away at once (nothing is stored, it is derived).
 """
 from __future__ import annotations
 
@@ -13,6 +18,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.models.auth import PayrollPayout, PayrollSheet, User
@@ -57,7 +63,7 @@ class DuplicatePayout(PayoutError):
 
 
 class OverpayConfirmRequired(PayoutError):
-    """MN-32: the payout is bigger than what is left to pay; ``overpay`` is by how many sum, ``balance`` what was left (>= 0)."""
+    """MN-32: the payout is bigger than what is left to pay; ``overpay`` is by how many sum, ``balance`` what was left (>= 0).  Also the answer to a confirmation of ANOTHER sum than the real one (R3 7)."""
 
     status_code, code = 409, "OVERPAY_CONFIRM_REQUIRED"
 
@@ -90,11 +96,13 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() if value else None
 
 
-def state_of(*, saved_total: int, fresh_total: Optional[int], items: List[PayoutOut]) -> PayoutState:
-    """The balance of a (teacher, month): see the module docstring.  ``items`` oldest first (voided ones listed, not counted)."""
+def state_of(*, saved_total: int, fresh_total: Optional[int], items: List[PayoutOut], carry_in: int = 0) -> PayoutState:
+    """The balance of a (teacher, month): see the module docstring.  ``items`` oldest first (voided ones listed, not counted).  ``carry_in``: the advance of the earlier months."""
     paid = sum(p.amount for p in items if p.voided_at is None)
     stale = fresh_total is not None and fresh_total != saved_total
-    target = fresh_total if stale else saved_total
+    total = fresh_total if stale else saved_total
+    carry_used = min(max(carry_in, 0), max(total, 0))
+    target = total - carry_used
     balance = target - paid
     if balance < 0:
         name = "overpaid"
@@ -105,8 +113,8 @@ def state_of(*, saved_total: int, fresh_total: Optional[int], items: List[Payout
     return PayoutState(
         saved_total=saved_total, fresh_total=fresh_total, target=target, paid=paid, balance=balance, state=name,
         basis="fresh" if stale else "saved",
-        text=tx.payout_text(state=name, saved_total=saved_total, fresh_total=fresh_total, target=target, paid=paid, balance=balance),
-        items=items)
+        text=tx.payout_text(state=name, saved_total=saved_total, fresh_total=fresh_total, target=target, paid=paid, balance=balance, carry_used=carry_used),
+        items=items, carry_in=max(carry_in, 0), carry_used=carry_used, advance_out=max(0, max(carry_in, 0) + paid - total))
 
 
 class PayrollPayoutService:
@@ -142,11 +150,38 @@ class PayrollPayoutService:
             out.setdefault((r.teacher_id, r.period_month), []).append(self._out(r, names))
         return out
 
+    def carry_ins(self, org_id: str, teacher_ids: Iterable[UUID], month: date) -> Dict[UUID, int]:
+        """R3 3: ``{teacher: the advance that arrives in ``month``}`` - one pair of queries for any number of teachers.  Walks the months before ``month`` (any gap passes the advance
+        through): ``carry = max(0, carry + paid_live - saved_total)``; a month without a saved sheet counts as 0, a month without payouts as 0 paid."""
+        ids = list(teacher_ids)
+        if not ids:
+            return {}
+        sheets = self.db.query(PayrollSheet.teacher_id, PayrollSheet.period_month, PayrollSheet.total_amount).filter(
+            PayrollSheet.org_id == org_id, PayrollSheet.teacher_id.in_(ids), PayrollSheet.period_month < month).all()
+        paid = self.db.query(PayrollPayout.teacher_id, PayrollPayout.period_month, func.sum(PayrollPayout.amount)).filter(
+            PayrollPayout.org_id == org_id, PayrollPayout.teacher_id.in_(ids), PayrollPayout.period_month < month,
+            PayrollPayout.voided_at.is_(None)).group_by(PayrollPayout.teacher_id, PayrollPayout.period_month).all()
+        months: Dict[UUID, Dict[date, List[int]]] = {}
+        for teacher, first, total in sheets:
+            months.setdefault(teacher, {}).setdefault(first, [0, 0])[0] = int(total)
+        for teacher, first, amount in paid:
+            months.setdefault(teacher, {}).setdefault(first, [0, 0])[1] = int(amount)
+        out: Dict[UUID, int] = {}
+        for teacher in ids:
+            carry = 0
+            for first in sorted(months.get(teacher, {})):
+                total, got = months[teacher][first]
+                carry = max(0, carry + got - total)
+            out[teacher] = carry
+        return out
+
     def state_for(self, org_id: str, sheet: PayrollSheet, fresh_total: Optional[int],
-                  all_payouts: Optional[Dict[Tuple[UUID, date], List[PayoutOut]]] = None) -> PayoutState:
+                  all_payouts: Optional[Dict[Tuple[UUID, date], List[PayoutOut]]] = None, carry_in: Optional[int] = None) -> PayoutState:
         items = (all_payouts if all_payouts is not None else self.payouts_of(org_id, month=sheet.period_month, teacher_ids=[sheet.teacher_id])
                  ).get((sheet.teacher_id, sheet.period_month), [])
-        return state_of(saved_total=int(sheet.total_amount), fresh_total=fresh_total, items=items)
+        if carry_in is None:
+            carry_in = self.carry_ins(org_id, [sheet.teacher_id], sheet.period_month).get(sheet.teacher_id, 0)
+        return state_of(saved_total=int(sheet.total_amount), fresh_total=fresh_total, items=items, carry_in=carry_in)
 
     def list(self, org_id: str, *, month: Optional[date], teacher_id: Optional[UUID]) -> List[PayoutOut]:
         grouped = self.payouts_of(org_id, month=month, teacher_ids=[teacher_id] if teacher_id else None)
@@ -189,11 +224,13 @@ class PayrollPayoutService:
                     PayrollPayout.created_at >= since).first())
                 if twin is not None:
                     raise DuplicatePayout("Такая выплата только что внесена", payout_id=str(twin.id))
-            if not body.confirm_overpay:
-                # MN-32: the sheet is locked, so a parallel payout is already counted; an advance is written only on an explicit yes
-                left = max(self.state_for(org_id, sheet, fresh_total_of(sheet)).balance, 0)
-                if amount > left:
-                    raise OverpayConfirmRequired(f"Выплата больше остатка на {tx.num(amount - left)} сум", overpay=amount - left, balance=left)
+            # MN-32: the sheet is locked, so a parallel payout is already counted; an advance is written only on an explicit yes to THE SUM the owner saw (R3 7): another real
+            # overpay (a payout from another tab meanwhile) is the question again, with the new sum.  The balance is after the advance of the earlier months (R3 3).
+            left = max(self.state_for(org_id, sheet, fresh_total_of(sheet)).balance, 0)
+            excess = max(amount - left, 0)
+            if excess > 0 and not (body.confirm_overpay and body.overpay == excess):
+                raise OverpayConfirmRequired(f"Выплата больше остатка на {tx.num(excess)} сум. Если окно не предложило записать аванс — обновите страницу и повторите",
+                                             overpay=excess, balance=left)
             row = PayrollPayout(
                 org_id=UUID(str(org_id)), sheet_id=sheet.id, teacher_id=sheet.teacher_id, period_month=sheet.period_month,
                 amount=amount, paid_on=paid_on, method=method, note=(body.note or "").strip() or None,

@@ -4733,6 +4733,17 @@
             ],
             "title": "Note"
           },
+          "overpay": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overpay"
+          },
           "paid_on": {
             "anyOf": [
               {
@@ -4944,6 +4955,11 @@
       "PayoutState": {
         "description": "``target`` = ``fresh_total`` when the sheet is stale (``basis=\"fresh\"``), else the saved total (``basis=\"saved\"``;\n``fresh_total`` null when there is no rate / a manual price); ``balance = target - paid`` (negative = overpaid).",
         "properties": {
+          "advance_out": {
+            "default": 0,
+            "title": "Advance Out",
+            "type": "integer"
+          },
           "balance": {
             "title": "Balance",
             "type": "integer"
@@ -4956,6 +4972,16 @@
             ],
             "title": "Basis",
             "type": "string"
+          },
+          "carry_in": {
+            "default": 0,
+            "title": "Carry In",
+            "type": "integer"
+          },
+          "carry_used": {
+            "default": 0,
+            "title": "Carry Used",
+            "type": "integer"
           },
           "fresh_total": {
             "anyOf": [

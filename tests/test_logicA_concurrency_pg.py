@@ -136,7 +136,7 @@ def test_two_payouts_in_parallel_are_both_kept_and_a_payout_does_not_wait_for_a_
     m, s1, s2 = g_pay_world(world)
     sheet = save_sheet(world, m)
     org, actor = str(world.org.id), str(world.owner.id)
-    body = lambda amount: PayoutCreate(amount=amount, paid_on=business_today(), method="cash", confirm_overpay=True)   # 600 000 against 475 000: an advance, confirmed (MN-32)
+    body = lambda amount: PayoutCreate(amount=amount, paid_on=business_today(), method="cash")   # 100 000 + 150 000 + 200 000 = 450 000 against 475 000: no advance, no question (MN-32)
     fresh = lambda s: (lambda row: PayrollService(s)._fresh_total(org, row))
     import uuid
 
@@ -146,12 +146,12 @@ def test_two_payouts_in_parallel_are_both_kept_and_a_payout_does_not_wait_for_a_
             return PayrollPayoutService(s).create(org, uuid.UUID(sheet["id"]), actor, body(amount), uuid.uuid4(), lambda r: PayrollService(s)._fresh_total(org, r))
         return call
 
-    threads = [run_in_thread(engine, pay(a)) for a in (100_000, 200_000, 300_000)]
+    threads = [run_in_thread(engine, pay(a)) for a in (100_000, 150_000, 200_000)]
     join_all(*threads)
     assert all("error" not in o for _, o in threads), [o.get("error") for _, o in threads]
     world.db.expire_all()
     from src.models.auth import PayrollPayout
 
-    assert sorted(int(p.amount) for p in world.db.query(PayrollPayout).filter_by(org_id=world.org.id, voided_at=None)) == [100_000, 200_000, 300_000]
+    assert sorted(int(p.amount) for p in world.db.query(PayrollPayout).filter_by(org_id=world.org.id, voided_at=None)) == [100_000, 150_000, 200_000]
     state = PayrollService(world.db).payout_state(org, world.db.get(PayrollSheet, uuid.UUID(sheet["id"])))
-    assert state.paid == 600_000 and state.state == "overpaid"
+    assert state.paid == 450_000 and state.state == "due" and state.balance == 25_000
