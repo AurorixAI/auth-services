@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 
 from src.api.database import get_db
+from src.auth.diagnostic_skill_states import apply_skill_states
 from src.auth.service import AuthService
 from src.core.config import get_settings
 
@@ -197,95 +198,15 @@ def internal_complete_diagnostic(
 
     # Upsert StudentSkillState per topic from diagnostic breakdown
     if body.topic_breakdown and saved.get("student_id"):
-        _upsert_skill_states(
-            db=db,
+        # Replayed by the sender's outbox (retries, requeues): idempotent, a malformed topic is skipped (DM-036).
+        apply_skill_states(
+            db,
             student_id=saved["student_id"],
             org_id=saved.get("org_id"),
             theta=body.final_theta,
             topic_breakdown=body.topic_breakdown,
             gaps=set(body.identified_gaps or []),
+            result_at=body.session_started_at,
         )
 
     return saved
-
-
-def _upsert_skill_states(
-    db: Session,
-    student_id: str,
-    org_id: Optional[str],
-    theta: Optional[float],
-    topic_breakdown: Dict[str, Any],
-    gaps: set,
-) -> None:
-    """
-    Upsert StudentSkillState for each topic in diagnostic breakdown.
-    Alpha (per-topic mastery score) maps to status:
-      alpha >= 0.4  → mastered
-      alpha >= -0.2 → learning
-      alpha >= -0.8 → struggling
-      else          → gap
-    """
-    import uuid as _uuid
-    from datetime import datetime, timezone
-    from src.models.analytics import StudentSkillState
-
-    now = datetime.now(timezone.utc)
-    student_uuid = _uuid.UUID(student_id)
-    org_uuid = _uuid.UUID(org_id) if org_id else None
-
-    for skill_id, info in topic_breakdown.items():
-        alpha: float = info.get("alpha", 0.0)
-
-        if alpha >= 0.4:
-            status = "mastered"
-        elif alpha >= -0.2:
-            status = "learning"
-        elif alpha >= -0.8:
-            status = "struggling"
-        else:
-            status = "gap"
-
-        # Override: if confirmed as gap by IRT engine
-        if skill_id in gaps:
-            status = "gap"
-
-        # Mastery probability: sigmoid-like mapping of alpha [-2, 2] → [0, 1]
-        mastery = round(max(0.0, min(1.0, 0.5 + alpha / 4.0)), 4)
-
-        existing = (
-            db.query(StudentSkillState)
-            .filter(
-                StudentSkillState.student_id == student_uuid,
-                StudentSkillState.skill_id == skill_id,
-            )
-            .first()
-        )
-
-        if existing:
-            prev_mastery = float(existing.mastery_probability or 0.5)
-            if mastery > prev_mastery + 0.05:
-                existing.trend = "improving"
-            elif mastery < prev_mastery - 0.05:
-                existing.trend = "declining"
-            else:
-                existing.trend = "stable"
-            existing.mastery_probability = mastery
-            existing.status = status
-            existing.theta = theta
-            existing.last_attempt_at = now
-            existing.updated_at = now
-        else:
-            state = StudentSkillState(
-                student_id=student_uuid,
-                org_id=org_uuid,
-                skill_id=skill_id,
-                mastery_probability=mastery,
-                status=status,
-                trend="stable",
-                theta=theta,
-                last_attempt_at=now,
-                updated_at=now,
-            )
-            db.add(state)
-
-    db.commit()
