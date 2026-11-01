@@ -206,6 +206,7 @@ def internal_complete_diagnostic(
             theta=body.final_theta,
             topic_breakdown=body.topic_breakdown,
             gaps=set(body.identified_gaps or []),
+            result_at=body.session_started_at,
         )
 
     return saved

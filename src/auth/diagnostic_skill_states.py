@@ -10,6 +10,13 @@ after a timeout, after a restart of either side, after the hourly requeue.  Appl
   already committed, is fine;
 * honest about time: the columns are naive UTC (see ``core/db_timezone``), so naive UTC is written.
 
+* monotonic: a result OLDER than the one already applied to the topic is ignored.  The late replay of diagnostic No. 1
+  (the sender's hourly requeue after a long outage) must not roll back the states written by diagnostic No. 2 of the
+  same student.  The time of a result is the moment its session started (``session_started_at`` of the callback); it is
+  stored in ``last_attempt_at`` (the column already meant "last attempt"; no migration).  Rows written before this
+  change hold the time they were applied, which is later than the start of the same result, so a replay of such a result
+  is ignored too, which is what a replay should be.
+
 A database error is NOT swallowed: the sender retries and the (idempotent) replay finishes the job.
 """
 from __future__ import annotations
@@ -43,6 +50,13 @@ def _finite(value: Any) -> Optional[float]:
     return number if math.isfinite(number) else None
 
 
+def naive_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """An aware datetime as naive UTC (the convention of every column); a naive one is taken as UTC already."""
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def status_for(alpha: float, is_gap: bool) -> str:
     if is_gap or alpha < -0.8:
         return "gap"
@@ -67,14 +81,20 @@ def apply_skill_states(
     topic_breakdown: Any,
     gaps: Set[str],
     now: Optional[datetime] = None,
+    result_at: Optional[datetime] = None,
 ) -> Dict[str, int]:
-    """Upsert one StudentSkillState per topic.  Returns ``{"written": n, "unchanged": n, "skipped": n}``."""
-    counts = {"written": 0, "unchanged": 0, "skipped": 0}
+    """Upsert one StudentSkillState per topic.
+
+    ``result_at``: when the diagnostic that produced ``topic_breakdown`` started (naive UTC; ``None`` = unknown, the
+    result counts as the newest).  Returns ``{"written": n, "unchanged": n, "skipped": n, "stale": n}``.
+    """
+    counts = {"written": 0, "unchanged": 0, "skipped": 0, "stale": 0}
     if not isinstance(topic_breakdown, dict):
         if topic_breakdown:
             logger.warning("diagnostic_topic_breakdown_ignored student_id=%s type=%s", student_id, type(topic_breakdown).__name__)
         return counts
     now = now or _utcnow()
+    result_at = naive_utc(result_at) or now
     student_uuid = uuid.UUID(str(student_id))
     org_uuid = uuid.UUID(str(org_id)) if org_id else None
     theta_value = _finite(theta)
@@ -102,9 +122,12 @@ def apply_skill_states(
         if existing is None:
             db.add(StudentSkillState(
                 student_id=student_uuid, org_id=org_uuid, skill_id=skill_id, mastery_probability=mastery,
-                status=status, trend="stable", theta=theta_stored, last_attempt_at=now, updated_at=now,
+                status=status, trend="stable", theta=theta_stored, last_attempt_at=result_at, updated_at=now,
             ))
             counts["written"] += 1
+            continue
+        if existing.last_attempt_at is not None and result_at < existing.last_attempt_at:
+            counts["stale"] += 1                # an older result than the one already applied: never roll back
             continue
         previous = float(existing.mastery_probability if existing.mastery_probability is not None else 0.5)
         same_theta = (existing.theta is None and theta_stored is None) or (
@@ -122,10 +145,12 @@ def apply_skill_states(
         existing.mastery_probability = mastery
         existing.status = status
         existing.theta = theta_stored
-        existing.last_attempt_at = now
+        existing.last_attempt_at = result_at
         existing.updated_at = now
         counts["written"] += 1
 
+    if counts["stale"]:
+        logger.info("diagnostic_topic_results_stale student_id=%s stale=%s", student_id, counts["stale"])
     if counts["skipped"]:
         logger.warning("diagnostic_topic_breakdown_rows_skipped student_id=%s skipped=%s", student_id, counts["skipped"])
     db.commit()

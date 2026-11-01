@@ -7,7 +7,7 @@ what does not depend on it.
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -26,6 +26,8 @@ from tests.test_diagnostic_completion_lifecycle import DB_URL, scenario  # noqa:
 pytestmark = pytest.mark.skipif(not DB_URL, reason="Requires disposable A2 auth PostgreSQL")
 NOW = datetime(2026, 10, 1, 12, 0)
 LATER = datetime(2026, 10, 1, 12, 5)
+STARTED_1 = datetime(2026, 9, 28, 9, 0)       # diagnostic No. 1 of a student
+STARTED_2 = datetime(2026, 10, 2, 9, 0)       # diagnostic No. 2, a new link after No. 1 was lost for hours
 
 
 def states(db, student_id):
@@ -48,12 +50,12 @@ def test_replay_of_the_same_payload_changes_nothing_not_even_the_trend(scenario)
     db.commit()
     breakdown = {"T1": {"alpha": 0.8}, "T2": {"alpha": -1.0}}
     first = apply_skill_states(db, student_id=str(sid), org_id=str(org), theta=0.4, topic_breakdown=breakdown, gaps=set(), now=LATER)
-    assert first == {"written": 2, "unchanged": 0, "skipped": 0}
+    assert first == {"written": 2, "unchanged": 0, "skipped": 0, "stale": 0}
     before = {k: (v.trend, v.status, float(v.mastery_probability), v.last_attempt_at) for k, v in states(db, sid).items()}
     assert before["T1"][:2] == ("improving", "mastered") and before["T2"][:2] == ("stable", "gap")
     replay = apply_skill_states(db, student_id=str(sid), org_id=str(org), theta=0.4, topic_breakdown=breakdown, gaps=set(),
                                 now=datetime(2026, 10, 1, 13, 0))
-    assert replay == {"written": 0, "unchanged": 2, "skipped": 0}
+    assert replay == {"written": 0, "unchanged": 2, "skipped": 0, "stale": 0}
     after = {k: (v.trend, v.status, float(v.mastery_probability), v.last_attempt_at) for k, v in states(db, sid).items()}
     assert after == before                                                    # "improving" is still "improving"
     assert db.query(StudentSkillState).filter_by(student_id=sid).count() == 2
@@ -66,6 +68,38 @@ def test_a_new_result_for_a_known_topic_still_moves_the_trend(scenario):
     apply_skill_states(db, student_id=str(sid), org_id=str(org), theta=0.2, topic_breakdown={"T1": {"alpha": -0.8}}, gaps=set(), now=LATER)
     row = states(db, sid)["T1"]
     assert (row.trend, row.status, float(row.mastery_probability), row.last_attempt_at) == ("declining", "struggling", 0.3, LATER)
+
+
+def test_an_old_callback_replayed_after_a_newer_diagnostic_does_not_roll_the_states_back(scenario):
+    db, _factory, invite = scenario
+    sid, org = invite.student_id, invite.org_id
+    first = {"T1": {"alpha": -1.0}, "T2": {"alpha": 0.9}}
+    second = {"T1": {"alpha": 0.9}, "T2": {"alpha": -1.0}}
+    kw = dict(student_id=str(sid), org_id=str(org), gaps=set())
+    # No. 2 was applied (it was delivered first); No. 1 is the requeued callback that finally reaches auth-service
+    assert apply_skill_states(db, theta=0.8, topic_breakdown=second, result_at=STARTED_2, now=LATER, **kw)["written"] == 2
+    after_second = {k: (v.status, float(v.mastery_probability), v.trend, v.last_attempt_at) for k, v in states(db, sid).items()}
+    late = apply_skill_states(db, theta=-0.5, topic_breakdown=first, result_at=STARTED_1, now=datetime(2026, 10, 3, 9, 0), **kw)
+    assert late == {"written": 0, "unchanged": 0, "skipped": 0, "stale": 2}
+    assert {k: (v.status, float(v.mastery_probability), v.trend, v.last_attempt_at) for k, v in states(db, sid).items()} == after_second
+    assert after_second["T1"][3] == STARTED_2                                  # the time of the result, not of the delivery
+    # the SAME result delivered again is a plain replay
+    assert apply_skill_states(db, theta=0.8, topic_breakdown=second, result_at=STARTED_2, now=datetime(2026, 10, 4, 9, 0), **kw)["unchanged"] == 2
+
+
+def test_in_order_results_still_apply_and_an_equal_time_with_other_values_is_not_stale(scenario):
+    db, _factory, invite = scenario
+    kw = dict(student_id=str(invite.student_id), org_id=None, gaps=set(), now=LATER)
+    apply_skill_states(db, theta=0.1, topic_breakdown={"T1": {"alpha": -1.0}}, result_at=STARTED_1, **kw)
+    assert apply_skill_states(db, theta=0.2, topic_breakdown={"T1": {"alpha": 0.9}}, result_at=STARTED_2, **kw)["written"] == 1
+    assert apply_skill_states(db, theta=0.3, topic_breakdown={"T1": {"alpha": 0.1}}, result_at=STARTED_2, **kw)["written"] == 1
+    assert states(db, invite.student_id)["T1"].last_attempt_at == STARTED_2
+
+
+def test_aware_result_time_is_stored_as_naive_utc():
+    from src.auth.diagnostic_skill_states import naive_utc
+    assert naive_utc(datetime(2026, 10, 1, 10, 0, tzinfo=timezone(timedelta(hours=5)))) == datetime(2026, 10, 1, 5, 0)
+    assert naive_utc(datetime(2026, 10, 1, 5, 0)) == datetime(2026, 10, 1, 5, 0) and naive_utc(None) is None
 
 
 def test_malformed_topics_are_skipped_the_rest_is_written(scenario):
@@ -82,7 +116,7 @@ def test_malformed_topics_are_skipped_the_rest_is_written(scenario):
         "EMPTY_DICT": {},
     }
     result = apply_skill_states(db, student_id=str(sid), org_id=str(org), theta=0.0, topic_breakdown=breakdown, gaps={"OK"}, now=NOW)
-    assert result == {"written": 3, "unchanged": 0, "skipped": 5}
+    assert result == {"written": 3, "unchanged": 0, "skipped": 5, "stale": 0}
     rows = states(db, sid)
     assert set(rows) == {"OK", "NO_ALPHA", "EMPTY_DICT"}
     assert rows["OK"].status == "gap" and rows["NO_ALPHA"].status == "learning" and float(rows["NO_ALPHA"].mastery_probability) == 0.5
@@ -108,7 +142,7 @@ def test_times_are_naive_utc_like_every_other_column(scenario):
 def test_breakdown_that_is_not_a_mapping_is_ignored(scenario):
     db, _factory, invite = scenario
     assert apply_skill_states(db, student_id=str(invite.student_id), org_id=None, theta=0.0, topic_breakdown=["T1"], gaps=set()) == \
-        {"written": 0, "unchanged": 0, "skipped": 0}
+        {"written": 0, "unchanged": 0, "skipped": 0, "stale": 0}
 
 
 # ── over HTTP: a failure after the result was committed is repaired by the sender's retry ─────────────────────────
@@ -171,3 +205,14 @@ def test_a_crash_after_the_result_commit_is_finished_by_the_retry_without_a_seco
 def test_list_instead_of_mapping_is_a_validation_error_not_a_500(http):
     client, _db, invite = http
     assert callback(client, invite, topic_breakdown=["T1"]).status_code == 422
+
+
+def test_old_callback_after_a_newer_diagnostic_over_http(http):
+    """The callback of diagnostic No. 1 arrives after No. 2 already wrote the states of the student."""
+    client, db, invite = http
+    apply_skill_states(db, student_id=str(invite.student_id), org_id=str(invite.org_id), theta=0.9,
+                       topic_breakdown={"T1": {"alpha": 0.9}}, gaps=set(), result_at=STARTED_2, now=LATER)
+    response = callback(client, invite, topic_breakdown={"T1": {"alpha": -1.0}}, session_started_at="2026-09-28T14:00:00+05:00")
+    assert response.status_code == 200, response.text                         # accepted: the result row is saved
+    row = states(db, invite.student_id)["T1"]
+    assert (row.status, float(row.mastery_probability), row.last_attempt_at) == ("mastered", 0.725, STARTED_2)
