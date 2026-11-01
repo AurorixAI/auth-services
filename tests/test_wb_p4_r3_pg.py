@@ -46,7 +46,8 @@ def fake(monkeypatch, w):
 
 def trail(w):
     w.db.expire_all()
-    rows = w.db.query(GroupAudit).filter(GroupAudit.group_id == w.G1.id, GroupAudit.action.in_([exam_release.ACTION_PENDING, exam_release.ACTION_DONE])).order_by(GroupAudit.created_at, GroupAudit.id).all()
+    rows = w.db.query(GroupAudit).filter(GroupAudit.group_id == w.G1.id, GroupAudit.action.in_([exam_release.ACTION_PENDING, exam_release.ACTION_DONE])).all()
+    rows.sort(key=lambda r: (r.action != exam_release.ACTION_PENDING, r.created_at))      # the business clock of the test stands still: «pending» always comes before «done»
     return [(r.action, r.snapshot["outcome"], r.snapshot["message"]) for r in rows]
 
 
