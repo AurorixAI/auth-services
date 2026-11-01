@@ -1643,7 +1643,7 @@ def test_the_dry_run_script_connection_is_read_only(world):
     module = __import__("importlib.util", fromlist=["util"]).module_from_spec(spec)
     spec.loader.exec_module(module)
     plans, target, applied = module.collect(DB_URL)
-    assert target == "a2_auth" and applied is True                                     # the tables exist in the test database
+    assert target.startswith("a2_auth") and applied is True                                     # the tables exist in the test database
     assert module.main(["--database-url", ""]) == 2                                    # no URL: refuses
 
 

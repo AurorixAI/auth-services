@@ -21,6 +21,7 @@ from src.auth.diagnostic_level import (
 from src.auth.service import AuthService
 from src.core.config import get_settings
 from src.models.auth import DiagnosticInvite, Group, Organization, Student, StudentDiagnosticResult, StudentGroup, User
+from tests.dbguard import is_a2_db as _is_a2_db  # noqa: E402
 
 
 # --- pure helper: boundaries are the cross-service contract -------------------
@@ -79,7 +80,7 @@ needs_db = pytest.mark.skipif(not DB_URL, reason="Requires disposable A2 auth Po
 
 @pytest.fixture
 def world():
-    assert DB_URL and DB_URL.endswith("/a2_auth"), "Use only the disposable a2_auth database"
+    assert DB_URL and _is_a2_db(DB_URL), "Use only the disposable a2_auth database"
     engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
     Organization.metadata.create_all(engine)
     factory = sessionmaker(engine, autoflush=False)

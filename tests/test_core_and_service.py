@@ -696,6 +696,7 @@ class TestAuthServiceExtended:
                 service.login(LoginRequest(email="x@y.com", password="anypass"))
         assert verified == [service_module._DUMMY_PASSWORD_HASH, real, real]
 
+    @pytest.mark.real_bcrypt
     def test_the_dummy_hash_is_a_real_bcrypt_hash_of_the_current_cost(self):
         from src.auth import service as service_module
 

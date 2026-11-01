@@ -10,6 +10,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 from src.core.db_timezone import utc_connect_args
 from sqlalchemy.orm import Session
+from tests.dbguard import is_migration_db as _is_migration_db  # noqa: E402
 
 URL=os.environ.get('A5_AUTH_MIGRATION_TEST_DATABASE_URL')
 pytestmark=pytest.mark.skipif(not URL,reason='Requires isolated a5_auth_migrations PostgreSQL')
@@ -44,7 +45,7 @@ def _group_row(db,id,org_id,name,class_level=9,created_at=None):
 
 
 def test_empty_upgrade_repeat_and_checkpoint_upgrade_preserve_records(monkeypatch):
-    assert URL and URL.endswith('/a5_auth_migrations'), 'Use only the disposable migration database'
+    assert URL and _is_migration_db(URL), 'Use only the disposable migration database'
     engine=create_engine(URL, connect_args=utc_connect_args(URL))
     assert not inspect(engine).get_table_names(), 'The migration fixture must start empty'
     monkeypatch.setenv('DATABASE_URL',URL)

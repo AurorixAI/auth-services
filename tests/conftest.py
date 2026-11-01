@@ -5,10 +5,65 @@ leak from run to run), and no in-process counter may leak from one test into the
 Redis behaviour installs its own client by monkeypatching ``src.core.redis_client.get_redis``.
 """
 import os
+import re
 
 import pytest
 
 os.environ.setdefault("PAYMENTS_SUMMARY_TTL", "0")  # no summary cache in tests (a test that wants it sets it)
+
+
+def _own_database_per_xdist_worker():
+    """``pytest -n N`` (scripts/test_fast.sh): worker ``gwK`` gets its own copy of every test database, ``<name>_gwK``, created on first use.
+
+    Runs while pytest loads this file - before any test module reads the URLs. CI and a plain run have no ``PYTEST_XDIST_WORKER`` and are not
+    touched. Whole files go to one worker (``--dist loadfile``), so the databases the migration tests create by a fixed name never meet."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker:
+        return
+    import psycopg2
+    from urllib.parse import urlsplit, urlunsplit
+
+    for var in ("A2_AUTH_TEST_DATABASE_URL", "A5_AUTH_MIGRATION_TEST_DATABASE_URL", "DATABASE_URL"):
+        url = os.environ.get(var)
+        if not url or not re.search(r"/(a2_auth|a5_auth_migrations)$", url.split("?")[0]):
+            continue                                  # an unusual URL: leave it, the guards of the tests refuse it
+        parts = urlsplit(url)
+        name = f"{parts.path.lstrip('/')}_{worker}"
+        maintenance = urlunsplit(parts._replace(scheme="postgresql", path="/postgres"))
+        conn = psycopg2.connect(maintenance)
+        conn.autocommit = True
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,))
+                if cursor.fetchone() is None:
+                    cursor.execute(f'CREATE DATABASE "{name}"')
+        finally:
+            conn.close()
+        os.environ[var] = urlunsplit(parts._replace(path=f"/{name}"))
+
+
+_own_database_per_xdist_worker()
+
+
+def pytest_collection_modifyitems(config, items):
+    """Under pytest-xdist only: the longest test files first (measured seconds of ``.github/ci_test_durations.json``), so that a 270-second file does not start
+    last and leave three workers waiting for it. Every worker sorts the same way (stable: the order inside a file and between equal weights is kept)."""
+    if not os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    try:
+        known = json.loads((root / ".github" / "ci_test_durations.json").read_text())
+    except (OSError, ValueError):
+        return
+    default = sorted(known.values())[len(known) // 2] if known else 0.0
+
+    def weight(item):
+        return known.get(Path(str(item.fspath)).resolve().relative_to(root).as_posix(), default)
+
+    items.sort(key=lambda item: -weight(item))
 
 
 @pytest.fixture(autouse=True)
@@ -62,6 +117,29 @@ def _legacy_slots_valid_from_the_beginning(request, monkeypatch):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "legacy_valid_from: keep the real fallback of a slot without validFrom")
+    config.addinivalue_line("markers", "real_bcrypt: the test is about the production cost of the password hash (12), keep it")
+
+
+@pytest.fixture(autouse=True)
+def _cheap_password_hashes(request, monkeypatch):
+    """Two thirds of a database test is bcrypt: every sign-in hashes or verifies at cost 12 (0.3 s each). A test is about the behaviour, not about the
+    cost, so passwords are hashed at cost 4 (the minimum) here; the production contexts are untouched, and a test that is about the production cost
+    carries ``@pytest.mark.real_bcrypt``."""
+    if request.node.get_closest_marker("real_bcrypt"):
+        yield
+        return
+    try:
+        from passlib.context import CryptContext
+
+        from src.auth import service
+        from src.core import security
+    except Exception:  # pragma: no cover - a unit test without the application stack
+        yield
+        return
+    cheap = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=4)
+    monkeypatch.setattr(security, "_pwd_context", cheap)
+    monkeypatch.setattr(service, "pwd_context", cheap)
+    yield
 
 
 @pytest.fixture(autouse=True)

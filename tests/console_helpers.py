@@ -25,6 +25,7 @@ from src.core.database import get_db  # noqa: E402
 from src.core.db_timezone import utc_connect_args  # noqa: E402
 from src.models.auth import Organization, OrganizationMember, User  # noqa: E402
 from src.models.platform import PlatformRole, PlatformStaff  # noqa: E402
+from tests.dbguard import is_a2_db as _is_a2_db  # noqa: E402
 
 DB_URL = os.getenv("A2_AUTH_TEST_DATABASE_URL")
 needs_pg = pytest.mark.skipif(not DB_URL, reason="Requires disposable A2 auth PostgreSQL")
@@ -40,7 +41,7 @@ CONSOLE_TABLES = "support_attachments, support_messages, support_tickets, passwo
 def cw(monkeypatch):
     from src.models.base import Base
 
-    assert DB_URL and DB_URL.endswith("/a2_auth"), "Use only the disposable a2_auth database"
+    assert DB_URL and _is_a2_db(DB_URL), "Use only the disposable a2_auth database"
     engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
     Base.metadata.create_all(engine)
     with engine.begin() as c:

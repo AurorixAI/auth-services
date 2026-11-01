@@ -14,6 +14,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql://algo:algo@localhost:5432/alg
 
 from src.auth.service import AuthService
 from src.models.auth import Group, Organization, Student, StudentGroup, User
+from tests.dbguard import is_a2_db as _is_a2_db  # noqa: E402
 
 
 DB_URL = os.getenv("A2_AUTH_TEST_DATABASE_URL")
@@ -24,7 +25,7 @@ pytestmark = pytest.mark.skipif(not DB_URL, reason="Requires disposable A2 auth 
 
 @pytest.fixture
 def world():
-    assert DB_URL and DB_URL.endswith("/a2_auth"), "Use only the disposable a2_auth database"
+    assert DB_URL and _is_a2_db(DB_URL), "Use only the disposable a2_auth database"
     engine = create_engine(DB_URL, connect_args=utc_connect_args(DB_URL))
     Organization.metadata.create_all(engine)
     with sessionmaker(engine, autoflush=False)() as db:

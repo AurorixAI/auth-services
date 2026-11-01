@@ -605,7 +605,7 @@ def test_r2_a_twin_that_loses_the_insert_race_with_another_email_is_409(cw, monk
     assert [x.email for x in rows(cw)] == [body["email"]] and len(cw.outbox) == 2
 
 
-@pytest.mark.parametrize("bad", [str(__import__("uuid").uuid1()), "00000000-0000-0000-0000-000000000000", str(__import__("uuid").uuid5(__import__("uuid").NAMESPACE_DNS, "x"))])
+@pytest.mark.parametrize("bad", ["de4ee2fa-d603-11f1-ab65-f786ec4ab382", "00000000-0000-0000-0000-000000000000", str(__import__("uuid").uuid5(__import__("uuid").NAMESPACE_DNS, "x"))])
 def test_r2_the_request_id_must_be_a_uuid_v4(cw, bad):
     r = post(cw, step2(request_id=bad))
     assert r.status_code == 422 and "request_id" in r.json()["fields"] and rows(cw) == []
