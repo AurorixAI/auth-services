@@ -11,7 +11,7 @@ from tests.pg_world import (  # noqa: F401  (fixtures)
     business_today, excused_lesson, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save, world,
 )
 from tests.pg_world import set_paid_through
-from tests.test_pay2_api_pg import fixed_today  # noqa: F401  (fixture)
+from tests.test_pay2_api_pg import fixed_today, membership, stay  # noqa: F401  (fixture + helpers)
 from tests.test_payments_service_pg import day, mid, owner, pay, set_settings
 
 API = "/api/v1/auth"
@@ -354,6 +354,8 @@ def test_no_payment_means_the_last_day_of_the_lesson_month(world, fixed_today, m
     # LESSONS 76: «today» is fixed, not the real clock - on the 1st a lesson of 2 days ago belongs to the month that has ended
     from src.auth import attendance_excuses as ae
 
+    for student in world.students:                                   # the fixture enrols them at the REAL "now - 60 days": with a pinned past «today» they would join after the lesson
+        stay(world, membership(world, student), date(2026, 9, 1))
     fixed_today(today)                                               # ps.business_today, business_clock and the datetime of the service modules
     monkeypatch.setattr(ae, "_business_today", lambda: today)       # the excuse list reads its own clock
     day_, _ = excused_lesson(world, offset_days=offset)
