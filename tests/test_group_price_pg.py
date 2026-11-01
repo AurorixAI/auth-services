@@ -29,6 +29,7 @@ from tests.test_payroll_pg import (
     count_queries, current_month, lesson, line_of, overview, pay_calendar, preview, previous_month,
     save as save_sheet, set_rate, teacher_row, workbook,
 )
+from tests.test_pay2_api_pg import fixed_today  # noqa: E402,F401  (fixture)
 
 pytestmark = needs_pg
 
@@ -503,6 +504,7 @@ def test_the_fingerprint_of_a_sheet_saved_before_the_group_price_stays_the_same_
     assert sheet_state(world, m, saved)["stale"] is False
 
 
+@pytest.mark.usefixtures("fixed_today")        # LESSONS 76/82: the scenario is built from day(-N); it stood on the day of the month it ran at
 def test_the_list_of_stale_sheets_is_for_the_owner_only(world):
     m, saved = saved_flat_month(world)
     allow_admin(world)
@@ -553,6 +555,7 @@ def build_priced_centre(w, students_per):
     return m, [{"teacher_id": str(teacher.id), "lesson_type": "group", "percent": "40"}], teacher
 
 
+@pytest.mark.usefixtures("fixed_today")        # LESSONS 76/82: the scenario is built from day(-N); it stood on the day of the month it ran at
 def test_a_month_of_30_students_with_price_history_costs_the_same_queries_as_one_of_3(world):
     small_m, small_percents, _ = build_priced_centre(world, 3)
     client = money_owner(world)
@@ -1375,6 +1378,7 @@ def test_a_price_that_already_acts_cannot_be_cancelled(world):
     assert audit_rows(world, pricing.ACTION_MEMBERSHIP_PRICE_CANCELLED) == []
 
 
+@pytest.mark.usefixtures("fixed_today")        # LESSONS 76/82: the scenario is built from day(-N); it stood on the day of the month it ran at
 def test_cancelling_a_scheduled_individual_price_and_a_scheduled_way_back(world):
     s0 = world.students[0]
     put_price(world, 500_000, valid_from=day(-30))
@@ -1650,8 +1654,9 @@ def test_the_dry_run_script_connection_is_read_only(world):
 # ---- PAY-2: prices and the money that is already on the account -------------------------------------------------------
 
 
-def test_a_backdated_price_never_alters_a_payment_already_entered(world):
+def test_a_backdated_price_never_alters_a_payment_already_entered(world, fixed_today):
     """LOGIC-A (decision 4): a price that rewrites a charged period of a student with money is REFUSED; what is allowed never moves a payment."""
+    fixed_today(date(2026, 11, 15))             # LESSONS 76/82: built from day(-N); it failed on the 29th-31st (the periods of day(-20) / day(-19) cross a month)
     give_group_price(world.db, world.group, 400_000, EPOCH)
     made = pay(world, amount=400_000, paid_on=day(-20))["payment"]
     second = pay(world, world.students[1], amount=123_456, paid_on=day(-5))["payment"]

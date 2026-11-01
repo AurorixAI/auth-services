@@ -481,6 +481,7 @@ def test_no_fee_gives_zero_and_a_warning(world):
 
 
 from tests.test_payment_carry_over_pg import clock, transfer, two  # noqa: E402,F401
+from tests.test_pay2_api_pg import fixed_today  # noqa: E402,F401  (fixture)
 
 
 def test_transfer_in_the_middle_of_the_month_splits_the_lessons_and_the_payment_follows(two, monkeypatch):
@@ -1281,6 +1282,7 @@ def build_centre(w, teachers, students_per, lessons=8):
     return m, percents
 
 
+@pytest.mark.usefixtures("fixed_today")        # LESSONS 76/82: the scenario is built from day(-N); it stood on the day of the month it ran at
 def test_a_month_of_ten_teachers_and_two_hundred_students_costs_a_fixed_number_of_queries(world):
     small_m, small_percents = build_centre(world, 2, 3)
     small_client = owner(world)

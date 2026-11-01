@@ -13,6 +13,7 @@ from tests.test_payroll_pg import (  # noqa: F401
     student_group, teacher_row,
 )
 from tests.pg_world import money_for, payments_block
+from tests.test_pay2_api_pg import fixed_today  # noqa: E402,F401  (fixture)
 
 
 def _today():
@@ -240,6 +241,7 @@ def payout(w, sheet, amount, expect=201, **extra):
     return r.json()
 
 
+@pytest.mark.usefixtures("fixed_today")        # LESSONS 76/82: the scenario is built from day(-N); it stood on the day of the month it ran at
 def test_g_pay_chain_pay_late_payment_to_pay_recalc_overpaid_void(world):
     m, s1, s2 = g_pay_world(world)
     sheet = save_sheet(world, m)
