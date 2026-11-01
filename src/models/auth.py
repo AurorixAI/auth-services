@@ -987,6 +987,9 @@ class GroupAttendance(Base):
     # LOGIC-B O7: optimistic lock of the marks.  Grows by 1 on every successful write of the row (start / reconcile = 1,
     # save, cancel, admin correction, change of the lesson teacher); the resolutions of excuses do not touch it.
     version = Column(Integer, nullable=False, default=1, server_default="1")
+    # Wave B P4 (SV-15 / LD-23): this CANCELLED lesson's exams are still to be released in exam-service (asked after the commit; a failure leaves the marker, the next write to the
+    # group retries it; a restored lesson loses its row and with it the marker).
+    exam_release_pending = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     # TIME_CONVENTIONS: ``started_at`` / ``completed_at`` are TASHKENT wall time, ``created_at`` / ``updated_at`` are
     # UTC.  Compare them only through ``src/auth/business_clock.py``.
@@ -1006,6 +1009,7 @@ class GroupAttendance(Base):
             name="ck_group_attendance_cancellation_kind",
         ),
         Index("idx_attendance_group", "group_id"),
+        Index("ix_attendance_exam_release_pending", "org_id", "group_id", postgresql_where=text("exam_release_pending")),
         Index("idx_attendance_org", "org_id"),
         Index("idx_attendance_teacher", "org_id", "teacher_id", "lesson_date"),
         Index("idx_group_attendance_day_off", "day_off_id", postgresql_where=text("day_off_id IS NOT NULL")),

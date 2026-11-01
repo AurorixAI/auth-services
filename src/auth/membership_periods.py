@@ -40,6 +40,8 @@ from sqlalchemy.orm import Session
 
 from src.models.auth import StudentGroup, StudentGroupPeriod
 
+from . import business_clock as bc
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,7 +58,7 @@ def naive_utc(moment: Optional[datetime]) -> Optional[datetime]:
 
 
 def utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return bc.utc_now()   # DM-005: the one clock
 
 
 # ------------------------------------------------------------------------------------------ write points

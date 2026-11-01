@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StrictInt, field_validator, model_validator
 
 from . import payroll_engine as engine
 
@@ -424,10 +424,11 @@ class PayoutCreate(BaseModel):
     """``amount`` 1..10^10 (422 ``AMOUNT_RANGE``); ``paid_on`` default today, not in the future, not older than 3 years
     (422 ``PAID_ON_RANGE``); ``method`` mandatory (422 ``METHOD_REQUIRED``)."""
 
-    amount: int
+    amount: StrictInt
     paid_on: Optional[date] = None
     method: Optional[PayoutMethod] = None
     note: Optional[str] = Field(None, max_length=500)
+    confirm_overpay: bool = False  # MN-32: without it a payout above the balance is 409 ``OVERPAY_CONFIRM_REQUIRED`` (``overpay`` = by how much)
 
 
 class PayoutVoidRequest(BaseModel):
@@ -485,13 +486,15 @@ class PayoutVoided(BaseModel):
 
 
 class PayoutError(BaseModel):
-    """409 ``DUPLICATE_PAYOUT`` carries ``payout_id``; the other codes: ``SHEET_NOT_SAVED`` / ``ALREADY_VOIDED`` (409),
+    """409 ``DUPLICATE_PAYOUT`` carries ``payout_id``; 409 ``OVERPAY_CONFIRM_REQUIRED`` carries ``overpay`` and ``balance``; the other codes: ``SHEET_NOT_SAVED`` / ``ALREADY_VOIDED`` (409),
     ``AMOUNT_RANGE`` / ``PAID_ON_RANGE`` / ``METHOD_REQUIRED`` / ``REASON_REQUIRED`` / ``FINGERPRINT_REQUIRED`` /
     ``DIVISOR_RANGE`` (422)."""
 
     code: Optional[str] = None
     message: str
     payout_id: Optional[str] = None
+    overpay: Optional[int] = None  # OVERPAY_CONFIRM_REQUIRED: by how many sum the payout is above the balance
+    balance: Optional[int] = None  # OVERPAY_CONFIRM_REQUIRED: what was left to pay
 
 
 for _model in (SheetOut, MonthTeacher):

@@ -40,12 +40,13 @@ def fixed_today(monkeypatch):
 
     from src.auth import business_clock as bc
 
-    state = {"day": TODAY}
+    state = {"day": TODAY, "ticks": 0}
 
     def moment():
         day = state["day"]
+        state["ticks"] += 1          # the frozen clock still ADVANCES by a microsecond per reading: two writes of one test are never "at the same instant" (``created_at >= requested_at`` checks)
         hour, minute = (int(x) for x in os.environ.get("ALGO_TEST_CLOCK", "12:00").split(":"))        # Tashkent wall time; a stress run sets other values
-        return real_datetime(day.year, day.month, day.day, hour, minute, tzinfo=bc.BUSINESS_TIMEZONE)
+        return real_datetime(day.year, day.month, day.day, hour, minute, tzinfo=bc.BUSINESS_TIMEZONE) + timedelta(microseconds=state["ticks"])
 
     class Frozen(real_datetime):
         @classmethod

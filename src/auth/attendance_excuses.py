@@ -40,6 +40,8 @@ from src.models.auth import (
     User,
 )
 
+from . import business_clock as bc
+
 logger = logging.getLogger(__name__)
 
 PAUSE_NOT_REQUIRED = "Не требуется: ученик на паузе"   # LOGIC-A: the note of an excuse closed by a pause / the refusal to open one on a pause day
@@ -57,15 +59,13 @@ REASON_REQUIRED_MESSAGE = "Укажите причину уважительно�
 LEGACY_REASON = "Отмечено до введения причин"
 
 
-def _business_now() -> datetime:
-    """Naive business-timezone "now" - the convention of the attendance tables."""
-    from .service import BUSINESS_TIMEZONE  # lazy: service imports this module
-
-    return datetime.now(BUSINESS_TIMEZONE).replace(tzinfo=None)
-
-
 def _business_today() -> date:
-    return _business_now().date()
+    return bc.business_today()
+
+
+def _iso_wall(value: Optional[datetime]) -> Optional[str]:
+    """DM-003: ``reason_at`` / ``reviewed_at`` are stored as naive UTC (the convention of the other tables); the API keeps showing the Tashkent wall time (the front prints it as it is)."""
+    return _iso(bc.utc_to_business_wall(value))
 
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
@@ -571,9 +571,9 @@ class AttendanceExcuseService:
                 "status": row.status,
                 "reason": row.reason,
                 "reason_by_name": _user_name(users.get(row.reason_by)),
-                "reason_at": _iso(row.reason_at),
+                "reason_at": _iso_wall(row.reason_at),
                 "reviewed_by_name": _user_name(users.get(row.reviewed_by)) if row.reviewed_by else None,
-                "reviewed_at": _iso(row.reviewed_at),
+                "reviewed_at": _iso_wall(row.reviewed_at),
                 "has_files": row.id in with_files,
             }
             # The administrator's note and the decision mark (#39) are not for teachers.
@@ -777,12 +777,12 @@ class AttendanceExcuseService:
                     ),
                     reason=excuse.reason,
                     reason_by=IdName(id=str(excuse.reason_by), name=_user_name(users.get(excuse.reason_by))),
-                    reason_at=_iso(excuse.reason_at),
+                    reason_at=_iso_wall(excuse.reason_at),
                     status=excuse.status,
                     reviewed_by=IdName(id=str(excuse.reviewed_by), name=_user_name(users.get(excuse.reviewed_by)))
                     if excuse.reviewed_by
                     else None,
-                    reviewed_at=_iso(excuse.reviewed_at),
+                    reviewed_at=_iso_wall(excuse.reviewed_at),
                     review_note=excuse.review_note,
                     files=files.get(excuse.id, []),
                     deadline=deadlines.get(excuse.id),
@@ -1075,11 +1075,11 @@ class AttendanceExcuseService:
             )
             return
         # ONE reading of the clock: the stored time of the decision and the day its deadline is measured against.
-        now = _business_now()
+        now = bc.utc_now()
         # The mark (#39) is worked out BEFORE the decision is written, from the state the list showed, and under the
         # row lock the caller already holds; a changed decision overwrites the previous mark (kept in the journal row).
         mark_before = _mark_before(excuse)
-        deadline_day, after_deadline = self._decision_mark(excuse, att, now.date())
+        deadline_day, after_deadline = self._decision_mark(excuse, att, bc.utc_to_business_date(now))
         excuse.status = decision
         excuse.reviewed_by = actor_id
         excuse.reviewed_at = now
@@ -1205,7 +1205,7 @@ class AttendanceExcuseService:
             size_bytes=len(data),
             data=data,
             uploaded_by=actor_id,
-            uploaded_at=_business_now(),
+            uploaded_at=bc.utc_now(),
         )
         self.db.add(stored)
         self.db.flush()

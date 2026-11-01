@@ -200,7 +200,9 @@
       "detail": {
         "code": "DUPLICATE_PAYOUT",
         "message": "Выплата уже внесена",
-        "payout_id": "00000000-0000-4000-8000-000000000601"
+        "payout_id": "00000000-0000-4000-8000-000000000601",
+        "overpay": null,
+        "balance": null
       }
     }
   },

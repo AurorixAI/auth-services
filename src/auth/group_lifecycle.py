@@ -122,9 +122,7 @@ class GroupLifecycle:
         return self.teachers.users_by_id(ids)
 
     def impact(self, org_id: Any, group_id: Any) -> Dict[str, Any]:
-        group = self._group(org_id, group_id)
-        if group.exam_release_pending:
-            self.retry_pending_releases(org_id, group.id)
+        group = self._group(org_id, group_id)           # a GET has no side effect: a pending release is retried by the next archive / the sweep, never here (DM-007)
         students = self.active_students(group)
         if group.status != "active":
             return {
@@ -183,6 +181,16 @@ class GroupLifecycle:
 
     # ------------------------------------------------------------------------------------------- archive
     def archive(self, org_id: Any, group_id: Any, req, *, actor_id: Any, actor_role: str) -> Dict[str, Any]:
+        probe = self._group(org_id, group_id)            # DM-007: exam-service is asked BEFORE the group is locked (no lock is held while the network is called)
+        if probe.status != "active":
+            raise conflict("ALREADY_ARCHIVED", ERROR_CATALOGUE["ALREADY_ARCHIVED"][1])
+        try:
+            exams = exam_bridge.group_archive_impact(probe.org_id, probe.id)
+        except (exam_bridge.ExamBridgeUnavailable, exam_bridge.ExamBridgeConflict) as exc:
+            logger.warning("archive: exam-service unavailable: %s", exc)
+            self.db.rollback()
+            raise unavailable("EXAM_SERVICE_UNAVAILABLE", ERROR_CATALOGUE["EXAM_SERVICE_UNAVAILABLE"][1])
+        self.db.rollback()                                 # the read transaction ends with the call
         group = self._group(org_id, group_id, lock=True)  # the same lock a start / a membership change takes: archive vs start is decided here
         if group.status != "active":
             raise conflict("ALREADY_ARCHIVED", ERROR_CATALOGUE["ALREADY_ARCHIVED"][1])
@@ -202,12 +210,6 @@ class GroupLifecycle:
             blockers.append({"code": "MISSED_LESSONS", "count": len(missed), "lessons": [
                 {"lessonId": i.lessonId, "lessonDate": i.lessonDate, "startTime": i.startTime, "endTime": i.endTime,
                  "teacherName": short_name(names.get(i.teacherId)) if i.teacherId else None} for i in missed]})
-        try:
-            exams = exam_bridge.group_archive_impact(group.org_id, group.id)
-        except (exam_bridge.ExamBridgeUnavailable, exam_bridge.ExamBridgeConflict) as exc:
-            logger.warning("archive: exam-service unavailable: %s", exc)
-            self.db.rollback()
-            raise unavailable("EXAM_SERVICE_UNAVAILABLE", ERROR_CATALOGUE["EXAM_SERVICE_UNAVAILABLE"][1])
         live = [e for e in exams if not e.get("canRelease", True)]
         if live:
             blockers.append({"code": "LIVE_EXAMS", "count": len(live), "exams": [
@@ -244,6 +246,8 @@ class GroupLifecycle:
         # that the next archive-related call / the sweep retries; the exams of an archived group are never left half-released silently.
         self.db.commit()
         released, pending = self._release(group, actor_id, reason)
+        if not pending:        # LD-23: exam-service answers - the releases of OTHER archived groups of the centre that were left pending are retried now (lazy, no cron)
+            self.retry_pending_releases(group.org_id, exclude=group.id)
         response = self.svc._build_group_response(group).model_dump()
         response.update({"releasedExamIds": released if not pending else [], "cancelledMissedLessons": cancelled,
                          "examReleasePending": pending, "closedSubstitutionRequests": closed_requests})
@@ -261,9 +265,11 @@ class GroupLifecycle:
         self.db.commit()
         return released, False
 
-    def retry_pending_releases(self, org_id: Any = None, group_id: Any = None) -> int:
-        """Retry the release of every ARCHIVED group with the marker (one group, one centre, or all).  Returns how many were cleared."""
+    def retry_pending_releases(self, org_id: Any = None, group_id: Any = None, exclude: Any = None) -> int:
+        """Retry the release of every ARCHIVED group with the marker (one group, one centre, or all; ``exclude``: not this one).  Returns how many were cleared."""
         q = self.db.query(Group).filter(Group.exam_release_pending.is_(True), Group.status == "archived")
+        if exclude is not None:
+            q = q.filter(Group.id != exclude)
         if org_id is not None:
             q = q.filter(Group.org_id == org_id)
         if group_id is not None:

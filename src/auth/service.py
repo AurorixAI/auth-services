@@ -14,7 +14,6 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 import logging
-from zoneinfo import ZoneInfo
 
 from jose import jwt, JWTError
 from passlib.context import CryptContext
@@ -133,7 +132,7 @@ MEMBERSHIP_MODES = ("transfer", "add")
 
 class MembershipConflict(ValueError):
     """The membership change contradicts the current state (HTTP 409)."""
-BUSINESS_TIMEZONE = ZoneInfo(os.getenv("BUSINESS_TIMEZONE", "Asia/Tashkent"))
+BUSINESS_TIMEZONE = business_clock.BUSINESS_TIMEZONE   # SV-20: ONE zone object (business_clock owns it)
 
 
 def missed_lesson_window_start(today: date) -> date:
@@ -1116,7 +1115,7 @@ class AuthService:
         if not student:
             raise ValueError("Ученик не найден")
 
-        selected_month = month or datetime.now(BUSINESS_TIMEZONE).strftime("%Y-%m")
+        selected_month = month or business_clock.business_now().strftime("%Y-%m")
         try:
             period_start = datetime.strptime(selected_month + "-01", "%Y-%m-%d").date()
         except ValueError as exc:
@@ -1560,11 +1559,7 @@ class AuthService:
         """Whether an unfinished invite has passed its hard expiry time."""
         if invite.status not in _EXPIRABLE_DIAGNOSTIC_STATUSES or not invite.expires_at:
             return False
-        expires_at = (
-            invite.expires_at
-            if invite.expires_at.tzinfo
-            else invite.expires_at.replace(tzinfo=timezone.utc)
-        )
+        expires_at = business_clock.as_utc(invite.expires_at)
         return expires_at < (now or datetime.now(timezone.utc))
 
     def _expire_diagnostic_invite_if_due(self, invite: DiagnosticInvite) -> bool:
@@ -1613,13 +1608,9 @@ class AuthService:
         after it was confirmed, not in the future, before it expired.  Anything else is not a start we can trust."""
         try:
             started_at = datetime.fromisoformat(str(raw_started_at or "").replace("Z", "+00:00"))
-            started_at = started_at.replace(tzinfo=timezone.utc) if started_at.tzinfo is None else started_at
-            confirmed_at = invite.confirmed_at
-            if confirmed_at and confirmed_at.tzinfo is None:
-                confirmed_at = confirmed_at.replace(tzinfo=timezone.utc)
-            expires_at = invite.expires_at
-            if expires_at and expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            started_at = business_clock.as_utc(started_at)
+            confirmed_at = business_clock.as_utc(invite.confirmed_at)
+            expires_at = business_clock.as_utc(invite.expires_at)
             if not confirmed_at or started_at < confirmed_at or started_at > datetime.now(timezone.utc):
                 raise ValueError("Unconfirmed start")
             if expires_at and started_at >= expires_at:
@@ -1659,9 +1650,7 @@ class AuthService:
             started_at = self._verified_session_start(invite, raw_started_at)
         except ValueError:
             return None
-        cancelled_at = invite.cancelled_at
-        if cancelled_at.tzinfo is None:
-            cancelled_at = cancelled_at.replace(tzinfo=timezone.utc)
+        cancelled_at = business_clock.as_utc(invite.cancelled_at)
         if started_at >= cancelled_at:
             return None
         logger.info(
@@ -1738,11 +1727,7 @@ class AuthService:
             raise ValueError("Диагностика не найдена или уже начата")
 
         if invite.expires_at:
-            exp = (
-                invite.expires_at
-                if invite.expires_at.tzinfo
-                else invite.expires_at.replace(tzinfo=timezone.utc)
-            )
+            exp = business_clock.as_utc(invite.expires_at)
             if exp < datetime.now(timezone.utc):
                 invite.status = "expired"
                 self.db.commit()
@@ -1800,11 +1785,7 @@ class AuthService:
             raise ValueError("Диагностика не найдена или уже завершена")
 
         if invite.expires_at:
-            expires_at = (
-                invite.expires_at
-                if invite.expires_at.tzinfo
-                else invite.expires_at.replace(tzinfo=timezone.utc)
-            )
+            expires_at = business_clock.as_utc(invite.expires_at)
             if expires_at < datetime.now(timezone.utc):
                 invite.status = "expired"
                 self.db.commit()
@@ -2770,7 +2751,7 @@ class AuthService:
                 "warnings": [],
             }
 
-        now_dt = datetime.now(timezone.utc)
+        now_dt = business_clock.as_utc(business_clock.utc_now())   # SV-19: the one clock (aware UTC for the callers below)
 
         # Only a transfer closes the previous memberships.  The roster of
         # every changed group must not rewrite an already started lesson.
@@ -2934,8 +2915,9 @@ class AuthService:
             raise ValueError("Ученик не в этой группе")
         self._lock_groups_for_membership_change(org_id, [group.id])
         self._assert_no_open_attendance_for_groups(org_id, [group.id])
-        close_period(sg, datetime.now(timezone.utc))
-        on_membership_closed(self.db, sg, datetime.now(timezone.utc), None)  # LOGIC-A: pauses (no author: no price marker)
+        closed_at = business_clock.utc_now()   # SV-19: ONE reading of the clock for the whole event
+        close_period(sg, closed_at)
+        on_membership_closed(self.db, sg, closed_at, None)  # LOGIC-A: pauses (no author: no price marker)
         self.db.flush()
 
         if str(student.group_id or "") == str(group.id):
@@ -3101,7 +3083,7 @@ class AuthService:
 
         groups = query.order_by(Group.name).all()
         lessons_out: List[ScheduleLessonResponse] = []
-        today = datetime.now(BUSINESS_TIMEZONE).date()
+        today = business_clock.business_now().date()
 
         for g in groups:
             recurring, _, recurring_ends = self._schedule_overrides_for_group(g, until=today)
@@ -3745,7 +3727,7 @@ class AuthService:
         self._require_group_access(org_id, str(group.id), actor_id=actor_id, is_org_admin=is_org_admin)
         if group.status != "active":
             raise ops_rules.group_archived()
-        today = datetime.now(BUSINESS_TIMEZONE).date()
+        today = business_clock.business_now().date()
         if req.effectiveFrom <= today:
             raise ValueError("Постоянное расписание можно менять только начиная с будущей даты")
         self._lock_group_row(group)         # W1 S6 (ДЫРА-12): two revisions / a revision and a stop of one group serialise
@@ -3917,7 +3899,7 @@ class AuthService:
     def get_series_revisions(self, org_id: str, lesson_id: str, *, after: Optional[date], actor_id: Optional[str], is_org_admin: bool) -> Dict[str, Any]:
         """The revisions of a weekly lesson dated after ``after`` (default: today) with the fields each one changes, and the date the series stops (W1 F6)."""
         group = self._require_recurring_lesson(org_id, lesson_id, actor_id=actor_id, is_org_admin=is_org_admin)
-        after = after or datetime.now(BUSINESS_TIMEZONE).date()
+        after = after or business_clock.business_now().date()
         rows = (self.db.query(GroupScheduleOverride).filter(GroupScheduleOverride.group_id == group.id, GroupScheduleOverride.lesson_id == lesson_id,
                                                            GroupScheduleOverride.scope == "recurring", GroupScheduleOverride.effective_date > after.isoformat())
                 .order_by(GroupScheduleOverride.effective_date, GroupScheduleOverride.created_at).all())
@@ -3994,7 +3976,7 @@ class AuthService:
         effective_from: date,
         lock: bool = False,
     ) -> Optional[GroupScheduleOverride]:
-        today = datetime.now(BUSINESS_TIMEZONE).date()
+        today = business_clock.business_now().date()
         if effective_from <= today:
             raise ValueError("Регулярные занятия можно прекратить только начиная с будущей даты")
         slot = next(
@@ -4301,7 +4283,7 @@ class AuthService:
         target_start = req.startTime if req.startTime is not None else target_slot.get("startTime", "10:00")
         target_end = req.endTime if req.endTime is not None else target_slot.get("endTime", "11:30")
         target_start_minutes, _ = self._validate_lesson_time_range(target_start, target_end)
-        now = datetime.now(BUSINESS_TIMEZONE)
+        now = business_clock.business_now()
         today_dow = now.weekday() + 1
         if target_dow == today_dow:
             current_minutes = now.hour * 60 + now.minute
@@ -4508,7 +4490,7 @@ class AuthService:
         lesson_id: str,
     ) -> Dict[str, Any]:
         """Return a past schedule occurrence that can be reconciled explicitly."""
-        current_business_time = datetime.now(BUSINESS_TIMEZONE)
+        current_business_time = business_clock.business_now()
         today = current_business_time.date()
         if lesson_date > today:
             raise ValueError("Нельзя разбирать будущий урок")
@@ -4584,7 +4566,7 @@ class AuthService:
         derive it from the resolved schedule and present it as a separate,
         explicit reconciliation action. It is never converted to absences.
         """
-        now = now or datetime.now(BUSINESS_TIMEZONE)
+        now = now or business_clock.business_now()
         today_date = now.date()
         today = today_date.isoformat()
         query = (
@@ -4976,7 +4958,7 @@ class AuthService:
             if (period_end - period_start).days > 62:
                 raise ValueError("Период журнала не может превышать 63 дня")
         else:
-            selected_month = month or datetime.now(BUSINESS_TIMEZONE).strftime("%Y-%m")
+            selected_month = month or business_clock.business_now().strftime("%Y-%m")
             try:
                 month_start = datetime.strptime(selected_month + "-01", "%Y-%m-%d").date()
             except ValueError as exc:
@@ -5007,7 +4989,7 @@ class AuthService:
         lessons_map: Dict[str, Dict[str, Any]] = {}
         attendance_keys: Dict[UUID, str] = {}  # attendance row id -> journal lesson key
         historical_candidate_ids: set[str] = set()
-        business_today = datetime.now(BUSINESS_TIMEZONE).date().isoformat()
+        business_today = business_clock.business_now().date().isoformat()
 
         for att in att_records:
             # A recurring slot is the source of truth for a future lesson. An
@@ -5457,6 +5439,9 @@ class AuthService:
         group = self._require_group_read_access(
             org_id, group_id, actor_id=cancelled_by, is_org_admin=is_org_admin
         )
+        from .lesson_substitutions import Substitutions
+        # Wave B P4 (SV-15): exam-service is asked (fail-closed) BEFORE the group is locked; the release is asked after the commit
+        Substitutions(self).exam_preflight(org_id, group_id, req.lessonId, req.lessonDate.isoformat(), req.cancellationReason or "")
         locked_group = (
             self.db.query(Group)
             .filter(Group.id == group.id, Group.org_id == org_id)
@@ -5502,7 +5487,9 @@ class AuthService:
             via="request" if manager else "teacher_cancel", archived_ok=True,       # the missed lessons of an archived group are resolved by this very road
         )
         self.db.commit()
-        return {"version": out["version"], "warnings": out["warnings"]}
+        from . import exam_release
+        warnings = [*out["warnings"], *exam_release.release_pending(self, org_id, group_id)]   # Wave B P4 (SV-15 / LD-23): AFTER the commit, no lock held
+        return {"version": out["version"], "warnings": warnings}
 
     def start_group_attendance(
         self,
@@ -5534,7 +5521,7 @@ class AuthService:
         if group.status != "active":
             raise ops_rules.group_archived()  # O4: an archived group is read-only (the lock above made the status current)
         lesson_date = req.lessonDate
-        today = datetime.now(BUSINESS_TIMEZONE).date()
+        today = business_clock.business_now().date()
         if lesson_date != today:
             raise ValueError("Начать урок можно только в день его проведения")
 
@@ -5556,7 +5543,7 @@ class AuthService:
         start_minutes, end_minutes = self._validate_lesson_time_range(
             matching_slot.get("startTime"), matching_slot.get("endTime")
         )
-        current_business_time = datetime.now(BUSINESS_TIMEZONE)
+        current_business_time = business_clock.business_now()
         current_minutes = current_business_time.hour * 60 + current_business_time.minute
         if current_minutes < start_minutes:
             raise ValueError("Нельзя начать урок до времени по расписанию")
@@ -5580,7 +5567,7 @@ class AuthService:
         # prevents two browser tabs (or two groups) from creating overlapping
         # active lessons between the check below and the insert.
         lesson_teacher_id = resolved_teacher_id or started_by
-        self.db.query(User.id).filter(User.id == lesson_teacher_id).with_for_update().first()
+        self.db.query(User.id).filter(User.id == lesson_teacher_id).with_for_update(key_share=True).first()   # SV-17: login / audit rows with an FK to the user do not wait
         if att:
             if att.status == LessonAttendanceStatus.CANCELLED.value:
                 raise ValueError("Отменённый урок нельзя начать")
@@ -5605,7 +5592,7 @@ class AuthService:
         )
         if resolved_teacher_id:
             active_lesson_query = active_lesson_query.filter(
-                GroupAttendance.teacher_id == resolved_teacher_id
+                func.coalesce(GroupAttendance.teacher_id, Group.teacher_id) == resolved_teacher_id   # SV-18: a row without ``teacher_id`` (before LOGIC-B) is the group's
             )
         else:
             # Unassigned legacy groups have no designated instructor.  The
@@ -5720,7 +5707,7 @@ class AuthService:
             org_id, group_id, actor_id=marked_by, is_org_admin=is_org_admin
         )
         lesson_date = req.lessonDate
-        today = datetime.now(BUSINESS_TIMEZONE).date()
+        today = business_clock.business_now().date()
         if (
             lesson_date > today
             and req.status.value != LessonAttendanceStatus.CANCELLED.value
@@ -5734,6 +5721,10 @@ class AuthService:
         is_cancellation = requested_status == LessonAttendanceStatus.CANCELLED.value
         cancellation_kind = (req.cancellationKind or DEFAULT_CANCELLATION_KIND) if is_cancellation else None  # PAY-F
         manager = is_org_manager or is_org_admin
+        if is_cancellation and req.cancellationReason:
+            from .lesson_substitutions import Substitutions
+            # Wave B P4 (SV-15): exam-service is asked (fail-closed) BEFORE the group is locked; the release is asked after the commit
+            Substitutions(self).exam_preflight(org_id, group_id, target_lesson_id, lesson_date.isoformat(), req.cancellationReason)
         if is_cancellation:
             # W1 S6: the lock of the group comes first (the order of the move and of every other writer of the lesson); the cancellation re-takes it
             self.db.query(Group).filter(Group.id == group.id, Group.org_id == org_id).with_for_update().populate_existing().first()
@@ -5804,7 +5795,9 @@ class AuthService:
                 by_manager=manager, via="request" if manager else "teacher_cancel",
             )
             self.db.commit()
-            return {"version": out["version"], "examSync": None, "warnings": out["warnings"]}
+            from . import exam_release
+            warnings = [*out["warnings"], *exam_release.release_pending(self, org_id, group_id)]   # Wave B P4 (SV-15 / LD-23): AFTER the commit, no lock held
+            return {"version": out["version"], "examSync": None, "warnings": warnings}
         # An administrator may correct a completed lesson (a reason is required
         # below); anyone else only edits a lesson that is in progress.
         is_correction_save = bool(
@@ -5819,7 +5812,7 @@ class AuthService:
             start_time = matching_slot.get("startTime")
             end_time = matching_slot.get("endTime")
             start_minutes, end_minutes = self._validate_lesson_time_range(start_time, end_time)
-            current_business_time = datetime.now(BUSINESS_TIMEZONE)
+            current_business_time = business_clock.business_now()
             current_minutes = current_business_time.hour * 60 + current_business_time.minute
             if current_minutes < start_minutes:
                 raise ValueError("Нельзя начать или отмечать посещаемость до времени урока")
@@ -5897,7 +5890,7 @@ class AuthService:
                 org_id, group_id, target_lesson_id, lesson_date.isoformat(), bool(getattr(req, "acknowledgeLiveExam", False))
             )
 
-        now = datetime.now(BUSINESS_TIMEZONE).replace(tzinfo=None)
+        now = business_clock.business_now_naive()
         before_status = att.status if att else None
         before_records = dict(att.records or {}) if att else None
         is_completed_correction = bool(
@@ -5949,7 +5942,7 @@ class AuthService:
             action = "corrected" if is_completed_correction else "updated"
 
         self.db.flush()
-        excuse_service.apply_save(att, excuse_plan, marked_by, now)
+        excuse_service.apply_save(att, excuse_plan, marked_by, business_clock.business_wall_to_utc(now))   # DM-003: the excuse times are naive UTC like the other tables
         self.db.add(
             GroupAttendanceAudit(
                 attendance_id=att.id,

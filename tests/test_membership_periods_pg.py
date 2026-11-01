@@ -10,9 +10,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import event
 
+from src.auth import business_clock as bc
 from src.auth import membership_periods as mp
-from src.auth import service as service_module
-from src.auth import student_archive as archive_module
 from src.auth.membership_periods import check_periods, close_period, membership_period_violations, open_period
 from src.auth.service import lesson_start_as_naive_utc
 from src.models.auth import Student, StudentGroup, StudentGroupPeriod, StudentPayment
@@ -45,16 +44,9 @@ class Clock:
 
 @pytest.fixture
 def clock(monkeypatch):
+    """Wave B P4 (B2): the story's clock is the ONE business clock (``bc``) - no module's ``datetime`` is patched; the service, the archive and the periods read it."""
     c = Clock()
-
-    class FakeDatetime(D):
-        @classmethod
-        def now(cls, tz=None):
-            base = c.now.replace(tzinfo=timezone.utc)
-            return base.astimezone(tz) if tz is not None else c.now
-
-    for module in (service_module, archive_module, mp):
-        monkeypatch.setattr(module, "datetime", FakeDatetime)
+    monkeypatch.setattr(bc, "_clock", lambda: c.now.replace(tzinfo=timezone.utc))
     return c
 
 

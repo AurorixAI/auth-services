@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Retry the release of the exams of archived groups whose release exam-service has not confirmed (``groups.exam_release_pending``).
+"""Retry the release of the exams that exam-service has not confirmed (idempotent; by hand - there is no cron).
 
-Idempotent; run it from cron / by hand.  Prints how many groups were cleared and how many are still pending.
+* archived groups with ``groups.exam_release_pending``;
+* CANCELLED lessons with ``group_attendance.exam_release_pending`` (Wave B P4: a cancellation commits first, exam-service is asked afterwards).
+
+Prints how many are still pending; exit code 1 when something is.
 """
 from __future__ import annotations
 
@@ -14,16 +17,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 def main() -> int:
     from sqlalchemy.orm import Session
 
+    from src.auth import exam_release
     from src.auth.group_lifecycle import GroupLifecycle
-    from src.auth.models import Group
+    from src.auth.models import Group, GroupAttendance
     from src.auth.service import AuthService
     from src.core.database import engine
 
     with Session(engine) as db:
-        cleared = GroupLifecycle(AuthService(db)).retry_pending_releases()
-        left = db.query(Group).filter(Group.exam_release_pending.is_(True)).count()
-    print(f"cleared: {cleared}, still pending: {left}")
-    return 1 if left else 0
+        svc = AuthService(db)
+        cleared = GroupLifecycle(svc).retry_pending_releases()
+        for (org_id,) in db.query(GroupAttendance.org_id).filter(GroupAttendance.exam_release_pending.is_(True)).distinct().all():
+            exam_release.release_pending(svc, org_id, limit=10_000)
+        groups_left = db.query(Group).filter(Group.exam_release_pending.is_(True)).count()
+        lessons_left = db.query(GroupAttendance).filter(GroupAttendance.exam_release_pending.is_(True)).count()
+    print(f"groups cleared: {cleared}, groups still pending: {groups_left}, lessons still pending: {lessons_left}")
+    return 1 if groups_left or lessons_left else 0
 
 
 if __name__ == "__main__":

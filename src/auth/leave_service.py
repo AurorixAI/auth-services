@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from src.models.auth import Group, GroupAudit, MembershipPause, Student, StudentGroup, StudentRefund, StudentWriteoff
 
 from . import billing_ledger as bl
+from . import business_clock as bc
 from . import ledger_service as ls
 from . import membership_periods
 from . import payment_status as ps
@@ -268,7 +269,7 @@ class LeaveService:
 
         svc = AuthService(self.db)
         try:
-            student = (self.db.query(Student).filter(Student.id == student_id, Student.org_id == org_id).with_for_update().first())
+            student = (self.db.query(Student).filter(Student.id == student_id, Student.org_id == org_id).with_for_update(key_share=True).first())   # DM-006: rows with an FK to the student insert meanwhile (LESSONS 23)
             group = (self.db.query(Group).filter(Group.id == group_id, Group.org_id == org_id).with_for_update().first())
             if not student or not group:
                 raise ValueError("Ученик или группа не найдены")
@@ -279,7 +280,7 @@ class LeaveService:
             self.pay._lock_family(org_id, student.id)
             svc._lock_groups_for_membership_change(org_id, [group.id])
             svc._assert_no_open_attendance_for_groups(org_id, [group.id])
-            now = datetime.now(timezone.utc)
+            now = bc.utc_now().replace(tzinfo=timezone.utc)   # DM-005: the one clock
             close_period(sg, now)
             self.db.flush()
             if str(student.group_id or "") == str(group.id):

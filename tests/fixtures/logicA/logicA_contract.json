@@ -4699,6 +4699,11 @@
             "title": "Amount",
             "type": "integer"
           },
+          "confirm_overpay": {
+            "default": false,
+            "title": "Confirm Overpay",
+            "type": "boolean"
+          },
           "method": {
             "anyOf": [
               {
@@ -4764,8 +4769,19 @@
         "type": "object"
       },
       "PayoutError": {
-        "description": "409 ``DUPLICATE_PAYOUT`` carries ``payout_id``; the other codes: ``SHEET_NOT_SAVED`` / ``ALREADY_VOIDED`` (409),\n``AMOUNT_RANGE`` / ``PAID_ON_RANGE`` / ``METHOD_REQUIRED`` / ``REASON_REQUIRED`` / ``FINGERPRINT_REQUIRED`` /\n``DIVISOR_RANGE`` (422).",
+        "description": "409 ``DUPLICATE_PAYOUT`` carries ``payout_id``; 409 ``OVERPAY_CONFIRM_REQUIRED`` carries ``overpay`` and ``balance``; the other codes: ``SHEET_NOT_SAVED`` / ``ALREADY_VOIDED`` (409),\n``AMOUNT_RANGE`` / ``PAID_ON_RANGE`` / ``METHOD_REQUIRED`` / ``REASON_REQUIRED`` / ``FINGERPRINT_REQUIRED`` /\n``DIVISOR_RANGE`` (422).",
         "properties": {
+          "balance": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Balance"
+          },
           "code": {
             "anyOf": [
               {
@@ -4780,6 +4796,17 @@
           "message": {
             "title": "Message",
             "type": "string"
+          },
+          "overpay": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overpay"
           },
           "payout_id": {
             "anyOf": [

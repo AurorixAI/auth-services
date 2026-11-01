@@ -40,6 +40,7 @@ from src.models.auth import (
 )
 
 from . import billing_ledger as bl
+from . import business_clock as bc
 from . import membership_periods
 from . import payment_status as ps
 from . import pricing
@@ -291,7 +292,7 @@ class LedgerLoader:
         if scope == "tracked":
             query = query.filter(tracked)
         elif scope == "all":
-            start = datetime.combine(self.settings.accounting_start, datetime.min.time())
+            start = bc.business_wall_to_utc(datetime.combine(self.settings.accounting_start, datetime.min.time()))   # MN-25: left_at is UTC, the start day is a Tashkent day
             since = (
                 exists().where(
                     and_(

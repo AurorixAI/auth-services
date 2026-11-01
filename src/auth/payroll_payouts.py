@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from src.models.auth import PayrollPayout, PayrollSheet, User
 
+from . import business_clock as bc
 from . import payment_status as ps
 from . import payments_texts as tx
 from .payments_files import staff_name
@@ -26,7 +27,7 @@ from .payroll_schemas import PayoutCreate, PayoutCreated, PayoutOut, PayoutState
 logger = logging.getLogger(__name__)
 
 SOFT_DUPLICATE_SECONDS = 60  # the same teacher + month + sum + day + method within a minute is a double click
-MAX_PAID_AGO_YEARS = 3
+MAX_PAID_AGO_YEARS = ps.MAX_PAID_AGO_YEARS
 METHODS = ("cash", "card", "bank_transfer", "other")
 
 
@@ -55,6 +56,12 @@ class DuplicatePayout(PayoutError):
     status_code, code = 409, "DUPLICATE_PAYOUT"
 
 
+class OverpayConfirmRequired(PayoutError):
+    """MN-32: the payout is bigger than what is left to pay; ``overpay`` is by how many sum, ``balance`` what was left (>= 0)."""
+
+    status_code, code = 409, "OVERPAY_CONFIRM_REQUIRED"
+
+
 class PayoutAlreadyVoided(PayoutError):
     status_code, code = 409, "ALREADY_VOIDED"
 
@@ -76,7 +83,7 @@ class PayoutReasonRequired(PayoutError):
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return bc.utc_now()   # MN-03 / DM-005: the one clock (``set_clock`` of the tests freezes it)
 
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
@@ -154,11 +161,7 @@ class PayrollPayoutService:
         paid_on = body.paid_on or today
         if paid_on > today:
             raise PayoutDateRange("Дата выплаты не может быть в будущем")
-        try:
-            oldest = today.replace(year=today.year - MAX_PAID_AGO_YEARS)
-        except ValueError:
-            oldest = today.replace(year=today.year - MAX_PAID_AGO_YEARS, day=28)
-        if paid_on < oldest:
+        if paid_on < ps._years_ago(today, MAX_PAID_AGO_YEARS):   # MN-34: the payments' own rule (29 February included)
             raise PayoutDateRange("Дата выплаты старше 3 лет")
         if body.method is None:
             raise PayoutMethodRequired("Укажите способ выплаты")
@@ -186,6 +189,11 @@ class PayrollPayoutService:
                     PayrollPayout.created_at >= since).first())
                 if twin is not None:
                     raise DuplicatePayout("Такая выплата только что внесена", payout_id=str(twin.id))
+            if not body.confirm_overpay:
+                # MN-32: the sheet is locked, so a parallel payout is already counted; an advance is written only on an explicit yes
+                left = max(self.state_for(org_id, sheet, fresh_total_of(sheet)).balance, 0)
+                if amount > left:
+                    raise OverpayConfirmRequired(f"Выплата больше остатка на {tx.num(amount - left)} сум", overpay=amount - left, balance=left)
             row = PayrollPayout(
                 org_id=UUID(str(org_id)), sheet_id=sheet.id, teacher_id=sheet.teacher_id, period_month=sheet.period_month,
                 amount=amount, paid_on=paid_on, method=method, note=(body.note or "").strip() or None,

@@ -57,6 +57,7 @@ from src.models.auth import (
     User,
 )
 
+from . import business_clock as bc
 from . import lesson_types
 from . import payment_status as ps
 from . import payroll_engine as engine
@@ -168,7 +169,7 @@ class DataChanged(PayrollError):
 
 def _utcnow() -> datetime:
     """Naive UTC timestamp (the convention of the other audit-like columns)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return bc.utc_now()   # MN-03 / DM-005: the one clock (``set_clock`` of the tests freezes it)
 
 
 def _iso(value: Optional[datetime]) -> Optional[str]:

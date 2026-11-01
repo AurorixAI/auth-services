@@ -136,7 +136,7 @@ def test_two_payouts_in_parallel_are_both_kept_and_a_payout_does_not_wait_for_a_
     m, s1, s2 = g_pay_world(world)
     sheet = save_sheet(world, m)
     org, actor = str(world.org.id), str(world.owner.id)
-    body = lambda amount: PayoutCreate(amount=amount, paid_on=business_today(), method="cash")
+    body = lambda amount: PayoutCreate(amount=amount, paid_on=business_today(), method="cash", confirm_overpay=True)   # 600 000 against 475 000: an advance, confirmed (MN-32)
     fresh = lambda s: (lambda row: PayrollService(s)._fresh_total(org, row))
     import uuid
 

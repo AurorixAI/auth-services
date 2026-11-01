@@ -8,7 +8,7 @@ from datetime import datetime, time, timedelta
 
 import pytest
 
-import src.auth.attendance_excuses as excuses_module
+from src.auth import business_clock as bc
 from src.auth.attendance_excuses import AttendanceExcuseService
 from src.auth.excuse_deadline import month_end
 from src.models.auth import AttendanceExcuse, GroupAttendance, StudentPayment
@@ -356,7 +356,8 @@ def test_the_audit_of_a_decision_without_a_mark_has_no_mark_keys(world):
 
 
 def freeze(monkeypatch, moment):
-    monkeypatch.setattr(excuses_module, "_business_now", lambda: moment)
+    """``moment`` is the Tashkent wall time of the clock (wave B P4: the one business clock, ``bc.set_clock``; no module is patched)."""
+    monkeypatch.setattr(bc, "_clock", lambda: moment.replace(tzinfo=bc.BUSINESS_TIMEZONE))     # ``set_clock`` by hand; monkeypatch puts it back
 
 
 def test_midnight_in_tashkent_on_time_until_the_deadline_day_ends(world, monkeypatch):
@@ -383,18 +384,20 @@ def test_the_stored_time_and_the_measured_day_come_from_one_reading_of_the_clock
     excused_lesson(world, offset_days=3)
     pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))
     excuse_id = excuse_of(world).id
-    before = datetime.combine(day(15), time(23, 59, 59))
+    deadline_day = day(15)          # worked out BEFORE the clock is replaced (``day`` reads the business today)
+    before = datetime.combine(deadline_day, time(23, 59, 59))
     readings = []
 
     def clock():
         readings.append(1)
-        return before if len(readings) == 1 else before + timedelta(seconds=2)       # every later reading is after midnight
+        moment = before if len(readings) == 1 else before + timedelta(seconds=2)      # every later reading is after midnight
+        return moment.replace(tzinfo=bc.BUSINESS_TIMEZONE)
 
-    monkeypatch.setattr(excuses_module, "_business_now", clock)
+    monkeypatch.setattr(bc, "_clock", clock)
     AttendanceExcuseService(world.db).review(str(world.org.id), excuse_id, str(world.admin.id), "confirmed", None)
     row = excuse_of(world)
-    assert row.reviewed_at == before
-    assert (row.decided_after_deadline, row.deadline_at_decision) == (False, day(15))
+    assert row.reviewed_at == bc.business_wall_to_utc(before)       # stored as UTC (DM-003)
+    assert (row.decided_after_deadline, row.deadline_at_decision) == (False, deadline_day)
 
 
 # ---- two lessons of one day: a lesson is told by its attendance row, not by its date (ROADMAP #113) -------------------

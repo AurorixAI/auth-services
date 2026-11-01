@@ -15,13 +15,14 @@ starts with ``= + - @`` (or a tab / CR) gets a leading apostrophe and is stored 
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from io import BytesIO
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from openpyxl import Workbook
 from openpyxl.comments import Comment
 
+from . import business_clock as bc
 from . import payroll_engine as engine
 from . import xlsx_style as xs
 from .payments_statement_texts import method_label
@@ -60,8 +61,7 @@ FREEZE_COL = 5                   # the group, the type, the time and the student
 
 
 _WHITESPACE = re.compile(r"[\t\r\n]")
-# not allowed in a worksheet: openpyxl refuses \x00-\x08, \x0b, \x0c, \x0e-\x1f, and U+FFFE / U+FFFF are not XML characters
-_CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
+_CONTROL = xs._CONTROL   # MN-44: one definition (xlsx_style)
 
 
 def clean_text(value: Any) -> str:
@@ -73,12 +73,7 @@ def local_time(moment: Optional[str]) -> str:
     """``2026-09-30T20:30:00`` (naive UTC, as stored) -> ``01.10.2026 01:30`` (Tashkent)."""
     if not moment:
         return ""
-    from .service import BUSINESS_TIMEZONE  # lazy: service is heavy
-
-    parsed = datetime.fromisoformat(moment)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(BUSINESS_TIMEZONE).strftime("%d.%m.%Y %H:%M")
+    return bc.utc_to_business_wall(datetime.fromisoformat(moment)).strftime("%d.%m.%Y %H:%M")   # MN-44: one UTC -> Tashkent conversion
 
 
 def _put(ws, row: int, column: int, value: Any, **style: Any):

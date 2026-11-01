@@ -119,6 +119,7 @@ from src.models.auth import (
     User,
 )
 
+from . import business_clock as bc
 from . import payment_status as ps
 from .payments_files import staff_name
 
@@ -413,7 +414,7 @@ def price_dict(price: Price) -> Dict[str, Any]:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return bc.utc_now()   # MN-03 / DM-005: the one clock (``set_clock`` of the tests freezes it)
 
 
 def check_amount(amount: Any) -> int:

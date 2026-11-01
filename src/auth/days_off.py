@@ -30,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 from src.models.auth import Group, GroupAttendance, GroupAttendanceAudit, GroupAudit, LessonTeacherAssignment, Organization, OrgDayOff, User
 
 from . import business_clock as bc
+from . import exam_release
 from . import payments_texts as tx
 from .ops_rules import conflict, hhmm_to_minutes, not_found, short_name, unprocessable
 from .schemas import LessonAttendanceStatus
@@ -576,9 +577,12 @@ class DaysOffService:
         from .lesson_substitutions import Substitutions  # lazy: it imports this module
 
         try:
-            Substitutions(self.svc).cancel_lesson(org_id, actor_id, group.id, occurrence["id"], date.fromisoformat(occurrence["occurrenceDate"]),
-                                                  reason=lesson_reason_text(reason), kind=HOLIDAY, day_off_id=day_off_id)
+            subs = Substitutions(self.svc)
+            subs.exam_preflight(org_id, group.id, occurrence["id"], occurrence["occurrenceDate"], "")       # Wave B P4 (SV-15): before the group is locked
+            subs.cancel_lesson(org_id, actor_id, group.id, occurrence["id"], date.fromisoformat(occurrence["occurrenceDate"]),
+                               reason=lesson_reason_text(reason), kind=HOLIDAY, day_off_id=day_off_id)
             self.db.commit()
+            exam_release.release_pending(self.svc, org_id, group.id)          # AFTER the commit; a failure is retried by the next write to the group
         except RuntimeError:
             self.db.rollback()
             return EXAM_DOWN
@@ -657,7 +661,7 @@ class DaysOffService:
                           "reason": att.cancellation_reason})
         if not dry_run:
             row.restored = trace
-            row.voided_at = datetime.utcnow()
+            row.voided_at = bc.utc_now()
             row.voided_by = UUID(str(actor_id))
             by_group: Dict[Any, List[Dict[str, Any]]] = {}
             for entry, att in zip(trace, doomed):

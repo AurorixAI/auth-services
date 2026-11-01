@@ -93,8 +93,9 @@ def test_creation_against_a_handover(w):
         assert r.status == "closed" and r.closed_reason == "GROUP_TEACHER_CHANGED"
 
 
-def test_a_decision_leaves_nothing_behind_when_a_part_fails(w, sync):
-    """[B2.S5.R1] The reschedule is atomic: a failing exam release after the cancelled row and the one-off lesson were flushed rolls everything back."""
+def test_a_decision_leaves_nothing_behind_when_the_check_fails_and_keeps_the_move_when_only_the_release_fails(w, sync):
+    """[B2.S5.R1] The reschedule is atomic up to the CHECK of exam-service (fail-closed, asked before any lock: nothing is written when it fails).  Wave B P4 (SV-15): the RELEASE is asked
+    after the commit - a failing release no longer rolls the move back; the cancelled row keeps the marker and the answer warns."""
     from src.auth.service import AuthService
     from src.models.auth import GroupScheduleOneOffLesson
 
@@ -103,11 +104,26 @@ def test_a_decision_leaves_nothing_behind_when_a_part_fails(w, sync):
 
     def flaky(self, *, phase, **kw):
         calls.append(phase)
-        if phase == "release":
-            raise RuntimeError("down at release")
+        if phase == "cancellation-check":
+            raise RuntimeError("down at check")
 
     AuthService._sync_exam_lesson_cancellation = flaky           # the ``sync`` fixture restores the original at its teardown
     r = decide(w, "admin", item["id"], decision="reschedule", newDate="2026-10-29", startTime="16:00", endTime="17:30", reason="Перенос")
-    assert r.status_code == 503 and calls == ["cancellation-check", "release"]
+    assert r.status_code == 503 and calls == ["cancellation-check"]
     assert row_of(w, w.G1, "lesson-l2", "2026-10-28") is None and w.db.query(GroupScheduleOneOffLesson).filter_by(group_id=w.G1.id).count() == 0
     assert [x.status for x in requests_of(w)] == ["pending"] and [e.action for e in events_of(w)] == ["requested"]
+
+    calls.clear()
+
+    def release_down(self, *, phase, **kw):
+        calls.append(phase)
+        if phase == "release":
+            raise RuntimeError("down at release")
+
+    AuthService._sync_exam_lesson_cancellation = release_down
+    r = decide(w, "admin", item["id"], decision="reschedule", newDate="2026-10-29", startTime="16:00", endTime="17:30", reason="Перенос")
+    assert r.status_code == 200 and calls == ["cancellation-check", "release"], r.text
+    assert [x["code"] for x in r.json()["result"]["warnings"]][-1] == "EXAM_RELEASE_PENDING"
+    row = row_of(w, w.G1, "lesson-l2", "2026-10-28")
+    assert row is not None and row.status == "cancelled" and row.exam_release_pending is True
+    assert w.db.query(GroupScheduleOneOffLesson).filter_by(group_id=w.G1.id).count() == 1

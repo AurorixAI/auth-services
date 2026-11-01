@@ -18,7 +18,6 @@ from uuid import UUID
 
 from .service import (
     AuthService,
-    BUSINESS_TIMEZONE,
     MembershipConflict,
     hash_token,
     verify_access_token,
@@ -34,7 +33,7 @@ from .student_archive import (
     StudentArchiveService,
     actor_role_for_audit,
 )
-from . import import_limits, import_ops, import_service, xlsx_style
+from . import business_clock as bc, import_limits, import_ops, import_service, xlsx_style
 from .ops_router import router as ops_router
 from .days_off_router import router as days_off_router
 from .ops_rules import GroupArchivedForEnrolment, OpsError
@@ -1420,7 +1419,7 @@ def get_teacher_dashboard_summary(
         selected_date = (
             date.fromisoformat(business_date)
             if business_date
-            else datetime.now(BUSINESS_TIMEZONE).date()
+            else bc.business_today()
         )
     except ValueError as exc:
         raise HTTPException(400, "business_date должен иметь формат YYYY-MM-DD") from exc

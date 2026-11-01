@@ -10,7 +10,8 @@ Before this module four roads cancelled a lesson with four different traces (SPE
 * the trace: the card of the student gets the note (a ``cancelled`` record of the journal «Замены», like a move: origin ``system``, the trigger says who - ``manager_cancel`` /
   ``teacher_cancel``), a request of a teacher that is waiting is decided by this very cancellation, a substitute set on the lesson is taken off (``assignment_cleared``,
   trigger ``cancel``).  A lesson cancelled by a DAY OFF has no record of its own: the day off is its journal and the note of the student (and «Отменить выходной» gives it back);
-* the exams: checked before anything is written, released before the commit (the saga of ``AuthService._sync_exam_lesson_cancellation``).
+* the exams: checked BEFORE the locks (``Substitutions.exam_preflight``, fail-closed), released AFTER the commit and outside the locks (``exam_release``: this module only marks the
+  cancelled row, the road asks exam-service once it has committed; a failure is retried by the next write to the group).
 
 ``restore_lesson`` is the undo (W1 S5): a future lesson that was cancelled comes back (the cancelled row is deleted - what it was is recorded first), the deduction of the
 recalculation disappears by itself because it is a function of the cancelled rows.
@@ -24,6 +25,7 @@ from typing import Any, Dict, List, Optional
 from src.models.auth import GroupAudit
 
 from . import business_clock as bc
+from . import exam_release
 from .days_off import DaysOffService, HOLIDAY
 from .lesson_teachers import TeacherBook, _uuid
 from .models import AttendanceExcuse, Group, GroupAttendance, GroupAttendanceAudit, LessonSubstitutionRequest as Req, LessonTeacherAssignment, User
@@ -100,7 +102,7 @@ class LessonCancelMixin:
         if released:
             warnings.append({"code": "SUBSTITUTE_RELEASED", "message": f"Замена снята: {released}"})
         if not archive:
-            self._exam_release(ref, reason)
+            exam_release.mark(row)          # Wave B P4 (SV-15): exam-service is asked AFTER the commit and outside the lock (``exam_release.release_pending`` of the road)
         if record is None and day_off_id is None and not archive:        # a group without a teacher: no record of «Замены» (nobody to attribute it to) - the author stays in the history of the group
             self.db.add(GroupAudit(org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role="admin" if by_manager else "teacher", action="lesson_cancelled",
                                    assigned_teacher_id=None, created_at=bc.utc_now(),

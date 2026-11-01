@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session, aliased
 from src.models.auth import OrgDayOff
 
 from . import business_clock as bc
-from . import exam_bridge, substitution_rules as R
+from . import exam_bridge, exam_release, substitution_rules as R
 from .days_off import DaysOffService
 from .lesson_cancel import LessonCancelMixin, RESTORED, lesson_outcomes
 from .lesson_teachers import (
@@ -975,7 +975,10 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
     def decide(self, org_id: Any, actor_id: Any, actor_role: str, request_id: Any, body) -> Dict[str, Any]:
         actor, via = _uuid(actor_id), self._via(actor_role)
         viewer = viewer_for(actor, teacher=via == TEACHER_MOVE)          # a teacher who moves his own lesson is answered as a teacher (#157 A1)
+        if body.decision in ("cancel", "reschedule"):
+            self._preflight_request(org_id, request_id, body)           # Wave B P4 (SV-15): exam-service is asked before the group is locked
         group, r = self._lock_request(org_id, request_id)
+        group_id = group.id
         if r.status == PENDING:
             reason, occ = self.closure_reason(r, group)
             if reason and reason != "LESSON_OUTSIDE_WINDOW":
@@ -1005,7 +1008,16 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         except BaseException:
             self.db.rollback()
             raise
+        if result.get("kind") in ("cancel", "reschedule"):           # Wave B P4 (SV-15 / LD-23): AFTER the commit, no lock held; the older markers of the group are retried first
+            late = exam_release.release_pending(self.svc, org_id, group_id)
+            if late:
+                result["warnings"] = [*(result.get("warnings") or []), *late]
         return {"item": self.one(r, viewer), "result": result}
+
+    def _preflight_request(self, org_id: Any, request_id: Any, body) -> None:
+        r0 = self._request(org_id, request_id)
+        if r0.status == PENDING:
+            self.exam_preflight(r0.org_id, r0.group_id, r0.lesson_id, r0.lesson_date, (getattr(body, "reason", None) or "").strip()[:500])
 
     # ---------------------------------------------------------------------------------------------- helpers
     def _finish(self, r: Req, status: str, actor: UUID, note: Optional[str], via: str = "request") -> None:
@@ -1081,18 +1093,25 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         return {"kind": "reject"}
 
     # ------------------------------------------------------------------------------------- exam (fail-closed)
+    def exam_preflight(self, org_id: Any, group_id: Any, lesson_id: str, lesson_date: Any, reason: str) -> None:
+        """Wave B P4 (SV-15): the check of exam-service for a cancellation / a move, asked BEFORE the first lock of the road (a slow exam-service no longer holds the group).
+        Still fail-closed (503 ``EXAM_SERVICE_UNAVAILABLE`` / 409 ``LESSON_HAS_LIVE_EXAM``).  Remembered per request (``svc``): ``_exam_check`` inside the locks then does not ask again."""
+        ref = SimpleNamespace(org_id=org_id, group_id=group_id, lesson_id=lesson_id, lesson_date=str(lesson_date))
+        self._exam_check(ref, reason)
+        self._preflighted().add(self._exam_key(ref))
+
+    @staticmethod
+    def _exam_key(r: Any) -> Tuple[str, str, str]:
+        return (str(r.group_id), str(r.lesson_id), str(r.lesson_date))
+
+    def _preflighted(self) -> Set[Tuple[str, str, str]]:
+        return self.svc.__dict__.setdefault("_exam_preflighted", set())
+
     def _exam_check(self, r: Req, reason: str) -> None:
+        if self._exam_key(r) in self._preflighted():           # asked a moment ago, before the locks
+            return
         try:
             self.svc._sync_exam_lesson_cancellation(phase="cancellation-check", org_id=str(r.org_id), group_id=str(r.group_id), lesson_id=r.lesson_id,
-                                                    lesson_date=r.lesson_date, reason=reason)
-        except RuntimeError as exc:
-            raise R.err(503, "EXAM_SERVICE_UNAVAILABLE", "Не удалось проверить экзамены группы. Повторите попытку.") from exc
-        except ValueError as exc:
-            raise conflict("LESSON_HAS_LIVE_EXAM", str(exc)) from exc
-
-    def _exam_release(self, r: Req, reason: str) -> None:
-        try:
-            self.svc._sync_exam_lesson_cancellation(phase="release", org_id=str(r.org_id), group_id=str(r.group_id), lesson_id=r.lesson_id,
                                                     lesson_date=r.lesson_date, reason=reason)
         except RuntimeError as exc:
             raise R.err(503, "EXAM_SERVICE_UNAVAILABLE", "Не удалось проверить экзамены группы. Повторите попытку.") from exc
@@ -1261,7 +1280,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         self.db.flush()
         if source is not None:
             OneOffPurpose(self.svc).repoint(group, source, new_id)
-        self._exam_release(r, text)
+        exam_release.mark(row)             # Wave B P4 (SV-15): released AFTER the commit, outside the locks
         from .schedule_rules import ScheduleRules
 
         warnings = ScheduleRules(self.svc).warnings_for(group, new_id, [new_date], payload)
@@ -1512,6 +1531,8 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         the teacher of the lesson as requester) and decided in the SAME transaction, so the audit, the label of the student, the neutrality of package A and the payroll
         follow without a second code path.  The author is the decider (``decided_by``) and ``decided_via`` says whether he moved it as the teacher."""
         actor, gid = _uuid(actor_id), _uuid(group_id)
+        if gid:
+            self.exam_preflight(org_id, gid, body.lessonId, body.lessonDate.isoformat(), (body.reason or "").strip()[:500])       # Wave B P4 (SV-15): before the group is locked
         group = self._group_locked(org_id, gid) if gid else None
         if group is None:
             self.db.rollback()

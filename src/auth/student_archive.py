@@ -49,6 +49,7 @@ from sqlalchemy import func, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from . import business_clock as bc
 from .membership_periods import close_period
 from .models import DiagnosticInvite, Group, GroupAudit, Student, StudentDiagnosticResult, StudentGroup
 from .payments_schemas import SettledOut, SettleItem
@@ -153,7 +154,7 @@ class RestoreStudentResponse(StudentResponse):
 
 def _utcnow_naive() -> datetime:
     """Naive UTC, the convention of ``student_groups.joined_at`` / ``left_at``."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return bc.utc_now()   # MN-03 / DM-005: the one clock (``set_clock`` of the tests freezes it)
 
 
 def student_not_archived():

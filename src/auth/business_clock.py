@@ -61,6 +61,16 @@ def utc_to_business_date(moment: datetime) -> date:
     return moment.astimezone(BUSINESS_TIMEZONE).date()
 
 
+def as_utc(moment: Optional[datetime]) -> Optional[datetime]:
+    """An AWARE UTC moment from a stored one (SV-21): a naive value is UTC already, an aware one is converted; ``None`` stays ``None``.  The one way to compare a
+    stored ``timestamp`` with ``datetime.now(timezone.utc)``."""
+    if moment is None:
+        return None
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
 def business_wall_to_utc(wall: Optional[datetime]) -> Optional[datetime]:
     """Naive Tashkent wall time -> naive UTC (``None`` stays ``None``).  The only way to compare a Tashkent
     column with a UTC one."""
@@ -102,10 +112,6 @@ def attendance_duration_minutes(att) -> Optional[int]:
     if started is None or completed is None:
         return None
     return int((completed - started).total_seconds() // 60)
-
-
-def add_days(day: date, days: int) -> date:
-    return day + timedelta(days=days)
 
 
 def month_window_start(today: date) -> date:

@@ -6,6 +6,7 @@ from sqlalchemy import inspect, text
 from tests.test_k2_1_migration_pg import BASE_URL, config, engine, version  # noqa: F401  (engine is a fixture)
 
 REVISION, BEFORE = "k4a1b2c3d4e5", "k2b1b2c3d4e5"
+HEAD = "wb4a1b2c3d4e5"          # wave B P4 sits on top of K4a (its own test: test_wb_p4_migration_pg.py)
 TABLES = {"support_tickets", "support_messages", "support_attachments"}
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
 
@@ -20,13 +21,13 @@ def test_the_revision_follows_k2_2_and_is_the_head():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == [REVISION] and script.get_revision(REVISION).down_revision == BEFORE
+    assert script.get_heads() == [HEAD] and script.get_revision(HEAD).down_revision == REVISION and script.get_revision(REVISION).down_revision == BEFORE
 
 
 def test_up_down_up_the_tables_the_checks_and_the_sequence(engine):
     cfg = config()
     command.upgrade(cfg, "head")
-    assert version(engine) == REVISION and TABLES <= set(inspect(engine).get_table_names())
+    assert version(engine) == HEAD and TABLES <= set(inspect(engine).get_table_names())
     assert {"ck_support_tickets_status", "ck_support_tickets_author_role", "ck_support_tickets_mail_status"} <= set(checks(engine, "support_tickets"))
     assert "'resolved'" in checks(engine, "support_tickets")["ck_support_tickets_status"]
     assert "'throttled'" in checks(engine, "support_tickets")["ck_support_tickets_mail_status"] and "'throttled'" in checks(engine, "support_messages")["ck_support_messages_mail_status"]
@@ -54,7 +55,7 @@ def test_up_down_up_the_tables_the_checks_and_the_sequence(engine):
         assert c.execute(text("SELECT count(*) FROM pg_class WHERE relname = 'support_ticket_number_seq'")).scalar() == 0
     command.upgrade(cfg, "head")
     command.upgrade(cfg, "head")                                # repeating is harmless
-    assert version(engine) == REVISION and TABLES <= set(inspect(engine).get_table_names())
+    assert version(engine) == HEAD and TABLES <= set(inspect(engine).get_table_names())
 
 
 def test_the_template_roles_carry_the_right_and_the_migration_adds_it_where_it_is_missing(engine):
@@ -83,4 +84,4 @@ def test_a_database_built_from_the_models_and_stamped_back_upgrades_without_fail
     cfg = config()
     command.stamp(cfg, BEFORE)
     command.upgrade(cfg, "head")
-    assert version(engine) == REVISION and TABLES <= set(inspect(engine).get_table_names())
+    assert version(engine) == HEAD and TABLES <= set(inspect(engine).get_table_names())

@@ -69,19 +69,13 @@ def membership(w, group, student=None):
 
 @contextmanager
 def clock(monkeypatch, day_, hour, minute=0):
-    """The membership service sees "now" as ``day_`` hour:minute Tashkent time (a transfer in the past)."""
-    from src.auth import service as service_module
+    """The membership service sees "now" as ``day_`` hour:minute Tashkent time (a transfer in the past).  Wave B P4 (B2): the ONE business clock (``bc``), no module's ``datetime`` is patched."""
+    from src.auth import business_clock as bc
     from src.auth.service import BUSINESS_TIMEZONE
 
     instant = datetime.combine(day_, time(hour, minute), tzinfo=BUSINESS_TIMEZONE).astimezone(timezone.utc)
-
-    class Frozen(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
-
     with monkeypatch.context() as patch:
-        patch.setattr(service_module, "datetime", Frozen)
+        patch.setattr(bc, "_clock", lambda: instant)
         yield instant
 
 

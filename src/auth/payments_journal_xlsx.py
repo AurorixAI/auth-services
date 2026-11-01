@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from . import payments_statement_texts as st_tx
 from . import payments_texts as tx
 from . import xlsx_style as xs
-from .business_clock import BUSINESS_TIMEZONE
+from . import business_clock as bc
 from .payments_income_schemas import JournalRow
 
 SHEET_TITLE = "Журнал оплат"
@@ -51,12 +51,7 @@ def _local(moment: Optional[str]) -> Optional[datetime]:
     """An ISO naive-UTC moment -> the clock of the centre (Tashkent), naive (what a cell shows)."""
     if not moment:
         return None
-    parsed = datetime.fromisoformat(moment)
-    if parsed.tzinfo is None:
-        from datetime import timezone
-
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(BUSINESS_TIMEZONE).replace(tzinfo=None)
+    return bc.utc_to_business_wall(datetime.fromisoformat(moment))   # MN-44: one UTC -> Tashkent conversion
 
 
 def _dd_mm(moment: Optional[str]) -> str:

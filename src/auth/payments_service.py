@@ -332,7 +332,7 @@ def deadlock_guard(method):
 
 def _utcnow() -> datetime:
     """Naive UTC timestamp (the convention of the other audit-like columns)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return bc.utc_now()   # MN-03 / DM-005: the one clock (``set_clock`` of the tests freezes it)
 
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
@@ -976,7 +976,7 @@ class PaymentService:
 
     @staticmethod
     def _check_amount(amount: int) -> int:
-        if not isinstance(amount, int) or amount < 1 or amount > MAX_MONEY:
+        if not isinstance(amount, int) or isinstance(amount, bool) or amount < 1 or amount > MAX_MONEY:
             raise AmountRange(f"Сумма: от 1 до {_num(MAX_MONEY)}")
         return amount
 
@@ -1275,6 +1275,8 @@ class PaymentService:
         try:
             reason = self._check_reason(reason)
             probe = self._probe_payment(org_id, payment_id)
+            if probe.kind == "legacy_carry" or probe.carried_from_payment_id is not None:   # MN-50: the same guard as ``replace_payment``
+                raise PaymentConflict("Перенос оплаты нельзя аннулировать — это не денежная операция")
             family = self._lock_family(org_id, probe.student_id)
             self._membership(org_id, probe.membership_id)
             payment = self._lock_payment(org_id, payment_id)
@@ -1431,7 +1433,7 @@ class PaymentService:
             method = self._method_of(method, required=True)
             effective_on = effective_on or today
             self._check_date(effective_on, today, "Дата возврата")
-            if not isinstance(amount, int) or amount < 1 or amount > MAX_MONEY:
+            if not isinstance(amount, int) or isinstance(amount, bool) or amount < 1 or amount > MAX_MONEY:
                 raise AmountRange(f"Сумма: от 1 до {_num(MAX_MONEY)}")
             reason = (reason or "").strip() or None
             note = (note or "").strip() or None
@@ -1857,6 +1859,8 @@ class PaymentService:
         ]
         if since is not None:
             starts.append(since)
+        if not starts:   # MN-06: nothing to read from (no lessons package and no ``since``) - every membership has no lessons
+            return {m.id: [] for m, _, _ in members}
         earliest = min(starts)
         lessons = (
             self.db.query(

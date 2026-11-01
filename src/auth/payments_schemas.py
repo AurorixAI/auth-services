@@ -5,7 +5,7 @@ from datetime import date
 from datetime import date as date_type
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 MAX_MONEY = 10_000_000_000
 
@@ -584,7 +584,7 @@ class PaymentCreate(BaseModel):
     The header ``Idempotency-Key: <uuid>``: a second POST with the same key creates nothing and answers 409
     ``DUPLICATE_PAYMENT`` whose detail carries ``payment_id`` of the payment the first call created."""
 
-    amount: int
+    amount: StrictInt  # MN-42: ``true`` / "100" / 1.5 are 422, never coerced
     paid_on: date
     method: Optional[PaymentMethod] = None
     valid_from: Optional[date] = Field(None, json_schema_extra={"deprecated": True})
@@ -798,7 +798,7 @@ class WriteoffCreate(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    amount: Optional[int] = None
+    amount: Optional[StrictInt] = None  # MN-42
     all_debt: bool = Field(False, alias="all")
     reason: str = Field(..., max_length=500)
     effective_on: Optional[date_type] = None  # default: the business today
@@ -851,7 +851,7 @@ class WriteoffVoided(PayModel):
 
 
 class RefundCreate(BaseModel):
-    amount: int
+    amount: StrictInt  # MN-42
     method: Optional[NewPaymentMethod] = None  # mandatory: a missing one is 422 METHOD_REQUIRED
     reason: Optional[str] = Field(None, max_length=500)
     note: Optional[str] = Field(None, max_length=500)

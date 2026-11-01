@@ -303,10 +303,16 @@ def test_exam_release_failure_after_the_archive_is_a_durable_marker_retried_late
     # still failing: the retry keeps the marker
     assert GroupLifecycle(w.svc).retry_pending_releases(w.org.id) == 0
     assert refresh(w, group).exam_release_pending is True
-    # exam-service is fine again: the next archive-related call (the impact) clears it
+    # exam-service is fine again.  DM-007 (wave B P4): the GET of the impact has NO side effect - it never retries; the next ARCHIVE of the centre does (LD-23, lazy, no cron)
     exams.release_conflict = False
     impact = client(w, "admin").get(G.format(gid=group.id) + "/archive-impact")
     assert impact.status_code == 200
+    assert refresh(w, group).exam_release_pending is True
+    asked = len([c for c in exams.calls if c[0].endswith("/archive-release")])
+    client(w, "admin").get(G.format(gid=group.id) + "/archive-impact")
+    assert len([c for c in exams.calls if c[0].endswith("/archive-release")]) == asked
+    other = free_group(w, "Следующая")
+    assert archive(w, other, reason="Закрыта").status_code == 200
     assert refresh(w, group).exam_release_pending is False
     assert GroupLifecycle(w.svc).retry_pending_releases(w.org.id) == 0          # idempotent
     # unavailable at release time behaves the same; the sweep clears it

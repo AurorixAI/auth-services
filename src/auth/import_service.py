@@ -45,6 +45,7 @@ from src.models.auth import (
     User,
 )
 
+from . import business_clock as bc
 from . import import_limits as limits
 from .membership_periods import open_period
 from .student_id_service import DisplayIdAllocator
@@ -621,7 +622,7 @@ def build_template_xlsx() -> bytes:
             ws_info.row_dimensions[i].height = xs.LINE_HEIGHT * lines
     xs.print_setup(ws_info, header=None)
 
-    example_date = date.today().replace(day=1) - timedelta(days=1)          # the last day of the previous month: a date that is always «before»
+    example_date = bc.business_today().replace(day=1) - timedelta(days=1)          # the last day of the previous month: a date that is always «before»
 
     def data_sheet(title: str, cols: list[str], example: list, date_cols: tuple[str, ...] = (), phone_col: Optional[str] = None):
         ws = wb.create_sheet(title)

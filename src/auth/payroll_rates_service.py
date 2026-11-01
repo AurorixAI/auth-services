@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import calendar
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Set
 from uuid import UUID
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.models.auth import Group, GroupAttendance, OrganizationMember, PayrollRate, User
@@ -220,6 +221,12 @@ class RatesService:
         if note and len(note) > MAX_NOTE:
             raise PayrollInvalid(f"Примечание — не длиннее {MAX_NOTE} знаков")
         now, actor = _utcnow(), UUID(str(actor_id))
+        # MN-35: the winner of equal ``valid_from`` is the later ``created_at``; a clock that stepped back (or a second instance) must not let an
+        # older rate beat the one just written, so the new rows are never older than the newest row of this teacher
+        newest = (self.db.query(func.max(PayrollRate.created_at))
+                  .filter(PayrollRate.org_id == org_id, PayrollRate.teacher_id == teacher_id).scalar())
+        if newest is not None and newest >= now:
+            now = newest + timedelta(microseconds=1)
         for lesson_type in engine.LESSON_TYPES:  # a fixed order: the rows of one request get increasing times
             if lesson_type in parsed:
                 self.db.add(
