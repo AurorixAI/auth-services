@@ -310,7 +310,7 @@ def test_file_size_limit_and_three_file_cap(world, lesson):
     assert upload(client, excuse.id, JPEG, "b.jpg").status_code == 200
     assert upload(client, excuse.id, PDF, "c.pdf").status_code == 200
     assert upload(client, excuse.id, PNG, "d.png").status_code == 409
-    items = client.get(BASE).json()["items"][0]
+    items = client.get(BASE, params=window()).json()["items"][0]
     assert len(items["files"]) == 3
     assert all(set(f) == {"id", "filename", "content_type", "size_bytes"} for f in items["files"])
     assert "data" not in str(items)
