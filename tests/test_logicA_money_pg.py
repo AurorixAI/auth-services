@@ -189,6 +189,7 @@ def test_f13_the_individual_price_ends_when_the_student_leaves_and_a_return_is_p
 def two_students_world(w, price=500_000):
     centre(w, price)
     a, b = enrolled(w, D(2026, 10, 1)), enrolled(w, D(2026, 10, 1), w.students[1])
+    enrolled(w, D(2026, 10, 1), w.students[2])                      # LESSONS 76: the fixture enrols him at the REAL «now - 60 days» (after 01.12.2026 that is past 01.10)
     seed_payment(w, a, 500_000, D(2026, 10, 1))
     return a, b
 
