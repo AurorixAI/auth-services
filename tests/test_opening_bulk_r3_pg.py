@@ -1,19 +1,17 @@
-"""OPENING-BULK, R3 round (22.10): the release script's skip rules and impact print, the Excel «Без остатка» of a student who joined after the start,
+"""OPENING-BULK, R3 round (22.10): the Excel «Без остатка» of a student who joined after the start,
 what happens between a preview and its apply, the property «a batch = N single PUTs and the ledger reconciles», VOID_BREAKS_REFUND, the size of an Excel file.
 Spec: artifacts/partner_doc_check/opening_bulk_spec.md."""
-import importlib.util
 import random
 from datetime import date
 import time
 import tracemalloc
 import uuid
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import pytest
 
 from src.auth import payment_status as ps
-from src.models.auth import MembershipOpeningBalance, Organization, Student, StudentGroup, StudentPayment
+from src.models.auth import Student, StudentGroup, StudentPayment
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
     give_group_price, give_price, make_client, make_group, make_student, make_user, make_member, pg_session, world,
@@ -26,136 +24,6 @@ from tests.test_payment_carry_over_pg import engine, run_in_thread  # noqa: F401
 from tests.test_pay2_api_pg import (  # noqa: F401
     API, D, TODAY, fixed_today, membership, owner, pytestmark, seed_payment, settings_block, stay,
 )
-
-
-def load_script():
-    spec = importlib.util.spec_from_file_location("set_openings_pending", Path(__file__).resolve().parents[1] / "scripts" / "set_openings_pending.py")
-    script = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(script)
-    return script
-
-
-# ---- R3 #5: the release script ----------------------------------------------------------------------------------------------------------------
-
-
-def _org_with_charges(w, name, start=None, created=None):
-    """A second centre with ONE group, ONE student charged for Sep-Oct (a price, no payments); returns ``(org, membership)``."""
-    from tests.pg_world import make_org
-
-    org = make_org(w.db, name)
-    admin = make_user(w.db, "owner")
-    make_member(w.db, org, admin, "owner")
-    group = make_group(w.db, org, admin, f"Группа {name}")
-    group.schedule = []
-    s = make_student(w.db, org, group, "Уч", name, f"X-{uuid.uuid4().hex[:6]}")
-    w.db.commit()
-    org.settings = {"payments": {"billing_anchor": "fixed_day", "billing_day": 1, **({"accounting_start_date": start} if start else {})}}
-    if created:
-        org.created_at = created
-    w.db.commit()
-    give_group_price(w.db, group, 600_000, valid_from=D(2026, 1, 1))
-    m = w.db.query(StudentGroup).filter_by(student_id=s.id, group_id=group.id).one()
-    m.joined_at = datetime(2026, 9, 1, 6)
-    (period,) = m.periods
-    period.joined_at = m.joined_at
-    w.db.commit()
-    return org, m
-
-
-def _ids(report, key):
-    return [o["org_id"] for o in report[key]]
-
-
-def test_the_release_script_skips_a_later_start_and_openings_dated_from_the_start_and_prints_the_impact(world, fixed_today, capsys):
-    script = load_script()
-    fixed_today(D(2026, 10, 21))
-    # A: derived start (the creation day, in September), charges for Sep-Oct, no money -> «will be set»
-    a, ma = _org_with_charges(world, "A", created=datetime(2026, 9, 1, 6))
-    # B: the start is already AFTER 01.11 (explicit 15.11) -> skipped
-    b, _ = _org_with_charges(world, "B", start="2026-11-15")
-    # C: a live opening with a debt dated 01.11 (start explicit 2026-10-01) -> skipped
-    c, mc = _org_with_charges(world, "C", start="2026-10-01")
-    svc_row = MembershipOpeningBalance(org_id=c.id, membership_id=mc.id, student_id=mc.student_id, group_id=mc.group_id, debt_amount=50_000,
-                                       debt_on=D(2026, 11, 1), source="manual", created_by=world.owner.id, created_at=datetime(2026, 10, 20, 9))
-    world.db.add(svc_row)
-    world.db.commit()
-    # D: derived start AFTER the start: the centre was created on 05.11 (a future day in this test) -> skipped, derived
-    d, _ = _org_with_charges(world, "D", created=datetime(2026, 11, 5, 6))
-    mine = {str(o.id) for o in (a, b, c, d)}
-    report = script.run(world.db, execute=False, only=mine)
-    assert _ids(report, "changed") == [str(a.id)]
-    assert sorted(_ids(report, "skipped_later_start")) == sorted([str(b.id), str(d.id)])
-    by = {o["org_id"]: o for o in report["skipped_later_start"]}
-    assert by[str(b.id)]["current_start"] == "2026-11-15" and by[str(b.id)]["explicit"] is True
-    assert by[str(d.id)]["current_start"] == "2026-11-05" and by[str(d.id)]["explicit"] is False
-    assert _ids(report, "skipped_openings") == [str(c.id)] and report["skipped_openings"][0]["openings_dated_from_start"] == 1
-    # the impact of A is the one of the settings endpoint's dry run: the Sep-Oct charges disappear from the debt
-    (entry,) = report["changed"]
-    im = entry["impact"]
-    assert (entry["current_start"], entry["new_start"], entry["explicit"]) == ("2026-09-01", "2026-11-01", False)
-    from src.auth.payments_service import PaymentService
-
-    endpoint = PaymentService(world.db)._accounting_start_impact(str(a.id), D(2026, 11, 1))
-    assert im["debt_delta"] == endpoint.debt_delta and im["memberships_with_new_debt"] == endpoint.memberships_with_new_debt
-    assert im["debt_before"] > 0 and im["debt_after"] == im["debt_before"] + im["debt_delta"] == 0 and im["debt_delta"] == -im["debt_before"]
-    assert im["debtors_before"] == 1
-    # nothing written by the dry run
-    world.db.expire_all()
-    assert "openings_state" not in dict(world.db.get(Organization, a.id).settings or {}).get("payments", {})
-    # the text the operator reads
-    text = "\n".join(script.format_report(report, start=D(2026, 11, 1), execute=False))
-    assert "DRY RUN" in text and "start: 2026-09-01 (derived from the creation day) -> 2026-11-01" in text
-    assert f"debt: {script._money(im['debt_before'])} (1 debtors) -> 0 (delta -{script._money(im['debt_before'])})" in text
-    assert "AFTER 2026-11-01" in text and str(b.id) in text and "start 2026-11-15 (set)" in text and "start 2026-11-05 (derived)" in text
-    assert "openings: 1" in text
-
-
-def test_the_release_script_execute_writes_only_the_centres_listed_as_will_set(world, fixed_today):
-    script = load_script()
-    fixed_today(D(2026, 10, 21))
-    a, _ = _org_with_charges(world, "A", created=datetime(2026, 9, 1, 6))
-    b, _ = _org_with_charges(world, "B", start="2026-11-15")
-    c, mc = _org_with_charges(world, "C", start="2026-10-01")
-    world.db.add(MembershipOpeningBalance(org_id=c.id, membership_id=mc.id, student_id=mc.student_id, group_id=mc.group_id, debt_amount=50_000,
-                                          debt_on=D(2026, 11, 3), source="manual", created_by=world.owner.id, created_at=datetime(2026, 10, 20, 9)))
-    world.db.commit()
-    mine = {str(o.id) for o in (a, b, c)}
-    dry = script.run(world.db, execute=False, only=mine)
-    done = script.run(world.db, execute=True, only=mine)
-    assert _ids(done, "changed") == _ids(dry, "changed") == [str(a.id)]
-    world.db.expire_all()
-    got = {o: dict(world.db.get(Organization, o.id).settings or {}).get("payments", {}) for o in (a, b, c)}
-    assert (got[a]["accounting_start_date"], got[a]["openings_state"]) == ("2026-11-01", "pending")
-    assert got[b]["accounting_start_date"] == "2026-11-15" and "openings_state" not in got[b]
-    assert got[c]["accounting_start_date"] == "2026-10-01" and "openings_state" not in got[c]
-    # a debt dated BEFORE the start (31.10) does not block
-    d, md = _org_with_charges(world, "D", start="2026-10-01")
-    world.db.add(MembershipOpeningBalance(org_id=d.id, membership_id=md.id, student_id=md.student_id, group_id=md.group_id, debt_amount=50_000,
-                                          debt_on=D(2026, 10, 31), source="manual", created_by=world.owner.id, created_at=datetime(2026, 10, 20, 9)))
-    world.db.commit()
-    assert _ids(script.run(world.db, execute=False, only={str(d.id)}), "changed") == [str(d.id)]
-    # the start already equal to 01.11 is not «later»: the centre is set (only the state changes)
-    e, _ = _org_with_charges(world, "E", start="2026-11-01")
-    rep = script.run(world.db, execute=False, only={str(e.id)})
-    assert _ids(rep, "changed") == [str(e.id)] and rep["changed"][0]["impact"]["debt_delta"] == 0
-
-
-def test_the_release_script_main_prints_the_per_centre_impact(world, fixed_today, monkeypatch, capsys):
-    script = load_script()
-    fixed_today(D(2026, 10, 21))
-    a, _ = _org_with_charges(world, "A", created=datetime(2026, 9, 1, 6))
-    import src.core.database as database
-
-    class _Session:
-        def __call__(self):
-            return world.db
-
-    monkeypatch.setattr(database, "SessionLocal", _Session())
-    monkeypatch.setattr(world.db, "close", lambda: None)
-    assert script.main(["--org", str(a.id)]) == 0
-    out = capsys.readouterr().out
-    assert "DRY RUN (nothing written)" in out and "will be set / set: 1" in out
-    assert "start: 2026-09-01 (derived from the creation day) -> 2026-11-01" in out and "impact:" in out and "debt:" in out
 
 
 # ---- R3 #6: Excel «Без остатка (да)» on a student who joined AFTER the start ---------------------------------------------------------------------

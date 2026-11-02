@@ -709,46 +709,6 @@ def test_the_query_budget_does_not_depend_on_the_number_of_rows(world, fixed_tod
     assert len(live_openings(world)) == len(small) + len(big)
 
 
-# ---- the release script -----------------------------------------------------------------------------------------------------------------------
-
-
-def test_the_release_script_dry_run_by_default_and_only_centres_without_money_before_the_start(world, fixed_today):
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("set_openings_pending", Path(__file__).resolve().parents[1] / "scripts" / "set_openings_pending.py")
-    script = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(script)
-    # a second centre that has a payment before the start
-    fm = world.db.query(StudentGroup).filter_by(student_id=world.foreign_student.id).one()
-    from src.models.auth import StudentPayment
-
-    world.db.add(StudentPayment(org_id=world.other_org.id, membership_id=fm.id, student_id=fm.student_id, group_id=fm.group_id, amount=100_000, paid_on=D(2026, 10, 5),
-                                created_by=world.foreign_admin.id, method="cash", created_at=datetime(2026, 10, 5, 9)))
-    world.db.commit()
-    mine = {str(world.org.id), str(world.other_org.id)}
-    settings_block(world, accounting_start_date="2026-09-01")
-    # DRY RUN: nothing is written
-    report = script.run(world.db, execute=False, only=mine)
-    assert [o["org_id"] for o in report["changed"]] == [str(world.org.id)] and [o["org_id"] for o in report["skipped_money"]] == [str(world.other_org.id)]
-    assert report["skipped_money"][0]["earliest_money_event"] == "2026-10-05" and report["skipped_money"][0]["kind"] == "payment"
-    assert "openings_state" not in settings_of(world) and settings_of(world)["accounting_start_date"] == "2026-09-01"
-    # EXECUTE: the centre without money is moved, the other is not touched and is listed
-    report = script.run(world.db, execute=True, only=mine)
-    st = settings_of(world)
-    assert (st["accounting_start_date"], st["openings_state"], st["openings_pending_since"]) == ("2026-11-01", "pending", TODAY.isoformat())
-    world.db.expire_all()
-    other = dict(world.db.get(Organization, world.other_org.id).settings or {}).get("payments", {})
-    assert "openings_state" not in other and "accounting_start_date" not in other
-    assert lst(world)["state"] == "pending"
-    # the second run leaves the centre in its state
-    again = script.run(world.db, execute=True, only=mine)
-    assert [o["org_id"] for o in again["untouched"]] == [str(world.org.id)] and not again["changed"]
-    # «Готово» ends it; the script never brings it back
-    assert owner(world).post(f"{BASE}/state", json={"state": "done"}).json()["state"] == "done"
-    script.run(world.db, execute=True, only=mine)
-    assert settings_of(world)["openings_state"] == "done"
-
-
 # ---- Excel round trip -------------------------------------------------------------------------------------------------------------------------
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

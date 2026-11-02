@@ -113,8 +113,7 @@ class OpeningsList(PayModel):
 
 
 class OpeningsStateIn(BaseModel):
-    """The owner / an admin with the right to money ends the checklist: ``done`` («Готово») or ``skipped`` («Не нужно»).  ``pending`` is set by the
-    release script only (``scripts/set_openings_pending.py``)."""
+    """The owner / an admin with the right to money ends the checklist: ``done`` («Готово») or ``skipped`` («Не нужно»).  ``pending`` is not set by the API."""
 
     state: Literal["done", "skipped"]
 
