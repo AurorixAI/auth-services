@@ -6,7 +6,6 @@ JWT, bcrypt, org CRUD, invite flow, student management, diagnostic invites
 
 import os
 import hashlib
-import hmac
 import secrets
 import string
 import httpx
