@@ -77,3 +77,54 @@ def test_sv08_my_groups_of_a_teacher_do_not_grow_and_keep_the_flag(world):
     print(f"[wca] SV-08 my groups: {len(small_body)} groups {small} SQL, {len(body)} groups {big} SQL")
     assert len(body) > len(small_body) + 15 and big == small
     assert all(item["substitution"] is False and item["teacher_name"] == body[0]["teacher_name"] for item in body)
+
+
+# ---- SV-09: GET /org/schedule -------------------------------------------------------------------------------------------------------------------
+
+
+def revise_schedules(w, groups):
+    """Every group gets: a revision of s1 (applied) and one from the far future (not applied), a stopped s2, an s3 that stops in the far future."""
+    from src.models.auth import GroupScheduleOverride
+
+    for group in groups:
+        def add(lesson, scope, day, payload):
+            w.db.add(GroupScheduleOverride(org_id=w.org.id, group_id=group.id, lesson_id=lesson, scope=scope, effective_date=day,
+                                           payload=payload, reason="тест", changed_by=w.admin.id))
+        add("s1", "recurring", "2026-01-05", {"dayOfWeek": 1, "startTime": "15:00", "endTime": "16:00", "format": "online"})
+        add("s1", "recurring", "2999-01-01", {"dayOfWeek": 1, "startTime": "18:00", "endTime": "19:00", "format": "offline"})
+        add("s2", "recurring_end", "2026-01-05", {})
+        add("s3", "recurring_end", "2999-01-01", {})
+    w.db.commit()
+
+
+def schedule_json(w):
+    r = make_client(w).get(f"{API}/org/schedule")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_sv09_schedule_queries_do_not_grow_with_groups(world):
+    revise_schedules(world, [world.group])
+    small, _ = count_queries(world, lambda: schedule_json(world))
+    made = grow_centre(world, groups=40)
+    revise_schedules(world, made)
+    big, body = count_queries(world, lambda: schedule_json(world))
+    print(f"[wca] SV-09 GET /org/schedule: 1 group {small} SQL, 41 groups {big} SQL")
+    assert len({item["groupId"] for item in body}) == 41 and big == small
+
+
+def test_sv09_schedule_answer_equals_the_per_group_query_answer(world, monkeypatch):
+    made = grow_centre(world, groups=6)
+    revise_schedules(world, [world.group, *made[:4]])           # the rest has no overrides at all
+    body = schedule_json(world)
+    assert any(item["startTime"] == "15:00" for item in body)                                  # the revision is applied ...
+    assert not any(item["startTime"] == "18:00" for item in body)                              # ... the future one is not
+    assert not any(item["id"] == "s2" for item in body if item["groupId"] == str(world.group.id))   # a stopped recurrence is omitted
+    assert any(item["id"] == "s3" for item in body if item["groupId"] == str(world.group.id))       # one that stops later is still there
+    original = type(world.svc)._schedule_overrides_for_group
+
+    def per_group(self, group, *, until, extra_lesson_ids=None, preloaded_overrides=None):
+        return original(self, group, until=until, extra_lesson_ids=extra_lesson_ids)       # the OLD path: one query per group
+
+    monkeypatch.setattr(type(world.svc), "_schedule_overrides_for_group", per_group)
+    assert schedule_json(world) == body

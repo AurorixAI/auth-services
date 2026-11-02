@@ -3107,9 +3107,13 @@ class AuthService:
         groups = query.order_by(Group.name).all()
         lessons_out: List[ScheduleLessonResponse] = []
         today = business_clock.business_now().date()
+        # wave C SV-09: the overrides of ALL the groups in one query (the one-offs are not used here)
+        preload = self._preload_schedule_data([g.id for g in groups], date_from=today, date_to=today, with_one_offs=False)
 
         for g in groups:
-            recurring, _, recurring_ends = self._schedule_overrides_for_group(g, until=today)
+            recurring, _, recurring_ends = self._schedule_overrides_for_group(
+                g, until=today, preloaded_overrides=preload.overrides.get(g.id, [])
+            )
             slots = list(g.schedule or [])
             for s in slots:
                 if not isinstance(s, dict):
@@ -3459,9 +3463,9 @@ class AuthService:
         return payload
 
     def _preload_schedule_data(
-        self, group_ids: List[Any], *, date_from: date, date_to: date
+        self, group_ids: List[Any], *, date_from: date, date_to: date, with_one_offs: bool = True
     ) -> "_SchedulePreload":
-        """One-off lessons and schedule overrides of many groups: two queries in total."""
+        """One-off lessons and schedule overrides of many groups: two queries in total (one without ``with_one_offs``)."""
         preload = _SchedulePreload()
         ids = list(dict.fromkeys(group_ids))
         if not ids:
@@ -3474,6 +3478,8 @@ class AuthService:
                 GroupScheduleOneOffLesson.lesson_date <= date_to.isoformat(),
             )
             .all()
+            if with_one_offs
+            else ()
         ):
             preload.one_offs.setdefault(lesson.group_id, []).append(lesson)
         for override in (
