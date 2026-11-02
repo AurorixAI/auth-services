@@ -38,7 +38,6 @@ from .lesson_teachers import (
     TeacherBook,
     _s,
     _uuid,
-    effective_teacher,
 )
 from .models import (
     Group,
