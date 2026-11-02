@@ -2254,9 +2254,10 @@ class AuthService:
             query = query.filter(Group.class_level == class_level)
 
         groups = query.order_by(Group.name).all()
+        context = self._group_response_context(groups)   # wave C SV-08: the counts and the teachers of ALL the groups in two queries
         if not is_org_admin:
-            return [self._with_substitution_flag(g, "own") for g in groups]
-        return [self._build_group_response(g) for g in groups]
+            return [self._with_substitution_flag(g, "own", *context) for g in groups]
+        return [self._build_group_response(g, *context) for g in groups]
 
     def get_group_detail(
         self,
@@ -2943,19 +2944,41 @@ class AuthService:
         self.db.commit()
         return True
 
-    def _build_group_response(self, group: Group) -> GroupResponse:
-        student_count = (
-            self.db.query(func.count(StudentGroup.id))
-            .filter(
-                StudentGroup.group_id == group.id,
-                StudentGroup.is_active,
-                student_not_archived(),
+    def _group_response_context(self, groups: list[Group]) -> tuple[dict, dict]:
+        """``(counts, teacher names)`` of a LIST of groups for ``_build_group_response`` (SV-08: two queries instead of two per group)."""
+        group_ids = [g.id for g in groups]
+        counts = {}
+        if group_ids:
+            counts = dict(
+                self.db.query(StudentGroup.group_id, func.count(StudentGroup.id))
+                .filter(StudentGroup.group_id.in_(group_ids), StudentGroup.is_active, student_not_archived())
+                .group_by(StudentGroup.group_id)
+                .all()
             )
-            .scalar()
-        ) or 0
+        teacher_ids = {g.teacher_id for g in groups if g.teacher_id}
+        names = {}
+        if teacher_ids:
+            names = {u.id: f"{u.first_name} {u.last_name}" for u in self.db.query(User).filter(User.id.in_(teacher_ids)).all()}
+        return counts, names
+
+    def _build_group_response(self, group: Group, counts: Optional[dict] = None, teacher_names: Optional[dict] = None) -> GroupResponse:
+        if counts is not None:
+            student_count = counts.get(group.id, 0)
+        else:
+            student_count = (
+                self.db.query(func.count(StudentGroup.id))
+                .filter(
+                    StudentGroup.group_id == group.id,
+                    StudentGroup.is_active,
+                    student_not_archived(),
+                )
+                .scalar()
+            ) or 0
 
         teacher_name = None
-        if group.teacher_id:
+        if group.teacher_id and teacher_names is not None:
+            teacher_name = teacher_names.get(group.teacher_id)
+        elif group.teacher_id:
             teacher = self.db.query(User).filter(User.id == group.teacher_id).first()
             if teacher:
                 teacher_name = f"{teacher.first_name} {teacher.last_name}"
@@ -2978,9 +3001,9 @@ class AuthService:
             archiveReason=group.archive_reason,
         )
 
-    def _with_substitution_flag(self, group: Group, reason: str) -> GroupResponse:
+    def _with_substitution_flag(self, group: Group, reason: str, counts: Optional[dict] = None, teacher_names: Optional[dict] = None) -> GroupResponse:
         """A teacher's "my groups" entry: ``substitution`` when the group is shown only because he substitutes in it."""
-        response = self._build_group_response(group)
+        response = self._build_group_response(group, counts, teacher_names)
         response.substitution = reason == "substitution"
         return response
 
@@ -4908,9 +4931,10 @@ class AuthService:
                 .scalar()
             ) or 0
 
+        context = self._group_response_context(groups)   # SV-08
         return TeacherDashboardSummaryResponse(
             businessDate=business_date.isoformat(),
-            groups=[self._with_substitution_flag(group, visible[group.id]) for group in groups],
+            groups=[self._with_substitution_flag(group, visible[group.id], *context) for group in groups],
             studentCount=distinct_student_count,
             todayLessons=today_lessons,
             scheduleWindow=schedule_window,
