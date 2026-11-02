@@ -1,4 +1,5 @@
 """N13 P2: payments service and API - defaults, duplicates, replace/void, status, tenancy (PostgreSQL)."""
+import calendar
 from datetime import date, datetime, timedelta
 from uuid import uuid4
 
@@ -35,6 +36,14 @@ def day(offset=0):
     return business_today() + timedelta(days=offset)
 
 
+def month_minus_day(start):
+    """The default end of a calendar period: the day before ``start``'s day in the next month (the 1st: the end of its own month)."""
+    if start.day == 1:
+        return start.replace(day=calendar.monthrange(start.year, start.month)[1])
+    year, month = (start.year + 1, 1) if start.month == 12 else (start.year, start.month + 1)
+    return date(year, month, min(start.day - 1, calendar.monthrange(year, month)[1]))
+
+
 def owner(w):
     return make_client(w, user=w.owner)
 
@@ -68,7 +77,7 @@ def pay(w, student=None, group=None, client=None, expect=201, **body):
             if current.mode == ps.LESSONS:
                 body["amount"] = money_for(w, membership_id, lessons=lessons or current.package_size, on=paid_on)
             else:
-                body["amount"] = money_for(w, membership_id, through=through or ps.add_month_minus_day(paid_on), on=paid_on)
+                body["amount"] = money_for(w, membership_id, through=through or month_minus_day(paid_on), on=paid_on)
         else:
             body["amount"] = 450000
     body["paid_on"] = paid_on.isoformat()

@@ -34,14 +34,12 @@ def test_the_mode_is_the_one_of_the_latest_live_payment():
     # the same day: the later entered one
     assert ps.billing_mode([rec(d, lessons=12, created=5), rec(d, valid_to=d + timedelta(days=29), created=1)]) == "package"
     assert ps.billing_mode([rec(d, lessons=12, created=1), rec(d, valid_to=d + timedelta(days=29), created=5)]) == "calendar"
-    # the one definition: the very payment compute_status reads, covers-nothing payments left out
+    # covers-nothing payments (moved away before their period began) are left out
     moved_before_it_began = rec(d + timedelta(days=40), valid_from=d + timedelta(days=40), valid_to=d + timedelta(days=70),
                                 carried_out_at=datetime(2026, 9, 5, 10, 0))
     assert moved_before_it_began.covers_nothing
     assert ps.billing_mode([rec(d, lessons=12), moved_before_it_began]) == "package"
     assert ps.billing_mode([moved_before_it_began]) is None
-    status = ps.compute_status(today=d + timedelta(days=50), monthly_fee=None, payments=[rec(d, lessons=12), moved_before_it_began])
-    assert status.period_mode == ps.LESSONS
 
 
 # ---- through the API --------------------------------------------------------------

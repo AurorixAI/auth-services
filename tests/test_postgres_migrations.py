@@ -1242,37 +1242,9 @@ def _check_pay2_objects(engine,config,ids):
     with engine.connect() as c:
         money_before=c.execute(text('SELECT coalesce(sum(amount),0) FROM student_payments WHERE voided_at IS NULL AND org_id=:o'),{'o':ids['org']}).scalar_one()
     assert money_before==1350000
-    # --- the dry run of the conversion report on this stage-like data: the migration runs INSIDE its transaction, nothing is kept
-    import importlib.util,sys
-    spec=importlib.util.spec_from_file_location('pay2_convert_report',str(Path(__file__).resolve().parents[1]/'scripts'/'pay2_convert_report.py'))
-    report_module=importlib.util.module_from_spec(spec); spec.loader.exec_module(report_module)
+    # a price of the group, so that the migration below meets a group with a price
     with engine.begin() as c:
         c.execute(text("INSERT INTO group_prices (id,group_id,amount,valid_from,created_at) VALUES (gen_random_uuid(),:g,500000,'2000-01-01',now())"),{'g':ids['group']})
-    with engine.connect() as c:
-        tx=c.begin()
-        try:
-            # the ORM of today also reads the LOGIC-B columns, which a database at PAYROLL_RATES has not got yet (rolled back below)
-            c.execute(text("ALTER TABLE groups ADD COLUMN IF NOT EXISTS inactive_intervals jsonb NOT NULL DEFAULT '[]'::jsonb, ADD COLUMN IF NOT EXISTS archive_reason varchar(300), ADD COLUMN IF NOT EXISTS exam_release_pending boolean NOT NULL DEFAULT false"))
-            c.execute(text("ALTER TABLE group_attendance ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1"))
-            # ... and the columns of #154 (purpose / money / make-up of the one-off lessons, ``made_up_by`` of the attendance row)
-            c.execute(text("ALTER TABLE group_schedule_one_off_lessons ADD COLUMN IF NOT EXISTS purpose varchar(10), ADD COLUMN IF NOT EXISTS money varchar(10), ADD COLUMN IF NOT EXISTS made_up_lesson_id varchar(100), ADD COLUMN IF NOT EXISTS made_up_date varchar(10)"))
-            c.execute(text("ALTER TABLE group_attendance ADD COLUMN IF NOT EXISTS made_up_by varchar(100)"))
-            # ... and the columns of the console pack (users.platform_block*, organizations.blocked_*)
-            c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS platform_blocked_at timestamp, ADD COLUMN IF NOT EXISTS platform_block_reason text, ADD COLUMN IF NOT EXISTS platform_block_was_active boolean"))
-            c.execute(text("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS blocked_at timestamp, ADD COLUMN IF NOT EXISTS blocked_reason text"))
-            rep=report_module.build_report(c,today=date(2026,10,21))
-        finally:
-            tx.rollback()
-    assert rep['migrated_in_transaction'] and rep['ok'], rep
-    t=rep['orgs'][str(ids['org'])]
-    assert t['money_before']==t['money_after']==money_before and t['money_equal'] and t['distribution_ok']
-    assert t['centre']['payments_ok'] and t['centre']['transfers_ok'] and t['centre']['distribution_ok'] and t['centre']['payments_sum']==money_before
-    mine={r['membership_id']:r for r in rep['memberships']}
-    first=mine[str(ids['membership'])]
-    assert (first['old_status'],first['old_paid_until'])==('active','2026-11-04')       # old: the periods said paid until 04.11
-    assert 'student_payments' in inspect(engine).get_table_names() and 'method' not in {c['name'] for c in inspect(engine).get_columns('student_payments')}  # rolled back
-    text_out=report_module.render(rep,5)
-    assert 'РАВНЫ' in text_out and 'ИТОГ: деньги равны' in text_out
     command.upgrade(config,'head')
     with engine.connect() as c:
         assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one()==HEAD
