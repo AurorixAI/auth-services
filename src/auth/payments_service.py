@@ -140,14 +140,19 @@ AUDIT_REFUND_VOID = "payment_refund_void"
 # /org/payments/summary is asked by the banner and the menu of every administrator: a few seconds of cache.
 SUMMARY_TTL_SECONDS = float(os.getenv("PAYMENTS_SUMMARY_TTL", "15"))
 _SUMMARY_CACHE: Dict[str, Tuple[float, PaymentsSummary]] = {}
+# wave C DM-011: the counters of «остатки» (the checklist banner; NOT money: how many openings are still to enter) - the same life as the summary above: the same hook drops it
+OPENINGS_SUMMARY_TTL_SECONDS = float(os.getenv("OPENINGS_SUMMARY_TTL", "30"))
+_OPENINGS_SUMMARY_CACHE: Dict[str, Tuple[float, str, Any]] = {}      # org -> (valid until, business day, OpeningsSummary)
 
 
 def invalidate_summary(org_id: Any = None) -> None:
     """Forget the cached summary (any write of money / price / settings of the centre)."""
     if org_id is None:
         _SUMMARY_CACHE.clear()
+        _OPENINGS_SUMMARY_CACHE.clear()
     else:
         _SUMMARY_CACHE.pop(str(org_id), None)
+        _OPENINGS_SUMMARY_CACHE.pop(str(org_id), None)
 
 
 # Every write that can change a ledger drops the cached summary - ONE hook on the session instead of a call in every write
@@ -179,6 +184,7 @@ def _mark_ledger_bulk_writes(context):
 def _forget_summary_after_commit(session):
     if session.info.pop(_DIRTY_FLAG, False):
         _SUMMARY_CACHE.clear()
+        _OPENINGS_SUMMARY_CACHE.clear()
 
 
 @event.listens_for(Session, "after_rollback")

@@ -690,3 +690,30 @@ def test_cost_copies_of_all_the_groups_in_one_query_with_the_same_cancels(pg_ses
     assert len(costing) == 1
     kept = {gid: [c.lesson_id for c in loader.cancels[gid]] for gid in copies}
     assert kept[gs[0].id] == [] and all(kept[g.id] == [copies[g.id]] for g in gs[1:])       # the additional lesson's copy costs nothing; the five moved copies do
+
+
+# ---- DM-011: the counters of the openings page are asked once, dropped by every write -------------------------------------------------------------------
+
+
+def test_dm011_openings_summary_is_cached_and_every_write_drops_it(pg_session, clock):
+    from src.auth import payments_service
+    from src.models.auth import MembershipOpeningBalance
+
+    w = build_org(pg_session)
+    gs, ss, ms = money_centre(w, clock, groups=5, accounting_start_date="2026-10-01")         # they joined on 01.09: before the start, so an opening is expected from each
+    payments_service.invalidate_summary()
+    own = pay_client(w, "owner")
+    url = "/api/v1/auth/org/opening-balances/summary"
+    first_n, first = count_queries(w, lambda: own.get(url))
+    second_n, second = count_queries(w, lambda: own.get(url))
+    print(f"[wca] DM-011 openings summary: first {first_n} SQL, repeated {second_n} SQL")
+    assert first.status_code == second.status_code == 200 and second.json() == first.json()
+    assert first.json()["totals"]["memberships"] == 5 and first.json()["totals"]["missing"] == 5 and first.json()["totals"]["with_opening"] == 0
+    assert first_n - second_n >= 10                                          # the table (members, periods, money, prices) is not read again
+    w.db.add(MembershipOpeningBalance(org_id=w.org.id, membership_id=ms[0].id, student_id=ms[0].student_id, group_id=ms[0].group_id, paid_until=_date(2026, 10, 15),
+                                      created_by=w.owner.id, source="manual"))
+    w.db.commit()                                                           # a write of an opening: the counters change AT ONCE (the hook), not after the TTL
+    fresh = own.get(url).json()["totals"]
+    assert (fresh["with_opening"], fresh["missing"]) == (1, 4)
+    assert own.post("/api/v1/auth/org/opening-balances/state", json={"state": "done"}).json()["state"] == "done"       # the state lives in the settings of the centre: dropped as well
+    assert own.get(url).json()["state"] == "done"

@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from types import SimpleNamespace
@@ -79,6 +80,7 @@ from .payments_service import (
     deadlock_guard,
     invalidate_summary,
 )
+from . import payments_service as _payments_service
 
 logger = logging.getLogger(__name__)
 
@@ -302,8 +304,16 @@ class OpeningsService(_Base):
 
     def summary(self, org_id: str) -> OpeningsSummary:
         today = ps.business_today()
+        ttl, cache = _payments_service.OPENINGS_SUMMARY_TTL_SECONDS, _payments_service._OPENINGS_SUMMARY_CACHE
+        if ttl > 0:         # wave C DM-011: three widgets ask on every open of the page; any write of the ledger models drops it (the hook of ``payments_service``)
+            hit = cache.get(str(org_id))
+            if hit and hit[0] > time.monotonic() and hit[1] == today.isoformat():
+                return hit[2]
         settings, tracked, left, state = self._table(org_id, today)
-        return OpeningsSummary(accounting_start=settings.accounting_start, state=state, totals=self._totals(tracked, left, 0))
+        result = OpeningsSummary(accounting_start=settings.accounting_start, state=state, totals=self._totals(tracked, left, 0))
+        if ttl > 0:
+            cache[str(org_id)] = (time.monotonic() + ttl, today.isoformat(), result)
+        return result
 
     # ------------------------------------------------------------------------------------------------ the state
 
