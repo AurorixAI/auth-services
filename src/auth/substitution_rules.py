@@ -12,7 +12,6 @@ CREATE_MAX_DAYS_AHEAD = 90
 MOVE_MAX_DAYS_AHEAD = 60
 TEACHER_MOVE_LEAD_MINUTES = 60                  # P1.1: a teacher moves his own lesson only while more than this is left before it starts
 MY_LESSONS_MAX_DAYS = 62
-DECIDE_BULK_MAX = 50
 
 ERROR_CATALOGUE: Dict[str, tuple[int, str]] = {
     "SUBSTITUTION_NOT_FOUND": (404, "Запрос на замену не найден"),
