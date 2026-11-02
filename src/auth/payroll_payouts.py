@@ -14,7 +14,7 @@ next month behind the owner's back, the sheet of a past month is not touched, an
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
