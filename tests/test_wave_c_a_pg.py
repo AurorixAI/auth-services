@@ -588,10 +588,10 @@ def test_mn16_receipts_items_run_only_the_memberships_of_the_page(pg_session, cl
         assert sum(i["column_amount"] for i in listed["items"]) == report["totals"][key], column
 
 
-# ---- MN-39: the payroll what-if of a price runs before the lock of the group ---------------------------------------------------------------------------
+# ---- MN-39 (reverted after R3 B-1): impact() reads the price history, which the lock of the group guards - it stays UNDER the lock -------------------------
 
 
-def test_mn39_the_payroll_what_if_runs_before_the_group_lock_and_the_answer_is_the_same(world):
+def test_mn39_the_impact_of_a_price_is_read_after_the_group_lock(world):
     from tests.test_group_price_pg import put_price, saved_flat_month
 
     m, saved = saved_flat_month(world)
@@ -599,10 +599,9 @@ def test_mn39_the_payroll_what_if_runs_before_the_group_lock_and_the_answer_is_t
     statements, out = capture_queries(world, lambda: put_price(world, 450_000, valid_from=m.d(11)))
     flat = [" ".join(s.split()) for s in statements]
     lock = next(i for i, s in enumerate(flat) if "FROM groups" in s and "FOR NO KEY UPDATE" in s)
-    sheets = [i for i, s in enumerate(flat) if "FROM payroll_sheets" in s]
-    print(f"[wca] MN-39 price backdated: {len(flat)} SQL, the lock is statement {lock}, payroll_sheets statements at {sheets}")
-    assert sheets and max(sheets) < lock                              # nothing of the payroll what-if is read while the lock is held
-    assert out["impact"]["stale_payroll_sheets"] == dry["stale_payroll_sheets"] == 1                    # the same answer as the dry run (which takes no lock at all)
+    reads = [i for i, s in enumerate(flat) if "FROM group_prices" in s or "FROM payroll_sheets" in s or "FROM membership_price_overrides" in s]
+    assert reads and min(reads) > lock                                # no read of the price history / the sheets before the lock: a neighbour's step is always seen
+    assert out["impact"]["stale_payroll_sheets"] == dry["stale_payroll_sheets"] == 1
     assert out["impact"]["stale_sheets"] == dry["stale_sheets"] and out["impact"]["students_following"] == dry["students_following"] == 3
 
 
