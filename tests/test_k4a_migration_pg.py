@@ -6,7 +6,7 @@ from sqlalchemy import inspect, text
 from tests.test_k2_1_migration_pg import BASE_URL, config, engine, version  # noqa: F401  (engine is a fixture)
 
 REVISION, BEFORE = "k4a1b2c3d4e5", "k2b1b2c3d4e5"
-HEAD = "wb4a1b2c3d4e5"          # wave B P4 sits on top of K4a (its own test: test_wb_p4_migration_pg.py)
+HEAD = "wca1b2c3d4e5"          # wave B P4 sits on top of K4a (its own test: test_wb_p4_migration_pg.py)
 TABLES = {"support_tickets", "support_messages", "support_attachments"}
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
 
@@ -21,7 +21,7 @@ def test_the_revision_follows_k2_2_and_is_the_head():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == [HEAD] and script.get_revision(HEAD).down_revision == REVISION and script.get_revision(REVISION).down_revision == BEFORE
+    assert script.get_heads() == [HEAD] and script.get_revision("wb4a1b2c3d4e5").down_revision == REVISION and script.get_revision("wca1b2c3d4e5").down_revision == "wb4a1b2c3d4e5" and script.get_revision(REVISION).down_revision == BEFORE
 
 
 def test_up_down_up_the_tables_the_checks_and_the_sequence(engine):

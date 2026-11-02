@@ -305,6 +305,7 @@ class OrganizationMember(Base):
     __table_args__ = (
         CheckConstraint("org_role IN ('owner', 'admin', 'teacher')"),
         UniqueConstraint("org_id", "user_id", name="uq_org_member"),
+        Index("ix_org_members_user", "user_id"),  # wave C LD-29: «where is this user a member» (sign-in, every dependency check); uq_org_member leads with org_id
     )
 
 
@@ -652,6 +653,7 @@ class StudentGroup(Base):
     __table_args__ = (
         UniqueConstraint("student_id", "group_id", name="uq_student_group"),
         CheckConstraint("monthly_fee >= 0", name="ck_student_groups_monthly_fee"),
+        Index("ix_student_groups_group", "group_id"),  # wave C MN-48: «who is in this group» (ledger select, price impact, payroll); uq_student_group leads with student_id
     )
 
 
@@ -1012,6 +1014,7 @@ class GroupAttendance(Base):
         Index("ix_attendance_exam_release_pending", "org_id", "group_id", postgresql_where=text("exam_release_pending")),
         Index("idx_attendance_org", "org_id"),
         Index("idx_attendance_teacher", "org_id", "teacher_id", "lesson_date"),
+        Index("ix_attendance_org_completed_date", "org_id", "lesson_date", postgresql_where=text("status = 'completed'")),  # wave C MN-48: the held lessons of a centre in a month (payroll, the ledger)
         Index("idx_group_attendance_day_off", "day_off_id", postgresql_where=text("day_off_id IS NOT NULL")),
         # #154: one make-up lesson is the make-up of one cancelled lesson (a second guard under the lock of the row)
         Index("uq_group_attendance_made_up_by", "group_id", "made_up_by", unique=True, postgresql_where=text("made_up_by IS NOT NULL")),

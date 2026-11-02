@@ -25,16 +25,16 @@ def audit_actions(engine):
         return c.execute(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_group_audit_action'")).scalar()
 
 
-def test_the_revision_follows_k4a_and_is_the_head():
+def test_the_revision_follows_k4a_and_wave_c_follows_it():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == [REVISION] and script.get_revision(REVISION).down_revision == BEFORE
+    assert script.get_heads() == ["wca1b2c3d4e5"] and script.get_revision(REVISION).down_revision == BEFORE and script.get_revision("wca1b2c3d4e5").down_revision == REVISION
 
 
 def test_up_down_up_the_column_and_the_partial_index(engine):
     cfg = config()
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     assert version(engine) == REVISION
     column = columns(engine)["exam_release_pending"]
     assert column["nullable"] is False and "false" in str(column["default"]).lower()
@@ -43,8 +43,8 @@ def test_up_down_up_the_column_and_the_partial_index(engine):
     command.downgrade(cfg, BEFORE)
     assert version(engine) == BEFORE and "exam_release_pending" not in columns(engine) and index_definition(engine) is None
     assert "'exam_release_done'" not in audit_actions(engine) and "'lesson_cancelled'" in audit_actions(engine)
-    command.upgrade(cfg, "head")
-    command.upgrade(cfg, "head")                                # repeating is harmless
+    command.upgrade(cfg, REVISION)
+    command.upgrade(cfg, REVISION)                              # repeating is harmless
     assert version(engine) == REVISION and "exam_release_pending" in columns(engine)
 
 
@@ -55,5 +55,5 @@ def test_a_database_built_from_the_models_and_stamped_back_upgrades_without_fail
     Base.metadata.create_all(engine)                            # the column and the index are already there
     cfg = config()
     command.stamp(cfg, BEFORE)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     assert version(engine) == REVISION and "exam_release_pending" in columns(engine)
