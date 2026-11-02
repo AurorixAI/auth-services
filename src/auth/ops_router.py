@@ -19,7 +19,6 @@ from .ops_schemas import (
     ArchiveGroupOut,
     ArchiveGroupRequest,
     ArchiveImpactOut,
-    GroupResponseB,
     GroupRestoredB,
     HandoverOut,
     HandoverRequest,
