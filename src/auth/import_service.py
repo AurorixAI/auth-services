@@ -282,7 +282,7 @@ def _parse_money(raw: str) -> Optional[int]:
 
 def parse_opening(d: dict, row: int, *, money: bool, accounting_start: date, enrol_day: date, err, warn):
     """LOGIC-A: the opening-balance columns G-I of a student row -> ``(ok, paid_until, debt_amount, debt_on)``.  ``ok=False`` = a blocking error
-    (already reported through ``err``).  Shared by the legacy plan and by LOGIC-B's ``import_ops.build_plan``."""
+    (already reported through ``err``).  Used by LOGIC-B's ``import_ops.build_plan`` (the legacy plan is deleted: Wave D-B DM-002)."""
     paid_until = debt_amount = debt_on = None
     if not any(d.get(k) for k in (K_PAID_UNTIL, K_DEBT, K_DEBT_ON)):
         return True, None, None, None

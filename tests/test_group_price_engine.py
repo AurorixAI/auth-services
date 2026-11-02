@@ -280,5 +280,3 @@ def test_two_votes_give_the_price_and_a_2_plus_2_tie_still_does(migration):
     assert [fee for _, fee, _ in plans[g].overrides] == [300_000] and plans[g].null_active == 1
     assert (plans[h].price, plans[h].votes, plans[h].tie) == (500_000, 2, True)             # the later date wins
     assert plans[h].overrides == [(rows[4]["membership_id"], 400_000, True), (rows[5]["membership_id"], 400_000, True)]
-
-

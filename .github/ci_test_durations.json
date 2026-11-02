@@ -166,7 +166,6 @@
  "tests/test_price_scheduled_pg.py": 9.9,
  "tests/test_proration_pattern_pg.py": 1.8,
  "tests/test_query_pii_log_filter.py": 0.0,
- "tests/test_repos_and_deps.py": 0.1,
  "tests/test_service_eol_preserved.py": 0.3,
  "tests/test_session_cookies.py": 11.8,
  "tests/test_student_archive_pg.py": 31.0,
