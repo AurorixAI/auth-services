@@ -342,7 +342,6 @@ class Invites:
 
     # -------------------------------------------------------------------------------------------- accept
     def accept(self, request):
-        from .schemas import AuthResponse  # noqa: F401  (typing only)
         from .service import hash_password
 
         invite = self.db.query(Invitation).filter(Invitation.code_hash == _hash_code(request.code)).with_for_update().populate_existing().first()
