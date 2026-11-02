@@ -24,8 +24,6 @@ from . import xlsx_style as xs
 SHEET_TITLE = "Выписка"
 HEADER = ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]       # the columns every statement has (the optional ones go after «Оплачено»)
 OPTIONAL = (("forgiven", "Прощено"), ("recalc", "Перерасчёт"), ("refunded", "Возвращено"), ("transferred", "Переведено"))
-DATE_FORMAT = xs.DATE
-MONEY_FORMAT = xs.MONEY
 CANCELLED_TITLE = "Отменённые записи"
 CANCELLED_EMPTY = "Отменённых записей нет"
 TOTAL_LABEL = "Итого"
