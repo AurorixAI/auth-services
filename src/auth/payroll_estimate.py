@@ -11,7 +11,7 @@ A lesson without students has no estimate: ``None`` with ``NO_STUDENTS``; a cand
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable
 from uuid import UUID
 
 from src.models.auth import PayrollRate, StudentGroup
