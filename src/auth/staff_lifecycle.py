@@ -14,7 +14,7 @@ Lock order (SPEC 0.4): the member row -> the groups of the member (ascending id)
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
