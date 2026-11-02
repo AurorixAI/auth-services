@@ -9,15 +9,14 @@ from __future__ import annotations
 import csv
 import io
 from collections import defaultdict
-from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from src.models.auth import Group, Student, StudentGroup, StudentPayment, StudentRefund, StudentWriteoff, User
+from src.models.auth import Group, StudentPayment, StudentRefund, StudentWriteoff, User
 
 from . import billing_ledger as bl
 from . import ledger_service as ls
@@ -47,7 +46,7 @@ from .payments_schemas import (
     StatementRow,
     StatementSummary,
 )
-from .payments_service import PaymentNotFound, PaymentService, RangeTooLong, PaymentInvalid
+from .payments_service import PaymentService, RangeTooLong, PaymentInvalid
 
 MAX_RANGE_DAYS = 366
 MAX_DAY_SERIES_DAYS = 92
