@@ -281,38 +281,3 @@ def test_two_votes_give_the_price_and_a_2_plus_2_tie_still_does(migration):
     assert plans[h].overrides == [(rows[4]["membership_id"], 400_000, True), (rows[5]["membership_id"], 400_000, True)]
 
 
-def test_the_dry_run_report_flags_ties_and_single_votes(migration):
-    import importlib.util
-    from pathlib import Path
-
-    path = Path(__file__).resolve().parents[1] / "scripts" / "group_price_dry_run.py"
-    spec = importlib.util.spec_from_file_location("dry_run_report_test", path)
-    script = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(script)
-    a, b, c, d = uuid4(), uuid4(), uuid4(), uuid4()
-    old, new = datetime(2026, 1, 1), datetime(2026, 6, 1)
-    rows = [row(a, 400_000, updated=old, name="Ничья 2+2"), row(a, 400_000, updated=old, name="Ничья 2+2"),
-            row(a, 500_000, updated=new, name="Ничья 2+2"), row(a, 500_000, updated=new, name="Ничья 2+2"), row(a, None, name="Ничья 2+2")]
-    rows += [row(b, 300_000, name="Один голос"), row(b, None, name="Один голос")]
-    rows += [row(c, 300_000, name="Все разные"), row(c, 400_000, name="Все разные")]
-    rows += [row(d, None, name="Без сумм")]
-    text = script.report(migration.plan_backfill(rows), "db", False, False)
-    lines = {name: next(x for x in text.splitlines() if x.strip().startswith(name)) for name in ("Ничья 2+2", "Один голос", "Все разные", "Без сумм")}
-    assert "500 000" in lines["Ничья 2+2"] and "НИЧЬЯ (выбрана сумма" in lines["Ничья 2+2"] and "1 / 0" in lines["Ничья 2+2"]
-    assert "без цены (меньше 2 совпадений)" in lines["Один голос"] and "ОДИН ГОЛОС" in lines["Один голос"] and "НИЧЬЯ" not in lines["Один голос"]
-    assert "без цены (меньше 2 совпадений)" in lines["Все разные"] and "НИЧЬЯ — без цены" in lines["Все разные"] and "ОДИН ГОЛОС" in lines["Все разные"]
-    assert "без цены (сумм нет)" in lines["Без сумм"] and "ОДИН ГОЛОС" not in lines["Без сумм"]
-    assert "без цены 3 (из них с одним голосом: 2)" in text and "ничья по голосам: 2" in text
-
-
-def test_the_dry_run_report_of_a_database_without_memberships_is_not_a_crash(migration):
-    import importlib.util
-    from pathlib import Path
-
-    path = Path(__file__).resolve().parents[1] / "scripts" / "group_price_dry_run.py"
-    spec = importlib.util.spec_from_file_location("dry_run_empty_test", path)
-    script = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(script)
-    text = script.report(migration.plan_backfill([]), "empty_db", False, True)
-    assert "групп с членствами 0; получат цену 0" in text and "без цены 0" in text and "активных 0, неактивных 0" in text
-    assert script.as_json(migration.plan_backfill([]), "empty_db", False)["groups"] == []

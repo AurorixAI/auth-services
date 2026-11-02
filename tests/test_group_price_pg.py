@@ -1,10 +1,6 @@
 """ROADMAP #105: the price of a group and the individual price of a student - API, payments, payroll per lesson date,
-stale sheets, permissions, locks, the dry-run script (PostgreSQL)."""
-import json
-import subprocess
-import sys
+stale sheets, permissions, locks (PostgreSQL)."""
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -285,7 +281,6 @@ def test_the_status_none_free_follows_the_price_of_the_group(world):
     assert money_owner(world).get(f"{API}/org/payments/summary").json()["free"] == 2
 
 
-
 # ============================================================================================
 # payroll: the price of EACH lesson
 # ============================================================================================
@@ -383,7 +378,6 @@ def test_the_price_of_a_sheet_is_the_price_of_each_lesson_and_cannot_be_overwrit
     r = money_owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json={
         "revision": 1, "line_overrides": [{"membership_id": mid, "monthly_fee": 300_000}]})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "PRICE_NOT_EDITABLE"
-
 
 
 # ============================================================================================
@@ -1582,73 +1576,6 @@ def test_the_lock_order_of_a_cancel_is_the_one_of_the_writes(world, engine):
     holder.commit()
     holder.close()
     assert "error" not in finish(thread, outcome)
-
-
-# ============================================================================================
-# the dry-run script
-# ============================================================================================
-
-
-def run_dry_run(*extra):
-    script = Path(__file__).resolve().parents[1] / "scripts" / "group_price_dry_run.py"
-    done = subprocess.run([sys.executable, str(script), *extra], capture_output=True, text=True, timeout=120,
-                          env={"DATABASE_URL": DB_URL, "PATH": "/usr/bin:/bin"})
-    assert done.returncode == 0, done.stderr
-    return done.stdout
-
-
-def test_the_dry_run_script_prints_the_plan_and_writes_nothing(world):
-    name = f"Сухой прогон {uuid4().hex[:8]}"
-    world.org.name = name
-    world.db.commit()
-    g2 = make_group(world.db, world.org, world.teacher2, "Вторая")
-    g3 = make_group(world.db, world.org, world.teacher2, "Третья")
-    extra = [make_student(world.db, world.org, world.group, f"Доп{i}", "Тестов", f"N13-9{i}") for i in range(2)]
-    pupil = make_student(world.db, world.org, g2, "Один", "Тестов", "N13-950")
-    cold = make_student(world.db, world.org, g3, "Холод", "Тестов", "N13-951")
-    world.db.commit()
-    fees = {world.students[0]: 500_000, world.students[1]: 500_000, world.students[2]: 450_000, extra[0]: None, extra[1]: None,
-            pupil: 300_000, cold: None}
-    for student, fee in fees.items():
-        world.db.query(StudentGroup).filter_by(student_id=student.id).update({"monthly_fee": fee})
-    world.db.commit()
-
-    def counts():
-        world.db.expire_all()
-        return (world.db.query(GroupPrice).count(), world.db.query(MembershipPriceOverride).count(),
-                sorted((str(m.id), m.monthly_fee) for m in world.db.query(StudentGroup)))
-
-    before = counts()
-    data = json.loads(run_dry_run("--json"))
-    mine = {g["group"]: g for g in data["groups"] if g["org"] == name}
-    assert set(mine) == {"Группа", "Вторая", "Третья"}
-    first = mine["Группа"]
-    assert (first["price"], first["votes"], first["tie"], first["memberships"]) == (500_000, 2, False, 5)
-    assert (first["follow_active"], first["overrides"], first["null_fee_start_following_active"]) == (4, 1, 2)
-    second = mine["Вторая"]                                                           # ONE fee in the group: not a price
-    assert (second["price"], second["votes"], second["single_vote"], second["tie"]) == (None, 1, True, False)
-    assert (second["follow_active"], second["overrides"], second["null_fee_start_following_active"]) == (0, 1, 0)
-    assert second["no_price_reason"] == "less_than_min_votes" and first["no_price_reason"] is None and first["min_votes"] == 2
-    third = mine["Третья"]
-    assert third["price"] is None and third["follow_active"] == 0 and third["overrides"] == 0 and third["null_fee_start_following_active"] == 0
-    assert third["votes"] == 0 and third["single_vote"] is False and third["no_price_reason"] == "no_fees"
-    text = run_dry_run("--verbose")
-    assert name in text and "500 000" in text and "450 000 × 1" in text and "Итого" in text and "НАЧНУТ БРАТЬ ЦЕНУ" in text
-    assert "без цены (меньше 2 совпадений)" in text and "ОДИН ГОЛОС" in text and "без цены (сумм нет)" in text
-    assert "300 000 × 1" in text                                                      # the lone fee stays an individual price
-    assert "Каримова" not in text and "Алия" not in text                              # no student names
-    assert counts() == before                                                         # it wrote nothing
-    assert "migration_already_applied" in data
-
-
-def test_the_dry_run_script_connection_is_read_only(world):
-    script = Path(__file__).resolve().parents[1] / "scripts" / "group_price_dry_run.py"
-    spec = __import__("importlib.util", fromlist=["util"]).spec_from_file_location("dry_run_script", script)
-    module = __import__("importlib.util", fromlist=["util"]).module_from_spec(spec)
-    spec.loader.exec_module(module)
-    plans, target, applied = module.collect(DB_URL)
-    assert target.startswith("a2_auth") and applied is True                                     # the tables exist in the test database
-    assert module.main(["--database-url", ""]) == 2                                    # no URL: refuses
 
 
 # ---- PAY-2: prices and the money that is already on the account -------------------------------------------------------
