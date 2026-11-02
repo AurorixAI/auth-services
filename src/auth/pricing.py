@@ -9,7 +9,7 @@ Until #105 the price lived in ``student_groups.monthly_fee`` only.  Now:
   ``amount NULL`` = "from this day the price of the group again".  It hangs on the membership, so it is not
   carried by a transfer: in the new group the student takes the price of the new group.
 
-The effective price of a membership on a day is ONE rule (:meth:`PriceBooks.price` / :func:`effective_price`):
+The effective price of a membership on a day is ONE rule (:meth:`PriceBooks.price`):
 the last override with ``valid_from <= d`` if it exists and has an amount, else the price of the group on *d*,
 else none.  It also tells where the price came from (``group`` / ``override`` / ``none``).
 
@@ -233,10 +233,6 @@ class Price:
     set_by_name: Optional[str] = None  # who set the individual price in force (``source`` = override)
     scheduled: Optional["ScheduledOverride"] = None  # the nearest FUTURE individual price of the membership (amount None = "the group price again")
 
-    @property
-    def is_set(self) -> bool:
-        return self.amount is not None
-
 
 NO_PRICE = Price(None, SOURCE_NONE)
 
@@ -270,9 +266,6 @@ class GroupBook:
         steps = {day: value for day, value in zip(self._days, self._amounts)}
         steps[valid_from] = int(amount)
         return GroupBook(steps.items())
-
-    def steps(self) -> List[Tuple[date, int]]:
-        return list(zip(self._days, self._amounts))
 
 
 class OverrideBook:
@@ -380,17 +373,6 @@ def load_books(db: Session, group_ids: Iterable[Any], membership_ids: Iterable[A
         {g: GroupBook(steps) for g, steps in group_steps.items()},
         {m: OverrideBook(rows, override_meta[m]) for m, rows in override_rows.items()},
     )
-
-
-def effective_price(db: Session, membership: StudentGroup, day: date, *, books: Optional[PriceBooks] = None) -> Price:
-    """The price of ``membership`` on the business day ``day``.
-
-    ``books`` (from :func:`load_books`) answers without a query; without them the history of this one
-    membership and its group is loaded.
-    """
-    if books is None:
-        books = load_books(db, [membership.group_id], [membership.id])
-    return books.price(membership.id, membership.group_id, day)
 
 
 def price_dict(price: Price) -> Dict[str, Any]:

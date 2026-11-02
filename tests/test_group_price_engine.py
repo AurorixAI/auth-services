@@ -64,7 +64,7 @@ def test_an_override_wins_and_a_null_override_returns_the_group_price():
 def test_an_override_of_zero_is_a_free_student_not_a_missing_price():
     g, m, b = books([(D(2000, 1, 1), 500_000)], [(D(2000, 1, 1), 0, "грант")])
     free = b.price(m, g, D(2026, 9, 1))
-    assert free.amount == 0 and free.source == "override" and free.is_set
+    assert free.amount == 0 and free.source == "override"
 
 
 def test_an_override_without_a_group_price_still_prices_the_student():
@@ -76,8 +76,9 @@ def test_an_override_without_a_group_price_still_prices_the_student():
 def test_the_what_if_book_replaces_a_day_and_never_touches_the_original():
     book = pricing.GroupBook([(D(2000, 1, 1), 100), (D(2026, 9, 15), 200)])
     changed = book.with_step(D(2026, 9, 15), 300).with_step(D(2026, 9, 20), 400)
-    assert changed.steps() == [(D(2000, 1, 1), 100), (D(2026, 9, 15), 300), (D(2026, 9, 20), 400)]
-    assert book.steps() == [(D(2000, 1, 1), 100), (D(2026, 9, 15), 200)]
+    days = (D(2000, 1, 1), D(2026, 9, 15), D(2026, 9, 20))
+    assert [changed.at(d) for d in days] == [(D(2000, 1, 1), 100), (D(2026, 9, 15), 300), (D(2026, 9, 20), 400)]
+    assert [book.at(d) for d in days] == [(D(2000, 1, 1), 100), (D(2026, 9, 15), 200), (D(2026, 9, 15), 200)]
 
 
 # ---- payroll: the price of EACH lesson ---------------------------------------------------------------------
