@@ -255,6 +255,11 @@ def test_sv11_group_stats_and_invite_list_use_the_light_rows_with_the_same_answe
     assert item["result"]["theta"] == 0.2                                                           # the result of THIS invite, not the latest of the student
     reads = [s for s, _ in statements if "FROM student_diagnostic_results" in s]
     assert len(reads) == 1 and not any(col in reads[0] for col in HEAVY)
+    world.db.expire_all()
+    statements, r = capture_queries(world, lambda: make_client(world).get(f"{API}/org/diagnostics/{invite.id}"), rows=True)       # one invite: the same light row
+    assert r.status_code == 200 and r.json()["result"]["theta"] == 0.2
+    reads = [s for s, _ in statements if "FROM student_diagnostic_results" in s]
+    assert len(reads) == 1 and not any(col in reads[0] for col in HEAVY)
 
 
 # ---- DM-009: «Замены» of a teacher ----------------------------------------------------------------------------------------------------------------
@@ -518,6 +523,7 @@ def test_dm012_skill_states_one_select_for_any_number_of_topics_same_outcome(wor
 from datetime import date as _date, datetime as _datetime  # noqa: E402
 
 from tests.ops_helpers import build_org  # noqa: E402
+from tests.test_pay2_api_pg import fixed_today  # noqa: E402,F401  (fixture)
 from tests.payf_helpers import centre, client as pay_client, pay as pay_row  # noqa: E402
 
 
