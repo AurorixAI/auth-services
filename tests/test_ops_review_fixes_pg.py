@@ -57,7 +57,9 @@ def test_open_interval_on_an_active_group_is_closed_and_restore_without_interval
     assert ivs[0][1] is not None and ivs[0][1] >= ivs[0][0]
     # the interval is closed at the row's last update (the real wall clock, not the test clock): ask for two Mondays safely AFTER it, so the
     # test does not depend on the day it runs (it failed on 27.10 when 26.10 had become the past)
-    first = business_today() + timedelta(days=7)
+    # 02.11 (lead): the base is the LATER of the test clock's today and the close point - the close point is the real wall clock, so on a Monday after
+    # 10:00 the Monday a week after the test clock's today could still fall inside the hidden interval
+    first = max(business_today(), ivs[0][1].date()) + timedelta(days=7)
     first += timedelta(days=(7 - first.weekday()) % 7)                       # the first Monday a week or more ahead
     days = [o["occurrenceDate"] for o in w.svc._resolved_occurrences_for_group(g, date_from=first, date_to=first + timedelta(days=7))]
     assert days == [first.isoformat(), (first + timedelta(days=7)).isoformat()]
