@@ -4,10 +4,9 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from src.api.rate_limit import client_bucket, client_ip, rate_limit
+from src.api.rate_limit import rate_limit
 from src.core.database import get_db
 from src.core.exceptions import InvalidCredentialsError
 from src.core.security import hash_password
@@ -16,7 +15,6 @@ from src.models.auth import Organization, User
 from . import password_links as links
 from . import password_rules
 from . import user_sessions
-from .cookies import set_auth_cookies
 from .platform_audit import record as audit_record
 from .platform_blocks import ORG_BLOCKED_TEXT, ensure_centre_usable, ensure_login_allowed
 from .platform_common import iso, utcnow
