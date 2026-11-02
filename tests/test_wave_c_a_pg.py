@@ -239,7 +239,7 @@ def test_sv11_group_stats_and_invite_list_use_the_light_rows_with_the_same_answe
     add_result(world, s0, 0.9, 5)
     add_result(world, s1, 0.4, 3)
     invite = DiagnosticInvite(org_id=world.org.id, student_id=s0.id, created_by=world.admin.id, code=uuid4().hex[:10].upper(), class_level=9, status="completed",
-                              expires_at=datetime.utcnow() + timedelta(days=3))
+                              expires_at=datetime(2099, 1, 1))
     world.db.add(invite)
     world.db.commit()
     add_result(world, s0, 0.2, 90, invite=invite)
@@ -425,7 +425,7 @@ def test_sv23_org_stats_one_round_trip_and_the_same_numbers(world):
     world.db.query(OrganizationMember).filter_by(org_id=world.org.id, user_id=world.teacher2.id).update({"is_active": False})
     for status in ("pending", "confirmed", "in_progress", "completed", "completed", "cancelled", "expired"):
         world.db.add(DiagnosticInvite(org_id=world.org.id, student_id=world.students[0].id, created_by=world.admin.id, code=uuid4().hex[:10].upper(), class_level=9,
-                                      status=status, expires_at=datetime.utcnow() + timedelta(days=3)))
+                                      status=status, expires_at=datetime(2099, 1, 1)))
     world.db.commit()
     org = world.org.id
     expected = {                                           # the numbers of the six separate queries this endpoint used to run

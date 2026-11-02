@@ -606,10 +606,8 @@ class AuthService:
         password_links.revoke_live_resets(self.db, user.id, self_requested_only=True)  # he remembered the password: the «Забыли пароль» links HE asked for are over (K2-2, B); a link sent by the leadership lives on
 
         org_info = self._get_user_org_info(user)           # wave C SV-22: the membership and the centre once for the tokens, the user and the centre of the answer
-        org = None
         org_obj = self.db.get(Organization, user.default_org_id) if user.default_org_id else None      # the row `_get_user_org_info` has just read
-        if org_obj:
-            org = self._build_org_response(org_obj)
+        org_out = self._build_org_response(org_obj) if org_obj else None
         tokens = self._create_tokens(user, remember=bool(getattr(request, "remember_me", False)), org_info=org_info)
         self.db.commit()
 
@@ -618,7 +616,7 @@ class AuthService:
         return AuthResponse(
             user=self._build_user_response(user, org_info),
             tokens=tokens,
-            org=org,
+            org=org_out,
         )
 
     # ═══════════════════════════════════════════════════════════════════
@@ -3028,21 +3026,17 @@ class AuthService:
         """Краткая статистика организации для dashboard (total_students — без архивных)"""
         self._expire_due_diagnostic_invites(org_id)
         # wave C SV-23: the six counts in ONE round trip (scalar sub-selects, each with its own filter as before)
-        student_count, group_count, member_count, active_diagnostics, completed_diagnostics, new_students = (
-            self.db.query(
-                select(func.count(Student.id)).where(Student.org_id == org_id, Student.status != "archived").scalar_subquery(),
-                select(func.count(Group.id)).where(Group.org_id == org_id, Group.status == "active").scalar_subquery(),
-                select(func.count(OrganizationMember.id)).where(OrganizationMember.org_id == org_id, OrganizationMember.is_active).scalar_subquery(),
-                select(func.count(DiagnosticInvite.id)).where(
-                    DiagnosticInvite.org_id == org_id, DiagnosticInvite.status.in_(["pending", "confirmed", "in_progress"])
-                ).scalar_subquery(),
-                select(func.count(DiagnosticInvite.id)).where(DiagnosticInvite.org_id == org_id, DiagnosticInvite.status == "completed").scalar_subquery(),
-                select(func.count(Student.id)).where(Student.org_id == org_id, Student.status == "new").scalar_subquery(),
-            ).one()
-        )
-        student_count, group_count, member_count, active_diagnostics, completed_diagnostics, new_students = (
-            student_count or 0, group_count or 0, member_count or 0, active_diagnostics or 0, completed_diagnostics or 0, new_students or 0,
-        )
+        counts = self.db.query(
+            select(func.count(Student.id)).where(Student.org_id == org_id, Student.status != "archived").scalar_subquery(),
+            select(func.count(Group.id)).where(Group.org_id == org_id, Group.status == "active").scalar_subquery(),
+            select(func.count(OrganizationMember.id)).where(OrganizationMember.org_id == org_id, OrganizationMember.is_active).scalar_subquery(),
+            select(func.count(DiagnosticInvite.id)).where(
+                DiagnosticInvite.org_id == org_id, DiagnosticInvite.status.in_(["pending", "confirmed", "in_progress"])
+            ).scalar_subquery(),
+            select(func.count(DiagnosticInvite.id)).where(DiagnosticInvite.org_id == org_id, DiagnosticInvite.status == "completed").scalar_subquery(),
+            select(func.count(Student.id)).where(Student.org_id == org_id, Student.status == "new").scalar_subquery(),
+        ).one()
+        student_count, group_count, member_count, active_diagnostics, completed_diagnostics, new_students = [c or 0 for c in counts]
 
         return {
             "total_students": student_count,
