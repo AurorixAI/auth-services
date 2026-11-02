@@ -756,9 +756,9 @@ class PaymentService:
             if hit and hit[0] > time.monotonic() and hit[1].as_of == ps.business_today().isoformat():
                 return hit[1]
         loader = self._loader(org_id)
-        tracked = set(loader.select(scope="tracked"))
-        everything = list(dict.fromkeys(list(tracked) + loader.select(scope="all")))
-        entries = loader.run(everything)
+        # wave C MN-05: ONE select - "all" holds every tracked membership (``select``: tracked OR a stay since the start OR money), and the tracked ones are told apart by the same condition in Python
+        entries = loader.run(loader.select(scope="all"))
+        tracked = {e.membership.id for e in entries if e.membership.is_active is True and e.group.status == "active" and e.student.status is not None and e.student.status != "archived"}
         counts = {s: 0 for s in ps.STATUSES}
         students_due: set = set()
         students_expired: set = set()

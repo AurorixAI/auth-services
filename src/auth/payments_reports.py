@@ -454,8 +454,11 @@ class PaymentsReports:
         offset: int = 0,
     ) -> ReceiptItems:
         self._validate_range(date_from, date_to)
-        loader, entries = self._everything(org_id)
         payments, writeoffs, refunds = self._records(org_id, date_from, date_to, method, group_id, teacher_id)
+        # wave C MN-16: only the memberships of THESE records are run (a ledger of a membership does not depend on the other memberships of the centre;
+        # the chains of transfers the loader follows itself) - not the whole centre for a page of 50 lines
+        loader = ls.LedgerLoader(self.db, str(org_id), ps.business_today())
+        entries = {e.membership.id: e for e in loader.run(list({x.membership_id for x, _ in (*payments, *writeoffs, *refunds)}))}
 
         def in_bucket(day: date) -> bool:
             if not bucket:

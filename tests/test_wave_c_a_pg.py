@@ -511,3 +511,72 @@ def test_dm012_skill_states_one_select_for_any_number_of_topics_same_outcome(wor
     world.db.expire_all()
     assert world.db.query(StudentSkillState).filter_by(student_id=sid).count() == 40
     assert float(world.db.query(StudentSkillState).filter_by(student_id=sid, skill_id="T1").one().mastery_probability) == 0.725
+
+
+# ---- MN-05 / MN-16: the payments summary selects once; a page of receipts runs only the memberships of its records -----------------------------------
+
+from datetime import date as _date, datetime as _datetime  # noqa: E402
+
+from tests.ops_helpers import build_org  # noqa: E402
+from tests.payf_helpers import centre, client as pay_client, pay as pay_row  # noqa: E402
+
+
+def money_centre(w, clock, groups=6, **block):
+    clock.set("2026-10-21 12:00")
+    gs, ss, ms = centre(w, groups=groups, joined=_datetime(2026, 9, 1, 6, 0), **block)
+    return gs, ss, ms
+
+
+def test_mn05_summary_selects_the_memberships_once_with_the_same_numbers(pg_session, clock):
+    from src.auth import ledger_service as ls, payment_status as ps, payments_service
+    from src.models.auth import Group, Student, StudentGroup
+
+    w = build_org(pg_session)
+    gs, ss, ms = money_centre(w, clock)
+    for m in ms[:4]:
+        pay_row(w, m, 600_000, _date(2026, 10, 1))
+    ss[4].status = "archived"                                # an archived student: in "all" (he still has an open stay), not tracked
+    gs[5].status = "archived"                                # an archived group: the same
+    ms[3].is_active = False                                  # left, with money: in "all", not tracked
+    ms[3].left_at = _datetime(2026, 10, 10, 6, 0)
+    w.db.commit()
+    payments_service.invalidate_summary()
+    statements, r = capture_queries(w, lambda: pay_client(w, "owner").get("/api/v1/auth/org/payments/summary"))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    selects = [s for s in statements if " ".join(s.split()).startswith("SELECT student_groups.id AS student_groups_id FROM student_groups JOIN")]
+    print(f"[wca] MN-05 summary: {len(statements)} SQL, {len(selects)} membership selects")
+    assert len(selects) == 1
+    loader = ls.LedgerLoader(w.db, str(w.org.id), ps.business_today())
+    tracked = loader.select(scope="tracked")                 # the unchanged path: the oracle
+    kinds = [e.ledger.status.status for e in loader.run(tracked)]
+    assert body["tracked_total"] == len(tracked) == 3
+    assert body["expired"] == kinds.count(ps.EXPIRED) and body["ends_today"] == kinds.count(ps.ENDS_TODAY) and body["none"] == kinds.count(ps.NONE)
+    assert body["active"] == kinds.count(ps.ACTIVE) + kinds.count(ps.FREE)
+    everything = loader.run(loader.select(scope="all"))
+    assert len(everything) == 6
+    assert body["debt_total"] == sum(e.ledger.debt for e in everything) and body["advance_total"] == sum(e.ledger.advance for e in everything)
+
+
+def test_mn16_receipts_items_run_only_the_memberships_of_the_page(pg_session, clock):
+    from src.auth import payments_service
+
+    w = build_org(pg_session)
+    gs, ss, ms = money_centre(w, clock, groups=8)
+    for m in ms:
+        pay_row(w, m, 600_000, _date(2026, 9, 5))            # September: every student paid
+    for m in ms[:2]:
+        pay_row(w, m, 600_000, _date(2026, 10, 5))           # October: two of them again
+    own = pay_client(w, "owner")
+    url = "/api/v1/auth/org/payments/receipts/items?from=2026-10-01&to=2026-10-31&column={}"
+    payments_service.invalidate_summary()
+    statements, r = capture_queries(w, lambda: own.get(url.format("received")), rows=True)
+    assert r.status_code == 200, r.text
+    items = r.json()
+    read = sum(n for s, n in statements if "FROM student_payments" in s and "student_payments.id" in s and " ".join(s.split()).startswith("SELECT"))
+    print(f"[wca] MN-16 receipts items: payment rows read by the loader and the list: {read} (18 stored, 2 in the period)")
+    assert items["total"] == 2 and read <= 2 + 4                      # the list (2) + the ledgers of those 2 memberships (4), not all 16 payments of the centre
+    report = own.get("/api/v1/auth/org/payments/receipts?from=2026-10-01&to=2026-10-31").json()          # the unchanged full-centre path: the oracle
+    for column, key in (("received", "received"), ("to_past_debt", "to_past_debt"), ("to_current", "to_current"), ("to_advance", "to_advance")):
+        listed = own.get(url.format(column)).json()
+        assert sum(i["column_amount"] for i in listed["items"]) == report["totals"][key], column
