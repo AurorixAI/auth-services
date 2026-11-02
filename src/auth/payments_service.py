@@ -351,10 +351,6 @@ def _person(user: Optional[User]) -> Optional[str]:
     return staff_name(user.first_name, user.last_name)
 
 
-def _plural_lessons(count: int) -> str:
-    return tx.lessons_word(count)
-
-
 def _num(amount: int) -> str:
     """``250 000`` (a plain space between the thousands)."""
     return tx.num(amount)

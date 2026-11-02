@@ -146,9 +146,9 @@ def test_exhausted_package_is_not_carried(two):
 
 
 def test_plural_forms_of_the_lessons_message(two):
-    from src.auth.payments_service import _plural_lessons
+    from src.auth import payments_texts as tx
 
-    assert [_plural_lessons(n) for n in (1, 2, 4, 5, 11, 12, 14, 21, 22, 25)] == [
+    assert [tx.lessons_word(n) for n in (1, 2, 4, 5, 11, 12, 14, 21, 22, 25)] == [
         "урок", "урока", "урока", "уроков", "уроков", "уроков", "уроков", "урок", "урока", "уроков"]
 
 
