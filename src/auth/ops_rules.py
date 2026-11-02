@@ -7,7 +7,7 @@ the router only) and a service called directly can be asserted with ``pytest.rai
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
