@@ -23,7 +23,6 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from uuid import UUID
 
 from sqlalchemy import func
-from sqlalchemy.orm.attributes import flag_modified
 
 from . import business_clock as bc
 from . import payroll_hooks
@@ -39,9 +38,7 @@ from .models import (
     User,
 )
 from .ops_rules import (
-    OpsError,
     conflict,
-    forbidden,
     hhmm_to_minutes,
     minutes_overlap,
     not_found,
