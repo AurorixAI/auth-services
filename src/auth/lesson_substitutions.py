@@ -202,6 +202,8 @@ class SubstitutionsBase:
         by_group: Dict[UUID, List[str]] = {}
         for r in reqs:
             by_group.setdefault(r.group_id, []).append(r.lesson_date)
+        every = [d for days in by_group.values() for d in days]
+        preload = self.svc._preload_schedule_data(list(by_group), date_from=date.fromisoformat(min(every)), date_to=date.fromisoformat(max(every)))      # wave C DM-009: two queries for the page
         for gid, days in by_group.items():
             group = ctx.groups.get(gid)
             if group is None:
@@ -209,7 +211,7 @@ class SubstitutionsBase:
             d_from, d_to = date.fromisoformat(min(days)), date.fromisoformat(max(days))
             if (d_to - d_from).days > 400:
                 continue
-            for o in self.svc._resolved_occurrences_for_group(group, date_from=d_from, date_to=d_to):
+            for o in self.svc._resolved_occurrences_for_group(group, date_from=d_from, date_to=d_to, preloaded=preload):
                 ctx.occ[(gid, o["id"], o["occurrenceDate"])] = o
         return ctx
 
@@ -371,23 +373,39 @@ class SubstitutionsBase:
             GroupAttendance.group_id == r.group_id, GroupAttendance.lesson_id == r.lesson_id, GroupAttendance.lesson_date == r.lesson_date
         ).first()
 
-    def closure_reason(self, r: Req, group: Group, book: Optional[TeacherBook] = None) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-        """Why a pending request must be closed now (SPEC 3.4 order) and, when the lesson only changed its time, the new times.  Returns ``(reason, occurrence)``."""
+    def prefetch(self, reqs: Sequence[Req], book: TeacherBook) -> SimpleNamespace:
+        """Wave C DM-009: what ``closure_reason`` reads for MANY requests, loaded at once (the schedule: 2 queries, the lesson rows: 1, the requesters still working: 1; the book gets
+        the teacher history and the substitutions of the groups: 2) - the same answers as the per-request queries, so a page costs the same for 3 requests and for 30."""
+        gids, days = {r.group_id for r in reqs}, sorted({r.lesson_date for r in reqs})
+        schedule = self.svc._preload_schedule_data(list(gids), date_from=date.fromisoformat(days[0]), date_to=date.fromisoformat(days[-1]))
+        rows = {(a.group_id, a.lesson_id, a.lesson_date): a
+                for a in self.db.query(GroupAttendance).filter(GroupAttendance.group_id.in_(gids), GroupAttendance.lesson_date.in_(days)).all()}
+        members = {(org, uid) for org, uid in self.db.query(OrganizationMember.org_id, OrganizationMember.user_id).join(User, User.id == OrganizationMember.user_id)
+                   .filter(OrganizationMember.org_id.in_({r.org_id for r in reqs}), OrganizationMember.user_id.in_({r.requester_id for r in reqs}),
+                           OrganizationMember.is_active.is_(True), User.is_active.isnot(False)).all()}
+        book.load_history(gids)
+        book.load_assignments(gids, days[0], days[-1])
+        return SimpleNamespace(schedule=schedule, rows=rows, members=members)
+
+    def closure_reason(self, r: Req, group: Group, book: Optional[TeacherBook] = None, pre: Optional[SimpleNamespace] = None) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+        """Why a pending request must be closed now (SPEC 3.4 order) and, when the lesson only changed its time, the new times.  Returns ``(reason, occurrence)``.
+        ``pre`` (see ``prefetch``): the data of many requests loaded at once."""
         if group.status != "active":
             return "GROUP_ARCHIVED", None
         day = date.fromisoformat(r.lesson_date)
-        occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == r.lesson_id), None)
+        occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day, preloaded=pre.schedule if pre else None) if o["id"] == r.lesson_id), None)
         if occ is None:
             return "LESSON_REMOVED", None
-        row = self._row(r)
+        row = pre.rows.get((r.group_id, r.lesson_id, r.lesson_date)) if pre else self._row(r)
         if row is not None:
             return ("LESSON_CANCELLED" if row.status == "cancelled" else "LESSON_STARTED"), occ
         if day < bc.month_window_start(bc.business_today()):
             return "LESSON_OUTSIDE_WINDOW", occ
-        member = (self.db.query(OrganizationMember.id).join(User, User.id == OrganizationMember.user_id)
-                  .filter(OrganizationMember.org_id == r.org_id, OrganizationMember.user_id == r.requester_id,
-                          OrganizationMember.is_active.is_(True), User.is_active.isnot(False)).first())
-        if member is None:
+        member = ((r.org_id, r.requester_id) in pre.members) if pre else (
+            self.db.query(OrganizationMember.id).join(User, User.id == OrganizationMember.user_id)
+            .filter(OrganizationMember.org_id == r.org_id, OrganizationMember.user_id == r.requester_id,
+                    OrganizationMember.is_active.is_(True), User.is_active.isnot(False)).first()) is not None
+        if not member:
             return "TEACHER_REMOVED", occ
         book = book or TeacherBook(self.db)
         try:
@@ -433,14 +451,18 @@ class SubstitutionsBase:
         for r in reqs:
             if r.status == PENDING:
                 by_group.setdefault(r.group_id, []).append(r)
+        if not by_group:
+            return 0
+        groups = {g.id: g for g in self.db.query(Group).filter(Group.id.in_(list(by_group))).all()}          # wave C DM-009: the groups, the schedule and the lesson rows of ALL the requests at once
+        book = TeacherBook(self.db)
+        pre = self.prefetch([r for group_reqs in by_group.values() for r in group_reqs], book)
         for gid, group_reqs in by_group.items():
-            group = self.db.query(Group).filter(Group.id == gid).first()
+            group = groups.get(gid)
             if group is None:
                 continue
-            book = TeacherBook(self.db)
             plan = []
             for r in group_reqs:
-                reason, occ = self.closure_reason(r, group, book)
+                reason, occ = self.closure_reason(r, group, book, pre)
                 times_changed = bool(occ) and (occ.get("startTime") != r.start_time or occ.get("endTime") != r.end_time)
                 if reason or times_changed:
                     plan.append((r, reason, occ, times_changed))
@@ -606,10 +628,17 @@ class SubstitutionsBase:
             q = q.filter(or_(Req.status == PENDING, Req.lesson_date >= since))
         reqs = q.order_by(Req.created_at.desc(), Req.id).all()
         self.revalidate([r for r in reqs if r.status == PENDING])
-        for r in reqs:
-            self.db.refresh(r)
+        if reqs:        # wave C DM-009: the same re-read as a refresh of each request, in one query
+            self.db.query(Req).filter(Req.id.in_([r.id for r in reqs])).populate_existing().all()
         pending_total = sum(1 for r in reqs if r.status == PENDING)
         return {"items": self.items(reqs, actor), "pendingTotal": pending_total, "assignedToMe": self._assigned_to(org_id, actor, past_days), "clearedForMe": self._cleared_for(org_id, actor)}
+
+    def _preload_assigned(self, rows: Sequence[Tuple[LessonTeacherAssignment, Group]]) -> Optional[Any]:
+        """Wave C DM-009: the schedule of the groups of these assignments for their days, in two queries (``None`` without rows)."""
+        if not rows:
+            return None
+        days = [asg.lesson_date for asg, _g in rows]
+        return self.svc._preload_schedule_data([g.id for _a, g in rows], date_from=date.fromisoformat(min(days)), date_to=date.fromisoformat(max(days)))
 
     def _cleared_for(self, org_id: Any, actor: UUID) -> List[Dict[str, Any]]:
         """W1 S22 (D30): the lessons where the actor WAS the substitute and the assignment was taken off in the last 14 days - who took it off and when (the substitute used to just lose it)."""
@@ -621,9 +650,10 @@ class SubstitutionsBase:
         roles = self.roles_of([org_id], [a.cancelled_by for a, _ in rows])
         ctx = SimpleNamespace(users=users, roles=roles, viewer=actor)          # #157 R3: the substitute reads who took it off by the ROLE only (like every author in the journal)
         out = []
+        preload = self._preload_assigned(rows)
         for asg, group in rows:
             day = date.fromisoformat(asg.lesson_date)
-            occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == asg.lesson_id), None)
+            occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day, preloaded=preload) if o["id"] == asg.lesson_id), None)
             out.append({"groupId": str(group.id), "groupName": group.name, "lessonId": asg.lesson_id, "lessonDate": asg.lesson_date,
                         "startTime": occ["startTime"] if occ else None, "endTime": occ["endTime"] if occ else None, "clearedAt": asg.cancelled_at.isoformat(),
                         "clearedBy": self._author(ctx, asg.cancelled_by) if asg.cancelled_by else None})
@@ -645,22 +675,25 @@ class SubstitutionsBase:
         gone = ({(r.group_id, r.lesson_id, r.lesson_date) for r in self.db.query(GroupAttendance.group_id, GroupAttendance.lesson_id, GroupAttendance.lesson_date).filter(
             GroupAttendance.group_id.in_({g.id for _a, g in rows}), GroupAttendance.status == "cancelled",
             GroupAttendance.lesson_date.in_({a.lesson_date for a, _g in rows}))} if rows else set())
+        preload = self._preload_assigned(rows)             # wave C DM-009: the schedule, the teacher history and the names of the whole list at once
+        book.load_history({g.id for _a, g in rows})
         for asg, group in rows:
             if (group.id, asg.lesson_id, asg.lesson_date) in gone:
                 continue                                    # a cancelled / moved lesson is not shown as «Замена»
             d = date.fromisoformat(asg.lesson_date)
-            occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=d, date_to=d) if o["id"] == asg.lesson_id), None)
+            occ = next((o for o in self.svc._resolved_occurrences_for_group(group, date_from=d, date_to=d, preloaded=preload) if o["id"] == asg.lesson_id), None)
             if occ is None:
                 continue
             default = book.default_teacher(group, asg.lesson_date, hhmm_to_minutes(occ["endTime"]))
-            user = self.db.query(User).filter(User.id == default).first() if default else None
             out.append({"groupId": str(group.id), "groupName": group.name, "lessonId": asg.lesson_id, "lessonDate": asg.lesson_date,
                         "startTime": occ["startTime"], "endTime": occ["endTime"],
-                        "replacing": {"id": str(default), "name": short_name(user)} if default else None,
+                        "replacing": {"id": str(default), "name": None} if default else None,
                         "assignedAt": asg.created_at.isoformat() if asg.created_at else None})
         roles = self.roles_of([org_id], [o["replacing"]["id"] for o in out if o["replacing"]])      # one query for all the rows
+        names = self.teachers.users_by_id(o["replacing"]["id"] for o in out if o["replacing"])
         for o in out:
             if o["replacing"]:
+                o["replacing"]["name"] = short_name(names.get(o["replacing"]["id"]))
                 o["replacing"]["role"] = roles.get(o["replacing"]["id"])
         return out
 
@@ -1752,8 +1785,10 @@ def on_group_teacher_changed(svc, group: Group, actor_id: Any = None, trigger: s
     svc.db.flush()
     book = TeacherBook(svc.db)
     closed = 0
-    for r in svc.db.query(Req).filter(Req.group_id == group.id, Req.status == PENDING).all():
-        reason, _occ = subs.closure_reason(r, group, book)
+    pending = svc.db.query(Req).filter(Req.group_id == group.id, Req.status == PENDING).all()
+    pre = subs.prefetch(pending, book) if pending else None          # wave C DM-009: the schedule, lesson rows and requesters of all of them at once
+    for r in pending:
+        reason, _occ = subs.closure_reason(r, group, book, pre)
         if reason == "GROUP_TEACHER_CHANGED":
             subs.close(r, reason, actor_id=actor_id, trigger=trigger, group=group)
             closed += 1
@@ -1799,12 +1834,13 @@ def on_member_removed(svc, org_id: Any, user_id: UUID, actor_id: Any, released: 
     reopened = 0
     removed_user = db.query(User).filter(User.id == user_id).first()
     book = TeacherBook(db)
+    preload = subs._preload_assigned(released)          # wave C DM-009: the schedule of all the released lessons in two queries
     for asg, group in released:
         old = db.query(Req).filter(Req.assignment_id == asg.id, Req.status == "substituted").first()
         if old is None:
             continue
         d = date.fromisoformat(asg.lesson_date)
-        occ = next((o for o in svc._resolved_occurrences_for_group(group, date_from=d, date_to=d) if o["id"] == asg.lesson_id), None)
+        occ = next((o for o in svc._resolved_occurrences_for_group(group, date_from=d, date_to=d, preloaded=preload) if o["id"] == asg.lesson_id), None)
         if occ is None or group.status != "active":
             continue
         end = hhmm_to_minutes(occ["endTime"])

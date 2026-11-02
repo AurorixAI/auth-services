@@ -255,3 +255,102 @@ def test_sv11_group_stats_and_invite_list_use_the_light_rows_with_the_same_answe
     assert item["result"]["theta"] == 0.2                                                           # the result of THIS invite, not the latest of the student
     reads = [s for s, _ in statements if "FROM student_diagnostic_results" in s]
     assert len(reads) == 1 and not any(col in reads[0] for col in HEAVY)
+
+
+# ---- DM-009: «Замены» of a teacher ----------------------------------------------------------------------------------------------------------------
+
+from tests.b2_helpers import build_d2, client as sub_client, decide, exams, clock, new_group, new_slot, req as sub_req  # noqa: E402,F401
+
+SUB = f"{API}/org/substitutions"
+
+
+@pytest.fixture
+def sw(pg_session, clock, exams):
+    clock.set("2026-10-21 14:00")
+    return build_d2(pg_session)
+
+
+def grow_subs(w, start, pending, assigned):
+    """``pending`` groups of A whose Monday-to-Saturday lesson A asks to be covered (stays pending) and ``assigned`` such lessons the admin gives to D."""
+    from tests.b2_helpers import new_student
+
+    made = []
+    for i in range(start, start + pending + assigned):
+        dow, hour = 1 + i % 6, 8 + i // 6
+        day = f"2026-10-{25 + dow}"
+        group = new_group(w.db, w.org, w.ids, f"WC{i}", f"WC-{i}", w.A, [new_slot(f"wc-lesson-{i}", dow, f"{hour:02d}:00", f"{hour:02d}:45", "2026-10-12")])
+        new_student(w.db, w.org, w.ids, f"wcs{i}", f"Фам{i}", f"Имя{i}", group)
+        made.append((group, f"wc-lesson-{i}", day))
+    w.db.commit()
+    for k, lesson in enumerate(made):
+        r = sub_req(w, "A", [lesson])
+        assert r.status_code == 201, r.text
+        if k >= pending:
+            assert decide(w, "admin", r.json()["created"][0]["id"], decision="substitute", teacherId=str(w.D.id)).status_code == 200
+    return made
+
+
+def test_dm009_mine_queries(sw):
+    grow_subs(sw, 0, 2, 2)
+    small_a, ra = count_queries(sw, lambda: sub_client(sw, "A").get(f"{SUB}/mine"))
+    small_d, rd = count_queries(sw, lambda: sub_client(sw, "D").get(f"{SUB}/mine"))
+    grow_subs(sw, 4, 10, 10)
+    big_a, ra2 = count_queries(sw, lambda: sub_client(sw, "A").get(f"{SUB}/mine"))
+    big_d, rd2 = count_queries(sw, lambda: sub_client(sw, "D").get(f"{SUB}/mine"))
+    print(f"[wca] DM-009 mine (teacher A: {len(ra.json()['items'])} -> {len(ra2.json()['items'])} requests): {small_a} -> {big_a} SQL; "
+          f"substitute D: {len(rd.json()['assignedToMe'])} -> {len(rd2.json()['assignedToMe'])} lessons: {small_d} -> {big_d} SQL")
+    assert (big_a, big_d) == (small_a, small_d)
+
+
+def test_dm009_prefetched_answers_equal_the_per_request_answers(sw, monkeypatch):
+    """The batch (``prefetch``, the preloaded schedule) gives the same reason for every pending request and the same ``mine`` for the teacher and for the substitute as the per-request queries."""
+    from sqlalchemy import select as sa_select
+
+    from src.auth.lesson_substitutions import Substitutions
+    from src.auth.lesson_teachers import TeacherBook
+    from src.auth.service import AuthService
+    from src.models.auth import GroupAttendance, LessonSubstitutionRequest, OrganizationMember
+
+    made = grow_subs(sw, 0, 8, 3)
+    # B asks too (a lesson of the group G3 on Monday); then B stops working in the centre
+    b_req = sub_req(sw, "B", [(sw.G3, "lesson-l4", "2026-10-26")])
+    assert b_req.status_code == 201, b_req.text
+    sw.db.query(OrganizationMember).filter_by(org_id=sw.org.id, user_id=sw.B.id).update({"is_active": False})
+
+    def attendance(group, lesson, day, status):
+        sw.db.add(GroupAttendance(org_id=sw.org.id, group_id=group.id, lesson_id=lesson, lesson_date=day, status=status, records={}, roster_snapshot=[], marked_by=sw.A.id))
+
+    attendance(*made[0], "cancelled")                           # LESSON_CANCELLED
+    attendance(*made[1], "in_progress")                         # LESSON_STARTED
+    made[2][0].teacher_id = sw.C.id                             # GROUP_TEACHER_CHANGED
+    made[3][0].status = "archived"                              # GROUP_ARCHIVED
+    slot = dict(made[4][0].schedule[0], startTime="09:30", endTime="10:15")
+    made[4][0].schedule = [slot]                                # the lesson only changed its time: the request follows
+    made[5][0].schedule = [dict(made[5][0].schedule[0], id="other-lesson")]       # LESSON_REMOVED
+    attendance(*made[9], "cancelled")                           # an assigned lesson that was cancelled is not listed for the substitute
+    sw.db.commit()
+
+    subs = Substitutions(AuthService(sw.db))
+    pending = sw.db.query(LessonSubstitutionRequest).filter_by(org_id=sw.org.id, status="pending").all()
+    assert len(pending) == 7                # the two with a cancelled / started lesson were closed by the writer of that row at once
+    groups = {g.id: g for g in sw.db.query(type(sw.G1)).filter(type(sw.G1).id.in_({r.group_id for r in pending})).all()}
+    book = TeacherBook(sw.db)
+    pre = subs.prefetch(pending, book)
+    for r in pending:
+        assert subs.closure_reason(r, groups[r.group_id], book, pre) == subs.closure_reason(r, groups[r.group_id]), r.lesson_id
+    reasons = {subs.closure_reason(r, groups[r.group_id])[0] for r in pending}
+    assert {"GROUP_TEACHER_CHANGED", "GROUP_ARCHIVED", "LESSON_REMOVED", "TEACHER_REMOVED", None} <= reasons
+
+    first = {who: sub_client(sw, who).get(f"{SUB}/mine").json() for who in ("A", "D")}        # the new path closes what has to be closed ...
+    closed = {item["lesson"]["lessonId"]: item["decision"]["closedReason"] for item in first["A"]["items"] if item["status"] == "closed"}
+    assert len(closed) == 5
+    original = AuthService._resolved_occurrences_for_group
+
+    def per_group(self, group, *, date_from, date_to, preloaded=None):
+        return original(self, group, date_from=date_from, date_to=date_to)                 # the OLD path: two queries per call
+
+    monkeypatch.setattr(AuthService, "_resolved_occurrences_for_group", per_group)
+    monkeypatch.setattr(Substitutions, "prefetch", lambda self, reqs, book: None)
+    second = {who: sub_client(sw, who).get(f"{SUB}/mine").json() for who in ("A", "D")}       # ... and the per-request path reads the same from the settled state
+    assert second == first
+    assert len(first["D"]["assignedToMe"]) == 2                                              # three given, one of them cancelled
