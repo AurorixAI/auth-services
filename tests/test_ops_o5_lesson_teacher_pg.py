@@ -249,12 +249,12 @@ def test_r8b_substitute_window_is_seven_days(w, clock):
 
 def test_r9_import_group_without_history_follows_the_current_teacher_and_old_rows_keep_theirs(w):
     """[O5.R9] A group with no teacher history (created by an import, audit ``created`` only): the teacher is the current one; rows written before keep their own teacher_id."""
-    from src.auth.lesson_teachers import group_teacher_at
+    from src.auth.lesson_teachers import TeacherBook
 
     group = new_group(w.db, w.org, w.ids, "Gi", "Импорт", w.C, [new_slot("lesson-i", 1, "10:00", "11:00", "2026-10-12")])
     old_row = history_row(w.db, w.org, group, "lesson-i", "2026-10-12", None, [], status="completed", records={})
     w.db.commit()
-    assert group_teacher_at(w.db, group, datetime(2026, 10, 1)) == w.C.id
+    assert TeacherBook(w.db).group_teacher_at(group, datetime(2026, 10, 1)) == w.C.id
     assert old_row.teacher_id is None
 
 

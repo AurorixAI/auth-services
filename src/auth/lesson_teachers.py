@@ -215,10 +215,6 @@ class TeacherBook:
         return Resolved(default, default, False)
 
 
-def group_teacher_at(db, group: Group, instant: datetime) -> Optional[UUID]:
-    return TeacherBook(db).group_teacher_at(group, instant)
-
-
 def lesson_teacher(
     db, group: Group, lesson_id: str, lesson_date: str, occurrence: Optional[Dict[str, Any]] = None
 ) -> Optional[UUID]:
