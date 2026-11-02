@@ -3,7 +3,7 @@
 Every test builds a small centre and a big one (30-40 groups) and asserts that the number of SQL statements of the path is the same;
 where a path was rewritten, the answer is compared with the answer of the untouched single-row path (the old behaviour).
 """
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -771,7 +771,70 @@ def payroll_scenario(world, record):
     record("replayed_key", [one.status_code, twin.status_code, twin.json()["detail"]["message"]])
     missing = c.post(f"{PAPI}/org/payroll/sheets/{uuid4()}/payouts", json={**base, "amount": 1000})
     record("unsaved_sheet", [missing.status_code, missing.json()])
-    return m, sheet
+
+    # R3 B-2 (a): the data moved after the save - a late payment of S2: the sheet is stale and the state stands on the FRESH total (basis = fresh)
+    from src.models.auth import PayrollSheet, StudentPayment
+    from tests.test_logicA_payroll_pg import student_group
+
+    mem2 = student_group(world, s2)
+    world.db.add(StudentPayment(org_id=world.org.id, membership_id=mem2.id, student_id=s2.id, group_id=mem2.group_id, amount=300_000, paid_on=ps_today(),
+                                created_by=world.owner.id, method="cash"))
+    world.db.commit()
+    stale = c.get(f"{PAPI}/org/payroll/sheets/{sheet['id']}")
+    record("stale_get", [stale.status_code, stale.json()])
+    on_stale = c.post(pay_url, json={**base, "amount": 12_000})
+    record("payout_on_stale_sheet", [on_stale.status_code, on_stale.json()])
+
+    # R3 B-2 (b): an advance of this month is carried into the next one (carry_in > 0)
+    probe = c.post(pay_url, json={**base, "amount": 5_000_000})        # the question names the balance; the advance is 30 000 above it
+    left = probe.json()["detail"]["balance"]
+    asked = c.post(pay_url, json={**base, "amount": left + 30_000})
+    record("advance_question_2", [asked.status_code, asked.json()])
+    taken = c.post(pay_url, json={**base, "amount": left + 30_000, "confirm_overpay": True, "overpay": asked.json()["detail"]["overpay"]})
+    record("advance_taken_2", [taken.status_code, taken.json()])
+    nxt = _date(m.first.year + (m.first.month // 12), m.first.month % 12 + 1, 1)
+    import copy
+
+    stored = world.db.get(PayrollSheet, UUID(sheet["id"]))          # the lines of the first sheet, one of them a MANUAL price: such a sheet has no fresh total, its saved total is the target
+    lines = copy.deepcopy(list(stored.lines))
+    lines[0]["fee_overridden"] = True
+    follow = PayrollSheet(org_id=world.org.id, teacher_id=world.teacher.id, period_month=nxt, percent_inputs=dict(stored.percent_inputs), divisor_default=12, lines=lines,
+                          total_amount=sum(int(x["amount"]) for x in lines), source_fingerprint="x", revision=1, created_by=world.owner.id, updated_by=world.owner.id)
+    world.db.add(follow)
+    world.db.commit()
+    got = c.get(f"{PAPI}/org/payroll/sheets/{follow.id}")
+    record("next_month_get", [got.status_code, got.json()])
+    assert got.json()["payout"]["carry_in"] > 0
+    pay_next = c.post(f"{PAPI}/org/payroll/sheets/{follow.id}/payouts", json={**base, "amount": 1_000})
+    record("next_month_payout", [pay_next.status_code, pay_next.json()])
+    return m, sheet, follow
+
+
+def revision_changes_before_the_lock(world, monkeypatch, sheet_id):
+    """R3 B-2 (c): ANOTHER writer bumps the revision of the sheet while a payout calculates (``_fresh_total``: its first call).  On the code that calculates before the lock the
+    bump lands between the calculation and the lock (the memo misses, the sheet is calculated again under the lock); on code that calculates under the lock the bump waits for
+    the lock and fails fast - nothing changes.  Returns ``(bumped, calls)``."""
+    from sqlalchemy import text
+
+    from src.auth.payroll_service import PayrollService
+
+    state = {"bumped": False, "calls": 0}
+    real = PayrollService._fresh_total
+
+    def spying(self, *args, **kwargs):
+        state["calls"] += 1
+        if state["calls"] == 1:
+            try:
+                with world.db.get_bind().begin() as conn:
+                    conn.execute(text("SET LOCAL lock_timeout = '300ms'"))
+                    conn.execute(text("UPDATE payroll_sheets SET revision = revision + 1 WHERE id = :i"), {"i": sheet_id})
+                state["bumped"] = True
+            except Exception:           # the row is locked by the payout itself: lock timeout, the bump did not happen
+                pass
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(PayrollService, "_fresh_total", spying)
+    return state
 
 
 def ps_today():
@@ -781,13 +844,27 @@ def ps_today():
 
 
 @pytest.mark.usefixtures("fixed_today")
-def test_mn33_mn37_golden_scenario(world):
+def test_mn33_mn37_golden_scenario(world, monkeypatch):
+    import os
     from tests.test_pay2_api_pg import fixed_today  # noqa: F401
 
     steps = {}
-    payroll_scenario(world, lambda name, value: steps.__setitem__(name, scrub(value)))
-    import os
+    m, sheet, follow = payroll_scenario(world, lambda name, value: steps.__setitem__(name, scrub(value)))
+    from tests.test_logicA_payroll_pg import API as PAPI, owner
 
+    state = revision_changes_before_the_lock(world, monkeypatch, follow.id)
+    r = owner(world).post(f"{PAPI}/org/payroll/sheets/{follow.id}/payouts", json={"paid_on": ps_today().isoformat(), "method": "cash", "amount": 2_000})
+    body = r.json()
+
+    def without_revisions(value):                  # the other writer's bump is the one difference by design: the revision a payout was written against
+        if isinstance(value, dict):
+            return {k: without_revisions(v) for k, v in value.items() if k != "sheet_revision"}
+        return [without_revisions(v) for v in value] if isinstance(value, list) else value
+
+    steps["payout_revision_changed_before_the_lock"] = without_revisions(scrub([r.status_code, body]))
+    assert r.status_code == 201, r.text
+    if not os.environ.get("WCA_RECORD"):                      # (the recording run is on the OLD code, where the bump cannot land: the row is locked while it calculates)
+        assert state["bumped"] is True and state["calls"] == 2          # the memo missed on the new revision: calculated before the lock AND again under it - not three times
     path = os.path.join(os.path.dirname(__file__), "fixtures", "wave_c_a_payroll_golden.json")
     if os.environ.get("WCA_RECORD"):                          # (re)record the golden answers - only from the code BEFORE the change under test
         open(path, "w", encoding="utf-8").write(_json.dumps(steps, ensure_ascii=False, sort_keys=True, indent=1))
@@ -840,3 +917,28 @@ def test_mn33_mn37_one_collection_per_request_and_less_under_the_lock(world, mon
     assert r.status_code == 200, r.text
     assert (n_save, n_tick, n_recalc, n_pay, n_void) == (1, 1, 1, 1, 1)         # was 2, 2, 2, 2, 1
     assert under_pay <= 12                                                       # the calculation of the month no longer runs while the sheet row is locked
+
+
+def test_once_per_revision_calls_once_per_sheet_and_revision():
+    from types import SimpleNamespace
+    from src.auth.payroll_payouts import _once_per_revision
+
+    calls = []
+
+    def fresh(sheet):
+        calls.append((sheet.id, sheet.revision))
+        return sheet.revision * 1000 + (1 if sheet.id == "b" else 0)
+
+    get = _once_per_revision(fresh)
+    a1, a2, b1 = SimpleNamespace(id="a", revision=1), SimpleNamespace(id="a", revision=2), SimpleNamespace(id="b", revision=1)
+    assert (get(a1), get(a1), get(a1)) == (1000, 1000, 1000) and calls == [("a", 1)]          # one call per revision, whatever the number of asks
+    assert get(a2) == 2000 and calls[-1] == ("a", 2)                                          # a new revision of the same sheet is calculated again
+    assert get(b1) == 1001 and get(a1) == 1000 and get(a2) == 2000                            # another sheet is not mixed up with it; the old answers stay
+    assert calls == [("a", 1), ("a", 2), ("b", 1)]
+    none_get = _once_per_revision(lambda sheet: None)                                          # «cannot be calculated» (None) is an answer too: asked once
+    sheet = SimpleNamespace(id="c", revision=1)
+    assert none_get(sheet) is None and none_get(sheet) is None
+    counter = []
+    cached_none = _once_per_revision(lambda s: counter.append(1))
+    cached_none(sheet); cached_none(sheet)
+    assert len(counter) == 1

@@ -1,4 +1,528 @@
 {
+ "advance_question_2": [
+  409,
+  {
+   "detail": {
+    "balance": 428000,
+    "code": "OVERPAY_CONFIRM_REQUIRED",
+    "message": "Выплата больше остатка на 30 000 сум. Если окно не предложило записать аванс — обновите страницу и повторите",
+    "overpay": 30000
+   }
+  }
+ ],
+ "advance_taken_2": [
+  201,
+  {
+   "payout": {
+    "amount": 458000,
+    "created_by_name": "Иван Owner",
+    "method": "cash",
+    "month": "2026-09",
+    "note": null,
+    "paid_on": "2026-10-21",
+    "sheet_revision": 4,
+    "sheet_total": 475000,
+    "void_reason": null
+   },
+   "state": {
+    "advance_out": 30000,
+    "balance": -30000,
+    "basis": "fresh",
+    "carry_in": 0,
+    "carry_used": 0,
+    "fresh_total": 600000,
+    "items": [
+     {
+      "amount": 100000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 1,
+      "sheet_total": 475000,
+      "void_reason": null
+     },
+     {
+      "amount": 500000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 1,
+      "sheet_total": 475000,
+      "void_reason": "внесли по ошибке"
+     },
+     {
+      "amount": 50000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 3,
+      "sheet_total": 475000,
+      "void_reason": null
+     },
+     {
+      "amount": 10000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 4,
+      "sheet_total": 475000,
+      "void_reason": null
+     },
+     {
+      "amount": 12000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 4,
+      "sheet_total": 475000,
+      "void_reason": null
+     },
+     {
+      "amount": 458000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 4,
+      "sheet_total": 475000,
+      "void_reason": null
+     }
+    ],
+    "paid": 630000,
+    "saved_total": 475000,
+    "state": "overpaid",
+    "target": 600000,
+    "text": "Переплачено 30 000"
+   }
+  }
+ ],
+ "next_month_get": [
+  200,
+  {
+   "counted_total": 19,
+   "created_by_name": "Иван Owner",
+   "divisor_default": 12,
+   "groups": [
+    {
+     "counted": 19,
+     "dates": [
+      {
+       "date": "2026-09-01"
+      },
+      {
+       "date": "2026-09-03"
+      },
+      {
+       "date": "2026-09-06"
+      },
+      {
+       "date": "2026-09-08"
+      },
+      {
+       "date": "2026-09-10"
+      },
+      {
+       "date": "2026-09-13"
+      },
+      {
+       "date": "2026-09-15"
+      },
+      {
+       "date": "2026-09-17"
+      },
+      {
+       "date": "2026-09-20"
+      },
+      {
+       "date": "2026-09-22"
+      },
+      {
+       "date": "2026-09-24"
+      },
+      {
+       "date": "2026-09-27"
+      }
+     ],
+     "group_name": "Группа",
+     "lesson_time": null,
+     "lesson_type": "group",
+     "line_count": 2,
+     "percent": "50",
+     "total_amount": 475000,
+     "unpaid": 5
+    }
+   ],
+   "lines": [
+    {
+     "amount": 300000,
+     "counted": 12,
+     "divisor": 12,
+     "fee_overridden": true,
+     "group_name": "Группа",
+     "include_unpaid": true,
+     "lesson_time": null,
+     "lesson_type": "group",
+     "marks": [
+      {
+       "cover": "money",
+       "date": "2026-09-01",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-03",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-06",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-08",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-10",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-13",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-15",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-17",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-20",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-22",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-24",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-27",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      }
+     ],
+     "monthly_fee": 600000,
+     "no_pay": 0,
+     "no_price_lessons": 0,
+     "pending_excused": 0,
+     "percent": "50",
+     "price_changed": false,
+     "price_source": "group",
+     "price_steps": [],
+     "source_fee": 600000,
+     "student_name": "Каримова Алия",
+     "undecided": 0,
+     "unpaid": 0,
+     "unpaid_due": 0,
+     "warnings": [],
+     "written_off": 0
+    },
+    {
+     "amount": 175000,
+     "counted": 7,
+     "divisor": 12,
+     "fee_overridden": false,
+     "group_name": "Группа",
+     "include_unpaid": false,
+     "lesson_time": null,
+     "lesson_type": "group",
+     "marks": [
+      {
+       "cover": "money",
+       "date": "2026-09-01",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-03",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-06",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-08",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-10",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-13",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-15",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "unpaid",
+       "date": "2026-09-17",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "unpaid"
+      },
+      {
+       "cover": "unpaid",
+       "date": "2026-09-20",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "unpaid"
+      },
+      {
+       "cover": "unpaid",
+       "date": "2026-09-22",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "unpaid"
+      },
+      {
+       "cover": "unpaid",
+       "date": "2026-09-24",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "unpaid"
+      },
+      {
+       "cover": "unpaid",
+       "date": "2026-09-27",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "unpaid"
+      }
+     ],
+     "monthly_fee": 600000,
+     "no_pay": 0,
+     "no_price_lessons": 0,
+     "pending_excused": 0,
+     "percent": "50",
+     "price_changed": false,
+     "price_source": "group",
+     "price_steps": [],
+     "source_fee": 600000,
+     "student_name": "Юсупов Бек",
+     "undecided": 0,
+     "unpaid": 5,
+     "unpaid_due": 5,
+     "warnings": [
+      {
+       "code": "UNPAID_LESSONS",
+       "message": "Не оплачено уроков: 5"
+      }
+     ],
+     "written_off": 0
+    }
+   ],
+   "month": "2026-10",
+   "month_open": true,
+   "note": null,
+   "payout": {
+    "advance_out": 0,
+    "balance": 320000,
+    "basis": "saved",
+    "carry_in": 155000,
+    "carry_used": 155000,
+    "fresh_total": null,
+    "items": [],
+    "paid": 0,
+    "saved_total": 475000,
+    "state": "unpaid",
+    "target": 320000,
+    "text": "Не выплачено"
+   },
+   "pending_excused_total": 0,
+   "percents": {
+    "group": "50"
+   },
+   "period_end": "2026-10-31",
+   "period_start": "2026-10-01",
+   "revision": 1,
+   "saved": true,
+   "stale": true,
+   "teacher_name": "Пётр Teacher",
+   "total_amount": 475000,
+   "undecided_total": 0,
+   "unpaid_total": 5,
+   "updated_by_name": "Иван Owner",
+   "warnings": {
+    "no_fee": 0,
+    "open_lessons": null,
+    "pending_excused": 0,
+    "unpaid": 5,
+    "unpaid_students": 1
+   },
+   "written_off_total": 0
+  }
+ ],
+ "next_month_payout": [
+  201,
+  {
+   "payout": {
+    "amount": 1000,
+    "created_by_name": "Иван Owner",
+    "method": "cash",
+    "month": "2026-10",
+    "note": null,
+    "paid_on": "2026-10-21",
+    "sheet_revision": 1,
+    "sheet_total": 475000,
+    "void_reason": null
+   },
+   "state": {
+    "advance_out": 0,
+    "balance": 319000,
+    "basis": "saved",
+    "carry_in": 155000,
+    "carry_used": 155000,
+    "fresh_total": null,
+    "items": [
+     {
+      "amount": 1000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-10",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 1,
+      "sheet_total": 475000,
+      "void_reason": null
+     }
+    ],
+    "paid": 1000,
+    "saved_total": 475000,
+    "state": "due",
+    "target": 320000,
+    "text": "Выплачено 1 000 из 320 000 · осталось 319 000"
+   }
+  }
+ ],
  "overpay_question": [
   409,
   {
@@ -921,6 +1445,92 @@
    }
   }
  ],
+ "payout_on_stale_sheet": [
+  201,
+  {
+   "payout": {
+    "amount": 12000,
+    "created_by_name": "Иван Owner",
+    "method": "cash",
+    "month": "2026-09",
+    "note": null,
+    "paid_on": "2026-10-21",
+    "sheet_revision": 4,
+    "sheet_total": 475000,
+    "void_reason": null
+   },
+   "state": {
+    "advance_out": 0,
+    "balance": 428000,
+    "basis": "fresh",
+    "carry_in": 0,
+    "carry_used": 0,
+    "fresh_total": 600000,
+    "items": [
+     {
+      "amount": 100000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 1,
+      "sheet_total": 475000,
+      "void_reason": null
+     },
+     {
+      "amount": 500000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 1,
+      "sheet_total": 475000,
+      "void_reason": "внесли по ошибке"
+     },
+     {
+      "amount": 50000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 3,
+      "sheet_total": 475000,
+      "void_reason": null
+     },
+     {
+      "amount": 10000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 4,
+      "sheet_total": 475000,
+      "void_reason": null
+     },
+     {
+      "amount": 12000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 4,
+      "sheet_total": 475000,
+      "void_reason": null
+     }
+    ],
+    "paid": 172000,
+    "saved_total": 475000,
+    "state": "due",
+    "target": 600000,
+    "text": "Выплачено 172 000 · после изменений данных доплатить 428 000"
+   }
+  }
+ ],
  "payout_partial": [
   201,
   {
@@ -960,6 +1570,56 @@
     "state": "due",
     "target": 475000,
     "text": "Выплачено 100 000 из 475 000 · осталось 375 000"
+   }
+  }
+ ],
+ "payout_revision_changed_before_the_lock": [
+  201,
+  {
+   "payout": {
+    "amount": 2000,
+    "created_by_name": "Иван Owner",
+    "method": "cash",
+    "month": "2026-10",
+    "note": null,
+    "paid_on": "2026-10-21",
+    "sheet_total": 475000,
+    "void_reason": null
+   },
+   "state": {
+    "advance_out": 0,
+    "balance": 317000,
+    "basis": "saved",
+    "carry_in": 155000,
+    "carry_used": 155000,
+    "fresh_total": null,
+    "items": [
+     {
+      "amount": 1000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-10",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_total": 475000,
+      "void_reason": null
+     },
+     {
+      "amount": 2000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-10",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_total": 475000,
+      "void_reason": null
+     }
+    ],
+    "paid": 3000,
+    "saved_total": 475000,
+    "state": "due",
+    "target": 320000,
+    "text": "Выплачено 3 000 из 320 000 · осталось 317 000"
    }
   }
  ],
@@ -1744,6 +2404,425 @@
   },
   "written_off_total": 0
  },
+ "stale_get": [
+  200,
+  {
+   "counted_total": 19,
+   "created_by_name": "Иван Owner",
+   "divisor_default": 12,
+   "groups": [
+    {
+     "counted": 19,
+     "dates": [
+      {
+       "date": "2026-09-01"
+      },
+      {
+       "date": "2026-09-03"
+      },
+      {
+       "date": "2026-09-06"
+      },
+      {
+       "date": "2026-09-08"
+      },
+      {
+       "date": "2026-09-10"
+      },
+      {
+       "date": "2026-09-13"
+      },
+      {
+       "date": "2026-09-15"
+      },
+      {
+       "date": "2026-09-17"
+      },
+      {
+       "date": "2026-09-20"
+      },
+      {
+       "date": "2026-09-22"
+      },
+      {
+       "date": "2026-09-24"
+      },
+      {
+       "date": "2026-09-27"
+      }
+     ],
+     "group_name": "Группа",
+     "lesson_time": null,
+     "lesson_type": "group",
+     "line_count": 2,
+     "percent": "50",
+     "total_amount": 475000,
+     "unpaid": 5
+    }
+   ],
+   "lines": [
+    {
+     "amount": 300000,
+     "counted": 12,
+     "divisor": 12,
+     "fee_overridden": false,
+     "group_name": "Группа",
+     "include_unpaid": true,
+     "lesson_time": null,
+     "lesson_type": "group",
+     "marks": [
+      {
+       "cover": "money",
+       "date": "2026-09-01",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-03",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-06",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-08",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-10",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-13",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-15",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-17",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-20",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-22",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-24",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-27",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      }
+     ],
+     "monthly_fee": 600000,
+     "no_pay": 0,
+     "no_price_lessons": 0,
+     "pending_excused": 0,
+     "percent": "50",
+     "price_changed": false,
+     "price_source": "group",
+     "price_steps": [],
+     "source_fee": 600000,
+     "student_name": "Каримова Алия",
+     "undecided": 0,
+     "unpaid": 0,
+     "unpaid_due": 0,
+     "warnings": [],
+     "written_off": 0
+    },
+    {
+     "amount": 175000,
+     "counted": 7,
+     "divisor": 12,
+     "fee_overridden": false,
+     "group_name": "Группа",
+     "include_unpaid": false,
+     "lesson_time": null,
+     "lesson_type": "group",
+     "marks": [
+      {
+       "cover": "money",
+       "date": "2026-09-01",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-03",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-06",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-08",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-10",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-13",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "money",
+       "date": "2026-09-15",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "counted"
+      },
+      {
+       "cover": "unpaid",
+       "date": "2026-09-17",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "unpaid"
+      },
+      {
+       "cover": "unpaid",
+       "date": "2026-09-20",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "unpaid"
+      },
+      {
+       "cover": "unpaid",
+       "date": "2026-09-22",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "unpaid"
+      },
+      {
+       "cover": "unpaid",
+       "date": "2026-09-24",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "unpaid"
+      },
+      {
+       "cover": "unpaid",
+       "date": "2026-09-27",
+       "divisor": 12,
+       "mark": 1,
+       "price": 600000,
+       "price_source": "group",
+       "state": "unpaid"
+      }
+     ],
+     "monthly_fee": 600000,
+     "no_pay": 0,
+     "no_price_lessons": 0,
+     "pending_excused": 0,
+     "percent": "50",
+     "price_changed": false,
+     "price_source": "group",
+     "price_steps": [],
+     "source_fee": 600000,
+     "student_name": "Юсупов Бек",
+     "undecided": 0,
+     "unpaid": 5,
+     "unpaid_due": 5,
+     "warnings": [
+      {
+       "code": "UNPAID_LESSONS",
+       "message": "Не оплачено уроков: 5"
+      }
+     ],
+     "written_off": 0
+    }
+   ],
+   "month": "2026-09",
+   "month_open": false,
+   "note": null,
+   "payout": {
+    "advance_out": 0,
+    "balance": 440000,
+    "basis": "fresh",
+    "carry_in": 0,
+    "carry_used": 0,
+    "fresh_total": 600000,
+    "items": [
+     {
+      "amount": 100000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 1,
+      "sheet_total": 475000,
+      "void_reason": null
+     },
+     {
+      "amount": 500000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 1,
+      "sheet_total": 475000,
+      "void_reason": "внесли по ошибке"
+     },
+     {
+      "amount": 50000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 3,
+      "sheet_total": 475000,
+      "void_reason": null
+     },
+     {
+      "amount": 10000,
+      "created_by_name": "Иван Owner",
+      "method": "cash",
+      "month": "2026-09",
+      "note": null,
+      "paid_on": "2026-10-21",
+      "sheet_revision": 4,
+      "sheet_total": 475000,
+      "void_reason": null
+     }
+    ],
+    "paid": 160000,
+    "saved_total": 475000,
+    "state": "due",
+    "target": 600000,
+    "text": "Выплачено 160 000 · после изменений данных доплатить 440 000"
+   },
+   "pending_excused_total": 0,
+   "percents": {
+    "group": "50"
+   },
+   "period_end": "2026-09-30",
+   "period_start": "2026-09-01",
+   "revision": 4,
+   "saved": true,
+   "stale": true,
+   "teacher_name": "Пётр Teacher",
+   "total_amount": 475000,
+   "undecided_total": 0,
+   "unpaid_total": 5,
+   "updated_by_name": "Иван Owner",
+   "warnings": {
+    "no_fee": 0,
+    "open_lessons": null,
+    "pending_excused": 0,
+    "unpaid": 5,
+    "unpaid_students": 1
+   },
+   "written_off_total": 0
+  }
+ ],
  "unsaved_sheet": [
   409,
   {
