@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import logging
 from bisect import bisect_right
-from datetime import date, datetime, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from datetime import date, timedelta
+from typing import Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -19,7 +19,7 @@ from src.models.auth import Group, GroupAudit, GroupLessonTypeHistory, User
 
 from . import payment_status as ps
 from .payments_schemas import GroupLessonTypeChanged, GroupLessonTypes, LessonTypeImpact, LessonTypePut, LessonTypeRow, LessonTypeSheet
-from .payments_service import PaymentConflict, PaymentError, PaymentInvalid, PaymentNotFound, _person
+from .payments_service import PaymentError, PaymentInvalid, PaymentNotFound, _person
 
 logger = logging.getLogger(__name__)
 
