@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from . import import_service as legacy
 from .models import Group, GroupAudit, OrganizationMember, Student, StudentGroup, User
 from .lesson_teachers import can_lead
-from .ops_rules import ERROR_CATALOGUE, OpsError, conflict
+from .ops_rules import ERROR_CATALOGUE, conflict
 from .ops_schemas import (
     CreatedGroup,
     ImportCommitResponseB,
