@@ -249,10 +249,3 @@ def membership_period_violations(
         if not membership.is_active and last.left_at != membership.left_at:
             problems.append(f"{label}: last period ends {last.left_at}, the membership says {membership.left_at}")
     return problems
-
-
-def check_periods(db: Session, membership_ids: Optional[Iterable[UUID]] = None) -> None:
-    """Raise ``AssertionError`` listing the broken invariants (for tests)."""
-    problems = membership_period_violations(db, membership_ids)
-    if problems:
-        raise AssertionError("membership periods are inconsistent:\n  " + "\n  ".join(problems))

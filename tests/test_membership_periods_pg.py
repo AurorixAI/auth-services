@@ -12,7 +12,7 @@ from sqlalchemy import event
 
 from src.auth import business_clock as bc
 from src.auth import membership_periods as mp
-from src.auth.membership_periods import check_periods, close_period, membership_period_violations, open_period
+from src.auth.membership_periods import close_period, membership_period_violations, open_period
 from src.auth.service import lesson_start_as_naive_utc
 from src.models.auth import Student, StudentGroup, StudentGroupPeriod, StudentPayment
 
@@ -48,6 +48,13 @@ def clock(monkeypatch):
     c = Clock()
     monkeypatch.setattr(bc, "_clock", lambda: c.now.replace(tzinfo=timezone.utc))
     return c
+
+
+def check_periods(db, membership_ids=None) -> None:
+    """Raise ``AssertionError`` listing the broken invariants of the periods (``membership_period_violations``)."""
+    problems = membership_period_violations(db, membership_ids)
+    if problems:
+        raise AssertionError("membership periods are inconsistent:\n  " + "\n  ".join(problems))
 
 
 def newcomer(w, name="Возвращенец", group=None):
