@@ -4624,12 +4624,6 @@ class AuthService:
             ),
         )
 
-    @staticmethod
-    def _open_action_teacher_id(attendance: GroupAttendance, group: Group) -> Optional[str]:
-        """Who taught the lesson: the lesson snapshot, else the group's teacher."""
-        teacher_id = attendance.teacher_id or group.teacher_id
-        return str(teacher_id) if teacher_id else None
-
     def get_teacher_dashboard_summary(
         self,
         org_id: str,
