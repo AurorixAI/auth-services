@@ -11,7 +11,7 @@ import secrets
 import string
 import httpx
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID, uuid4
 import logging
 
@@ -847,8 +847,9 @@ class AuthService:
         *,
         actor_id: Optional[str],
         is_org_admin: bool,
+        options: Sequence[Any] = (),
     ) -> Student:
-        """Return a student only when the staff actor may view their data.
+        """Return a student only when the staff actor may view their data (``options``: loader options of the one query that reads him).
 
         Owner/admin may view every student in their organisation.  A teacher
         may view only a current member of a group assigned to that teacher.
@@ -856,6 +857,7 @@ class AuthService:
         """
         student = (
             self.db.query(Student)
+            .options(*options)
             .filter(Student.id == student_id, Student.org_id == org_id)
             .first()
         )
@@ -913,19 +915,10 @@ class AuthService:
         actor_id: Optional[str],
         is_org_admin: bool,
     ) -> dict:
-        self._require_student_visibility(
-            org_id, student_id, actor_id=actor_id, is_org_admin=is_org_admin
+        student = self._require_student_visibility(          # wave C SV-25: ONE read of the student (with his group and its teacher), not three
+            org_id, student_id, actor_id=actor_id, is_org_admin=is_org_admin,
+            options=(joinedload(Student.primary_group).joinedload(Group.teacher),),
         )
-        student = (
-            self.db.query(Student)
-            .options(
-                joinedload(Student.primary_group).joinedload(Group.teacher)
-            )
-            .filter(Student.id == student_id, Student.org_id == org_id)
-            .first()
-        )
-        if not student:
-            raise ValueError("Ученик не найден")
 
         # 1. Ensure display_id
         if (student.group_id or student.status == "active") and not student.display_id:
@@ -949,7 +942,7 @@ class AuthService:
             }
 
         # 3. Diagnostic history
-        invites = (
+        invite_rows = (          # (not ``invites``: that is the module of the invitations)
             self.db.query(DiagnosticInvite)
             .filter(
                 DiagnosticInvite.student_id == student_id,
@@ -991,7 +984,7 @@ class AuthService:
                 results_by_invite[str(r.invite_id)] = res_obj
 
         diagnostics_list = []
-        for inv in invites:
+        for inv in invite_rows:
             matching_res = results_by_invite.get(str(inv.id))
             if matching_res:
                 matching_res = dict(matching_res)

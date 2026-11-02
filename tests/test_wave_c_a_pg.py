@@ -436,3 +436,28 @@ def test_sv23_org_stats_one_round_trip_and_the_same_numbers(world):
     assert {k: body[k] for k in expected} == expected
     counting = [s for s in statements if s.lstrip().upper().startswith("SELECT") and "count(" in s]
     assert len(counting) == 2                              # the six counts in one statement + the students without a group
+
+
+# ---- SV-25: the student card reads the student once ---------------------------------------------------------------------------------------------
+
+
+def test_sv25_student_profile_reads_the_student_once_for_owner_and_teacher(world):
+    me = world.students[0]
+    add_result(world, me, 0.7, ago_days=3)
+    url = f"{API}/org/students/{me.id}/profile"
+    seen = {}
+    for who in ("admin", "teacher"):
+        user = getattr(world, who)
+        world.db.expire_all()
+        statements, r = capture_queries(world, lambda: make_client(world, user=user).get(url))
+        assert r.status_code == 200, r.text
+        reads = [s for s in statements if s.lstrip().startswith("SELECT students.") or " FROM students " in s]
+        print(f"[wca] SV-25 profile as {who}: {len(statements)} SQL, {len(reads)} read the student")
+        assert len(reads) == 1
+        seen[who] = r.json()
+    body = seen["admin"]
+    assert body["group"]["id"] == str(world.group.id) and body["group"]["teacher_id"] == str(world.teacher.id)
+    assert body["group"]["teacher_name"] == f"{world.teacher.first_name} {world.teacher.last_name}".strip()
+    assert seen["teacher"]["group"] == body["group"]
+    assert make_client(world, user=world.teacher2).get(url).status_code == 403       # another teacher: still refused
+    assert make_client(world).get(f"{API}/org/students/{uuid4()}/profile").status_code in (400, 404)
