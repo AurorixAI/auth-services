@@ -461,3 +461,21 @@ def test_sv25_student_profile_reads_the_student_once_for_owner_and_teacher(world
     assert seen["teacher"]["group"] == body["group"]
     assert make_client(world, user=world.teacher2).get(url).status_code == 403       # another teacher: still refused
     assert make_client(world).get(f"{API}/org/students/{uuid4()}/profile").status_code in (400, 404)
+
+
+# ---- SV-24: the dashboard of a teacher (counter first: the cost must not grow with his groups) --------------------------------------------------------
+
+
+def dashboard_json(w, user):
+    r = make_client(w, user=user).get(f"{API}/org/teacher/dashboard/summary?business_date=2026-10-26")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_sv24_teacher_dashboard_queries_do_not_grow_with_his_groups(world):
+    small, small_body = count_queries(world, lambda: dashboard_json(world, world.teacher))
+    grow_centre(world, groups=24, teachers=2)
+    big, body = count_queries(world, lambda: dashboard_json(world, world.teacher))
+    print(f"[wca] SV-24 teacher dashboard: {len(small_body['groups'])} groups {small} SQL, {len(body['groups'])} groups {big} SQL")
+    assert len(body["groups"]) > len(small_body["groups"]) + 10 and body["studentCount"] > small_body["studentCount"]
+    assert big == small
