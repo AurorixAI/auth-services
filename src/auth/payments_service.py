@@ -25,12 +25,12 @@ import functools
 import logging
 import os
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import event, func, or_
+from sqlalchemy import event, func
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, defer
 from sqlalchemy.orm.attributes import flag_modified
