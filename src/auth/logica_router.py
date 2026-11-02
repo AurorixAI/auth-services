@@ -6,7 +6,6 @@ pack (``artifacts/partner_doc_check/logicA_contract.json``, ``tests/fixtures/log
 (``logicA_spec.md``) and of the schemas first.  Guards: opening balance / leave settlement / price - ``require_payments_access``;
 pause, leave, lesson type - ``require_org_admin`` (the sums inside the answer only with access to money).
 """
-from datetime import date
 from typing import Optional
 from uuid import UUID
 
