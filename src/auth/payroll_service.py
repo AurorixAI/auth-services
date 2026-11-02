@@ -1156,7 +1156,8 @@ class PayrollService:
         teacher = seed.teachers.get(body.teacher_id) or TeacherSeed(
             body.teacher_id, fingerprint=fingerprint_of(first, body.teacher_id, [])
         )
-        percents = payroll_rates.load_book(self.db, org_id, [body.teacher_id]).percents_at(body.teacher_id, first)
+        book = payroll_rates.load_book(self.db, org_id, [body.teacher_id])
+        percents = book.percents_at(body.teacher_id, first)
         missing = self._missing_percents(teacher, percents)
         if missing:
             raise self._rate_required(
@@ -1240,7 +1241,8 @@ class PayrollService:
         logger.info(
             "payroll sheet saved org=%s sheet=%s revision=%s actor=%s", org_id, sheet.id, sheet.revision, actor_id
         )
-        return self._saved_out(sheet, stale=False, payout=self.payout_state(org_id, sheet))
+        # wave C MN-37: the sheet was rendered from THIS collection and these rates, so its fresh total is its saved total by construction - no second collection of the month
+        return self._saved_out(sheet, stale=False, payout=self.payout_state(org_id, sheet, seed, book))
 
     @staticmethod
     def _check_expected(expected: Optional[str], fresh: str) -> None:
@@ -1321,6 +1323,7 @@ class PayrollService:
             # the percents of the body (an old front sends them) are ignored.  A recalculation takes the rate of the
             # sheet's month; a change without it (a tick) is computed from the saved lines with the saved percents
             percents = {t: engine.parse_percent(v) for t, v in (sheet.percent_inputs or {}).items()}
+            seed = book = None
 
             if body.recalculate:
                 given = self._changes_from_body(body.line_overrides, None)
@@ -1329,9 +1332,8 @@ class PayrollService:
                 teacher = seed.teachers.get(sheet.teacher_id) or TeacherSeed(
                     sheet.teacher_id, fingerprint=fingerprint_of(first, sheet.teacher_id, [])
                 )
-                percents = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id]).percents_at(
-                    sheet.teacher_id, first
-                )
+                book = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])
+                percents = book.percents_at(sheet.teacher_id, first)
                 missing = self._missing_percents(teacher, percents)
                 if missing:
                     raise self._rate_required(
@@ -1387,8 +1389,12 @@ class PayrollService:
             "payroll sheet changed org=%s sheet=%s revision=%s actor=%s recalculate=%s",
             org_id, sheet_id, sheet.revision, actor_id, body.recalculate,
         )
-        return self._saved_out(sheet, stale=False if body.recalculate else self._is_stale(org_id, sheet),
-                               payout=self.payout_state(org_id, sheet))
+        if not body.recalculate:        # wave C MN-37: ONE collection of the month serves the stale flag and the payout state (as ``get_sheet``); a recalculation already made it
+            first = sheet.period_month
+            seed = self._collect(org_id, first, date(first.year, first.month, calendar.monthrange(first.year, first.month)[1]), teacher_ids={sheet.teacher_id})
+            book = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])
+        return self._saved_out(sheet, stale=False if body.recalculate else self._is_stale(org_id, sheet, seed, book),
+                               payout=self.payout_state(org_id, sheet, seed, book))
 
     # ----------------------------------------------------------------- read
 

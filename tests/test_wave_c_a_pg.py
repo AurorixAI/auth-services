@@ -723,3 +723,121 @@ def test_dm011_openings_summary_is_cached_and_every_write_drops_it(pg_session, c
     assert (fresh["with_opening"], fresh["missing"]) == (1, 4)
     assert own.post("/api/v1/auth/org/opening-balances/state", json={"state": "done"}).json()["state"] == "done"       # the state lives in the settings of the centre: dropped as well
     assert own.get(url).json()["state"] == "done"
+
+
+# ---- MN-33 / MN-37 (money): one calculation per request ----------------------------------------------------------------------------------------------
+
+import json as _json  # noqa: E402
+
+
+def scrub(value):
+    """The answer without what differs per run: ids and stamps (sums, states, texts, line data stay)."""
+    if isinstance(value, dict):
+        return {k: scrub(v) for k, v in value.items() if not (k == "id" or k.endswith("_id") or k.endswith("_at") or k.endswith("_by") or k.endswith("_key") or k == "source_fingerprint")}
+    if isinstance(value, list):
+        return [scrub(v) for v in value]
+    return value
+
+
+def payroll_scenario(world, record):
+    """The P4 chain through the real endpoints: save, a partial payout, the question of an advance, the advance, a void, a tick, a recalculation, a replayed key, an unsaved sheet."""
+    from tests.test_logicA_payroll_pg import API as PAPI, g_pay_world, owner, save_sheet as save_it
+
+    m, s1, s2 = g_pay_world(world)
+    c = owner(world)
+    sheet = save_it(world, m)
+    record("save", sheet)
+    base = {"paid_on": ps_today().isoformat(), "method": "cash"}
+    pay_url = f"{PAPI}/org/payroll/sheets/{sheet['id']}/payouts"
+    first = c.post(pay_url, json={**base, "amount": 100_000}, headers={"Idempotency-Key": str(uuid4())})
+    record("payout_partial", [first.status_code, first.json()])
+    over = c.post(pay_url, json={**base, "amount": 500_000})
+    record("overpay_question", [over.status_code, over.json()])
+    advance = c.post(pay_url, json={**base, "amount": 500_000, "confirm_overpay": True, "overpay": over.json()["detail"]["overpay"]})
+    record("payout_advance", [advance.status_code, advance.json()])
+    voided = c.post(f"{PAPI}/org/payroll/payouts/{advance.json()['payout']['id']}/void", json={"reason": "внесли по ошибке"})
+    record("void", [voided.status_code, voided.json()])
+    tick = c.patch(f"{PAPI}/org/payroll/sheets/{sheet['id']}", json={"revision": 1, "line_overrides": [{"membership_id": sheet["lines"][0]["membership_id"], "include_unpaid": True}]})
+    record("patch_tick", [tick.status_code, tick.json()])
+    fp = c.get(f"{PAPI}/org/payroll/sheets/{sheet['id']}/diff").json()["source_fingerprint"]
+    recalc = c.patch(f"{PAPI}/org/payroll/sheets/{sheet['id']}", json={"revision": 2, "recalculate": True, "expected_fingerprint": fp, "note": "пересчёт"})
+    record("patch_recalculate", [recalc.status_code, recalc.json()])
+    rest = c.post(pay_url, json={**base, "amount": 50_000})
+    record("payout_after_recalc", [rest.status_code, rest.json()])
+    again = save_it(world, m, revision=recalc.json()["revision"])
+    record("save_next_revision", again)
+    key = str(uuid4())
+    one = c.post(pay_url, json={**base, "amount": 10_000}, headers={"Idempotency-Key": key})
+    twin = c.post(pay_url, json={**base, "amount": 10_000}, headers={"Idempotency-Key": key})
+    record("replayed_key", [one.status_code, twin.status_code, twin.json()["detail"]["message"]])
+    missing = c.post(f"{PAPI}/org/payroll/sheets/{uuid4()}/payouts", json={**base, "amount": 1000})
+    record("unsaved_sheet", [missing.status_code, missing.json()])
+    return m, sheet
+
+
+def ps_today():
+    from src.auth import payment_status as ps
+
+    return ps.business_today()
+
+
+@pytest.mark.usefixtures("fixed_today")
+def test_mn33_mn37_golden_scenario(world):
+    from tests.test_pay2_api_pg import fixed_today  # noqa: F401
+
+    steps = {}
+    payroll_scenario(world, lambda name, value: steps.__setitem__(name, scrub(value)))
+    import os
+
+    path = os.path.join(os.path.dirname(__file__), "fixtures", "wave_c_a_payroll_golden.json")
+    if os.environ.get("WCA_RECORD"):                          # (re)record the golden answers - only from the code BEFORE the change under test
+        open(path, "w", encoding="utf-8").write(_json.dumps(steps, ensure_ascii=False, sort_keys=True, indent=1))
+    golden = _json.loads(open(path, encoding="utf-8").read())
+    assert sorted(steps) == sorted(golden)
+    for name in golden:                                       # step by step, so a failure names the step
+        assert _json.loads(_json.dumps(steps[name], ensure_ascii=False)) == golden[name], name
+
+
+@pytest.mark.usefixtures("fixed_today")
+def test_mn33_mn37_one_collection_per_request_and_less_under_the_lock(world, monkeypatch):
+    from src.auth.payroll_service import PayrollService
+    from tests.test_logicA_payroll_pg import API as PAPI, fp, g_pay_world, owner, save_sheet as save_it
+
+    m, s1, s2 = g_pay_world(world)
+    c = owner(world)
+    collected = {"n": 0}
+    real = PayrollService._collect
+
+    def counting(self, *args, **kwargs):
+        collected["n"] += 1
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(PayrollService, "_collect", counting)
+
+    def measure(name, call):
+        collected["n"] = 0
+        statements, response = capture_queries(world, call)
+        flat = [" ".join(s.split()) for s in statements]
+        lock = next((i for i, s in enumerate(flat) if "FROM payroll_sheets" in s and "FOR UPDATE" in s), None)
+        end = next((i for i, s in enumerate(flat) if s.startswith("INSERT INTO payroll_payouts") or s.startswith("UPDATE payroll_payouts") or s.startswith("INSERT INTO payroll_sheet_revisions")), None)
+        under = None if lock is None or end is None else end - lock - 1
+        print(f"[wca] MN-33/37 {name}: {collected['n']} collection(s), {len(flat)} SQL, under the sheet lock {under}")
+        return collected["n"], len(flat), under, response
+
+    expected = fp(world, m, None)                                               # (the helper collects the month itself: not part of the measured request)
+    n_save, sql_save, under_save, r = measure("save_sheet", lambda: c.post(f"{PAPI}/org/payroll/sheets", json={"month": m.label, "teacher_id": str(world.teacher.id), "expected_fingerprint": expected}))
+    assert r.status_code == 201, r.text
+    sheet = r.json()
+    base = {"paid_on": ps_today().isoformat(), "method": "cash"}
+    n_tick, sql_tick, _, r = measure("patch (a tick)", lambda: c.patch(f"{PAPI}/org/payroll/sheets/{sheet['id']}", json={"revision": 1, "line_overrides": [{"membership_id": sheet["lines"][0]["membership_id"], "include_unpaid": True}]}))
+    assert r.status_code == 200, r.text
+    fingerprint = c.get(f"{PAPI}/org/payroll/sheets/{sheet['id']}/diff").json()["source_fingerprint"]
+    n_recalc, sql_recalc, _, r = measure("patch (recalculate)", lambda: c.patch(f"{PAPI}/org/payroll/sheets/{sheet['id']}", json={"revision": 2, "recalculate": True, "expected_fingerprint": fingerprint}))
+    assert r.status_code == 200, r.text
+    n_pay, sql_pay, under_pay, r = measure("payout", lambda: c.post(f"{PAPI}/org/payroll/sheets/{sheet['id']}/payouts", json={**base, "amount": 100_000}))
+    assert r.status_code == 201, r.text
+    payout_id = r.json()["payout"]["id"]
+    n_void, sql_void, _, r = measure("void", lambda: c.post(f"{PAPI}/org/payroll/payouts/{payout_id}/void", json={"reason": "внесли дважды"}))
+    assert r.status_code == 200, r.text
+    assert (n_save, n_tick, n_recalc, n_pay, n_void) == (1, 1, 1, 1, 1)         # was 2, 2, 2, 2, 1
+    assert under_pay <= 12                                                       # the calculation of the month no longer runs while the sheet row is locked

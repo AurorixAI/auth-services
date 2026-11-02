@@ -117,6 +117,19 @@ def state_of(*, saved_total: int, fresh_total: Optional[int], items: List[Payout
         items=items, carry_in=max(carry_in, 0), carry_used=carry_used, advance_out=max(0, max(carry_in, 0) + paid - total))
 
 
+def _once_per_revision(fresh_total_of):
+    """The fresh total of a sheet is needed twice by a payout (the balance before the write, the state after it): one calculation per (sheet, revision)."""
+    done: Dict[Tuple[UUID, int], Optional[int]] = {}
+
+    def get(sheet):
+        key = (sheet.id, sheet.revision)
+        if key not in done:
+            done[key] = fresh_total_of(sheet)
+        return done[key]
+
+    return get
+
+
 class PayrollPayoutService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -203,10 +216,16 @@ class PayrollPayoutService:
         return body.amount, paid_on, body.method
 
     def create(self, org_id: str, sheet_id: UUID, actor_id: str, body: PayoutCreate, key: Optional[UUID], fresh_total_of) -> PayoutCreated:
-        """``fresh_total_of(sheet) -> Optional[int]`` is the payroll's fresh calculation of the sheet (called after the write)."""
+        """``fresh_total_of(sheet) -> Optional[int]`` is the payroll's fresh calculation of the sheet (asked once per revision of the sheet in a request)."""
         today = ps.business_today()
+        fresh_total_of = _once_per_revision(fresh_total_of)
         try:
             amount, paid_on, method = self._check(body, today)
+            # wave C MN-33: the calculation of the month does not depend on the lock (it reads lessons, payments and rates, not the payouts): it runs BEFORE the sheet is
+            # locked; under the lock the same call finds the answer - unless the sheet got another revision meanwhile (then it is calculated again, under the lock, as before).
+            probe = self.db.query(PayrollSheet).filter(PayrollSheet.id == sheet_id, PayrollSheet.org_id == org_id).first()
+            if probe is not None:
+                fresh_total_of(probe)
             sheet = (self.db.query(PayrollSheet).filter(PayrollSheet.id == sheet_id, PayrollSheet.org_id == org_id)
                      .with_for_update().populate_existing().first())
             if sheet is None:
