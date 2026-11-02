@@ -20,7 +20,6 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from src.models.base import Base
@@ -71,90 +70,6 @@ class AnswerEvent(Base):
         Index("idx_ae_student", "student_id"),
         Index("idx_ae_skill", "skill_id"),
         Index("idx_ae_submitted", "submitted_at"),
-    )
-
-
-# SkillCorrelation removed — no active consumers (CorrelationRepo also removed)
-class _SkillCorrelationRemoved:
-    """Обнаруженные корреляции между навыками"""
-
-    __tablename__ = "skill_correlations"
-
-    id = Column(Integer, primary_key=True)
-
-    skill_a_id = Column(
-        String(30), ForeignKey("knowledge_hierarchy.id"), nullable=False
-    )
-    skill_b_id = Column(
-        String(30), ForeignKey("knowledge_hierarchy.id"), nullable=False
-    )
-
-    correlation_coefficient = Column(Numeric(6, 4), nullable=False)
-    p_value = Column(Numeric(10, 8))
-    sample_size = Column(Integer, nullable=False)
-
-    relationship_type = Column(String(20), nullable=False)
-    direction = Column(String(10))
-
-    strength = Column(Numeric(4, 2))
-    confidence = Column(Numeric(4, 3))
-
-    discovery_method = Column(String(30), nullable=False)
-
-    is_validated = Column(Boolean, default=False)
-    validated_by = Column(String(100))
-    validated_at = Column(DateTime)
-
-    discovered_at = Column(DateTime, default=func.now())
-    last_updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-
-    skill_a = relationship("KnowledgeHierarchy", foreign_keys=[skill_a_id])
-    skill_b = relationship("KnowledgeHierarchy", foreign_keys=[skill_b_id])
-
-    __table_args__ = (
-        CheckConstraint(
-            "relationship_type IN ('prerequisite', 'corequisite', 'diagnostic', 'transfer')"
-        ),
-        CheckConstraint(
-            "discovery_method IN ('expert_defined', 'statistical', 'ml_discovered', 'pattern_mining')"
-        ),
-        UniqueConstraint("skill_a_id", "skill_b_id", "relationship_type"),
-        Index("idx_sc_skill_a", "skill_a_id"),
-        Index("idx_sc_skill_b", "skill_b_id"),
-    )
-
-
-# ErrorPattern ORM removed — no active consumers (learning_updater has its own dataclass)
-class _ErrorPatternRemoved:
-    """Паттерны ошибок"""
-
-    __tablename__ = "error_patterns"
-
-    id = Column(Integer, primary_key=True)
-    skill_id = Column(String(30), nullable=False)  # FK removed — content DB is separate
-
-    pattern_type = Column(String(30), nullable=False)
-    pattern_description = Column(Text, nullable=False)
-    error_examples = Column(JSONB, default=[])
-
-    root_cause_skills = Column(JSONB, default=[])
-
-    occurrence_count = Column(Integer, default=0)
-    occurrence_rate = Column(Numeric(5, 4))
-    recovery_rate = Column(Numeric(5, 4))
-
-    remediation_suggestions = Column(JSONB, default=[])
-    related_tasks = Column(JSONB, default=[])
-
-    discovered_at = Column(DateTime, default=func.now())
-    last_seen_at = Column(DateTime, default=func.now())
-
-    __table_args__ = (
-        CheckConstraint(
-            "pattern_type IN ('sign_error', 'order_of_operations', 'formula_confusion', 'concept_gap', 'calculation_error', 'careless_mistake', 'time_pressure', 'partial_knowledge', 'misconception', 'other')"
-        ),
-        Index("idx_ep_skill", "skill_id"),
-        Index("idx_ep_type", "pattern_type"),
     )
 
 
@@ -245,34 +160,3 @@ class StudentSkillState(Base):
         Index("idx_sss_skill", "skill_id"),
         Index("idx_sss_status", "status"),
     )
-
-
-# SkillResponseTime removed — no active consumers
-class _SkillResponseTimeRemoved:
-    """Статистика времени ответов по навыкам"""
-
-    __tablename__ = "skill_response_times"
-
-    skill_id = Column(
-        String(30), ForeignKey("knowledge_hierarchy.id"), primary_key=True
-    )
-    difficulty_level = Column(String(1), primary_key=True)
-
-    sample_size = Column(Integer, default=0)
-    mean_time_ms = Column(Integer)
-    median_time_ms = Column(Integer)
-    std_dev_ms = Column(Integer)
-    percentile_10 = Column(Integer)
-    percentile_25 = Column(Integer)
-    percentile_75 = Column(Integer)
-    percentile_90 = Column(Integer)
-    percentile_99 = Column(Integer)
-
-    min_realistic_time_ms = Column(Integer)
-
-    mean_time_correct_ms = Column(Integer)
-    mean_time_incorrect_ms = Column(Integer)
-
-    last_calculated_at = Column(DateTime, default=func.now())
-
-    __table_args__ = (CheckConstraint("difficulty_level IN ('A', 'B', 'C')"),)

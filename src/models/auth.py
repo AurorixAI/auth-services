@@ -201,12 +201,6 @@ class User(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
-    def to_dict_with_org(self, org_role: str = None, org_name: str = None) -> dict:
-        d = self.to_dict()
-        d["org_role"] = org_role
-        d["org_name"] = org_name
-        return d
-
 
 # ============================================================================
 # USER SESSION - one row per signed-in device (ROADMAP #101)
