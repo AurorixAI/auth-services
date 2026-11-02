@@ -114,9 +114,6 @@ def is_too_old_for_teacher(lesson_date: date, today: date) -> bool:
 
 # ------------------------------------------------------------------------------------------------- small helpers
 
-ROOM_PLACEHOLDER_LEGACY = "Кабинет 204"
-
-
 def normalize_room(value: Optional[str]) -> Optional[str]:
     """``room`` is stored as typed or as ``None`` (SPEC O11): blank -> ``None``; no placeholder is invented."""
     if value is None:
