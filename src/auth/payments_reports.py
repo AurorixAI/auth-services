@@ -51,7 +51,6 @@ from .payments_service import PaymentNotFound, PaymentService, RangeTooLong, Pay
 
 MAX_RANGE_DAYS = 366
 MAX_DAY_SERIES_DAYS = 92
-COLUMNS = ("received", "to_past_debt", "to_current", "to_advance", "written_off", "refunded")
 BUCKET_COLUMN = {bl.PAST_DEBT: "to_past_debt", bl.CURRENT: "to_current", bl.ADVANCE: "to_advance"}
 
 
