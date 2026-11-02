@@ -12,8 +12,6 @@ role as a teacher, no audit, status "new").  This module plans and writes the sa
 * refusals by STATE skip the row with a code in ``skipped``: ``GROUP_FULL``, ``GROUP_ARCHIVED``, ``IN_OTHER_GROUP``, ``STUDENT_ARCHIVED``,
   ``HOMONYM_NO_PHONE``, ``DUPLICATE_IN_FILE`` (information: ``ALREADY_IN_GROUP``);
 * one import per centre at a time (advisory lock): a parallel one gets 409 ``IMPORT_IN_PROGRESS``.
-
-Extension point for the payment package: ``payroll_hooks.after_enrol(db, student, membership, row)``.
 """
 from __future__ import annotations
 
@@ -27,7 +25,6 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from . import import_service as legacy
-from . import payroll_hooks
 from .models import Group, GroupAudit, OrganizationMember, Student, StudentGroup, User
 from .lesson_teachers import can_lead
 from .ops_rules import ERROR_CATALOGUE, OpsError, conflict
@@ -495,8 +492,6 @@ def _enrol(db: Session, svc, org_id: Any, creator_id: Any, item: Dict[str, Any],
             opening = OpeningIn(paid_until=paid_until, debt_amount=debt_amount, debt_on=debt_on)
         svc.add_student_to_group(str(org_id), str(group_id), str(student.id), mode="transfer", actor_id=str(creator_id),
                                  opening_balance=opening, opening_source="import")
-        membership = db.query(StudentGroup).filter(StudentGroup.student_id == student.id, StudentGroup.group_id == group_id).first()
-        payroll_hooks.after_enrol(db, student, membership, item["data"])
         db.commit()
         return ("enrolled",)
     except GroupArchivedForEnrolment:

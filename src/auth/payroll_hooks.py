@@ -57,20 +57,13 @@ def sheets_touched_by_lesson_teacher_change(
     return out
 
 
-def after_enrol(db, student, membership, row) -> None:
-    """Extension point called after a student of an Excel row is enrolled.  LOGIC-A (owner decision 1): the opening balance of a NEW student ("paid
-    until" / "debt on a date", columns G-I) is NOT written here - ``import_ops._enrol`` hands it to ``AuthService.add_student_to_group(opening_balance=...,
-    opening_source="import")``, so the enrolment and the balance are one transaction (a refused balance rolls the whole row back).  Nothing left to do."""
-    return None
-
-
 # ---------------------------------------------------------------------------------------------- LOGIC-B2 <-> package A (SPEC 0 item 8 / 3.5)
 def moved_one_off_lesson_keys(db, group_ids) -> set:
     """PACK A MERGE STUB.  ``{(group_id, lesson_id)}`` of the one-off lessons that a decision "reschedule" of LOGIC-B2 created.
 
     Package A's ``ledger_service._lesson_days`` counts the lesson days of the incomplete first period; the cancelled original is counted (A decision 3) and its
     moved copy must NOT be counted a second time, so that a move is neutral for the proration.  At the merge, ``_lesson_days`` skips the keys returned here
-    (nothing else in package A changes).  Until then nothing calls this function - the payroll side is neutral by itself: a cancelled / moved row is never
+    (nothing else in package A changes).  The payroll side is neutral by itself: a cancelled / moved row is never
     ``completed``, so nobody is paid for it, and the one-off lesson pays only when it is held."""
     from .lesson_substitutions import moved_one_off_keys
 

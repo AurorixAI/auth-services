@@ -4,7 +4,6 @@ from io import BytesIO
 import pytest
 from openpyxl import Workbook
 
-from src.auth import payroll_hooks
 from src.models.auth import Group, GroupAudit, Student, StudentGroup
 
 from tests.ops_helpers import (  # noqa: F401  (fixtures)
@@ -106,14 +105,6 @@ def test_r4_parallel_imports_one_wins_and_seats_are_checked_under_the_lock(w):
         r = post(w, "commit", chain3(w))
         assert r.status_code == 409 and r.json()["detail"]["code"] == "IMPORT_IN_PROGRESS"
     assert post(w, "commit", chain3(w)).status_code == 200                     # released: the next one runs
-
-
-def test_r5_the_after_enrol_hook_is_the_extension_point_of_the_payment_package(w, monkeypatch):
-    """[O9.R5] Owner decision 1 (paid-until / debt columns) is package A's: the hook is called once per enrolled student with the parsed row."""
-    seen = []
-    monkeypatch.setattr(payroll_hooks, "after_enrol", lambda db, student, membership, row: seen.append((student.last_name, membership.is_active, row.row)))
-    assert post(w, "commit", chain3(w)).status_code == 200
-    assert sorted(seen) == [("Каримова", True, 3), ("Рахимов", True, 4)]
 
 
 def test_r6_places_are_counted_in_the_file_order(w):
