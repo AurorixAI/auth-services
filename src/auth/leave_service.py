@@ -13,19 +13,17 @@ hooks run for «Убрать из группы», for a transfer (``add_student_
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
 from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from src.models.auth import Group, GroupAudit, MembershipPause, Student, StudentGroup, StudentRefund, StudentWriteoff
+from src.models.auth import Group, GroupAudit, Student, StudentGroup, StudentRefund, StudentWriteoff
 
 from . import billing_ledger as bl
 from . import business_clock as bc
 from . import ledger_service as ls
-from . import membership_periods
 from . import payment_status as ps
 from . import pricing
 from .logica_service import PauseService
@@ -43,8 +41,6 @@ from .payments_schemas import (
 from .payments_service import (
     AUDIT_REFUND,
     AUDIT_WRITEOFF,
-    MAX_MONEY,
-    AmountRange,
     MethodRequired,
     PaymentConflict,
     PaymentError,
@@ -53,7 +49,6 @@ from .payments_service import (
     PaymentNotFound,
     PaymentService,
     ReasonRequired,
-    _num,
     _utcnow,
     deadlock_guard,
     invalidate_summary,
