@@ -147,14 +147,12 @@
     "testable": false
   },
   "O13.R5": {
-    "removed": "the helper attendance_duration_minutes was deleted (Wave D-B DM-014, no caller)",
     "testable": false
   },
   "O13.R6": {
     "testable": true
   },
   "O13.R7": {
-    "removed": "the helpers attendance_started_utc/completed_utc/duration_minutes were deleted (Wave D-B DM-014, no caller)",
     "testable": false
   },
   "O13.R8": {
@@ -392,8 +390,7 @@
     "testable": true
   },
   "O9.R5": {
-    "removed": "the no-op hook payroll_hooks.after_enrol was deleted (Wave D-B MN-31, no caller)",
-    "testable": false
+    "testable": true
   },
   "O9.R6": {
     "testable": true

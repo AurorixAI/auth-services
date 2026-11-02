@@ -313,6 +313,7 @@ def import_workbook(rows, extra_headers=True):
 
 
 def test_import_creates_opening_balances_in_one_transaction_and_reports_what_was_skipped(world, fixed_today):
+    """[O9.R5] The columns «paid until» / «debt» of an Excel row (owner decision 1) are written with the enrolment, in one transaction (``import_ops._enrol`` -> ``add_student_to_group(opening_balance=...)``)."""
     centre(world, 600_000)
     data = import_workbook([
         ["Один", "Ученик", 7, "", "Импорт-группа", "", date(2026, 10, 31), None, None],             # paid until 31.10
