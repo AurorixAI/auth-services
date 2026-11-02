@@ -22,7 +22,6 @@ from .payments_reports import PaymentsReports
 from .payments_service import PaymentError, PaymentService
 from .payments_schemas import (
     BalancesPage,
-    MembershipPaymentRow,
     PayError,
     PaymentPreview,
     ReceiptItems,
