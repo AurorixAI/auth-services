@@ -16,18 +16,16 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
-from uuid import UUID
 
 from sqlalchemy import func
 
 from . import business_clock as bc
 from . import exam_bridge, lesson_substitutions, schedule_rules
-from .lesson_teachers import TEACHING_ROLES, LessonTeachers, TeacherBook, _s, _uuid
+from .lesson_teachers import TEACHING_ROLES, LessonTeachers, _s, _uuid
 from .models import (
     AttendanceExcuse,
     Group,
     GroupAttendance,
-    GroupAttendanceAudit,
     GroupAudit,
     Student,
     StudentGroup,
