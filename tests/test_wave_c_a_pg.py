@@ -401,3 +401,38 @@ def test_sv22_login_reads_the_centre_once_and_answers_the_same(world):
     assert (claims["org_id"], claims["org_role"]) == (str(world.org.id), "admin")
     assert answer.user.org_role == "admin" and answer.user.org_name == world.org.name
     assert answer.org.id == str(world.org.id) and answer.org.name == world.org.name
+
+
+# ---- SV-23: the dashboard counts in one round trip ------------------------------------------------------------------------------------------------
+
+
+def test_sv23_org_stats_one_round_trip_and_the_same_numbers(world):
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import func
+
+    from src.models.auth import DiagnosticInvite, Group, OrganizationMember, Student
+
+    made = grow_centre(world, groups=5, per=2)
+    made[0].status = "archived"
+    world.db.query(Student).filter_by(group_id=made[1].id).update({"status": "active"})
+    world.db.query(Student).filter_by(group_id=made[2].id).update({"status": "archived"})
+    world.db.query(OrganizationMember).filter_by(org_id=world.org.id, user_id=world.teacher2.id).update({"is_active": False})
+    for status in ("pending", "confirmed", "in_progress", "completed", "completed", "cancelled", "expired"):
+        world.db.add(DiagnosticInvite(org_id=world.org.id, student_id=world.students[0].id, created_by=world.admin.id, code=uuid4().hex[:10].upper(), class_level=9,
+                                      status=status, expires_at=datetime.utcnow() + timedelta(days=3)))
+    world.db.commit()
+    org = world.org.id
+    expected = {                                           # the numbers of the six separate queries this endpoint used to run
+        "total_students": world.db.query(func.count(Student.id)).filter(Student.org_id == org, Student.status != "archived").scalar(),
+        "total_groups": world.db.query(func.count(Group.id)).filter(Group.org_id == org, Group.status == "active").scalar(),
+        "total_members": world.db.query(func.count(OrganizationMember.id)).filter(OrganizationMember.org_id == org, OrganizationMember.is_active).scalar(),
+        "active_diagnostics": 3, "completed_diagnostics": 2,
+        "new_students": world.db.query(func.count(Student.id)).filter(Student.org_id == org, Student.status == "new").scalar(),
+    }
+    assert expected["new_students"] == 9 and expected["total_groups"] == 5 and expected["total_students"] == 3 + 10 - 2
+    statements, body = capture_queries(world, lambda: make_client(world, user=world.owner).get(f"{API}/org/stats").json())
+    print(f"[wca] SV-23 GET /org/stats: {len(statements)} SQL")
+    assert {k: body[k] for k in expected} == expected
+    counting = [s for s in statements if s.lstrip().upper().startswith("SELECT") and "count(" in s]
+    assert len(counting) == 2                              # the six counts in one statement + the students without a group

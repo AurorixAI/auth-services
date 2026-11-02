@@ -3033,51 +3033,22 @@ class AuthService:
     def get_org_stats(self, org_id: str) -> dict:
         """Краткая статистика организации для dashboard (total_students — без архивных)"""
         self._expire_due_diagnostic_invites(org_id)
-        student_count = (
-            self.db.query(func.count(Student.id))
-            .filter(Student.org_id == org_id, Student.status != "archived")
-            .scalar()
-            or 0
+        # wave C SV-23: the six counts in ONE round trip (scalar sub-selects, each with its own filter as before)
+        student_count, group_count, member_count, active_diagnostics, completed_diagnostics, new_students = (
+            self.db.query(
+                select(func.count(Student.id)).where(Student.org_id == org_id, Student.status != "archived").scalar_subquery(),
+                select(func.count(Group.id)).where(Group.org_id == org_id, Group.status == "active").scalar_subquery(),
+                select(func.count(OrganizationMember.id)).where(OrganizationMember.org_id == org_id, OrganizationMember.is_active).scalar_subquery(),
+                select(func.count(DiagnosticInvite.id)).where(
+                    DiagnosticInvite.org_id == org_id, DiagnosticInvite.status.in_(["pending", "confirmed", "in_progress"])
+                ).scalar_subquery(),
+                select(func.count(DiagnosticInvite.id)).where(DiagnosticInvite.org_id == org_id, DiagnosticInvite.status == "completed").scalar_subquery(),
+                select(func.count(Student.id)).where(Student.org_id == org_id, Student.status == "new").scalar_subquery(),
+            ).one()
         )
-        group_count = (
-            self.db.query(func.count(Group.id))
-            .filter(Group.org_id == org_id, Group.status == "active")
-            .scalar()
-            or 0
+        student_count, group_count, member_count, active_diagnostics, completed_diagnostics, new_students = (
+            student_count or 0, group_count or 0, member_count or 0, active_diagnostics or 0, completed_diagnostics or 0, new_students or 0,
         )
-        member_count = (
-            self.db.query(func.count(OrganizationMember.id))
-            .filter(
-                OrganizationMember.org_id == org_id,
-                OrganizationMember.is_active,
-            )
-            .scalar()
-            or 0
-        )
-
-        active_diagnostics = (
-            self.db.query(func.count(DiagnosticInvite.id))
-            .filter(
-                DiagnosticInvite.org_id == org_id,
-                DiagnosticInvite.status.in_(["pending", "confirmed", "in_progress"]),
-            )
-            .scalar()
-        ) or 0
-
-        completed_diagnostics = (
-            self.db.query(func.count(DiagnosticInvite.id))
-            .filter(
-                DiagnosticInvite.org_id == org_id,
-                DiagnosticInvite.status == "completed",
-            )
-            .scalar()
-        ) or 0
-
-        new_students = (
-            self.db.query(func.count(Student.id))
-            .filter(Student.org_id == org_id, Student.status == "new")
-            .scalar()
-        ) or 0
 
         return {
             "total_students": student_count,
