@@ -706,7 +706,7 @@ class _Gen:
             if not ok:
                 self.unpriced_from = self.unpriced_from or c.day
                 self.flags.add(F_PRICE_MISSING)
-        lessons_all, lessons = lessons, [c for c, ok in zip(lessons, priced) if ok]
+        lessons = [c for c, ok in zip(lessons, priced) if ok]
         owners: List[Optional[str]] = []
         place = 0
         for ok in priced:
@@ -1055,7 +1055,6 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
             begun=True, ended=opening.debt_on < today))
     cal_windows: List[Tuple[date, Optional[date]]] = []
     les_windows: List[Tuple[date, Optional[date]]] = []
-    package_costs: Dict[str, List[int]] = {}
     lesson_costs_all: List[int] = []
     package_regime: Optional[Regime] = None
     held_all: List[CountedLesson] = []
@@ -1129,7 +1128,6 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     for c in credits:
         spans[c.id] = (pos, pos + net[c.id])
         pos += net[c.id]
-    pieces: Dict[str, Dict[str, int]] = {}
     cur = 0
     seg_span: Dict[str, Tuple[int, int]] = {}
     for s in segments:
