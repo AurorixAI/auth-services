@@ -113,8 +113,11 @@ class OpeningsList(PayModel):
 
 
 class OpeningsStateIn(BaseModel):
-    """The owner / an admin with the right to money ends the checklist: ``done`` («Готово») or ``skipped`` («Не нужно»).  ``pending`` is not set by the API."""
+    """The owner / an admin with the right to money ends the checklist: ``done`` («Готово») or ``skipped`` («Не нужно»).  ``pending`` is set by the
+    release script only (``scripts/set_openings_pending.py``)."""
 
+    # Wave D-B LD-24: the release script named in the docstring above (scripts/set_openings_pending.py) is deleted, so nothing sets ``pending`` any more;
+    # the docstring stays word for word because it is part of the frozen OpenAPI contract (tests/fixtures/openings/openings_contract.json).
     state: Literal["done", "skipped"]
 
 
