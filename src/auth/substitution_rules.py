@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict
 
-from .ops_rules import ERROR_CATALOGUE as OPS_CATALOGUE, OpsError, conflict, forbidden, not_found, unprocessable
+from .ops_rules import ERROR_CATALOGUE as OPS_CATALOGUE, OpsError
 
 URGENT_MINUTES = 1440          # < 24 h before the start
 CREATE_MAX_LESSONS = 60
