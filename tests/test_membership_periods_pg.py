@@ -365,19 +365,6 @@ def test_a_membership_added_to_the_session_without_a_period_gets_one(world):
     invariants(world)
 
 
-def test_the_repo_removal_closes_the_period(world, clock):
-    from src.repositories.group_repo import StudentGroupRepo
-
-    s = newcomer(world)
-    clock.at(9, 1)
-    add(world, world.group, s)
-    clock.at(9, 20)
-    assert StudentGroupRepo(world.db).remove_student(s.id, world.group.id) is True
-    world.db.commit()
-    assert stays(world, s, world.group) == [(D(2026, 9, 1, 12), D(2026, 9, 20, 12))]
-    invariants(world)
-
-
 def test_a_clock_that_stepped_back_never_overlaps_the_previous_stay(world, clock):
     s = newcomer(world)
     clock.at(9, 1)

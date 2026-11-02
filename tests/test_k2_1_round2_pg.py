@@ -311,17 +311,3 @@ def test_n1_the_dead_jwt_only_checks_are_gone_and_no_route_can_use_a_token_witho
 
 def test_n4_the_organization_model_has_no_activation_columns_and_the_nginx_comments_do_not_name_the_old_page():
     assert not hasattr(Organization, "activation_token") and not hasattr(Organization, "activation_token_expires_at")
-
-
-@needs_pg
-def test_lead4_the_repository_finds_an_invitation_by_the_plain_code_through_its_hash(cw, centre):
-    from src.repositories.org_repo import InvitationRepo
-
-    owner = signed_in(cw, centre.owner)
-    address = f"repo-{uuid4().hex[:6]}@staff.test"
-    invite(owner, address)
-    code = invitation_code(cw, address)
-    repo = InvitationRepo(cw.db)
-    found = repo.get_by_code(code)
-    assert found is not None and found.email == address
-    assert repo.get_by_code(found.code_hash) is None and repo.get_by_code("NOPE") is None

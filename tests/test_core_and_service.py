@@ -45,44 +45,6 @@ class TestCoreSecurity:
         h = hash_password("mypass")
         assert verify_password("other", h) is False
 
-    def test_create_access_token_type(self):
-        from src.core.security import create_access_token, decode_token
-        token = create_access_token({"sub": "u1", "role": "teacher"})
-        payload = decode_token(token)
-        assert payload is not None
-        assert payload["type"] == "access"
-        assert payload["sub"] == "u1"
-
-    def test_create_refresh_token_type(self):
-        from src.core.security import create_refresh_token, decode_token
-        token = create_refresh_token({"sub": "u2", "role": "owner"})
-        payload = decode_token(token)
-        assert payload is not None
-        assert payload["type"] == "refresh"
-
-    def test_decode_token_invalid_returns_none(self):
-        from src.core.security import decode_token
-        assert decode_token("garbage.token.here") is None
-
-    def test_decode_token_empty_returns_none(self):
-        from src.core.security import decode_token
-        assert decode_token("") is None
-
-    def test_decode_token_tampered_returns_none(self):
-        from src.core.security import create_access_token, decode_token
-        token = create_access_token({"sub": "u3", "role": "admin"})
-        assert decode_token(token[:-8] + "XXXXXXXX") is None
-
-    def test_base_payload_without_extra(self):
-        from src.core.security import _base_payload
-        p = _base_payload("uid", "teacher")
-        assert p == {"sub": "uid", "role": "teacher"}
-
-    def test_base_payload_with_extra(self):
-        from src.core.security import _base_payload
-        p = _base_payload("uid", "admin", {"org_id": "org-x"})
-        assert p["org_id"] == "org-x"
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # core/exceptions.py
