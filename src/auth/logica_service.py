@@ -219,10 +219,6 @@ class OpeningService(_Base):
             MembershipTransfer.to_membership_id == membership_id, MembershipTransfer.voided_at.is_(None)
         ).first() is not None
 
-    def _guard_transfer(self, membership_id: UUID) -> None:
-        if self._transfer_target(membership_id):
-            raise OpeningNotAllowed("Остаток нельзя внести: ученик пришёл переводом")
-
     # ---- write
 
     def apply(
