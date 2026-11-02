@@ -445,23 +445,29 @@ class LedgerLoader:
         if made:
             self._load_makeups(made)
         groups = {g.id: g for _, _, g, _ in self.members.values()}
+        copies_of = self._cost_copies_of({gid: {lesson_id for _day, lesson_id in items} for gid, items in found.items() if gid in groups}, groups)      # wave C: one query for all the groups
         for group_id, items in found.items():
             group = groups.get(group_id)
             if group is None:
                 continue
             last = max(date.fromisoformat(day) for day, _ in items)
             regular = {(o["occurrenceDate"], o["id"]) for o in self._occurrences(group, self.settings.accounting_start, last, pattern=True) if not o.get("isOneOff")}
-            copies = self._cost_copies(group, {lesson_id for day, lesson_id in items})
+            copies = copies_of.get(group_id, set())
             self.cancels[group_id] = [bl.CentreCancel(date.fromisoformat(day), lesson_id) for day, lesson_id in items if (day, lesson_id) in regular or lesson_id in copies]
 
-    def _cost_copies(self, group: Group, lesson_ids: Set[str]) -> Set[str]:
-        """The copies of a move among ``lesson_ids`` whose cancellation costs the students: ONLY ``purpose = 'moved'`` (the copy of a regular lesson, which the month is priced by).  The copy of a move of an
-        additional lesson or of a make-up is a one-off lesson of the other purpose: it was never in the price of the month (LESSONS 53)."""
-        copies = {lesson_id for gid, lesson_id in self._moved_copies(group) if gid == str(group.id) and lesson_id in lesson_ids}
-        if not copies:
-            return set()
-        return {row[0] for row in self.db.query(GroupScheduleOneOffLesson.id).filter(
-            GroupScheduleOneOffLesson.group_id == group.id, GroupScheduleOneOffLesson.id.in_(copies), GroupScheduleOneOffLesson.purpose == "moved")}
+    def _cost_copies_of(self, wanted: Dict[UUID, Set[str]], groups: Dict[UUID, Group]) -> Dict[UUID, Set[str]]:
+        """``{group id: the copies of a move among its ``wanted`` lesson ids whose cancellation costs the students}``: ONLY ``purpose = 'moved'`` (the copy of a regular lesson, which the month is priced by).  The copy of a move of an
+        additional lesson or of a make-up is a one-off lesson of the other purpose: it was never in the price of the month (LESSONS 53).  One query for all the groups (wave C: it was one per group)."""
+        candidates = {gid: {lesson_id for g, lesson_id in self._moved_copies(groups[gid]) if g == str(gid) and lesson_id in ids} for gid, ids in wanted.items()}
+        candidates = {gid: copies for gid, copies in candidates.items() if copies}
+        if not candidates:
+            return {}
+        out: Dict[UUID, Set[str]] = {}
+        for gid, lesson_id in self.db.query(GroupScheduleOneOffLesson.group_id, GroupScheduleOneOffLesson.id).filter(
+            GroupScheduleOneOffLesson.group_id.in_(list(candidates)), GroupScheduleOneOffLesson.id.in_(set().union(*candidates.values())), GroupScheduleOneOffLesson.purpose == "moved"):
+            if lesson_id in candidates[gid]:
+                out.setdefault(gid, set()).add(lesson_id)
+        return out
 
     def _load_makeups(self, made: Dict[Tuple[UUID, str, str], str]) -> None:
         """#154: the facts of the make-ups of the cancelled lessons ``made`` (``{(group, day, lesson): make-up lesson id}``): the state of the make-up and - when it was held - the students it counted for

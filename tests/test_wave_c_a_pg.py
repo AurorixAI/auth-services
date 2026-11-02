@@ -663,3 +663,30 @@ def test_ld16_memory_rate_limit_is_exact_under_threads_and_does_not_grow_without
     assert rate_limit._check_memory("ip:two", 5, 60) is True
     assert len(rate_limit._memory_store) < 100                               # swept; the live keys stay
     assert "ip:one" in rate_limit._memory_store and "ip:two" in rate_limit._memory_store
+
+
+# ---- _cost_copies: one query for all the groups with a cancelled copy of a move -------------------------------------------------------------------------
+
+
+def test_cost_copies_of_all_the_groups_in_one_query_with_the_same_cancels(pg_session, clock, monkeypatch):
+    from src.auth import ledger_service as ls, payment_status as ps
+    from src.models.auth import GroupAttendance, GroupScheduleOneOffLesson
+
+    w = build_org(pg_session)
+    gs, ss, ms = money_centre(w, clock, groups=6, recalc_history=[{"from": "2026-09-01", "on": True}])      # «вычитать уроки, отменённые центром» is on: the loader reads the cancellations
+    copies = {}
+    for i, g in enumerate(gs):
+        copy_id = f"wc-copy-{i}-{uuid4().hex[:8]}"
+        copies[g.id] = copy_id
+        w.db.add(GroupScheduleOneOffLesson(id=copy_id, org_id=w.org.id, group_id=g.id, lesson_date="2026-10-07", payload={"dayOfWeek": 3, "startTime": "10:00", "endTime": "11:00"},
+                                           created_by=w.owner.id, purpose="extra" if i == 0 else "moved", money="none" if i == 0 else None))      # group 0: the copy of an ADDITIONAL lesson - it never cost the month
+        w.db.add(GroupAttendance(org_id=w.org.id, group_id=g.id, lesson_date="2026-10-07", lesson_id=copy_id, status="cancelled", cancellation_kind="centre", records={}, roster_snapshot=[]))
+    w.db.commit()
+    monkeypatch.setattr(ls.LedgerLoader, "_moved_copies", lambda self, group: {(str(group.id), copies[group.id])})       # the requests of the moves are not under test here
+    loader = ls.LedgerLoader(w.db, str(w.org.id), ps.business_today())
+    statements, _ = capture_queries(w, lambda: loader.load(scope="all"))
+    costing = [s for s in statements if "FROM group_schedule_one_off_lessons" in s and "purpose" in s.split("WHERE")[-1]]      # the query of the cost of the copies (purpose = 'moved')
+    print(f"[wca] _cost_copies: 6 groups with a cancelled copy: {len(costing)} query for the cost of the copies")
+    assert len(costing) == 1
+    kept = {gid: [c.lesson_id for c in loader.cancels[gid]] for gid in copies}
+    assert kept[gs[0].id] == [] and all(kept[g.id] == [copies[g.id]] for g in gs[1:])       # the additional lesson's copy costs nothing; the five moved copies do
