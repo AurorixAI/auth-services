@@ -6,7 +6,6 @@ Mounted by ``payments_router`` (under ``/api/v1/auth``).  The routes and their s
 (``artifacts/partner_doc_check/openings_contract.json``, ``tests/fixtures/openings``).  Guard of every route: ``require_payments_access`` (the owner,
 or an admin with the right to money; everybody else 403); everything is limited to the organisation of the caller (a foreign id = not found).
 """
-from datetime import date
 from typing import Optional
 from uuid import UUID
 
