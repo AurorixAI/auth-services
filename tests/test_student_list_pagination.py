@@ -74,10 +74,10 @@ def test_total_respects_filters_and_search(world):
     assert total == 1 and items[0].first_name == "Имя249"
 
 
-def test_list_students_keeps_plain_list_contract(world):
+def test_list_students_page_defaults_to_one_hundred_of_the_whole_total(world):
     db, org, _ = world
-    items = AuthService(db).list_students(org, actor_id="admin", is_org_admin=True)
-    assert isinstance(items, list) and len(items) == 100
+    items, total = _page(db, org)
+    assert isinstance(items, list) and len(items) == 100 and total > 100
 
 
 def test_teacher_without_groups_sees_nobody(world):

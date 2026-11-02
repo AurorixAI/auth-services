@@ -1358,37 +1358,6 @@ class AuthService:
                 query = query.filter(matches)
         return query
 
-    def list_students(
-        self,
-        org_id: str,
-        class_level: Optional[int] = None,
-        group_id: Optional[str] = None,
-        has_group: Optional[bool] = None,
-        status: Optional[str] = None,
-        exclude_status: Optional[str] = None,
-        search: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0,
-        has_primary_group: Optional[bool] = None,
-        *,
-        actor_id: Optional[str],
-        is_org_admin: bool,
-    ) -> list[StudentResponse]:
-        return self.list_students_page(
-            org_id,
-            class_level=class_level,
-            group_id=group_id,
-            has_group=has_group,
-            status=status,
-            exclude_status=exclude_status,
-            search=search,
-            limit=limit,
-            offset=offset,
-            has_primary_group=has_primary_group,
-            actor_id=actor_id,
-            is_org_admin=is_org_admin,
-        )[0]
-
     def list_students_page(
         self,
         org_id: str,
