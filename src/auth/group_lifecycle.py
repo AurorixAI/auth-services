@@ -238,7 +238,6 @@ class GroupLifecycle:
                 created_at=now,
             )
         )
-        releasable = [str(e.get("examId")) for e in exams if e.get("canRelease", True)]
         group.exam_release_pending = bool(exams)
         # The archive is committed FIRST: exam-service is asked afterwards.  A failure leaves a durable marker (``exam_release_pending``)
         # that the next archive-related call / the sweep retries; the exams of an archived group are never left half-released silently.
