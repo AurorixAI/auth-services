@@ -479,3 +479,35 @@ def test_sv24_teacher_dashboard_queries_do_not_grow_with_his_groups(world):
     print(f"[wca] SV-24 teacher dashboard: {len(small_body['groups'])} groups {small} SQL, {len(body['groups'])} groups {big} SQL")
     assert len(body["groups"]) > len(small_body["groups"]) + 10 and body["studentCount"] > small_body["studentCount"]
     assert big == small
+
+
+# ---- DM-012: the callback «диагностика завершена» reads the skill states in one query ---------------------------------------------------------------
+
+
+def test_dm012_skill_states_one_select_for_any_number_of_topics_same_outcome(world):
+    from datetime import datetime
+
+    from src.auth.diagnostic_skill_states import apply_skill_states
+    from src.models.analytics import StudentSkillState
+
+    NOW, LATER = datetime(2026, 10, 1, 12, 0), datetime(2026, 10, 1, 12, 5)
+    sid = world.students[0].id
+
+    def run(topics, now, result_at=None):
+        breakdown = {f"T{i}": {"alpha": 0.9 if i % 2 else -1.0} for i in range(topics)}
+        breakdown["bad"] = "not a dict"                                   # skipped
+        statements, counts = capture_queries(world, lambda: apply_skill_states(
+            world.db, student_id=str(sid), org_id=str(world.org.id), theta=0.4, topic_breakdown=breakdown, gaps=set(), now=now, result_at=result_at))
+        return [s for s in statements if "FROM student_skill_states" in s], counts
+
+    reads5, first5 = run(5, NOW)
+    reads40, first40 = run(40, NOW)                                       # 5 known (replay of the same values) + 35 new
+    print(f"[wca] DM-012 apply_skill_states: 5 topics {len(reads5)} select, 40 topics {len(reads40)} select")
+    assert (len(reads5), len(reads40)) == (1, 1)
+    assert first5 == {"written": 5, "unchanged": 0, "skipped": 1, "stale": 0}
+    assert first40 == {"written": 35, "unchanged": 5, "skipped": 1, "stale": 0}
+    _, stale = run(40, LATER, result_at=datetime(2026, 9, 1))              # an older result than the stored one: never rolls back
+    assert stale == {"written": 0, "unchanged": 0, "skipped": 1, "stale": 40}
+    world.db.expire_all()
+    assert world.db.query(StudentSkillState).filter_by(student_id=sid).count() == 40
+    assert float(world.db.query(StudentSkillState).filter_by(student_id=sid, skill_id="T1").one().mastery_probability) == 0.725

@@ -102,6 +102,12 @@ def apply_skill_states(
         theta_value = None
     theta_stored = None if theta_value is None else round(theta_value, 4)
 
+    # wave C DM-012: the states of all the topics in ONE query (was one per topic)
+    wanted = [key for key in topic_breakdown if isinstance(key, str) and 0 < len(key) <= SKILL_ID_MAX]
+    states = {}
+    if wanted:
+        states = {s.skill_id: s for s in db.query(StudentSkillState).filter(StudentSkillState.student_id == student_uuid, StudentSkillState.skill_id.in_(wanted)).all()}
+
     for skill_id, info in topic_breakdown.items():
         if not (isinstance(skill_id, str) and 0 < len(skill_id) <= SKILL_ID_MAX and isinstance(info, dict)):
             counts["skipped"] += 1
@@ -114,11 +120,7 @@ def apply_skill_states(
         status = status_for(alpha, skill_id in gaps)
         mastery = mastery_for(alpha)
 
-        existing = (
-            db.query(StudentSkillState)
-            .filter(StudentSkillState.student_id == student_uuid, StudentSkillState.skill_id == skill_id)
-            .first()
-        )
+        existing = states.get(skill_id)
         if existing is None:
             db.add(StudentSkillState(
                 student_id=student_uuid, org_id=org_uuid, skill_id=skill_id, mastery_probability=mastery,
