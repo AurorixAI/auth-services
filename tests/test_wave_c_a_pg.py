@@ -128,3 +128,58 @@ def test_sv09_schedule_answer_equals_the_per_group_query_answer(world, monkeypat
 
     monkeypatch.setattr(type(world.svc), "_schedule_overrides_for_group", per_group)
     assert schedule_json(world) == body
+
+
+# ---- SV-10: a student's attendance reads only the groups he was in --------------------------------------------------------------------------------
+
+
+def add_lessons(w, group, student_ids, day="2026-09-14", lessons=3, mark="present", snapshot=True):
+    """``lessons`` completed lessons of the group on consecutive days; ``student_ids`` are in the frozen roster (and marked ``mark``)."""
+    from datetime import date, timedelta
+
+    from src.models.auth import GroupAttendance
+
+    first = date.fromisoformat(day)
+    for i in range(lessons):
+        w.db.add(GroupAttendance(
+            org_id=w.org.id, group_id=group.id, lesson_date=(first + timedelta(days=i)).isoformat(), lesson_id=f"L{i}", topic=f"Тема {i}", status="completed",
+            records={str(s): mark for s in student_ids},
+            roster_snapshot=[{"student_id": str(s), "name": "x"} for s in student_ids] if snapshot else None,
+            marked_by=w.teacher.id, teacher_id=group.teacher_id,
+        ))
+    w.db.commit()
+
+
+def student_attendance(w, student, month="2026-09"):
+    r = make_client(w).get(f"{API}/org/students/{student.id}/attendance?month={month}")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_sv10_student_attendance_reads_only_his_groups(world):
+    me = world.students[0]
+    others = grow_centre(world, groups=30)
+    add_lessons(world, world.group, [me.id, world.students[1].id], lessons=4)
+    for g in others:
+        add_lessons(world, g, [], lessons=6)                                   # a big centre: 30 groups x 6 lessons of strangers
+    statements, body = capture_queries(world, lambda: student_attendance(world, me), rows=True)
+    journal = [(s, n) for s, n in statements if "FROM group_attendance JOIN groups" in s]       # the month's journal
+    print(f"[wca] SV-10 journal rows read for a student of a 31-group centre: {[n for _, n in journal]}")
+    assert len(journal) == 1 and journal[0][1] == 4                            # only the 4 lessons of HIS group, not 4 + 180
+    assert len(body["lessons"]) == 4
+
+
+def test_sv10_student_attendance_answer_keeps_closed_groups_and_other_rosters(world):
+    from src.models.auth import StudentGroup
+
+    me, other = world.students[0], world.students[1]
+    old_group = make_group(world.db, world.org, world.teacher2, "Старая группа")
+    world.db.add(StudentGroup(student_id=me.id, group_id=old_group.id, is_active=False, joined_at=__import__("tests.pg_world", fromlist=["x"]).ENROLLED_SINCE))
+    world.db.commit()
+    add_lessons(world, old_group, [me.id], day="2026-09-01", lessons=2, mark="absent")        # a group he has LEFT is still his history
+    add_lessons(world, world.group, [me.id], day="2026-09-10", lessons=3, mark="late")
+    add_lessons(world, world.group, [other.id], day="2026-09-20", lessons=2, mark="present")  # lessons without him in the roster are not his (other lesson ids)
+    add_lessons(world, world.group, [me.id], day="2026-09-25", lessons=1, mark="present", snapshot=False)   # a legacy row: no frozen roster, he is in the records
+    body = student_attendance(world, me)
+    assert [item["date"] for item in body["lessons"]] == ["2026-09-01", "2026-09-02", "2026-09-10", "2026-09-11", "2026-09-12", "2026-09-25"]
+    assert {g["group_name"] for g in body["groups"]} == {"Старая группа", world.group.name}

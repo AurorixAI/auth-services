@@ -19,7 +19,7 @@ from jose import jwt, JWTError
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, select
 
 from . import payment_status as ps
 from . import student_identity
@@ -1136,6 +1136,8 @@ class AuthService:
                 GroupAttendance.lesson_date >= period_start.isoformat(),
                 GroupAttendance.lesson_date <= period_end.isoformat(),
                 GroupAttendance.status != LessonAttendanceStatus.CANCELLED.value,
+                # wave C SV-10: only the groups he has ever been in (a closed membership stays; a lesson with him in its roster implies one)
+                GroupAttendance.group_id.in_(select(StudentGroup.group_id).where(StudentGroup.student_id == student.id)),
             )
             .order_by(GroupAttendance.lesson_date, GroupAttendance.created_at)
             .all()

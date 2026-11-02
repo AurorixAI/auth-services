@@ -366,8 +366,9 @@ def _engine_of(target):
     return db.get_bind() if hasattr(db, "get_bind") else db
 
 
-def capture_queries(target, fn):
-    """Run ``fn()`` and return ``(statements, result)``: every SQL statement the engine executed meanwhile (text, in order)."""
+def capture_queries(target, fn, rows=False):
+    """Run ``fn()`` and return ``(statements, result)``: every SQL statement the engine executed meanwhile (text, in order).
+    With ``rows=True`` each item is ``(text, number of rows the statement returned)`` - for "how much data does the path read" assertions."""
     from sqlalchemy import event
 
     engine = _engine_of(target)
@@ -376,11 +377,18 @@ def capture_queries(target, fn):
     def before(conn, cursor, statement, parameters, context, executemany):
         statements.append(statement)
 
+    def after(conn, cursor, statement, parameters, context, executemany):
+        statements[-1] = (statement, cursor.rowcount)
+
     event.listen(engine, "before_cursor_execute", before)
+    if rows:
+        event.listen(engine, "after_cursor_execute", after)
     try:
         result = fn()
     finally:
         event.remove(engine, "before_cursor_execute", before)
+        if rows:
+            event.remove(engine, "after_cursor_execute", after)
     return statements, result
 
 
