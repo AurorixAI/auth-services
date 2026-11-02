@@ -32,7 +32,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from uuid import UUID
