@@ -6,9 +6,8 @@ sentences (``payments_texts``).  Nothing here decides an amount.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, timedelta
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from datetime import timedelta
+from typing import List, Optional, Tuple
 
 from . import billing_ledger as bl
 from . import payment_status as ps
