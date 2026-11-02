@@ -321,20 +321,6 @@ class LessonTeachers:
         return {str(u.id): u for u in self.db.query(User).filter(User.id.in_(wanted)).all()}
 
     # ------------------------------------------------------------------------------------------- reading
-    def info_for(self, book: TeacherBook, group: Group, lesson_id: str, lesson_date: str, end_minutes: Optional[int],
-                 row: Optional[GroupAttendance], names: Dict[str, User]) -> Dict[str, Any]:
-        res = book.resolve(group, lesson_id, lesson_date, end_minutes)
-        teacher = effective_teacher(row, res)
-        default = res.default_teacher_id
-        return {
-            "teacherId": _s(teacher),
-            "teacherName": short_name(names.get(_s(teacher))) if teacher else None,
-            "isSubstitution": bool(teacher is not None and default is not None and teacher != default)
-            or bool(teacher is not None and default is None),
-            "defaultTeacherId": _s(default),
-            "defaultTeacherName": short_name(names.get(_s(default))) if default else None,
-        }
-
     def annotated_occurrences(self, groups: Sequence[Group], d_from: date, d_to: date, *, only_teacher: Any = None,
                               preloaded=None, include_replaced: bool = False) -> List[Dict[str, Any]]:
         """The resolved occurrences of ``groups`` with the teacher of each lesson (``teacherId``, ``teacherName``, ``isSubstitution``,
