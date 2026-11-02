@@ -91,7 +91,6 @@ from .schemas import (
     ScheduleOccurrenceResponse,
     CreateLessonRequest,
     CreateOneOffLessonRequest,
-    UpdateLessonRequest,
     ReviseRecurringLessonRequest,
     EndRecurringLessonRequest,
     RecurringLessonEndImpactResponse,
@@ -4214,40 +4213,6 @@ class AuthService:
         """Create a lesson for one date without altering a recurring rule (``schedule_rules``)."""
         return schedule_rules.ScheduleRules(self).create_one_off(
             org_id, req, actor_id=actor_id, is_org_admin=is_org_admin
-        )
-
-    def update_lesson(
-        self,
-        org_id: str,
-        lesson_id: str,
-        req: UpdateLessonRequest,
-        *,
-        actor_id: Optional[str] = None,
-        is_org_admin: bool = False,
-    ) -> ScheduleLessonResponse:
-        # A blind template rewrite changes the interpretation of historical
-        # lessons. Clients must explicitly choose either a one-off transfer or
-        # a future recurring revision, both of which are audited.
-        raise ValueError(
-            "Прямое редактирование расписания отключено: используйте перенос "
-            "сегодняшнего урока или изменение постоянного расписания с датой начала"
-        )
-
-    def delete_lesson(
-        self,
-        org_id: str,
-        lesson_id: str,
-        *,
-        actor_id: Optional[str] = None,
-        is_org_admin: bool = False,
-    ) -> bool:
-        # Do not leave a callable backdoor for physical deletion. A base JSON
-        # slot is historical context for attendance, audit entries and exam
-        # bindings; removing it can produce an orphaned delivery. Keep this
-        # method as a defensive compatibility boundary for direct callers.
-        del org_id, lesson_id, actor_id, is_org_admin
-        raise ValueError(
-            "Физическое удаление расписания отключено. Используйте отмену экземпляра или прекращение регулярных занятий с даты."
         )
 
     @staticmethod

@@ -365,7 +365,7 @@ def test_dm009_prefetched_answers_equal_the_per_request_answers(sw, monkeypatch)
 
 
 def test_sv12_both_flows_use_the_one_lookup_and_keep_their_messages(world):
-    from src.auth.schemas import ReviseRecurringLessonRequest, UpdateLessonRequest
+    from src.auth.schemas import ReviseRecurringLessonRequest
 
     org = str(world.org.id)
     made = grow_centre(world, groups=3)
@@ -379,8 +379,6 @@ def test_sv12_both_flows_use_the_one_lookup_and_keep_their_messages(world):
     assert world.svc._require_recurring_lesson(org, "s1", actor_id=str(world.admin.id), is_org_admin=True).org_id == world.org.id
     with pytest.raises(ValueError, match="Урок не найден"):
         world.svc.revise_recurring_lesson(org, "no-such-lesson", ReviseRecurringLessonRequest.model_construct(), actor_id=str(world.admin.id), is_org_admin=True)
-    with pytest.raises(ValueError, match="Прямое редактирование расписания отключено"):
-        world.svc.update_lesson(org, "s1", UpdateLessonRequest.model_construct(), actor_id=str(world.admin.id), is_org_admin=True)
 
 
 # ---- SV-22: the sign-in asks for the centre and the role of the user once ---------------------------------------------------------------------------

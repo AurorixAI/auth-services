@@ -1522,9 +1522,9 @@ def update_lesson(
 ):
     """Deprecated: base rules are never rewritten in place.
 
-    Keep this explicit HTTP boundary as well as the defensive service guard:
-    a stale client cannot reinterpret past attendance by moving/removing a
-    JSON schedule slot. The supported routes retain an audit trail.
+    Keep this explicit HTTP boundary: a stale client cannot reinterpret past
+    attendance by moving/removing a JSON schedule slot. The supported routes
+    retain an audit trail.
     """
     del lesson_id, request, user, db
     raise HTTPException(
