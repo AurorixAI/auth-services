@@ -15,10 +15,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from uuid import UUID
 
-from sqlalchemy import and_, exists, func, or_
+from sqlalchemy import and_, exists, or_
 from sqlalchemy.orm import Session
 
 from src.models.auth import (
