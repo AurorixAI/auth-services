@@ -36,7 +36,6 @@ from src.models.auth import (
     GroupAttendanceAudit,
     Student,
     StudentGroup,
-    StudentPayment,
     User,
 )
 
