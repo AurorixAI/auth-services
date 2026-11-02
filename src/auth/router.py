@@ -23,7 +23,7 @@ from .service import (
     verify_access_token,
 )
 from .attendance_access import is_org_manager
-from .models import DiagnosticInvite, Group, Invitation
+from .models import DiagnosticInvite, Group
 from .student_archive import (
     ArchiveError,
     ArchiveStudentRequest,
@@ -88,17 +88,13 @@ from .schemas import (
     SessionResponse,
     ChangePasswordRequest,
     UpdateProfileRequest,
-    InviteMemberRequest,
-    AcceptInviteRequest,
     StudentCreateRequest,
     StudentUpdateRequest,
-    StudentResponse,
     DiagnosticCreateRequest,
     DiagnosticQuickRequest,
     DiagnosticInviteResponse,
     GroupCreateRequest,
     GroupUpdateRequest,
-    GroupResponse,
     AddStudentToGroupRequest,
     BulkAddStudentsRequest,
     OrgUpdateRequest,
@@ -108,21 +104,11 @@ from .schemas import (
     OrgResponse,
     MessageResponse,
     OrgApplicationPendingResponse,
-    ScheduleLessonResponse,
-    ScheduleOccurrenceResponse,
-    CreateLessonRequest,
-    CreateOneOffLessonRequest,
     UpdateLessonRequest,
-    ReviseRecurringLessonRequest,
     EndRecurringLessonRequest,
     RecurringLessonEndImpactResponse,
-    EndRecurringLessonResponse,
     StartAttendanceRequest,
-    SaveAttendanceRequest,
     ReconcileMissedLessonRequest,
-    GroupAttendanceResponse,
-    OpenAttendanceActionResponse,
-    TeacherDashboardSummaryResponse,
 )
 from .dependencies import (
     get_current_active_user_payload,
