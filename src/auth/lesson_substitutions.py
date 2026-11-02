@@ -2112,7 +2112,6 @@ def annotate_journal(svc, user: Dict[str, Any], group: Group, resp) -> Any:
 
 def annotate_student_attendance(svc, org_id: Any, student_id: Any, summary: Dict[str, Any]) -> Dict[str, Any]:
     """The student card: ``lessons[].teacherName / isSubstitution`` and ``notices[]`` (a cancelled / moved lesson of his groups; no reasons, no comments - D-12)."""
-    month = summary["period"]["month"]
     d_from, d_to = summary["period"]["date_from"], summary["period"]["date_to"]
     db = svc.db
     lessons = summary.get("lessons", [])
