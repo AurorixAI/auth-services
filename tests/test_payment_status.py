@@ -145,11 +145,11 @@ def at(day, hour=15, minute=0):
     return datetime.combine(day, datetime.min.time()) + timedelta(hours=hour, minutes=minute) - timedelta(hours=5)
 
 
-def moved(record, day, hour=15, late=0):
+def moved(record, day, hour=15):
     return PaymentRecord(
         paid_on=record.paid_on, valid_from=record.valid_from, valid_to=record.valid_to,
         lessons_count=record.lessons_count, created_at=record.created_at,
-        carried_out_at=at(day, hour), carried_out_late=late,
+        carried_out_at=at(day, hour),
     )
 
 
@@ -178,14 +178,11 @@ def test_calendar_payment_that_moved_before_it_began_covers_nothing():
     assert not moved(cal(days(30), paid_on=days(0), valid_from=days(0)), days(0)).covers_nothing
 
 
-def test_lessons_payment_that_moved_takes_only_lessons_that_started_before_the_instant():
+def test_lessons_payment_that_moved_takes_only_lessons_up_to_the_transfer_day():
     package = moved(les(6, valid_from=days(-20)), days(-3))
     dates = [days(-10), days(-8), days(-3), days(-1)]            # the last one is after the move
     detail = ps.allocate_lessons_detail([package], dates)
-    assert detail[0][1] == [days(-10), days(-8), days(-3)]       # the lesson of the transfer day started before 15:00
-    # the same lesson, but it started after the instant (the service says 1 of them is late)
-    later = moved(les(6, valid_from=days(-20)), days(-3), late=1)
-    assert ps.allocate_lessons_detail([later], dates)[0][1] == [days(-10), days(-8)]
+    assert detail[0][1] == [days(-10), days(-8), days(-3)]       # the lessons of the transfer day itself are still its own
 
 
 def test_lessons_return_leaves_original_minus_consumed():
@@ -200,18 +197,8 @@ def test_lessons_return_leaves_original_minus_consumed():
     assert [len(taken) for _, taken in detail] == [2, 1]
 
 
-def test_same_day_round_trip_splits_the_lessons_of_that_day_by_the_instant():
-    # A lesson at 10:00 (before the 15:00 transfer) and one at 18:00 (after the student came back at 16:00)
-    original = moved(les(6, valid_from=days(-20)), days(-3), hour=15, late=1)
-    back = les(4, valid_from=days(-3), paid_on=days(-20), created=9)
-    dates = [days(-3), days(-3)]
-    detail = ps.allocate_lessons_detail([original, back], dates)
-    assert [len(taken) for _, taken in detail] == [1, 1]          # one lesson each, none twice, none lost
-
-
 def test_lessons_payment_moved_on_its_first_day():
     package = moved(les(6, valid_from=days(0)), days(0))
     taken = lambda payment, lessons: ps.allocate_lessons_detail([payment], lessons)[0][1]
     assert taken(package, [days(0)]) == [days(0)]                 # a lesson that morning is still its own
     assert taken(package, [days(1)]) == []
-    assert taken(moved(les(6, valid_from=days(0)), days(0), late=1), [days(0)]) == []

@@ -531,7 +531,7 @@ class LedgerLoader:
         skip = {
             mid: {d for p in self.pauses.get(mid, []) for d in _days(p.first_day, p.last_day)} for mid in ids if self.pauses.get(mid)
         }
-        PaymentService(self.db)._counted_lesson_dates(self.org_id, members, {}, since=since, detail_out=detail, exclude_days=skip)
+        PaymentService(self.db)._counted_lesson_dates(self.org_id, members, since=since, detail_out=detail, exclude_days=skip)
         for mid in ids:
             self.counted[mid] = [bl.CountedLesson(day, str(lesson_id or "")) for day, lesson_id, _ in detail.get(mid, [])]
 

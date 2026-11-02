@@ -1,5 +1,5 @@
 """
-ALGO - Payment status of a membership (N13 P2).  Pure functions, no database.
+ALGO - Payment records of a membership (N13 P2).  Pure functions, no database.
 
 A student's membership is "paid" in one of two period modes (a centre setting
 that is written into every payment):
@@ -9,15 +9,15 @@ that is written into every payment):
   after ``valid_from``.
 
 The mode of a membership is the mode of its **latest** live payment (order:
-``paid_on``, ``created_at``); the older payments of the other mode are
-ignored, so changing the centre setting never breaks old records.
+``paid_on``, ``created_at``; ``billing_mode``); the older payments of the other mode are
+ignored, so changing the centre setting never breaks old records.  The status and the debt
+themselves are computed by ``billing_ledger``.
 
-Lessons mode, FIFO.  Counted lessons (completed, student in the roster
-snapshot, mark present/late/absent or an excused mark without a confirmed
-excuse) are ordered by date and handed out to the live lessons payments in the
-order ``valid_from, paid_on, created_at``.  A payment takes up to
-``lessons_count`` not yet taken lessons dated on or after its ``valid_from``.
-``left = max(0, sum(lessons_count) - taken)``.
+Lessons mode, FIFO (``allocate_lessons_detail``).  Counted lessons (completed, student in the
+roster snapshot, mark present/late/absent or an excused mark without a confirmed excuse -
+``lesson_counts``) are ordered by date and handed out to the live lessons payments in the
+order ``valid_from, paid_on, created_at``.  A payment takes up to ``lessons_count`` not yet
+taken lessons dated on or after its ``valid_from``.
 
 Carried-out payments (N13 P2.1, "the payment moves with the student").  A transfer
 copies a payment in force into the new group and stamps the original with
@@ -29,23 +29,10 @@ covers, in its own membership, only what happened while the student was still in
   group that started before the transfer is on that day (``PaymentRecord.end``).  Lessons
   after the transfer are not in the old group's roster, so the day is never counted in
   both groups.  A payment that moved before its period began (``valid_from > T``) covers
-  nothing and is ignored by the status;
-* lessons: it takes only counted lessons that STARTED before the instant (lesson date +
-  scheduled start, Tashkent).  Lessons on other days compare by date; of the lessons on day T
-  the service tells how many started at or after the instant (``carried_out_late``) and they
-  are not taken.  Its capacity is what it took (``lesson_capacity``): the unspent rest
-  travelled with the student, so the original never "resurrects" when the student comes back.
-
-Conservation of a lessons package (money).  A carry-over does NOT freeze the remainder that
-travelled: its capacity is derived live along the chain, ``capacity(C) = capacity(source) -
-lessons the source took before it moved`` (``resolve_lesson_chains``, same counting rules: a
-confirmed excuse consumes nothing, a cancelled lesson does not exist, a reconciled lesson
-does).  The ``lessons_count`` stored on a carry-over is only the remainder at transfer time
-(informational).  So confirming a pre-transfer excuse - or reconciling a pre-transfer lesson -
-AFTER the transfer gives a lesson to - or takes one from - the student's current package, and
-the lessons of the whole chain always add up to the original ``lessons_count``.  The excuse
-deadline of a lesson that a moved package took follows the CURRENT remainder of the chain's live
-package (``PaymentRecord.moved_left``), not "nothing left".
+  nothing and is ignored (``payments_in_force``);
+* lessons: it takes only counted lessons dated up to and including day T (Tashkent); what is
+  left of the package travelled with the student, so the original never "resurrects" when
+  the student comes back.
 
 The same rule feeds the excuse deadline and (P3) payroll.  Payroll must therefore read the
 period of a calendar payment through ``PaymentRecord.end`` (never the raw ``valid_to``) and
@@ -54,12 +41,9 @@ the lessons of a package through ``allocate_lessons_detail``; the carry-over row
 A lesson belongs to one group, so a lesson is paid by exactly one membership.  The money for
 payroll is the effective PRICE of the student on the day of the lesson (``pricing.py``), never a payment ``amount``.
 
-N13 P2.2 - one payment day for the centre (``billing_anchor = fixed_day``, ``billing_day`` 1..28).
-The centre's periods then start on ``billing_day`` of every month (day 1: 01.10-31.10, day 10:
-10.10-09.11).  ``default_fixed_day_period`` suggests the dates of a payment, ``is_partial_period`` tells
-whether a payment covers whole periods, ``price_fixed_day`` prices an incomplete period by the lessons
-of the group (the amount hint, ``PaymentService.quote``).  Nothing here changes how a payment that is
-already saved is read: the status maths above knows only ``valid_from`` / ``valid_to``.
+N13 P2.2 - one payment day for the centre (``billing_anchor = fixed_day``, ``billing_day`` 1..28):
+the centre's periods start on ``billing_day`` of every month (day 1: 01.10-31.10, day 10:
+10.10-09.11); ``billing_period_start`` / ``billing_period_end`` give the period of a day.
 
 "Today" is the business date (``BUSINESS_TIMEZONE``, Asia/Tashkent by default),
 never the server's or the browser's local date.
@@ -122,14 +106,8 @@ class PaymentRecord:
     # The instant (naive UTC) the payment moved to another group with the student; it covers
     # only what happened while the student was still in this group (see the module docstring).
     carried_out_at: Optional[datetime] = None
-    # Counted lessons dated on the business day of ``carried_out_at`` that started at or after
-    # that instant (filled in by the service, which knows the schedule); 0 = none / unknown.
-    carried_out_late: int = 0
-    # Chain bookkeeping (lessons packages): the membership the payment lives in, the payment it was
-    # carried over from, and - for a payment that moved away - what is left in the live package at the
-    # end of its chain and that package's size (the original ``lessons_count``).
-    membership_id: object = None
-    carried_from_id: object = None
+    # For a lessons payment that moved away: what is left in the live package at the end of its chain
+    # and that package's size (the original ``lessons_count``), read by the excuse deadline.
     moved_left: Optional[int] = None
     moved_size: Optional[int] = None
 
@@ -252,11 +230,8 @@ def _take(pool: list[date], payment: PaymentRecord) -> list[date]:
     """One FIFO step: remove from the sorted ``pool`` the lessons ``payment`` covers and return them."""
     start = bisect_left(pool, payment.valid_from)
     stop = start + payment.lessons_count
-    if payment.carried_out_at is not None:  # only lessons that started before the instant it moved away
-        day = payment.carried_out_day
-        first, after = bisect_left(pool, day), bisect_right(pool, day)
-        # Of the lessons on that day the later ones come last; ``carried_out_late`` of them started after.
-        stop = min(stop, first + max(0, (after - first) - payment.carried_out_late))
+    if payment.carried_out_at is not None:  # only lessons up to the day it moved away (that day included)
+        stop = min(stop, bisect_right(pool, payment.carried_out_day))
     taken = pool[start : max(start, stop)]
     del pool[start : start + len(taken)]
     return taken

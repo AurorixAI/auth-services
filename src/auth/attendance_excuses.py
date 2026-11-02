@@ -913,7 +913,7 @@ class AttendanceExcuseService:
 
             since = ls.load_settings(self.db, str(org_id)).accounting_start
             pools = PaymentService(self.db)._counted_lesson_dates(
-                str(org_id), lessons_members, {}, since=since, detail_out=detail)
+                str(org_id), lessons_members, since=since, detail_out=detail)
             counted_rows = {
                 mid: {attendance_id for _day, _lesson_id, attendance_id in items} for mid, items in detail.items()
             }

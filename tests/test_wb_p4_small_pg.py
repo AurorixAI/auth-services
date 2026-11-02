@@ -59,7 +59,7 @@ def test_mn50_a_carry_over_copy_cannot_be_voided_but_the_payment_it_came_from_ca
 
 def test_mn06_a_package_read_with_nothing_to_read_from_is_empty_for_every_membership(world):
     m = membership(world)
-    out = PaymentService(world.db)._counted_lesson_dates(str(world.org.id), [(m, world.students[0], world.group)], {}, since=None)
+    out = PaymentService(world.db)._counted_lesson_dates(str(world.org.id), [(m, world.students[0], world.group)], since=None)
     assert out == {m.id: []}
 
 

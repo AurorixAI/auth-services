@@ -520,12 +520,12 @@ def test_deadlines_are_batch_loaded(world):
 # ---- a payment that moved to another group (N13 P2.1) ----------------------------------
 
 
-def moved(record, day, late=0):
+def moved(record, day):
     """Moved at 15:00 Tashkent (10:00 UTC) of ``day``."""
     return ps.PaymentRecord(
         paid_on=record.paid_on, valid_from=record.valid_from, valid_to=record.valid_to,
         lessons_count=record.lessons_count, created_at=record.created_at,
-        carried_out_at=__import__("datetime").datetime(day.year, day.month, day.day, 10, 0), carried_out_late=late,
+        carried_out_at=__import__("datetime").datetime(day.year, day.month, day.day, 10, 0),
     )
 
 

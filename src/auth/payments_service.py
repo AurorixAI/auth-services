@@ -1725,7 +1725,7 @@ class PaymentService:
         entries = {e.membership.id: e for e in loader.run([m.id for m, _, _ in rows])}
         # a lesson held on a day of a live pause is nobody's lesson (S-3): the student was not in its class
         skip = {mid: {d for p in e.pauses for d in ls._days(p.first_day, p.last_day)} for mid, e in entries.items() if e.pauses}
-        self._counted_lesson_dates(org_id, rows, {}, since=first_day, until=last_day, detail_out=detail, exclude_days=skip, extra_paid_out=extra_paid, neutral_out=neutral)
+        self._counted_lesson_dates(org_id, rows, since=first_day, until=last_day, detail_out=detail, exclude_days=skip, extra_paid_out=extra_paid, neutral_out=neutral)
         origins = self._makeup_origin_days(org_id, {g.id for _, _, g in rows}, first_day, last_day)
         regimes = loader.settings.regimes
         by_segment = {mid: {sg.id: sg for sg in e.ledger.segments} for mid, e in entries.items()}
@@ -1796,8 +1796,6 @@ class PaymentService:
         self,
         org_id: str,
         members: Sequence[tuple],
-        live_by_membership: Dict[UUID, List[StudentPayment]],
-        late_out: Optional[Dict[UUID, Dict[datetime, int]]] = None,
         *,
         since: Optional[date] = None,
         until: Optional[date] = None,
@@ -1819,10 +1817,6 @@ class PaymentService:
         LOGIC-A (S-3): ``exclude_days[membership]`` = the days of the live pauses of the membership - a lesson held on such a day
         spends nothing (the student is not in its roster; a lesson whose snapshot was made before the pause is cut here as well).
 
-        With ``late_out`` the lessons of the day a payment moved away on are looked at once more:
-        ``late_out[membership][instant]`` = how many of them started at or after that instant
-        (``PaymentRecord.carried_out_late``).
-
         Rule 4.3: the lesson is completed, the student is in its roster
         snapshot (no snapshot on a legacy lesson: being marked is enough), the
         mark is present / late / absent or an excused mark without a confirmed
@@ -1840,17 +1834,9 @@ class PaymentService:
         if not members:
             return {}
         group_ids = {g.id for _, _, g in members}
-        starts = [
-            p.valid_from
-            for m, _, _ in members
-            for p in live_by_membership.get(m.id, [])
-            if p.lessons_count is not None
-        ]
-        if since is not None:
-            starts.append(since)
-        if not starts:   # MN-06: nothing to read from (no lessons package and no ``since``) - every membership has no lessons
+        if since is None:   # MN-06: nothing to read from (no ``since``) - every membership has no lessons
             return {m.id: [] for m, _, _ in members}
-        earliest = min(starts)
+        earliest = since
         lessons = (
             self.db.query(
                 GroupAttendance.id,
@@ -1909,13 +1895,6 @@ class PaymentService:
             sid = str(membership.student_id)
             dates: List[date] = []
             detail: List[tuple] = []
-            # instants a payment of this membership moved away at, by business day
-            moved_at: Dict[date, set] = {}
-            if late_out is not None:
-                for p in live_by_membership.get(membership.id, ()):
-                    if p.lessons_count is not None and p.carried_out_at is not None:
-                        moved_at.setdefault(ps.business_date(p.carried_out_at), set()).add(p.carried_out_at)
-            on_moved_day: Dict[date, List[str]] = {}
             for lesson, roster in by_group.get(group.id, ()):
                 if roster is not None and sid not in roster:
                     continue
@@ -1940,21 +1919,10 @@ class PaymentService:
                         continue
                     dates.append(lesson_day)
                     detail.append((lesson_day, lesson.lesson_id or "", lesson.id))
-                    if lesson_day in moved_at:
-                        on_moved_day.setdefault(lesson_day, []).append(str(lesson.lesson_id))
             out[membership.id] = dates
             if detail_out is not None:
                 detail_out[membership.id] = detail
                 group_of[membership.id] = group
-            if late_out is not None and on_moved_day:
-                counts: Dict[datetime, int] = {}
-                for lesson_day, lesson_ids in on_moved_day.items():
-                    starts = self._scheduled_starts(group, lesson_day)
-                    for instant in moved_at[lesson_day]:
-                        counts[instant] = sum(
-                            1 for lid in lesson_ids if lid in starts and starts[lid] >= instant
-                        )
-                late_out[membership.id] = counts
         if detail_out is not None:
             self._order_by_start(detail_out, group_of)
         return out
