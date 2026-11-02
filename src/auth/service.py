@@ -20,6 +20,7 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session, joinedload, load_only
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import distinct_on
 
 from . import payment_status as ps
 from . import student_identity
@@ -2569,7 +2570,7 @@ class AuthService:
             self.db.query(StudentDiagnosticResult)
             .options(load_only(*_DIAGNOSTIC_RESULT_SUMMARY))
             .filter(StudentDiagnosticResult.student_id.in_(student_ids))
-            .distinct(StudentDiagnosticResult.student_id)
+            .ext(distinct_on(StudentDiagnosticResult.student_id))
             .order_by(StudentDiagnosticResult.student_id, StudentDiagnosticResult.diagnosed_at.desc(), StudentDiagnosticResult.id.desc())
             .all()
         )
@@ -2588,7 +2589,7 @@ class AuthService:
             self.db.query(StudentDiagnosticResult)
             .options(load_only(*_DIAGNOSTIC_RESULT_SUMMARY))
             .filter(StudentDiagnosticResult.invite_id.in_(invite_ids))
-            .distinct(StudentDiagnosticResult.invite_id)
+            .ext(distinct_on(StudentDiagnosticResult.invite_id))
             .order_by(StudentDiagnosticResult.invite_id, StudentDiagnosticResult.diagnosed_at.desc(), StudentDiagnosticResult.id.desc())
             .all()
         )
