@@ -10,15 +10,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from datetime import date, timedelta
+from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID, uuid4
 
 from sqlalchemy import func
 
 from src.models.auth import (
     GroupAttendance,
-    GroupAudit,
     MembershipOpeningBalance,
     MembershipPause,
     MembershipTransfer,
@@ -27,11 +26,9 @@ from src.models.auth import (
     StudentPayment,
     StudentRefund,
     StudentWriteoff,
-    User,
 )
 
 from . import billing_ledger as bl
-from . import ledger_service as ls
 from . import membership_periods
 from . import payment_status as ps
 from .payments_schemas import (
@@ -59,7 +56,6 @@ from .payments_service import (
     PaymentNotFound,
     PaymentService,
     ReasonRequired,
-    VoidBreaksRefund,
     _iso,
     _person,
     _utcnow,
