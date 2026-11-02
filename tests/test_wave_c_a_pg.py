@@ -3,6 +3,8 @@
 Every test builds a small centre and a big one (30-40 groups) and asserts that the number of SQL statements of the path is the same;
 where a path was rewritten, the answer is compared with the answer of the untouched single-row path (the old behaviour).
 """
+from uuid import uuid4
+
 import pytest
 
 from tests.pg_world import (  # noqa: F401
@@ -183,3 +185,73 @@ def test_sv10_student_attendance_answer_keeps_closed_groups_and_other_rosters(wo
     body = student_attendance(world, me)
     assert [item["date"] for item in body["lessons"]] == ["2026-09-01", "2026-09-02", "2026-09-10", "2026-09-11", "2026-09-12", "2026-09-25"]
     assert {g["group_name"] for g in body["groups"]} == {"Старая группа", world.group.name}
+
+
+# ---- SV-11: the group page does not read the heavy JSON of the diagnostic results ----------------------------------------------------------------
+
+
+HEAVY = ("identified_gaps", "root_gaps", "recommended_path", "error_summary", "integrity_report")
+
+
+def add_result(w, student, theta, ago_days, invite=None, level=None):
+    from datetime import datetime, timedelta
+
+    from src.models.auth import StudentDiagnosticResult
+
+    row = StudentDiagnosticResult(
+        student_id=student.id, org_id=w.org.id, invite_id=invite.id if invite else None, final_theta=theta, accuracy=0.5, total_tasks=20, correct_answers=10,
+        overall_level=level, diagnosed_at=datetime(2026, 10, 1, 12, 0) - timedelta(days=ago_days),
+        identified_gaps=[{"skill": f"s{i}", "note": "x" * 200} for i in range(40)], root_gaps=[{"a": "y" * 300}] * 10,
+        error_summary={"k": "z" * 500}, integrity_report={"r": "q" * 500},
+    )
+    w.db.add(row)
+    w.db.commit()
+    return row
+
+
+def test_sv11_group_page_reads_one_light_row_per_student(world):
+    me = world.students
+    for i, s in enumerate(me):
+        add_result(world, s, -1.0 + i, ago_days=60)           # old results ...
+        add_result(world, s, 1.0 + i, ago_days=30)
+        latest = add_result(world, s, 2.0 + i, ago_days=1, level="at_grade")     # ... and the latest one
+    world.db.expire_all()
+    statements, r = capture_queries(world, lambda: make_client(world).get(f"{API}/org/groups/{world.group.id}"), rows=True)
+    assert r.status_code == 200
+    reads = [(s, n) for s, n in statements if "FROM student_diagnostic_results" in s]
+    print(f"[wca] SV-11 group page: diagnostic result rows read {[n for _, n in reads]} (9 stored)")
+    assert len(reads) == 1 and reads[0][1] == 3                                   # 3 students, 9 results stored -> 3 rows
+    assert not any(col in reads[0][0] for col in HEAVY)
+    students = {item["id"]: item for item in r.json()["students"]}
+    for i, s in enumerate(me):
+        assert students[str(s.id)]["last_theta"] == 2.0 + i                       # the latest, not the first
+        assert students[str(s.id)]["last_level"] == ("at_grade" if i == 2 else students[str(s.id)]["last_level"])
+    assert latest.overall_level == "at_grade"
+
+
+def test_sv11_group_stats_and_invite_list_use_the_light_rows_with_the_same_answer(world):
+    from datetime import datetime, timedelta
+
+    from src.models.auth import DiagnosticInvite
+
+    s0, s1, s2 = world.students
+    add_result(world, s0, -1.0, 40)
+    add_result(world, s0, 0.9, 5)
+    add_result(world, s1, 0.4, 3)
+    invite = DiagnosticInvite(org_id=world.org.id, student_id=s0.id, created_by=world.admin.id, code=uuid4().hex[:10].upper(), class_level=9, status="completed",
+                              expires_at=datetime.utcnow() + timedelta(days=3))
+    world.db.add(invite)
+    world.db.commit()
+    add_result(world, s0, 0.2, 90, invite=invite)
+    world.db.expire_all()
+    statements, r = capture_queries(world, lambda: make_client(world).get(f"{API}/org/groups/{world.group.id}/stats"), rows=True)
+    body = r.json()
+    assert body["diagnosed_count"] == 2 and abs(body["avg_theta"] - (0.9 + 0.4) / 2) < 1e-9      # the latest of s0 (0.9), s1 (0.4); s2 has none
+    reads = [s for s, _ in statements if "FROM student_diagnostic_results" in s]
+    assert len(reads) == 1 and not any(col in reads[0] for col in HEAVY)
+    world.db.expire_all()
+    statements, r = capture_queries(world, lambda: make_client(world).get(f"{API}/org/diagnostics"), rows=True)
+    item = next(i for i in r.json() if i["id"] == str(invite.id))
+    assert item["result"]["theta"] == 0.2                                                           # the result of THIS invite, not the latest of the student
+    reads = [s for s, _ in statements if "FROM student_diagnostic_results" in s]
+    assert len(reads) == 1 and not any(col in reads[0] for col in HEAVY)
