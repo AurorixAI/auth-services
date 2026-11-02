@@ -55,7 +55,6 @@ def legend_line(show_included: bool) -> str:
     return LEGEND_HEAD + (LEGEND_GREY_INCLUDED if show_included else LEGEND_GREY) + LEGEND_TAIL
 
 
-LEGEND_LINE = legend_line(True)
 SUMMARY_NOTE = "Листы по учителям — дальше в этом файле. «К выплате» = заработано − выплачено."
 FREEZE_COL = 5                   # the group, the type, the time and the student stay on the screen
 
