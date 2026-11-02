@@ -15,7 +15,8 @@ from tests.pay2_ledger_helpers import (
 
 def check_preview(fx: dict, inp: bl.LedgerInput, new: bl.Credit):
     """The preview fixture == the engine before / after adding ``new``."""
-    before, after = bl.ledger_with_extra_credit(replace(inp, credits=tuple(c for c in inp.credits if c.id != new.id)), new)
+    inp = replace(inp, credits=tuple(c for c in inp.credits if c.id != new.id))
+    before, after = bl.run_ledger(inp), bl.run_ledger(replace(inp, credits=tuple(inp.credits) + (new,)))
     due = fx["due"]
     assert (before.debt, before.past_debt, before.current_due, before.advance) == (
         due["debt"], due["past_debt"], due["current_due"], due["advance"])

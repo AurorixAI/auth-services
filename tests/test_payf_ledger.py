@@ -47,7 +47,8 @@ def test_7_paid_in_full_the_deduction_is_an_advance_and_the_next_payment_is_smal
     led = bl.run_ledger(own_month(cancels=(D(2026, 10, 21),), paid=600_000))
     assert led.debt == 0 and led.advance == 46_000 and led.reconciles
     assert led.refundable == 46_000                                 # the student paid cash for a lesson that did not happen: if he leaves, that is what comes back
-    before, after = bl.ledger_with_extra_credit(own_month(cancels=(D(2026, 10, 21),), paid=600_000, today=D(2026, 11, 6)), credit("new", D(2026, 11, 6), 554_000))
+    month = own_month(cancels=(D(2026, 10, 21),), paid=600_000, today=D(2026, 11, 6))
+    before, after = bl.run_ledger(month), bl.run_ledger(replace(month, credits=tuple(month.credits) + (credit("new", D(2026, 11, 6), 554_000),)))
     assert before.debt == 554_000                                   # the second period (600 000) minus the 46 000 deduction
     assert after.debt == 0 and after.reconciles
 

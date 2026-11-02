@@ -1395,11 +1395,6 @@ def _status(inp: LedgerInput, mode: str, has_event: bool, open_now: bool, throug
 # ================================================================================================================
 
 
-def ledger_with_extra_credit(inp: LedgerInput, credit: Credit) -> Tuple[Ledger, Ledger]:
-    """``(before, after)`` the credit is added: the engine of «что закроет»."""
-    return run_ledger(inp), run_ledger(replace(inp, credits=tuple(inp.credits) + (credit,)))
-
-
 def sliced_input(inp: LedgerInput, as_of: date) -> LedgerInput:
     """The account as it stood on ``as_of``: later credits / outflows gone, stays closed on that day."""
     stays = []
