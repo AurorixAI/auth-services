@@ -4,13 +4,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Iterable, Optional, Sequence
+from typing import Optional, Sequence
 
 from fastapi import Request
 
 from src.api.rate_limit import client_ip
 
-from .platform_errors import PlatformError, validation_error
+from .platform_errors import PlatformError
 from .platform_validation import Form
 
 DEFAULT_PAGE_SIZE = 25
