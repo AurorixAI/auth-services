@@ -376,3 +376,28 @@ def test_sv12_both_flows_use_the_one_lookup_and_keep_their_messages(world):
         world.svc.revise_recurring_lesson(org, "no-such-lesson", ReviseRecurringLessonRequest.model_construct(), actor_id=str(world.admin.id), is_org_admin=True)
     with pytest.raises(ValueError, match="Прямое редактирование расписания отключено"):
         world.svc.update_lesson(org, "s1", UpdateLessonRequest.model_construct(), actor_id=str(world.admin.id), is_org_admin=True)
+
+
+# ---- SV-22: the sign-in asks for the centre and the role of the user once ---------------------------------------------------------------------------
+
+
+def test_sv22_login_reads_the_centre_once_and_answers_the_same(world):
+    from jose import jwt
+
+    from src.auth.schemas import LoginRequest
+    from src.auth.service import hash_password
+
+    world.admin.password_hash = hash_password("wave-c-password-1")
+    world.admin.default_org_id = world.org.id
+    world.db.commit()
+
+    def sign_in():
+        return world.svc.login(LoginRequest(email=world.admin.email, password="wave-c-password-1"))
+
+    statements, answer = capture_queries(world, sign_in)
+    print(f"[wca] SV-22 login: {len(statements)} SQL")
+    assert len(statements) == 18                                # was 21: the membership and the centre are read once, not three times
+    claims = jwt.get_unverified_claims(answer.tokens.access_token)
+    assert (claims["org_id"], claims["org_role"]) == (str(world.org.id), "admin")
+    assert answer.user.org_role == "admin" and answer.user.org_name == world.org.name
+    assert answer.org.id == str(world.org.id) and answer.org.name == world.org.name

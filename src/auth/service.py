@@ -389,9 +389,9 @@ class AuthService:
             org_name,
         )
 
-    def _build_user_response(self, user: User) -> UserResponse:
+    def _build_user_response(self, user: User, org_info: Optional[tuple] = None) -> UserResponse:
         d = user.to_dict()
-        org_id, org_role, org_name = self._get_user_org_info(user)
+        org_id, org_role, org_name = org_info or self._get_user_org_info(user)
         d["org_role"] = org_role
         d["org_name"] = org_name
         return UserResponse(**d)
@@ -408,10 +408,10 @@ class AuthService:
             created_at=org.created_at.isoformat() if org.created_at else None,
         )
 
-    def _issue_token_pair(self, user: User, session_id, remember: bool = False) -> TokenPair:
+    def _issue_token_pair(self, user: User, session_id, remember: bool = False, org_info: Optional[tuple] = None) -> TokenPair:
         """A fresh access + refresh JWT of the session *session_id* (the access token carries it as ``sid``). Records nothing:
         the refresh token belongs to a session row, see below. ``remember`` only tells the route how long the cookies live."""
-        org_id, org_role, _ = self._get_user_org_info(user)
+        org_id, org_role, _ = org_info or self._get_user_org_info(user)
         access = create_access_token(str(user.id), user.role, org_id, org_role, sid=str(session_id))
         refresh = create_refresh_token(str(user.id))
         return TokenPair(
@@ -421,7 +421,7 @@ class AuthService:
             remember=bool(remember),
         )
 
-    def _create_tokens(self, user: User, remember: bool = False) -> TokenPair:
+    def _create_tokens(self, user: User, remember: bool = False, org_info: Optional[tuple] = None) -> TokenPair:
         """A sign-in: a token pair and a NEW session of this user (one row per signed-in device); the user's other
         sessions are not touched (#101), except the one this very browser still held (A3). *remember* is the mode (D):
         the default is the short session - a sign-in by a link (password, invitation) never asks for it."""
@@ -430,7 +430,7 @@ class AuthService:
             # computer before) is over. Unknown / old / already revoked tokens revoke nothing.
             user_sessions.end_browser_session(self.db, hash_token(self.previous_refresh), user_sessions.REVOKE_NEW_LOGIN)
         session_id = uuid4()
-        tokens = self._issue_token_pair(user, session_id, remember)
+        tokens = self._issue_token_pair(user, session_id, remember, org_info)
         user_sessions.issue(
             self.db,
             user.id,
@@ -604,23 +604,18 @@ class AuthService:
 
         password_links.revoke_live_resets(self.db, user.id, self_requested_only=True)  # he remembered the password: the «Забыли пароль» links HE asked for are over (K2-2, B); a link sent by the leadership lives on
 
-        tokens = self._create_tokens(user, remember=bool(getattr(request, "remember_me", False)))
+        org_info = self._get_user_org_info(user)           # wave C SV-22: the membership and the centre once for the tokens, the user and the centre of the answer
+        org = None
+        org_obj = self.db.get(Organization, user.default_org_id) if user.default_org_id else None      # the row `_get_user_org_info` has just read
+        if org_obj:
+            org = self._build_org_response(org_obj)
+        tokens = self._create_tokens(user, remember=bool(getattr(request, "remember_me", False)), org_info=org_info)
         self.db.commit()
 
         logger.info("User logged in: user_id=%s", user.id)
 
-        org = None
-        if user.default_org_id:
-            org_obj = (
-                self.db.query(Organization)
-                .filter(Organization.id == user.default_org_id)
-                .first()
-            )
-            if org_obj:
-                org = self._build_org_response(org_obj)
-
         return AuthResponse(
-            user=self._build_user_response(user),
+            user=self._build_user_response(user, org_info),
             tokens=tokens,
             org=org,
         )
