@@ -5502,7 +5502,7 @@ class AuthService:
 
         if not req.lessonId:
             raise ValueError("Для посещаемости необходим идентификатор урока из расписания")
-        target_lesson_id = req.lessonId or f"lesson_{lesson_date.isoformat()}"
+        target_lesson_id = req.lessonId
         requested_status = req.status.value
         is_cancellation = requested_status == LessonAttendanceStatus.CANCELLED.value
         cancellation_kind = (req.cancellationKind or DEFAULT_CANCELLATION_KIND) if is_cancellation else None  # PAY-F
