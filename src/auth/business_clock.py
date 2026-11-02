@@ -96,24 +96,6 @@ def lesson_instant_utc(day: date, minutes: int) -> datetime:
     return business_wall_to_utc(wall)  # type: ignore[return-value]
 
 
-def attendance_started_utc(att) -> Optional[datetime]:
-    """``group_attendance.started_at`` (Tashkent) as naive UTC; ``None`` for a reconciled lesson (no start)."""
-    return business_wall_to_utc(getattr(att, "started_at", None))
-
-
-def attendance_completed_utc(att) -> Optional[datetime]:
-    """``group_attendance.completed_at`` (Tashkent) as naive UTC; ``None`` while the lesson is not completed."""
-    return business_wall_to_utc(getattr(att, "completed_at", None))
-
-
-def attendance_duration_minutes(att) -> Optional[int]:
-    """Real duration of a lesson in whole minutes, both ends from the Tashkent columns (never ``created_at``)."""
-    started, completed = getattr(att, "started_at", None), getattr(att, "completed_at", None)
-    if started is None or completed is None:
-        return None
-    return int((completed - started).total_seconds() // 60)
-
-
 def month_window_start(today: date) -> date:
     """First day of the previous month: the lower bound of the "unclosed lessons" window (same rule as
     ``service.missed_lesson_window_start``, without importing the service)."""

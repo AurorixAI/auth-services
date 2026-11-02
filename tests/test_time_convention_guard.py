@@ -1,6 +1,6 @@
 """TIME_CONVENTIONS guard (LOGIC-B O13): ``group_attendance.started_at / completed_at`` are TASHKENT wall time, ``created_at`` / ``updated_at``,
 ``joined_at`` / ``left_at`` and ``group_audit.created_at`` are UTC.  Arithmetic or a comparison that mixes the two groups is forbidden in
-``src/auth``; the only sanctioned way is ``business_clock.attendance_started_utc / attendance_completed_utc`` (that module is the exception)."""
+``src/auth``; the only sanctioned way is ``business_clock.business_wall_to_utc`` (that module is the exception)."""
 import ast
 from pathlib import Path
 
@@ -57,7 +57,7 @@ def test_the_guard_catches_a_mixed_comparison():
     assert violations("x = attendance.completed_at > membership.left_at")
     assert not violations("x = att.completed_at - att.started_at")                       # both Tashkent
     assert not violations("x = att.created_at - membership.joined_at")                   # both UTC
-    assert not violations("x = business_clock.attendance_started_utc(att) >= membership.joined_at")
+    assert not violations("x = business_clock.business_wall_to_utc(started) >= membership.joined_at")
 
 
 def test_no_module_mixes_the_two_time_groups():
