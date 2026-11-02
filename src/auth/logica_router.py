@@ -145,10 +145,6 @@ def void_pause(pause_id: UUID, request: PauseVoid, user: dict = Depends(require_
         raise _http(exc)
 
 
-def _not_ready():
-    raise HTTPException(501, {"code": "NOT_IMPLEMENTED", "message": "LOGIC-A: not implemented yet"})
-
-
 # ---- leave / archive with money -------------------------------------------------------------------------
 
 
