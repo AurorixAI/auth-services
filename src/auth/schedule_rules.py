@@ -272,8 +272,7 @@ class ScheduleRules:
             "validFrom": valid_from.isoformat(),
         }
         dates = self._candidate_dates(req.dayOfWeek, valid_from)
-        if valid_from == today and req.dayOfWeek == today.isoweekday():
-            dates = dates  # today's lesson is checked too (its time has not passed: checked above)
+        # today's lesson is checked too (its time has not passed: checked above)
         items = self._items(group, new_id, dates, req.startTime, req.endTime)
         teachers = LessonTeachers(self.svc)
         if group.teacher_id and items:
