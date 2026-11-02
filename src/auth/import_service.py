@@ -8,9 +8,9 @@ via the UI — groups may reference an existing teacher by email.
 
 Flow (all under require_org_admin — owner/admin):
     GET  /org/import/template  → this module generates the .xlsx skeleton.
-    POST /org/import/preview   → parse + validate, return a dry-run report
+    POST /org/import/preview   → import_ops: parse (this module) + validate, return a dry-run report
                                  (nothing is written).
-    POST /org/import/commit    → parse + validate again, then write EVERYTHING
+    POST /org/import/commit    → import_ops: parse + validate again, then write EVERYTHING
                                  in a single transaction (all-or-nothing).
 
 Key data-model facts this module respects (see src/models/auth.py):
@@ -34,21 +34,8 @@ from xml.etree import ElementTree
 from typing import Optional
 
 from pydantic import BaseModel
-from sqlalchemy import func
-from sqlalchemy.orm import Session
-
-from src.models.auth import (
-    Group,
-    OrganizationMember,
-    Student,
-    StudentGroup,
-    User,
-)
-
 from . import business_clock as bc
 from . import import_limits as limits
-from .membership_periods import open_period
-from .student_id_service import DisplayIdAllocator
 
 logger = logging.getLogger(__name__)
 
@@ -254,61 +241,6 @@ K_DEBT = "долг, сум"
 K_DEBT_ON = "долг на дату"
 
 
-@dataclass
-class GroupPlan:
-    row: int
-    name: str
-    class_level: Optional[int]
-    teacher_email: str
-    max_students: int
-    action: str            # create | existing
-    existing_group_id: Optional[str] = None
-
-
-@dataclass
-class StudentPlan:
-    row: int
-    last_name: str
-    first_name: str
-    class_level: int
-    phone: Optional[str]
-    group_name: str
-    comment: str
-    action: str            # create | existing
-    existing_student_id: Optional[str] = None
-    # LOGIC-A: the opening balance asked for in the row (already checked; ``None`` fields = not asked / skipped with a warning)
-    paid_until: Optional[date] = None
-    debt_amount: Optional[int] = None
-    debt_on: Optional[date] = None
-
-
-@dataclass
-class ImportPlan:
-    groups: list[GroupPlan] = field(default_factory=list)
-    students: list[StudentPlan] = field(default_factory=list)
-    issues: list[ImportIssue] = field(default_factory=list)
-
-    @property
-    def has_errors(self) -> bool:
-        return any(i.level == "error" for i in self.issues)
-
-    def counts(self) -> ImportCounts:
-        c = ImportCounts()
-        for g in self.groups:
-            if g.action == "create":
-                c.groups_new += 1
-            else:
-                c.groups_existing += 1
-        for s in self.students:
-            if s.action == "create":
-                c.students_new += 1
-                if s.paid_until or s.debt_amount:
-                    c.openings += 1
-            else:
-                c.students_existing += 1
-        return c
-
-
 def _parse_class_level(raw: str) -> Optional[int]:
     if not raw:
         return None
@@ -383,165 +315,6 @@ def parse_opening(d: dict, row: int, *, money: bool, accounting_start: date, enr
     return True, raw_paid, debt_amount, debt_on
 
 
-def build_plan(org_id: str, parsed: ParsedWorkbook, db: Session, *, money: bool = True) -> ImportPlan:
-    """``money``: the caller may enter money (owner / an admin with the switch): without it the opening-balance columns are ignored with a
-    warning and the rows are imported without them."""
-    plan = ImportPlan()
-    from .ledger_service import accounting_start_of
-    from .payments_service import PaymentService
-
-    accounting_start = PaymentService(db)._loader(org_id).settings.accounting_start
-    enrol_day = _today()
-
-    def err(sheet, row, field_, msg):
-        plan.issues.append(ImportIssue(sheet=sheet, row=row, field=field_, level="error", message=msg))
-
-    def warn(sheet, row, field_, msg):
-        plan.issues.append(ImportIssue(sheet=sheet, row=row, field=field_, level="warning", message=msg))
-
-    # Existing org-member emails (groups may reference a teacher already in the system).
-    org_member_emails: set[str] = set()
-    for u, in (
-        db.query(User.email)
-        .join(OrganizationMember, OrganizationMember.user_id == User.id)
-        .filter(OrganizationMember.org_id == org_id)
-        .all()
-    ):
-        if u:
-            org_member_emails.add(u.lower())
-
-    # ── Groups ────────────────────────────────────────────────────────────────
-    file_group_names: set[str] = set()
-    seen_group_names: set[str] = set()
-    for r in parsed.groups:
-        d = r.data
-        name = d.get(K_GROUP_NAME, "")
-        if not name:
-            err(SHEET_GROUPS, r.row, "Название", "Название группы обязательно.")
-            continue
-
-        name_key = name.lower()
-        if name_key in seen_group_names:
-            warn(SHEET_GROUPS, r.row, "Название", f"Группа '{name}' повторяется — строка пропущена.")
-            continue
-        seen_group_names.add(name_key)
-        file_group_names.add(name_key)
-
-        class_level = _parse_class_level(d.get(K_CLASS, ""))
-        if d.get(K_CLASS) and class_level is None:
-            err(SHEET_GROUPS, r.row, "Класс", f"Класс должен быть числом 1–11: '{d.get(K_CLASS)}'")
-            continue
-        if class_level is not None and not (1 <= class_level <= 11):
-            err(SHEET_GROUPS, r.row, "Класс", f"Класс вне диапазона 1–11: {class_level}")
-            continue
-
-        teacher_email = d.get(K_TEACHER_EMAIL, "").lower()
-        if teacher_email:
-            if teacher_email not in org_member_emails:
-                err(SHEET_GROUPS, r.row, "Почта учителя",
-                    f"Учитель {teacher_email} не найден в системе. Добавьте его через интерфейс.")
-                continue
-
-        max_students = _parse_class_level(d.get(K_MAX_STUDENTS, "")) or 30
-
-        existing = (
-            db.query(Group)
-            .filter(Group.org_id == org_id, func.lower(Group.name) == name_key)
-            .first()
-        )
-        if existing:
-            plan.groups.append(GroupPlan(
-                row=r.row, name=name, class_level=class_level,
-                teacher_email=teacher_email, max_students=max_students,
-                action="existing", existing_group_id=str(existing.id),
-            ))
-        else:
-            plan.groups.append(GroupPlan(
-                row=r.row, name=name, class_level=class_level,
-                teacher_email=teacher_email, max_students=max_students,
-                action="create",
-            ))
-
-    # Names of groups that will exist after import (new + existing referenced)
-    known_group_names = set(file_group_names)
-
-    # ── Students ──────────────────────────────────────────────────────────────
-    seen_students: set[tuple] = set()
-    for r in parsed.students:
-        d = r.data
-        last = d.get(K_LAST, "")
-        first = d.get(K_FIRST, "")
-        group_name = ""
-        phone = None
-        if not last or not first:
-            err(SHEET_STUDENTS, r.row, "Фамилия/Имя", "Фамилия и имя обязательны.")
-            continue
-        class_level = _parse_class_level(d.get(K_STUDENT_CLASS, ""))
-        if class_level is None:
-            err(SHEET_STUDENTS, r.row, "Класс", "Класс обязателен и должен быть числом 1–11.")
-            continue
-        if not (1 <= class_level <= 11):
-            err(SHEET_STUDENTS, r.row, "Класс", f"Класс вне диапазона 1–11: {class_level}")
-            continue
-
-        phone = d.get(K_PHONE, "") or None
-        group_name = d.get(K_GROUP, "")
-        if not group_name:
-            err(SHEET_STUDENTS, r.row, "Группа", "Группа обязательна")
-            continue
-        if group_name:
-            gk = group_name.lower()
-            group_exists_db = (
-                db.query(Group)
-                .filter(Group.org_id == org_id, func.lower(Group.name) == gk)
-                .first()
-                is not None
-            )
-            if gk not in known_group_names and not group_exists_db:
-                err(SHEET_STUDENTS, r.row, "Группа",
-                    f"Группа '{group_name}' не найдена во вкладке «Группы» и не существует.")
-                continue
-
-        ok, paid_until, debt_amount, debt_on = parse_opening(
-            d, r.row, money=money, accounting_start=accounting_start, enrol_day=enrol_day, err=err, warn=warn)
-        if not ok:
-            continue
-
-        dedup_key = (last.lower(), first.lower(), (phone or "").strip())
-        if dedup_key in seen_students:
-            warn(SHEET_STUDENTS, r.row, "ФИО", f"Ученик {last} {first} повторяется — строка пропущена.")
-            continue
-        seen_students.add(dedup_key)
-
-        existing_q = db.query(Student).filter(
-            Student.org_id == org_id,
-            func.lower(Student.last_name) == last.lower(),
-            func.lower(Student.first_name) == first.lower(),
-        )
-        if phone:
-            existing_q = existing_q.filter(Student.student_phone == phone)
-        else:
-            existing_q = existing_q.filter(Student.student_phone.is_(None))
-        existing = existing_q.first()
-
-        if existing:
-            if paid_until or debt_amount:
-                warn(SHEET_STUDENTS, r.row, "Остаток", "Ученик уже есть в системе — остаток не внесён.")
-            plan.students.append(StudentPlan(
-                row=r.row, last_name=last, first_name=first, class_level=class_level,
-                phone=phone, group_name=group_name, comment=d.get(K_COMMENT, ""),
-                action="existing", existing_student_id=str(existing.id),
-            ))
-        else:
-            plan.students.append(StudentPlan(
-                row=r.row, last_name=last, first_name=first, class_level=class_level,
-                phone=phone, group_name=group_name, comment=d.get(K_COMMENT, ""),
-                action="create", paid_until=paid_until, debt_amount=debt_amount, debt_on=debt_on,
-            ))
-
-    return plan
-
-
 # ════════════════════════════════════════════════════════════════════════════
 # Public API: preview + commit
 # ════════════════════════════════════════════════════════════════════════════
@@ -549,33 +322,6 @@ def _today() -> date:
     from . import payment_status as ps
 
     return ps.business_today()
-
-
-def preview(org_id: str, data: bytes, db: Session, *, money: bool = True) -> ImportPreviewResponse:
-    parsed = parse_workbook(data)
-    if parsed.fatal:
-        return ImportPreviewResponse(
-            ok=False,
-            counts=ImportCounts(),
-            issues=[ImportIssue(sheet="-", row=0, level="error", message=parsed.fatal)],
-        )
-
-    plan = build_plan(org_id, parsed, db, money=money)
-    return ImportPreviewResponse(
-        ok=not plan.has_errors,
-        counts=plan.counts(),
-        issues=plan.issues,
-        groups_preview=[
-            {"name": g.name, "class_level": g.class_level,
-             "teacher_email": g.teacher_email, "action": g.action}
-            for g in plan.groups[:50]
-        ],
-        students_preview=[
-            {"name": f"{s.last_name} {s.first_name}", "class_level": s.class_level,
-             "phone": s.phone, "group": s.group_name, "action": s.action}
-            for s in plan.students[:50]
-        ],
-    )
 
 
 TEMPLATE_FILE_NAME = "Шаблон_импорта.xlsx"
