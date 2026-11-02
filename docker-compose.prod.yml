@@ -24,9 +24,6 @@ services:
       - APP_ENV=production
       - SECRET_KEY=${SECRET_KEY}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - MATHPIX_APP_ID=${MATHPIX_APP_ID}
-      - MATHPIX_APP_KEY=${MATHPIX_APP_KEY}
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - SENTRY_DSN=${SENTRY_DSN:-}
       - EXAM_SERVICE_URL=${EXAM_SERVICE_URL:-http://algo-exam:8003/api/v1}

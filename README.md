@@ -18,9 +18,6 @@
 | `APP_ENV` | — | `production` / `development` | `production` |
 | `CORS_ORIGINS` | — | JSON-массив допустимых origins | `["https://algolab.me"]` |
 | `EXAM_SERVICE_URL` | — | URL exam-service для колбэков | `http://algo-exam:8003/api/v1` |
-| `GEMINI_API_KEY` | — | Google Gemini API | — |
-| `MATHPIX_APP_ID` | — | Mathpix OCR | — |
-| `MATHPIX_APP_KEY` | — | Mathpix OCR | — |
 | `GCP_PROJECT_ID` | — | GCP project ID | `algo-495713` |
 | `SENTRY_DSN` | — | Sentry error tracking | — |
 

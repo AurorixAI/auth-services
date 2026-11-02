@@ -54,9 +54,6 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
 
     # ── External APIs ─────────────────────────────────────────────────────────
-    mathpix_app_id: str = ""
-    mathpix_app_key: str = ""
-    gemini_api_key: str = ""
     # Exam-service receives authoritative lifecycle notifications from this
     # service after an attendance-backed lesson cancellation.
     exam_service_url: str = "http://exam-service:8003/api/v1"

@@ -57,9 +57,6 @@ logger = logging.getLogger(__name__)
 class Settings:
     """Настройки приложения (non-DB settings live here; DB is in database.py)"""
 
-    MATHPIX_APP_ID: str = os.getenv("MATHPIX_APP_ID", "")
-    MATHPIX_APP_KEY: str = os.getenv("MATHPIX_APP_KEY", "")
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
 
 
