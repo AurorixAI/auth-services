@@ -776,7 +776,6 @@ def e5(store):
         charged = sum(s.charge for s in segs)
         due_debt = charged
         past = sum(s.charge for s in segs if s.lessons[0] >= s.lessons[1])
-        due_segments = []
         # before: no money
         for s in segs:
             s.money = s.wo = 0
@@ -788,7 +787,6 @@ def e5(store):
         net, spans, tc = hand_ledger(segs, [new], today)
         leftover = max(0, tc - charged)
         covered_lessons = 0
-        run = 0
         c = 0
         for i in range(1, 200):  # lessons held and virtual ones (price of today)
             run_cost = 50_000

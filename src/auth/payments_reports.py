@@ -195,7 +195,6 @@ class PaymentsReports:
         return was, becomes
 
     def _voided_rows(self, org_id: str, membership_id: UUID) -> List[StatementRow]:
-        users_ids: List[Any] = []
         pay = self.db.query(StudentPayment).filter(
             StudentPayment.org_id == org_id, StudentPayment.membership_id == membership_id,
             StudentPayment.voided_at.isnot(None), StudentPayment.kind == "payment").all()
