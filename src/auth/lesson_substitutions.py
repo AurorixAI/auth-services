@@ -996,11 +996,6 @@ class SubstitutionsBase:
 # ======================================================================================================================
 # decisions
 # ======================================================================================================================
-def _label_text(r: Req) -> str:
-    label = REASON_LABELS[r.reason_code]
-    return f"{label}: {r.comment}" if r.comment else label
-
-
 class Substitutions(LessonCancelMixin, SubstitutionsBase):
     """The four decisions of an administrator (substitute / reschedule / cancel / reject) and the bulk variant."""
 
