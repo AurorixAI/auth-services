@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import Text, cast, func, or_
+from sqlalchemy import Text, cast, or_
 from sqlalchemy.orm import Session
 
 from src.core.database import get_db
