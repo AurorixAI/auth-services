@@ -20,7 +20,7 @@ from .service import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     REFRESH_TOKEN_EXPIRE_DAYS,
 )
-from .schemas import AuthResponse, UserResponse, TokenPair, OrgResponse, SessionResponse
+from .schemas import UserResponse, TokenPair, OrgResponse, SessionResponse
 from .cookies import set_auth_cookies
 from . import user_sessions
 
