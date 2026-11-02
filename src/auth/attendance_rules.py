@@ -278,7 +278,7 @@ class AttendanceRules:
         resp.lessons = [lesson for lesson in resp.lessons if lesson.get("instanceKey") in allowed]
         resp.records, resp.statuses, resp.cancellationReasons = only(resp.records), only(resp.statuses), only(resp.cancellationReasons)
         resp.cancellationKinds = only(resp.cancellationKinds)
-        resp.rosterStudentIds = {k: v for k, v in roster_ids.items() if k in resp.rosterStudentIds or True}
+        resp.rosterStudentIds = dict(roster_ids)
         resp.excuses, resp.corrections = only(resp.excuses), only(resp.corrections)
         resp.versions, resp.lessonTeachers = only(resp.versions), only(resp.lessonTeachers)
         resp.historicalStudents = [{k: h.get(k) for k in ("id", "first_name", "last_name", "full_name", "display_id")}      # name + display id only: no periods, no transfers
