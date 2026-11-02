@@ -40,7 +40,7 @@ The module imports ``AuthService`` lazily: ``service.py`` imports this module fo
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID
 
