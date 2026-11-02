@@ -355,3 +355,39 @@ def set_paid_through(w, payment, through):
     amount = money_for(w, row.membership_id, through=through, on=row.paid_on, exclude=row.id)
     w.db.query(StudentPayment).filter_by(id=payment["id"]).update({"amount": amount})
     w.db.commit()
+
+
+# ---- query counter (wave C): the ONE helper; tests compare a small centre with a big one ----------------------------------------------------------
+
+
+def _engine_of(target):
+    """The engine of a ``world`` (SimpleNamespace with ``.db``), of a Session or of an Engine."""
+    db = getattr(target, "db", target)
+    return db.get_bind() if hasattr(db, "get_bind") else db
+
+
+def capture_queries(target, fn):
+    """Run ``fn()`` and return ``(statements, result)``: every SQL statement the engine executed meanwhile (text, in order)."""
+    from sqlalchemy import event
+
+    engine = _engine_of(target)
+    statements = []
+
+    def before(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", before)
+    try:
+        result = fn()
+    finally:
+        event.remove(engine, "before_cursor_execute", before)
+    return statements, result
+
+
+def count_queries(target, fn):
+    """Run ``fn()`` and return ``(number of SQL statements, result)``.
+
+    LESSONS 81: a test asserts that the number does NOT GROW with the size of the centre (a small one against 30-40 groups), not a magic "<= N".
+    ``capture_queries`` gives the statements themselves for "no query touches table X" assertions."""
+    statements, result = capture_queries(target, fn)
+    return len(statements), result
