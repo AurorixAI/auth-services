@@ -355,10 +355,6 @@ def _plural_lessons(count: int) -> str:
     return tx.lessons_word(count)
 
 
-def _plural_days(count: int) -> str:
-    return tx.days_word(count)
-
-
 def _num(amount: int) -> str:
     """``250 000`` (a plain space between the thousands)."""
     return tx.num(amount)
@@ -367,11 +363,6 @@ def _num(amount: int) -> str:
 def _sum(amount: int) -> str:
     """``250 000 сум``."""
     return tx.money(amount)
-
-
-def _short_date(day: date, today: date) -> str:
-    """``10.11`` within the current year, ``10.11.2027`` otherwise."""
-    return day.strftime("%d.%m") if day.year == today.year else day.strftime("%d.%m.%Y")
 
 
 def _like(term: str) -> str:
@@ -594,10 +585,6 @@ class PaymentService:
 
     def _loader(self, org_id: str, today: Optional[date] = None, *, recalc: bool = True) -> ls.LedgerLoader:
         return ls.LedgerLoader(self.db, str(org_id), today or ps.business_today(), recalc=recalc)
-
-    @staticmethod
-    def _status_settings(settings: PaymentSettings) -> ps.StatusSettings:
-        return ps.StatusSettings(expiring_days=settings.expiring_days, expiring_lessons=settings.expiring_lessons)
 
     # ------------------------------------------------------------ serialising
 

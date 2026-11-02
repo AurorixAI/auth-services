@@ -155,12 +155,6 @@ class PaymentRecord:
 
 
 @dataclass(frozen=True)
-class StatusSettings:
-    expiring_days: int = DEFAULT_EXPIRING_DAYS
-    expiring_lessons: int = DEFAULT_EXPIRING_LESSONS
-
-
-@dataclass(frozen=True)
 class StatusResult:
     status: str = NONE
     period_mode: Optional[str] = None
