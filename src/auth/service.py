@@ -3736,6 +3736,18 @@ class AuthService:
         ]
         return sorted(occurrences, key=lambda item: (item.occurrenceDate, item.startTime, item.groupName))
 
+    def _group_by_lesson_id(self, org_id: str, lesson_id: str) -> Optional[Group]:
+        """The (first) group of the centre whose recurring schedule holds the slot ``lesson_id`` - the ONE scan (wave C SV-12; the legacy ids depend on the group, so no JSONB lookup)."""
+        groups = self.db.query(Group).filter(Group.org_id == org_id).all()
+        return next(
+            (
+                group
+                for group in groups
+                if any(isinstance(slot, dict) and self._lesson_id_for_slot(group, slot) == lesson_id for slot in (group.schedule or []))
+            ),
+            None,
+        )
+
     def revise_recurring_lesson(
         self,
         org_id: str,
@@ -3747,18 +3759,7 @@ class AuthService:
     ) -> ScheduleLessonResponse:
         if not actor_id:
             raise PermissionError("Не удалось определить автора изменения")
-        groups = self.db.query(Group).filter(Group.org_id == org_id).all()
-        group = next(
-            (
-                item
-                for item in groups
-                if any(
-                    isinstance(slot, dict) and self._lesson_id_for_slot(item, slot) == lesson_id
-                    for slot in (item.schedule or [])
-                )
-            ),
-            None,
-        )
+        group = self._group_by_lesson_id(org_id, lesson_id)
         if not group:
             raise ValueError("Урок не найден")
         self._require_group_access(org_id, str(group.id), actor_id=actor_id, is_org_admin=is_org_admin)
@@ -3963,19 +3964,7 @@ class AuthService:
         therefore cannot be ended through this flow. It needs the existing
         single-occurrence cancellation path instead.
         """
-        groups = self.db.query(Group).filter(Group.org_id == org_id).all()
-        group = next(
-            (
-                candidate
-                for candidate in groups
-                if any(
-                    isinstance(slot, dict)
-                    and self._lesson_id_for_slot(candidate, slot) == lesson_id
-                    for slot in (candidate.schedule or [])
-                )
-            ),
-            None,
-        )
+        group = self._group_by_lesson_id(org_id, lesson_id)
         if not group:
             raise ValueError("Регулярное занятие не найдено")
         self._require_group_access(
@@ -4288,131 +4277,6 @@ class AuthService:
         raise ValueError(
             "Прямое редактирование расписания отключено: используйте перенос "
             "сегодняшнего урока или изменение постоянного расписания с датой начала"
-        )
-
-        groups = self.db.query(Group).filter(Group.org_id == org_id).all()
-        target_group = None
-        target_slot = None
-        slot_idx = -1
-
-        for g in groups:
-            slots = list(g.schedule or [])
-            for idx, s in enumerate(slots):
-                if isinstance(s, dict) and s.get("id") == lesson_id:
-                    target_group = g
-                    target_slot = s
-                    slot_idx = idx
-                    break
-            if target_group:
-                break
-
-        if not target_group or not target_slot:
-            raise ValueError("Урок не найден")
-        self._require_group_access(
-            org_id,
-            str(target_group.id),
-            actor_id=actor_id,
-            is_org_admin=is_org_admin,
-        )
-
-        # Validate that lesson is not moved to past time if on today
-        target_dow = req.dayOfWeek if req.dayOfWeek is not None else int(target_slot.get("dayOfWeek", 1))
-        target_start = req.startTime if req.startTime is not None else target_slot.get("startTime", "10:00")
-        target_end = req.endTime if req.endTime is not None else target_slot.get("endTime", "11:30")
-        target_start_minutes, _ = self._validate_lesson_time_range(target_start, target_end)
-        now = business_clock.business_now()
-        today_dow = now.weekday() + 1
-        if target_dow == today_dow:
-            current_minutes = now.hour * 60 + now.minute
-            if target_start_minutes < current_minutes:
-                raise ValueError(
-                    f"Нельзя изменять уже начавшийся урок (текущее время: {now.strftime('%H:%M')})"
-                )
-
-        # If group changed
-        if req.groupId and req.groupId != str(target_group.id):
-            new_group = (
-                self.db.query(Group)
-                .filter(Group.id == req.groupId, Group.org_id == org_id)
-                .first()
-            )
-            if not new_group:
-                raise ValueError("Новая группа не найдена")
-            self._require_group_access(
-                org_id,
-                str(new_group.id),
-                actor_id=actor_id,
-                is_org_admin=is_org_admin,
-            )
-
-            old_slots = [
-                s for s in (target_group.schedule or [])
-                if isinstance(s, dict) and s.get("id") != lesson_id
-            ]
-            target_group.schedule = old_slots
-            flag_modified(target_group, "schedule")
-
-            updated_slot = dict(target_slot)
-            if req.dayOfWeek is not None: updated_slot["dayOfWeek"] = req.dayOfWeek
-            if req.startTime is not None: updated_slot["startTime"] = req.startTime
-            if req.endTime is not None: updated_slot["endTime"] = req.endTime
-            if req.subject is not None: updated_slot["subject"] = req.subject
-            if req.room is not None: updated_slot["room"] = req.room
-            if req.format is not None: updated_slot["format"] = req.format
-            if req.color is not None: updated_slot["color"] = req.color
-            if req.topic is not None: updated_slot["topic"] = req.topic
-
-            new_slots = list(new_group.schedule or [])
-            new_slots.append(updated_slot)
-            new_group.schedule = new_slots
-            flag_modified(new_group, "schedule")
-            self.db.commit()
-
-            return ScheduleLessonResponse(
-                id=lesson_id,
-                groupId=str(new_group.id),
-                groupName=new_group.name,
-                classLevel=new_group.class_level or 5,
-                subject=updated_slot.get("subject", "Математика"),
-                dayOfWeek=int(updated_slot.get("dayOfWeek", 1)),
-                startTime=updated_slot.get("startTime", "10:00"),
-                endTime=updated_slot.get("endTime", "11:30"),
-                room=updated_slot.get("room", "Кабинет 204"),
-                format=updated_slot.get("format", "offline"),
-                color=updated_slot.get("color", "blue"),
-                topic=updated_slot.get("topic"),
-            )
-
-        # Same group
-        updated_slot = dict(target_slot)
-        if req.dayOfWeek is not None: updated_slot["dayOfWeek"] = req.dayOfWeek
-        if req.startTime is not None: updated_slot["startTime"] = req.startTime
-        if req.endTime is not None: updated_slot["endTime"] = req.endTime
-        if req.subject is not None: updated_slot["subject"] = req.subject
-        if req.room is not None: updated_slot["room"] = req.room
-        if req.format is not None: updated_slot["format"] = req.format
-        if req.color is not None: updated_slot["color"] = req.color
-        if req.topic is not None: updated_slot["topic"] = req.topic
-
-        slots = list(target_group.schedule or [])
-        slots[slot_idx] = updated_slot
-        target_group.schedule = slots
-        flag_modified(target_group, "schedule")
-        self.db.commit()
-
-        return ScheduleLessonResponse(
-            id=lesson_id,
-            groupId=str(target_group.id),
-            groupName=target_group.name,
-            classLevel=target_group.class_level or 5,
-            subject=updated_slot.get("subject", "Математика"),
-            dayOfWeek=int(updated_slot.get("dayOfWeek", 1)),
-            startTime=updated_slot.get("startTime", "10:00"),
-            endTime=updated_slot.get("endTime", "11:30"),
-            room=updated_slot.get("room", "Кабинет 204"),
-            format=updated_slot.get("format", "offline"),
-            color=updated_slot.get("color", "blue"),
-            topic=updated_slot.get("topic"),
         )
 
     def delete_lesson(

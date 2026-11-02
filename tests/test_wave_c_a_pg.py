@@ -354,3 +354,25 @@ def test_dm009_prefetched_answers_equal_the_per_request_answers(sw, monkeypatch)
     second = {who: sub_client(sw, who).get(f"{SUB}/mine").json() for who in ("A", "D")}       # ... and the per-request path reads the same from the settled state
     assert second == first
     assert len(first["D"]["assignedToMe"]) == 2                                              # three given, one of them cancelled
+
+
+# ---- SV-12: one scan for the group of a recurring lesson ------------------------------------------------------------------------------------------
+
+
+def test_sv12_both_flows_use_the_one_lookup_and_keep_their_messages(world):
+    from src.auth.schemas import ReviseRecurringLessonRequest, UpdateLessonRequest
+
+    org = str(world.org.id)
+    made = grow_centre(world, groups=3)
+    assert world.svc._group_by_lesson_id(org, "s1").id in {world.group.id, *[g.id for g in made]}          # the same lesson id in every group: the first found
+    assert world.svc._group_by_lesson_id(org, "no-such-lesson") is None
+    assert world.svc._group_by_lesson_id(str(world.other_org.id), "s1").id == world.foreign_group.id        # only the groups of the own centre
+    statements, _ = capture_queries(world, lambda: world.svc._group_by_lesson_id(org, "s1"))
+    assert len(statements) == 1
+    with pytest.raises(ValueError, match="Регулярное занятие не найдено"):
+        world.svc._require_recurring_lesson(org, "no-such-lesson", actor_id=str(world.admin.id), is_org_admin=True)
+    assert world.svc._require_recurring_lesson(org, "s1", actor_id=str(world.admin.id), is_org_admin=True).org_id == world.org.id
+    with pytest.raises(ValueError, match="Урок не найден"):
+        world.svc.revise_recurring_lesson(org, "no-such-lesson", ReviseRecurringLessonRequest.model_construct(), actor_id=str(world.admin.id), is_org_admin=True)
+    with pytest.raises(ValueError, match="Прямое редактирование расписания отключено"):
+        world.svc.update_lesson(org, "s1", UpdateLessonRequest.model_construct(), actor_id=str(world.admin.id), is_org_admin=True)
