@@ -110,22 +110,6 @@ def round_half_up(value: Fraction) -> int:
     return (2 * value.numerator + value.denominator) // (2 * value.denominator)
 
 
-def line_amount(fee: Optional[int], percent: Decimal, divisors: Iterable[int]) -> int:
-    """Amount of a line: ``fee * p / 100`` per lesson divided by that lesson's divisor, summed, rounded once.
-
-    ``divisors`` has one entry per lesson that is in the sum.
-    """
-    if not fee:
-        return 0
-    per_lesson = Fraction(fee) * Fraction(percent) / 100
-    total = Fraction(0)
-    for divisor in divisors:
-        if divisor < 1:
-            raise ValueError("divisor must be positive")
-        total += per_lesson / divisor
-    return round_half_up(total)
-
-
 def lessons_amount(percent: Decimal, lessons: Iterable[Tuple[Optional[int], int]]) -> int:
     """Amount of a line whose lessons may have DIFFERENT prices: ``sum(price * p / 100 / D)`` over ``(price, D)``,
     rounded once.  A lesson without a price (None) or with price 0 adds nothing."""

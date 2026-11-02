@@ -25,6 +25,11 @@ def line(states, *, fee=450_000, percent="50", divisor=12, **kwargs):
         percent=None if percent is None else Decimal(percent), **kwargs)
 
 
+def amount_of(fee, percent, divisors):
+    """The amount of a line whose lessons all have one price: ``lessons_amount`` over ``(fee, divisor)`` pairs."""
+    return pe.lessons_amount(percent, [(fee, d) for d in divisors])
+
+
 # ---- the partner's table (mandatory) ----------------------------------------------------------
 
 
@@ -32,7 +37,7 @@ def line(states, *, fee=450_000, percent="50", divisor=12, **kwargs):
 def test_partner_table(lessons, expected):
     got = line([pe.COUNTED] * lessons)
     assert got["amount"] == expected and got["counted"] == lessons and got["divisor"] == 12
-    assert pe.line_amount(450_000, Decimal("50"), [12] * lessons) == expected
+    assert amount_of(450_000, Decimal("50"), [12] * lessons) == expected
 
 
 def test_more_than_d_lessons_are_all_paid():
@@ -51,11 +56,11 @@ def test_half_goes_up_not_to_even():
 
 def test_a_twelfth_is_never_truncated_before_the_multiplication():
     # fee 1, 100 %, six lessons of 1/12 = exactly half a sum: Decimal(1)/12*6 would give 0.4999... and round DOWN
-    assert pe.line_amount(1, Decimal("100"), [12] * 6) == 1
+    assert amount_of(1, Decimal("100"), [12] * 6) == 1
     # 25 000 * 33.33 % / 12 * 7 = 4860.625 -> 4861 (one rounding of the whole line, not seven roundings)
-    assert pe.line_amount(25_000, Decimal("33.33"), [12] * 7) == 4861
+    assert amount_of(25_000, Decimal("33.33"), [12] * 7) == 4861
     # a line is rounded ONCE: 7 lessons of 694.375 each is not 7 * 694
-    assert pe.line_amount(100_001, Decimal("100"), [12] * 7) == round_half_up_ref(100_001 * 7, 12)
+    assert amount_of(100_001, Decimal("100"), [12] * 7) == round_half_up_ref(100_001 * 7, 12)
 
 
 def round_half_up_ref(numerator, denominator):
@@ -64,7 +69,7 @@ def round_half_up_ref(numerator, denominator):
 
 def test_a_divisor_must_be_positive():
     with pytest.raises(ValueError):
-        pe.line_amount(1000, Decimal("50"), [0])
+        amount_of(1000, Decimal("50"), [0])
 
 
 def test_zero_fee_zero_percent_zero_lessons():
@@ -76,7 +81,7 @@ def test_zero_fee_zero_percent_zero_lessons():
 
 def test_large_sums_stay_exact():
     fee = 9_999_999_999
-    assert pe.line_amount(fee, Decimal("99.99"), [7] * 31) == round_half_up_ref(fee * 9999 * 31, 100 * 100 * 7)
+    assert amount_of(fee, Decimal("99.99"), [7] * 31) == round_half_up_ref(fee * 9999 * 31, 100 * 100 * 7)
 
 
 # ---- divisor of a lesson -------------------------------------------------------------------------------
