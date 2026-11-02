@@ -598,3 +598,68 @@ def test_mn39_the_payroll_what_if_runs_before_the_group_lock_and_the_answer_is_t
     assert sheets and max(sheets) < lock                              # nothing of the payroll what-if is read while the lock is held
     assert out["impact"]["stale_payroll_sheets"] == dry["stale_payroll_sheets"] == 1                    # the same answer as the dry run (which takes no lock at all)
     assert out["impact"]["stale_sheets"] == dry["stale_sheets"] and out["impact"]["students_following"] == dry["students_following"] == 3
+
+
+# ---- LD-12(a): the settings of the centre on a payments route are the row the live-access check has read -----------------------------------------------
+
+
+def test_ld12_payments_switch_reads_the_centre_row_the_dependency_has_read(pg_session):
+    from sqlalchemy import event
+
+    from src.auth.dependencies import payments_enabled_for_admin
+    from src.models.auth import Organization
+    from tests.test_live_access_revocation import _live_world
+
+    w = _live_world(pg_session)
+    org = pg_session.get(Organization, w.org.id)
+    org.settings = {"payments": {"admin_can_manage": True}}
+    pg_session.commit()
+    del org
+    pg_session.expire_all()
+    seen = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        if "FROM organizations" in statement:
+            seen.append(statement)
+
+    engine = pg_session.get_bind()
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        w.resolve()                                                         # the live-access dependency
+        before_switch = len(seen)
+        enabled = payments_enabled_for_admin(pg_session, str(w.org.id))     # the payments switch: the row is already there
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    print(f"[wca] LD-12 centre reads on a payments route: dependency {before_switch}, switch {len(seen) - before_switch}")
+    assert enabled is True and len(seen) == before_switch
+    assert payments_enabled_for_admin(pg_session, str(uuid4())) is False and payments_enabled_for_admin(pg_session, "not-a-uuid") is False
+    pg_session.get(Organization, w.org.id).settings = {"payments": {"admin_can_manage": "yes"}}
+    assert payments_enabled_for_admin(pg_session, str(w.org.id)) is False        # exactly ``true`` only
+
+
+# ---- LD-16: the in-memory rate limit (Redis down) has a lock and a ceiling ---------------------------------------------------------------------------
+
+
+def test_ld16_memory_rate_limit_is_exact_under_threads_and_does_not_grow_without_end(monkeypatch):
+    import threading
+    import time
+
+    from src.api import rate_limit
+
+    monkeypatch.setattr(rate_limit, "_memory_store", rate_limit.defaultdict(list))
+    allowed = []
+
+    def hammer():
+        for _ in range(50):
+            allowed.append(rate_limit._check_memory("ip:one", 100, 60))
+
+    threads = [threading.Thread(target=hammer) for _ in range(8)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert allowed.count(True) == 100 and allowed.count(False) == 300       # 400 calls, a limit of 100: exactly 100 pass, whatever the interleaving
+    old = time.time() - rate_limit._MEMORY_LONGEST_WINDOW - 10
+    for i in range(rate_limit._MEMORY_STORE_SOFT_LIMIT + 50):
+        rate_limit._memory_store[f"flood:{i}"] = [old]                       # a flood of keys, none seen for more than a day
+    assert rate_limit._check_memory("ip:two", 5, 60) is True
+    assert len(rate_limit._memory_store) < 100                               # swept; the live keys stay
+    assert "ip:one" in rate_limit._memory_store and "ip:two" in rate_limit._memory_store

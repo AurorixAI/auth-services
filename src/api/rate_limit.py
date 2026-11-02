@@ -38,6 +38,9 @@ _memory_store: dict[str, list[float]] = defaultdict(list)
 _window_store: dict[str, Tuple[int, float]] = {}
 _window_lock = threading.Lock()
 _WINDOW_STORE_SOFT_LIMIT = 20_000
+_memory_lock = threading.Lock()                # wave C LD-16: the sync dependencies run in the thread pool
+_MEMORY_STORE_SOFT_LIMIT = 20_000
+_MEMORY_LONGEST_WINDOW = 86_400                # the longest period ``_parse_rate`` knows ("day")
 
 
 def _parse_rate(rate_string: str) -> Tuple[int, int]:
@@ -220,12 +223,16 @@ def _check_memory(key: str, max_requests: int, window: int) -> bool:
     """In-memory sliding window fallback."""
     now = time.time()
     cutoff = now - window
-    # Prune old entries
-    _memory_store[key] = [t for t in _memory_store[key] if t > cutoff]
-    if len(_memory_store[key]) >= max_requests:
-        return False
-    _memory_store[key].append(now)
-    return True
+    with _memory_lock:
+        # Prune old entries
+        _memory_store[key] = [t for t in _memory_store[key] if t > cutoff]
+        allowed = len(_memory_store[key]) < max_requests
+        if allowed:
+            _memory_store[key].append(now)
+        if len(_memory_store) > _MEMORY_STORE_SOFT_LIMIT:  # keep a flood of unknown keys (IPs) from growing memory while Redis is down
+            for stale in [k for k, hits in _memory_store.items() if not hits or hits[-1] <= now - _MEMORY_LONGEST_WINDOW]:
+                del _memory_store[stale]
+    return allowed
 
 
 # ---------------------------------------------------------------------------

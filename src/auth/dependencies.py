@@ -164,6 +164,7 @@ def get_current_active_user_payload(
             detail="Доступ центра приостановлен. Свяжитесь с ALGO",
         )
 
+    db.info["live_organisation"] = organisation  # wave C LD-12: a strong reference for the life of the request's session, so ``payments_enabled_for_admin`` finds the row in the identity map
     resolved["org_id"] = str(organisation.id)
     resolved["org_role"] = membership.org_role
     return resolved
@@ -247,7 +248,8 @@ def payments_enabled_for_admin(db: Session, org_id: str) -> bool:
         org_uuid = UUID(str(org_id))
     except (TypeError, ValueError):
         return False
-    settings = db.query(Organization.settings).filter(Organization.id == org_uuid).scalar()
+    organisation = db.get(Organization, org_uuid)  # the row the live-access check has just read (``db.info["live_organisation"]``): no second query on a payments route
+    settings = organisation.settings if organisation is not None else None
     block = settings.get("payments") if isinstance(settings, dict) else None
     return isinstance(block, dict) and block.get("admin_can_manage") is True
 
