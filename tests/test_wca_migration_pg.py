@@ -8,7 +8,13 @@ from alembic import command
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from tests.test_k2_1_migration_pg import BASE_URL, config, engine, version  # noqa: F401  (engine is a fixture)
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
+
+from src.core.db_timezone import utc_connect_args
+from tests.test_k2_1_migration_pg import BASE_URL, config, version
+
+DB_NAME = "a5_auth_wca_migrations"      # its OWN database: the fixture of the K2-1 file names one database for every file that imports it, and two files on two workers drop it under each other
 
 REVISION, BEFORE = "wca1b2c3d4e5", "wb4a1b2c3d4e5"
 INDEXES = {
@@ -17,6 +23,23 @@ INDEXES = {
     "ix_org_members_user": ("organization_members", "(user_id)"),
 }
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
+
+
+@pytest.fixture
+def engine(monkeypatch):
+    base = make_url(BASE_URL)
+    admin = create_engine(base.set(database="postgres"), isolation_level="AUTOCOMMIT", connect_args=utc_connect_args(BASE_URL))
+    with admin.connect() as c:
+        c.execute(text(f"DROP DATABASE IF EXISTS {DB_NAME} WITH (FORCE)"))
+        c.execute(text(f"CREATE DATABASE {DB_NAME}"))
+    url = base.set(database=DB_NAME).render_as_string(hide_password=False)
+    monkeypatch.setenv("DATABASE_URL", url)
+    eng = create_engine(url, connect_args=utc_connect_args(url))
+    yield eng
+    eng.dispose()
+    with admin.connect() as c:
+        c.execute(text(f"DROP DATABASE IF EXISTS {DB_NAME} WITH (FORCE)"))
+    admin.dispose()
 
 
 def definitions(engine):
