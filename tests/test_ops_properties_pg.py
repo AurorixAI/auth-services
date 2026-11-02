@@ -34,14 +34,8 @@ def check_invariants(w, versions):
         if group.status == "archived" and w.db.query(GroupAudit).filter_by(group_id=group.id, action="group_archived").first():
             assert w.db.query(StudentGroup).filter_by(group_id=group.id, is_active=True).count() == 0
         # INV-O2-1: an active group has an active teacher member
-    from tests.test_ops_o2_staff_pg import audits  # noqa: F401
-    import importlib.util
-    from pathlib import Path
-
-    spec = importlib.util.spec_from_file_location("report_inactive", Path(__file__).resolve().parents[1] / "scripts" / "report_inactive_group_teachers.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert [v for v in module.find_violations(w.db) if v["org_id"] == str(w.org.id)] == []
+    from tests.test_ops_o2_staff_pg import audits, inactive_teacher_groups  # noqa: F401
+    assert [v for v in inactive_teacher_groups(w.db) if v["org_id"] == str(w.org.id)] == []
     rows = w.db.query(GroupAttendance).filter_by(org_id=w.org.id).all()
     for row in rows:
         key = row.id

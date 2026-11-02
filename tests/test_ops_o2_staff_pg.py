@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from src.auth.dependencies import get_current_active_user_payload
 from src.auth.service import hash_password
-from src.models.auth import Group, GroupAttendance, GroupAudit, MemberAudit, User
+from src.models.auth import Group, GroupAttendance, GroupAudit, MemberAudit, OrganizationMember, User
 
 from tests.ops_helpers import (  # noqa: F401  (fixtures)
     build_d0, clock, client, code_of, exams, fixture, history_row, needs_pg, new_group, new_slot, new_student, pg_session, run_parallel,
@@ -29,6 +29,20 @@ def w(pg_session, clock):
 
 def mid(w, key):
     return str(w.ids("member_" + key))
+
+
+def inactive_teacher_groups(db):
+    """INV-O2-1: the ACTIVE groups whose teacher is not an active member any more (the old delete left the groups with a removed teacher)."""
+    rows = (
+        db.query(Group, User, OrganizationMember)
+        .join(User, User.id == Group.teacher_id)
+        .outerjoin(OrganizationMember, (OrganizationMember.org_id == Group.org_id) & (OrganizationMember.user_id == Group.teacher_id))
+        .filter(Group.status == "active")
+        .all()
+    )
+    return [{"org_id": str(group.org_id), "group_id": str(group.id), "group": group.name, "teacher_id": str(user.id),
+             "teacher": user.email, "member": "none" if member is None else ("active" if member.is_active else "removed")}
+            for group, user, member in rows if member is None or not member.is_active or user.is_active is False]
 
 
 def audits(w, key, action=None):
@@ -238,14 +252,8 @@ def test_members_list_by_status(w):
 
 
 def test_inv_o2_1_the_legacy_report_lists_groups_with_a_removed_teacher(w):
-    """[INV-O2-1] Nothing in the new operations leaves an active group with a removed teacher; the script lists such legacy rows."""
-    import importlib.util
-    from pathlib import Path
-
-    spec = importlib.util.spec_from_file_location("report_inactive", Path(__file__).resolve().parents[1] / "scripts" / "report_inactive_group_teachers.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    mine = lambda: [v for v in module.find_violations(w.db) if v["org_id"] == str(w.org.id)]  # noqa: E731
+    """[INV-O2-1] Nothing in the new operations leaves an active group with a removed teacher; the helper finds such legacy rows."""
+    mine = lambda: [v for v in inactive_teacher_groups(w.db) if v["org_id"] == str(w.org.id)]  # noqa: E731
     assert mine() == []
     client(w, "owner").delete(M.format(mid=mid(w, "A")))                      # refused: A has groups
     assert mine() == []
