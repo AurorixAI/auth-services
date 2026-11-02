@@ -17,7 +17,7 @@ A day off cancels what EXISTS when it is given.  A WEEKLY lesson that appears la
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from uuid import UUID
