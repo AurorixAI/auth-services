@@ -580,3 +580,21 @@ def test_mn16_receipts_items_run_only_the_memberships_of_the_page(pg_session, cl
     for column, key in (("received", "received"), ("to_past_debt", "to_past_debt"), ("to_current", "to_current"), ("to_advance", "to_advance")):
         listed = own.get(url.format(column)).json()
         assert sum(i["column_amount"] for i in listed["items"]) == report["totals"][key], column
+
+
+# ---- MN-39: the payroll what-if of a price runs before the lock of the group ---------------------------------------------------------------------------
+
+
+def test_mn39_the_payroll_what_if_runs_before_the_group_lock_and_the_answer_is_the_same(world):
+    from tests.test_group_price_pg import put_price, saved_flat_month
+
+    m, saved = saved_flat_month(world)
+    dry = put_price(world, 450_000, valid_from=m.d(11), dry=True)["impact"]
+    statements, out = capture_queries(world, lambda: put_price(world, 450_000, valid_from=m.d(11)))
+    flat = [" ".join(s.split()) for s in statements]
+    lock = next(i for i, s in enumerate(flat) if "FROM groups" in s and "FOR NO KEY UPDATE" in s)
+    sheets = [i for i, s in enumerate(flat) if "FROM payroll_sheets" in s]
+    print(f"[wca] MN-39 price backdated: {len(flat)} SQL, the lock is statement {lock}, payroll_sheets statements at {sheets}")
+    assert sheets and max(sheets) < lock                              # nothing of the payroll what-if is read while the lock is held
+    assert out["impact"]["stale_payroll_sheets"] == dry["stale_payroll_sheets"] == 1                    # the same answer as the dry run (which takes no lock at all)
+    assert out["impact"]["stale_sheets"] == dry["stale_sheets"] and out["impact"]["students_following"] == dry["students_following"] == 3

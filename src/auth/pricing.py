@@ -973,8 +973,13 @@ class PricingService:
         if note is not None and len(note) > MAX_NOTE:
             raise PriceInvalid(f"Примечание — не более {MAX_NOTE} символов")
         try:
-            group = self._group(org_id, group_id, lock=not dry_run)
+            # wave C MN-39: the what-if of the payroll sheets (up to 2 x N months of ``_collect``) only READS the memberships and the saved sheets and goes into an
+            # information counter (and the audit snapshot) - it runs BEFORE the lock of the group, so the writers of this group do not wait for it.  The money impact below
+            # reads what the locks protect and stays after them (m4).
+            group = self._group(org_id, group_id)
             impact = self.impact(org_id, group, amount, valid_from, today, owner_view=owner_view)
+            if not dry_run:
+                group = self._group(org_id, group_id, lock=True)
             book = load_books(self.db, [group.id], []).group_book(group.id).with_step(valid_from, amount)
             money_ids = self._money_ids(org_id, group_id=group.id)
             if not dry_run:       # m4: the family locks (the memberships of the group, ascending id - the order every money write takes) BEFORE the what-if
