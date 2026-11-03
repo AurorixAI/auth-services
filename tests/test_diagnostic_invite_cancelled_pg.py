@@ -14,7 +14,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
-from src.api.database import get_db as internal_get_db
 from src.api.internal_router import router as internal_router
 from src.auth.service import AuthService
 from src.core.config import get_settings
@@ -74,7 +73,6 @@ def public_client(w):
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(internal_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = lambda: w.db
-    app.dependency_overrides[internal_get_db] = lambda: w.db
     return TestClient(app)
 
 

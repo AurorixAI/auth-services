@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.api.database import get_db
+from src.core.database import get_db
 from src.api.internal_router import router as internal_router
 from src.auth import diagnostic_skill_states as skills
 from src.auth.diagnostic_skill_states import apply_skill_states, mastery_for, status_for
