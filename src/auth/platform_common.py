@@ -11,6 +11,7 @@ from fastapi import Request
 from src.api.rate_limit import client_ip
 
 from .platform_errors import PlatformError
+from .sql_text import contains, like_escape  # noqa: F401  (moved to sql_text: the old import path stays for the platform routers)
 from .platform_validation import Form
 
 DEFAULT_PAGE_SIZE = 25
@@ -30,14 +31,6 @@ def iso(value: Optional[datetime]) -> Optional[str]:
     if value.tzinfo is not None:
         value = value.astimezone(timezone.utc).replace(tzinfo=None)
     return value.replace(microsecond=0).isoformat() + "Z"
-
-
-def like_escape(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
-def contains(value: str) -> str:
-    return f"%{like_escape(value.strip())}%"
 
 
 def client_meta(request: Optional[Request]) -> tuple[Optional[str], Optional[str]]:
