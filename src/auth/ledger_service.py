@@ -44,6 +44,7 @@ from . import business_clock as bc
 from . import membership_periods
 from . import payment_status as ps
 from . import pricing
+from .sql_text import contains
 
 logger = logging.getLogger(__name__)
 
@@ -225,8 +226,7 @@ def _days(first: date, last: date) -> List[date]:
     return [first + timedelta(days=i) for i in range((last - first).days + 1)]
 
 
-def _like(term: str) -> str:
-    return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+_like = contains          # one LIKE helper for the service (sql_text.py); payments_income takes it from here
 
 
 class LedgerLoader:

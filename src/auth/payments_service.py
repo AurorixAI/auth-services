@@ -361,10 +361,6 @@ def _sum(amount: int) -> str:
     return tx.money(amount)
 
 
-def _like(term: str) -> str:
-    return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-
-
 def _years_ago(day: date, years: int) -> date:
     return ps._years_ago(day, years)
 
