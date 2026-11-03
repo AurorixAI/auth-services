@@ -121,6 +121,7 @@ from .ops_schemas import (  # noqa: E402
 from . import attendance_rules, business_clock, exam_release, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
 from . import password_rules, staff_lifecycle, student_views  # noqa: E402
 from .roster_names import student_full_name  # noqa: E402
+from .sql_text import contains  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -1346,8 +1347,7 @@ class AuthService:
             # query such as "Иван Петров" finds the student too.
             for word in search.split():
                 # "%" and "_" typed by the user are plain characters, not wildcards.
-                escaped = word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                pattern = f"%{escaped}%"
+                pattern = contains(word)
                 matches = (Student.first_name.ilike(pattern, escape="\\")) | (
                     Student.last_name.ilike(pattern, escape="\\")
                 )

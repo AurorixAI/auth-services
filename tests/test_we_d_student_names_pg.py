@@ -47,3 +47,11 @@ def test_a_former_student_of_the_journal_has_the_same_name(world):
                                          actor_id=str(w.admin.id), is_org_admin=True)
     former = [x for x in journal.historicalStudents if x["id"] == str(s1.id)]
     assert former and former[0]["full_name"] == "Ученик"
+
+
+@pytest.mark.parametrize("typed,found", [("%", 0), ("_", 0), ("\\", 0), ("кари", 1), ("КАРИМ%", 0), ("N13-001", 1), ("N13_001", 0)])
+def test_the_search_box_treats_masks_as_plain_characters(world, typed, found):
+    """The student search builds its pattern with ``sql_text.contains`` (E-D): «%» and «_» are characters, not masks."""
+    w = world
+    page, total = w.svc.list_students_page(str(w.org.id), search=typed, actor_id=str(w.admin.id), is_org_admin=True)
+    assert total == found
