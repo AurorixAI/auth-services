@@ -160,14 +160,20 @@ def lesson_start_as_naive_utc(lesson_date: date, start_minutes: int) -> datetime
 
 
 def membership_covers_instant(
-    joined_at: Optional[datetime], left_at: Optional[datetime], instant: datetime
+    joined_at: Optional[datetime], left_at: Optional[datetime], instant: datetime, archived_at: Optional[datetime] = None
 ) -> bool:
     """Python twin of the SQL rule in ``AuthService._attendance_roster_at``.
 
     ``joined_at <= instant`` (a missing ``joined_at`` counts) and
-    ``left_at is None or left_at > instant``; all naive UTC.
+    ``left_at is None or left_at > instant``, and the student was not in the
+    archive at ``instant`` (``archived_at`` is None or later; the twin of
+    ``student_not_archived_at``); all naive UTC.
     """
-    return (joined_at is None or joined_at <= instant) and (left_at is None or left_at > instant)
+    return (
+        (joined_at is None or joined_at <= instant)
+        and (left_at is None or left_at > instant)
+        and (archived_at is None or archived_at > instant)
+    )
 
 
 # ============================================================================
@@ -4351,7 +4357,7 @@ class AuthService:
         # A never-started lesson of a group nobody belonged to at that moment
         # is not a lesson that was missed (the group had no students yet).
         # One query for every candidate group, not one per group.
-        memberships_by_group: Dict[Any, list[tuple[Optional[datetime], Optional[datetime]]]] = {}
+        memberships_by_group: Dict[Any, list[tuple[Optional[datetime], Optional[datetime], Optional[datetime]]]] = {}
         if group_ids:
             window_start_utc = lesson_start_as_naive_utc(reconciliation_from, 0)
             # Every STAY counts (a student who came back has several), still one query for all the groups.
@@ -4474,8 +4480,8 @@ class AuthService:
                     date.fromisoformat(occurrence_date), start_minutes
                 )
                 if not any(
-                    membership_covers_instant(joined_at, left_at, lesson_start)
-                    for joined_at, left_at in memberships_by_group.get(group.id, ())
+                    membership_covers_instant(joined_at, left_at, lesson_start, archived_at)
+                    for joined_at, left_at, archived_at in memberships_by_group.get(group.id, ())
                 ):
                     continue  # empty roster at the lesson start: nothing to reconcile
                 actions.append(

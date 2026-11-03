@@ -35,10 +35,10 @@ from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from sqlalchemy import and_, exists, or_
+from sqlalchemy import and_, case, exists, or_
 from sqlalchemy.orm import Session
 
-from src.models.auth import StudentGroup, StudentGroupPeriod
+from src.models.auth import Student, StudentGroup, StudentGroupPeriod
 
 from . import business_clock as bc
 
@@ -151,23 +151,26 @@ def member_at(instant: datetime):
 
 def group_period_spans(
     db: Session, group_ids: Sequence[UUID], *, not_before: datetime
-) -> Dict[UUID, List[Tuple[datetime, Optional[datetime]]]]:
-    """``{group_id: [(joined_at, left_at), ...]}`` of every period of the groups that is open or ended after
-    ``not_before`` - ONE query for all the groups (the missed-lesson discovery pass)."""
-    spans: Dict[UUID, List[Tuple[datetime, Optional[datetime]]]] = {}
+) -> Dict[UUID, List[Tuple[datetime, Optional[datetime], Optional[datetime]]]]:
+    """``{group_id: [(joined_at, left_at, archived_at), ...]}`` of every period of the groups that is open or ended after
+    ``not_before`` - ONE query for all the groups (the missed-lesson discovery pass).  ``archived_at``: when the student went into the
+    archive (``None``: he is not in it, or the moment is unknown) - the same question ``student_archive.student_not_archived_at`` asks in SQL."""
+    spans: Dict[UUID, List[Tuple[datetime, Optional[datetime], Optional[datetime]]]] = {}
     if not group_ids:
         return spans
+    archived_at = case((Student.status == "archived", Student.archived_at), else_=None)    # "archived" = student_archive.ARCHIVED (that module imports this one)
     rows = (
-        db.query(StudentGroup.group_id, StudentGroupPeriod.joined_at, StudentGroupPeriod.left_at)
+        db.query(StudentGroup.group_id, StudentGroupPeriod.joined_at, StudentGroupPeriod.left_at, archived_at)
         .join(StudentGroupPeriod, StudentGroupPeriod.membership_id == StudentGroup.id)
+        .join(Student, Student.id == StudentGroup.student_id)
         .filter(
             StudentGroup.group_id.in_(list(group_ids)),
             or_(StudentGroupPeriod.left_at.is_(None), StudentGroupPeriod.left_at > not_before),
         )
         .all()
     )
-    for group_id, joined_at, left_at in rows:
-        spans.setdefault(group_id, []).append((joined_at, left_at))
+    for group_id, joined_at, left_at, archived_moment in rows:
+        spans.setdefault(group_id, []).append((joined_at, left_at, archived_moment))
     return spans
 
 
