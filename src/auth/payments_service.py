@@ -269,6 +269,12 @@ class RangeTooLong(PaymentInvalid):
     code = "RANGE_TOO_LONG"
 
 
+class InvalidPeriod(PaymentInvalid):
+    """MN-11: the end of a period is before its start - the same 422 ``{code, message}`` on every payments report."""
+
+    code = "INVALID_PERIOD"
+
+
 class StudentArchived(PaymentConflict):
     """The student left the centre: money is not entered on his closed memberships until he is brought back
     (a payment can still be voided, and the history can be read)."""

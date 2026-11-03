@@ -46,11 +46,22 @@ from .payments_schemas import (
     StatementRow,
     StatementSummary,
 )
-from .payments_service import PaymentService, RangeTooLong, PaymentInvalid
+from .payments_service import InvalidPeriod, PaymentService, RangeTooLong, PaymentInvalid
 
 MAX_RANGE_DAYS = 366
 MAX_DAY_SERIES_DAYS = 92
 BUCKET_COLUMN = {bl.PAST_DEBT: "to_past_debt", bl.CURRENT: "to_current", bl.ADVANCE: "to_advance"}
+
+
+def validate_range(date_from: date, date_to: date, group_by: Optional[str] = None) -> None:
+    """The one check of a period for every payments report (receipts, income, journal): order, length, and ``group_by=day`` ≤ 92 days (MN-11)."""
+    if date_to < date_from:
+        raise InvalidPeriod("Конец периода раньше начала")
+    days = (date_to - date_from).days + 1
+    if days > MAX_RANGE_DAYS:
+        raise RangeTooLong(f"Период не длиннее {MAX_RANGE_DAYS} дней")
+    if group_by == "day" and days > MAX_DAY_SERIES_DAYS:
+        raise RangeTooLong(f"Разбивка по дням — не длиннее {MAX_DAY_SERIES_DAYS} дней")
 
 
 def _person(user: Optional[User]) -> Optional[str]:
@@ -293,16 +304,6 @@ class PaymentsReports:
         entries = loader.load(scope="all")
         return loader, {e.membership.id: e for e in entries}
 
-    @staticmethod
-    def _validate_range(date_from: date, date_to: date, group_by: Optional[str] = None) -> None:
-        if date_to < date_from:
-            raise PaymentInvalid("Конец периода раньше начала")
-        days = (date_to - date_from).days + 1
-        if days > MAX_RANGE_DAYS:
-            raise RangeTooLong(f"Период не длиннее {MAX_RANGE_DAYS} дней")
-        if group_by == "day" and days > MAX_DAY_SERIES_DAYS:
-            raise RangeTooLong(f"Разбивка по дням — не длиннее {MAX_DAY_SERIES_DAYS} дней")
-
     def _records(self, org_id: str, date_from: date, date_to: date, method: Optional[str],
                  group_id: Optional[UUID], teacher_id: Optional[UUID]):
         """Live payments / write-offs / refunds of the range with the filters (group / teacher of the membership)."""
@@ -342,7 +343,7 @@ class PaymentsReports:
         self, org_id: str, date_from: date, date_to: date, *, group_by: str = "day", method: Optional[str] = None,
         group_id: Optional[UUID] = None, teacher_id: Optional[UUID] = None,
     ) -> ReceiptsReport:
-        self._validate_range(date_from, date_to, group_by)
+        validate_range(date_from, date_to, group_by)
         loader, entries = self._everything(org_id)
         payments, writeoffs, refunds = self._records(org_id, date_from, date_to, method, group_id, teacher_id)
         totals: Dict[str, int] = defaultdict(int)
@@ -450,7 +451,7 @@ class PaymentsReports:
         method: Optional[str] = None, group_id: Optional[UUID] = None, teacher_id: Optional[UUID] = None, limit: int = 50,
         offset: int = 0,
     ) -> ReceiptItems:
-        self._validate_range(date_from, date_to)
+        validate_range(date_from, date_to)
         payments, writeoffs, refunds = self._records(org_id, date_from, date_to, method, group_id, teacher_id)
         # wave C MN-16: only the memberships of THESE records are run (a ledger of a membership does not depend on the other memberships of the centre;
         # the chains of transfers the loader follows itself) - not the whole centre for a page of 50 lines
