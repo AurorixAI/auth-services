@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 
-from src.api.database import get_db
+from src.core.database import get_db
 from src.auth.diagnostic_skill_states import apply_skill_states
 from src.auth.service import AuthService
 from src.core.config import get_settings

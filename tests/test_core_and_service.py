@@ -972,16 +972,16 @@ class TestSchemaValidators:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# src/api/database.py — get_db generator
+# src/core/database.py — get_db generator (the only one: the internal callbacks use it too, LD-04)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestApiDatabase:
-    def test_api_get_db_yields_and_closes(self):
+class TestCoreDatabase:
+    def test_core_get_db_yields_and_closes(self):
         from unittest.mock import patch, MagicMock
-        from src.api.database import get_db
+        from src.core.database import get_db
         mock_session = MagicMock()
-        with patch("src.api.database.SessionLocal", return_value=mock_session):
+        with patch("src.core.database.SessionLocal", return_value=mock_session):
             gen = get_db()
             db = next(gen)
             assert db is mock_session

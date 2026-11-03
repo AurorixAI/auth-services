@@ -126,26 +126,6 @@ def test_the_service_engine_is_built_with_the_pin(monkeypatch):
     assert recorded["connect_args"] == {"options": "-c timezone=UTC"}
 
 
-def test_the_internal_router_engine_is_pinned_too(monkeypatch):
-    """``src.api.database`` is a second engine (internal routes): load a private copy of it and read what it asks for."""
-    import importlib.util
-    import sqlalchemy
-
-    from src.api import database as shared
-
-    recorded = {}
-
-    def fake_create_engine(url, **kwargs):
-        recorded.update(url=url, **kwargs)
-        return create_engine("sqlite://")
-
-    monkeypatch.setattr(sqlalchemy, "create_engine", fake_create_engine)
-    monkeypatch.setenv("DATABASE_URL", PG)
-    spec = importlib.util.spec_from_file_location("api_database_probe", shared.__file__)
-    spec.loader.exec_module(importlib.util.module_from_spec(spec))
-    assert recorded["connect_args"] == {"options": "-c timezone=UTC"}
-
-
 # ---- on a real PostgreSQL ------------------------------------------------------
 
 

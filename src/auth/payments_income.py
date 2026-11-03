@@ -24,6 +24,7 @@ from src.models.auth import Group, Organization, Student, StudentPayment, Studen
 
 from . import billing_ledger as bl
 from . import ledger_service as ls
+from .sql_text import contains
 from . import payment_status as ps
 from . import payments_texts as tx
 from . import payments_journal_xlsx as jx
@@ -49,17 +50,12 @@ from .payments_income_schemas import (
     PaymentsJournal,
 )
 from .export_safety import FORMULA_STARTS, csv_safe_row  # noqa: F401  (one rule for every export; re-exported for the callers of this module)
-from .payments_reports import MAX_RANGE_DAYS, PaymentsReports, method_clause
-from .payments_service import PaymentInvalid, PaymentService, RangeTooLong
+from .payments_reports import MAX_DAY_SERIES_DAYS, PaymentsReports, method_clause, validate_range
+from .payments_service import InvalidPeriod, PaymentInvalid, PaymentService
 
-MAX_DAY_SERIES_DAYS = 92
 MAX_JOURNAL_PAGE = 100
 MAX_EXPORT_ROWS = 20_000
 MAX_CHAIN_DEPTH = 8                                       # corrections of a correction of a correction ...: the history goes this far back
-
-
-class InvalidPeriod(PaymentInvalid):
-    code = "INVALID_PERIOD"
 
 
 class ExportTooLong(PaymentInvalid):
@@ -97,13 +93,6 @@ def strip_parts(amounts: Dict[str, int], *, only_nonzero: bool) -> List[IncomeSt
     return [IncomeStripPart(kind=k, label=tx.INCOME_KIND_LABELS[k], amount=amounts.get(k, 0))
             for k in _KIND_ORDER if amounts.get(k, 0) or not only_nonzero]
 
-
-
-def validate_range(first: date, last: date) -> None:
-    if last < first:
-        raise InvalidPeriod("Конец периода раньше начала")
-    if (last - first).days + 1 > MAX_RANGE_DAYS:
-        raise RangeTooLong(f"Период не длиннее {MAX_RANGE_DAYS} дней")
 
 
 # ============================================================================================================
@@ -571,7 +560,7 @@ class IncomeReports:
             query = query.filter(StudentPayment.created_by == created_by)
         words = (q or "").split()
         for word in words:
-            pattern = ls._like(word)
+            pattern = contains(word)
             conds = [Student.first_name.ilike(pattern, escape="\\"), Student.last_name.ilike(pattern, escape="\\"),
                      Student.display_id.ilike(pattern, escape="\\")]
             if len(words) == 1 and word.isascii() and word.isdigit() and len(word) <= 9:

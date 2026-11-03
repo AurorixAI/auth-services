@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from src.core.db_timezone import utc_connect_args
 from sqlalchemy.orm import sessionmaker
 
-from src.api.database import get_db
+from src.core.database import get_db
 from src.api.internal_router import router as internal_router
 from src.auth.diagnostic_level import (
     classify_theta, level_fields, normalize_level_payload, theta_to_category, theta_to_status,

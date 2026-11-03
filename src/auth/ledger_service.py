@@ -44,6 +44,7 @@ from . import business_clock as bc
 from . import membership_periods
 from . import payment_status as ps
 from . import pricing
+from .sql_text import contains
 
 logger = logging.getLogger(__name__)
 
@@ -225,10 +226,6 @@ def _days(first: date, last: date) -> List[date]:
     return [first + timedelta(days=i) for i in range((last - first).days + 1)]
 
 
-def _like(term: str) -> str:
-    return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-
-
 class LedgerLoader:
     """Loads the facts of a set of memberships (and of the memberships linked to them by transfers) and runs the ledger."""
 
@@ -320,7 +317,7 @@ class LedgerLoader:
         if teacher_id:
             query = query.filter(Group.teacher_id == teacher_id)
         for word in (search or "").split():
-            pattern = _like(word)
+            pattern = contains(word)
             query = query.filter(
                 or_(
                     Student.first_name.ilike(pattern, escape="\\"),

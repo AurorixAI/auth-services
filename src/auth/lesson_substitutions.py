@@ -53,6 +53,7 @@ from .models import (
     User,
 )
 from .one_off_purpose import MOVED, OneOffPurpose, apply_marks, copy_fields, one_off_of
+from .sql_text import contains
 from .ops_rules import OpsError, conflict, forbidden, hhmm_to_minutes, normalize_room, not_found, short_name, unprocessable
 from .membership_periods import periods_by_membership
 from .student_archive import student_not_archived
@@ -784,10 +785,11 @@ class SubstitutionsBase:
         if urgent:
             q = q.filter(Req.status == PENDING, Req.starts_at > now, Req.starts_at < now + timedelta(minutes=R.URGENT_MINUTES))
         if search:
-            like = f"%{search.strip()}%"
+            like = contains(search)               # MN-09: `%` and `_` of the typed text are letters, not masks
             substitute = aliased(User)
             q = q.join(Group, Group.id == Req.group_id).join(User, User.id == Req.requester_id).outerjoin(substitute, substitute.id == Req.substitute_id).filter(
-                or_(Group.name.ilike(like), User.last_name.ilike(like), User.first_name.ilike(like), substitute.last_name.ilike(like), substitute.first_name.ilike(like)))
+                or_(Group.name.ilike(like, escape="\\"), User.last_name.ilike(like, escape="\\"), User.first_name.ilike(like, escape="\\"),
+                    substitute.last_name.ilike(like, escape="\\"), substitute.first_name.ilike(like, escape="\\")))
         total = q.count()
         if status == "pending":
             q = q.order_by((Req.starts_at <= now).desc(), Req.starts_at, Req.id)
