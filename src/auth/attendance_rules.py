@@ -19,6 +19,7 @@ from . import business_clock as bc
 from . import exam_bridge
 from .lesson_teachers import LessonTeachers, TeacherBook, effective_teacher
 from .models import Group, GroupAttendance, GroupAttendanceAudit, User
+from .roster_names import student_full_name
 from .ops_rules import (
     conflict,
     forbidden,
@@ -270,7 +271,7 @@ class AttendanceRules:
             if s is None:
                 continue
             roster.append({"id": sid, "first_name": s.first_name, "last_name": s.last_name,
-                           "full_name": f"{s.last_name or ''} {s.first_name or ''}".strip() or "Ученик", "display_id": s.display_id, "class_level": s.class_level})
+                           "full_name": student_full_name(s), "display_id": s.display_id, "class_level": s.class_level})
 
         def only(mapping):
             return {k: v for k, v in (mapping or {}).items() if k in allowed}

@@ -40,6 +40,7 @@ from src.models.auth import (
 )
 
 from . import business_clock as bc
+from .roster_names import student_full_name
 from .sql_text import contains
 
 logger = logging.getLogger(__name__)
@@ -756,9 +757,7 @@ class AttendanceExcuseService:
         items: List[ExcuseItem] = []
         for excuse, att, group, student in rows:
             teacher_uuid = att.teacher_id or group.teacher_id
-            full_name = (
-                f"{student.last_name or ''} {student.first_name or ''}".strip() if student else ""
-            ) or "Ученик"
+            full_name = student_full_name(student)
             items.append(
                 ExcuseItem(
                     id=str(excuse.id),
