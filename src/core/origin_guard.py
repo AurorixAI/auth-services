@@ -19,13 +19,15 @@ is deliberate (LESSONS 68): on 30.10 the sign-out broke because prod's ``CORS_OR
 served from must work even if the CORS list is one step behind. The landing (``algolab.me``) is never in either list (K3).
 The console has its own wall (``platform_security.console_guard``: the console host's origins) with the same decision.
 
-**Exempt routes** (``EXEMPT``) are the ones that carry no ambient cookie and are protected otherwise; each has its reason here and the guard test
-(``tests/test_ad2_origin_guard_pg.py``) fails on any other mutating route that lets a foreign Origin through.
+**Exempt routes** (``EXEMPT``) are listed ONE BY ONE (method + path), never by a prefix: they carry no ambient cookie and are protected otherwise; each has
+its reason here. A new route under ``/api/v1/internal`` or ``/api/v1/public`` is judged like any other until someone adds it here on purpose, and the guard
+test (``tests/test_ad2_origin_guard.py``) fails on it with that question, and on any exempt route whose dependencies read a cabinet cookie.
 """
 from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Callable, Mapping, Optional
 from urllib.parse import urlsplit
 
@@ -40,12 +42,27 @@ MUTATING_METHODS = frozenset(("POST", "PUT", "PATCH", "DELETE"))
 BAD_ORIGIN_CODE = "bad_origin"
 BAD_ORIGIN_TEXT = "Запрос должен приходить с сайта ALGO"
 
-# path prefix -> why a foreign Origin is not judged there. A prefix matches itself and everything under ``prefix/``.
+_INTERNAL = "service-to-service (diagnostic-service), not a browser: protected by INTERNAL_SERVICE_TOKEN (router-level dependency), no cookie is read"
+_PUBLIC = (
+    "the demo request of the landing (algolab.me, a foreign origin BY DESIGN: it is never in CORS_ORIGINS): anonymous, no cookie, protected by Turnstile + "
+    "rate limits + the request id (idempotency) / the signed details token; it changes nothing of a visitor's own"
+)
+# (METHOD, path template) -> why a foreign Origin is not judged there. ``{name}`` matches one path segment.
 EXEMPT = {
-    "/api/v1/internal": "service-to-service (diagnostic/exam/content services), not a browser: protected by INTERNAL_SERVICE_TOKEN, no cookie is read",
-    "/api/v1/public": "the demo request of the landing (algolab.me, a foreign origin BY DESIGN: it is never in CORS_ORIGINS): anonymous, no cookie, "
-    "protected by Turnstile + rate limits + the request id (idempotency); it changes nothing of a visitor's own",
+    ("POST", "/api/v1/internal/diagnostic/{code}/start"): _INTERNAL,
+    ("POST", "/api/v1/internal/diagnostic/{code}/complete"): _INTERNAL,
+    ("POST", "/api/v1/public/demo-requests"): _PUBLIC,
+    ("PATCH", "/api/v1/public/demo-requests/{request_id}"): _PUBLIC,
 }
+# Prefixes whose mutating routes must ALL be listed above (the guard test asks); nothing else is exempt by location.
+EXEMPT_AREAS = ("/api/v1/internal", "/api/v1/public")
+
+
+def _template_regex(path: str) -> "re.Pattern":
+    return re.compile("^" + re.sub(r"\\\{[^/]+?\\\}", "[^/]+", re.escape(path)) + "$")
+
+
+_EXEMPT_PATTERNS = tuple((method, _template_regex(path)) for method, path in EXEMPT)
 # The platform console answers only on the console host and checks its own origins in ``platform_security.console_guard`` (a wrong host is 404 FIRST, so
 # the console does not reveal itself to a probe from a foreign page); the middleware leaves the section to that dependency.
 PLATFORM_PREFIX = "/api/v1/platform"
@@ -79,12 +96,17 @@ def referer_origin(value: Optional[str]) -> Optional[str]:
     return normalize_origin(f"{parts.scheme}://{parts.netloc}") if parts.scheme and parts.netloc else None
 
 
+def frontend_origin() -> Optional[str]:
+    """The origin of ``FRONTEND_URL`` (its path, if somebody wrote one, is dropped: ``https://app.algolab.me/login`` -> ``https://app.algolab.me``)."""
+    return referer_origin(os.getenv("FRONTEND_URL"))
+
+
 def cabinet_origins() -> Optional[frozenset]:
     """The origins of the cabinets (CORS_ORIGINS + FRONTEND_URL, normalised); None = anybody (``*`` in CORS_ORIGINS)."""
     listed = list(get_settings().cors_origins)
     if "*" in listed:
         return None
-    front = normalize_origin(os.getenv("FRONTEND_URL"))
+    front = frontend_origin()
     allowed = {normalize_origin(o) for o in listed}
     if front:
         allowed.add(front)
@@ -111,8 +133,8 @@ def request_is_foreign(headers: Mapping[str, str], origin_allowed: Callable[[str
     return False
 
 
-def is_exempt(path: str) -> bool:
-    return any(path == prefix or path.startswith(prefix + "/") for prefix in EXEMPT)
+def is_exempt(method: str, path: str) -> bool:
+    return any(m == method and pattern.match(path) for m, pattern in _EXEMPT_PATTERNS)
 
 
 def is_platform(path: str) -> bool:
@@ -129,8 +151,10 @@ class OriginGuardMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http" and scope.get("method") in MUTATING_METHODS:
             path = scope.get("path", "")
-            if not is_exempt(path) and not is_platform(path):
-                headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+            if not is_exempt(scope["method"], path) and not is_platform(path):
+                headers: dict = {}
+                for name, value in scope.get("headers", []):
+                    headers.setdefault(name.decode("latin-1").lower(), value.decode("latin-1"))  # the FIRST of a repeated header: the one Starlette's CORS reads too
                 if request_is_foreign(headers, cabinet_origin_allowed):
                     logger.warning("foreign origin refused: %s %s origin=%r", scope.get("method"), path, headers.get("origin"))
                     await JSONResponse({"detail": BAD_ORIGIN_TEXT, "code": BAD_ORIGIN_CODE}, status_code=403)(scope, receive, send)
