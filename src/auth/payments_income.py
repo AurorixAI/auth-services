@@ -24,6 +24,7 @@ from src.models.auth import Group, Organization, Student, StudentPayment, Studen
 
 from . import billing_ledger as bl
 from . import ledger_service as ls
+from .sql_text import contains
 from . import payment_status as ps
 from . import payments_texts as tx
 from . import payments_journal_xlsx as jx
@@ -559,7 +560,7 @@ class IncomeReports:
             query = query.filter(StudentPayment.created_by == created_by)
         words = (q or "").split()
         for word in words:
-            pattern = ls._like(word)
+            pattern = contains(word)
             conds = [Student.first_name.ilike(pattern, escape="\\"), Student.last_name.ilike(pattern, escape="\\"),
                      Student.display_id.ilike(pattern, escape="\\")]
             if len(words) == 1 and word.isascii() and word.isdigit() and len(word) <= 9:

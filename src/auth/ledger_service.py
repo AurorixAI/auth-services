@@ -226,9 +226,6 @@ def _days(first: date, last: date) -> List[date]:
     return [first + timedelta(days=i) for i in range((last - first).days + 1)]
 
 
-_like = contains          # one LIKE helper for the service (sql_text.py); payments_income takes it from here
-
-
 class LedgerLoader:
     """Loads the facts of a set of memberships (and of the memberships linked to them by transfers) and runs the ledger."""
 
@@ -320,7 +317,7 @@ class LedgerLoader:
         if teacher_id:
             query = query.filter(Group.teacher_id == teacher_id)
         for word in (search or "").split():
-            pattern = _like(word)
+            pattern = contains(word)
             query = query.filter(
                 or_(
                     Student.first_name.ilike(pattern, escape="\\"),
