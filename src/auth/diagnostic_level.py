@@ -84,3 +84,14 @@ def level_fields(result: Any) -> dict:
         "class_equivalent": getattr(result, "class_equivalent", None),
         "level_provisional": getattr(result, "level_provisional", None),
     }
+
+
+def result_summary(result: Any) -> dict:
+    """What every list of diagnostics shows of a result: theta, accuracy, the level fields and the counters (not the gaps, not the ids)."""
+    return {
+        "theta": float(result.final_theta) if result.final_theta is not None else None,
+        "accuracy": float(result.accuracy) if result.accuracy is not None else None,
+        **level_fields(result),
+        "total_questions": result.total_tasks,
+        "correct_answers": result.correct_answers,
+    }

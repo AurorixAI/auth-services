@@ -82,6 +82,15 @@ def slot_has_time(payload: Dict[str, Any]) -> bool:
     return ok
 
 
+def revised_payload(payload: Dict[str, Any], revisions: Sequence[Any], iso_day: str) -> Dict[str, Any]:
+    """The configuration of a weekly slot on ``iso_day``: ``payload`` with every revision that is already in force (``effective_date <= iso_day``, ISO strings compare
+    as dates) laid over it in order; a revision without a payload changes nothing."""
+    for revision in revisions:
+        if revision.effective_date <= iso_day:
+            payload = dict(revision.payload or payload)
+    return payload
+
+
 # ------------------------------------------------------------------------------------------ inactive intervals
 
 

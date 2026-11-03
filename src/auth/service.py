@@ -26,7 +26,7 @@ from . import student_identity
 from . import user_sessions
 from .student_id_service import assign_display_id
 from .attendance_excuses import AttendanceExcuseService
-from .diagnostic_level import level_fields, normalize_level_payload
+from .diagnostic_level import level_fields, normalize_level_payload, result_summary
 from .membership_pauses import not_paused_at, not_paused_now
 from .leave_service import on_membership_closed, on_membership_returned
 from .membership_periods import (
@@ -963,18 +963,13 @@ class AuthService:
         results_list = []
         results_by_invite = {}
         for r in results:
-            theta = float(r.final_theta) if r.final_theta is not None else None
             gaps = r.identified_gaps if isinstance(r.identified_gaps, list) else []
 
             res_obj = {
                 "id": str(r.id),
                 "invite_id": str(r.invite_id) if r.invite_id else None,
                 "session_id": str(r.session_id) if r.session_id else None,
-                "theta": theta,
-                "accuracy": float(r.accuracy) if r.accuracy is not None else None,
-                **level_fields(r),
-                "total_questions": r.total_tasks,
-                "correct_answers": r.correct_answers,
+                **result_summary(r),
                 "duration_seconds": int((r.total_duration_ms or 0) / 1000) if r.total_duration_ms else None,
                 "diagnosed_at": r.diagnosed_at.isoformat() if r.diagnosed_at else None,
                 "identified_gaps": gaps,
@@ -1114,17 +1109,7 @@ class AuthService:
             raise ValueError("Ученик не найден")
 
         selected_month = month or business_clock.business_now().strftime("%Y-%m")
-        try:
-            period_start = datetime.strptime(selected_month + "-01", "%Y-%m-%d").date()
-        except ValueError as exc:
-            raise ValueError("month должен иметь формат YYYY-MM") from exc
-        if period_start.strftime("%Y-%m") != selected_month:
-            raise ValueError("month должен иметь формат YYYY-MM")
-        period_end = (
-            date(period_start.year + 1, 1, 1)
-            if period_start.month == 12
-            else date(period_start.year, period_start.month + 1, 1)
-        ) - timedelta(days=1)
+        period_start, period_end = business_clock.month_bounds(selected_month)
 
         attendance_rows = (
             self.db.query(GroupAttendance, Group)
@@ -1948,14 +1933,7 @@ class AuthService:
             r = results_by_invite.get(inv.id)
             res_dict = None
             if r:
-                theta = float(r.final_theta) if r.final_theta is not None else None
-                res_dict = {
-                    "theta": theta,
-                    "accuracy": float(r.accuracy) if r.accuracy is not None else None,
-                    **level_fields(r),
-                    "total_questions": r.total_tasks,
-                    "correct_answers": r.correct_answers,
-                }
+                res_dict = result_summary(r)
 
             result.append(
                 {
@@ -3049,10 +3027,7 @@ class AuthService:
                     # current schedule. Its base JSON slot stays intact so
                     # historical attendance keeps a valid schedule context.
                     continue
-                payload = self._slot_payload(s)
-                for revision in recurring.get(str(lesson_id), []):
-                    if revision.effective_date <= today.isoformat():
-                        payload = dict(revision.payload or payload)
+                payload = schedule_rules.revised_payload(self._slot_payload(s), recurring.get(str(lesson_id), []), today.isoformat())
                 if not schedule_rules.slot_has_time(payload):
                     continue
                 lessons_out.append(
@@ -3224,14 +3199,7 @@ class AuthService:
         exact_result = self._diagnostic_results_by_invite([invite.id]).get(invite.id)
         result = None
         if exact_result:
-            theta = float(exact_result.final_theta) if exact_result.final_theta is not None else None
-            result = {
-                "theta": theta,
-                "accuracy": float(exact_result.accuracy) if exact_result.accuracy is not None else None,
-                **level_fields(exact_result),
-                "total_questions": exact_result.total_tasks,
-                "correct_answers": exact_result.correct_answers,
-            }
+            result = result_summary(exact_result)
         return {
             "id": str(invite.id),
             "code": invite.code,
@@ -3381,10 +3349,7 @@ class AuthService:
         """
         payload = self._slot_payload(self._find_schedule_slot(group, lesson_id))
         recurring, _, _ = self._schedule_overrides_for_group(group, until=at_date)
-        for revision in recurring.get(lesson_id, []):
-            if revision.effective_date <= at_date.isoformat():
-                payload = dict(revision.payload or payload)
-        return payload
+        return schedule_rules.revised_payload(payload, recurring.get(lesson_id, []), at_date.isoformat())
 
     def _preload_schedule_data(
         self, group_ids: List[Any], *, date_from: date, date_to: date, with_one_offs: bool = True
@@ -3472,10 +3437,7 @@ class AuthService:
                 if current_iso < slot_starts[lesson_id]:
                     continue
                 base_payload = self._slot_payload(slot)
-                configured_payload = dict(base_payload)
-                for revision in recurring.get(lesson_id, []):
-                    if revision.effective_date <= current_iso:
-                        configured_payload = dict(revision.payload or configured_payload)
+                configured_payload = schedule_rules.revised_payload(dict(base_payload), recurring.get(lesson_id, []), current_iso)
 
                 if configured_payload["dayOfWeek"] != current_day.isoweekday():
                     continue
@@ -4713,19 +4675,7 @@ class AuthService:
                 raise ValueError("Период журнала не может превышать 63 дня")
         else:
             selected_month = month or business_clock.business_now().strftime("%Y-%m")
-            try:
-                month_start = datetime.strptime(selected_month + "-01", "%Y-%m-%d").date()
-            except ValueError as exc:
-                raise ValueError("month должен иметь формат YYYY-MM") from exc
-            if month_start.strftime("%Y-%m") != selected_month:
-                raise ValueError("month должен иметь формат YYYY-MM")
-            next_month = (
-                date(month_start.year + 1, 1, 1)
-                if month_start.month == 12
-                else date(month_start.year, month_start.month + 1, 1)
-            )
-            period_start = month_start
-            period_end = next_month - timedelta(days=1)
+            period_start, period_end = business_clock.month_bounds(selected_month)
             month = selected_month
 
         query = self.db.query(GroupAttendance).filter(

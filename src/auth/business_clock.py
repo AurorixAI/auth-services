@@ -101,3 +101,18 @@ def month_window_start(today: date) -> date:
     ``service.missed_lesson_window_start``, without importing the service)."""
     first_of_month = today.replace(day=1)
     return (first_of_month - timedelta(days=1)).replace(day=1)
+
+
+MONTH_FORMAT_MESSAGE = "month должен иметь формат YYYY-MM"
+
+
+def month_bounds(month: str) -> tuple[date, date]:
+    """First and last day of ``month`` (``YYYY-MM``); ``ValueError(MONTH_FORMAT_MESSAGE)`` for anything else (``2026-1``, ``2026-13``, a date)."""
+    try:
+        first = datetime.strptime(month + "-01", "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError(MONTH_FORMAT_MESSAGE) from exc
+    if first.strftime("%Y-%m") != month:
+        raise ValueError(MONTH_FORMAT_MESSAGE)
+    following = date(first.year + 1, 1, 1) if first.month == 12 else date(first.year, first.month + 1, 1)
+    return first, following - timedelta(days=1)
