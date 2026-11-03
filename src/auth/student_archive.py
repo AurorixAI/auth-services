@@ -45,7 +45,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, update
+from sqlalchemy import func, or_, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -160,6 +160,13 @@ def _utcnow_naive() -> datetime:
 def student_not_archived():
     """SQL condition for a query on ``StudentGroup``: the membership's student is not in the archive."""
     return StudentGroup.student.has(Student.status != ARCHIVED)
+
+
+def student_not_archived_at(instant: datetime):
+    """The same question asked of a PAST instant (the roster of a lesson that was held, or is reconciled, later): the student was not in the archive THEN.
+    Archiving closes the memberships, so a student archived after the lesson was in the class at it; the condition only removes a student whose stamp says he was
+    already archived at ``instant`` (a stale open membership of an old archiving).  No stamp = unknown moment = not removed."""
+    return StudentGroup.student.has(or_(Student.status != ARCHIVED, Student.archived_at.is_(None), Student.archived_at > instant))
 
 
 # The refusals of ``AuthService.add_student_to_group`` that a return can meet, as machine codes for the window

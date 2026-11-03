@@ -48,6 +48,7 @@ from .student_archive import (
     attach_archived_groups,
     guard_generic_status_update,
     student_not_archived,
+    student_not_archived_at,
 )
 from .models import (
     Organization,
@@ -120,7 +121,7 @@ from .ops_schemas import (  # noqa: E402
 )
 from . import attendance_rules, business_clock, exam_release, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
 from . import password_rules, staff_lifecycle, student_views  # noqa: E402
-from .roster_names import student_full_name  # noqa: E402
+from .roster_names import roster_payload, student_full_name  # noqa: E402
 from .sql_text import contains  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -2489,14 +2490,7 @@ class AuthService:
             return {
                 "enrolled": True,
                 "group_name": group.name,
-                "student": {
-                    "id": str(student.id),
-                    "first_name": student.first_name,
-                    "last_name": student.last_name,
-                    "full_name": student_full_name(student),
-                    "display_id": student.display_id,
-                    "class_level": student.class_level,
-                },
+                "student": roster_payload(student, id_key="id"),
             }
 
         def refused(message: str) -> dict:
@@ -4196,7 +4190,10 @@ class AuthService:
         }
 
     def _active_attendance_roster(self, group_id: UUID) -> list[dict[str, Any]]:
-        """Freeze the current active roster as a serialisable lesson fact."""
+        """Freeze the current active roster as a serialisable lesson fact.
+
+        Who is in the class NOW: an archived student is not (archiving closes his memberships; ``student_not_archived`` also drops a stale open one).
+        ``_attendance_roster_at`` asks the same question of a past instant."""
         memberships = (
             self.db.query(StudentGroup)
             .filter(
@@ -4209,27 +4206,7 @@ class AuthService:
             .order_by(StudentGroup.joined_at, StudentGroup.id)
             .all()
         )
-        student_ids = [membership.student_id for membership in memberships]
-        students_by_id = {
-            student.id: student
-            for student in self.db.query(Student).filter(Student.id.in_(student_ids)).all()
-        } if student_ids else {}
-
-        roster: list[dict[str, Any]] = []
-        for membership in memberships:
-            student = students_by_id.get(membership.student_id)
-            if not student:
-                continue
-            full_name = student_full_name(student)
-            roster.append({
-                "student_id": str(student.id),
-                "first_name": student.first_name,
-                "last_name": student.last_name,
-                "full_name": full_name,
-                "class_level": student.class_level,
-                "display_id": student.display_id,
-            })
-        return roster
+        return self._roster_of(memberships)
 
     def _attendance_roster_at(self, group_id: UUID, occurred_at: datetime) -> list[dict[str, Any]]:
         """Freeze the roster that existed when a historical lesson was scheduled.
@@ -4237,6 +4214,9 @@ class AuthService:
         Reconciliation happens later, so the current roster is not evidence of
         who could have attended. Memberships are evaluated at the scheduled
         start time; a transfer after that moment cannot rewrite the journal.
+
+        The archive rule of ``_active_attendance_roster`` at that instant: a student archived LATER was in the class (the journal keeps him), one the archive
+        already held then is not (``student_not_archived_at``).
         """
         memberships = (
             self.db.query(StudentGroup)
@@ -4244,32 +4224,22 @@ class AuthService:
                 StudentGroup.group_id == group_id,
                 # ANY stay of the student covers the instant, not only the last one.
                 member_at(occurred_at),
+                student_not_archived_at(occurred_at),
                 not_paused_at(occurred_at),  # LOGIC-A
             )
             .order_by(StudentGroup.joined_at, StudentGroup.id)
             .all()
         )
+        return self._roster_of(memberships)
+
+    def _roster_of(self, memberships: list[StudentGroup]) -> list[dict[str, Any]]:
+        """The students of ``memberships`` (in their order) as the serialisable roster of a lesson: one shape for the current and the historical snapshot."""
         student_ids = [membership.student_id for membership in memberships]
         students_by_id = {
             student.id: student
             for student in self.db.query(Student).filter(Student.id.in_(student_ids)).all()
         } if student_ids else {}
-
-        roster: list[dict[str, Any]] = []
-        for membership in memberships:
-            student = students_by_id.get(membership.student_id)
-            if not student:
-                continue
-            full_name = student_full_name(student)
-            roster.append({
-                "student_id": str(student.id),
-                "first_name": student.first_name,
-                "last_name": student.last_name,
-                "full_name": full_name,
-                "class_level": student.class_level,
-                "display_id": student.display_id,
-            })
-        return roster
+        return [roster_payload(students_by_id[m.student_id]) for m in memberships if m.student_id in students_by_id]
 
     def _resolve_reconcilable_missed_occurrence(
         self,
@@ -5058,14 +5028,8 @@ class AuthService:
                 if not student:
                     continue
                 membership = memberships_by_student_id.get(student_uuid)
-                full_name = student_full_name(student)
                 historical_students.append({
-                    "id": str(student.id),
-                    "first_name": student.first_name,
-                    "last_name": student.last_name,
-                    "full_name": full_name,
-                    "class_level": student.class_level,
-                    "display_id": student.display_id,
+                    **roster_payload(student, id_key="id"),
                     "left_at": membership.left_at.isoformat() if membership and membership.left_at else None,
                     "periods": periods_payload(period_map.get(membership.id, [])) if membership else [],
                     "transferred_to_group_name": destinations_by_student_id.get(student.id),
