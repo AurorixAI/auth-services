@@ -77,13 +77,18 @@ def test_the_audit_role_is_always_one_the_check_accepts():
     assert actor_role_for_audit({}) == "admin"
 
 
-def test_skip_codes_follow_the_messages_of_add_student_to_group():
-    """The messages are the ones of ``AuthService.add_student_to_group`` / the lesson guard."""
-    assert skip_code("В группе достигнут лимит учеников") == "group_full"
-    assert skip_code("Нельзя зачислить ученика в архивную группу") == "group_archived"
-    assert skip_code("Группа не найдена") == "not_found"
-    assert skip_code("Нельзя изменить состав группы, пока идёт урок. Сначала завершите или отмените начатый урок.") == "lesson_in_progress"
-    assert skip_code("что-то другое") == "refused"
+def test_skip_codes_follow_the_type_of_the_refusal_not_its_words():
+    """DM-043: the refusals of ``AuthService.add_student_to_group`` are typed (``ops_rules.EnrolmentRefused``); the code comes from the type, so a reworded message cannot turn a code into «refused»."""
+    from src.auth import ops_rules as R
+
+    assert skip_code(R.GroupFull(30, 30)) == "group_full"
+    assert skip_code(R.GroupArchivedForEnrolment("Нельзя зачислить ученика в архивную группу")) == "group_archived"
+    assert skip_code(R.GroupNotFoundForEnrolment("Группа не найдена")) == "not_found"
+    assert skip_code(R.LessonInProgressForRoster("Нельзя изменить состав группы, пока идёт урок.")) == "lesson_in_progress"
+    assert skip_code(R.GroupFull(1, 1)) == skip_code(type("Reworded", (R.GroupFull,), {})(1, 1)) == "group_full"
+    assert skip_code(R.StudentArchivedForEnrolment("Архивного ученика нельзя перевести в группу")) == "refused"
+    assert skip_code(ValueError("В группе достигнут лимит учеников")) == "refused"      # the same words from a plain ValueError are nobody's verdict
+    assert skip_code(ValueError("что-то другое")) == "refused"
     out = SkippedGroupOut(group_id="g", reason="group_full", message="В группе достигнут лимит учеников")
     assert out.model_dump() == {"group_id": "g", "group_name": None, "reason": "group_full",
                                 "message": "В группе достигнут лимит учеников"}

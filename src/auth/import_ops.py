@@ -456,7 +456,7 @@ def commit(org_id: Any, creator_id: Any, data: bytes, db: Session, *, money: boo
 
 def _enrol(db: Session, svc, org_id: Any, creator_id: Any, item: Dict[str, Any], group_id: UUID) -> Tuple[str, ...]:
     """One student row in one transaction: ``("enrolled",)`` or ``("skipped", code, message, group_name)``."""
-    from .ops_rules import GroupArchivedForEnrolment
+    from .ops_rules import GroupArchivedForEnrolment, GroupFull, StudentArchivedForEnrolment
 
     group = db.query(Group).filter(Group.id == group_id).first()
     name = group.name if group else item["group_name"]
@@ -497,16 +497,16 @@ def _enrol(db: Session, svc, org_id: Any, creator_id: Any, item: Dict[str, Any],
     except GroupArchivedForEnrolment:
         db.rollback()
         return ("skipped", "GROUP_ARCHIVED", SKIP_TEXT["GROUP_ARCHIVED"].format(group=name), name)
+    except GroupFull as full:     # DM-043: by the type of the refusal, never by a word of its message
+        db.rollback()
+        limit = full.limit or (group.max_students if group else None) or 30
+        return ("skipped", "GROUP_FULL", SKIP_TEXT["GROUP_FULL"].format(group=name, limit=limit, taken=full.taken if full.taken is not None else limit), name)
+    except StudentArchivedForEnrolment:
+        db.rollback()
+        return ("skipped", "STUDENT_ARCHIVED", SKIP_TEXT["STUDENT_ARCHIVED"], name)
     except ValueError as exc:
         db.rollback()
         text_ = str(exc)
-        if "лимит" in text_:
-            limit = (group.max_students if group else None) or 30
-            return ("skipped", "GROUP_FULL", SKIP_TEXT["GROUP_FULL"].format(group=name, limit=limit, taken=limit), name)
-        if "архивн" in text_ and "группу" in text_:
-            return ("skipped", "GROUP_ARCHIVED", SKIP_TEXT["GROUP_ARCHIVED"].format(group=name), name)
-        if "Архивного ученика" in text_:
-            return ("skipped", "STUDENT_ARCHIVED", SKIP_TEXT["STUDENT_ARCHIVED"], name)
         # any other refusal of the row is the row's problem, never the file's: a bare 500 would lose the rows that were enrolled before
         return ("skipped", "ROW_ERROR", SKIP_TEXT["ROW_ERROR"].format(reason=text_[:200] or "ошибка данных"), name)
     except OperationalError as exc:  # a lock timeout / a deadlock victim: the row can be repeated

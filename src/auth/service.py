@@ -2623,7 +2623,7 @@ class AuthService:
         if not student:
             raise ValueError("Ученик не найден")
         if student.status == "archived":
-            raise ValueError("Архивного ученика нельзя перевести в группу")
+            raise ops_rules.StudentArchivedForEnrolment("Архивного ученика нельзя перевести в группу")
 
         # Resolve the target first. All involved groups are locked below in a
         # stable ID order, so two opposite transfers cannot deadlock.
@@ -2633,7 +2633,7 @@ class AuthService:
             .first()
         )
         if not group:
-            raise ValueError("Группа не найдена")
+            raise ops_rules.GroupNotFoundForEnrolment("Группа не найдена")
         if group.status != "active":
             raise ops_rules.GroupArchivedForEnrolment("Нельзя зачислить ученика в архивную группу")
 
@@ -2715,7 +2715,7 @@ class AuthService:
                 .count()
             )
             if group.max_students is not None and active_count >= group.max_students:
-                raise ValueError("В группе достигнут лимит учеников")
+                raise ops_rules.GroupFull(group.max_students, active_count)
 
         if existing:
             if not already_member:
@@ -4266,7 +4266,7 @@ class AuthService:
             .first()
         )
         if active_lesson:
-            raise ValueError(
+            raise ops_rules.LessonInProgressForRoster(
                 "Нельзя изменить состав группы, пока идёт урок. "
                 "Сначала завершите или отмените начатый урок."
             )

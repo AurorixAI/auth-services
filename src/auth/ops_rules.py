@@ -44,8 +44,41 @@ def unavailable(code: str, message: str, **extra: Any) -> OpsError:
     return OpsError(503, code, message, **extra)
 
 
-class GroupArchivedForEnrolment(ValueError):
+class EnrolmentRefused(ValueError):
+    """``AuthService.add_student_to_group`` refuses (wave E DM-043): a ValueError, so every ``except ValueError`` and the router's 400 keep working; ``code`` is what the
+    window of a return from the archive (``skip_code``) and the import of a file react to - never the wording of the message."""
+
+    code = "refused"
+
+
+class GroupArchivedForEnrolment(EnrolmentRefused):
     """Enrolment into an archived group: a ValueError (the bulk add reports it per student), the router answers 409 ``GROUP_ARCHIVED``."""
+
+    code = "group_archived"
+
+
+class GroupFull(EnrolmentRefused):
+    """The group has no free place: ``limit`` is its size, ``taken`` the students in it now."""
+
+    code = "group_full"
+
+    def __init__(self, limit: Optional[int] = None, taken: Optional[int] = None) -> None:
+        super().__init__("В группе достигнут лимит учеников")
+        self.limit, self.taken = limit, taken
+
+
+class StudentArchivedForEnrolment(EnrolmentRefused):
+    """An archived student cannot be put into a group (he is brought back first); no machine code of the return window: it cannot meet it."""
+
+
+class GroupNotFoundForEnrolment(EnrolmentRefused):
+    code = "not_found"
+
+
+class LessonInProgressForRoster(EnrolmentRefused):
+    """A lesson of the group is open: its roster is frozen until the lesson is closed."""
+
+    code = "lesson_in_progress"
 
 
 def group_archived() -> OpsError:

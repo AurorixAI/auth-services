@@ -51,6 +51,7 @@ from sqlalchemy.orm import Session
 
 from . import business_clock as bc
 from .membership_periods import close_period
+from .ops_rules import EnrolmentRefused
 from .models import DiagnosticInvite, Group, GroupAudit, Student, StudentDiagnosticResult, StudentGroup
 from .payments_schemas import SettledOut, SettleItem
 from .payments_service import CONCURRENT_EDIT_MESSAGE, is_deadlock
@@ -169,22 +170,12 @@ def student_not_archived_at(instant: datetime):
     return StudentGroup.student.has(or_(Student.status != ARCHIVED, Student.archived_at.is_(None), Student.archived_at > instant))
 
 
-# The refusals of ``AuthService.add_student_to_group`` that a return can meet, as machine codes for the window
-# (the Russian text travels along in ``message``).  A test pins every pair, so a reworded message cannot
-# silently turn a code into "refused".
-_SKIP_CODES = (
-    ("достигнут лимит", "group_full"),
-    ("архивную группу", "group_archived"),
-    ("Группа не найдена", "not_found"),
-    ("пока идёт урок", "lesson_in_progress"),
-)
-
-
-def skip_code(message: str) -> str:
-    for needle, code in _SKIP_CODES:
-        if needle in message:
-            return code
-    return "refused"
+def skip_code(exc: Exception) -> str:
+    """The machine code of a refusal of ``AuthService.add_student_to_group`` for the window of a return (``group_full`` / ``group_archived`` / ``not_found`` /
+    ``lesson_in_progress``; anything else is ``refused``).  Wave E DM-043: it comes from the TYPE of the refusal (``ops_rules.EnrolmentRefused.code``), a reworded
+    message cannot silently turn a code into ``refused``."""
+    code = getattr(exc, "code", None) if isinstance(exc, EnrolmentRefused) else None
+    return code or "refused"
 
 
 def archive_stamp(student: Student) -> Dict[str, Optional[str]]:
@@ -551,7 +542,7 @@ class StudentArchiveService:
                 self.db.rollback()
                 skipped.append(
                     SkippedGroupOut(
-                        group_id=group_id, group_name=group_name, reason=skip_code(str(exc)), message=str(exc)
+                        group_id=group_id, group_name=group_name, reason=skip_code(exc), message=str(exc)
                     )
                 )
                 continue
