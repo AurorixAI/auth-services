@@ -8,7 +8,6 @@ import os
 import hashlib
 import secrets
 import string
-import httpx
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID, uuid4
@@ -119,7 +118,7 @@ from .ops_schemas import (  # noqa: E402
     StudentResponseB as StudentResponse,
     TeacherDashboardSummaryResponseB as TeacherDashboardSummaryResponse,
 )
-from . import attendance_rules, business_clock, exam_release, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
+from . import attendance_rules, business_clock, exam_bridge, exam_release, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
 from . import password_rules, staff_lifecycle, student_views  # noqa: E402
 from .roster_names import roster_payload, student_full_name  # noqa: E402
 from .sql_text import contains  # noqa: E402
@@ -5726,43 +5725,13 @@ class AuthService:
         Auth owns the cancellation, exam-service owns attempts and access
         codes.  The two short internal calls form a small guarded saga: first
         check that no active work exists, then revoke an untouched lobby while
-        this attendance transaction is still uncommitted.
+        this attendance transaction is still uncommitted.  The road and the
+        mapping of its failures are ``exam_bridge`` (SV-14 of wave E).
         """
-        settings = get_settings()
-        if not settings.internal_service_token:
-            raise RuntimeError("Не настроена внутренняя связка отмены урока и экзаменов")
-        endpoint = f"{settings.exam_service_url.rstrip('/')}/internal/lesson-bindings/{phase}"
-        payload = {
-            "org_id": str(org_id),
-            "group_id": str(group_id),
-            "lesson_id": lesson_id,
-            "lesson_date": lesson_date,
-            "reason": reason,
-        }
         try:
-            response = httpx.post(
-                endpoint,
-                json=payload,
-                headers={"X-Internal-Service-Token": settings.internal_service_token},
-                timeout=5.0,
-            )
-        except httpx.HTTPError as exc:
-            raise RuntimeError("Сервис экзаменов временно недоступен; урок не был отменён") from exc
-
-        if response.status_code == 409:
-            try:
-                detail = response.json().get("detail")
-            except ValueError:
-                detail = None
-            raise ValueError(detail or "Нельзя отменить урок с активным экзаменом")
-        if response.status_code != 200:
-            logger.error(
-                "Exam lesson cancellation sync failed: phase=%s status=%s body=%s",
-                phase,
-                response.status_code,
-                response.text[:500],
-            )
-            raise exam_release.ExamAnswerError(response.status_code, "Не удалось синхронизировать отмену урока с экзаменом")   # R3 6: a status of its own, not "no answer"
+            exam_bridge.lesson_cancellation(phase, org_id, group_id, lesson_id, lesson_date, reason)
+        except exam_bridge.ExamBridgeError as exc:
+            raise exam_bridge.refusal(exc, exam_bridge.CANCELLATION) from exc   # R3 6: a status of its own (``ExamAnswerError``), not "no answer"
 
     def _fetch_exam_recurring_end_impact(
         self,
@@ -5779,38 +5748,10 @@ class AuthService:
         internal connection blocks the operation rather than reporting a
         misleading zero-impact preview.
         """
-        settings = get_settings()
-        if not settings.internal_service_token:
-            raise RuntimeError("Не настроена внутренняя связка расписания и экзаменов")
-        endpoint = f"{settings.exam_service_url.rstrip('/')}/internal/lesson-bindings/recurring-end-impact"
         try:
-            response = httpx.post(
-                endpoint,
-                json={
-                    "org_id": str(org_id),
-                    "group_id": str(group_id),
-                    "lesson_id": lesson_id,
-                    "effective_from": effective_from,
-                },
-                headers={"X-Internal-Service-Token": settings.internal_service_token},
-                timeout=5.0,
-            )
-        except httpx.HTTPError as exc:
-            raise RuntimeError("Сервис экзаменов временно недоступен; остановка расписания не выполнена") from exc
-        if response.status_code != 200:
-            logger.error(
-                "Exam recurring-end impact failed: status=%s body=%s",
-                response.status_code,
-                response.text[:500],
-            )
-            raise RuntimeError("Не удалось проверить связанные экзамены")
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise RuntimeError("Сервис экзаменов вернул некорректный ответ") from exc
-        if not isinstance(payload, dict):
-            raise RuntimeError("Сервис экзаменов вернул некорректный ответ")
-        return payload
+            return exam_bridge.recurring_end_impact(org_id, group_id, lesson_id, effective_from)
+        except exam_bridge.ExamBridgeError as exc:
+            raise exam_bridge.refusal(exc, exam_bridge.RECURRING_IMPACT) from exc
 
     def _release_exam_recurring_end(
         self,
@@ -5824,45 +5765,7 @@ class AuthService:
         reason: str,
     ) -> List[str]:
         """Atomically release only the future deliveries approved in preview."""
-        settings = get_settings()
-        if not settings.internal_service_token:
-            raise RuntimeError("Не настроена внутренняя связка расписания и экзаменов")
-        endpoint = f"{settings.exam_service_url.rstrip('/')}/internal/lesson-bindings/recurring-end-release"
         try:
-            response = httpx.post(
-                endpoint,
-                json={
-                    "org_id": str(org_id),
-                    "group_id": str(group_id),
-                    "group_name": group_name,
-                    "lesson_id": lesson_id,
-                    "effective_from": effective_from,
-                    "actor_id": actor_id,
-                    "reason": reason,
-                },
-                headers={"X-Internal-Service-Token": settings.internal_service_token},
-                timeout=5.0,
-            )
-        except httpx.HTTPError as exc:
-            raise RuntimeError("Сервис экзаменов временно недоступен; регулярное расписание не прекращено") from exc
-        if response.status_code == 409:
-            try:
-                detail = response.json().get("detail")
-            except ValueError:
-                detail = None
-            raise ValueError(detail or "Нельзя прекратить расписание с активным экзаменом")
-        if response.status_code != 200:
-            logger.error(
-                "Exam recurring-end release failed: status=%s body=%s",
-                response.status_code,
-                response.text[:500],
-            )
-            raise RuntimeError("Не удалось безопасно вернуть экзамены в черновики")
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise RuntimeError("Сервис экзаменов вернул некорректный ответ") from exc
-        released = payload.get("released_exam_ids") if isinstance(payload, dict) else None
-        if not isinstance(released, list):
-            raise RuntimeError("Сервис экзаменов не подтвердил возврат экзаменов")
-        return [str(exam_id) for exam_id in released]
+            return exam_bridge.recurring_end_release(org_id, group_id, group_name, lesson_id, effective_from, actor_id, reason)
+        except exam_bridge.ExamBridgeError as exc:
+            raise exam_bridge.refusal(exc, exam_bridge.RECURRING_RELEASE) from exc

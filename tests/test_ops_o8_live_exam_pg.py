@@ -3,6 +3,7 @@ from datetime import datetime
 
 import pytest
 
+from src.auth.exam_bridge import ExamBridgeUnavailable
 from src.auth.service import AuthService
 from src.models.auth import GroupAttendance
 
@@ -113,7 +114,7 @@ def test_r7_exam_service_down_fails_open_for_completion_and_closed_for_cancellat
     assert done.status_code == 200 and done.json()["examSync"] == {"released": [], "leftRunning": [], "warning": "EXAM_SERVICE_UNAVAILABLE"}
     # cancellation: the real sync (not the stub) raises, nothing is cancelled
     monkeypatch.setattr(AuthService, "_sync_exam_lesson_cancellation", REAL_SYNC_CANCELLATION)
-    monkeypatch.setattr("src.auth.service.httpx.post", lambda *a, **kw: (_ for _ in ()).throw(__import__("httpx").ConnectError("down")))
+    monkeypatch.setattr("src.auth.exam_bridge._post", lambda *a, **kw: (_ for _ in ()).throw(ExamBridgeUnavailable("down")))   # the one road (SV-14)
     other = client(w, "admin").post(f"/api/v1/auth/org/groups/{w.G1.id}/attendance/reconcile/cancel",
                                     json={"lessonDate": "2026-10-19", "lessonId": "lesson-l1", "cancellationReason": "Праздник"})
     assert other.status_code in (400, 503, 409)    # the lesson of 19.10 is completed already; the point: a cancellation never passes while exam-service is down

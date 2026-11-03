@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func
 
 from . import business_clock as bc
+from .exam_bridge import ExamAnswerError  # the error of the road lives with the road (tests and callers import it from here)
 from .models import GroupAttendance, GroupAudit
 
 logger = logging.getLogger(__name__)
@@ -34,14 +35,6 @@ PENDING_TEXT = "Экзамен урока вернётся в черновик �
 LIMIT = 20            # markers one call handles (one centre never has that many at once; the rest wait for the next write)
 ACTION_PENDING = "exam_release_pending"      # ``group_audit.action``: the cancellation is committed, the exam is NOT released yet (R3 5)
 ACTION_DONE = "exam_release_done"            # ... the release is over: ``snapshot.outcome`` = ``released`` | ``refused``
-
-
-class ExamAnswerError(RuntimeError):
-    """exam-service ANSWERED the release with a status that is neither 200 nor 409 (``status``): 5xx is a trouble of the moment (retried later), a 4xx is its verdict about THIS lesson (R3 6)."""
-
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 def mark(row: GroupAttendance) -> None:
