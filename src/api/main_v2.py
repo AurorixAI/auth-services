@@ -91,9 +91,10 @@ async def lifespan(app: FastAPI):
         )
 
     # K3 (A9): the product and the landing on different hosts (fatal with REQUIRE_DISTINCT_SITE_HOSTS=true); Turnstile key present
-    from src.core.startup_guard import check_public_urls
+    from src.core.startup_guard import check_origin_settings, check_public_urls
 
     check_public_urls()
+    check_origin_settings()  # AD-2: no ``*`` in CORS_ORIGINS on a deployed stack; a path in FRONTEND_URL is reported
 
     # Применяем миграции Alembic (только новые, идемпотентно)
     from alembic.config import Config

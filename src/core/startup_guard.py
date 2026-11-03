@@ -123,3 +123,46 @@ def check_public_urls(environ: Optional[Mapping[str, str]] = None) -> None:
         logger.warning(
             "TURNSTILE_HOSTNAMES не задан при APP_ENV=%s: хост ответа Turnstile не сверяется, токен с чужого сайта на том же ключе будет принят.", app_env(env)
         )
+
+
+def _cors_origins_of(env: Mapping[str, str]) -> list:
+    """``CORS_ORIGINS`` as the settings read it (a JSON list; a comma-separated line is tolerated here so that a mistake is judged, not hidden)."""
+    import json
+
+    raw = (env.get("CORS_ORIGINS") or "").strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        return [str(item) for item in parsed] if isinstance(parsed, list) else [str(parsed)]
+    except ValueError:
+        return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def check_origin_settings(environ: Optional[Mapping[str, str]] = None) -> None:
+    """AD-2: the settings the source check of mutating requests (``core/origin_guard``) stands on.
+
+    * ``*`` in ``CORS_ORIGINS`` on production/staging stops the start: with it the Origin of a request is never refused, and the check shrinks to
+      ``Sec-Fetch-Site`` alone.
+    * ``FRONTEND_URL`` with a path or a query is a warning (any environment): only its ``scheme://host`` is the allowed origin, the rest is a mistake that the
+      letters' links (``{FRONTEND_URL}/set-password/...``) would show too.
+    """
+    env = os.environ if environ is None else environ
+    if is_strict_env(env) and "*" in [item.strip() for item in _cors_origins_of(env)]:
+        raise RuntimeError(
+            f"CRITICAL: CORS_ORIGINS содержит * при APP_ENV={app_env(env)}: проверка источника изменяющих запросов (AD-2) тогда не отказывает никому. "
+            f"Перечислите адреса продукта явно."
+        )
+    from urllib.parse import urlsplit
+
+    front = (env.get("FRONTEND_URL") or "").strip()
+    if front:
+        try:
+            parts = urlsplit(front)
+            extra = parts.path not in ("", "/") or bool(parts.query) or bool(parts.fragment)
+        except ValueError:
+            extra = True
+        if extra:
+            logger.warning(
+                "FRONTEND_URL содержит путь или параметры (%s): для проверки источника запросов берётся только адрес сайта (схема и хост); уберите лишнее.", front
+            )
