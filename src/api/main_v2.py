@@ -107,14 +107,8 @@ async def lifespan(app: FastAPI):
         logger.error("Alembic migration failed: %s", e)
         raise
 
-    # Ensure all newly added tables are created
-    try:
-        from src.core.database import engine
-        from src.models.auth import Base
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables verified/created.")
-    except Exception as e:
-        logger.error("Failed to verify/create database tables: %s", e)
+    # The schema comes from the migrations only (LD-27): no Base.metadata.create_all here - it swallowed its own errors and
+    # quietly added a table that a migration forgot (tests/test_schema_comes_from_migrations_pg.py pins head == models).
 
     # R3 4 (LD-23): the background retry of the release of exams (every 15 minutes, one executor among the workers); stops with the application
     import asyncio
