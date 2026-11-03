@@ -120,6 +120,7 @@ from .ops_schemas import (  # noqa: E402
 )
 from . import attendance_rules, business_clock, exam_release, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
 from . import password_rules, staff_lifecycle, student_views  # noqa: E402
+from .roster_names import student_full_name  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -2278,7 +2279,7 @@ class AuthService:
                 "id": str(s.id),
                 "first_name": s.first_name,
                 "last_name": s.last_name,
-                "full_name": f"{s.last_name} {s.first_name}",
+                "full_name": student_full_name(s),
                 "class_level": s.class_level,
                 "status": s.status,
                 "display_id": s.display_id,
@@ -2492,7 +2493,7 @@ class AuthService:
                     "id": str(student.id),
                     "first_name": student.first_name,
                     "last_name": student.last_name,
-                    "full_name": f"{student.last_name} {student.first_name}".strip(),
+                    "full_name": student_full_name(student),
                     "display_id": student.display_id,
                     "class_level": student.class_level,
                 },
@@ -4219,7 +4220,7 @@ class AuthService:
             student = students_by_id.get(membership.student_id)
             if not student:
                 continue
-            full_name = f"{student.last_name or ''} {student.first_name or ''}".strip() or "Ученик"
+            full_name = student_full_name(student)
             roster.append({
                 "student_id": str(student.id),
                 "first_name": student.first_name,
@@ -4259,7 +4260,7 @@ class AuthService:
             student = students_by_id.get(membership.student_id)
             if not student:
                 continue
-            full_name = f"{student.last_name or ''} {student.first_name or ''}".strip() or "Ученик"
+            full_name = student_full_name(student)
             roster.append({
                 "student_id": str(student.id),
                 "first_name": student.first_name,
@@ -5057,7 +5058,7 @@ class AuthService:
                 if not student:
                     continue
                 membership = memberships_by_student_id.get(student_uuid)
-                full_name = f"{student.last_name or ''} {student.first_name or ''}".strip() or "Ученик"
+                full_name = student_full_name(student)
                 historical_students.append({
                     "id": str(student.id),
                     "first_name": student.first_name,
