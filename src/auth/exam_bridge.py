@@ -97,9 +97,12 @@ def _post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         logger.error("exam-service %s answered %s: %s", path, response.status_code, response.text[:300])
         raise ExamBridgeUnavailable(f"status {response.status_code}", status=response.status_code)
     try:
-        return response.json()
+        body = response.json()
     except ValueError as exc:
         raise ExamBridgeBadAnswer(BAD_ANSWER) from exc
+    if not isinstance(body, dict):      # every caller reads ``body.get(...)``: a list / a number is a broken answer, not a crash
+        raise ExamBridgeBadAnswer(BAD_ANSWER)
+    return body
 
 
 def refusal_text(detail: Any) -> Optional[str]:

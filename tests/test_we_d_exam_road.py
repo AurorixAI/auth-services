@@ -128,3 +128,14 @@ def test_service_py_has_no_transport_of_its_own():
 
     text = (pathlib.Path(__file__).resolve().parents[1] / "src" / "auth" / "service.py").read_bytes().decode("utf-8")
     assert "httpx" not in text and "/internal/lesson-bindings" not in text and "exam_service_url" not in text
+
+
+@pytest.mark.parametrize("body", [[1, 2], 5, "text", None])
+def test_an_answer_that_is_not_a_json_object_is_a_bad_answer_for_every_call_not_a_crash(road, body):
+    """R3 М2: ``completion_check`` & co read ``body.get(...)``; a list or a number used to end in an AttributeError (a 500)."""
+    road.state["answer"] = Answer(200, body)
+    for call in (lambda: exam_bridge.completion_check("o", "g", "l", "d"), lambda: exam_bridge.lesson_completed("o", "g", "l", "d", None),
+                 lambda: exam_bridge.group_archive_impact("o", "g"), lambda: exam_bridge.group_archive_release("o", "g", None, None)):
+        with pytest.raises(exam_bridge.ExamBridgeUnavailable) as caught:              # the fail-open / fail-closed callers catch this class
+            call()
+        assert isinstance(caught.value, exam_bridge.ExamBridgeBadAnswer) and str(caught.value) == exam_bridge.BAD_ANSWER
