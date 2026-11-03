@@ -550,29 +550,6 @@ def _send_password_changed_letter(to: str, greeting: str) -> None:
         logger.error("password changed: the letter failed %s", type(exc).__name__)
 
 
-def _is_cross_site_request(request: Request) -> bool:
-    """A browser says this request was started by another site (CSRF-style).
-
-    Sec-Fetch-Site: cross-site is sent by every current browser and cannot be set by a page's script;
-    Origin (sent on every POST) must be one of the configured CORS origins. Requests without either
-    header (curl, server-to-server, old browsers) are not judged here: they carry no ambient cookies of
-    a third-party page's making.
-    """
-    if request.headers.get("sec-fetch-site", "").strip().lower() == "cross-site":
-        return True
-    origin = request.headers.get("origin")
-    if origin is not None:
-        allowed = {o.rstrip("/") for o in get_settings().cors_origins}
-        return "*" not in allowed and origin.strip().rstrip("/") not in allowed
-    return False
-
-
-def refuse_cross_site(request: Request) -> None:
-    """403 for a request that another site started (the same text as the sign-out): the check of every mutating route of K2-2 that works on the cookies."""
-    if _is_cross_site_request(request):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Запрос выхода должен приходить с сайта ALGO")
-
-
 def _access_subject(
     request: Request, credentials: Optional[HTTPAuthorizationCredentials]
 ) -> tuple:
@@ -590,7 +567,7 @@ LOGOUT_BODY_MAX_BYTES = 4096  # a refresh token is ~250 bytes; the body of an un
 async def _refresh_token_in_body(request: Request) -> Optional[str]:
     """The ``refresh_token`` of a JSON body, as /auth/refresh accepts it, or None.
 
-    The route is open to anybody (the CSRF check runs AFTER this dependency), so the body is read only when it is
+    The route is open to anybody, so the body is read only when it is
     declared JSON and is at most ``LOGOUT_BODY_MAX_BYTES`` long (the Content-Length header AND the bytes actually
     received, so a chunked or lying request is cut at the limit). Anything else - another content type, a big body,
     not JSON, a list, deep nesting that exhausts the parser's recursion - just means "no token" and NEVER raises:
@@ -624,7 +601,7 @@ def logout(
 ):
     """Revoke the server refresh token and clear both browser cookies.
 
-    - Started by another site (Sec-Fetch-Site: cross-site or a foreign Origin): 403, no cookie
+    - Started by another site (Sec-Fetch-Site: cross-site or a foreign Origin): 403 from ``OriginGuardMiddleware`` (AD-2), no cookie
       is touched - no site may sign a visitor out.
     - No credential at all (no auth cookie, no Bearer header): nothing to clear, so 200 WITHOUT any
       Set-Cookie.
@@ -636,8 +613,6 @@ def logout(
       in a small (<= 4 KB) JSON body (the cookie wins when both are present). A request with an access token only
       revokes the session that token names (``sid``, K2-1 A5): the token stops working at once.
     """
-    refuse_cross_site(request)
-
     refresh = request.cookies.get(REFRESH_COOKIE_NAME) or body_refresh
     has_credential = bool(
         request.cookies.get(AUTH_COOKIE_NAME) or refresh or (credentials and credentials.credentials)

@@ -8,7 +8,8 @@ and the dependencies every ``/api/v1/platform`` route is built on.
   (``sid``); the row decides (revoked / expired / staff disabled close the session at once).
 * **Cookie** ``__Host-algo_console_session`` (``algo_console_session`` on plain-http dev): host-only, ``HttpOnly``, ``SameSite=Strict``,
   ``Secure`` on staging/production, 12 h.
-* **Origin**: a request that carries ``Origin`` (any method) must come from a console origin (https, console host, default port).
+* **Origin**: a request that carries ``Origin`` (any method) must come from a console origin (https, console host, default port); a mutating
+  one is judged by the same decision as the cabinets' (AD-2: ``Sec-Fetch-Site``, ``Origin``, else ``Referer``; ``core/origin_guard.py``).
 
 «Войти как» (pack K4) plugs in here without touching this module's contract: ``Principal`` carries the staff member, his role, his permissions
 (``impersonate.view`` / ``impersonate.write`` are already in the catalogue) and the ``platform_sessions`` row; K4 adds a table of one-time codes
@@ -30,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from src.core.config import get_settings
 from src.core.database import get_db
+from src.core.origin_guard import MUTATING_METHODS, request_is_foreign
 from src.models.auth import User
 from src.models.platform import PlatformRole, PlatformSession, PlatformStaff
 
@@ -100,11 +102,17 @@ def is_console_origin(origin: str) -> bool:
 
 def console_guard(request: Request) -> None:
     """Router-level dependency: wrong host -> 404 (the section does not exist there); an Origin that is not a console origin -> 403
-    for EVERY method (a cross-origin read is as unwelcome as a cross-origin write)."""
+    for EVERY method (a cross-origin read is as unwelcome as a cross-origin write); a POST/PUT/PATCH/DELETE is also judged by
+    ``Sec-Fetch-Site`` and, without Origin, by Referer - the one decision of every mutating route (AD-2, ``core.origin_guard``)."""
     if not is_console_host(request):
         raise PlatformError(404, "Not Found", "not_found")
     origin = request.headers.get("origin")
-    if origin is not None and not is_console_origin(origin):
+    foreign = (
+        request_is_foreign(request.headers, is_console_origin)
+        if request.method in MUTATING_METHODS
+        else origin is not None and not is_console_origin(origin)
+    )
+    if foreign:
         raise PlatformError(403, "Запрос отклонён", "bad_origin")
 
 

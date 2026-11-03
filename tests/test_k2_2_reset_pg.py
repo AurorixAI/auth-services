@@ -1132,7 +1132,7 @@ def test_csrf_the_new_routes_of_the_cabinet_refuse_a_request_that_another_site_s
     for url, body in calls:
         for headers in ({"Origin": "https://evil.example"}, {"Sec-Fetch-Site": "cross-site"}, {"Origin": own, "Sec-Fetch-Site": "cross-site"}):
             r = owner.post(url, json=body, headers=headers)
-            assert r.status_code == 403 and r.json()["detail"] == "Запрос выхода должен приходить с сайта ALGO", (url, headers, r.text)
+            assert r.status_code == 403 and r.json()["code"] == "bad_origin", (url, headers, r.text)
         assert owner.post(url, json=body, headers={"Origin": own}).status_code == 200, url          # the own Origin passes
     assert len(letters_to(cw.outbox, centre.teacher.email)) == 2                                    # nothing went for the refused ones: one link, one notice
 

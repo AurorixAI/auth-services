@@ -165,6 +165,8 @@ app.add_middleware(
         "/attachments": (_SUPPORT_MAX_BYTES, "2 МБ"),  # K4a: one screenshot per request, POST …/support/tickets/{id}/attachments
     },
 )
+from src.core.origin_guard import OriginGuardMiddleware
+app.add_middleware(OriginGuardMiddleware)  # AD-2: a POST/PUT/PATCH/DELETE that another site started is 403 before anything is read (outside the upload limit: a foreign upload is refused first; inside RequestID: the 403 carries X-Request-ID)
 app.add_middleware(RequestIDMiddleware)  # wraps the upload limit: its 411/413 carry X-Request-ID too
 app.add_middleware(
     CORSMiddleware,

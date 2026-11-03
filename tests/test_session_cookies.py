@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 import src.api.internal_router  # noqa: E402,F401  (import order: avoids a pre-existing router cycle)
 import src.auth.cookies as cookies_module  # noqa: E402
 from src.api import main_v2  # noqa: E402
+from src.core.origin_guard import OriginGuardMiddleware  # noqa: E402
 import src.auth.router as auth_router_module  # noqa: E402
 import src.auth.service as service_module  # noqa: E402
 from src.auth import user_sessions  # noqa: E402
@@ -73,6 +74,7 @@ def client_for(db=None):
     app.include_router(auth_router_module.router, prefix="/api/v1")
     app.include_router(payments_router, prefix="/api/v1")
     app.add_exception_handler(AlgoException, main_v2.algo_exception_handler)  # as the real service answers
+    app.add_middleware(OriginGuardMiddleware)  # AD-2: the source check of every mutating route is the application's middleware, not the route's
     app.dependency_overrides[get_db] = lambda: db if db is not None else MagicMock()
     return TestClient(app)
 

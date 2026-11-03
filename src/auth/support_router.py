@@ -17,17 +17,8 @@ from . import support_rules as rules
 from . import support_service as svc
 from .dependencies import require_org_teacher
 from .platform_errors import PlatformError
-from .router import _is_cross_site_request
 
 router = APIRouter(prefix="/auth/support", tags=["Support"])
-
-CROSS_SITE_TEXT = "Запрос должен приходить с сайта ALGO"
-
-
-def _same_site(request: Request) -> None:
-    """A mutating route works on the cookies: a request that another site started is refused (K2-2 R3, 4)."""
-    if _is_cross_site_request(request):
-        raise PlatformError(403, CROSS_SITE_TEXT, "bad_origin")
 
 
 @router.post("/tickets")
@@ -35,7 +26,6 @@ def create_ticket(
     request: Request, response: Response, background: BackgroundTasks, body: dict = Body(default=None),
     user: dict = Depends(require_org_teacher), db: Session = Depends(get_db),
 ):
-    _same_site(request)
     ticket, created = svc.create_ticket(db, user, body, request.headers.get("user-agent"))
     db.commit()
     if created:
@@ -70,7 +60,6 @@ def reply(
     ticket_id: str, request: Request, response: Response, background: BackgroundTasks, body: dict = Body(default=None),
     user: dict = Depends(require_org_teacher), db: Session = Depends(get_db),
 ):
-    _same_site(request)
     ticket, message, created = svc.add_author_reply(db, user, ticket_id, body)
     db.commit()
     if created:
@@ -87,7 +76,6 @@ async def upload_attachment(
     ticket_id: str, request: Request, user: dict = Depends(require_org_teacher), db: Session = Depends(get_db),
 ):
     """One screenshot per request. The size is refused before the body is read (``UploadSizeLimitMiddleware``); the type is judged by the first bytes."""
-    _same_site(request)
     await run_in_threadpool(svc.own_ticket, db, user, ticket_id)  # somebody else's ticket: 404 BEFORE a byte of the body is read
     form = await request.form()
     try:
