@@ -10,6 +10,7 @@
   "lessonDate": "2026-10-13",
   "lessonId": "lesson-l3",
   "markedCount": 0,
+  "periodClosed": false,
   "remainingCount": 0,
   "requiresAdmin": true,
   "room": null,

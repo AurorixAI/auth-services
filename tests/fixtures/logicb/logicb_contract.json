@@ -3071,6 +3071,11 @@
             "title": "Markedcount",
             "type": "integer"
           },
+          "periodClosed": {
+            "default": false,
+            "title": "Periodclosed",
+            "type": "boolean"
+          },
           "remainingCount": {
             "default": 0,
             "title": "Remainingcount",
@@ -3441,7 +3446,7 @@
           "taughtBy": {
             "anyOf": [
               {
-                "maxLength": 36,
+                "format": "uuid",
                 "type": "string"
               },
               {
@@ -3753,9 +3758,15 @@
             "title": "Cancellationreason"
           },
           "confirmNobodyCame": {
-            "default": false,
-            "title": "Confirmnobodycame",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmnobodycame"
           },
           "correctionReason": {
             "anyOf": [
@@ -7037,6 +7048,11 @@
       "model": "LiveExamDetail",
       "status": 409
     },
+    "LESSON_IN_PROGRESS": {
+      "message": "Урок идёт: сначала завершите его, затем назначьте того, кто провёл",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
     "LESSON_NOT_FOUND": {
       "message": "Урок не найден",
       "model": "OpsErrorResponse",
@@ -7077,6 +7093,11 @@
       "model": "OpsErrorResponse",
       "status": 403
     },
+    "MONTH_INVALID": {
+      "message": "Месяц указывается в формате ГГГГ-ММ, например 2026-09",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
     "NOBODY_CAME": {
       "message": "Никто не пришёл. Если завершить, урок будет считаться проведённым и оплачен преподавателю",
       "model": "OpsErrorResponse",
@@ -7116,6 +7137,31 @@
       "message": "Месяц преподавателя закрыт: ведомость сохранена после его конца. Владелец или администратор с правом оплат сначала переоткрывает месяц",
       "model": "OpsErrorResponse",
       "status": 409
+    },
+    "REASON_REQUIRED": {
+      "message": "Причина: от 3 до 500 символов",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "RESTORE_BEFORE_START": {
+      "message": "Этот урок был раньше начала учёта центра: вернуть его на разбор нельзя",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "REVISION_REQUIRED": {
+      "message": "Обновите страницу и повторите: нужна текущая версия ведомости",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "SHEET_CHANGED": {
+      "message": "Ведомость уже изменили. Обновите страницу и проверьте, нужно ли переоткрывать месяц",
+      "model": "OpsErrorResponse",
+      "status": 409
+    },
+    "SHEET_NOT_FOUND": {
+      "message": "Ведомости за этот месяц нет: переоткрывать нечего",
+      "model": "OpsErrorResponse",
+      "status": 404
     },
     "STAFF_ROLE_REQUIRED": {
       "message": "Добавлять учеников может администратор центра",
@@ -7159,6 +7205,11 @@
     },
     "VALID_FROM_RANGE": {
       "message": "Дата начала не может быть позже чем через 365 дней",
+      "model": "OpsErrorResponse",
+      "status": 422
+    },
+    "VERSION_REQUIRED": {
+      "message": "Обновите страницу и повторите: нужна текущая версия урока",
       "model": "OpsErrorResponse",
       "status": 422
     }

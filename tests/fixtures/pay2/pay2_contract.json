@@ -1037,6 +1037,11 @@
               }
             ]
           },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
           "money_effects": {
             "anyOf": [
               {
@@ -2127,6 +2132,11 @@
       },
       "PaymentVoided": {
         "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
           "money_effects": {
             "anyOf": [
               {
@@ -3913,6 +3923,11 @@
             "title": "Advance Before",
             "type": "integer"
           },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
           "money_effects": {
             "anyOf": [
               {
@@ -3937,7 +3952,8 @@
           "advance_before",
           "advance_after",
           "row",
-          "money_effects"
+          "money_effects",
+          "dry_run"
         ],
         "title": "RefundCreated",
         "type": "object"
@@ -4096,6 +4112,11 @@
       },
       "RefundVoided": {
         "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
           "money_effects": {
             "anyOf": [
               {
@@ -4118,7 +4139,8 @@
         "required": [
           "refund",
           "row",
-          "money_effects"
+          "money_effects",
+          "dry_run"
         ],
         "title": "RefundVoided",
         "type": "object"
@@ -5054,6 +5076,11 @@
             "title": "Debt Before",
             "type": "integer"
           },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
           "money_effects": {
             "anyOf": [
               {
@@ -5078,7 +5105,8 @@
           "debt_before",
           "debt_after",
           "row",
-          "money_effects"
+          "money_effects",
+          "dry_run"
         ],
         "title": "WriteoffCreated",
         "type": "object"
@@ -5203,6 +5231,11 @@
       },
       "WriteoffVoided": {
         "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
           "money_effects": {
             "anyOf": [
               {
@@ -5225,7 +5258,8 @@
         "required": [
           "writeoff",
           "row",
-          "money_effects"
+          "money_effects",
+          "dry_run"
         ],
         "title": "WriteoffVoided",
         "type": "object"
@@ -5300,7 +5334,7 @@
         ]
       },
       "post": {
-        "description": "Внести оплату. PAY-2: только сумма, дата, способ, примечание — период и распределение считает система\n(``allocation`` в ответе). ``Idempotency-Key`` защищает от двойного клика.",
+        "description": "Внести оплату. PAY-2: только сумма, дата, способ, примечание — период и распределение считает система\n(``allocation`` в ответе). ``Idempotency-Key`` защищает от двойного клика.  ``dry_run`` — окно подтверждения: что изменится в ведомостях (R3 #15).",
         "parameters": [
           {
             "in": "path",
@@ -5310,6 +5344,18 @@
               "format": "uuid",
               "title": "Membership Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "только последствия для денег (ничего не записывается); ответ — как после оплаты, ``dry_run: true``",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "только последствия для денег (ничего не записывается); ответ — как после оплаты, ``dry_run: true``",
+              "title": "Dry Run",
+              "type": "boolean"
             }
           },
           {
@@ -5648,6 +5694,18 @@
               "format": "uuid",
               "title": "Membership Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "только последствия для денег (ничего не записывается)",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "только последствия для денег (ничего не записывается)",
+              "title": "Dry Run",
+              "type": "boolean"
             }
           }
         ],
@@ -5997,6 +6055,18 @@
               "format": "uuid",
               "title": "Membership Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "только последствия для денег (ничего не записывается)",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "только последствия для денег (ничего не записывается)",
+              "title": "Dry Run",
+              "type": "boolean"
             }
           }
         ],
@@ -6821,6 +6891,18 @@
             }
           },
           {
+            "description": "только последствия для денег (ничего не записывается)",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "только последствия для денег (ничего не записывается)",
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          },
+          {
             "in": "header",
             "name": "Idempotency-Key",
             "required": false,
@@ -6894,6 +6976,18 @@
               "title": "Payment Id",
               "type": "string"
             }
+          },
+          {
+            "description": "только последствия для денег (ничего не записывается)",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "только последствия для денег (ничего не записывается)",
+              "title": "Dry Run",
+              "type": "boolean"
+            }
           }
         ],
         "requestBody": {
@@ -6951,6 +7045,18 @@
               "format": "uuid",
               "title": "Refund Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "только последствия для денег (ничего не записывается)",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "только последствия для денег (ничего не записывается)",
+              "title": "Dry Run",
+              "type": "boolean"
             }
           }
         ],
@@ -7176,6 +7282,18 @@
               "format": "uuid",
               "title": "Writeoff Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "только последствия для денег (ничего не записывается)",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "только последствия для денег (ничего не записывается)",
+              "title": "Dry Run",
+              "type": "boolean"
             }
           }
         ],

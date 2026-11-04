@@ -387,7 +387,7 @@ put("x_open_action_requires_admin.json", "OpenAttendanceActionResponseB", {
     "actionType": "missed", "groupId": IDS["G2"], "groupName": "7-Б", "classLevel": 9, "lessonId": LESSON["L3"],
     "lessonDate": "2026-10-13", "subject": "Математика", "startTime": "10:00", "endTime": "11:00", "room": None,
     "format": "offline", "topic": None, "markedCount": 0, "rosterCount": 0, "remainingCount": 0, "teacherId": IDS["A"],
-    "teacherName": "Иван Иванов", "version": None, "requiresAdmin": True, "ageDays": 8, "isSubstitution": False,
+    "teacherName": "Иван Иванов", "version": None, "requiresAdmin": True, "ageDays": 8, "isSubstitution": False, "periodClosed": False,
 })
 put("x_occurrence_substitution.json", "ScheduleOccurrenceResponseB", {
     "id": LESSON["L1"], "groupId": IDS["G1"], "groupName": "9-А", "classLevel": 9, "subject": "Математика", "dayOfWeek": 1,

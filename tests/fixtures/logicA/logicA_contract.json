@@ -3687,6 +3687,11 @@
               }
             ]
           },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
           "money_effects": {
             "anyOf": [
               {
@@ -6653,6 +6658,17 @@
       "SheetCreate": {
         "description": "Save a sheet; if the teacher already has one for the month this is its next revision.",
         "properties": {
+          "confirm_open_lessons": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Open Lessons"
+          },
           "expected_fingerprint": {
             "anyOf": [
               {
@@ -7755,7 +7771,7 @@
   "paths": {
     "/org/groups/{group_id}/lesson-type": {
       "put": {
-        "description": "Тип занятий группы с даты (по умолчанию сегодня; не раньше начала прошлого месяца). Список ведомостей — только владельцу.",
+        "description": "Тип занятий группы с даты (по умолчанию сегодня; не раньше начала учёта центра и не в закрытый месяц). Список ведомостей — только владельцу.",
         "parameters": [
           {
             "in": "path",
@@ -7853,7 +7869,7 @@
         "x-errors": [
           {
             "code": "LESSON_TYPE_RANGE",
-            "message": "Тип занятий можно менять с начала прошлого месяца по сегодня",
+            "message": "Тип занятий можно менять с начала учёта центра по сегодня",
             "status": 422
           }
         ]
@@ -8055,6 +8071,18 @@
               ],
               "title": "Mode",
               "type": "string"
+            }
+          },
+          {
+            "description": "только показать, что перенесётся (ничего не записывается)",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "только показать, что перенесётся (ничего не записывается)",
+              "title": "Dry Run",
+              "type": "boolean"
             }
           }
         ],
@@ -8782,7 +8810,7 @@
     },
     "/org/memberships/{membership_id}/payments": {
       "post": {
-        "description": "Внести оплату. PAY-2: только сумма, дата, способ, примечание — период и распределение считает система\n(``allocation`` в ответе). ``Idempotency-Key`` защищает от двойного клика.",
+        "description": "Внести оплату. PAY-2: только сумма, дата, способ, примечание — период и распределение считает система\n(``allocation`` в ответе). ``Idempotency-Key`` защищает от двойного клика.  ``dry_run`` — окно подтверждения: что изменится в ведомостях (R3 #15).",
         "parameters": [
           {
             "in": "path",
@@ -8792,6 +8820,18 @@
               "format": "uuid",
               "title": "Membership Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "только последствия для денег (ничего не записывается); ответ — как после оплаты, ``dry_run: true``",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "только последствия для денег (ничего не записывается); ответ — как после оплаты, ``dry_run: true``",
+              "title": "Dry Run",
+              "type": "boolean"
             }
           },
           {
@@ -9800,6 +9840,18 @@
               "format": "uuid",
               "title": "Payment Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "только последствия для денег (ничего не записывается)",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "только последствия для денег (ничего не записывается)",
+              "title": "Dry Run",
+              "type": "boolean"
             }
           },
           {
