@@ -51,7 +51,7 @@ def test_the_revision_follows_wave_b_and_is_the_head():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == [REVISION] and script.get_revision(REVISION).down_revision == BEFORE
+    assert script.get_heads() == ["mn1a2b3c4d5"] and script.get_revision(REVISION).down_revision == BEFORE        # Money-1 sits on top of this revision
 
 
 def test_up_down_up_on_a_filled_database(engine):
@@ -79,7 +79,7 @@ def test_up_down_up_on_a_filled_database(engine):
             db.add(GroupAttendance(org_id=org.id, group_id=group.id, lesson_date=f"2026-10-0{i + 1}", lesson_id=f"l{i}", status=status, records={}, roster_snapshot=[]))
         db.commit()
         counts = {t: db.execute(text(f"SELECT count(*) FROM {t}")).scalar() for t, _ in INDEXES.values()}
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     assert version(engine) == REVISION
     found = definitions(engine)
     assert set(found) == set(INDEXES)
@@ -90,8 +90,8 @@ def test_up_down_up_on_a_filled_database(engine):
         assert {t: c.execute(text(f"SELECT count(*) FROM {t}")).scalar() for t, _ in INDEXES.values()} == counts            # no row lost
     command.downgrade(cfg, BEFORE)
     assert version(engine) == BEFORE and definitions(engine) == {}
-    command.upgrade(cfg, "head")
-    command.upgrade(cfg, "head")                                 # repeating is harmless
+    command.upgrade(cfg, REVISION)
+    command.upgrade(cfg, REVISION)                                 # repeating is harmless
     assert version(engine) == REVISION and set(definitions(engine)) == set(INDEXES)
 
 
@@ -103,5 +103,5 @@ def test_a_database_built_from_the_models_and_stamped_back_upgrades_without_fail
     assert set(definitions(engine)) == set(INDEXES)
     cfg = config()
     command.stamp(cfg, BEFORE)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     assert version(engine) == REVISION and set(definitions(engine)) == set(INDEXES)
