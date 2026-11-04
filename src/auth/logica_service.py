@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import func
 
 from src.models.auth import (
+    Group,
     GroupAttendance,
     MembershipOpeningBalance,
     MembershipPause,
@@ -29,6 +30,8 @@ from src.models.auth import (
 )
 
 from . import billing_ledger as bl
+from .closed_period import ClosedPeriods, group_teacher_ids
+from .ops_rules import OpsError
 from . import membership_periods
 from . import payment_status as ps
 from .payments_schemas import (
@@ -69,7 +72,6 @@ AUDIT_OPENING_SET = "opening_balance_set"
 AUDIT_OPENING_VOID = "opening_balance_void"
 AUDIT_PAUSE_SET = "membership_pause_set"
 AUDIT_PAUSE_VOID = "membership_pause_void"
-PAUSE_BACKDATE_DAYS = 30
 PAUSE_MAX_DAYS = 366
 OPENING_AHEAD_DAYS = 366
 OPENING_MIN_DATE = date(2020, 1, 1)
@@ -370,10 +372,25 @@ class PauseService(_Base):
     def _check_range(first: date, last: date, today: date) -> None:
         if last < first:
             raise PauseRange("Пауза: «по» не раньше «с»")
-        if first < today - timedelta(days=PAUSE_BACKDATE_DAYS):
-            raise PauseRange(f"Пауза начинается не раньше чем {PAUSE_BACKDATE_DAYS} дней назад")
         if (last - first).days + 1 > PAUSE_MAX_DAYS:
             raise PauseRange(f"Пауза не длиннее {PAUSE_MAX_DAYS} дней")
+
+    def _assert_days_open(self, org_id: str, membership: StudentGroup, days: Set[date], today: date) -> None:
+        """Money-1 A1 (was: «not older than 30 days»): the days of a pause that were / will be changed must not lie in a month of a teacher of this group that a saved sheet has closed
+        (``closed_period.py``) - a pause takes the lessons of those days off the pay of the teacher.  Days that have not come yet touch no sheet."""
+        past = sorted(d for d in days if d <= today)
+        if not past:
+            return
+        group = self.db.get(Group, membership.group_id)
+        if group is None:
+            return
+        periods = ClosedPeriods(self.db, org_id)
+        if not periods.months_with_closed():
+            return
+        try:
+            periods.assert_range_open(group_teacher_ids(self.db, group, past[0], past[-1]), past[0], past[-1])
+        except OpsError as exc:
+            raise PauseLocked(exc.message, **exc.extra) from exc
 
     def _lessons(self, membership: StudentGroup, first: date, last: date) -> Tuple[List[Tuple[date, Optional[str]]], List[Tuple[date, str]]]:
         """``(excluded, attended)``: the lessons of the group inside the pause where the student has a mark."""
@@ -432,6 +449,7 @@ class PauseService(_Base):
         try:
             self._check_range(body.first_day, body.last_day, today)
             membership = self._guard_open(org_id, membership_id)
+            self._assert_days_open(org_id, membership, _days(body.first_day, body.last_day), today)
             self.pay._lock_family(org_id, membership.student_id)
             live = self._live(membership_id)
             same = next((p for p in live if (p.first_day, p.last_day) == (body.first_day, body.last_day)), None)
@@ -499,12 +517,9 @@ class PauseService(_Base):
             raise AlreadyVoided("Пауза уже отменена")
         return row
 
-    @staticmethod
-    def _check_unlocking(old: Set[date], new: Set[date], today: date) -> None:
-        """Days that become payable again must not be older than 30 days (422 ``PAUSE_LOCKED``)."""
-        edge = today - timedelta(days=PAUSE_BACKDATE_DAYS)
-        if any(d < edge for d in old - new):
-            raise PauseLocked("Паузу нельзя сократить или отменить: дни старше 30 дней уже не меняются")
+    def _check_unlocking(self, org_id: str, membership: StudentGroup, old: Set[date], new: Set[date], today: date) -> None:
+        """Days that become payable again must not lie in a closed month (422 ``PAUSE_LOCKED``)."""
+        self._assert_days_open(org_id, membership, old - new, today)
 
     @deadlock_guard
     def patch(
@@ -521,11 +536,9 @@ class PauseService(_Base):
                 raise PauseRange("Пауза: «по» не раньше «с»")
             if (last - first).days + 1 > PAUSE_MAX_DAYS:
                 raise PauseRange(f"Пауза не длиннее {PAUSE_MAX_DAYS} дней")
-            # M3: EVERY day that enters the pause (new - old) is as old as a new pause may be - not only a moved start (a pause that lies wholly
-            # in the past cannot be lengthened over older days)
-            if any(d < today - timedelta(days=PAUSE_BACKDATE_DAYS) for d in _days(first, last) - _days(row.first_day, row.last_day)):
-                raise PauseRange(f"Пауза начинается не раньше чем {PAUSE_BACKDATE_DAYS} дней назад")
-            self._check_unlocking(_days(row.first_day, row.last_day), _days(first, last), today)
+            # M3: EVERY day that enters the pause (new - old) must lie in an open month, as a new pause's days must - not only a moved start
+            self._assert_days_open(org_id, membership, _days(first, last) - _days(row.first_day, row.last_day), today)
+            self._check_unlocking(org_id, membership, _days(row.first_day, row.last_day), _days(first, last), today)
             if any(p.id != row.id and p.first_day <= last and first <= p.last_day for p in self._live(row.membership_id)):
                 raise PauseOverlap("Пауза пересекается с другой паузой этого ученика")
             _, attended = self._lessons(membership, first, last)
@@ -573,7 +586,7 @@ class PauseService(_Base):
             reason = self.pay._check_reason(reason)
             row = self._locked_pause(org_id, pause_id)
             membership = self.pay._membership(org_id, row.membership_id, lock=True)
-            self._check_unlocking(_days(row.first_day, row.last_day), set(), today)
+            self._check_unlocking(org_id, membership, _days(row.first_day, row.last_day), set(), today)
             before = self.pay._entry_of(org_id, row.membership_id, today).ledger
             row.voided_at, row.voided_by, row.void_reason = _utcnow(), UUID(str(actor_id)), reason
             self.db.flush()

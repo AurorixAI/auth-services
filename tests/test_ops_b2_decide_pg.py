@@ -13,6 +13,7 @@ from tests.b2_helpers import (  # noqa: F401  (fixtures)
 )
 
 pytestmark = needs_pg
+from tests.ops_helpers import closed_sheet  # noqa: E402
 SUB = f"{API}/org/substitutions"
 
 
@@ -149,7 +150,7 @@ def test_s4_r4_races_with_the_other_writers(w, clock):
 
 def test_s4_r5_assigning_the_one_who_taught(w, clock):
     """[B2.S4.R5] The lesson began (nobody started it): decide substitute D -> the lesson is D's missed one; D reconciles it (marked_by D, teacher D); older than 7 days only the admin;
-    older than the window 422 LESSON_OUTSIDE_WINDOW with the request left pending and closed by the next pass."""
+    a closed month of the teacher 409 PERIOD_CLOSED (Money-1 A1) with the request left pending and closed by the next pass."""
     clock.set("2026-10-21 15:40")
     item = one(w, "A", "L2", "2026-10-21")
     clock.set("2026-10-21 17:40")
@@ -173,8 +174,9 @@ def test_s4_r5_assigning_the_one_who_taught(w, clock):
     clock.set("2026-10-22 11:00")
     far = one(w, "A", "L2", "2026-10-28")
     clock.set("2026-12-05 10:00")
+    closed_sheet(w, w.A, date(2026, 10, 1))                                           # Money-1 A1: October of A is closed by his saved sheet (it was «older than the window»)
     out = decide(w, "admin", far["id"], **sub_body(w, "D"))
-    assert out.status_code == 422 and out.json()["detail"]["code"] == "LESSON_OUTSIDE_WINDOW"
+    assert out.status_code == 409 and out.json()["detail"]["code"] == "PERIOD_CLOSED"
     assert [r.status for r in requests_of(w) if str(r.id) == far["id"]] == ["pending"]
     assert client(w, "admin").get(SUB, params={"status": "pending"}).json()["items"] == []
     assert [(r.status, r.closed_reason) for r in requests_of(w) if str(r.id) == far["id"]] == [("closed", "LESSON_OUTSIDE_WINDOW")]
@@ -470,7 +472,7 @@ def test_s6_r4_race_cancel_against_reject_and_start(w, sync, clock):
 
 
 def test_s6_r5_past_lesson_without_a_row_inside_the_window_only(w, clock, sync):
-    """[B2.S6.R5] A lesson that passed unstarted: allowed (audit ``reconciliation_cancelled``) inside the unclosed-lessons window, 422 LESSON_OUTSIDE_WINDOW outside it; the 7-day rule is not for the admin."""
+    """[B2.S6.R5] A lesson that passed unstarted: allowed (audit ``reconciliation_cancelled``) in an open month, 409 PERIOD_CLOSED in a month closed by a saved sheet (Money-1 A1); the 7-day rule is not for the admin."""
     item = one(w, "A", "L1", "2026-10-26")
     clock.set("2026-11-12 10:00")                                           # 17 days after: the admin is fine
     ok = decide(w, "admin", item["id"], decision="cancel", reason="Урока не было")
@@ -480,8 +482,9 @@ def test_s6_r5_past_lesson_without_a_row_inside_the_window_only(w, clock, sync):
     clock.set("2026-10-22 10:00")
     far = one(w, "A", "L2", "2026-10-28")
     clock.set("2026-12-05 10:00")
+    closed_sheet(w, w.A, date(2026, 10, 1))                                 # Money-1 A1: October of A is closed by his saved sheet (it was «outside the window»)
     out = decide(w, "admin", far["id"], decision="cancel", reason="Урока не было")
-    assert out.status_code == 422 and out.json()["detail"]["code"] == "LESSON_OUTSIDE_WINDOW"
+    assert out.status_code == 409 and out.json()["detail"]["code"] == "PERIOD_CLOSED"
 
 
 def test_s6_r6_cancel_of_a_lesson_of_the_previous_month(w, clock, sync):

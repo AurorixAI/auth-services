@@ -13,9 +13,9 @@ from sqlalchemy.orm import Session
 
 from src.models.auth import Group, GroupAttendance, GroupAttendanceAudit
 
-from . import business_clock as bc
+from .closed_period import ClosedPeriods, lesson_teacher_ids
 from .one_off_purpose import MAKEUP_EXISTS_TEXT
-from .ops_rules import conflict, not_found, unprocessable
+from .ops_rules import conflict, not_found
 from .lesson_teachers import _uuid
 from .schemas import CancellationKind
 
@@ -49,8 +49,7 @@ def change_cancellation_kind(db: Session, org_id: str, group_id: str, req: Chang
         raise conflict("CANCELLED_BY_DAY_OFF", "Урок отменён выходным днём центра: измените или отмените сам выходной")
     if row.cancellation_kind is None:
         raise conflict("CANCELLATION_HAS_NO_KIND", "Это отмена до обновления или перенос урока: вид отмены у неё не меняется")
-    if req.lessonDate < bc.month_window_start(bc.business_today()):       # W1 S17 (Д10): the same window as the marks of a past lesson - an old period is closed, its money does not move
-        raise unprocessable("REASON_CHANGE_TOO_OLD", "Причину отмены можно менять только у уроков не старше окна незакрытых уроков (с 1-го числа прошлого месяца)")
+    ClosedPeriods(db, org_id).assert_open(lesson_teacher_ids(db, group, req.lessonId, req.lessonDate.isoformat(), row), req.lessonDate)   # Money-1 A1: a closed month does not move (the one rule, ``closed_period.py``)
     before = row.cancellation_kind
     if before == req.cancellationKind:
         return {"ok": True, "changed": False, "cancellationKind": before, "version": row.version}

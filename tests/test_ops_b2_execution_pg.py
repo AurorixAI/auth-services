@@ -12,6 +12,7 @@ from tests.b2_helpers import (  # noqa: F401  (fixtures)
     row_of, run_parallel,
 )
 from tests.test_ops_b2_decide_pg import Sync, L, one, sync, sub_body, assignments  # noqa: F401
+from tests.ops_helpers import closed_sheet  # noqa: E402
 
 pytestmark = needs_pg
 SUB = f"{API}/org/substitutions"
@@ -223,6 +224,7 @@ def test_s9_r5_the_lazy_pass_closes_old_and_started(w, clock):
     detail = client(w, "A").get(f"{SUB}/{b['id']}").json()["item"]
     assert detail["status"] == "closed" and detail["decision"]["closedReason"] == "LESSON_STARTED"
     clock.set("2026-12-05 10:00")
+    closed_sheet(w, w.A, date(2026, 10, 1))                                           # Money-1 A1: October of A is closed by his saved sheet (it was «older than the window»)
     assert client(w, "admin").get(SUB, params={"status": "pending"}).json()["items"] == []
     assert {r.closed_reason for r in requests_of(w)} == {"LESSON_STARTED", "LESSON_OUTSIDE_WINDOW"}
 

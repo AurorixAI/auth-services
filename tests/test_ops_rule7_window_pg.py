@@ -1,12 +1,12 @@
 """LOGIC-B decision 7 - a teacher closes lessons that are at most 7 days old; older ones are the administrator's.  Matrix rows [D7.R1] ... [D7.R9]."""
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 
 from src.models.auth import GroupAttendance
 
 from tests.ops_helpers import (  # noqa: F401  (fixtures)
-    build_d0, clock, client, exams, fixture, history_row, needs_pg, new_group, new_slot, new_student, pg_session,
+    build_d0, clock, client, closed_sheet, exams, fixture, history_row, needs_pg, new_group, new_slot, new_student, pg_session,
 )
 
 pytestmark = needs_pg
@@ -52,28 +52,33 @@ def test_r2_the_idempotent_reconcile_obeys_the_window_and_an_old_open_lesson_is_
     assert rec(w, "admin", "lesson-wed", "2026-10-14").status_code in (200, 400)
 
 
-def test_r3_an_admin_closes_anything_inside_the_unclosed_window_and_nothing_before_it(w):
-    """[D7.R3] The administrator's lower bound is the first day of the previous month (01.09 on 21.10): 13.10 yes; 31.08 -> 422 LESSON_OUTSIDE_WINDOW (reconcile and cancel_missed)."""
+def test_r3_an_admin_closes_anything_of_an_open_month_and_nothing_of_a_closed_one(w):
+    """[D7.R3] Money-1 A1 (was: the lower bound of the first day of the previous month): 13.10 yes; 26.08 of a month the sheet of the teacher closed -> 409 PERIOD_CLOSED (reconcile and cancel_missed);
+    09.02 of an open month yes."""
     assert rec(w, "admin", "lesson-tue", "2026-10-13").status_code == 200
+    closed_sheet(w, w.D, date(2026, 8, 1))
     gone = rec(w, "admin", "lesson-wed", "2026-08-26")
-    assert gone.status_code == 422 and gone.json()["detail"]["code"] == "LESSON_OUTSIDE_WINDOW"
+    assert gone.status_code == 409 and gone.json()["detail"]["code"] == "PERIOD_CLOSED"
     cancel = client(w, "admin").post(f"{API}/groups/{w.G7.id}/attendance/reconcile/cancel",
                                      json={"lessonDate": "2026-08-26", "lessonId": "lesson-wed", "cancellationReason": "Каникулы"})
-    assert cancel.status_code == 422 and cancel.json()["detail"]["code"] == "LESSON_OUTSIDE_WINDOW"
+    assert cancel.status_code == 409 and cancel.json()["detail"]["code"] == "PERIOD_CLOSED"
     ok = client(w, "admin").post(f"{API}/groups/{w.G7.id}/attendance/reconcile/cancel",
                                  json={"lessonDate": "2026-09-02", "lessonId": "lesson-wed", "cancellationReason": "Каникулы"})
     assert ok.status_code == 200
 
 
 def test_r4_r6_the_window_is_the_business_day_at_the_moment_of_the_request(w, clock):
-    """[D7.R4] [D7.R6] 23:59 Wed 21.10: the lesson of 14.10 is still 7 days old; 00:00:30 Thu 22.10 it is 8 days; the month border moves the unclosed window."""
+    """[D7.R4] [D7.R6] 23:59 Wed 21.10: the lesson of 14.10 is still 7 days old; 00:00:30 Thu 22.10 it is 8 days; the month border moves nothing any more (Money-1 A1: only a sheet saved after
+    the month closes it)."""
     clock.set("2026-10-21 23:59")
     assert rec(w, "D", "lesson-wed", "2026-10-14").status_code == 200
     clock.set("2026-10-22 00:00:30")
     assert rec(w, "D", "lesson-wed", "2026-10-14").json()["detail"]["code"] == "LESSON_TOO_OLD"
-    clock.set("2026-11-01 09:00")                                              # the window now starts on 01.10
-    new = rec(w, "admin", "lesson-wed", "2026-09-30")
-    assert new.status_code == 422 and new.json()["detail"]["code"] == "LESSON_OUTSIDE_WINDOW"
+    clock.set("2026-11-01 09:00")                                              # the 1st: it used to close September
+    assert rec(w, "admin", "lesson-wed", "2026-09-30").status_code == 200
+    closed_sheet(w, w.D, date(2026, 9, 1), saved="2026-10-02 12:00")
+    new = rec(w, "admin", "lesson-wed", "2026-09-23")
+    assert new.status_code == 409 and new.json()["detail"]["code"] == "PERIOD_CLOSED"
 
 
 def test_r5_open_actions_tell_a_teacher_that_an_old_lesson_needs_an_admin(w, clock):

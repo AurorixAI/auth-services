@@ -366,3 +366,17 @@ def grant_money_right(w, on: bool = True) -> None:
     settings["payments"] = {**(settings.get("payments") or {}), "admin_can_manage": on}
     org.settings = settings
     w.db.commit()
+
+
+def closed_sheet(w, teacher, month: date, saved: str = None):
+    """Money-1 A1: a saved sheet that CLOSES ``month`` of ``teacher`` (saved on the 2nd of the next month, 12:00 Tashkent, unless ``saved`` = ``YYYY-MM-DD HH:MM`` says otherwise).
+    The tests of the old window «from the 1st of the previous month» say «this month is closed» with it."""
+    from src.models.auth import PayrollSheet
+
+    first = month.replace(day=1)
+    following = date(first.year + (first.month == 12), first.month % 12 + 1, 1)
+    when = datetime.strptime(saved, "%Y-%m-%d %H:%M") if saved else datetime(following.year, following.month, 2, 12, 0)
+    at = bc.business_wall_to_utc(when)
+    w.db.add(PayrollSheet(org_id=w.org.id, teacher_id=getattr(teacher, "id", teacher), period_month=first, source_fingerprint="x", total_amount=100, created_by=w.owner.id, updated_by=w.owner.id,
+                          created_at=at, updated_at=at, lines=[], percent_inputs={}, divisor_default=12))
+    w.db.commit()

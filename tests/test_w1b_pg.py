@@ -10,7 +10,7 @@ import pytest
 from src.models.auth import GroupAttendance, GroupAudit, GroupScheduleOverride, LessonSubstitutionEvent, LessonSubstitutionRequest as Req, LessonTeacherAssignment, OrganizationMember, StudentGroup
 from src.auth.ops_rules import short_name
 from tests.b2_helpers import API, build_d2, clock, decide, events_of, needs_pg, pg_session, req, requests_of, row_of  # noqa: F401  (fixtures)
-from tests.ops_helpers import client, history_row, new_group, new_slot, new_student
+from tests.ops_helpers import client, closed_sheet, history_row, new_group, new_slot, new_student
 from tests.pg_world import give_group_price
 from tests.test_ops_b2_decide_pg import Sync, one  # noqa: F401
 
@@ -136,14 +136,15 @@ def test_s17_the_reason_of_a_cancellation_is_changed_in_the_window_with_a_record
     assert any(i["decision"]["closedReasonText"] == "Вид отмены изменён" for i in listed)
     assert kind("2026-10-26", kind="holiday").json()["changed"] is False                                  # nothing changed: nothing recorded
     assert len([x for x in requests_of(w) if x.closed_reason == "KIND_CHANGED"]) == 1
-    # the window: the 1st of the previous month (01.09 today) - a row older than that is closed for money
+    # Money-1 A1: a month the saved sheet of the lesson's teacher has closed is closed for money (was: the window «from the 1st of the previous month»)
+    closed_sheet(w, w.A, date(2026, 8, 1))
     w.db.add(GroupAttendance(org_id=w.org.id, group_id=w.G1.id, lesson_date="2026-08-31", lesson_id="lesson-l1", status="cancelled", records={}, roster_snapshot=[],
                              cancellation_reason="Давно", cancellation_kind="centre", marked_by=w.admin.id, version=1))
     w.db.add(GroupAttendance(org_id=w.org.id, group_id=w.G1.id, lesson_date="2026-09-07", lesson_id="lesson-l1", status="cancelled", records={}, roster_snapshot=[],
                              cancellation_reason="В окне", cancellation_kind="centre", marked_by=w.admin.id, version=1))
     w.db.commit()
     old = kind("2026-08-31")
-    assert old.status_code == 422 and old.json()["detail"]["code"] == "REASON_CHANGE_TOO_OLD"
+    assert old.status_code == 409 and old.json()["detail"]["code"] == "PERIOD_CLOSED"
     assert row_of(w, w.G1, "lesson-l1", "2026-08-31").cancellation_kind == "centre"
     assert kind("2026-09-07").status_code == 200
     assert kind("2026-10-26", who="A").status_code == 403
@@ -233,15 +234,15 @@ def test_s19_a_requester_sees_only_his_own_requests_of_the_chain(w):
     assert own["item"]["comment"] == "Свой комментарий"
 
 
-def test_s20_a_request_that_falls_out_of_the_window_says_so_and_the_badge_warns_three_days_before(w, clock):
+def test_s20_a_request_of_a_closed_month_says_so_and_the_badge_no_longer_forecasts(w, clock):
+    """Money-1 A1: a request falls out when the sheet of its teacher's month is saved after the month ended (was: the 1st of the month, a badge 3 days before)."""
     item = one(w, "A", "L1", "2026-10-26")
-    clock.set("2026-11-20 12:00")
-    assert client(w, "admin").get(f"{SUB}/summary").json()["expiringTotal"] == 0              # far from the 1st
     clock.set("2026-11-29 12:00")
     s = client(w, "admin").get(f"{SUB}/summary").json()
-    assert (s["pendingTotal"], s["expiringTotal"]) == (1, 1)                                   # 01.12: the window starts on 01.11, the lesson of 26.10 falls out
-    assert client(w, "admin").get(SUB, params={"status": "pending"}).json()["expiringTotal"] == 1
+    assert (s["pendingTotal"], s["expiringTotal"]) == (1, 0)                                   # the 1st of December passes nothing by itself
     clock.set("2026-12-01 09:00")
+    assert client(w, "admin").get(f"{SUB}/summary").json()["pendingTotal"] == 1                # no sheet, no closing: the request waits
+    closed_sheet(w, w.A, date(2026, 10, 1))
     assert client(w, "admin").get(f"{SUB}/summary").json()["pendingTotal"] == 0                # the lazy pass closes it
     listed = client(w, "admin").get(SUB, params={"status": "decided", "dateFrom": "2026-10-01"}).json()["items"]
     assert [(i["status"], i["decision"]["closedReason"], i["decision"]["closedReasonText"], i["decision"]["by"]) for i in listed] == [("closed", "LESSON_OUTSIDE_WINDOW", "Не решено вовремя", None)]

@@ -9,6 +9,8 @@ from src.models.auth import (
     GroupAudit, MembershipOpeningBalance, MembershipPause, MembershipTransfer, Student, StudentGroup,
 )
 
+from tests.ops_helpers import closed_sheet  # noqa: E402,F401
+
 from tests.pg_world import (  # noqa: F401  (fixtures)
     give_group_price, make_client, pg_session, world,
 )
@@ -196,12 +198,14 @@ def test_pause_dry_run_double_click_overlap_ranges(world, fixed_today):
     assert again["pause"]["id"] == first["pause"]["id"] and world.db.query(MembershipPause).filter_by(org_id=world.org.id).count() == 1
     r = c.post(f"{API}/org/memberships/{m.id}/pauses", json={"first_day": "2026-10-24", "last_day": "2026-10-27"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "PAUSE_OVERLAP"
-    for body, why in (({"first_day": "2026-09-01", "last_day": "2026-09-05"}, "30 days back"), ({"first_day": "2026-10-25", "last_day": "2026-10-24"}, "reversed"),
-                      ({"first_day": "2026-10-25", "last_day": "2027-12-31"}, "too long")):
+    for body, why in (({"first_day": "2026-10-25", "last_day": "2026-10-24"}, "reversed"), ({"first_day": "2026-10-25", "last_day": "2027-12-31"}, "too long")):
         r = c.post(f"{API}/org/memberships/{m.id}/pauses", json=body)
         assert r.status_code == 422 and r.json()["detail"]["code"] == "PAUSE_RANGE", why
-    # the boundary: exactly 30 days back is allowed
-    assert c.post(f"{API}/org/memberships/{m.id}/pauses", json={"first_day": "2026-09-21", "last_day": "2026-09-22"}).status_code == 201
+    # Money-1 A1: the 30 days are gone - the days of a month an open sheet does not protect can be paused at any age; a month the sheet closed cannot
+    assert c.post(f"{API}/org/memberships/{m.id}/pauses", json={"first_day": "2026-09-01", "last_day": "2026-09-05"}).status_code == 201
+    closed_sheet(world, world.group.teacher_id, D(2026, 8, 1))
+    r = c.post(f"{API}/org/memberships/{m.id}/pauses", json={"first_day": "2026-08-25", "last_day": "2026-08-26"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PAUSE_LOCKED" and r.json()["detail"]["month"] == "2026-08"
 
 
 def test_pause_patch_shorten_extend_and_the_lock_of_old_days(world, fixed_today):
@@ -218,6 +222,7 @@ def test_pause_patch_shorten_extend_and_the_lock_of_old_days(world, fixed_today)
                           first_day=D(2026, 8, 1), last_day=D(2026, 8, 10), created_by=world.owner.id)
     world.db.add(old)
     world.db.commit()
+    closed_sheet(world, world.group.teacher_id, D(2026, 8, 1))              # Money-1 A1: August of the group's teacher is closed by his saved sheet (was: «older than 30 days»)
     for call in (lambda: c.post(f"{API}/org/pauses/{old.id}/void", json={"reason": "давно"}),
                  lambda: c.patch(f"{API}/org/pauses/{old.id}", json={"last_day": "2026-08-05"})):
         r = call()

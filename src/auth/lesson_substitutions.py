@@ -29,6 +29,7 @@ from src.models.auth import OrgDayOff
 
 from . import business_clock as bc
 from . import exam_bridge, exam_release, substitution_rules as R
+from .closed_period import ClosedPeriods, lesson_teacher_ids
 from .days_off import DaysOffService
 from .lesson_cancel import LessonCancelMixin, RESTORED, lesson_outcomes
 from .lesson_teachers import (
@@ -69,7 +70,6 @@ LIST_DEFAULT_DAYS = 30
 MINE_DAYS = 60
 SUMMARY_REVALIDATE_MAX = 200                 # W1 R3 13: how many pending requests the badge revalidates at most
 CLEARED_DAYS = 14                            # W1 S22: how long a substitute sees «снято» in ``mine``
-EXPIRY_WARNING_DAYS = 3                      # W1 S20: «истекают» is shown this many days before the 1st
 ASSIGNED_AHEAD_DAYS = 30
 TEACHER_MOVE = "teacher_move"                # ``decided_via`` of a lesson moved by the teacher of the lesson himself (P1.1); the administrator's decision is ``request``
 ASSIGN_TRIGGER = "manager_assign"           # ``trigger`` of the ``requested`` event of a record the lesson sheet made (P1.2): the only mark of its creation, nothing else is guessed from ``origin`` / ``decided_via``
@@ -387,6 +387,25 @@ class SubstitutionsBase:
         book.load_assignments(gids, days[0], days[-1])
         return SimpleNamespace(schedule=schedule, rows=rows, members=members)
 
+    def _periods(self, org_id: Any) -> ClosedPeriods:
+        """One snapshot of the closed months of the centre per ``Substitutions`` object (a sweep asks it for every pending request)."""
+        cache = self.__dict__.setdefault("_closed_periods", {})
+        if str(org_id) not in cache:
+            cache[str(org_id)] = ClosedPeriods(self.db, org_id)
+        return cache[str(org_id)]
+
+    def _period_open(self, group: Group, lesson_id: str, day: date, row: Optional[GroupAttendance], occ: Optional[Dict[str, Any]]) -> bool:
+        periods = self._periods(group.org_id)
+        if not periods.any_closed(day):
+            return True
+        end = hhmm_to_minutes(occ["endTime"]) if occ and occ.get("endTime") else None
+        return periods.closed_for(lesson_teacher_ids(self.db, group, lesson_id, day.isoformat(), row, end), day) is None
+
+    def _assert_period_open(self, group: Group, lesson_id: str, day: date) -> None:
+        if not self._period_open(group, lesson_id, day, None, None):
+            periods = self._periods(group.org_id)
+            raise periods.refusal(periods.closed_for(lesson_teacher_ids(self.db, group, lesson_id, day.isoformat(), None, None), day))
+
     def closure_reason(self, r: Req, group: Group, book: Optional[TeacherBook] = None, pre: Optional[SimpleNamespace] = None) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
         """Why a pending request must be closed now (SPEC 3.4 order) and, when the lesson only changed its time, the new times.  Returns ``(reason, occurrence)``.
         ``pre`` (see ``prefetch``): the data of many requests loaded at once."""
@@ -399,7 +418,7 @@ class SubstitutionsBase:
         row = pre.rows.get((r.group_id, r.lesson_id, r.lesson_date)) if pre else self._row(r)
         if row is not None:
             return ("LESSON_CANCELLED" if row.status == "cancelled" else "LESSON_STARTED"), occ
-        if day < bc.month_window_start(bc.business_today()):
+        if not self._period_open(group, r.lesson_id, day, None, occ):        # Money-1 A1: the month of the lesson's teacher is closed by a saved sheet (it was the window of the unclosed lessons)
             return "LESSON_OUTSIDE_WINDOW", occ
         member = ((r.org_id, r.requester_id) in pre.members) if pre else (
             self.db.query(OrganizationMember.id).join(User, User.id == OrganizationMember.user_id)
@@ -734,7 +753,8 @@ class SubstitutionsBase:
     # ================================================================================== summary / list / detail
     def summary(self, org_id: Any, *, revalidate: bool = True, money_right: bool = True) -> Dict[str, int]:
         """The badge of «Замены».  W1 S18 (А-8): the same lazy pass as the list (a revised / stopped series, a month border) runs first, so the counts are not those of requests that are already void.
-        ``expiringTotal`` (S20, D25): pending requests of the previous month that fall out of the window of the unclosed lessons on the 1st - non-zero only in the last 3 days before it.
+        ``expiringTotal`` (S20, D25) is ALWAYS 0 since Money-1 A1: a request used to fall out on the 1st of a month (the window of the unclosed lessons) and the badge warned three days before;
+        now it falls out when the sheet of its teacher's month is saved after the month ended - nothing to forecast.  The field stays for the front's contract.
         #159 M2: ``waitingTotal`` is what the CALLER has to do - the money rows count only for who may decide them (``money_right``); an admin without the right gets the requests only (the money rows
         stay in ``oneOffDecisionsTotal`` as information)."""
         if revalidate:      # (R3 13) one pass per request, bounded (the list does it itself over its page + the same set and asks the counts with ``revalidate=False``)
@@ -744,9 +764,7 @@ class SubstitutionsBase:
         pending = base.count()
         urgent = base.filter(Req.starts_at > now, Req.starts_at < now + timedelta(minutes=R.URGENT_MINUTES)).count()
         overdue = base.filter(Req.starts_at <= now).count()
-        this_month = today.replace(day=1)
-        next_month = (this_month + timedelta(days=32)).replace(day=1)
-        expiring = base.filter(Req.lesson_date < this_month.isoformat()).count() if (next_month - today).days <= EXPIRY_WARNING_DAYS else 0
+        expiring = 0
         one_off = OneOffPurpose(self.svc).pending_count(org_id)          # #154: the decisions of the money of additional lessons are in the same badge (the 1st-of-the-month window and «urgent» do not apply to them)
         return {"pendingTotal": pending, "urgentTotal": urgent, "overdueTotal": overdue, "expiringTotal": expiring, "oneOffDecisionsTotal": one_off, "waitingTotal": pending + (one_off if money_right else 0)}
 
@@ -1198,8 +1216,8 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         sick teacher is the centre's fault, the students are deducted when the centre deducts cancelled lessons; a MOVE has no kind: neutral for the money)."""
         reason = self._reason(body, 3, 500)
         day = date.fromisoformat(r.lesson_date)
-        if r.starts_at <= self.now() and day < bc.month_window_start(bc.business_today()):
-            raise R.err(422, "LESSON_OUTSIDE_WINDOW", "Урок старше окна незакрытых уроков: отменить его нельзя — можно только отклонить запрос")
+        if r.starts_at <= self.now():
+            self._assert_period_open(group, r.lesson_id, day)      # Money-1 A1: a lesson of a closed month cannot be cancelled - only the request can be declined
         out = self.cancel_lesson(r.org_id, actor, group.id, r.lesson_id, day, reason=reason, kind=getattr(body, "cancellationKind", None) or DEFAULT_CANCELLATION_KIND,
                                  request=r, via="request")
         return {"kind": "cancel", "version": out["version"], "cancellationKind": out["kind"], "warnings": out["warnings"]}

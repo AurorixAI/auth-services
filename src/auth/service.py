@@ -5071,7 +5071,7 @@ class AuthService:
             if attendance.status == LessonAttendanceStatus.CANCELLED.value:
                 raise ValueError("Пропущенный урок уже отменён")
             raise ValueError("Пропущенный урок уже завершён")
-        rules.assert_unclosed_window(req.lessonDate)
+        rules.assert_period_open(group, req.lessonId, req.lessonDate, occurrence, None)
 
         start_minutes, _ = self._validate_lesson_time_range(
             occurrence.get("startTime"), occurrence.get("endTime")
@@ -5183,7 +5183,7 @@ class AuthService:
             else:
                 raise ValueError("Нельзя отменить урок, который уже начали или завершили")
         else:
-            rules.assert_unclosed_window(req.lessonDate)
+            rules.assert_period_open(group, req.lessonId, req.lessonDate, occurrence, None)
 
         from .lesson_substitutions import Substitutions
 
@@ -5484,10 +5484,10 @@ class AuthService:
         )
         if att is None and group.status != "active":
             raise ops_rules.group_archived()
-        if att is None and is_cancellation:
-            rules.assert_unclosed_window(lesson_date)  # a never-started lesson older than the "unclosed lessons" window is nobody's to cancel
         if rules.version_gate(att, req):
             return {"version": att.version, "examSync": None, "warnings": []}
+        if att is not None or is_cancellation:
+            rules.assert_period_open(group, target_lesson_id, lesson_date, matching_slot, att)  # Money-1 A1: a lesson of a month the sheet has closed is nobody's to change - the month is reopened first
 
         if not is_cancellation and not att:
             raise ValueError("Сначала начните урок, затем отмечайте посещаемость")

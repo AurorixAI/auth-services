@@ -31,6 +31,7 @@ from src.models.auth import Group, GroupAttendance, GroupAttendanceAudit, GroupA
 
 from . import business_clock as bc
 from . import exam_release
+from .closed_period import ClosedPeriods, lesson_teacher_ids
 from . import payments_texts as tx
 from .ops_rules import conflict, hhmm_to_minutes, not_found, short_name, unprocessable
 from .schemas import LessonAttendanceStatus
@@ -298,12 +299,19 @@ class DaysOffService:
         shown = SimpleNamespace(id=att.group_id, name=group.name if group is not None else "")
         return self._item(shown, occ or {"id": att.lesson_id or "", "occurrenceDate": att.lesson_date})
 
-    OLD_CONVERT = "Отмена «по вине центра» старше окна незакрытых уроков: её вид не меняется (закрытый период не пересчитывается)"
+    OLD_CONVERT = "Отмена «по вине центра» в закрытом месяце преподавателя: её вид не меняется (закрытый месяц не пересчитывается)"
+    CLOSED_LESSON = "Месяц преподавателя закрыт ведомостью: урок не меняется"
 
-    @staticmethod
-    def _in_window(lesson_date: str) -> bool:
-        """W1 R3 (2): the same window as the marks of a past lesson - a cancellation older than it is never turned into a holiday (a closed or paid month does not change)."""
-        return date.fromisoformat(lesson_date) >= bc.month_window_start(bc.business_today())
+    def _period_open(self, org_id: Any, group: Group, lesson_id: str, lesson_date: str, row: Optional[GroupAttendance] = None, end_time: Optional[str] = None) -> bool:
+        """Money-1 A1 (was W1 R3 (2): the window of the unclosed lessons): a cancellation of a CLOSED month of its teacher is never turned into a holiday and a lesson of it is not cancelled by a day off
+        (a closed or paid month does not change).  One snapshot of the closed months per service object (``closed_period.py``)."""
+        periods = self.__dict__.setdefault("_periods", {}).get(str(org_id))
+        if periods is None:
+            periods = self.__dict__["_periods"][str(org_id)] = ClosedPeriods(self.db, org_id)
+        if not periods.any_closed(lesson_date):
+            return True
+        end = hhmm_to_minutes(end_time) if end_time else None
+        return periods.closed_for(lesson_teacher_ids(self.db, group, lesson_id, lesson_date, row, end), lesson_date) is None
 
     @staticmethod
     def _convertible(row: Optional[GroupAttendance]) -> bool:
@@ -324,8 +332,8 @@ class DaysOffService:
         day = date.fromisoformat(occurrence["occurrenceDate"])
         if row is not None:
             return "Урок уже начат" if row.status == LessonAttendanceStatus.IN_PROGRESS.value else "Урок уже проведён"
-        if day < bc.month_window_start(bc.business_today()):
-            return "Урок старше окна незакрытых уроков"
+        if not self._period_open(org_id, group, occurrence["id"], occurrence["occurrenceDate"], None, occurrence.get("endTime")):
+            return self.CLOSED_LESSON
         try:
             started = bc.lesson_instant_utc(day, hhmm_to_minutes(occurrence["startTime"])) <= bc.utc_now()
         except (KeyError, ValueError, AttributeError):
@@ -363,7 +371,7 @@ class DaysOffService:
             if row is not None and row.status == LessonAttendanceStatus.CANCELLED.value:
                 if self._makeup_kept(row):                           # #154: said in a line of the preview: the cancellation stays «по вине центра», the make-up lifts the deduction
                     blocked.append(self._item(group, occurrence, self.MAKEUP_KEPT))
-                elif self._convertible(row) and self._in_window(occurrence["occurrenceDate"]):
+                elif self._convertible(row) and self._period_open(org_id, group, occurrence["id"], occurrence["occurrenceDate"], row):
                     convertible.append(self._item(group, occurrence))
                 elif self._convertible(row):
                     blocked.append(self._item(group, occurrence, self.OLD_CONVERT))
@@ -456,7 +464,7 @@ class DaysOffService:
                 already += 1
                 continue
             if self._convertible(existing):
-                if not self._in_window(occurrence["occurrenceDate"]):
+                if not self._period_open(org_id, group, occurrence["id"], occurrence["occurrenceDate"], existing):
                     blocked.append(self._item(group, occurrence, self.OLD_CONVERT))
                 elif self._convert(existing, group, day_off_id, reason, actor_id):
                     converted.append(self._item(group, occurrence))
@@ -541,7 +549,7 @@ class DaysOffService:
         the day off itself (``_convert_row``: the marker ``converted_from_kind``, the audit, the record of «Замены»), as it would have if the make-up had never been.  The row is locked by the caller, nothing
         is committed or rolled back here (the caller's cancellation is one transaction); a lesson older than the window of the unclosed lessons stays «по вине центра» (the day off does the same)."""
         live = self.live_for_date(group.org_id, date.fromisoformat(row.lesson_date))
-        if live is None or not self._convertible(row) or not self._in_window(row.lesson_date):
+        if live is None or not self._convertible(row) or not self._period_open(group.org_id, group, row.lesson_id, row.lesson_date, row):
             return False
         # the day off is read again under a SHARE lock that SKIPS a locked row: «Отменить выходной» (``void``) holds it FOR UPDATE while it reverts - then the day off is going away and nothing is converted
         # (waiting for it could be a cycle: void then wants the key of this group); once we hold the lock void waits for our commit and finds the converted row in its list

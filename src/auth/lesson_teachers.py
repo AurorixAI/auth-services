@@ -26,6 +26,7 @@ from sqlalchemy import func
 
 from . import business_clock as bc
 from . import payroll_hooks
+from .closed_period import ClosedPeriods
 from src.models.auth import PayrollRate
 
 from .models import (
@@ -761,8 +762,6 @@ class LessonTeachers:
         self.last_assignment = None
         today = bc.business_today()
         day = req.lessonDate
-        if day < bc.month_window_start(today):
-            raise unprocessable("LESSON_OUTSIDE_WINDOW", "Урок старше окна незакрытых уроков: сменить преподавателя нельзя")
         if day > today + timedelta(days=LESSON_DATE_MAX_AHEAD_DAYS):
             raise not_found("LESSON_NOT_FOUND", "Урок не найден")
         lesson_date = day.isoformat()
@@ -803,9 +802,11 @@ class LessonTeachers:
         row_teacher = row.teacher_id if row is not None else None
         asg_state_ok = (asg is None) if clearing else (asg is not None and asg.teacher_id == target)
         row_state_ok = row is None or row_teacher == want
+        old_teacher_for_period = row_teacher if row is not None and row_teacher is not None else current
         if asg_state_ok and row_state_ok:
             return self._out(group, req.lessonId, lesson_date, current if row is None else row.teacher_id, default, row, version_changed=False,
                              sheets=[])
+        ClosedPeriods(self.db, org_id).assert_open([old_teacher_for_period, want], day)     # Money-1 A1: the month of the old AND of the new teacher must be open (``closed_period.py``)
         if not clearing:
             # the target's row first: a removal of him serialises with this assignment.  FOR NO KEY UPDATE (as the move does): the record of the journal that follows takes
             # FOR KEY SHARE on the MAIN teacher's row, and two crossed assignments (X takes D's lesson, D takes X's) must not wait for each other

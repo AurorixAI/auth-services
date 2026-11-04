@@ -1086,7 +1086,7 @@ class GroupAttendanceAudit(Base):
         nullable=False,
     )
     actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    action = Column(String(30), nullable=False)  # started | reconciliation_started | updated | corrected | cancelled | excuse_*
+    action = Column(String(30), nullable=False)  # started | reconciliation_started | updated | corrected | cancelled | excuse_* | completed_reverted | cancel_reverted
     before_status = Column(String(20))
     after_status = Column(String(20), nullable=False)
     before_records = Column(JSONB)
@@ -1101,7 +1101,7 @@ class GroupAttendanceAudit(Base):
         CheckConstraint(
             "action IN ('started', 'reconciliation_started', 'created', 'updated', 'corrected', 'cancelled', 'reconciliation_cancelled', "
             "'excuse_reviewed', 'excuse_reset', 'excuse_removed', 'excuse_file_added', 'excuse_file_removed', "
-            "'excuse_closed_pause', 'teacher_changed')",
+            "'excuse_closed_pause', 'teacher_changed', 'completed_reverted', 'cancel_reverted')",
             name="ck_group_attendance_audit_action",
         ),
         Index("idx_group_attendance_audit_attendance", "attendance_id"),
@@ -1981,4 +1981,75 @@ class PayrollPayout(Base):
         ),
         Index("ix_pp_org_month_live", "org_id", "period_month", postgresql_where=text("voided_at IS NULL")),
         Index("ix_pp_sheet_live", "sheet_id", postgresql_where=text("voided_at IS NULL")),
+    )
+
+
+class PayrollPeriodReopening(Base):
+    """Money-1 (A1): the owner / an administrator with the payments right REOPENED a closed month of a teacher, with a reason (the journal of the closed period).
+
+    A month of a teacher is closed when his last sheet of it was saved after the month ended (``closed_period.py``).  A reopening is in force until the sheet is saved again
+    (``created_at`` later than the sheet's ``updated_at``): the next save after the correction closes the month again by the same rule, so nothing else is stored."""
+
+    __tablename__ = "payroll_period_reopenings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    teacher_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    period_month = Column(Date, nullable=False)
+    sheet_id = Column(UUID(as_uuid=True), ForeignKey("payroll_sheets.id", ondelete="CASCADE"), nullable=False)
+    sheet_revision = Column(Integer, nullable=False)
+    reopened_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    reason = Column(String(500), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("EXTRACT(DAY FROM period_month) = 1", name="ck_payroll_reopenings_first_day"),
+        CheckConstraint("char_length(btrim(reason)) >= 3", name="ck_payroll_reopenings_reason"),
+        Index("ix_payroll_reopenings_teacher_month", "org_id", "teacher_id", "period_month", "created_at"),
+    )
+
+
+class MoneyReconcileRun(Base):
+    """Money-1 (A7): one night run of the reconciliation of the invariants I-1..I-4 over all centres (``money_reconcile.py``)."""
+
+    __tablename__ = "money_reconcile_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    started_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    finished_at = Column(DateTime, nullable=True)
+    status = Column(String(12), nullable=False, default="running", server_default="running")  # running | clean | findings | failed
+    centres_checked = Column(Integer, nullable=False, default=0, server_default="0")
+    findings_count = Column(Integer, nullable=False, default=0, server_default="0")
+    new_findings_count = Column(Integer, nullable=False, default=0, server_default="0")
+    mail_status = Column(String(12), nullable=True)  # sent | skipped | failed (null: no mail needed)
+    error = Column(String(300), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('running', 'clean', 'findings', 'failed')", name="ck_money_reconcile_runs_status"),
+        Index("ix_money_reconcile_runs_started", "started_at"),
+    )
+
+
+class MoneyReconcileFinding(Base):
+    """Money-1 (A7): one divergence found by a run.  ``subject_key`` identifies the thing (a membership, a teacher month, a lesson) so that the next run knows whether it is new."""
+
+    __tablename__ = "money_reconcile_findings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("money_reconcile_runs.id", ondelete="CASCADE"), nullable=False)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    invariant = Column(String(4), nullable=False)  # I-1 .. I-4
+    subject_key = Column(String(200), nullable=False)
+    subject_id = Column(String(64), nullable=True)
+    month = Column(String(7), nullable=True)
+    expected = Column(BigInteger, nullable=True)
+    actual = Column(BigInteger, nullable=True)
+    details = Column(JSONB, nullable=True)
+    is_new = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("invariant IN ('I-1', 'I-2', 'I-3', 'I-4')", name="ck_money_reconcile_findings_invariant"),
+        Index("ix_money_reconcile_findings_run", "run_id"),
+        Index("ix_money_reconcile_findings_org_key", "org_id", "invariant", "subject_key"),
     )

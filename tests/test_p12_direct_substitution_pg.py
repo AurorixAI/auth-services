@@ -9,7 +9,7 @@ from src.auth.ops_schemas import LessonTeacherPut
 from src.models.auth import LessonTeacherAssignment, PayrollRate
 
 from tests.b2_helpers import API, client, clock, code_of, decide, events_of, needs_pg, pg_session, requests_of, row_of  # noqa: F401  (fixtures)
-from tests.ops_helpers import run_parallel
+from tests.ops_helpers import closed_sheet, run_parallel
 from tests.test_integration_ab_pg import money, pay, member, sheet_of
 from tests.test_lesson_move_direct_pg import move
 from tests.test_ops_b2_decide_pg import L, Sync, one, sync, w  # noqa: F401
@@ -232,8 +232,6 @@ def test_s6_payroll_pays_the_substitute_one_lesson_and_the_main_teacher_none(w, 
 def test_s7_the_rules_of_the_assignment_are_as_they_were_nothing_widened_and_a_refusal_writes_no_record(w, clock, sync):
     """[7] The window, a cancelled lesson, a stranger as the target: the same refusals as before and no record.  A lesson of the past inside the window and one that has started
     are still allowed - and are in the journal like any other."""
-    assert put(w, "admin", "D", day="2026-08-31").status_code == 422                       # older than the window of unclosed lessons
-    assert put(w, "admin", "D", day="2026-08-31").json()["detail"]["code"] == "LESSON_OUTSIDE_WINDOW"
     stranger = client(w, "admin").put(LT.format(gid=w.G1.id), json={"lessonDate": MON, "lessonId": "lesson-l1", "teacherId": str(w.foreign_admin.id), "reason": REASON})
     assert stranger.status_code == 422 and stranger.json()["detail"]["code"] == "TARGET_NOT_TEACHER"
     gone = one(w, "A", "L2", "2026-10-28")
@@ -250,6 +248,9 @@ def test_s7_the_rules_of_the_assignment_are_as_they_were_nothing_widened_and_a_r
     started = put(w, "admin", "C")                                                         # W1 S7 (D20): a lesson that is going on keeps its teacher
     assert started.status_code == 409 and started.json()["detail"]["code"] == "LESSON_IN_PROGRESS"
     assert [r for r in requests_of(w) if r.lesson_date == MON] == []                        # and a refusal writes no record
+    closed_sheet(w, w.A, date(2026, 10, 1))                                                 # Money-1 A1: October of A is closed by his saved sheet (was: «older than the window of unclosed lessons»)
+    shut = put(w, "admin", "C", day="2026-10-12")
+    assert shut.status_code == 409 and shut.json()["detail"]["code"] == "PERIOD_CLOSED"
 
 
 # ------------------------------------------------------------------------------------------------------ S8

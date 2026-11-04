@@ -6,6 +6,7 @@ import pytest
 from src.models.auth import Group
 
 from tests.ops_helpers import (  # noqa: F401  (fixtures)
+    closed_sheet,
     build_d0, clock, client, code_of, exams, fixture, history_row, needs_pg, new_group, new_slot, new_student, pg_session, run_parallel,
 )
 from tests.pg_world import business_today
@@ -356,14 +357,15 @@ def test_candidates_list_has_a_constant_number_of_queries(w):
     assert counts[1][0] <= counts[0][0] + 2, counts
 
 
-def test_cancelling_a_never_started_old_lesson_is_outside_the_window(w, clock):
-    """R3-9: the cancellation through the save path (no row yet) obeys the unclosed-lessons window like reconcile."""
+def test_cancelling_a_never_started_lesson_of_a_closed_month_is_refused(w, clock):
+    """R3-9 (Money-1 A1): the cancellation through the save path (no row yet) obeys the closed month of the teacher like reconcile (was: the unclosed-lessons window)."""
     clock.set("2026-10-21 14:00")
     old = new_group(w.db, w.org, w.ids, "FO", "Старая", w.C, [new_slot("lesson-o", 1, "10:00", "11:00", "2026-08-03")])
     w.db.commit()
+    closed_sheet(w, w.C, date(2026, 8, 1))
     r = client(w, "admin").post(f"{B}/groups/{old.id}/attendance", json={"lessonDate": "2026-08-31", "lessonId": "lesson-o", "status": "cancelled",
                                                                           "cancellationReason": "Старый урок", "records": {}})
-    assert r.status_code == 422 and r.json()["detail"]["code"] == "LESSON_OUTSIDE_WINDOW", r.text
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "PERIOD_CLOSED", r.text
 
 
 # ------------------------------------------------------------------------------------------------------------------------------ exam release sweep

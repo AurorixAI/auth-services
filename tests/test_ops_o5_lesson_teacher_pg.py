@@ -7,7 +7,7 @@ from sqlalchemy import text
 from src.models.auth import GroupAttendance, GroupAudit, LessonTeacherAssignment
 
 from tests.ops_helpers import (  # noqa: F401  (fixtures)
-    build_d0, clock, client, code_of, exams, fixture, history_row, needs_pg, new_group, new_slot, new_student, pg_session, run_parallel,
+    build_d0, clock, client, closed_sheet, code_of, exams, fixture, history_row, needs_pg, new_group, new_slot, new_student, pg_session, run_parallel,
 )
 
 pytestmark = needs_pg
@@ -136,8 +136,8 @@ def test_r4c_a_substitution_during_a_start_is_refused_and_the_teacher_keeps_the_
     assert row.teacher_id == w.C.id and row.records == {str(w.s1.id): "present", str(w.s2.id): "absent"}
 
 
-def test_r5_who_taught_a_finished_lesson_can_be_corrected_inside_the_window_only(w, monkeypatch, clock):
-    """[O5.R5] Admin / owner, window from the 1st of the previous month (a saved / paid sheet never blocks the change: it becomes «data changed»); older than the window -> 422;
+def test_r5_who_taught_a_finished_lesson_can_be_corrected_while_the_month_is_open(w, monkeypatch, clock):
+    """[O5.R5] Admin / owner; a mid-month sheet never blocks the change (it becomes «data changed»), a month CLOSED by a sheet saved after it ended -> 409 PERIOD_CLOSED (Money-1 A1);
     a missed lesson is reconciled by the teacher OF THAT DATE, not by the new teacher."""
     r = put(w, "admin", w.G1, "D", lesson="lesson-l1", day="2026-10-19", reason="Исправление")
     assert r.status_code == 200 and r.json()["attendanceUpdated"] is True and r.json()["version"] == 2
@@ -147,8 +147,9 @@ def test_r5_who_taught_a_finished_lesson_can_be_corrected_inside_the_window_only
         [r_[0] for r_ in w.db.execute(text("SELECT action FROM group_attendance_audit WHERE attendance_id=:i"), {"i": row.id}).fetchall()]
     assert "teacher_changed" in kinds
 
-    old = put(w, "admin", w.G1, "B", lesson="lesson-l1", day="2026-08-31", reason="Исправление")
-    assert old.status_code == 422 and old.json()["detail"]["code"] == "LESSON_OUTSIDE_WINDOW"
+    closed_sheet(w, w.D, date(2026, 10, 1))             # Money-1 A1: October of D (the teacher of the lesson now) is closed by his saved sheet (was: the window from the 1st of the previous month)
+    old = put(w, "admin", w.G1, "B", lesson="lesson-l1", day="2026-10-19", reason="Исправление")
+    assert old.status_code == 409 and old.json()["detail"]["code"] == "PERIOD_CLOSED"
 
 
 def test_r6_group_teacher_change_by_the_end_of_the_lesson(w, clock):

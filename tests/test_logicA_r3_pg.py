@@ -114,6 +114,8 @@ def test_m1_deferred_calendar_to_lessons_the_running_period_keeps_calendar_and_t
 
 from src.models.auth import MembershipPause  # noqa: E402
 from tests.test_logicA_opening_pause_pg import chain1_world, pause  # noqa: E402,F401
+from tests.ops_helpers import closed_sheet  # noqa: E402
+
 
 
 def test_m3_a_patch_cannot_lengthen_an_old_pause_over_old_days_and_a_money_change_needs_a_reason(world, fixed_today):
@@ -123,9 +125,11 @@ def test_m3_a_patch_cannot_lengthen_an_old_pause_over_old_days_and_a_money_chang
                           first_day=D(2026, 8, 1), last_day=D(2026, 8, 10), created_by=world.owner.id)
     world.db.add(old)
     world.db.commit()
-    for body in ({"last_day": "2026-08-20", "reason": "продлил"}, {"first_day": "2026-07-20", "reason": "раньше"}):       # the days 11-20.08 / 20-31.07 are older than 30 days
+    closed_sheet(world, world.group.teacher_id, D(2026, 8, 1))              # Money-1 A1: August and July of the group's teacher are closed by his saved sheets (was: «older than 30 days»)
+    closed_sheet(world, world.group.teacher_id, D(2026, 7, 1))
+    for body in ({"last_day": "2026-08-20", "reason": "продлил"}, {"first_day": "2026-07-20", "reason": "раньше"}):       # the days 11-20.08 / 20-31.07 lie in a closed month
         r = c.patch(f"{API}/org/pauses/{old.id}", json=body)
-        assert r.status_code == 422 and r.json()["detail"]["code"] == "PAUSE_RANGE", (body, r.text)
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "PAUSE_LOCKED", (body, r.text)
     p = pause(world, m, "2026-10-20", "2026-10-24")["pause"]
     r = c.patch(f"{API}/org/pauses/{p['id']}", json={"last_day": "2026-10-22"})                                     # 2 days are paid again: money moves
     assert r.status_code == 422 and r.json()["detail"]["code"] == "REASON_REQUIRED", r.text

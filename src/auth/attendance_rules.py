@@ -3,8 +3,8 @@
 Used by the hooks in ``AuthService`` (start / save / reconcile / cancel-missed / open actions / the journal read).  Nothing here commits.
 
 * lesson rights (O5): a teacher acts only on HIS lessons - the teacher frozen in the row, else the lesson-teacher resolver; owner / admin on any;
-* decision 7: a teacher closes lessons with ``lesson_date >= today - 7`` (``LESSON_TOO_OLD`` 403); nobody (admin included) reconciles /
-  cancels a never-started lesson older than the "unclosed lessons" window (first day of the previous month: ``LESSON_OUTSIDE_WINDOW`` 422);
+* decision 7: a teacher closes lessons with ``lesson_date >= today - 7`` (``LESSON_TOO_OLD`` 403); nobody (admin included) acts on a lesson of a CLOSED month of its teacher
+  (Money-1 A1, ``closed_period.py``: ``PERIOD_CLOSED`` 409) - the old window «from the 1st of the previous month» is gone;
 * O7: ``expectedVersion`` against ``group_attendance.version``; an identical repeat is a 200 without a write (``ATTENDANCE_CONFLICT`` 409);
 * O8: ending a lesson asks exam-service for live exams (``LESSON_HAS_LIVE_EXAM`` 409 until ``acknowledgeLiveExam``), fail-open.
 """
@@ -17,6 +17,7 @@ from uuid import UUID
 
 from . import business_clock as bc
 from . import exam_bridge
+from .closed_period import ClosedPeriods, lesson_teacher_ids
 from .lesson_teachers import LessonTeachers, TeacherBook, effective_teacher
 from .models import Group, GroupAttendance, GroupAttendanceAudit, User
 from .roster_names import student_full_name
@@ -26,7 +27,6 @@ from .ops_rules import (
     hhmm_to_minutes,
     is_too_old_for_teacher,
     short_name,
-    unprocessable,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,11 +64,16 @@ class AttendanceRules:
             raise forbidden("LESSON_TOO_OLD", "Урок старше 7 дней — его закрывает администратор или владелец")
         return teacher
 
-    @staticmethod
-    def assert_unclosed_window(lesson_date: date) -> None:
-        """reconcile / cancel-missed: not before the first day of the previous month, for everybody."""
-        if lesson_date < bc.month_window_start(bc.business_today()):
-            raise unprocessable("LESSON_OUTSIDE_WINDOW", "Урок старше окна незакрытых уроков: разобрать его нельзя")
+    def assert_period_open(self, group: Group, lesson_id: str, lesson_date: date, occurrence: Optional[Dict[str, Any]] = None,
+                           row: Optional[GroupAttendance] = None, *, extra_teachers: Tuple[Any, ...] = ()) -> None:
+        """Money-1 A1: the ONE rule of a closed period for every action on a lesson (reconcile, cancel, marks of a held lesson, an excuse decision): the month of the lesson date of the
+        lesson's teacher must not be closed by a saved sheet (``closed_period.py``) - for everybody, the owner too; he reopens the month first."""
+        periods = ClosedPeriods(self.db, group.org_id)
+        if not periods.any_closed(lesson_date):
+            return                                    # nobody's month is closed: no need to find the teacher
+        end = hhmm_to_minutes(occurrence["endTime"]) if occurrence and occurrence.get("endTime") else None
+        teachers = [*lesson_teacher_ids(self.db, group, lesson_id, lesson_date.isoformat(), row, end), *extra_teachers]
+        periods.assert_open(teachers, lesson_date)
 
     # ----------------------------------------------------------------------------------- O7: version / no-op
     def _last_writer(self, row: GroupAttendance) -> Tuple[Optional[str], Optional[str]]:

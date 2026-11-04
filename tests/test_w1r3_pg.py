@@ -7,6 +7,7 @@ from uuid import UUID
 
 import pytest
 
+from src.auth.days_off import DaysOffService
 from src.auth.service import AuthService
 from src.models.auth import (
     GroupAttendance,
@@ -17,7 +18,7 @@ from src.models.auth import (
     StudentGroup,
 )
 from tests.b2_helpers import API, build_d2, clock, decide, events_of, needs_pg, pg_session, req, requests_of, row_of  # noqa: F401  (fixtures)
-from tests.ops_helpers import client, history_row, new_group, new_slot
+from tests.ops_helpers import client, closed_sheet, history_row, new_group, new_slot
 from tests.pg_world import give_group_price, make_client
 from tests.test_ops_b2_decide_pg import Sync, one  # noqa: F401
 from tests.test_w1_series_pg import Exams  # noqa: F401
@@ -103,14 +104,15 @@ def test_r3_1_a_converted_cancellation_belongs_to_the_day_off(w):
     assert row.cancellation_reason == "Преподаватель болен"                                           # the author's own reason
 
 
-def test_r3_2_a_day_off_does_not_convert_cancellations_older_than_the_window(w):
+def test_r3_2_a_day_off_does_not_convert_cancellations_of_a_closed_month(w):
     g = old_group(w)
-    legacy_cancel(w, g, "2026-08-31")                                                       # older than 01.09: a closed month
+    closed_sheet(w, w.C, date(2026, 8, 1))                                                  # Money-1 A1: August of the teacher is closed by his saved sheet (was: «older than the window»)
+    legacy_cancel(w, g, "2026-08-31")                                                       # August: a closed month
     legacy_cancel(w, g, "2026-09-07")                                                       # inside the window
     body = {"dateFrom": "2026-08-31", "dateTo": "2026-09-07"}
     plan = client(w, "owner").post(f"{DAYS}/preview", json=body).json()
     assert [x["date"] for x in plan["convertible"] if x["lessonId"] == "lesson-x"] == ["2026-09-07"]
-    assert [(x["date"], x["reason"]) for x in plan["blocked"] if x["lessonId"] == "lesson-x"] == [("2026-08-31", "Отмена «по вине центра» старше окна незакрытых уроков: её вид не меняется (закрытый период не пересчитывается)")]
+    assert [(x["date"], x["reason"]) for x in plan["blocked"] if x["lessonId"] == "lesson-x"] == [("2026-08-31", DaysOffService.OLD_CONVERT)]
     made = client(w, "owner").post(DAYS, json={**body, "reason": "Задним числом"}).json()
     assert [x["date"] for x in made["converted"] if x["lessonId"] == "lesson-x"] == ["2026-09-07"]
     assert [x["date"] for x in made["blocked"] if x["lessonId"] == "lesson-x"] == ["2026-08-31"]

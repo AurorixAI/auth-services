@@ -40,6 +40,8 @@ from src.models.auth import (
 )
 
 from . import business_clock as bc
+from .closed_period import ClosedPeriods, lesson_teacher_ids
+from .ops_rules import OpsError
 from .roster_names import student_full_name
 from .sql_text import contains
 
@@ -991,6 +993,16 @@ class AttendanceExcuseService:
             raise ExcuseNotFound("Урок не найден")
         return att
 
+    def _assert_period_open(self, att: GroupAttendance) -> None:
+        """Money-1 A1: a decision on an excuse moves the pay of the lesson's teacher and the pack of the student - it is refused in a month that a saved sheet has closed
+        (``closed_period.py``); the month is reopened first.  Before: no limit of age at all."""
+        group = self.db.get(Group, att.group_id)
+        if group is None:
+            return
+        periods = ClosedPeriods(self.db, att.org_id)
+        if periods.any_closed(att.lesson_date):
+            periods.assert_open(lesson_teacher_ids(self.db, group, att.lesson_id, att.lesson_date, att), att.lesson_date)
+
     def _audit(
         self, att: GroupAttendance, actor_id: str, action: str, details: Optional[Dict[str, Any]] = None
     ) -> None:
@@ -1117,7 +1129,9 @@ class AttendanceExcuseService:
             raise ExcuseInvalid("Решение: confirmed или rejected")
         excuse = self._lock_excuse(org_id, excuse_id)
         self._check_expected(org_id, excuse, expected_status)
-        self._apply_review(excuse, self._lesson(excuse), actor_id, decision, note)
+        att = self._lesson(excuse)
+        self._assert_period_open(att)
+        self._apply_review(excuse, att, actor_id, decision, note)
         self.db.commit()
         logger.info("Attendance excuse %s reviewed by %s: %s", excuse_id, actor_id, decision)
         return self._item(org_id, excuse_id)
@@ -1141,12 +1155,17 @@ class AttendanceExcuseService:
                 if excuse.status != "pending":
                     # A stale list must not overwrite another administrator's decision.
                     raise ExcuseConflict("Решение по заявке уже принято")
-                self._apply_review(excuse, self._lesson(excuse), actor_id, decision, note)
+                att = self._lesson(excuse)
+                self._assert_period_open(att)
+                self._apply_review(excuse, att, actor_id, decision, note)
                 self.db.commit()
                 updated += 1
             except ExcuseError as exc:
                 self.db.rollback()
                 skipped.append(BulkSkipped(id=str(excuse_id), reason=exc.message))
+            except OpsError as exc:          # Money-1 A1: the month of the lesson is closed - reported per item like every other refusal of a bulk decision
+                self.db.rollback()
+                skipped.append(BulkSkipped(id=str(excuse_id), reason=exc.message, code=exc.code))
         logger.info("Attendance excuses bulk %s by %s: updated=%d skipped=%d", decision, actor_id, updated, len(skipped))
         return BulkReviewResponse(updated=updated, skipped=skipped)
 
@@ -1156,6 +1175,7 @@ class AttendanceExcuseService:
         excuse = self._lock_excuse(org_id, excuse_id)
         self._check_expected(org_id, excuse, expected_status)
         if excuse.status != "pending":
+            self._assert_period_open(self._lesson(excuse))
             details = {
                 "excuse_id": str(excuse.id),
                 "student_id": str(excuse.student_id),
