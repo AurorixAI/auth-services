@@ -7,6 +7,7 @@ All new fields are additive; a dict key spelled in camelCase / snake_case is spe
 from __future__ import annotations
 
 from datetime import date
+from uuid import UUID
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
@@ -198,7 +199,7 @@ class SaveAttendanceRequestB(SaveAttendanceRequest):
 class ReconcileRequestB(StartAttendanceRequest):
     """Money-1 A6: «Оформить проведённый урок» may name who actually taught it (default: the planned teacher); the money right only."""
 
-    taughtBy: Optional[str] = Field(None, max_length=36)
+    taughtBy: Optional[UUID] = None                # R3 n6: an id, not any text (a text that is not an id is refused by the type; an id that is not a teacher of the centre - 422 ``TARGET_NOT_TEACHER``)
 
 
 class ExamSyncOut(BaseModel):

@@ -20,7 +20,7 @@ from __future__ import annotations
 import functools
 import logging
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
@@ -139,10 +139,27 @@ class SheetProbe:
             self.sheets.setdefault(sheet.id, sheet)
 
     def measure(self, into: str) -> None:
+        """R3 n4: one calculation of the month for ALL its tracked teachers (and one load of their rates), not one per sheet - a rate backdated over a year names hundreds of sheets."""
+        from . import payroll_rates
+        from .payroll_service import PayrollService
+
         bucket = self.before if into == "before" else self.after
+        service = PayrollService(self.db)
+        by_month: Dict[date, List[PayrollSheet]] = {}
         for sheet_id, sheet in self.sheets.items():
             if sheet_id not in bucket:
-                bucket[sheet_id] = _fresh(self.db, self.org_id, sheet)
+                by_month.setdefault(sheet.period_month, []).append(sheet)
+        for first, sheets in by_month.items():
+            teachers = {s.teacher_id for s in sheets}
+            last = date(first.year + (first.month == 12), first.month % 12 + 1, 1) - timedelta(days=1)
+            try:
+                seed = service._collect(str(self.org_id), first, last, teacher_ids=teachers)
+                book = payroll_rates.load_book(self.db, str(self.org_id), list(teachers))
+            except Exception:
+                logger.exception("could not calculate the month %s for the effects", first)
+                seed = book = None
+            for sheet in sheets:
+                bucket[sheet.id] = service._fresh_total(str(self.org_id), sheet, seed, book) if seed is not None else _fresh(self.db, self.org_id, sheet)
 
     def lines(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []

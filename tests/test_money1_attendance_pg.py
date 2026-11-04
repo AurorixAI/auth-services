@@ -153,3 +153,13 @@ def test_the_archive_of_a_group_says_before_the_confirmation_which_lessons_it_ca
     missed = next(b for b in impact["blockers"] if b["code"] == "MISSED_LESSONS")
     assert missed["count"] >= 1 and len(missed["lessons"]) == missed["count"] and missed["lessons"][0]["teacherName"]
     assert "не начислят" in missed["cancelConsequence"] and "не заплатят" in missed["cancelConsequence"]
+
+
+def test_r3_n6_who_taught_is_an_id_nothing_else_a_text_a_stranger_and_a_valid_teacher_are_told_apart(world, now_4_nov):
+    day, lid = lesson(date(2026, 10, 30))
+    url = f"{API}/{world.group.id}/attendance/reconcile"
+    owner = make_client(world, user=world.owner)
+    junk = owner.post(url, json={"lessonDate": day.isoformat(), "lessonId": lid, "taughtBy": "'; drop table users; --"})
+    assert junk.status_code == 422 and junk.json()["detail"][0]["loc"][-1] == "taughtBy"                 # the type refuses a text that is not an id
+    assert world.db.query(GroupAttendance).filter_by(group_id=world.group.id, lesson_date=day.isoformat(), lesson_id=lid).count() == 0       # and nothing was written
+    assert owner.post(url, json={"lessonDate": day.isoformat(), "lessonId": lid, "taughtBy": str(world.teacher2.id)}).status_code == 200

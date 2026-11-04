@@ -158,3 +158,23 @@ def test_r3_21_a_month_that_is_over_is_not_closed_over_an_unresolved_lesson_with
     detail = refused.json()["detail"]
     assert detail["count"] >= 1 and any(i["lessonDate"] == day.isoformat() and i["groupName"] for i in detail["items"])
     assert owner(world).post(f"{API}/org/payroll/sheets", json={**body, "confirm_open_lessons": True}).status_code == 201     # the owner said yes
+
+
+def test_r3_n4_the_effects_of_many_sheets_of_one_month_calculate_the_month_once(world, now_4_nov, monkeypatch):
+    """A rate backdated over a year names hundreds of sheets: the month is calculated ONCE for all its teachers, not once per sheet."""
+    from src.auth import money_effects
+    from src.auth.payroll_service import PayrollService
+    from tests.pg_world import make_member, make_user
+
+    sheets = [sheet(world, world.teacher, OCT, tashkent(2026, 10, 15))]
+    for n in range(4):
+        teacher = make_user(world.db, "teacher", f"Учитель{n}")
+        make_member(world.db, world.org, teacher, "teacher")
+        sheets.append(sheet(world, teacher, OCT, tashkent(2026, 10, 15)))
+    calls = []
+    real = PayrollService._collect
+    monkeypatch.setattr(PayrollService, "_collect", lambda self, *a, **k: calls.append(1) or real(self, *a, **k))
+    probe = money_effects.SheetProbe(world.db, world.org.id, owner=True)
+    probe.track(sheets)
+    probe.measure("before")
+    assert len(calls) == 1 and len(probe.before) == 5                                              # five sheets, one calculation of October
