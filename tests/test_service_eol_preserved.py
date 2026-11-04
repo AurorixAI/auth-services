@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "814d948"           # the commit the W1 package started from (prod main); a diff against an older base only measures the earlier packs
+BASE = "5a64741"           # Money-1 (R3 m13): the prod main this pack started from - a diff against an older base measures the earlier packs and hides EOL flips of the pack itself
 pytestmark = pytest.mark.skipif(shutil.which("git") is None or not (ROOT / ".git").exists(), reason="needs a git checkout")
 
 
@@ -50,3 +50,15 @@ def test_schemas_py_diff_is_not_an_eol_normalisation():
     plain = _git("diff", "--stat", BASE, "--", "src/auth/schemas.py").stdout
     quiet = _git("diff", "--ignore-space-at-eol", "--stat", BASE, "--", "src/auth/schemas.py").stdout
     assert plain == quiet
+
+
+@pytest.mark.skipif(not _have_base(), reason="the base commit is not in this checkout")
+@pytest.mark.parametrize("path", ["src/auth/dependencies.py", "src/auth/schemas.py", "src/auth/service.py", "src/auth/__init__.py"])
+def test_the_files_with_crlf_keep_every_line_ending_of_the_base(path):
+    """Money-1 R3 m13: ``dependencies.py`` was normalised CRLF -> LF as a whole (262 lines of diff for 10 real ones).  EVERY file that has CR on the base keeps the ending of each line it did not change."""
+    plain = _git("diff", "--stat", BASE, "--", path).stdout
+    quiet = _git("diff", "--ignore-space-at-eol", "--stat", BASE, "--", path).stdout
+    assert plain == quiet, f"{path}: some line ended differently than on the base (EOL normalised)"
+    before = subprocess.run(["git", "show", f"{BASE}:{path}"], cwd=str(ROOT), capture_output=True).stdout
+    now = (ROOT / path).read_bytes()
+    assert before.count(b"\r") > 0 and now.count(b"\r") >= before.count(b"\r") - 1, f"{path}: the carriage returns are gone"
