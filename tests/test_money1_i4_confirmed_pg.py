@@ -126,3 +126,73 @@ def test_a_recalculation_keeps_the_confirmation_of_the_last_save(world, fixed_to
     patched = owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": saved["revision"], "recalculate": True, "expected_fingerprint": diff["source_fingerprint"]})
     assert patched.status_code == 200, patched.text
     assert sheet_row(world, m).confirmed_open_lessons == [key_of(world, a)] and i4(world) == []
+
+
+# ---------------------------------------------------------------------------------------------------- the re-save (PATCH) closes the month again: the same question, the same memory
+def patch(world, saved, confirm, expect=200, **extra):
+    diff = owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}/diff").json()
+    body = {"revision": sheet_row(world, saved_month(world)).revision, "recalculate": True, "expected_fingerprint": diff["source_fingerprint"], **extra}
+    if confirm is not None:
+        body["confirm_open_lessons"] = confirm
+    r = owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json=body)
+    assert r.status_code == expect, r.text
+    return r
+
+
+def saved_month(world):
+    class M:
+        first = world.db.query(PayrollSheet.period_month).filter_by(org_id=world.org.id, teacher_id=world.teacher.id).scalar()
+    return M
+
+
+def test_the_resave_after_a_reopening_asks_first_and_the_confirmed_lesson_is_no_failure(world, fixed_today):
+    m, s1, s2 = g_pay_world(world)
+    a = unresolved(world, m, free_days(1)[0])
+    saved = save(world, m, None)                                                                    # an old client saved without the question: nothing confirmed
+    assert len(i4(world)) == 1
+    reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Правим ведомость")
+    before = sheet_row(world, m).revision
+    asked = patch(world, saved, False, expect=409)
+    assert asked.json()["detail"]["code"] == "OPEN_LESSONS_CONFIRM_REQUIRED" and asked.json()["detail"]["count"] == 1
+    assert [i["lessonDate"] for i in asked.json()["detail"]["items"]] == [a.lesson_date]
+    assert sheet_row(world, m).revision == before                                                   # the question changed nothing
+    from src.auth import closed_period
+
+    assert closed_period.period_state(world.db, world.org.id, world.teacher.id, m.first)["state"] == "reopened"
+    patch(world, saved, True)                                                                       # «Сохранить всё равно»
+    assert sheet_row(world, m).confirmed_open_lessons == [key_of(world, a)]
+    assert closed_period.period_state(world.db, world.org.id, world.teacher.id, m.first)["state"] == "closed"
+    assert i4(world) == []                                                                          # the month is closed again, the lesson is the decision of the centre
+
+
+def test_the_resave_with_nothing_unresolved_stores_an_empty_list_and_a_note_only_change_is_asked_too(world, fixed_today):
+    m, s1, s2 = g_pay_world(world)
+    a = unresolved(world, m, free_days(1)[0])
+    saved = save(world, m, True)
+    world.db.query(GroupAttendance).filter_by(id=a.id).update({"status": "completed"})
+    world.db.commit()
+    reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Правим ведомость")
+    patch(world, saved, False)                                                                      # nothing is unresolved now: no question, the old confirmation is gone with the lesson
+    assert sheet_row(world, m).confirmed_open_lessons == []
+    b = unresolved(world, m, free_days(2)[1])
+    reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Ещё раз")
+    note_only = owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": sheet_row(world, m).revision, "note": "Комментарий", "confirm_open_lessons": False})
+    assert note_only.status_code == 409 and note_only.json()["detail"]["code"] == "OPEN_LESSONS_CONFIRM_REQUIRED"      # every re-save that closes the month asks, not only the recalculation
+    assert b.id is not None
+
+
+def test_the_resave_with_true_replaces_the_list_with_the_fresh_one(world, fixed_today):
+    m, s1, s2 = g_pay_world(world)
+    first, second = free_days(2)
+    a = unresolved(world, m, first)
+    saved = save(world, m, True)
+    b = unresolved(world, m, second)
+    assert len(i4(world)) == 1                                                                      # B appeared after the closing
+    reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Правим ведомость")
+    patch(world, saved, True)
+    assert sheet_row(world, m).confirmed_open_lessons == sorted([key_of(world, a), key_of(world, b)]) and i4(world) == []
+    world.db.query(GroupAttendance).filter_by(id=a.id).update({"status": "completed"})
+    world.db.commit()
+    reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Правим ведомость")
+    patch(world, saved, True)
+    assert sheet_row(world, m).confirmed_open_lessons == [key_of(world, b)] and i4(world) == []     # replaced, not added to
