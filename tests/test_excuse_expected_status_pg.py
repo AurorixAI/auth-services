@@ -12,6 +12,14 @@ from src.models.auth import AttendanceExcuse, GroupAttendanceAudit
 from tests.pg_world import (  # noqa: F401  (fixtures)
     excused_lesson, make_client, needs_pg, pg_session, save, world,
 )
+
+
+@pytest.fixture(autouse=True)
+def _admin_may_decide_money(world):
+    """Money-1 A4: a decision on an excuse moves money - the administrator of these tests has the right of the owner (the case of an administrator without it is in test_money1_rights_guard)."""
+    from tests.ops_helpers import grant_money_right
+
+    grant_money_right(world)
 from tests.test_attendance_excuses import excuse_of
 from tests.test_excuse_deadline import listing
 

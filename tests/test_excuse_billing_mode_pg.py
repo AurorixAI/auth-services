@@ -1,3 +1,4 @@
+import pytest
 """ROADMAP #103 / PAY-2: ``billing_mode`` of an excuse - how the student is billed in that group: the billing mode of the
 centre while he has money on the account (calendar or package), ``None`` while he has none.  Excuse list / review responses
 and the journal (administrators only)."""
@@ -11,6 +12,14 @@ from tests.pg_world import ENROLLED_SINCE, business_today, make_client, needs_pg
 from tests.test_attendance_excuses import journal, key_of
 from tests.test_excuse_deadline import API, lesson_marks, listing
 from tests.test_payments_service_pg import day, owner, pay, set_settings
+
+
+@pytest.fixture(autouse=True)
+def _admin_may_decide_money(world):
+    """Money-1 A4: a decision on an excuse moves money - the administrator of these tests has the right of the owner."""
+    from tests.ops_helpers import grant_money_right
+
+    grant_money_right(world)
 
 
 # ---- the pure rule ----------------------------------------------------------------

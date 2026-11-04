@@ -16,6 +16,14 @@ from src.models.auth import AttendanceExcuse, GroupAttendance, StudentPayment
 from tests.pg_world import (  # noqa: F401  (fixtures)
     LIVE_SLOT, business_today, excused_lesson, make_client, needs_pg, pg_session, save, world,
 )
+
+
+@pytest.fixture(autouse=True)
+def _admin_may_decide_money(world):
+    """Money-1 A4: a decision on an excuse moves money - the administrator of these tests has the right of the owner (the case of an administrator without it is in test_money1_rights_guard)."""
+    from tests.ops_helpers import grant_money_right
+
+    grant_money_right(world)
 from tests.test_attendance_excuses import audit_rows, excuse_of, journal, key_of
 from tests.test_excuse_deadline import API, lesson_marks, listing, same_day_lessons
 from tests.test_payments_service_pg import day, pay, row_of, set_settings

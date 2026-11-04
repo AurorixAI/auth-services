@@ -7,6 +7,7 @@ from src.auth.exam_bridge import ExamBridgeUnavailable
 from src.auth.service import AuthService
 from src.models.auth import GroupAttendance
 
+from tests.ops_helpers import grant_money_right  # noqa: E402
 from tests.ops_helpers import (  # noqa: F401  (fixtures)
     REAL_SYNC_CANCELLATION, build_d0, clock, client, exams, fixture, history_row, needs_pg, pg_session,
 )
@@ -71,6 +72,7 @@ def test_r1b_the_lobby_exam_goes_back_to_a_draft_after_the_warning(w, clock, exa
 
 def test_r2_double_completion_and_an_idempotent_ack(w, clock, exams):
     """[O8.R2] A second completion is a 200 without a write (and without another exam call); a lesson cannot be turned back into another status."""
+    grant_money_right(w)                    # Money-1 A4: a correction of a held lesson is for the money right
     clock.set("2026-10-21 17:20")
     assert complete(w).status_code == 200
     n = len(exams.calls)
@@ -96,6 +98,7 @@ def test_r3_nothing_reopens_the_lesson(w, clock, exams):
 
 def test_r5_a_correction_of_a_past_lesson_does_not_ask_exam_service(w, clock, exams):
     """[O8.R5] The correction of a completed lesson (an admin, later) never calls exam-service: the exam of a past date is closed already."""
+    grant_money_right(w)                    # Money-1 A4: a correction of a held lesson is for the money right
     clock.set("2026-10-21 17:20")
     assert complete(w).status_code == 200
     exams.calls.clear()

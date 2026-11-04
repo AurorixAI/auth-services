@@ -5597,7 +5597,7 @@ class AuthService:
             missing_student_ids = roster_student_ids - set(records)
             if missing_student_ids:
                 raise ValueError("Перед завершением урока заполните отметки всех учеников из состава урока")
-            if records and att and att.status != LessonAttendanceStatus.COMPLETED.value and not any(m in ("present", "late") for m in records.values()) and not getattr(req, "confirmNobodyCame", False):
+            if records and att and att.status != LessonAttendanceStatus.COMPLETED.value and not any(m in ("present", "late") for m in records.values()) and getattr(req, "confirmNobodyCame", None) is False:     # only the request of the screen carries the field (``SaveAttendanceRequestB``)
                 raise ops_rules.conflict("NOBODY_CAME", "Никто не пришёл. Если завершить, урок будет считаться проведённым и оплачен преподавателю. Если урока не было, нажмите «Урока не было»")
 
         # Reasons for new "excused" marks are validated before any write.

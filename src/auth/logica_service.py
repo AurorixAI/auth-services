@@ -100,6 +100,12 @@ class PauseOverlap(PaymentConflict):
     code = "PAUSE_OVERLAP"
 
 
+class PauseLessonInProgress(PaymentConflict):
+    """Money-1 A6 (ОШ-1): a lesson of the group is going on inside the pause - its roster is frozen like for a transfer / an archive, or the student would be marked after the pause was put."""
+
+    code = "LESSON_IN_PROGRESS"
+
+
 class PauseOverlapsAttended(PaymentConflict):
     code = "PAUSE_OVERLAPS_ATTENDED"
 
@@ -375,6 +381,14 @@ class PauseService(_Base):
         if (last - first).days + 1 > PAUSE_MAX_DAYS:
             raise PauseRange(f"Пауза не длиннее {PAUSE_MAX_DAYS} дней")
 
+    def _assert_no_lesson_in_progress(self, membership: StudentGroup, first: date, last: date) -> None:
+        """A lesson of the group that is IN PROGRESS inside the days of the pause blocks it (the same as a transfer, an archive, a leave): the roster of a lesson is frozen while it goes on, and a pause
+        put now would leave the student in the roster, to be marked and paid."""
+        going = (self.db.query(GroupAttendance.lesson_date).filter(GroupAttendance.group_id == membership.group_id, GroupAttendance.status == "in_progress",
+                                                                    GroupAttendance.lesson_date >= first.isoformat(), GroupAttendance.lesson_date <= last.isoformat()).first())
+        if going is not None:
+            raise PauseLessonInProgress("Сейчас идёт урок группы: поставить паузу можно после его завершения или отмены")
+
     def _assert_days_open(self, org_id: str, membership: StudentGroup, days: Set[date], today: date) -> None:
         """Money-1 A1 (was: «not older than 30 days»): the days of a pause that were / will be changed must not lie in a month of a teacher of this group that a saved sheet has closed
         (``closed_period.py``) - a pause takes the lessons of those days off the pay of the teacher.  Days that have not come yet touch no sheet."""
@@ -450,6 +464,7 @@ class PauseService(_Base):
             self._check_range(body.first_day, body.last_day, today)
             membership = self._guard_open(org_id, membership_id)
             self._assert_days_open(org_id, membership, _days(body.first_day, body.last_day), today)
+            self._assert_no_lesson_in_progress(membership, body.first_day, body.last_day)
             self.pay._lock_family(org_id, membership.student_id)
             live = self._live(membership_id)
             same = next((p for p in live if (p.first_day, p.last_day) == (body.first_day, body.last_day)), None)
@@ -538,6 +553,7 @@ class PauseService(_Base):
                 raise PauseRange(f"Пауза не длиннее {PAUSE_MAX_DAYS} дней")
             # M3: EVERY day that enters the pause (new - old) must lie in an open month, as a new pause's days must - not only a moved start
             self._assert_days_open(org_id, membership, _days(first, last) - _days(row.first_day, row.last_day), today)
+            self._assert_no_lesson_in_progress(membership, first, last)
             self._check_unlocking(org_id, membership, _days(row.first_day, row.last_day), _days(first, last), today)
             if any(p.id != row.id and p.first_day <= last and first <= p.last_day for p in self._live(row.membership_id)):
                 raise PauseOverlap("Пауза пересекается с другой паузой этого ученика")

@@ -239,7 +239,7 @@ class SaveAttendanceOut(BaseModel):
     version: int
     examSync: Optional[ExamSyncOut] = None
     warnings: List[CancelWarning] = Field(default_factory=list)       # W1 S2: only a cancellation has any
-    moneyEffects: Optional[Dict[str, Any]] = None                      # Money-1 A3: a correction of a held lesson says what it did to money (``money_effects.build``)
+    moneyEffects: Optional[Dict[str, Any]] = Field(None, exclude_if=lambda v: v is None)       # Money-1 A3: a correction of a held lesson says what it did to money (``money_effects.build``); absent otherwise
 
 
 class AttendanceConflictDetail(OpsErrorDetail):

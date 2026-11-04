@@ -8,6 +8,14 @@ from src.models.auth import AttendanceExcuse, AttendanceExcuseFile, GroupAttenda
 from tests.pg_world import (  # noqa: F401  (fixtures)
     LIVE_SLOT, business_today, excused_lesson, make_client, needs_pg, pg_session, reconcile, save, world,
 )
+
+
+@pytest.fixture(autouse=True)
+def _admin_may_decide_money(world):
+    """Money-1 A4: a decision on an excuse moves money - the administrator of these tests has the right of the owner (the case of an administrator without it is in test_money1_rights_guard)."""
+    from tests.ops_helpers import grant_money_right
+
+    grant_money_right(world)
 from src.auth.schemas import StartAttendanceRequest
 
 pytestmark = needs_pg
@@ -164,12 +172,17 @@ def test_admin_corrects_completed_lesson_into_excused(world):
     assert data.excuses[key][str(world.students[0].id)]["reason"] == "Болел"
 
 
-def test_teacher_cannot_touch_a_completed_lesson(world):
+def test_teacher_corrects_only_his_own_held_lesson_with_a_reason(world):
+    """Money-1 A5 (was: a teacher cannot touch a completed lesson at all): the teacher OF the lesson corrects it within 7 days with a reason; another teacher cannot."""
+    from src.auth.ops_rules import OpsError
+
     day, lesson_id = reconcile(world)
     save(world, day, lesson_id, [(s, "present") for s in world.students], status="completed")
-    with pytest.raises(ValueError, match="только у начатого урока"):
-        save(world, day, lesson_id, [(s, "absent") for s in world.students], status="completed",
-             actor=world.teacher, is_admin=False, correctionReason="Хочу поменять")
+    with pytest.raises(ValueError, match="укажите причину"):
+        save(world, day, lesson_id, [(s, "absent") for s in world.students], status="completed", actor=world.teacher, is_admin=False)
+    save(world, day, lesson_id, [(s, "absent") for s in world.students], status="completed", actor=world.teacher, is_admin=False, correctionReason="Хочу поменять")
+    with pytest.raises((OpsError, PermissionError)):
+        save(world, day, lesson_id, [(s, "present") for s in world.students], status="completed", actor=world.teacher2, is_admin=False, correctionReason="Чужой урок")
 
 
 def test_completed_correction_requires_reason(world):
@@ -293,7 +306,7 @@ def test_global_admin_role_without_org_admin_membership_cannot_correct(world):
             "records": {str(s.id): "absent" for s in world.students}, "correctionReason": "Хочу поменять"}
     url = f"/api/v1/auth/org/groups/{world.group.id}/attendance"
     # org_role teacher, global role admin: passes the group-access check, not the correction check.
-    loose = make_client(world, user=world.teacher, role="admin", org_role="teacher")
+    loose = make_client(world, user=world.teacher2, role="admin", org_role="teacher")          # not the teacher of this lesson (Money-1 A5: the teacher OF the lesson may correct it)
     r = loose.post(url, json=body)
     assert r.status_code in (400, 403)                                    # W1 S1: a teacher here is a teacher whatever he owns elsewhere - a completed lesson is not his to correct
     world.db.expire_all()
@@ -307,5 +320,6 @@ def test_global_admin_role_without_org_admin_membership_cannot_correct(world):
     excuse = excuse_of(world)
     excuse.status, excuse.review_note = "confirmed", "секрет"
     world.db.commit()
-    got = loose.get(url, params={"date_from": day2.isoformat(), "date_to": day2.isoformat()}).json()
+    reader = make_client(world, user=world.teacher, role="admin", org_role="teacher")
+    got = reader.get(url, params={"date_from": day2.isoformat(), "date_to": day2.isoformat()}).json()
     assert "review_note" not in got["excuses"][key_of(day2, lesson2)][str(s.id)]

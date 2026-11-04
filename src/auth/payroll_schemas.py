@@ -276,7 +276,8 @@ class MonthSheetRef(BaseModel):
 
 
 class MonthWarnings(BaseModel):
-    open_lessons: int = 0
+    open_lessons: Optional[int] = 0           # null: the check failed (see ``open_lessons_unknown``) - the screen says «не удалось проверить незакрытые уроки», never 0
+    open_lessons_unknown: bool = False
     pending_excused: int = 0
     no_fee: int = 0
     unpaid: int = 0

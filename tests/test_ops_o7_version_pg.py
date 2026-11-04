@@ -6,6 +6,7 @@ import pytest
 
 from src.models.auth import GroupAttendance
 
+from tests.ops_helpers import grant_money_right  # noqa: E402
 from tests.ops_helpers import (  # noqa: F401  (fixtures)
     build_d0, clock, client, code_of, exams, fixture, needs_pg, pg_session, run_parallel,
 )
@@ -72,6 +73,7 @@ def test_r3_removing_a_mark_is_part_of_the_snapshot_and_conflicts_like_any_chang
 def test_r4_two_tabs_conflict_and_keep_mine_chain7(w, clock):
     """[O7.R4] Chain 7: tab 2 writes v2, tab 1 (expects v1) gets 409 ATTENDANCE_CONFLICT with the current marks, nothing is written; "keep mine" repeats with
     expectedVersion=2 -> v3; completing -> v4; the admin's correction with expectedVersion=4 -> v5; the same correction again -> 200, no bump."""
+    grant_money_right(w)                    # Money-1 A4: a correction of a held lesson is for the money right
     exp_conflict = fixture("c7_conflict.json")["body"]["detail"]
     start(w, "A")
     assert save(w, "A", {"s1": "present"}, expectedVersion=1).json() == {"ok": True, "saved": True, "version": 2, "examSync": None, "warnings": []}      # tab 2
@@ -115,6 +117,7 @@ def test_r4b_two_writers_with_one_expected_version_exactly_one_wins(w):
 
 def test_r5_a_month_old_correction_checks_the_version_too(w, clock):
     """[O7.R5]"""
+    grant_money_right(w)                    # Money-1 A4: a correction of a held lesson is for the money right
     clock.set("2026-11-21 12:00")
     from tests.ops_helpers import history_row
 

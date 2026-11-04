@@ -280,6 +280,7 @@ class MonthSeed:
     divisor: int
     teachers: Dict[UUID, TeacherSeed] = field(default_factory=dict)
     lessons_without_teacher: int = 0
+    open_unknown: bool = False          # Money-1 A6 (П7): the check of the unfinished lessons failed - «не удалось проверить», NOT «0»
 
 
 @dataclass
@@ -405,8 +406,8 @@ class PayrollService:
 
     # ------------------------------------------------------------- reading
 
-    def _open_lessons(self, org_id: str, first: date, last: date) -> Dict[str, int]:
-        """Unfinished lessons of the month per teacher - the very list of "Незакрытые уроки"."""
+    def _open_lessons(self, org_id: str, first: date, last: date) -> Optional[Dict[str, int]]:
+        """Unfinished lessons of the month per teacher - the very list of "Незакрытые уроки".  ``None`` when the check failed (Money-1 A6: a silent 0 let the owner save a sheet that had open lessons)."""
         from .service import AuthService  # lazy: service is heavy
 
         try:
@@ -416,7 +417,7 @@ class PayrollService:
         except Exception:
             logger.exception("Could not count open lessons for org %s", org_id)
             self.db.rollback()  # nothing else has been read yet
-            return {}
+            return None
         out: Dict[str, int] = {}
         low, high = first.isoformat(), last.isoformat()
         for action in actions:
@@ -474,7 +475,9 @@ class PayrollService:
         """
         divisor = self.divisor_at(org_id, first)
         seed = MonthSeed(first, last, divisor)
-        open_by_teacher = self._open_lessons(org_id, first, last) if with_open else {}
+        found = self._open_lessons(org_id, first, last) if with_open else {}
+        seed.open_unknown = found is None
+        open_by_teacher = found or {}
         if teacher_ids is not None:
             open_by_teacher = {t: n for t, n in open_by_teacher.items() if t in {str(i) for i in teacher_ids}}
 
@@ -1026,7 +1029,8 @@ class PayrollService:
                     ),
                     payout=payout,
                     warnings=MonthWarnings(
-                        open_lessons=teacher.open_lessons if teacher else 0,
+                        open_lessons=None if seed.open_unknown else (teacher.open_lessons if teacher else 0),
+                        open_lessons_unknown=seed.open_unknown,
                         pending_excused=counters["pending_excused"] if counters else 0,
                         no_fee=counters["no_fee"] if counters else 0,
                         unpaid=counters["unpaid"] if counters else 0,
@@ -1107,7 +1111,7 @@ class PayrollService:
                     revision=None,
                     fingerprint=teacher.fingerprint,
                     stale=None,
-                    open_lessons=teacher.open_lessons,
+                    open_lessons=None if seed.open_unknown else teacher.open_lessons,
                 )
             )
         return CalculateResponse(month=month_label(first), month_open=ps.business_today() <= last, sheets=sheets)

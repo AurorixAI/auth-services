@@ -1698,7 +1698,10 @@ def save_group_attendance(
             money_right=money_right,
             owner=user.get("org_role") == "owner",
         )
-        return {"ok": True, "saved": True, "version": result["version"], "examSync": result["examSync"], "warnings": result["warnings"], "moneyEffects": result.get("moneyEffects")}
+        out = {"ok": True, "saved": True, "version": result["version"], "examSync": result["examSync"], "warnings": result["warnings"]}
+        if result.get("moneyEffects") is not None:         # Money-1 A3: only a correction of a held lesson has it
+            out["moneyEffects"] = result["moneyEffects"]
+        return out
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ExcusePauseRefused as e:  # LOGIC-A: an excuse on a day of the student's pause

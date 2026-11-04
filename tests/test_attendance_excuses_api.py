@@ -10,6 +10,14 @@ from src.models.auth import AttendanceExcuse, AttendanceExcuseFile, GroupAttenda
 from tests.pg_world import (  # noqa: F401  (fixtures)
     business_today, excused_lesson, make_client, needs_pg, pg_session, reconcile, save, world,
 )
+
+
+@pytest.fixture(autouse=True)
+def _admin_may_decide_money(world):
+    """Money-1 A4: a decision on an excuse moves money - the administrator of these tests has the right of the owner (the case of an administrator without it is in test_money1_rights_guard)."""
+    from tests.ops_helpers import grant_money_right
+
+    grant_money_right(world)
 from tests.test_attendance_excuses import JPEG, PDF, PNG, excuse_of, key_of
 
 pytestmark = needs_pg
@@ -70,6 +78,9 @@ def test_a_token_without_an_organisation_gets_403_not_500(world, lesson):
 
 def test_other_organisation_sees_nothing_and_gets_404(world, lesson):
     excuse = lesson[2]
+    from tests.ops_helpers import grant_money_right
+
+    grant_money_right(world, org=world.other_org)          # the foreign administrator has the money right of HIS centre: the refusal is about the centre, not about the right
     foreign = make_client(world, user=world.foreign_admin, org="other")
     assert foreign.get(BASE, params={"status": "all"}).json() == {"items": [], "total": 0, "pending_total": 0}
     summary = foreign.get(f"{BASE}/summary").json()
