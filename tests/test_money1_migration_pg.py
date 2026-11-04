@@ -6,7 +6,7 @@ from sqlalchemy import inspect, text
 from tests.test_k2_1_migration_pg import BASE_URL, config, engine, version  # noqa: F401  (engine is a fixture)
 
 REVISION, BEFORE = "mn1a2b3c4d5", "wca1b2c3d4e5"
-TABLES = {"payroll_period_reopenings", "money_reconcile_runs", "money_reconcile_findings"}
+TABLES = {"payroll_period_reopenings", "money_reconcile_runs", "money_reconcile_findings", "money_reconcile_snapshots"}
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
 
 

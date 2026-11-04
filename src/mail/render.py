@@ -37,9 +37,10 @@ SUBJECTS: Dict[str, str] = {
     "support_new": "[ALGO] Обращение №{number}: {centre_name}",
     "support_author_reply": "[ALGO] Ответ автора по обращению №{number}: {centre_name}",
     "support_reply": "Есть ответ на обращение №{number} — ALGO",
+    "money_reconcile": "[ALGO] Сверка денег: расхождений {total}, новых {new}",
 }
 # the letters that share a template file
-TEMPLATE_OF: Dict[str, str] = {"support_new": "support_team", "support_author_reply": "support_team"}
+TEMPLATE_OF: Dict[str, str] = {"support_new": "support_team", "support_author_reply": "support_team", "money_reconcile": "support_team"}
 ROLE_WORDS = {"owner": "владелец", "admin": "администратор", "teacher": "преподаватель"}
 LETTERS = tuple(SUBJECTS)
 ROLE_TEXT = {"teacher": "преподаватель", "admin": "администратор"}
@@ -154,6 +155,11 @@ def _prepare(letter: str, ctx: dict) -> dict:
             ("Роль", ROLE_WORDS.get(out.get("author_role"), "")),
             ("Текст" if letter == "support_new" else "Ответ", _inert(out.get("text"), 300)),
         ]
+    elif letter == "money_reconcile":
+        # Money-1 A7: the team only; counts, ids and sums - no name of a person (the console has the list)
+        out["headline"] = "Сверка денег: есть расхождения"
+        out["centre_name"] = f"найдено {out['total']}"          # the preheader of the shared team template names the centre; here it names the count
+        out["rows"] = [("Всего", str(out["total"])), ("Новых", str(out["new"])), *[(label_, _inert(value, 300)) for label_, value in out.get("rows", [])]]
     elif letter == "support_reply":
         out.setdefault("greeting", "")
     elif letter == "new_application":
@@ -192,7 +198,7 @@ def render(letter: str, ctx: dict) -> Rendered:
         raise KeyError(letter)
     data = _prepare(letter, ctx)
     data.setdefault("site_url", "https://algolab.me")
-    subject = SUBJECTS[letter].format(**{k: data.get(k, "") for k in ("centre_name", "city", "number")}) if "{" in SUBJECTS[letter] else SUBJECTS[letter]
+    subject = SUBJECTS[letter].format(**{k: data.get(k, "") for k in ("centre_name", "city", "number", "total", "new")}) if "{" in SUBJECTS[letter] else SUBJECTS[letter]
     data["subject"] = subject
     template = TEMPLATE_OF.get(letter, letter)
     html = _html.get_template(f"{template}.html.j2").render(**data)

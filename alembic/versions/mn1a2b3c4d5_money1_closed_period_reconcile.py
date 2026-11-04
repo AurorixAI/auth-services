@@ -6,7 +6,8 @@ Create Date: 2026-11-04
 
 * ``payroll_period_reopenings`` (A1): a closed month of a teacher (his last sheet was saved after the month ended) reopened by the owner / an administrator with the payments
   right, with a reason.  Append-only; a reopening lasts until the sheet is saved again.
-* ``money_reconcile_runs`` / ``money_reconcile_findings`` (A7): the result of the nightly check of the invariants I-1..I-4 (the platform console reads them; a centre never does).
+* ``money_reconcile_runs`` / ``money_reconcile_findings`` (A7): the result of the nightly check of the invariants I-1..I-4 (the platform console reads them; a centre never does);
+  ``money_reconcile_snapshots`` - the last seen "paid until" / covered lessons of every membership (I-2 compares the next night with it).
 * ``group_attendance_audit`` accepts ``completed_reverted`` («Вернуть проведённый урок», A2); the CHECK is rebuilt from the
   live definition, so a parallel change of the list by another revision is kept.
 
@@ -103,6 +104,17 @@ def upgrade() -> None:
         )
         op.create_index("ix_money_reconcile_findings_run", "money_reconcile_findings", ["run_id"])
         op.create_index("ix_money_reconcile_findings_org_key", "money_reconcile_findings", ["org_id", "invariant", "subject_key"])
+    if "money_reconcile_snapshots" not in tables:
+        op.create_table(
+            "money_reconcile_snapshots",
+            sa.Column("membership_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("student_groups.id", ondelete="CASCADE"), primary_key=True),
+            sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("covered_through", sa.Date(), nullable=True),
+            sa.Column("lessons_covered", sa.Integer(), nullable=True),
+            sa.Column("paid", sa.BigInteger(), nullable=True),
+            sa.Column("taken_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        )
+        op.create_index("ix_money_reconcile_snapshots_org", "money_reconcile_snapshots", ["org_id"])
     actions = _check_actions(bind)
     if actions:
         _set_check_actions(actions + [a for a in NEW_ACTIONS if a not in actions])
@@ -116,6 +128,6 @@ def downgrade() -> None:
         op.execute(f"DELETE FROM {AUDIT} WHERE action IN ({', '.join(repr(a) for a in NEW_ACTIONS)})")
         _set_check_actions([a for a in actions if a not in NEW_ACTIONS])
     tables = _tables(bind)
-    for name in ("money_reconcile_findings", "money_reconcile_runs", "payroll_period_reopenings"):
+    for name in ("money_reconcile_snapshots", "money_reconcile_findings", "money_reconcile_runs", "payroll_period_reopenings"):
         if name in tables:
             op.drop_table(name)

@@ -2053,3 +2053,18 @@ class MoneyReconcileFinding(Base):
         Index("ix_money_reconcile_findings_run", "run_id"),
         Index("ix_money_reconcile_findings_org_key", "org_id", "invariant", "subject_key"),
     )
+
+
+class MoneyReconcileSnapshot(Base):
+    """Money-1 (A7, I-2): the last seen "paid until" and covered lessons of a membership - the next night compares with it and asks the journal why it moved."""
+
+    __tablename__ = "money_reconcile_snapshots"
+
+    membership_id = Column(UUID(as_uuid=True), ForeignKey("student_groups.id", ondelete="CASCADE"), primary_key=True)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    covered_through = Column(Date, nullable=True)
+    lessons_covered = Column(Integer, nullable=True)
+    paid = Column(BigInteger, nullable=True)          # the gross sum of the payments the ledger counts: it moves only with a record (a payment made / cancelled)
+    taken_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+
+    __table_args__ = (Index("ix_money_reconcile_snapshots_org", "org_id"),)

@@ -8,6 +8,7 @@ from . import (
     platform_auth_router,
     platform_demo_router,
     platform_orgs_router,
+    platform_reconcile_router,
     platform_team_router,
     platform_users_router,
 )
@@ -21,4 +22,5 @@ router.include_router(platform_orgs_router.router)
 router.include_router(platform_users_router.router)
 router.include_router(platform_team_router.router)
 router.include_router(platform_audit_router.router)
+router.include_router(platform_reconcile_router.router)
 router.include_router(support_console_router.router)
