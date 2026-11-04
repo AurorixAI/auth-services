@@ -178,7 +178,7 @@ class LessonCancelMixin:
         return who or "преподаватель"
 
     # ------------------------------------------------------------------------------------------------ restore
-    def restore_lesson(self, org_id: Any, actor_id: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str, *, money_right: bool = False) -> Dict[str, Any]:
+    def restore_lesson(self, org_id: Any, actor_id: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str, *, money_right: bool = False, dry_run: bool = False) -> Dict[str, Any]:
         """W1 S5: «Вернуть отменённый урок» (owner / admin, a lesson that has not started, with a reason).  Refused: a lesson that is not cancelled, a MOVED original (cancel the
         copy instead), a lesson that has started, a date that a live day off holds (cancel the day off), a lesson the schedule no longer has, a teacher who is busy meanwhile.
         What was cancelled is recorded (the group audit + the record of the journal «Замены») BEFORE the row is deleted; the deduction of the recalculation is gone with the row.
@@ -186,14 +186,18 @@ class LessonCancelMixin:
         in an open month of the lesson's teacher; the answer says ``returnedToReview`` and carries ``moneyEffects``."""
         actor = _uuid(actor_id)
         try:
-            out = self._restore_locked(org_id, actor, actor_role, group_id, lesson_id, day, reason, money_right)
+            out = self._restore_locked(org_id, actor, actor_role, group_id, lesson_id, day, reason, money_right, dry_run)
+            if dry_run:                                      # R3 #23: the confirmation before the return - everything above is thrown away, the answer says what it WOULD do
+                self.db.rollback()
+                out["dryRun"] = True
+                return out
             self.db.commit()
             return out
         except BaseException:
             self.db.rollback()
             raise
 
-    def _restore_locked(self, org_id: Any, actor: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str, money_right: bool = False) -> Dict[str, Any]:
+    def _restore_locked(self, org_id: Any, actor: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str, money_right: bool = False, dry_run: bool = False) -> Dict[str, Any]:
         iso = day.isoformat()
         group = self._group_locked(org_id, _uuid(group_id))
         if group is None:
@@ -222,6 +226,7 @@ class LessonCancelMixin:
             ClosedPeriods.of(self.db, group.org_id).assert_open(lesson_teacher_ids(self.db, group, lesson_id, iso, row), iso)
             if day < open_lessons_since(self.db, group.org_id, bc.business_today()):         # R3 #2: the lesson would come back to a list that does not reach so far
                 raise conflict("RESTORE_BEFORE_START", "Этот урок был раньше начала учёта центра: вернуть его на разбор нельзя")
+        deduction_was = money_effects.centre_deductions(self.db, org_id, group.id) if money_right and row.cancellation_kind == "centre" else {}
         held = DaysOffService(self.svc).live_for_date(org_id, day)
         if row.day_off_id is not None or held is not None:
             why = f" ({held.reason})" if held is not None else ""
@@ -247,13 +252,17 @@ class LessonCancelMixin:
         lost = DaysOffService(self.svc)._substitutes_not_restored([row], {group.id: group})          # the substitute the cancellation took off does not come back (R3 12)
         self.db.delete(row)
         self.db.flush()
+        gone = money_effects.deductions_gone(self.db, org_id, group.id, deduction_was) if deduction_was else []
         out = {"ok": True, "restored": True, "lessonId": lesson_id, "lessonDate": iso, "previousKind": trace["cancellationKind"], "examsNote": EXAMS_NOT_RESTORED,
                "warnings": [{"code": w.code, "message": w.message} for w in lost] + (slot_warnings or [])}
-        if past:
-            out["returnedToReview"] = True
-            out["moneyEffects"] = money_effects.lesson_block(self.db, org_id, students=[], probe=None, owner=actor_role == "owner", done=True)       # a lesson nobody held pays nobody: the sheets do not move
-            if trace["cancellationKind"] == "centre":
-                out["moneyEffects"]["text"] = "У учеников исчезнет вычет за этот урок (если центр вычитает отмены); урок снова ждёт разбора — преподавателю он оплатится, когда его проведут"
+        if gone or deduction_was:
+            out["deductions"] = gone                          # R3 #23: whose deduction for this cancelled lesson disappears and by how much (the money right only)
+        if past or dry_run:
+            if past:
+                out["returnedToReview"] = True
+            out["moneyEffects"] = money_effects.lesson_block(self.db, org_id, students=[], probe=None, owner=actor_role == "owner", done=not dry_run)       # a lesson nobody held pays nobody: the sheets do not move
+            if trace["cancellationKind"] == "centre" and (past or money_right):
+                out["moneyEffects"]["text"] = money_effects.deduction_text(gone, done=not dry_run)
         return out
 
     def record_kind_change(self, group: Group, lesson_id: str, day: date, actor: Any, before: str, after: str, reason: str, trigger: str = MANAGER_REASON_CHANGE) -> None:

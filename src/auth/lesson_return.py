@@ -23,7 +23,7 @@ from src.models.auth import AttendanceExcuse, Group, GroupAttendance, GroupAtten
 from . import business_clock as bc
 from . import money_effects as me
 from .closed_period import ClosedPeriods, lesson_teacher_ids
-from .ops_rules import OpsError, conflict, not_found
+from .ops_rules import OpsError, conflict, forbidden, not_found
 
 COMPLETED, IN_PROGRESS = "completed", "in_progress"
 
@@ -110,7 +110,7 @@ def return_completed_lesson(db, org_id: Any, group_id: Any, req: ReturnLessonReq
     return {"ok": True, "changed": True, "version": int(row.version), "status": IN_PROGRESS, "moneyEffects": effects}
 
 
-def correction_impact(db, org_id: Any, group_id: Any, req: AttendanceImpactRequest, *, owner: bool) -> Dict[str, Any]:
+def correction_impact(db, org_id: Any, group_id: Any, req: AttendanceImpactRequest, *, owner: bool, money_right: bool = True, actor_id: Any = None) -> Dict[str, Any]:
     """What a correction of the marks of a HELD lesson would do to money - nothing is written (the correction is applied inside a transaction that is rolled back; the confirmation before «Сохранить»)."""
     group = db.query(Group).filter(Group.id == group_id, Group.org_id == org_id).first()
     if group is None:
@@ -119,6 +119,12 @@ def correction_impact(db, org_id: Any, group_id: Any, req: AttendanceImpactReque
     if row is None or row.status != COMPLETED:
         db.rollback()
         raise not_found("LESSON_NOT_HELD", "Проведённого урока нет")
+    if not money_right:                                                # R3 #24: the teacher of THIS lesson may ask (the numbers of the pack, no sums of the sheet); nobody else without the right
+        from .dependencies import MONEY_RIGHT_REQUIRED_TEXT
+
+        if actor_id is None or str(actor_id) not in {str(t) for t in lesson_teacher_ids(db, group, req.lessonId, row.lesson_date, row)}:
+            db.rollback()
+            raise forbidden("MONEY_RIGHT_REQUIRED", MONEY_RIGHT_REQUIRED_TEXT)
     try:
         teachers = _assert_open(db, group, row)
         before = {str(k): v for k, v in (row.records or {}).items()}

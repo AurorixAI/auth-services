@@ -5,7 +5,7 @@
 * ``students`` - the lessons of the packs of the students that the action gives back (+1) or spends (-1), by the rule 4.3 (``payment_status.lesson_counts``);
 * ``payroll`` - the SAVED sheets whose pay the action really moves: ``fresh total BEFORE`` != ``fresh total AFTER`` of THIS action (Money-1 R3 #21: not the drift that was there before it,
   and nothing at all when the difference is 0).  Everybody gets ``{"month", "state"}`` (``open`` | ``closed`` | ``reopened``, see ``closed_period.py``); only the OWNER also gets the sheet, the
-  teacher, the saved total, ``freshBefore`` / ``freshAfter``, ``changedBy`` (= after - before) and ``driftAfter`` (= after - saved) - LESSONS 45;
+  teacher, the saved total, ``freshBefore`` / ``freshAfter`` (= ``freshTotal``, the same in a dry run: the sum BEFORE the owner confirms), ``changedBy`` (= after - before) and ``driftAfter`` (= after - saved) - LESSONS 45;
 * ``text`` - the sentence for the confirmation / the toast, in the words of the screen (no technical words);
 * ``dryRun`` - the confirmation before the action (``True``: nothing was written) or the toast after it.
 
@@ -155,7 +155,7 @@ class SheetProbe:
                 user = self.db.query(User).filter(User.id == sheet.teacher_id).first()
                 paid = int(sum(p.amount for p in self.db.query(PayrollPayout).filter(PayrollPayout.sheet_id == sheet.id, PayrollPayout.voided_at.is_(None)).all()))
                 line.update({"sheetId": str(sheet.id), "teacherId": str(sheet.teacher_id), "teacherName": short_name(user), "savedTotal": int(sheet.total_amount), "paid": paid,
-                             "freshBefore": before, "freshAfter": after, "changedBy": after - before, "driftAfter": after - int(sheet.total_amount)})
+                             "freshBefore": before, "freshAfter": after, "freshTotal": after, "changedBy": after - before, "driftAfter": after - int(sheet.total_amount)})
             out.append(line)
         return out
 
@@ -342,3 +342,38 @@ def run_with_effects(db, org_id: Any, membership_ids: Iterable[Any], owner: bool
     if dry_run:
         return preview, block
     return action(), block
+
+
+# ============================================================================================ the deduction for a lesson the centre cancelled (restore)
+def centre_deductions(db, org_id: Any, group_id: Any) -> Dict[str, int]:
+    """``{student_id: recalculated}`` - what the centre has deducted from each student of the group for the lessons it cancelled (the screens' ledger, ``recalc=True``).  Read before and after
+    the return of a cancelled lesson, the difference is what disappears with it.  Never raises: an unreadable ledger is an empty answer (the caller then says the rule in words)."""
+    from src.models.auth import StudentGroup
+
+    from .payments_service import PaymentService
+
+    try:
+        ids = [mid for (mid,) in db.query(StudentGroup.id).filter(StudentGroup.group_id == group_id).all()]
+        out: Dict[str, int] = {}
+        loader = PaymentService(db)._loader(str(org_id), recalc=True)
+        for start in range(0, len(ids), 150):
+            for entry in loader.run(ids[start:start + 150]):
+                out[str(entry.membership.student_id)] = int(entry.ledger.recalculated)
+        return out
+    except Exception:
+        logger.exception("could not read the deductions of group %s", group_id)
+        return {}
+
+
+def deductions_gone(db, org_id: Any, group_id: Any, was: Dict[str, int]) -> List[Dict[str, Any]]:
+    """``[{"studentId", "name", "amount"}]`` of the students whose deduction got smaller since ``was`` (the lesson went back)."""
+    now = centre_deductions(db, org_id, group_id)
+    return with_names(db, [{"studentId": sid, "amount": amount - now.get(sid, 0)} for sid, amount in sorted(was.items()) if amount - now.get(sid, 0) > 0])
+
+
+def deduction_text(gone: List[Dict[str, Any]], *, done: bool) -> str:
+    if not gone:
+        return ("У учеников вычет за этот урок не изменится" if not done else "Вычет учеников не изменился") + "; урок снова ждёт разбора — преподавателю он оплатится, когда его проведут"
+    total = sum(g["amount"] for g in gone)
+    who = f"у {len(gone)} " + ("ученика" if len(gone) == 1 else "учеников")
+    return f"{who.capitalize()} {'исчез' if done else 'исчезнет'} вычет за этот урок: {num(total)} сум; урок снова ждёт разбора — преподавателю он оплатится, когда его проведут"

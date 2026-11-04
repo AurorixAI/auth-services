@@ -24,7 +24,7 @@ WHOLE = {
     ("POST", f"{P}/org/memberships/{{membership_id}}/pauses"), ("PATCH", f"{P}/org/pauses/{{pause_id}}"), ("POST", f"{P}/org/pauses/{{pause_id}}/void"),
     ("PUT", f"{P}/org/groups/{{group_id}}/lesson-type"), ("PUT", f"{P}/org/groups/{{group_id}}/attendance/cancellation-kind"),
     # the return of a held lesson, the impact of its correction, the reopening of a closed month
-    ("POST", f"{P}/org/groups/{{group_id}}/attendance/return"), ("POST", f"{P}/org/groups/{{group_id}}/attendance/impact"), ("POST", f"{P}/org/payroll-periods/{{month}}/reopen"),
+    ("POST", f"{P}/org/groups/{{group_id}}/attendance/return"), ("POST", f"{P}/org/payroll-periods/{{month}}/reopen"),
     # payments (the ones of the earlier packs; the full list is the one below)
     ("POST", f"{P}/org/memberships/{{membership_id}}/payments"), ("POST", f"{P}/org/payments/{{payment_id}}/void"), ("POST", f"{P}/org/payments/{{payment_id}}/replace"),
     ("POST", f"{P}/org/memberships/{{membership_id}}/writeoffs"), ("POST", f"{P}/org/memberships/{{membership_id}}/refunds"),
@@ -38,6 +38,7 @@ WHOLE = {
 # the part of the route that moves money asks the flag (``money_rights_flag``): the route is used by teachers / administrators for the rest
 CONDITIONAL = {
     ("POST", f"{P}/org/groups/{{group_id}}/attendance"),                    # a correction of a held lesson
+    ("POST", f"{P}/org/groups/{{group_id}}/attendance/impact"),             # R3 #24: the money right, or the teacher of THIS lesson without the sums
     ("POST", f"{P}/org/groups/{{group_id}}/attendance/reconcile"),          # a lesson formalised backwards, «кто провёл»
     ("PUT", f"{P}/org/groups/{{group_id}}/lesson-teacher"),                 # who taught a held lesson (ЗП-02)
     ("POST", f"{P}/org/groups/{{group_id}}/lessons/restore"),               # the return of «Урока не было» for a lesson that had begun

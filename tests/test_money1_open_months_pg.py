@@ -44,6 +44,7 @@ def test_a_closed_month_leaves_the_list_and_comes_back_when_it_is_reopened_the_s
     assert all(i.periodClosed for i in seen if i.lessonDate.startswith("2026-09")) and not any(i.periodClosed for i in seen if not i.lessonDate.startswith("2026-09"))
     named = PayrollService(world.db)._open_lessons(str(world.org.id), date(2026, 9, 1), date(2026, 9, 30))
     assert len([x for x in named[str(world.teacher.id)] if x["lessonId"].startswith("s")]) == 30                  # the closed sheet still names what is left
+    assert {x["groupName"] for x in named[str(world.teacher.id)]} == {world.group.name}                           # R3 #26: with the name of the group - no second request for it
     reopen_now(world.db, world.org.id, world.teacher.id, "2026-09", world.owner.id, "Разбираем сентябрь")
     assert by_month(missed(world)) == {"2026-08": 31, "2026-09": 30, "2026-10": 31, "2026-11": 4}
     assert row.id is not None

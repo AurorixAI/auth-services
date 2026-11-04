@@ -556,6 +556,8 @@ class AttendanceExcuseService:
             every_audit.setdefault(audit.attendance_id, []).append(audit)
             if audit.action == "corrected":
                 latest_audit.setdefault(audit.attendance_id, audit)
+        for att_id, items in every_audit.items():            # R3 #25: a lesson that was only RETURNED (and held again) is marked too - its newest event stands in for the correction
+            latest_audit.setdefault(att_id, items[0])
 
         user_ids = {r.reason_by for r in rows} | {r.reviewed_by for r in rows if r.reviewed_by}
         user_ids |= {a.actor_id for items in every_audit.values() for a in items}
@@ -608,6 +610,7 @@ class AttendanceExcuseService:
             if key is None:
                 continue
             corrections[key] = {
+                "kind": "returned" if audit.action == "completed_reverted" else "corrected",
                 "by_name": _user_name(users.get(audit.actor_id)),
                 "at": _iso(audit.created_at),
                 "reason": audit.correction_reason,

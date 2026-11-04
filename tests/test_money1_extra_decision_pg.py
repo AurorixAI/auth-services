@@ -35,3 +35,22 @@ def test_the_decision_can_be_taken_back_in_an_open_month_and_not_in_a_closed_one
     shut = decide(w, "owner", made, "undo", expect=409)
     assert shut.json()["detail"]["code"] == "PERIOD_CLOSED"
     assert one_off(w, made).money == "none"
+
+
+def test_r3_28_the_list_of_decided_additional_lessons_is_for_the_money_right_and_says_when_the_decision_can_be_taken_back(pg_session, clock):
+    w = build_org(pg_session)
+    g, st, ms, made = extra_world(w, clock, "wait", "A")
+    url = f"{API}/org/one-off-decisions/decided"
+    assert client(w, "owner").get(url).json() == {"total": 0, "items": []}                                                  # nothing decided yet
+    decide(w, "admin", made, "pay")
+    assert client(w, "owner").get(f"{API}/org/one-off-decisions").json()["total"] == 0                                      # it left the queue ...
+    (item,) = client(w, "owner").get(url).json()["items"]                                                                    # ... and is in the list of the decided
+    assert item["lessonId"] == made and item["money"] == "paid" and item["groupName"] and (item["studentsPresent"], item["studentsPaid"]) == (3, 5)
+    assert item["canUndo"] is True and item["periodClosed"] is False and item["decidedBy"]["role"] == "admin" and item["decidedAt"]
+    assert client(w, "owner").get(url, params={"month": "2026-10"}).json()["total"] == 1 and client(w, "owner").get(url, params={"month": "2026-09"}).json()["total"] == 0
+    closed_sheet(w, w.A, date(2026, 10, 1), saved="2026-11-02 12:00")
+    (shut,) = client(w, "owner").get(url).json()["items"]
+    assert shut["canUndo"] is False and shut["periodClosed"] is True                                                         # the button «Отменить решение» is not offered: reopen the month first
+    assert client(w, "A").get(url).status_code == 403                                                                        # a teacher
+    assert client(w, "admin").get(url).status_code == 200                                                                    # this world's administrator has the money right (``decide`` above)
+    assert client(w, "owner").post(f"{API}/org/one-off-lessons/{made}/money-decision", json={"decision": "undo"}).status_code == 409

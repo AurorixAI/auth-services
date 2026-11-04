@@ -37,12 +37,11 @@ def test_an_administrator_without_the_money_right_cannot_correct_a_held_lesson_t
     done = post_save(world, world.admin, day, lid, ["absent", "present", "present"], correctionReason="Опечатка")
     assert done.status_code == 200, done.text
     effects = done.json()["moneyEffects"]
-    assert effects["payroll"] == [{"month": "2026-10", "state": "open"}]            # an administrator: the month only, no sums of the teacher's pay (LESSONS 45)
-    assert "Ведомость" in effects["text"] and "изменилась" in effects["text"]
-    # the owner hears the sums: the saved total, and what the data says now
+    # R3 #17/#21: a sheet is named only when this action REALLY moves it; the hand-made sheet of this world has no rate of the teacher, so there is nothing to measure
+    # (the sums and the «month only» for an administrator are proven with real rates in ``test_money1_effects_pg`` and ``test_money1_holes_pg``)
+    assert effects["payroll"] == [] and effects["dryRun"] is False
     again = post_save(world, world.owner, day, lid, ["present", "present", "present"], correctionReason="Вернули")
-    mine = again.json()["moneyEffects"]["payroll"][0]
-    assert mine["savedTotal"] == 1_000_000 and mine["state"] == "open" and "freshTotal" in mine and "changedBy" in mine and mine["teacherName"]
+    assert again.status_code == 200 and again.json()["moneyEffects"]["payroll"] == []
 
 
 def test_a_correction_that_changes_what_a_pack_spends_names_the_students(world, now_4_nov):

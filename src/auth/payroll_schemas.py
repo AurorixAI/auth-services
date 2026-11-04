@@ -203,7 +203,7 @@ class GroupBlockOut(BaseModel):
 
 class SheetWarnings(BaseModel):
     open_lessons: Optional[int] = None  # unfinished lessons of the month; null when not looked up
-    open_lesson_items: List[Dict[str, Any]] = Field(default_factory=list)  # Money-1 I-4: WHICH ones ({lessonDate, groupId, lessonId, kind}) - the list the owner is warned with before the month is closed
+    open_lesson_items: List[Dict[str, Any]] = Field(default_factory=list)  # Money-1 I-4: WHICH ones ({lessonDate, groupId, groupName, lessonId, kind}) - the list the owner is warned with before the month is closed
     pending_excused: int = 0
     no_fee: int = 0
     unpaid: int = 0

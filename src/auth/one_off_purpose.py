@@ -373,6 +373,48 @@ class OneOffPurpose:
             })
         return {"total": len(items), "items": items}
 
+    def decided(self, org_id: Any, *, owner: bool, month: Optional[str] = None, limit: int = 200) -> Dict[str, Any]:
+        """R3 #28: the additional lessons whose money is DECIDED (paid / not paid), newest first - the list where «Отменить решение» lives.  ``canUndo``: the month of the teacher is open
+        (a closed one: ``periodClosed`` - the owner reopens it first).  The same item as ``pending`` plus ``money``, who decided and when."""
+        from .closed_period import ClosedPeriods
+
+        query = (self.db.query(GroupScheduleOneOffLesson, GroupAttendance, Group)
+                 .join(GroupAttendance, and_(GroupAttendance.group_id == GroupScheduleOneOffLesson.group_id, GroupAttendance.lesson_id == GroupScheduleOneOffLesson.id,
+                                             GroupAttendance.lesson_date == GroupScheduleOneOffLesson.lesson_date))
+                 .join(Group, Group.id == GroupScheduleOneOffLesson.group_id)
+                 .filter(GroupScheduleOneOffLesson.org_id == org_id, GroupAttendance.status == "completed", GroupScheduleOneOffLesson.purpose == EXTRA,
+                         GroupScheduleOneOffLesson.money.in_((PAID, NONE))))
+        if month:
+            query = query.filter(GroupScheduleOneOffLesson.lesson_date.like(f"{month}-%"))
+        rows = query.order_by(GroupScheduleOneOffLesson.lesson_date.desc(), GroupScheduleOneOffLesson.id).limit(max(1, min(int(limit), 500))).all()
+        if not rows:
+            return {"total": 0, "items": []}
+        audits: Dict[str, GroupAudit] = {}
+        for audit in (self.db.query(GroupAudit).filter(GroupAudit.group_id.in_({o.group_id for o, _, _ in rows}), GroupAudit.action == DECIDED_ACTION)
+                      .order_by(GroupAudit.created_at.desc()).all()):
+            audits.setdefault((audit.snapshot or {}).get("lessonId"), audit)
+        users = {u.id: u for u in self.db.query(User).filter(User.id.in_({x for o, a, _ in rows for x in (a.teacher_id, o.created_by) if x} | {a.actor_id for a in audits.values() if a.actor_id})).all()}
+        periods = ClosedPeriods.of(self.db, org_id)
+        items = []
+        for one_off, att, group in rows:
+            payload = one_off.payload or {}
+            marks = att.records if isinstance(att.records, dict) else {}
+            audit = audits.get(one_off.id)
+            closed = periods.closed_for([att.teacher_id] if att.teacher_id else [], one_off.lesson_date)
+            items.append({
+                "lessonId": one_off.id, "groupId": str(group.id), "groupName": group.name, "lessonDate": one_off.lesson_date, "startTime": payload.get("startTime"),
+                "endTime": payload.get("endTime"), "purpose": one_off.purpose, "title": TITLES[one_off.purpose],
+                "teacher": {"id": str(att.teacher_id), "name": short_name(users.get(att.teacher_id))} if att.teacher_id else None,
+                "createdBy": {"id": str(one_off.created_by), "name": short_name(users.get(one_off.created_by))},
+                "studentsPresent": sum(1 for m in marks.values() if m in ("present", "late")), "studentsTotal": len([r for r in (att.roster_snapshot or []) if isinstance(r, dict)]),
+                "studentsPaid": sum(1 for m in marks.values() if ps.lesson_counts(mark=m, excuse_status="pending" if m == "excused" else None)),
+                "money": one_off.money, "decidedAt": audit.created_at.isoformat() if audit is not None and audit.created_at else None,
+                "decidedBy": {"id": str(audit.actor_id), "name": short_name(users.get(audit.actor_id)), "role": audit.actor_role} if audit is not None and audit.actor_id else None,
+                "canUndo": closed is None, "periodClosed": closed is not None,
+                "payrollSheet": self.sheet_of(org_id, one_off.lesson_date, att.teacher_id, owner=owner),
+            })
+        return {"total": len(items), "items": items}
+
     def decide(self, org_id: Any, actor_id: Any, actor_role: str, lesson_id: str, decision: str, *, owner: bool) -> Dict[str, Any]:
         """«Оплатить» / «Не оплачивать»: once, only a held lesson whose money waits (an additional ``wait``).  Under the lock of the group, so two administrators never both decide.  #159: the owner, or an
         admin with the right of payments - read under that lock; an admin without it: 403 ``MONEY_RIGHT_REQUIRED``, nothing changes."""

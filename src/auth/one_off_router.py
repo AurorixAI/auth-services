@@ -6,14 +6,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.core.database import get_db
 
 from .attendance_access import is_org_manager
-from .dependencies import require_org_member
+from .dependencies import require_org_member, require_payments_access
 from .ops_router import _manager
 from .ops_rules import not_found
 
@@ -68,6 +68,21 @@ class OneOffDecisions(BaseModel):
     items: List[OneOffDecisionItem]
 
 
+class OneOffDecidedItem(OneOffDecisionItem):
+    """R3 #28: a decided additional lesson (the list of «Решённые»)."""
+
+    money: str                                         # paid | none
+    decidedAt: Optional[str] = None
+    decidedBy: Optional[OneOffPerson] = None
+    canUndo: bool = True                               # false: the month of the teacher is closed - reopen it first
+    periodClosed: bool = False
+
+
+class OneOffDecided(BaseModel):
+    total: int
+    items: List[OneOffDecidedItem]
+
+
 class MoneyDecisionRequest(BaseModel):
     decision: Literal["pay", "skip", "undo"]       # Money-1 A3: «undo» takes the decision back (back to «ждёт решения») while the month of the teacher is open
 
@@ -105,6 +120,14 @@ def makeup_candidates(group_id: str, user: dict = Depends(require_org_member), d
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
     return _purposes(db).candidates(group, manager=manager, actor=user["user_id"])
+
+
+@router.get("/org/one-off-decisions/decided", response_model=OneOffDecided)
+def one_off_decided(month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$"), limit: int = Query(200, ge=1, le=500), user: dict = Depends(require_payments_access),
+                    db: Session = Depends(get_db)):
+    """«Решённые»: дополнительные уроки, по которым уже решено «Оплатить» / «Не оплачивать» (новые сверху; ``month`` — YYYY-MM); отсюда решение можно отменить, пока месяц преподавателя открыт.
+    Владелец и администратор с правом на деньги; суммы ведомости видит только владелец."""
+    return _purposes(db).decided(user["org_id"], owner=user.get("org_role") == "owner", month=month, limit=limit)
 
 
 @router.get("/org/one-off-decisions", response_model=OneOffDecisions)

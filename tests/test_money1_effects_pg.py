@@ -27,6 +27,7 @@ def test_a_late_payment_names_the_sheet_it_moves_with_the_sum_ЗП05(world, fixe
     assert dry.status_code == 201 and dry.json()["dry_run"] is True
     assert world.db.query(StudentPayment).filter_by(membership_id=mem2.id).count() == 1     # nothing was written (the one payment of the world)
     (dry_line,) = [p for p in dry.json()["money_effects"]["payroll"] if p["month"] == m.label]
+    assert (dry_line["freshTotal"], dry_line["changedBy"]) == (600_000, 125_000)             # R3 #22: the owner reads the signed sum BEFORE he confirms, not only in the toast after
     r = owner(world).post(url, json=body)
     assert r.status_code == 201, r.text
     assert r.json()["dry_run"] is False

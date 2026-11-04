@@ -559,6 +559,7 @@ class LessonRestoreRequest(BaseModel):
     lessonId: str = Field(..., min_length=1, max_length=100)
     lessonDate: date
     reason: str = Field(..., max_length=500)
+    dryRun: bool = False                                   # R3 #23: only say what the return would do (nothing is written)
 
 
 class LessonRestoreOut(BaseModel):
@@ -571,3 +572,5 @@ class LessonRestoreOut(BaseModel):
     warnings: List[CancelWarning] = Field(default_factory=list)
     returnedToReview: bool = False                         # Money-1 A2: a lesson that had begun went back to «Требует разбора» (not to the schedule)
     moneyEffects: Optional[Dict[str, Any]] = None          # Money-1 A3: what it did to money (``money_effects.build``)
+    dryRun: bool = False
+    deductions: Optional[List[Dict[str, Any]]] = None      # R3 #23: [{studentId, name, amount}] - whose deduction for the cancelled lesson disappears (the money right only)

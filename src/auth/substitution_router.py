@@ -235,7 +235,7 @@ def restore_cancelled_lesson(group_id: str, request: LessonRestoreRequest, user:
 
     reason = Substitutions._reason(request, 3, 500)
     return _subs(db).restore_lesson(user["org_id"], user["user_id"], user["org_role"], group_id, request.lessonId, request.lessonDate, reason,
-                                      money_right=money_right)
+                                      money_right=money_right, dry_run=request.dryRun)
 
 
 # ------------------------------------------------------------------------------------ exam-service (D-1)
