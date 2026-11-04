@@ -65,10 +65,14 @@ def test_a_sheet_saved_with_the_confirmed_lesson_is_no_failure_the_same_lesson_s
     assert sheet_row(world, m).confirmed_open_lessons == [key_of(world, a)]
     assert [x.lessonDate for x in closed_unresolved(world)] == [a.lesson_date]                      # the month is closed and the lesson is unresolved: the reconciliation has something to look at ...
     assert i4(world) == []                                                                          # ... and finds nothing: the owner said «save anyway»
-    # the same lesson, but the sheet is saved by an old client (no question): nobody confirmed anything
-    reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Правим ведомость")
-    save(world, m, None, revision=saved["revision"])
-    assert sheet_row(world, m).confirmed_open_lessons is None or sheet_row(world, m).confirmed_open_lessons == []
+    assert saved["revision"] == 1
+
+
+def test_the_first_save_without_the_question_confirms_nothing_the_unresolved_lesson_is_a_finding(world, fixed_today):
+    m, s1, s2 = g_pay_world(world)
+    a = unresolved(world, m, free_days(1)[0])
+    save(world, m, None)                                                                            # an old client saved without the question: nothing is confirmed
+    assert sheet_row(world, m).confirmed_open_lessons == []
     (hit,) = i4(world)
     assert (hit.invariant, hit.month, hit.actual) == ("I-4", m.label, 1) and hit.details["lessons"] == [f"{a.lesson_date}|{a.group_id}"]
 
@@ -196,3 +200,64 @@ def test_the_resave_with_true_replaces_the_list_with_the_fresh_one(world, fixed_
     reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Правим ведомость")
     patch(world, saved, True)
     assert sheet_row(world, m).confirmed_open_lessons == [key_of(world, b)] and i4(world) == []     # replaced, not added to
+
+
+# ---------------------------------------------------------------------------------------------------- ONE rule for the save and the re-save: U = unresolved now, C = confirmed at the last save
+def resave(world, how, saved, confirm, expect, m, **extra):
+    """The same moment through the two doors: ``how`` = «post» (the save of the sheet) or «patch» (the re-save)."""
+    if how == "post":
+        body = {"month": m.label, "teacher_id": str(world.teacher.id), "expected_fingerprint": fp(world, m), "revision": sheet_row(world, m).revision}
+        if confirm is not None:
+            body["confirm_open_lessons"] = confirm
+        r = owner(world).post(f"{API}/org/payroll/sheets", json=body)
+        assert r.status_code == expect, r.text
+        return r
+    return patch(world, saved, confirm, expect=expect, **extra)
+
+
+@pytest.mark.parametrize("how", ["post", "patch"])
+def test_a_resave_with_everything_already_confirmed_asks_nothing(world, fixed_today, how):
+    m, s1, s2 = g_pay_world(world)
+    a = unresolved(world, m, free_days(1)[0])
+    saved = save(world, m, True)
+    for round_ in range(2):                                                                         # twice: the owner is not asked the same question again and again
+        reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Правим ведомость")
+        before = sheet_row(world, m).revision
+        resave(world, how, saved, False, 200 if how == "patch" else 201, m, **({"note": "Только комментарий"} if how == "patch" and round_ else {}))
+        assert sheet_row(world, m).revision == before + 1 and sheet_row(world, m).confirmed_open_lessons == [key_of(world, a)] and i4(world) == []
+
+
+@pytest.mark.parametrize("how", ["post", "patch"])
+def test_a_new_lesson_outside_the_confirmed_ones_is_asked_alone_and_nothing_is_written(world, fixed_today, how):
+    m, s1, s2 = g_pay_world(world)
+    first, second = free_days(2)
+    a = unresolved(world, m, first)
+    saved = save(world, m, True)
+    b = unresolved(world, m, second)                                                                # appeared after the confirmation
+    reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Правим ведомость")
+    before = sheet_row(world, m)
+    revision, listed = before.revision, list(before.confirmed_open_lessons)
+    asked = resave(world, how, saved, False, 409, m)
+    detail = asked.json()["detail"]
+    assert detail["code"] == "OPEN_LESSONS_CONFIRM_REQUIRED" and detail["count"] == 1 and detail["alreadyConfirmed"] == 1
+    assert [i["lessonDate"] for i in detail["items"]] == [b.lesson_date]                            # B only: A was confirmed before
+    assert sheet_row(world, m).revision == revision and sheet_row(world, m).confirmed_open_lessons == listed        # nothing written
+    resave(world, how, saved, True, 200 if how == "patch" else 201, m)                              # the owner answers: both are confirmed now
+    assert sheet_row(world, m).confirmed_open_lessons == sorted([key_of(world, a), key_of(world, b)]) and i4(world) == []
+
+
+@pytest.mark.parametrize("how", ["post", "patch"])
+def test_null_keeps_what_is_still_unresolved_and_confirmed_drops_the_resolved_and_confirms_nothing_new(world, fixed_today, how):
+    m, s1, s2 = g_pay_world(world)
+    first, second, third = free_days(3)
+    a, b = unresolved(world, m, first), unresolved(world, m, second)
+    saved = save(world, m, True)
+    assert sheet_row(world, m).confirmed_open_lessons == sorted([key_of(world, a), key_of(world, b)])
+    world.db.query(GroupAttendance).filter_by(id=a.id).update({"status": "completed"})             # A is resolved ...
+    c = unresolved(world, m, third)                                                                 # ... C is a new one
+    world.db.commit()
+    reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Правим ведомость")
+    resave(world, how, saved, None, 200 if how == "patch" else 201, m)                              # an old client: no question
+    assert sheet_row(world, m).confirmed_open_lessons == [key_of(world, b)]                         # C ∩ U: not empty, not the old list, and the new lesson is NOT confirmed
+    (hit,) = i4(world)
+    assert hit.actual == 1 and hit.details["lessons"] == [f"{c.lesson_date}|{c.group_id}"]
