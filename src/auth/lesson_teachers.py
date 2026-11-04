@@ -135,6 +135,17 @@ class TeacherBook:
                 return old
         return group.teacher_id
 
+    def teachers_between(self, group: Group, first: datetime, last: datetime) -> Set[UUID]:
+        """Everybody who was the teacher of the group at some moment between ``first`` and ``last`` (the one at ``first`` and every change inside) - not the ones before or after (R3 m3)."""
+        out: Set[UUID] = set()
+        start = self.group_teacher_at(group, first)
+        if start:
+            out.add(start)
+        for created_at, _old, new in self.history(group.id):
+            if created_at is not None and first < created_at <= last and new:
+                out.add(new)
+        return out
+
     def teachers_in_window(self, group: Group, instant: datetime) -> Set[UUID]:
         """Everybody who was the teacher of the group at some moment since ``instant`` (including now)."""
         out: Set[UUID] = set()

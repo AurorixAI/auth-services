@@ -46,7 +46,8 @@ def test_the_chain_a_paid_sheet_closes_the_month_a_mistake_is_reopened_returned_
     line = done.json()["moneyEffects"]["payroll"][0]
     assert (line["savedTotal"], line["freshBefore"], line["freshAfter"], line["changedBy"]) == (475_000, 475_000, 425_000, -50_000)       # two covered students x 25 000 gone from the pay
     state = owner(world).get(f"{API}/org/payroll/sheets/{sheet_['id']}").json()["payout"]
-    assert (state["state"], state["balance"], state["changed_by"]) == ("settled", 0, -50_000)                 # A1b: the payout target is still the saved 475 000
+    assert (state["state"], state["basis"], state["balance"], state["changed_by"]) == ("overpaid", "fresh", -50_000, -50_000)       # R3 #20: the month is REOPENED (open) - the target is what the data says now, 425 000
+    assert state["text"] == "Месяц открыт: начислено сейчас 425 000, выплачено 475 000: переплачено 50 000"
     assert "−50 000" in state["change_text"] and "Пересохраните" in state["change_text"]
     fp = owner(world).get(f"{API}/org/payroll/sheets/{sheet_['id']}/diff").json()["source_fingerprint"]
     resaved = owner(world).patch(f"{API}/org/payroll/sheets/{sheet_['id']}", json={"revision": 1, "recalculate": True, "expected_fingerprint": fp})
@@ -179,4 +180,4 @@ def test_i4_the_month_names_its_unfinished_lessons_before_the_owner_saves_it(wor
     warn = r.json()["sheets"][0]["warnings"]
     assert warn["open_lessons"] == 1 and warn["open_lesson_items"][0]["lessonDate"] == m.d(29).isoformat()
     overview = owner(world).get(f"{API}/org/payroll/months/{m.label}").json()["teachers"][0]["warnings"]
-    assert overview["open_lessons"] == 1 and overview["open_lesson_items"] == [{"lessonDate": m.d(29).isoformat(), "groupId": str(world.group.id), "lessonId": f"s{m.d(29).isoweekday()}", "kind": "in_progress"}]
+    assert overview["open_lessons"] == 1 and overview["open_lesson_items"] == [{"lessonDate": m.d(29).isoformat(), "groupId": str(world.group.id), "groupName": world.group.name, "lessonId": f"s{m.d(29).isoweekday()}", "kind": "in_progress"}]

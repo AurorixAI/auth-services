@@ -123,3 +123,47 @@ def test_r3_21_who_taught_defaults_to_the_substitute_of_that_date(world, now_4_n
     world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid), reconciled_by=str(world.owner.id), is_org_admin=True, money_right=True)
     row = world.db.query(GroupAttendance).filter_by(group_id=world.group.id, lesson_date=day.isoformat(), lesson_id=lid).one()
     assert row.teacher_id == world.teacher2.id
+
+
+# ============================================================================================================ R3 m3: the pause
+def _pause(world, who, membership, first, last, **extra):
+    return make_client(world, user=who).post(f"/api/v1/auth/org/memberships/{membership}/pauses", json={"first_day": first, "last_day": last, **extra})
+
+
+def test_r3_m3_a_pause_is_locked_by_the_teachers_of_THOSE_days_not_by_the_current_teacher_of_the_group(world, now_4_nov):
+    """The group was taught by A until 20.10, now by B.  B's September is closed, A's is not: a pause on 14.09 is fine (B did not teach the group then); with A's September closed it is refused."""
+    from src.models.auth import GroupAudit, StudentGroup
+    from tests.pg_world import ensure_billing
+
+    ensure_billing(world)
+    a, b = world.teacher, world.teacher2
+    world.db.add(GroupAudit(org_id=world.org.id, group_id=world.group.id, actor_id=world.owner.id, actor_role="owner", action="teacher_changed",
+                            snapshot={"teacher_id": [str(a.id), str(b.id)]}, created_at=tashkent(2026, 10, 20)))
+    world.group.teacher_id = b.id
+    world.db.commit()
+    sheet(world, b, date(2026, 9, 1), tashkent(2026, 10, 3))                           # B's September is closed (for other groups)
+    membership = world.db.query(StudentGroup).filter_by(student_id=world.students[0].id, group_id=world.group.id).one().id
+    ok = _pause(world, world.owner, membership, "2026-09-14", "2026-09-15")
+    assert ok.status_code == 201, ok.text
+    sheet(world, a, date(2026, 9, 1), tashkent(2026, 10, 3))                           # now A's September is closed too
+    refused = _pause(world, world.owner, world.db.query(StudentGroup).filter_by(student_id=world.students[1].id, group_id=world.group.id).one().id, "2026-09-14", "2026-09-15")
+    assert refused.status_code == 422 and refused.json()["detail"]["code"] == "PAUSE_LOCKED"
+
+
+def test_r3_m3_a_repeat_of_the_pause_is_a_repeat_even_if_a_lesson_began_meanwhile_and_the_sentence_names_a_forgotten_lesson(world, now_4_nov):
+    from tests.payf_helpers import API as _unused  # noqa: F401
+    from src.models.auth import StudentGroup
+    from tests.pg_world import ensure_billing
+    from tests.test_payroll_pg import lesson as lesson_row
+
+    ensure_billing(world)
+    membership = world.db.query(StudentGroup).filter_by(student_id=world.students[0].id, group_id=world.group.id).one().id
+    first = _pause(world, world.owner, membership, "2026-11-10", "2026-11-12")
+    assert first.status_code == 201, first.text
+    lesson_row(world, date(2026, 11, 11), {world.students[1]: "present"}, status="in_progress")                 # a lesson inside the pause begins (a double click / a lost answer follows)
+    again = _pause(world, world.owner, membership, "2026-11-10", "2026-11-12")
+    assert again.status_code in (200, 201), again.text                                                          # a repeat, not a 409 (before: PauseLessonInProgress)
+    other = world.db.query(StudentGroup).filter_by(student_id=world.students[2].id, group_id=world.group.id).one().id
+    new = _pause(world, world.owner, other, "2026-11-10", "2026-11-12")
+    assert new.status_code == 409 or new.status_code == 422, new.text
+    assert "11.11" in new.json()["detail"]["message"] and "не завершён" in new.json()["detail"]["message"]       # not «сейчас идёт»: it began on the 11th and was never finished

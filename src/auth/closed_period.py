@@ -204,9 +204,9 @@ def group_teacher_ids(db, group, first: date, last: date) -> Set[UUID]:
     """Everybody who taught or leads the lessons of the group between two days: the teachers frozen in its journal rows + the teacher of the group + the assigned substitutes."""
     from src.models.auth import GroupAttendance, LessonTeacherAssignment
 
-    ids: Set[UUID] = set()
-    if group.teacher_id is not None:
-        ids.add(group.teacher_id)
+    from .lesson_teachers import TeacherBook
+
+    ids: Set[UUID] = TeacherBook(db).teachers_between(group, bc.lesson_instant_utc(first, 0), bc.lesson_instant_utc(last, 24 * 60 - 1))       # R3 m3: the teachers OF THOSE DAYS, not the current one
     ids |= {t for (t,) in db.query(GroupAttendance.teacher_id).filter(
         GroupAttendance.group_id == group.id, GroupAttendance.teacher_id.isnot(None),
         GroupAttendance.lesson_date >= first.isoformat(), GroupAttendance.lesson_date <= last.isoformat()).distinct().all()}

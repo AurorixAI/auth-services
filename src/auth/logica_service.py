@@ -381,13 +381,18 @@ class PauseService(_Base):
         if (last - first).days + 1 > PAUSE_MAX_DAYS:
             raise PauseRange(f"Пауза не длиннее {PAUSE_MAX_DAYS} дней")
 
-    def _assert_no_lesson_in_progress(self, membership: StudentGroup, first: date, last: date) -> None:
+    def _assert_no_lesson_in_progress(self, membership: StudentGroup, first: date, last: date, only_days: Optional[Set[date]] = None) -> None:
         """A lesson of the group that is IN PROGRESS inside the days of the pause blocks it (the same as a transfer, an archive, a leave): the roster of a lesson is frozen while it goes on, and a pause
-        put now would leave the student in the roster, to be marked and paid."""
-        going = (self.db.query(GroupAttendance.lesson_date).filter(GroupAttendance.group_id == membership.group_id, GroupAttendance.status == "in_progress",
-                                                                    GroupAttendance.lesson_date >= first.isoformat(), GroupAttendance.lesson_date <= last.isoformat()).first())
-        if going is not None:
-            raise PauseLessonInProgress("Сейчас идёт урок группы: поставить паузу можно после его завершения или отмены")
+        put now would leave the student in the roster, to be marked and paid.  ``only_days`` (a change of a pause): just the days that ENTER the pause - a lesson on days that were in it already is not new.
+        R3 m3: the sentence names the day when the lesson is not today's (a lesson left going last week is a lesson nobody finished, not «сейчас идёт»)."""
+        rows = (self.db.query(GroupAttendance.lesson_date).filter(GroupAttendance.group_id == membership.group_id, GroupAttendance.status == "in_progress",
+                                                                   GroupAttendance.lesson_date >= first.isoformat(), GroupAttendance.lesson_date <= last.isoformat())
+                .order_by(GroupAttendance.lesson_date).all())
+        going = [d for (d,) in rows if only_days is None or date.fromisoformat(d) in only_days]
+        if going:
+            if going[0] == ps.business_today().isoformat():
+                raise PauseLessonInProgress("Сейчас идёт урок группы: поставить паузу можно после его завершения или отмены")
+            raise PauseLessonInProgress(f"Урок группы {date.fromisoformat(going[0]).strftime('%d.%m')} начат и не завершён: сначала завершите или отмените его, потом ставьте паузу")
 
     def _assert_days_open(self, org_id: str, membership: StudentGroup, days: Set[date], today: date) -> None:
         """Money-1 A1 (was: «not older than 30 days»): the days of a pause that were / will be changed must not lie in a month of a teacher of this group that a saved sheet has closed
@@ -463,17 +468,17 @@ class PauseService(_Base):
         try:
             self._check_range(body.first_day, body.last_day, today)
             membership = self._guard_open(org_id, membership_id)
-            self._assert_days_open(org_id, membership, _days(body.first_day, body.last_day), today)
-            self._assert_no_lesson_in_progress(membership, body.first_day, body.last_day)
             self.pay._lock_family(org_id, membership.student_id)
             live = self._live(membership_id)
             same = next((p for p in live if (p.first_day, p.last_day) == (body.first_day, body.last_day)), None)
-            if same is not None:  # the same range again (a double click): nothing new
+            if same is not None:  # the same range again (a double click, a lost answer): nothing new - BEFORE the gates, which a lesson begun meanwhile would trip (R3 m3)
                 before = after = self.pay._entry_of(org_id, membership_id, today).ledger
                 out = self._saved(org_id, membership, same, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
                                   first=same.first_day, last=same.last_day)
                 self.db.rollback()
                 return out
+            self._assert_days_open(org_id, membership, _days(body.first_day, body.last_day), today)
+            self._assert_no_lesson_in_progress(membership, body.first_day, body.last_day)
             if any(p.first_day <= body.last_day and body.first_day <= p.last_day for p in live):
                 raise PauseOverlap("Пауза пересекается с другой паузой этого ученика")
             _, attended = self._lessons(membership, body.first_day, body.last_day)
@@ -553,7 +558,7 @@ class PauseService(_Base):
                 raise PauseRange(f"Пауза не длиннее {PAUSE_MAX_DAYS} дней")
             # M3: EVERY day that enters the pause (new - old) must lie in an open month, as a new pause's days must - not only a moved start
             self._assert_days_open(org_id, membership, _days(first, last) - _days(row.first_day, row.last_day), today)
-            self._assert_no_lesson_in_progress(membership, first, last)
+            self._assert_no_lesson_in_progress(membership, first, last, only_days=_days(first, last) - _days(row.first_day, row.last_day))
             self._check_unlocking(org_id, membership, _days(row.first_day, row.last_day), _days(first, last), today)
             if any(p.id != row.id and p.first_day <= last and first <= p.last_day for p in self._live(row.membership_id)):
                 raise PauseOverlap("Пауза пересекается с другой паузой этого ученика")
