@@ -10,6 +10,7 @@ from src.models.auth import GroupAttendance
 from tests.money1_helpers import hold_lesson, lesson, now_4_nov, sheet, tashkent  # noqa: F401  (fixtures)
 from tests.ops_helpers import grant_money_right
 from tests.pg_world import ensure_billing, make_client, needs_pg, payments_block, pg_session, world  # noqa: F401  (fixtures)
+from tests.test_pay2_api_pg import fixed_today  # noqa: E402,F401  (fixture)
 
 pytestmark = needs_pg
 API = "/api/v1/auth/org/groups"
@@ -49,22 +50,29 @@ def test_r3_23_the_return_of_a_cancelled_lesson_has_a_dry_run_that_names_the_ded
     assert sum(me.centre_deductions(world.db, world.org.id, world.group.id).values()) == 0
 
 
-def test_r3_24_the_teacher_of_a_held_lesson_asks_the_impact_of_his_own_correction_without_sums_nobody_else_without_the_right(world, now_4_nov):
-    day, lid = hold_lesson(world, date(2026, 10, 28))
-    s1, s2, s3 = world.students
-    sheet(world, world.teacher, date(2026, 10, 1), tashkent(2026, 10, 30))
+def test_r3_24_the_teacher_of_a_held_lesson_asks_the_impact_of_his_own_correction_without_sums_nobody_else_without_the_right(world, fixed_today):
+    """ЗП-05 world: 475 000 saved mid-month (open).  Taking the mark of S1 on the 13th away (he was not there at all) takes 25 000 off: the owner hears the sums, the teacher of the lesson only the month and the state."""
+    from src.models.auth import PayrollSheet
+    from tests.test_logicA_payroll_pg import g_pay_world, save_sheet
+
+    m, s1, s2 = g_pay_world(world)
+    saved = save_sheet(world, m)
+    world.db.query(PayrollSheet).filter(PayrollSheet.id == saved["id"]).update({"updated_at": tashkent(m.first.year, m.first.month, 15)})        # saved mid-month: open
+    world.db.commit()
+    day = m.d(13)
     url = f"{API}/{world.group.id}/attendance/impact"
-    body = {"lessonDate": day.isoformat(), "lessonId": lid, "records": {str(s1.id): "absent", str(s2.id): "present", str(s3.id): "present"}}
+    body = {"lessonDate": day.isoformat(), "lessonId": f"s{day.isoweekday()}", "records": {str(s2.id): "present"}}
     mine = make_client(world, user=world.teacher).post(url, json=body)
     assert mine.status_code == 200, mine.text
     effects = mine.json()["moneyEffects"]
-    assert effects["dryRun"] is True and all(set(line) <= {"month", "state"} for line in effects["payroll"])      # the month and the state only: no sum of anybody's pay
+    assert effects["dryRun"] is True and effects["payroll"] == [{"month": m.label, "state": "open"}]          # the month and the state only: no sum of anybody's pay
     other = make_client(world, user=world.teacher2).post(url, json=body)                                       # another teacher, not the one of this lesson
     assert other.status_code == 403 and other.json()["detail"]["code"] == "MONEY_RIGHT_REQUIRED"
     assert make_client(world, user=world.admin).post(url, json=body).status_code == 403                         # an administrator without the money right
     grant_money_right(world)
-    assert make_client(world, user=world.admin).post(url, json=body).status_code == 200
-    assert make_client(world, user=world.owner).post(url, json=body).status_code == 200
+    assert make_client(world, user=world.admin).post(url, json=body).json()["moneyEffects"]["payroll"] == [{"month": m.label, "state": "open"}]
+    (line,) = make_client(world, user=world.owner).post(url, json=body).json()["moneyEffects"]["payroll"]      # the owner: the sums
+    assert (line["savedTotal"], line["freshBefore"], line["freshAfter"], line["changedBy"]) == (475_000, 475_000, 450_000, -25_000)
 
 
 def test_r3_25_a_lesson_that_was_only_returned_is_marked_in_the_journal(world, now_4_nov):

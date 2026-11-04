@@ -27,8 +27,10 @@ def test_i1_the_account_of_every_membership_adds_up_after_payments_a_writeoff_an
     r = owner(world).post(f"{API}/org/memberships/{mid(world, s1)}/refunds", json={"amount": 500_000, "method": "cash", "reason": "Выбыл на месяц"})
     assert r.status_code == 201, r.text
     w = owner(world).post(f"{API}/org/memberships/{mid(world, s2)}/writeoffs", json={"all": True, "reason": "Договорённость с родителем"})
-    assert w.status_code in (201, 409, 422), w.text                                                 # s2 may have no debt in this world: the identity must hold anyway
-    assert [f for f in mr.reconcile_org(world.db, world.org.id) if f.invariant == "I-1"] == []
+    assert w.status_code == 201, w.text                                                             # s2 owes since the accounting start: the forgiveness is real (a hole here would make the check below vacuous)
+    snaps = []
+    assert [f for f in mr.reconcile_org(world.db, world.org.id, snapshots=snaps) if f.invariant == "I-1"] == []
+    assert len(snaps) == 3                                                                          # the reconciliation looked at the three accounts
 
 
 def test_i3_a_held_lesson_where_everybody_is_absent_is_paid_and_a_lesson_cancelled_by_the_centre_pays_nothing(world):
@@ -65,3 +67,29 @@ def test_i5_a_forgiven_debt_is_paid_to_the_teacher_and_the_answer_says_how_much_
     assert voided.status_code == 200
     (back,) = voided.json()["money_effects"]["payroll"]                                              # R3 #21: the effect of THIS action - the debt is back, the sheet moves down by what the forgiveness added
     assert (back["freshBefore"], back["freshAfter"], back["changedBy"], back["driftAfter"]) == (600_000, 475_000, -125_000, 0)
+
+
+def test_r3_i5_the_real_answers_of_every_money_action_carry_the_block_of_consequences(world):
+    """Not the model: the JSON that comes back from a payment, its cancellation, a forgiveness, its cancellation, a refund and its cancellation (R3 m12)."""
+    from tests.test_payments_service_pg import mid
+
+    ensure_billing(world)
+    s0, s1, _ = world.students
+    client = owner(world)
+    seen = []
+
+    def block(response, expect):
+        assert response.status_code == expect, response.text
+        effects = response.json()["money_effects"]
+        assert {"students", "payroll", "text", "dryRun"} <= set(effects) and isinstance(effects["students"], list) and isinstance(effects["payroll"], list), effects
+        seen.append(effects)
+        return response.json()
+
+    paid = block(client.post(f"{API}/org/memberships/{mid(world, s0)}/payments", json={"amount": 450_000, "paid_on": date.today().isoformat(), "method": "cash"}), 201)
+    block(client.post(f"{API}/org/payments/{paid['payment']['id']}/void", json={"reason": "Внесли дважды"}), 200)
+    forgiven = block(client.post(f"{API}/org/memberships/{mid(world, s1)}/writeoffs", json={"all": True, "reason": "Договорённость с родителем"}), 201)
+    block(client.post(f"{API}/org/writeoffs/{forgiven['writeoff']['id']}/void", json={"reason": "Ошибка"}), 200)
+    paid2 = block(client.post(f"{API}/org/memberships/{mid(world, s0)}/payments", json={"amount": 2_000_000, "paid_on": date.today().isoformat(), "method": "cash"}), 201)
+    refund = block(client.post(f"{API}/org/memberships/{mid(world, s0)}/refunds", json={"amount": 100_000, "method": "cash", "reason": "Выбыл на неделю"}), 201)
+    block(client.post(f"{API}/org/refunds/{refund['refund']['id']}/void", json={"reason": "Ошибка"}), 200)
+    assert len(seen) == 7 and paid2 and all(e["dryRun"] is False for e in seen)

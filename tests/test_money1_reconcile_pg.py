@@ -100,11 +100,12 @@ def test_paid_until_that_moves_under_the_feet_of_the_journal_is_found_and_a_new_
     s0 = world.students[0]
     pay(world, s0, amount=450_000)
     first = mr.run(world.db, apply=True, only=[world.org.id])                                                             # night 1: the snapshots
-    assert first["findings"] == 0 or all(i["invariant"] != "I-2" for i in first["items"])
+    assert [i for i in first["items"] if i["invariant"] == "I-2" and i["org"] == str(world.org.id)] == []
     assert world.db.query(MoneyReconcileSnapshot).filter_by(org_id=world.org.id).count() == 3
     pay(world, s0, amount=450_000)                                                                   # a lawful move: a payment (a record that explains it)
     second = mr.run(world.db, apply=True, only=[world.org.id])
-    assert all(not (i["invariant"] == "I-2" and i["org"] == str(world.org.id)) for i in second["items"])
+    assert [i for i in second["items"] if i["invariant"] == "I-2" and i["org"] == str(world.org.id)] == []        # night 2 looked at the same three memberships (below) and found nothing
+    assert world.db.query(MoneyReconcileSnapshot).filter_by(org_id=world.org.id).count() == 3
     mine = world.db.query(StudentPayment).filter_by(org_id=world.org.id).order_by(StudentPayment.created_at.desc()).first()
     world.db.query(StudentPayment).filter_by(id=mine.id).update({"amount": 1_350_000})              # a silent change in the database: no record explains the move
     world.db.commit()

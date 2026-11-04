@@ -262,3 +262,35 @@ def test_r3_n3_the_list_of_periods_costs_the_same_number_of_queries_for_one_teac
     many, listed = capture_queries(world.db, lambda: closed_period.list_periods(world.db, world.org.id, "2026-10"))
     assert len(listed) == 7 and {x["state"] for x in listed} == {"closed", "reopened"}
     assert len(many) == len(few) <= 4, (len(few), len(many))             # the same few queries for 1 or 7 teachers
+
+
+# ---------------------------------------------------------------------------------------------------- R3 m12: the edges of the calendar
+@pytest.mark.parametrize("month, saved, closed", [
+    (date(2026, 10, 1), tashkent(2026, 10, 31, 23, 59), False),      # 23:59 Tashkent = 18:59 UTC of the 31st: still the month
+    (date(2026, 10, 1), tashkent(2026, 11, 1, 0, 0), True),          # 00:00 Tashkent = 19:00 UTC of the 31st: already after it (the UTC day of this instant is the 31st!)
+    (date(2028, 2, 1), tashkent(2028, 2, 29, 23, 59), False),        # February of a leap year ends on the 29th
+    (date(2028, 2, 1), tashkent(2028, 3, 1, 0, 0), True),
+    (date(2027, 2, 1), tashkent(2027, 2, 28, 23, 59), False),        # and a common one on the 28th
+    (date(2027, 2, 1), tashkent(2027, 3, 1, 0, 0), True),
+    (date(2026, 12, 1), tashkent(2026, 12, 31, 23, 59), False),      # December -> January: the year turns
+    (date(2026, 12, 1), tashkent(2027, 1, 1, 0, 0), True),
+])
+def test_r3_m12_the_edges_of_the_month_by_the_business_clock(world, now_4_nov, month, saved, closed):
+    sheet(world, world.teacher, month, saved)
+    assert closed_period.period_state(world.db, world.org.id, world.teacher.id, month)["state"] == ("closed" if closed else "open")
+    assert (closed_period.ClosedPeriods.of(world.db, world.org.id).closed_for([world.teacher.id], month) is not None) is closed
+
+
+def test_r3_m12_a_range_over_the_turn_of_the_year_finds_the_closed_month_on_either_side(world, now_4_nov):
+    teacher = world.teacher.id
+    periods = lambda: closed_period.ClosedPeriods.of(world.db, world.org.id)           # noqa: E731
+    assert periods().closed_in_range([teacher], date(2026, 12, 28), date(2027, 1, 3)) is None            # nothing saved
+    sheet(world, world.teacher, date(2026, 12, 1), tashkent(2027, 1, 2))                                  # December is closed
+    world.db.commit()
+    hit = periods().closed_in_range([teacher], date(2026, 12, 28), date(2027, 1, 3))
+    assert hit is not None and hit.label == "2026-12"
+    assert periods().closed_in_range([teacher], date(2027, 1, 1), date(2027, 1, 3)) is None             # the range of January alone does not touch December
+    sheet(world, world.teacher, date(2027, 1, 1), tashkent(2027, 2, 3))                                   # January is closed too
+    world.db.commit()
+    assert periods().closed_in_range([teacher], date(2027, 1, 1), date(2027, 1, 3)).label == "2027-01"
+    assert periods().closed_in_range([teacher], date(2027, 2, 1), date(2027, 2, 5)) is None             # February is open
