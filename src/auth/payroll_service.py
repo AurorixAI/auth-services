@@ -281,6 +281,7 @@ class MonthSeed:
     teachers: Dict[UUID, TeacherSeed] = field(default_factory=dict)
     lessons_without_teacher: int = 0
     open_unknown: bool = False          # Money-1 A6 (П7): the check of the unfinished lessons failed - «не удалось проверить», NOT «0»
+    open_items: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)       # Money-1 I-4: the unfinished lessons of the month by teacher (the list the owner is warned with)
 
 
 @dataclass
@@ -406,7 +407,7 @@ class PayrollService:
 
     # ------------------------------------------------------------- reading
 
-    def _open_lessons(self, org_id: str, first: date, last: date) -> Optional[Dict[str, int]]:
+    def _open_lessons(self, org_id: str, first: date, last: date) -> Optional[Dict[str, List[Dict[str, Any]]]]:
         """Unfinished lessons of the month per teacher - the very list of "Незакрытые уроки".  ``None`` when the check failed (Money-1 A6: a silent 0 let the owner save a sheet that had open lessons)."""
         from .service import AuthService  # lazy: service is heavy
 
@@ -418,11 +419,11 @@ class PayrollService:
             logger.exception("Could not count open lessons for org %s", org_id)
             self.db.rollback()  # nothing else has been read yet
             return None
-        out: Dict[str, int] = {}
+        out: Dict[str, List[Dict[str, Any]]] = {}
         low, high = first.isoformat(), last.isoformat()
         for action in actions:
             if action.teacherId and low <= action.lessonDate <= high:
-                out[action.teacherId] = out.get(action.teacherId, 0) + 1
+                out.setdefault(action.teacherId, []).append({"lessonDate": action.lessonDate, "groupId": str(action.groupId), "lessonId": action.lessonId, "kind": action.actionType})
         return out
 
     def _lesson_times(self, groups: Iterable[Group], first: date, last: date) -> Dict[Tuple[UUID, str, str], str]:
@@ -477,7 +478,8 @@ class PayrollService:
         seed = MonthSeed(first, last, divisor)
         found = self._open_lessons(org_id, first, last) if with_open else {}
         seed.open_unknown = found is None
-        open_by_teacher = found or {}
+        seed.open_items = {t: sorted(v, key=lambda x: (x["lessonDate"], x["groupId"])) for t, v in (found or {}).items()}
+        open_by_teacher = {t: len(v) for t, v in (found or {}).items()}
         if teacher_ids is not None:
             open_by_teacher = {t: n for t, n in open_by_teacher.items() if t in {str(i) for i in teacher_ids}}
 
@@ -847,6 +849,7 @@ class PayrollService:
         note: Optional[str] = None,
         open_lessons: Optional[int] = None,
         payout: Optional[PayoutState] = None,
+        open_lesson_items: Optional[List[Dict[str, Any]]] = None,
     ) -> SheetOut:
         counters = engine.sheet_counters(lines)
         return SheetOut(
@@ -872,6 +875,7 @@ class PayrollService:
             payout=payout,
             warnings=SheetWarnings(
                 open_lessons=open_lessons,
+                open_lesson_items=open_lesson_items or [],
                 pending_excused=counters["pending_excused"],
                 no_fee=counters["no_fee"],
                 unpaid=counters["unpaid"],
@@ -1031,6 +1035,7 @@ class PayrollService:
                     warnings=MonthWarnings(
                         open_lessons=None if seed.open_unknown else (teacher.open_lessons if teacher else 0),
                         open_lessons_unknown=seed.open_unknown,
+                        open_lesson_items=seed.open_items.get(str(tid), []),
                         pending_excused=counters["pending_excused"] if counters else 0,
                         no_fee=counters["no_fee"] if counters else 0,
                         unpaid=counters["unpaid"] if counters else 0,
@@ -1112,6 +1117,7 @@ class PayrollService:
                     fingerprint=teacher.fingerprint,
                     stale=None,
                     open_lessons=None if seed.open_unknown else teacher.open_lessons,
+                    open_lesson_items=seed.open_items.get(str(tid), []),
                 )
             )
         return CalculateResponse(month=month_label(first), month_open=ps.business_today() <= last, sheets=sheets)

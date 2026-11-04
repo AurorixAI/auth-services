@@ -150,3 +150,16 @@ def membership_effects(db, org_id: Any, membership_id: Any, since: date, *, owne
     if owner and done:
         payroll = [p for p in payroll if p.get("changedBy")]
     return {"students": [], "payroll": payroll, "text": text_of([], payroll, done=done), "dryRun": not done}
+
+
+def sheets_from(db, org_id: Any, first: date, *, teacher_id: Any = None) -> Dict[str, Any]:
+    """A3 (ЗП-04): a rate / the divisor changed from the month ``first``: the SAVED sheets of that month onwards (of one teacher, or of the centre) that now differ from what was saved, with the sum.
+    Owner only (the pay of the teachers is his): the payout of a month does not move (it is by the saved total) - the sheet says «изменилось на ±N» and waits for «Пересохранить»."""
+    from src.models.auth import PayrollSheet
+
+    query = db.query(PayrollSheet.teacher_id, PayrollSheet.period_month).filter(PayrollSheet.org_id == org_id, PayrollSheet.period_month >= month_first(first))
+    if teacher_id is not None:
+        query = query.filter(PayrollSheet.teacher_id == teacher_id)
+    pairs = [(t, m) for t, m in query.all()]
+    payroll = [p for p in payroll_effects(db, org_id, pairs, owner=True, amounts=True) if p.get("changedBy")]
+    return {"students": [], "payroll": payroll, "text": text_of([], payroll, done=True), "dryRun": False}

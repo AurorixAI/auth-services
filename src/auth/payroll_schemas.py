@@ -32,6 +32,8 @@ class PayrollSettings(BaseModel):
     updated_by: Optional[str] = None
     updated_at: Optional[str] = None
     history: List[DivisorRow] = Field(default_factory=list)
+    # Money-1 A3: only the answer of a change - the saved sheets from ``valid_from`` that now differ from what was saved (``money_effects.payroll_effects``)
+    money_effects: Optional[Dict[str, Any]] = None
 
 
 class PayrollSettingsUpdate(BaseModel):
@@ -201,6 +203,7 @@ class GroupBlockOut(BaseModel):
 
 class SheetWarnings(BaseModel):
     open_lessons: Optional[int] = None  # unfinished lessons of the month; null when not looked up
+    open_lesson_items: List[Dict[str, Any]] = Field(default_factory=list)  # Money-1 I-4: WHICH ones ({lessonDate, groupId, lessonId, kind}) - the list the owner is warned with before the month is closed
     pending_excused: int = 0
     no_fee: int = 0
     unpaid: int = 0
@@ -278,6 +281,7 @@ class MonthSheetRef(BaseModel):
 class MonthWarnings(BaseModel):
     open_lessons: Optional[int] = 0           # null: the check failed (see ``open_lessons_unknown``) - the screen says «не удалось проверить незакрытые уроки», never 0
     open_lessons_unknown: bool = False
+    open_lesson_items: List[Dict[str, Any]] = Field(default_factory=list)
     pending_excused: int = 0
     no_fee: int = 0
     unpaid: int = 0
@@ -391,6 +395,7 @@ class TeacherRates(BaseModel):
     lesson_types: List[str] = Field(default_factory=list)
     rates: Dict[str, Optional[RateOut]] = Field(default_factory=dict)  # a kind without a rate: null
     next: Dict[str, RateNextOut] = Field(default_factory=dict)  # only kinds that have a future change
+    money_effects: Optional[Dict[str, Any]] = None  # Money-1 A3: only the answer of a change of the rates - the saved sheets of the teacher from the month of the rate that now differ from what was saved
 
 
 class RatesResponse(BaseModel):

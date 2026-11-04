@@ -143,3 +143,39 @@ def test_i7_two_returns_at_once_leave_one_record_and_two_reopenings_at_once_one_
     assert [e for _, e in second if e is not None] == [] and sorted(r["changed"] for r, _ in second) == [False, True]
     world.db.expire_all()
     assert world.db.query(GroupAttendanceAudit).filter_by(org_id=world.org.id, action="completed_reverted").count() == 1
+
+
+def test_zp04_a_rate_changed_backwards_says_which_saved_sheets_it_moves_and_the_payout_does_not_move(world):
+    """ЗП-04: the rate 50 % -> 60 % from the month: the saved 475 000 becomes 570 000 (+95 000); the payout of 475 000 stays settled by the SAVED total."""
+    m, s1, s2 = g_pay_world(world)
+    sheet_ = save_sheet(world, m)
+    payout(world, sheet_, 475_000)
+    r = owner(world).put(f"{API}/org/payroll/rates/{world.teacher.id}", json={"valid_from": m.label, "percents": {"group": "60"}})
+    assert r.status_code == 200, r.text
+    effects = r.json()["money_effects"]
+    (line,) = [p for p in effects["payroll"] if p["month"] == m.label]
+    assert (line["savedTotal"], line["freshTotal"], line["changedBy"]) == (475_000, 570_000, 95_000) and "+95 000" in effects["text"]
+    state = owner(world).get(f"{API}/org/payroll/sheets/{sheet_['id']}").json()["payout"]
+    assert (state["state"], state["balance"], state["changed_by"]) == ("settled", 0, 95_000)
+
+
+def test_zp04_a_divisor_changed_backwards_names_the_sheets_with_the_sum(world):
+    m, s1, s2 = g_pay_world(world)
+    sheet_ = save_sheet(world, m)
+    r = owner(world).put(f"{API}/org/payroll/settings", json={"divisor": 13, "valid_from": m.label})
+    assert r.status_code == 200, r.text
+    (line,) = [p for p in r.json()["money_effects"]["payroll"] if p["month"] == m.label]
+    assert line["savedTotal"] == 475_000 and line["changedBy"] < 0 and line["freshTotal"] == 475_000 + line["changedBy"]
+    assert owner(world).put(f"{API}/org/payroll/settings", json={"divisor": 12, "valid_from": m.label}).json()["money_effects"]["payroll"] == []     # back to 12: nothing differs
+
+
+def test_i4_the_month_names_its_unfinished_lessons_before_the_owner_saves_it(world):
+    from tests.test_payroll_pg import lesson as held
+
+    m, s1, s2 = g_pay_world(world)
+    held(world, m.d(29), {}, status="in_progress")                                                 # a lesson of the month that nobody closed
+    r = owner(world).post(f"{API}/org/payroll/months/{m.label}/calculate", json={"teacher_ids": [str(world.teacher.id)]})
+    warn = r.json()["sheets"][0]["warnings"]
+    assert warn["open_lessons"] == 1 and warn["open_lesson_items"][0]["lessonDate"] == m.d(29).isoformat()
+    overview = owner(world).get(f"{API}/org/payroll/months/{m.label}").json()["teachers"][0]["warnings"]
+    assert overview["open_lessons"] == 1 and overview["open_lesson_items"] == [{"lessonDate": m.d(29).isoformat(), "groupId": str(world.group.id), "lessonId": f"s{m.d(29).isoweekday()}", "kind": "in_progress"}]

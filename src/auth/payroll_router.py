@@ -5,6 +5,7 @@ Mounted under /api/v1/auth.  Every handler is tenant-scoped by the org of the to
 ``require_payroll_owner``: the owner only.  An administrator is refused (403) even when the owner gave
 the administrator the right to payments, a teacher too; a sheet of another centre is a 404.
 """
+from datetime import date
 from typing import Optional
 from uuid import UUID
 
@@ -16,7 +17,7 @@ from src.core.database import get_db
 from src.models.auth import Organization
 
 from .dependencies import require_payroll_owner
-from . import payment_status, xlsx_style
+from . import money_effects, payment_status, xlsx_style
 from .payroll_export import UNSAVED_NOTE, XLSX_MIME, build_workbook, export_filename
 from .payroll_schemas import (
     CalculateRequest,
@@ -45,6 +46,10 @@ from .payroll_rates_service import RatesService
 from .payroll_payouts import PayoutError as PayoutError_
 from .payroll_payouts import PayrollPayoutService as PrPayoutService
 from .payroll_service import PayrollError, PayrollService, parse_month
+
+def ps_today() -> date:
+    return payment_status.business_today()
+
 
 router = APIRouter(prefix="/auth", tags=["Payroll"])
 
@@ -78,7 +83,9 @@ def update_payroll_settings(
     db: Session = Depends(get_db),
 ):
     try:
-        return PayrollService(db).update_settings(user["org_id"], user["user_id"], request.divisor, request.valid_from)
+        out = PayrollService(db).update_settings(user["org_id"], user["user_id"], request.divisor, request.valid_from)
+        out.money_effects = money_effects.sheets_from(db, user["org_id"], date.fromisoformat((request.valid_from or out.valid_from or ps_today().strftime("%Y-%m")) + "-01"))      # A3
+        return out
     except PayrollError as exc:
         raise _http(exc)
 
@@ -108,7 +115,9 @@ def put_rates(
 ):
     """Задать ставки преподавателя с месяца ``valid_from`` (ГГГГ-ММ); возвращает его строку списка на текущий месяц."""
     try:
-        return RatesService(db).put_rates(user["org_id"], user["user_id"], teacher_id, request)
+        out = RatesService(db).put_rates(user["org_id"], user["user_id"], teacher_id, request)
+        out.money_effects = money_effects.sheets_from(db, user["org_id"], date.fromisoformat(str(request.valid_from)[:7] + "-01"), teacher_id=teacher_id)      # A3: the saved sheets this rate moves
+        return out
     except PayrollError as exc:
         raise _http(exc)
 

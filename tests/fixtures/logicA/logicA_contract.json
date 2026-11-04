@@ -2712,6 +2712,14 @@
             "title": "No Fee",
             "type": "integer"
           },
+          "open_lesson_items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Open Lesson Items",
+            "type": "array"
+          },
           "open_lessons": {
             "anyOf": [
               {
@@ -5126,6 +5134,18 @@
             "title": "History",
             "type": "array"
           },
+          "money_effects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Money Effects"
+          },
           "updated_at": {
             "anyOf": [
               {
@@ -7054,6 +7074,14 @@
             "default": 0,
             "title": "No Fee",
             "type": "integer"
+          },
+          "open_lesson_items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Open Lesson Items",
+            "type": "array"
           },
           "open_lessons": {
             "anyOf": [
