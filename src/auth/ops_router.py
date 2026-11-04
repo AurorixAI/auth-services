@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from src.core.database import get_db
 
 from .attendance_access import is_org_manager
-from .dependencies import require_org_admin, require_org_owner
+from .dependencies import money_rights_flag, require_org_admin, require_org_owner
 from .ops_schemas import (
     ArchiveGroupOut,
     ArchiveGroupRequest,
@@ -60,13 +60,14 @@ def put_lesson_teacher(
     group_id: str,
     request: LessonTeacherPut,
     user: dict = Depends(_manager),
+    money_right: bool = Depends(money_rights_flag),
     db: Session = Depends(get_db),
 ):
-    """Назначить или снять замену преподавателя на один урок (owner/admin)."""
+    """Назначить или снять замену преподавателя на один урок (owner/admin); для проведённого урока — только с правом оплат."""
     from .lesson_teachers import LessonTeachers
 
     return LessonTeachers(_svc(db)).put(
-        user["org_id"], group_id, request, actor_id=user["user_id"], actor_role=user["org_role"]
+        user["org_id"], group_id, request, actor_id=user["user_id"], actor_role=user["org_role"], money_right=money_right
     )
 
 

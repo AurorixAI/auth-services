@@ -1224,6 +1224,7 @@ def bulk_add_students(
     request: BulkAddStudentsRequest,
     mode: Literal["transfer", "add"] = Query("transfer", description="transfer | add"),
     user: dict = Depends(require_org_admin),
+    money_right: bool = Depends(money_rights_flag),
     db: Session = Depends(get_db),
 ):
     """Массово добавить учеников в группу.
@@ -1236,7 +1237,7 @@ def bulk_add_students(
         return _svc(db).bulk_add_students(
             user["org_id"], group_id, request.student_ids,
             mode=mode, price_override=request.price_override, actor_id=user["user_id"],
-            payments_detail=has_payments_access(user, db),
+            payments_detail=has_payments_access(user, db), money_right=money_right,
         )
     except OperationalError as e:
         raise _concurrent_edit_or_raise(e, db)
@@ -1253,6 +1254,7 @@ def add_student_to_group(
     request: Optional[AddStudentToGroupRequest] = None,
     mode: Literal["transfer", "add"] = Query("transfer", description="transfer | add"),
     user: dict = Depends(require_org_admin),
+    money_right: bool = Depends(money_rights_flag),
     db: Session = Depends(get_db),
 ):
     """Добавить ученика в группу: перевести (по умолчанию) или добавить ещё одну группу."""
@@ -1263,7 +1265,7 @@ def add_student_to_group(
         return _svc(db).add_student_to_group(
             user["org_id"], group_id, student_id,
             mode=mode, price_override=price_override, actor_id=user["user_id"],
-            payments_detail=has_payments_access(user, db), opening_balance=opening_balance,
+            payments_detail=has_payments_access(user, db), opening_balance=opening_balance, money_right=money_right,
         )
     except MembershipConflict as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
@@ -1293,7 +1295,7 @@ def remove_student_from_group(
     try:
         from .leave_service import LeaveService  # lazy: pulls in the payments modules
 
-        LeaveService(db).leave(user["org_id"], group_id, student_id, user["user_id"], actor_role_for_audit(user), None)
+        LeaveService(db).leave(user["org_id"], group_id, student_id, user["user_id"], actor_role_for_audit(user), None, money=has_payments_access(user, db))
         return MessageResponse(message="Ученик удалён из группы")
     except OperationalError as e:
         raise _concurrent_edit_or_raise(e, db)

@@ -40,6 +40,7 @@ from .models import (
 )
 from .ops_rules import (
     conflict,
+    forbidden,
     hhmm_to_minutes,
     minutes_overlap,
     not_found,
@@ -745,18 +746,19 @@ class LessonTeachers:
             (o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == lesson_id), None
         )
 
-    def put(self, org_id: Any, group_id: Any, req, *, actor_id: Any, actor_role: str = "admin") -> Dict[str, Any]:
-        """``PUT /org/groups/{id}/lesson-teacher`` (SPEC 4.3).  Manager only (checked by the caller)."""
+    def put(self, org_id: Any, group_id: Any, req, *, actor_id: Any, actor_role: str = "admin", money_right: bool = True) -> Dict[str, Any]:
+        """``PUT /org/groups/{id}/lesson-teacher`` (SPEC 4.3).  Manager only (checked by the caller).  ``money_right`` (Money-1 A4, ЗП-02): who taught a HELD lesson decides whose pay it is -
+        the owner / an administrator with the payments right only (the router passes the real flag)."""
         # locks: group -> attendance row -> request row -> assignments
         group = (
             self.db.query(Group).filter(Group.id == group_id, Group.org_id == org_id).with_for_update().populate_existing().first()
         )
         if not group:
             raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
-        return self._put_locked(org_id, group, req, actor_id=actor_id, actor_role=actor_role, commit=True)
+        return self._put_locked(org_id, group, req, actor_id=actor_id, actor_role=actor_role, commit=True, money_right=money_right)
 
     def _put_locked(self, org_id: Any, group: Group, req, *, actor_id: Any, actor_role: str = "admin", commit: bool = True,
-                    skip_request_id: Any = None) -> Dict[str, Any]:
+                    skip_request_id: Any = None, money_right: bool = True) -> Dict[str, Any]:
         """The body of ``put`` for a caller that already holds the group lock (LOGIC-B2: a decision of a substitution request runs it in its own transaction,
         ``commit=False``; ``skip_request_id`` is the request being decided, so the hook does not close it a second time)."""
         self.last_assignment = None
@@ -806,6 +808,8 @@ class LessonTeachers:
         if asg_state_ok and row_state_ok:
             return self._out(group, req.lessonId, lesson_date, current if row is None else row.teacher_id, default, row, version_changed=False,
                              sheets=[])
+        if row is not None and row.status == COMPLETED and want != row_teacher and not money_right:
+            raise forbidden("MONEY_RIGHT_REQUIRED", "Провести урок за другого преподавателя в журнале может владелец или администратор, которому владелец разрешил оплаты: от этого зависит, чья это зарплата")
         ClosedPeriods(self.db, org_id).assert_open([old_teacher_for_period, want], day)     # Money-1 A1: the month of the old AND of the new teacher must be open (``closed_period.py``)
         if not clearing:
             # the target's row first: a removal of him serialises with this assignment.  FOR NO KEY UPDATE (as the move does): the record of the journal that follows takes

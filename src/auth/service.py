@@ -2548,6 +2548,7 @@ class AuthService:
         price_override: Optional[Any] = None,
         actor_id: Optional[str] = None,
         payments_detail: bool = False,
+        money_right: bool = True,
     ) -> dict:
         added = 0
         skipped_details: list[dict[str, str]] = []
@@ -2557,7 +2558,7 @@ class AuthService:
                 result = self.add_student_to_group(
                     org_id, group_id, student_id,
                     mode=mode, price_override=price_override, actor_id=actor_id,
-                    payments_detail=payments_detail,
+                    payments_detail=payments_detail, money_right=money_right,
                 )
                 added += 1
                 for warning in result.get("warnings", []):
@@ -2566,6 +2567,11 @@ class AuthService:
                 # Release the row locks taken before the refusal.
                 self.db.rollback()
                 skipped_details.append({"student_id": str(student_id), "reason": str(exc)})
+            except ops_rules.OpsError as exc:
+                if exc.code != "MONEY_RIGHT_REQUIRED":
+                    raise
+                self.db.rollback()      # Money-1 A4: a transfer moves the money of the student - reported per student like every other refusal of a bulk transfer
+                skipped_details.append({"student_id": str(student_id), "reason": exc.message})
         # ``skipped`` stays a number for older clients; the reasons are new.
         return {
             "group_id": str(group_id),
@@ -2587,8 +2593,12 @@ class AuthService:
         payments_detail: bool = False,
         opening_balance: Optional[Any] = None,
         opening_source: str = "add",
+        money_right: bool = True,
     ) -> dict:
         """Enrol a student in a group.
+
+        ``money_right`` (Money-1 A4): a TRANSFER (another active group is closed) moves the student's paid time and advance - the owner / an administrator with the payments right only;
+        the router passes the real flag.
 
         ``transfer`` (default): every other active membership is closed and the
         group becomes the primary one.  ``add``: other memberships stay, the
@@ -2697,6 +2707,8 @@ class AuthService:
         # Only a transfer closes the previous memberships.  The roster of
         # every changed group must not rewrite an already started lesson.
         closing = other_active_memberships if mode == "transfer" else []
+        if closing and not money_right:
+            raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Перевод ученика переносит его оплаченные дни и аванс: его делает владелец или администратор, которому владелец разрешил оплаты")
         affected_group_ids = [group.id, *(membership.group_id for membership in closing)]
         self._lock_groups_for_membership_change(org_id, affected_group_ids)
         self.db.refresh(group)  # the lock is held now: an archiving that won the race is seen (O4.R4)

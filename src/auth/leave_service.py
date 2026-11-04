@@ -273,6 +273,10 @@ class LeaveService:
             if not sg:
                 raise PaymentConflict("Ученик не в этой группе")
             self.pay._lock_family(org_id, student.id)
+            if not money:        # Money-1 A4: a student who has PAID AHEAD leaves with his advance and his paid-until date - the owner / an administrator with the right decides that
+                ahead, _ = self._after(org_id, [sg.id], ps.business_today())
+                if sg.id in ahead and ahead[sg.id][0].advance > 0:
+                    raise PaymentForbidden("Ученик оплатил вперёд: убрать его из группы может владелец или администратор, которому владелец разрешил оплаты")
             svc._lock_groups_for_membership_change(org_id, [group.id])
             svc._assert_no_open_attendance_for_groups(org_id, [group.id])
             now = bc.utc_now().replace(tzinfo=timezone.utc)   # DM-005: the one clock
