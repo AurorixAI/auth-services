@@ -6,6 +6,8 @@
   "balance": 475000,
   "state": "unpaid",
   "basis": "saved",
+  "changed_by": 0,
+  "change_text": null,
   "text": "Не выплачено",
   "items": [],
   "carry_in": 0,

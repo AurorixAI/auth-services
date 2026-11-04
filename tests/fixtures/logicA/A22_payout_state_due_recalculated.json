@@ -6,6 +6,8 @@
   "balance": 125000,
   "state": "due",
   "basis": "saved",
+  "changed_by": 0,
+  "change_text": null,
   "text": "Выплачено 475 000 из 600 000 · осталось 125 000",
   "items": [
     {

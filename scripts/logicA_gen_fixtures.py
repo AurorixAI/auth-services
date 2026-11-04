@@ -463,12 +463,13 @@ def payout(n: int, amount: int, paid_on: date, **kw) -> PayoutOut:
 
 
 def state(saved: int, fresh: Optional[int], paid: int, items: List[PayoutOut]) -> PayoutState:
-    stale = fresh is not None and fresh != saved
-    target = fresh if stale else saved
+    # Money-1 A1b: the target is ALWAYS the saved total; what changed after the save is ``changed_by`` + the line «Пересохраните»
+    changed = fresh - saved if fresh is not None and fresh != saved else 0
+    target = saved
     balance = target - paid
     st = "settled" if balance == 0 else ("overpaid" if balance < 0 else ("unpaid" if paid == 0 else "due"))
     return PayoutState(saved_total=saved, fresh_total=fresh, target=target, paid=paid, balance=balance, state=st,
-                       basis="fresh" if stale else "saved",
+                       basis="saved", changed_by=changed, change_text=tx.payout_change_text(changed) if changed else None,
                        text=tx.payout_text(state=st, saved_total=saved, fresh_total=fresh, target=target, paid=paid, balance=balance),
                        items=items)
 
@@ -487,14 +488,14 @@ def payroll_chain(store):
     # S2 pays 300 000 on 10.11: October fully covered: fresh total 600 000
     write("A21_payout_state_due_after_late_payment.json", state(475_000, 600_000, 475_000, [p1]), store)
     st = state(475_000, 600_000, 475_000, [p1])
-    assert (st.balance, st.state) == (125_000, "due") and st.text == "Выплачено 475 000 · после изменений данных доплатить 125 000"
+    assert (st.balance, st.state, st.changed_by) == (0, "settled", 125_000) and st.text == "Выплачено полностью"            # A1b: paid by the SAVED total, the change is its own line
     # recalculated (version 2: 600 000): the payout of 12.11
     write("A22_payout_state_due_recalculated.json", state(600_000, 600_000, 475_000, [p1]), store)
     p2 = payout(2, 125_000, D(2026, 11, 12), rev=2, total=600_000)
     write("A23_payout_created_second_settled.json", PayoutCreated(payout=p2, state=state(600_000, 600_000, 600_000, [p1, p2])), store)
-    # the payment of S2 is cancelled on 20.11: fresh 475 000, paid 600 000 -> overpaid 125 000
+    # the payment of S2 is cancelled on 20.11: fresh 475 000, saved 600 000, paid 600 000 -> settled, «изменилось на −125 000» (no phantom advance)
     over = state(600_000, 475_000, 600_000, [p1, p2])
-    assert (over.balance, over.state, over.text) == (-125_000, "overpaid", "Переплачено 125 000")
+    assert (over.balance, over.state, over.text, over.changed_by) == (0, "settled", "Выплачено полностью", -125_000)
     write("A24_payout_state_overpaid.json", over, store)
     p2v = p2.model_copy(update={"voided_at": "2026-11-21T09:00:00", "void_reason": "внесли дважды"})
     write("A25_payout_void.json", PayoutVoided(payout=p2v, state=state(600_000, 475_000, 475_000, [p1, p2v])), store)

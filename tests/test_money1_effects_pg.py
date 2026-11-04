@@ -24,6 +24,7 @@ def test_a_late_payment_names_the_sheet_it_moves_with_the_sum_ЗП05(world, fixe
     effects = r.json()["money_effects"]
     line = next(p for p in effects["payroll"] if p["month"] == m.label)
     assert (line["savedTotal"], line["freshTotal"], line["changedBy"]) == (475_000, 600_000, 125_000)
+    assert line["state"] == "closed"                      # ДП-07: the sheet of the previous month was saved after it ended - the payment is NOT refused, it only says so
     assert "+125 000" in effects["text"] and "пересохраните" in effects["text"]
     # an administrator with the right hears that the sheet changes, without the sums of the teacher
     grant_money_right(world)

@@ -23,6 +23,8 @@
     "balance": 0,
     "state": "settled",
     "basis": "saved",
+    "changed_by": 0,
+    "change_text": null,
     "text": "Выплачено полностью",
     "items": [
       {

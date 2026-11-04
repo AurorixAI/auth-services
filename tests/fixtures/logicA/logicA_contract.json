@@ -2713,9 +2713,21 @@
             "type": "integer"
           },
           "open_lessons": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "default": 0,
-            "title": "Open Lessons",
-            "type": "integer"
+            "title": "Open Lessons"
+          },
+          "open_lessons_unknown": {
+            "default": false,
+            "title": "Open Lessons Unknown",
+            "type": "boolean"
           },
           "pending_excused": {
             "default": 0,
@@ -3666,6 +3678,18 @@
                 "type": "null"
               }
             ]
+          },
+          "money_effects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Money Effects"
           },
           "payment": {
             "$ref": "#/components/schemas/PaymentOut"
@@ -4953,7 +4977,7 @@
         "type": "object"
       },
       "PayoutState": {
-        "description": "``target`` = ``fresh_total`` when the sheet is stale (``basis=\"fresh\"``), else the saved total (``basis=\"saved\"``;\n``fresh_total`` null when there is no rate / a manual price); ``balance = target - paid`` (negative = overpaid).",
+        "description": "``target`` = the SAVED total less the advance of the earlier months (Money-1 A1b; ``basis`` is always ``\"saved\"``, the field stays for the front).  ``fresh_total`` is null when there is no rate /\na manual price; when it differs from the saved total ``changed_by`` = fresh - saved (the line «изменилось на ±N», ``change_text``) and the owner re-saves the sheet; ``balance = target - paid`` (negative = overpaid).",
         "properties": {
           "advance_out": {
             "default": 0,
@@ -4981,6 +5005,22 @@
           "carry_used": {
             "default": 0,
             "title": "Carry Used",
+            "type": "integer"
+          },
+          "change_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Text"
+          },
+          "changed_by": {
+            "default": 0,
+            "title": "Changed By",
             "type": "integer"
           },
           "fresh_total": {
@@ -8676,12 +8716,17 @@
         "x-errors": [
           {
             "code": "PAUSE_RANGE",
-            "message": "Пауза начинается не раньше чем 30 дней назад | Пауза не длиннее 366 дней",
+            "message": "Пауза: «по» не раньше «с» | Пауза не длиннее 366 дней",
             "status": 422
           },
           {
             "code": "PAUSE_OVERLAP",
             "message": "Пауза пересекается с другой паузой этого ученика",
+            "status": 409
+          },
+          {
+            "code": "LESSON_IN_PROGRESS",
+            "message": "Сейчас идёт урок группы: поставить паузу можно после его завершения или отмены",
             "status": 409
           },
           {
@@ -8691,7 +8736,7 @@
           },
           {
             "code": "PAUSE_LOCKED",
-            "message": "Паузу нельзя сократить или отменить: дни старше 30 дней уже не меняются",
+            "message": "Месяц преподавателя закрыт ведомостью: паузу за эти дни не изменить. Владелец или администратор с правом оплат может переоткрыть месяц",
             "status": 422
           },
           {
@@ -9393,12 +9438,17 @@
         "x-errors": [
           {
             "code": "PAUSE_RANGE",
-            "message": "Пауза начинается не раньше чем 30 дней назад | Пауза не длиннее 366 дней",
+            "message": "Пауза: «по» не раньше «с» | Пауза не длиннее 366 дней",
             "status": 422
           },
           {
             "code": "PAUSE_OVERLAP",
             "message": "Пауза пересекается с другой паузой этого ученика",
+            "status": 409
+          },
+          {
+            "code": "LESSON_IN_PROGRESS",
+            "message": "Сейчас идёт урок группы: поставить паузу можно после его завершения или отмены",
             "status": 409
           },
           {
@@ -9408,7 +9458,7 @@
           },
           {
             "code": "PAUSE_LOCKED",
-            "message": "Паузу нельзя сократить или отменить: дни старше 30 дней уже не меняются",
+            "message": "Месяц преподавателя закрыт ведомостью: паузу за эти дни не изменить. Владелец или администратор с правом оплат может переоткрыть месяц",
             "status": 422
           },
           {
@@ -9517,14 +9567,14 @@
         ],
         "x-errors": [
           {
-            "code": "PAUSE_LOCKED",
-            "message": "Паузу нельзя сократить или отменить: дни старше 30 дней уже не меняются",
-            "status": 422
+            "code": "PAUSE_OVERLAPS_ATTENDED",
+            "message": "Ученик был отмечен на уроках {dates} — на эти даты паузу поставить нельзя",
+            "status": 409
           },
           {
-            "code": "PAUSE_BREAKS_REFUND",
-            "message": "Сначала отмените возврат: без паузы вернуть нечего",
-            "status": 409
+            "code": "PAUSE_LOCKED",
+            "message": "Месяц преподавателя закрыт ведомостью: паузу за эти дни не изменить. Владелец или администратор с правом оплат может переоткрыть месяц",
+            "status": 422
           },
           {
             "code": "REASON_REQUIRED",

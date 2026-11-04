@@ -1037,6 +1037,18 @@
               }
             ]
           },
+          "money_effects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Money Effects"
+          },
           "payment": {
             "$ref": "#/components/schemas/PaymentOut"
           },
@@ -2115,6 +2127,18 @@
       },
       "PaymentVoided": {
         "properties": {
+          "money_effects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Money Effects"
+          },
           "payment": {
             "$ref": "#/components/schemas/PaymentOut"
           },
@@ -3889,6 +3913,18 @@
             "title": "Advance Before",
             "type": "integer"
           },
+          "money_effects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Money Effects"
+          },
           "refund": {
             "$ref": "#/components/schemas/RefundOut"
           },
@@ -3900,7 +3936,8 @@
           "refund",
           "advance_before",
           "advance_after",
-          "row"
+          "row",
+          "money_effects"
         ],
         "title": "RefundCreated",
         "type": "object"
@@ -4059,6 +4096,18 @@
       },
       "RefundVoided": {
         "properties": {
+          "money_effects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Money Effects"
+          },
           "refund": {
             "$ref": "#/components/schemas/RefundOut"
           },
@@ -4068,7 +4117,8 @@
         },
         "required": [
           "refund",
-          "row"
+          "row",
+          "money_effects"
         ],
         "title": "RefundVoided",
         "type": "object"
@@ -5004,6 +5054,18 @@
             "title": "Debt Before",
             "type": "integer"
           },
+          "money_effects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Money Effects"
+          },
           "row": {
             "$ref": "#/components/schemas/MembershipPaymentRow"
           },
@@ -5015,7 +5077,8 @@
           "writeoff",
           "debt_before",
           "debt_after",
-          "row"
+          "row",
+          "money_effects"
         ],
         "title": "WriteoffCreated",
         "type": "object"
@@ -5140,6 +5203,18 @@
       },
       "WriteoffVoided": {
         "properties": {
+          "money_effects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Money Effects"
+          },
           "row": {
             "$ref": "#/components/schemas/MembershipPaymentRow"
           },
@@ -5149,7 +5224,8 @@
         },
         "required": [
           "writeoff",
-          "row"
+          "row",
+          "money_effects"
         ],
         "title": "WriteoffVoided",
         "type": "object"

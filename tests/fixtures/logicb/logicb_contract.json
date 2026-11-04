@@ -83,6 +83,17 @@
       },
       "ArchiveBlocker": {
         "properties": {
+          "cancelConsequence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelconsequence"
+          },
           "code": {
             "enum": [
               "ACTIVE_STUDENTS",
@@ -1086,6 +1097,14 @@
       },
       "GroupAttendanceResponseB": {
         "properties": {
+          "backdated": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Backdated",
+            "type": "object"
+          },
           "cancellationKinds": {
             "additionalProperties": {
               "type": "string"
@@ -3405,6 +3424,52 @@
         "title": "ReconcileOut",
         "type": "object"
       },
+      "ReconcileRequestB": {
+        "description": "Money-1 A6: «Оформить проведённый урок» may name who actually taught it (default: the planned teacher); the money right only.",
+        "properties": {
+          "lessonDate": {
+            "format": "date",
+            "title": "Lessondate",
+            "type": "string"
+          },
+          "lessonId": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Lessonid",
+            "type": "string"
+          },
+          "taughtBy": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taughtby"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          }
+        },
+        "required": [
+          "lessonDate",
+          "lessonId"
+        ],
+        "title": "ReconcileRequestB",
+        "type": "object"
+      },
       "RemovalGroup": {
         "properties": {
           "id": {
@@ -3612,6 +3677,18 @@
               }
             ]
           },
+          "moneyEffects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moneyeffects"
+          },
           "ok": {
             "default": true,
             "title": "Ok",
@@ -3674,6 +3751,11 @@
               }
             ],
             "title": "Cancellationreason"
+          },
+          "confirmNobodyCame": {
+            "default": false,
+            "title": "Confirmnobodycame",
+            "type": "boolean"
           },
           "correctionReason": {
             "anyOf": [
@@ -5626,7 +5708,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/StartAttendanceRequest"
+                "$ref": "#/components/schemas/ReconcileRequestB"
               }
             }
           },
@@ -5781,7 +5863,7 @@
     },
     "/org/groups/{group_id}/lesson-teacher": {
       "put": {
-        "description": "Назначить или снять замену преподавателя на один урок (owner/admin).",
+        "description": "Назначить или снять замену преподавателя на один урок (owner/admin); для проведённого урока — только с правом оплат.",
         "parameters": [
           {
             "in": "path",
@@ -6960,6 +7042,11 @@
       "model": "OpsErrorResponse",
       "status": 404
     },
+    "LESSON_NOT_HELD": {
+      "message": "Проведённого урока нет: возвращать нечего",
+      "model": "OpsErrorResponse",
+      "status": 404
+    },
     "LESSON_OUTSIDE_WINDOW": {
       "message": "Урок вне окна незакрытых уроков",
       "model": "OpsErrorResponse",
@@ -6984,6 +7071,16 @@
       "message": "Сотрудник не найден",
       "model": "OpsErrorResponse",
       "status": 404
+    },
+    "MONEY_RIGHT_REQUIRED": {
+      "message": "Это действие меняет деньги: его выполняет владелец или администратор, которому владелец разрешил оплаты",
+      "model": "OpsErrorResponse",
+      "status": 403
+    },
+    "NOBODY_CAME": {
+      "message": "Никто не пришёл. Если завершить, урок будет считаться проведённым и оплачен преподавателю",
+      "model": "OpsErrorResponse",
+      "status": 409
     },
     "NOT_ARCHIVED": {
       "message": "Группа не в архиве",
@@ -7014,6 +7111,11 @@
       "message": "Приглашать администраторов может только владелец",
       "model": "OpsErrorResponse",
       "status": 403
+    },
+    "PERIOD_CLOSED": {
+      "message": "Месяц преподавателя закрыт: ведомость сохранена после его конца. Владелец или администратор с правом оплат сначала переоткрывает месяц",
+      "model": "OpsErrorResponse",
+      "status": 409
     },
     "STAFF_ROLE_REQUIRED": {
       "message": "Добавлять учеников может администратор центра",
