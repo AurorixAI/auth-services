@@ -337,23 +337,57 @@ class OneOffPurpose:
             return None
         return {"month": found[0]["month"], **({"status": found[0]["status"]} if owner else {})}
 
-    def _estimate(self, group: Group, one_off: GroupScheduleOneOffLesson, payload: Dict[str, Any], att: GroupAttendance, *, owner: bool, org_id: Any) -> Optional[Dict[str, Any]]:
-        """What «Оплатить» would pay the teacher for this lesson (the owner only, LESSONS 45): ``{"amount", "reason"}`` of the estimate of a substitution - no second formula (LESSONS 38)."""
-        if not owner or att.teacher_id is None or not payload.get("startTime"):
-            return None
-        from .payroll_estimate import substitute_pay_estimates
+    def _estimates(self, org_id: Any, rows: List[Tuple[GroupScheduleOneOffLesson, GroupAttendance, Group]], *, owner: bool) -> Dict[str, Optional[Dict[str, Any]]]:
+        """What «Оплатить» would add to the teacher's month, per lesson (the owner only, LESSONS 45).  R3 #19 / LESSONS 38: ONE formula - the payroll itself: the fresh total of the month of the
+        teacher with THIS lesson decided «Оплатить» (inside a SAVEPOINT that is thrown away) minus the total as it stands; so the sum shown before the decision is the one the sheet gets after it,
+        with the excuses and the students who did not pay."""
+        from .payroll_service import PayrollService
 
-        try:
-            return substitute_pay_estimates(self.svc, org_id, group, one_off.id, one_off.lesson_date, hhmm_to_minutes(payload["startTime"]), [att.teacher_id], is_owner=True).get(att.teacher_id)
-        except Exception:        # an estimate must never break the list of decisions
-            logger.exception("Could not estimate the pay of the one-off lesson %s", one_off.id)
-            return None
+        out: Dict[str, Optional[Dict[str, Any]]] = {}
+        if not owner:
+            return out
+        service = PayrollService(self.db)
+        base: Dict[Tuple[Any, date], Optional[int]] = {}
+        for one_off, att, _group in rows:
+            if att.teacher_id is None:
+                out[one_off.id] = None
+                continue
+            month = date.fromisoformat(one_off.lesson_date).replace(day=1)
+            try:
+                if (att.teacher_id, month) not in base:
+                    base[(att.teacher_id, month)] = service.fresh_month_total(org_id, month, att.teacher_id)
+                nested = self.db.begin_nested()
+                try:
+                    one_off.money = PAID
+                    self.db.flush()
+                    after = service.fresh_month_total(org_id, month, att.teacher_id)
+                finally:
+                    nested.rollback()
+                    self.db.refresh(one_off)
+            except Exception:        # an estimate must never break the list of decisions
+                logger.exception("Could not estimate the pay of the one-off lesson %s", one_off.id)
+                out[one_off.id] = None
+                continue
+            before = base[(att.teacher_id, month)]
+            out[one_off.id] = {"amount": None, "reason": "RATE_MISSING"} if before is None or after is None else {"amount": after - before, "reason": None}
+        return out
+
+    def _excuse_statuses(self, rows: List[Tuple[GroupScheduleOneOffLesson, GroupAttendance, Group]]) -> Dict[Tuple[Any, str], str]:
+        """``{(attendance_id, student_id): status}`` of the excuses of these lessons - the pack / the pay of a mark «Уважительная» depends on the decision."""
+        from .models import AttendanceExcuse
+
+        ids = [att.id for _, att, _ in rows]
+        if not ids:
+            return {}
+        return {(a, str(s)): st for a, s, st in self.db.query(AttendanceExcuse.attendance_id, AttendanceExcuse.student_id, AttendanceExcuse.status).filter(AttendanceExcuse.attendance_id.in_(ids)).all()}
 
     def pending(self, org_id: Any, *, owner: bool) -> Dict[str, Any]:
         rows = self.pending_rows(org_id)
         users = {u.id: u for u in self.db.query(User).filter(User.id.in_({x for o, a, _ in rows for x in (a.teacher_id, o.created_by) if x})).all()} if rows else {}
         roles = {m.user_id: m.org_role for m in self.db.query(OrganizationMember).filter(OrganizationMember.org_id == org_id, OrganizationMember.user_id.in_([o.created_by for o, _, _ in rows])).all()} if rows else {}
         items = []
+        estimates = self._estimates(org_id, rows, owner=owner)
+        excuses = self._excuse_statuses(rows)
         for one_off, att, group in rows:
             payload = one_off.payload or {}
             roster = [r for r in (att.roster_snapshot or []) if isinstance(r, dict)]
@@ -367,8 +401,8 @@ class OneOffPurpose:
                 "createdBy": {"id": str(one_off.created_by), "name": short_name(author), "role": roles.get(one_off.created_by)},
                 "studentsPresent": sum(1 for m in marks.values() if m in ("present", "late")), "studentsTotal": len(roster),
                 # Money-1 A3 (ЗП-07, ЗПД-4): «Оплатить» pays for EVERY student whose mark counts (rule 4.3: «Не был» counts), not for the ones who came - said with the number; the owner sees the sum
-                "studentsPaid": sum(1 for m in marks.values() if ps.lesson_counts(mark=m, excuse_status="pending" if m == "excused" else None)),
-                "moneyEstimate": self._estimate(group, one_off, payload, att, owner=owner, org_id=org_id),
+                "studentsPaid": sum(1 for sid, m in marks.items() if ps.lesson_counts(mark=m, excuse_status=(excuses.get((att.id, str(sid))) or "pending") if m == "excused" else None)),
+                "moneyEstimate": estimates.get(one_off.id),
                 "payrollSheet": self.sheet_of(org_id, one_off.lesson_date, att.teacher_id, owner=owner),
             })
         return {"total": len(items), "items": items}
@@ -395,6 +429,7 @@ class OneOffPurpose:
             audits.setdefault((audit.snapshot or {}).get("lessonId"), audit)
         users = {u.id: u for u in self.db.query(User).filter(User.id.in_({x for o, a, _ in rows for x in (a.teacher_id, o.created_by) if x} | {a.actor_id for a in audits.values() if a.actor_id})).all()}
         periods = ClosedPeriods.of(self.db, org_id)
+        excuses = self._excuse_statuses(rows)
         items = []
         for one_off, att, group in rows:
             payload = one_off.payload or {}
@@ -407,7 +442,7 @@ class OneOffPurpose:
                 "teacher": {"id": str(att.teacher_id), "name": short_name(users.get(att.teacher_id))} if att.teacher_id else None,
                 "createdBy": {"id": str(one_off.created_by), "name": short_name(users.get(one_off.created_by))},
                 "studentsPresent": sum(1 for m in marks.values() if m in ("present", "late")), "studentsTotal": len([r for r in (att.roster_snapshot or []) if isinstance(r, dict)]),
-                "studentsPaid": sum(1 for m in marks.values() if ps.lesson_counts(mark=m, excuse_status="pending" if m == "excused" else None)),
+                "studentsPaid": sum(1 for sid, m in marks.items() if ps.lesson_counts(mark=m, excuse_status=(excuses.get((att.id, str(sid))) or "pending") if m == "excused" else None)),
                 "money": one_off.money, "decidedAt": audit.created_at.isoformat() if audit is not None and audit.created_at else None,
                 "decidedBy": {"id": str(audit.actor_id), "name": short_name(users.get(audit.actor_id)), "role": audit.actor_role} if audit is not None and audit.actor_id else None,
                 "canUndo": closed is None, "periodClosed": closed is not None,

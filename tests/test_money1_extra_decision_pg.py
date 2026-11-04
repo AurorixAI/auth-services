@@ -54,3 +54,43 @@ def test_r3_28_the_list_of_decided_additional_lessons_is_for_the_money_right_and
     assert client(w, "A").get(url).status_code == 403                                                                        # a teacher
     assert client(w, "admin").get(url).status_code == 200                                                                    # this world's administrator has the money right (``decide`` above)
     assert client(w, "owner").post(f"{API}/org/one-off-lessons/{made}/money-decision", json={"decision": "undo"}).status_code == 409
+
+
+def _extra_estimate_and_sheet(w, who="owner"):
+    (item,) = client(w, who).get(f"{API}/org/one-off-decisions").json()["items"]
+    return item
+
+
+def test_r3_19_scenario_a_the_sum_before_the_decision_is_the_sum_after_it_with_a_confirmed_excuse(pg_session, clock):
+    """R3-деньги НЕТОЧНОСТЬ-4, A: five in the roster, three came, one has a CONFIRMED excuse -> «за 4 / 100 000»; before the round the screen said 5 / 125 000 and the sheet got 100 000."""
+    from src.models.auth import AttendanceExcuse, GroupAttendance
+
+    w = build_org(pg_session)
+    g, (a, b, c, d, e), ms, made = extra_world(w, clock, "wait", "A")
+    att = w.db.query(GroupAttendance).filter_by(group_id=g.id, lesson_id=made).one()
+    row = w.db.query(AttendanceExcuse).filter_by(attendance_id=att.id, student_id=e.id).first()
+    if row is None:
+        row = AttendanceExcuse(org_id=w.org.id, attendance_id=att.id, student_id=e.id, status="confirmed", reason="Справка", reason_by=w.owner.id, reason_at=att.created_at,
+                               reviewed_by=w.owner.id, reviewed_at=att.created_at)
+        w.db.add(row)
+    else:
+        row.status = "confirmed"
+    w.db.commit()
+    item = _extra_estimate_and_sheet(w)
+    assert item["studentsPaid"] == 4 and item["moneyEstimate"] == {"amount": 100_000, "reason": None}
+    decide(w, "owner", made, "pay")
+    assert sheet(w, "2026-10")["total_amount"] == 100_000                                                                 # before = after
+
+
+def test_r3_19_scenario_b_a_student_who_did_not_pay_is_still_in_the_sum_of_an_additional_lesson(pg_session, clock):
+    """B: one of the five paid nothing; an additional lesson is paid independently of the payment of the student -> 125 000 before and after (before the round: 100 000 / 125 000)."""
+    from src.models.auth import StudentPayment
+
+    w = build_org(pg_session)
+    g, (a, b, c, d, e), ms, made = extra_world(w, clock, "wait", "A")
+    w.db.query(StudentPayment).filter(StudentPayment.student_id == d.id).delete(synchronize_session=False)
+    w.db.commit()
+    item = _extra_estimate_and_sheet(w)
+    decide(w, "owner", made, "pay")
+    after = sheet(w, "2026-10")["total_amount"]
+    assert item["moneyEstimate"]["amount"] == after == 125_000

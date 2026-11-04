@@ -946,6 +946,21 @@ class PayrollService:
             return None
         return engine.sheet_total(self._render(teacher, percents, self._carried_changes(sheet), seed.divisor))
 
+    def fresh_month_total(self, org_id: str, first: date, teacher_id: UUID) -> Optional[int]:
+        """The total of the month of a teacher as the screen computes it NOW, saved sheet or not (R3 #19: the ONE formula the estimates and the sheet share).  ``None``: a rate is missing."""
+        sheet = self.db.query(PayrollSheet).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == teacher_id, PayrollSheet.period_month == first).first()
+        if sheet is not None:
+            return self._fresh_total(org_id, sheet)
+        last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
+        seed = self._collect(org_id, first, last, teacher_ids={teacher_id})
+        teacher = seed.teachers.get(teacher_id)
+        if teacher is None:
+            return 0
+        percents = payroll_rates.load_book(self.db, org_id, [teacher_id]).percents_at(teacher_id, first)
+        if self._missing_percents(teacher, percents):
+            return None
+        return engine.sheet_total(self._render(teacher, percents, {}, seed.divisor))
+
     def payout_state(self, org_id: str, sheet: PayrollSheet, seed: Optional[MonthSeed] = None, book=None) -> PayoutState:
         from .payroll_payouts import PayrollPayoutService
 
