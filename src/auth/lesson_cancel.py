@@ -26,6 +26,8 @@ from src.models.auth import GroupAudit
 
 from . import business_clock as bc
 from . import exam_release
+from . import money_effects
+from .closed_period import ClosedPeriods, lesson_teacher_ids
 from .days_off import DaysOffService, HOLIDAY
 from .lesson_teachers import TeacherBook, _uuid
 from .models import AttendanceExcuse, Group, GroupAttendance, GroupAttendanceAudit, LessonSubstitutionRequest as Req, LessonTeacherAssignment, User
@@ -176,20 +178,22 @@ class LessonCancelMixin:
         return who or "преподаватель"
 
     # ------------------------------------------------------------------------------------------------ restore
-    def restore_lesson(self, org_id: Any, actor_id: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str) -> Dict[str, Any]:
+    def restore_lesson(self, org_id: Any, actor_id: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str, *, money_right: bool = False) -> Dict[str, Any]:
         """W1 S5: «Вернуть отменённый урок» (owner / admin, a lesson that has not started, with a reason).  Refused: a lesson that is not cancelled, a MOVED original (cancel the
         copy instead), a lesson that has started, a date that a live day off holds (cancel the day off), a lesson the schedule no longer has, a teacher who is busy meanwhile.
-        What was cancelled is recorded (the group audit + the record of the journal «Замены») BEFORE the row is deleted; the deduction of the recalculation is gone with the row."""
+        What was cancelled is recorded (the group audit + the record of the journal «Замены») BEFORE the row is deleted; the deduction of the recalculation is gone with the row.
+        Money-1 A2: a lesson that has ALREADY begun (a mistaken «Урока не было») goes back to «Требует разбора» the same way - for the owner / an administrator with the payments right (``money_right``),
+        in an open month of the lesson's teacher; the answer says ``returnedToReview`` and carries ``moneyEffects``."""
         actor = _uuid(actor_id)
         try:
-            out = self._restore_locked(org_id, actor, actor_role, group_id, lesson_id, day, reason)
+            out = self._restore_locked(org_id, actor, actor_role, group_id, lesson_id, day, reason, money_right)
             self.db.commit()
             return out
         except BaseException:
             self.db.rollback()
             raise
 
-    def _restore_locked(self, org_id: Any, actor: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str) -> Dict[str, Any]:
+    def _restore_locked(self, org_id: Any, actor: Any, actor_role: str, group_id: Any, lesson_id: str, day: date, reason: str, money_right: bool = False) -> Dict[str, Any]:
         iso = day.isoformat()
         group = self._group_locked(org_id, _uuid(group_id))
         if group is None:
@@ -211,13 +215,16 @@ class LessonCancelMixin:
             ref, occ = self._lesson_ref(group, lesson_id, day)
         except OpsError as exc:                                   # the series was stopped / changed after the cancellation
             raise conflict("RESTORE_LESSON_GONE", "Этого урока уже нет в расписании группы: вернуть его нельзя") from exc
-        if ref.starts_at <= self.now():
-            raise conflict("RESTORE_PAST", "Урок уже должен был начаться: вернуть его нельзя. Отметьте посещаемость или оставьте урок отменённым")
+        past = ref.starts_at <= self.now()
+        if past and not money_right:
+            raise conflict("RESTORE_PAST", "Урок уже должен был начаться, поэтому в расписание его не вернуть. Снова разобрать его («Требует разбора») может владелец или администратор с правом оплат")
+        if past:        # Money-1 A2: a month the sheet of the teacher has closed is reopened first
+            ClosedPeriods(self.db, group.org_id).assert_open(lesson_teacher_ids(self.db, group, lesson_id, iso, row), iso)
         held = DaysOffService(self.svc).live_for_date(org_id, day)
         if row.day_off_id is not None or held is not None:
             why = f" ({held.reason})" if held is not None else ""
             raise conflict("RESTORE_DAY_OFF", f"Дата — выходной день центра{why}: чтобы вернуть урок, отмените сам выходной")
-        slot_warnings = OneOffPurpose(self.svc).restore_slot(group, lesson_id, day, occ)          # #154: the slot of a make-up / an additional lesson may be taken meanwhile: GROUP_BUSY / TEACHER_BUSY / STUDENT_BUSY
+        slot_warnings = OneOffPurpose(self.svc).restore_slot(group, lesson_id, day, occ) if not past else []          # #154: the slot of a make-up / an additional lesson may be taken meanwhile: GROUP_BUSY / TEACHER_BUSY / STUDENT_BUSY (a lesson of the past takes no slot)
         if slot_warnings is None:
             self.svc._assert_teacher_time_is_available(group=group, lesson_id=lesson_id, occurrence_date=day, payload=occ)
         OneOffPurpose(self.svc).relink(group, lesson_id)             # #154: a cancelled make-up makes up for the same lesson again (409 ``RESTORE_MAKEUP_TARGET`` when that lesson changed meanwhile)
@@ -236,10 +243,17 @@ class LessonCancelMixin:
             self._close_restored(record, actor, trace)
         self.db.flush()
         lost = DaysOffService(self.svc)._substitutes_not_restored([row], {group.id: group})          # the substitute the cancellation took off does not come back (R3 12)
+        teachers = lesson_teacher_ids(self.db, group, lesson_id, iso, row) if past else []
         self.db.delete(row)
         self.db.flush()
-        return {"ok": True, "restored": True, "lessonId": lesson_id, "lessonDate": iso, "previousKind": trace["cancellationKind"], "examsNote": EXAMS_NOT_RESTORED,
-                "warnings": [{"code": w.code, "message": w.message} for w in lost] + (slot_warnings or [])}
+        out = {"ok": True, "restored": True, "lessonId": lesson_id, "lessonDate": iso, "previousKind": trace["cancellationKind"], "examsNote": EXAMS_NOT_RESTORED,
+               "warnings": [{"code": w.code, "message": w.message} for w in lost] + (slot_warnings or [])}
+        if past:
+            out["returnedToReview"] = True
+            out["moneyEffects"] = money_effects.build(self.db, org_id, students=[], pairs=[(t, iso) for t in teachers], owner=actor_role == "owner", done=True)
+            if trace["cancellationKind"] == "centre":
+                out["moneyEffects"]["text"] = "У учеников исчезнет вычет за этот урок (если центр вычитает отмены); урок снова ждёт разбора — преподавателю он оплатится, когда его проведут"
+        return out
 
     def record_kind_change(self, group: Group, lesson_id: str, day: date, actor: Any, before: str, after: str, reason: str, trigger: str = MANAGER_REASON_CHANGE) -> None:
         """W1 S17 (Д10): «Изменить причину отмены» leaves a record in the journal «Замены» (``closed`` / ``KIND_CHANGED``, trigger ``manager_reason_change``: who, when, from what to what, why) -

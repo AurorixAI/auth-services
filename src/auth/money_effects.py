@@ -2,7 +2,7 @@
 
 ``{"students": [...], "payroll": [...], "text": "..."}``:
 
-* ``students`` - the lessons of the packs of the students that the action gives back (+1) or takes (-1), by the rule 4.3 (``payment_status.lesson_counts``);
+* ``students`` - the lessons of the packs of the students that the action gives back (+1) or spends (-1), by the rule 4.3 (``payment_status.lesson_counts``);
 * ``payroll`` - the SAVED sheets of the lesson's teacher the action touches.  Everybody gets ``{"month", "state"}`` (state of the period: ``open`` | ``closed`` | ``reopened``, see
   ``closed_period.py``); only the OWNER gets the sheet, the teacher, the saved total and - after the action - the fresh total and ``changedBy`` (LESSONS 45: the money of the teachers
   belongs to the owner, also in the answers of other people's actions);
@@ -30,14 +30,14 @@ def counted(mark: Optional[str], excuse_status: Optional[str]) -> bool:
 
 def student_deltas(before: Dict[str, Optional[str]], after: Dict[str, Optional[str]], status_before: Dict[str, Optional[str]], status_after: Dict[str, Optional[str]],
                    *, held_before: bool = True, held_after: bool = True) -> List[Dict[str, Any]]:
-    """``[{"studentId", "delta"}]`` of the students whose lesson is spent (-1) or given back (+1) by the change; ``before`` / ``after`` are the marks, ``status_*`` the excuse statuses by
+    """``[{"studentId", "delta"}]`` of the students whose pack gets a lesson back (+1) or spends one (-1) by the change; ``before`` / ``after`` are the marks, ``status_*`` the excuse statuses by
     student, ``held_*`` whether the lesson is completed before / after (only a completed lesson spends a pack, rule 4.3)."""
     out = []
     for sid in sorted(set(before) | set(after)):
         was = held_before and counted(before.get(sid), status_before.get(sid))
         will = held_after and counted(after.get(sid), status_after.get(sid))
         if was != will:
-            out.append({"studentId": sid, "delta": (1 if will else 0) - (1 if was else 0)})
+            out.append({"studentId": sid, "delta": (1 if was else 0) - (1 if will else 0)})       # +1: a lesson goes back into the pack, -1: one is spent
     return out
 
 
@@ -84,9 +84,9 @@ def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, do
     gave = sum(1 for s in students if s["delta"] > 0)
     took = sum(1 for s in students if s["delta"] < 0)
     if took:
-        parts.append(f"у {took} {_pupils(took)} спишется занятие из пакета" if not done else f"у {took} {_pupils(took)} списано занятие из пакета")
+        parts.append(f"в пакетах учеников спишется занятие: {took}" if not done else f"в пакетах учеников списано занятие: {took}")
     if gave:
-        parts.append(f"{gave} {_pupils(gave)} вернётся занятие в пакет" if not done else f"{gave} {_pupils(gave)} возвращено занятие в пакет")
+        parts.append(f"в пакеты учеников вернётся занятие: {gave}" if not done else f"в пакеты учеников возвращено занятие: {gave}")
     for line in payroll:
         title = month_title(date.fromisoformat(line["month"] + "-01"))
         who = f" {line['teacherName']}," if line.get("teacherName") else ""
@@ -97,10 +97,6 @@ def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, do
             parts.append(f"ведомость{who} {title} {'изменилась' if done else 'изменится'}" + (" (месяц закрыт: сначала переоткройте его)" if line["state"] == "closed" and not done else ""))
     text = "; ".join(parts)
     return (text[0].upper() + text[1:]) if text else ""
-
-
-def _pupils(n: int) -> str:
-    return "ученика" if n % 10 == 1 and n % 100 != 11 else "учеников"
 
 
 def build(db, org_id: Any, *, students: List[Dict[str, Any]], pairs: Iterable[Tuple[Any, Any]], owner: bool, done: bool) -> Dict[str, Any]:

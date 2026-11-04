@@ -569,3 +569,5 @@ class LessonRestoreOut(BaseModel):
     previousKind: Optional[CancellationKind] = None       # what the cancellation was (null: an old one / a move): the deduction of ``centre`` is gone with the row
     examsNote: str = ""                                    # the exams freed by the cancellation do not come back
     warnings: List[CancelWarning] = Field(default_factory=list)
+    returnedToReview: bool = False                         # Money-1 A2: a lesson that had begun went back to «Требует разбора» (not to the schedule)
+    moneyEffects: Optional[Dict[str, Any]] = None          # Money-1 A3: what it did to money (``money_effects.build``)

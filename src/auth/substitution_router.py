@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from src.core.database import get_db
 
 from .attendance_access import is_org_manager
-from .dependencies import require_org_member
+from .dependencies import money_rights_flag, require_org_member
 from .ops_router import _manager
 from .substitution_rules import err
 from .substitution_schemas import (
@@ -228,12 +228,14 @@ def lesson_exam_binding(
 
 
 @router.post("/org/groups/{group_id}/lessons/restore", response_model=LessonRestoreOut)
-def restore_cancelled_lesson(group_id: str, request: LessonRestoreRequest, user: dict = Depends(_manager), db: Session = Depends(get_db)):
+def restore_cancelled_lesson(group_id: str, request: LessonRestoreRequest, user: dict = Depends(_manager), money_right: bool = Depends(money_rights_flag),
+                             db: Session = Depends(get_db)):
     """W1 S5 «Вернуть отменённый урок» (owner / admin): только будущий урок, с причиной; перенесённый оригинал и урок выходного дня не возвращаются (коды ``RESTORE_*``)."""
     from .lesson_substitutions import Substitutions
 
     reason = Substitutions._reason(request, 3, 500)
-    return _subs(db).restore_lesson(user["org_id"], user["user_id"], user["org_role"], group_id, request.lessonId, request.lessonDate, reason)
+    return _subs(db).restore_lesson(user["org_id"], user["user_id"], user["org_role"], group_id, request.lessonId, request.lessonDate, reason,
+                                      money_right=money_right)
 
 
 # ------------------------------------------------------------------------------------ exam-service (D-1)
