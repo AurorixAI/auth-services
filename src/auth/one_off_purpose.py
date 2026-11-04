@@ -12,6 +12,7 @@ A make-up is an ordinary official lesson (#159): its ``money`` is always NULL, a
 Money is never stored here: the deduction of the recalculation, the package, the forecast and the payroll are functions of these facts (``ledger_service``, ``payments_service``, ``payroll_service``)."""
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
@@ -19,10 +20,13 @@ from uuid import UUID
 from sqlalchemy import and_, false, or_
 
 from . import business_clock as bc
+from . import payment_status as ps
 from .attendance_rules import AttendanceRules
 from .lesson_teachers import TeacherBook, _s, _uuid
 from .models import Group, GroupAttendance, GroupAudit, GroupScheduleOneOffLesson, LessonSubstitutionRequest as Req, OrganizationMember, User
-from .ops_rules import conflict, forbidden, not_found, short_name, unprocessable
+from .ops_rules import conflict, forbidden, hhmm_to_minutes, not_found, short_name, unprocessable
+
+logger = logging.getLogger(__name__)
 
 MAKEUP, EXTRA, MOVED = "makeup", "extra", "moved"
 NONE, WAIT, PAID = "none", "wait", "paid"
@@ -333,6 +337,18 @@ class OneOffPurpose:
             return None
         return {"month": found[0]["month"], **({"status": found[0]["status"]} if owner else {})}
 
+    def _estimate(self, group: Group, one_off: GroupScheduleOneOffLesson, payload: Dict[str, Any], att: GroupAttendance, *, owner: bool, org_id: Any) -> Optional[Dict[str, Any]]:
+        """What «Оплатить» would pay the teacher for this lesson (the owner only, LESSONS 45): ``{"amount", "reason"}`` of the estimate of a substitution - no second formula (LESSONS 38)."""
+        if not owner or att.teacher_id is None or not payload.get("startTime"):
+            return None
+        from .payroll_estimate import substitute_pay_estimates
+
+        try:
+            return substitute_pay_estimates(self.svc, org_id, group, one_off.id, one_off.lesson_date, hhmm_to_minutes(payload["startTime"]), [att.teacher_id], is_owner=True).get(att.teacher_id)
+        except Exception:        # an estimate must never break the list of decisions
+            logger.exception("Could not estimate the pay of the one-off lesson %s", one_off.id)
+            return None
+
     def pending(self, org_id: Any, *, owner: bool) -> Dict[str, Any]:
         rows = self.pending_rows(org_id)
         users = {u.id: u for u in self.db.query(User).filter(User.id.in_({x for o, a, _ in rows for x in (a.teacher_id, o.created_by) if x})).all()} if rows else {}
@@ -350,6 +366,9 @@ class OneOffPurpose:
                 "teacher": {"id": str(att.teacher_id), "name": short_name(teacher)} if att.teacher_id else None,
                 "createdBy": {"id": str(one_off.created_by), "name": short_name(author), "role": roles.get(one_off.created_by)},
                 "studentsPresent": sum(1 for m in marks.values() if m in ("present", "late")), "studentsTotal": len(roster),
+                # Money-1 A3 (ЗП-07, ЗПД-4): «Оплатить» pays for EVERY student whose mark counts (rule 4.3: «Не был» counts), not for the ones who came - said with the number; the owner sees the sum
+                "studentsPaid": sum(1 for m in marks.values() if ps.lesson_counts(mark=m, excuse_status="pending" if m == "excused" else None)),
+                "moneyEstimate": self._estimate(group, one_off, payload, att, owner=owner, org_id=org_id),
                 "payrollSheet": self.sheet_of(org_id, one_off.lesson_date, att.teacher_id, owner=owner),
             })
         return {"total": len(items), "items": items}
@@ -370,6 +389,8 @@ class OneOffPurpose:
         att = (self.db.query(GroupAttendance).filter(GroupAttendance.group_id == one_off.group_id, GroupAttendance.lesson_id == one_off.id, GroupAttendance.lesson_date == one_off.lesson_date)
                .with_for_update().first())
         waiting = one_off.purpose == EXTRA and one_off.money == WAIT
+        if decision == "undo":
+            return self._undo(org_id, actor, actor_role, group, one_off, att, owner=owner)
         if not waiting:
             decided = self.db.query(GroupAudit.id).filter(GroupAudit.group_id == one_off.group_id, GroupAudit.action == DECIDED_ACTION, GroupAudit.snapshot["lessonId"].astext == lesson_id).first()
             if decided is not None:
@@ -388,6 +409,26 @@ class OneOffPurpose:
         sheet = self.sheet_of(org_id, one_off.lesson_date, att.teacher_id, owner=owner)
         self.db.commit()
         return {"lessonId": lesson_id, "money": one_off.money, "payrollSheet": sheet}
+
+    def _undo(self, org_id: Any, actor: Any, actor_role: str, group: Group, one_off: GroupScheduleOneOffLesson, att: Optional[GroupAttendance], *, owner: bool) -> Dict[str, Any]:
+        """Money-1 A3 (ЗП-07): the decision is reversible while the month of the teacher is open - back to «ждёт решения»; the audit keeps both.  A repeat (already waiting) changes nothing."""
+        from .closed_period import ClosedPeriods
+
+        if one_off.purpose != EXTRA:
+            raise unprocessable("DECISION_NOT_ALLOWED", "По этому уроку решения не было")
+        if one_off.money == WAIT:
+            self.db.rollback()
+            return {"lessonId": one_off.id, "money": WAIT, "payrollSheet": None}
+        if att is None or att.status != "completed":
+            raise conflict("LESSON_NOT_COMPLETED", "Урок ещё не проведён")
+        ClosedPeriods(self.db, org_id).assert_open([att.teacher_id], one_off.lesson_date)
+        before = one_off.money
+        one_off.money = WAIT
+        self.db.add(GroupAudit(org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role=actor_role, action=DECIDED_ACTION, assigned_teacher_id=att.teacher_id, created_at=bc.utc_now(),
+                               snapshot={"lessonId": one_off.id, "lessonDate": one_off.lesson_date, "purpose": one_off.purpose, "from": before, "to": WAIT, "decision": "undo", "teacherId": _s(att.teacher_id)}))
+        sheet = self.sheet_of(org_id, one_off.lesson_date, att.teacher_id, owner=owner)
+        self.db.commit()
+        return {"lessonId": one_off.id, "money": one_off.money, "payrollSheet": sheet}
 
     # ============================================================================== what the answers say (the mask)
     def marks(self, keys: Sequence[Tuple[Any, str, str]], *, manager: bool, actor: Optional[Any] = None, money_visible: bool = True, money_right: bool = True) -> Dict[Tuple[str, str, str], Dict[str, Any]]:

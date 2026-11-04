@@ -58,6 +58,8 @@ class OneOffDecisionItem(BaseModel):
     createdBy: Optional[OneOffPerson] = None
     studentsPresent: int
     studentsTotal: int
+    studentsPaid: int = 0                              # Money-1 A3: for how many students «Оплатить» pays (rule 4.3: a mark «Не был» counts)
+    moneyEstimate: Optional[Dict[str, Any]] = None     # Money-1 A3: the owner only: ``{"amount", "reason"}`` - what «Оплатить» pays the teacher (≈)
     payrollSheet: Optional[OneOffPayrollSheet] = None
 
 
@@ -67,7 +69,7 @@ class OneOffDecisions(BaseModel):
 
 
 class MoneyDecisionRequest(BaseModel):
-    decision: Literal["pay", "skip"]
+    decision: Literal["pay", "skip", "undo"]       # Money-1 A3: «undo» takes the decision back (back to «ждёт решения») while the month of the teacher is open
 
 
 class MoneyDecisionOut(BaseModel):
@@ -113,7 +115,7 @@ def one_off_decisions(user: dict = Depends(_manager), db: Session = Depends(get_
 
 @router.post("/org/one-off-lessons/{lesson_id}/money-decision", response_model=MoneyDecisionOut)
 def decide_one_off_money(lesson_id: str, request: MoneyDecisionRequest, user: dict = Depends(_manager), db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """«Оплатить» / «Не оплачивать»: один раз, только проведённый урок (повтор — 409 ``ALREADY_DECIDED``)."""
+    """«Оплатить» / «Не оплачивать»: один раз, только проведённый урок (повтор — 409 ``ALREADY_DECIDED``); ``undo`` — отменить решение, пока месяц преподавателя открыт."""
     try:
         return _purposes(db).decide(user["org_id"], user["user_id"], user["org_role"], lesson_id, request.decision, owner=user.get("org_role") == "owner")
     except BaseException:
