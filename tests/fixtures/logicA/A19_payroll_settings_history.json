@@ -12,5 +12,6 @@
       "valid_from": "2026-10",
       "divisor": 13
     }
-  ]
+  ],
+  "money_effects": null
 }

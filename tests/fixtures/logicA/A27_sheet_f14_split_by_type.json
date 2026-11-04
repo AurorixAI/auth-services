@@ -285,6 +285,7 @@
   "undecided_total": 0,
   "warnings": {
     "open_lessons": null,
+    "open_lesson_items": [],
     "pending_excused": 0,
     "no_fee": 0,
     "unpaid": 0,
