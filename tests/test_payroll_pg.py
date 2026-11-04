@@ -1202,8 +1202,13 @@ def test_group_lesson_type_is_stored_audited_and_returned(world):
     assert c.post(f"{API}/org/groups", json={"name": "Плохая", "lesson_type": "huge"}).status_code == 422
     created = world.db.query(GroupAudit).filter_by(group_id=gid, action="created").one()
     assert created.snapshot["lesson_type"] == "pair"
-    # an administrator changes it: the change is in the audit log
+    # an administrator changes it: the change is in the audit log - WITH the money right (Money-1 R3 acceptance: the type sets the rate of the teacher); without it 403 and nothing written
     admin = make_client(world, user=world.admin)
+    refused = admin.put(f"{API}/org/groups/{gid}", json={"lesson_type": "individual"})
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "MONEY_RIGHT_REQUIRED"
+    assert c.get(f"{API}/org/groups/{gid}").json()["lesson_type"] == "pair" and world.db.query(GroupAudit).filter_by(group_id=gid, action="updated").count() == 0
+    from tests.ops_helpers import grant_money_right
+    grant_money_right(world)
     r = admin.put(f"{API}/org/groups/{gid}", json={"lesson_type": "individual"})
     assert r.status_code == 200 and r.json()["lesson_type"] == "individual"
     audit = world.db.query(GroupAudit).filter_by(group_id=gid, action="updated").one()

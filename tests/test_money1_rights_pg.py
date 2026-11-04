@@ -73,3 +73,34 @@ def test_r3_1_a_day_off_changes_the_deductions_so_it_is_for_the_money_right_but_
     assert admin.post(f"{days}/preview", json={"dateFrom": "2026-11-23", "dateTo": "2026-11-23"}).status_code == 200
     assert admin.post(f"{days}/{day_off_id}/apply").status_code == 200
     assert admin.post(f"{days}/{day_off_id}/void").status_code == 200
+
+
+def test_r3_acceptance_the_type_of_lessons_in_the_edit_of_a_group_needs_the_money_right_and_the_request_is_all_or_nothing(world, now_4_nov):
+    """``PUT /org/groups/{id}`` with ``lesson_type`` changes the pay rate of the teacher (rates are per teacher x type): an administrator without the right gets 403 and NOTHING of the request is written
+    (not the name of the same request either); the other fields stay for any manager."""
+    from src.models.auth import GroupAudit, GroupLessonTypeHistory
+
+    url = f"{P}/groups/{world.group.id}"
+    name = world.group.name
+    admin, owner = make_client(world, user=world.admin), make_client(world, user=world.owner)
+
+    def state():
+        world.db.expire_all()
+        g = world.db.get(type(world.group), world.group.id)
+        return (g.name, g.lesson_type, world.db.query(GroupLessonTypeHistory).filter_by(group_id=g.id).count(), world.db.query(GroupAudit).filter_by(group_id=g.id).count())
+
+    before = state()
+    assert before[1] == "group"
+    refused = admin.put(url, json={"name": "Переименована", "lesson_type": "pair"})
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "MONEY_RIGHT_REQUIRED"
+    assert state() == before and before[0] == name                                                   # neither the type nor the name of the same request, no history row, no audit row
+    assert admin.put(url, json={"name": "Только имя"}).status_code == 200                              # the other fields: any manager
+    after_name = state()
+    assert after_name[0] == "Только имя" and after_name[1] == "group"
+    assert admin.put(url, json={"name": "Только имя", "lesson_type": "group"}).status_code == 200      # the SAME type is not a change: no right needed
+    assert owner.put(url, json={"lesson_type": "pair"}).status_code == 200                              # the owner
+    changed = state()
+    assert changed[1] == "pair" and changed[2] > after_name[2] and changed[3] > after_name[3]            # the history row of the new type (+ the seed row of a group without history) and an audit row
+    grant_money_right(world)
+    assert admin.put(url, json={"lesson_type": "individual"}).status_code == 200                       # an administrator the owner allowed
+    assert state()[1] == "individual"

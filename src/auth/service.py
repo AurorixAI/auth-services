@@ -2095,7 +2095,10 @@ class AuthService:
         *,
         actor_id: str,
         actor_role: Optional[str] = None,
+        money_right: bool = False,
     ) -> GroupResponse:
+        """``money_right`` (Money-1 R3 acceptance, A4 / I-6): the type of lessons of the group sets the pay rate of its teacher (rates are per teacher x type), so a REAL change of ``lesson_type`` is
+        for the owner / an administrator with the payments right - 403 ``MONEY_RIGHT_REQUIRED`` and nothing of the request is written (all or nothing); the other fields are for any manager."""
         changes = request.model_dump(exclude_none=True)
         if "teacher_id" in request.model_fields_set and request.teacher_id is None:
             # W1 round 2: «Не назначен» is no value of an existing group (a group is without a teacher only at creation, after a dismissal / a change of role)
@@ -2123,6 +2126,9 @@ class AuthService:
             raise ValueError("Группа не найдена")
         if group.status != "active":
             raise ops_rules.group_archived()  # O4: an archived group is read-only
+        if not money_right and "lesson_type" in changes and changes["lesson_type"] != group.lesson_type:
+            self.db.rollback()          # nothing of this request is written: the lock is let go before the refusal
+            raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Вид занятий группы задаёт ставку преподавателя: его меняет владелец или администратор, которому владелец разрешил деньги")
         teacher_changed = False
         if "teacher_id" in changes:
             try:

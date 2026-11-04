@@ -1,7 +1,7 @@
 """Money-1 A4 (I-6): the rights on money are ONE - the owner or an administrator the owner allowed (``require_payments_access`` / ``money_rights_flag``).
 
 The guard walks EVERY route of the application and fails when a route that moves money has no such dependency.  R3 #10: it is a REGISTRY with a ban by default - every
-non-GET route of ``/org/*`` is classified here (money: ``WHOLE`` / ``CONDITIONAL`` / ``INLINE`` / ``MANAGER_MONEY`` / the owner-only prefixes / the payment modules, or ``NOT_MONEY``
+non-GET route of ``/org/*`` is classified here (money: ``WHOLE`` / ``CONDITIONAL`` / ``INLINE`` / ``SERVICE_CHECKED`` / the owner-only prefixes / the payment modules, or ``NOT_MONEY``
 with the reason); a new route without a record fails the test and makes its author decide.  The code is a second witness: a ``NOT_MONEY`` handler that calls a service
 that moves money fails too.  Per LESSONS 94 the test first asserts that the walk FOUND the routes it is about."""
 import inspect
@@ -13,6 +13,7 @@ from fastapi.routing import APIRoute
 
 from src.api import main_v2
 from src.auth import dependencies
+from src.auth.one_off_purpose import OneOffPurpose
 
 P = "/api/v1/auth"
 
@@ -38,6 +39,7 @@ WHOLE = {
 # the part of the route that moves money asks the flag (``money_rights_flag``): the route is used by teachers / administrators for the rest
 CONDITIONAL = {
     ("POST", f"{P}/org/groups/{{group_id}}/attendance"),                    # a correction of a held lesson
+    ("PUT", f"{P}/org/groups/{{group_id}}"),                                # the type of lessons of the group sets the pay rate of its teacher: a REAL change of ``lesson_type`` needs the right (the rest of the fields: any manager)
     ("POST", f"{P}/org/groups/{{group_id}}/attendance/impact"),             # R3 #24: the money right, or the teacher of THIS lesson without the sums
     ("POST", f"{P}/org/groups/{{group_id}}/attendance/reconcile"),          # a lesson formalised backwards, «кто провёл»
     ("PUT", f"{P}/org/groups/{{group_id}}/lesson-teacher"),                 # who taught a held lesson (ЗП-02)
@@ -54,9 +56,10 @@ INLINE = {
     ("POST", f"{P}/org/import/preview"), ("POST", f"{P}/org/import/commit"),  # the opening-balance columns are read only with the right
 }
 
-# a conscious exception: the owner / an administrator decides WITHOUT the money right, the amounts are hidden from him (the owner sees them) - decided in the earlier packs
-MANAGER_MONEY = {
-    ("POST", f"{P}/org/one-off-lessons/{{lesson_id}}/money-decision"): "«Оплатить / Не оплачивать» an additional lesson: the decision belongs to the manager, the sums only to the owner",
+# the money right is checked INSIDE the service (the route itself is open to a manager: he sees the queue), like ``INLINE`` - and the test below reads the service source for the refusal;
+# the SUMS of the pay of the teacher are the owner's (an administrator reads the number of students, not the amount)
+SERVICE_CHECKED = {
+    ("POST", f"{P}/org/one-off-lessons/{{lesson_id}}/money-decision"): ("«Оплатить / Не оплачивать» an additional lesson: ``OneOffPurpose.decide`` answers 403 MONEY_RIGHT_REQUIRED to an administrator without the right (#159)", OneOffPurpose.decide),
 }
 
 # NOT money: the reason is the proof that somebody thought about it (R3 #10).  A route here whose handler calls a money service fails the test below.
@@ -67,7 +70,6 @@ NOT_MONEY = {
     ("POST", f"{P}/org/diagnostics/quick"): "diagnostics: tests of the students",
     ("POST", f"{P}/org/diagnostics/{{diagnostic_id}}/acknowledge-report"): "a read mark on a report",
     ("POST", f"{P}/org/groups"): "a new group has no lessons held; the type of lessons is the starting value",
-    ("PUT", f"{P}/org/groups/{{group_id}}"): "name / level / limit / teacher of the group; a new type goes through LessonTypeService from today (never backwards)",
     ("POST", f"{P}/org/groups/{{group_id}}/archive"): "refused while students are in the group; the cancelled lessons pay nothing",
     ("POST", f"{P}/org/groups/{{group_id}}/restore"): "the group comes back without lessons held",
     ("POST", f"{P}/org/groups/{{group_id}}/attendance/start"): "a lesson begins: the money appears when it is completed (the marks route is CONDITIONAL)",
@@ -167,7 +169,7 @@ def test_every_payment_module_route_is_behind_the_money_right_except_the_named_o
 
 def _is_money_class(key, deps):
     module = ROUTES[key][1].endpoint.__module__.rsplit(".", 1)[-1]
-    return (key in WHOLE or key in CONDITIONAL or key in INLINE or key in MANAGER_MONEY or key[1].startswith(OWNER_ONLY_PREFIXES) or module in PAYMENT_MODULES)
+    return (key in WHOLE or key in CONDITIONAL or key in INLINE or key in SERVICE_CHECKED or key[1].startswith(OWNER_ONLY_PREFIXES) or module in PAYMENT_MODULES)
 
 
 PAYMENT_MODULES = ("payments_router", "payments_pay2_router", "openings_router", "payments_income_router")
@@ -179,12 +181,19 @@ def test_every_non_get_route_of_the_centre_is_classified_and_the_registry_has_no
     assert len(org) >= 85, len(org)
     unclassified = [k for k in sorted(org) if not _is_money_class(k, ROUTES[k][0]) and k not in NOT_MONEY]
     assert not unclassified, f"routes with no class in tests/test_money1_rights_guard.py (money or NOT_MONEY with a reason): {unclassified}"
-    dead = [k for k in sorted(NOT_MONEY) + sorted(MANAGER_MONEY) if k not in ROUTES]
+    dead = [k for k in sorted(NOT_MONEY) + sorted(SERVICE_CHECKED) if k not in ROUTES]
     assert not dead, f"records of routes that do not exist (renamed?): {dead}"
-    classes = [WHOLE, CONDITIONAL, INLINE, set(MANAGER_MONEY), set(NOT_MONEY)]
+    classes = [WHOLE, CONDITIONAL, INLINE, set(SERVICE_CHECKED), set(NOT_MONEY)]
     double = [k for k in sorted(set().union(*classes)) if sum(k in c for c in classes) > 1]
     assert not double, f"routes in two classes: {double}"
-    assert all(reason.strip() for reason in NOT_MONEY.values()) and all(reason.strip() for reason in MANAGER_MONEY.values())
+    assert all(reason.strip() for reason in NOT_MONEY.values()) and all(reason.strip() for reason, _ in SERVICE_CHECKED.values())
+
+
+def test_a_route_whose_right_is_checked_in_the_service_has_the_refusal_in_the_service():
+    """``SERVICE_CHECKED`` is not an exemption: the service the route calls must answer 403 ``MONEY_RIGHT_REQUIRED`` itself (LESSONS 94: the walk found the records it is about)."""
+    assert SERVICE_CHECKED
+    for key, (_reason, service) in SERVICE_CHECKED.items():
+        assert "MONEY_RIGHT_REQUIRED" in inspect.getsource(service), key
 
 
 def test_a_not_money_route_does_not_call_a_money_service_and_has_no_money_dependency():
@@ -208,7 +217,7 @@ def test_a_route_with_the_money_dependency_is_a_money_record_and_the_services_ar
                                                                   or key in (CONDITIONAL | INLINE)):
             bad.append((key, "has the money dependency but is not in a money class"))
         module = route.endpoint.__module__.rsplit(".", 1)[-1]
-        if module in PAYMENT_MODULES or key[1].startswith(OWNER_ONLY_PREFIXES) or dependencies.require_payments_access in deps or key in (WHOLE | CONDITIONAL | INLINE | set(MANAGER_MONEY)):
+        if module in PAYMENT_MODULES or key[1].startswith(OWNER_ONLY_PREFIXES) or dependencies.require_payments_access in deps or key in (WHOLE | CONDITIONAL | INLINE | set(SERVICE_CHECKED)):
             continue
         if MONEY_CALLS.search(inspect.getsource(route.endpoint)):
             bad.append((key, "calls a money service and is in no money class"))

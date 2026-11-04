@@ -1189,9 +1189,10 @@ def update_group(
     group_id: str,
     request: GroupUpdateRequest,
     user: dict = Depends(require_org_admin),
+    money_right: bool = Depends(money_rights_flag),
     db: Session = Depends(get_db),
 ):
-    """Обновить группу"""
+    """Обновить группу.  Вид занятий (``lesson_type``) задаёт ставку преподавателя — его меняет только владелец или администратор с правом на деньги (иначе 403 ``MONEY_RIGHT_REQUIRED``, ничего не записано)."""
     try:
         return _svc(db).update_group(
             user["org_id"],
@@ -1199,6 +1200,7 @@ def update_group(
             request,
             actor_id=user["user_id"],
             actor_role=user.get("org_role"),
+            money_right=money_right,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
