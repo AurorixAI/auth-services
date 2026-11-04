@@ -160,9 +160,16 @@ def test_f14_the_type_by_day_splits_the_line_and_the_fingerprint_is_mandatory(wo
     # a tick on a line does not need it; the tick of a membership acts on both lines
     r = c.patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 1, "line_overrides": [{"membership_id": mid, "include_unpaid": True}]})
     assert r.status_code == 200, r.text
-    # the same type from the same day is nothing; a day before last month is out of range; the history is readable
+    # Money-1 R3 #4: the month is SAVED (closed) - a type that moves its pay backwards is refused until the owner reopens the month; then the old rules go on
+    closed = c.put(f"{API}/org/groups/{world.group.id}/lesson-type", json={"lesson_type": "pair", "valid_from": m.d(20).isoformat()})
+    assert closed.status_code == 409 and closed.json()["detail"]["code"] == "PERIOD_CLOSED" and closed.json()["detail"]["month"] == m.label
+    from tests.money1_helpers import reopen_now
+    reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Правим тип занятий")
+    # the same type from the same day is nothing; a day before the accounting start is out of range; the history is readable
     assert c.put(f"{API}/org/groups/{world.group.id}/lesson-type", json={"lesson_type": "pair", "valid_from": m.d(20).isoformat()}).status_code == 200
-    r = c.put(f"{API}/org/groups/{world.group.id}/lesson-type", json={"lesson_type": "group", "valid_from": (m.first - timedelta(days=1)).isoformat()})
+    r = c.put(f"{API}/org/groups/{world.group.id}/lesson-type", json={"lesson_type": "group", "valid_from": (world.org.created_at.date() - timedelta(days=400)).isoformat()})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "LESSON_TYPE_RANGE"
+    r = c.put(f"{API}/org/groups/{world.group.id}/lesson-type", json={"lesson_type": "group", "valid_from": (date.today() + timedelta(days=1)).isoformat()})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "LESSON_TYPE_RANGE"
     assert c.get(f"{API}/org/groups/{world.group.id}/lesson-types").json()["current"] == "pair"
     # the impact: the saved sheet of the month turns stale by a change from the 1st of the month

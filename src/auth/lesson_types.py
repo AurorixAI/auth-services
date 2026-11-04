@@ -99,11 +99,19 @@ class LessonTypeService:
         out = self._out(group, ps.business_today())
         return GroupLessonTypes(current=out.current, history=out.history)
 
-    @staticmethod
-    def _check_range(valid_from: date, today: date) -> None:
-        lowest = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
-        if valid_from > today or valid_from < lowest:
-            raise LessonTypeRange("Тип занятий можно менять с начала прошлого месяца по сегодня")
+    def _check_range(self, org_id: str, valid_from: date, today: date) -> None:
+        """Money-1 R3 #4: the old calendar window «from the start of last month» is gone - the month of a teacher that is CLOSED is protected by the one rule of the closed period
+        (``_assert_months_open``); what stays is the physical bound: not the future and not before the accounting start of the centre (nothing is accounted earlier)."""
+        from .closed_period import accounting_start
+
+        if valid_from > today or valid_from < accounting_start(self.db, org_id):
+            raise LessonTypeRange("Тип занятий можно менять с начала учёта центра по сегодня")
+
+    def _assert_months_open(self, org_id: str, group: Group, valid_from: date, today: date) -> None:
+        """A new type moves the pay of the teachers of the group backwards to ``valid_from``: not into a month whose sheet is saved (the owner reopens it first)."""
+        from .closed_period import ClosedPeriods, group_teacher_ids
+
+        ClosedPeriods.of(self.db, org_id).assert_range_open(group_teacher_ids(self.db, group, valid_from, today), valid_from, today, "тип занятий")
 
     def _write(self, org_id, group: Group, rows, valid_from: date, lesson_type: str, was: str, actor_id: str, actor_role: str, today: date) -> None:
         """One history row (valid_from, type), the mirror ``groups.lesson_type`` and the audit row - in the caller's transaction (no commit)."""
@@ -148,8 +156,9 @@ class LessonTypeService:
         today = ps.business_today()
         try:
             valid_from = body.valid_from or today
-            self._check_range(valid_from, today)
+            self._check_range(org_id, valid_from, today)
             group = self._group(org_id, group_id, lock=True)
+            self._assert_months_open(org_id, group, valid_from, today)
             rows = history_of(self.db, group.id)
             if not rows:  # a group made after the migration: its history starts with its own type
                 self.db.add(GroupLessonTypeHistory(group_id=group.id, valid_from=SEED_DAY, lesson_type=group.lesson_type or "group"))

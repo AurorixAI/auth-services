@@ -26,7 +26,7 @@ from uuid import UUID
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
-from src.models.auth import PayrollPeriodReopening, PayrollSheet, User
+from src.models.auth import Organization, PayrollPeriodReopening, PayrollSheet, User
 
 from . import business_clock as bc
 from .ops_rules import OpsError, conflict, short_name
@@ -218,6 +218,15 @@ def group_teacher_ids(db, group, first: date, last: date) -> Set[UUID]:
 
 # ---------------------------------------------------------------------------------------------- reopening (the journal of the closed period)
 REASON_MIN, REASON_MAX = 3, 500
+
+
+def accounting_start(db, org_id: Any) -> date:
+    """The day the centre starts to account (the setting, else the day the centre was created): the lower bound of «open for ever» months (R3 #2) and of the type of lessons (R3 #4)."""
+    from .ledger_service import accounting_start_of
+
+    row = db.query(Organization.settings, Organization.created_at).filter(Organization.id == org_id).first()
+    block = (row[0] or {}).get("payments") if row and isinstance(row[0], dict) else None
+    return accounting_start_of(dict(block) if isinstance(block, dict) else {}, row[1] if row else None)
 
 
 def _parse_month(text: str) -> date:

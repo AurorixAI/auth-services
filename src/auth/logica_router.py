@@ -202,7 +202,7 @@ def put_lesson_type(
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Тип занятий группы с даты (по умолчанию сегодня; не раньше начала прошлого месяца). Список ведомостей — только владельцу."""
+    """Тип занятий группы с даты (по умолчанию сегодня; не раньше начала учёта центра и не в закрытый месяц). Список ведомостей — только владельцу."""
     try:
         return LessonTypeService(db).put(user["org_id"], group_id, user["user_id"], request, dry_run=dry_run,
                                          owner=user.get("org_role") == "owner", actor_role=_role(user))
