@@ -153,7 +153,10 @@ def test_4_rights_and_input(five_groups):
     w, gs, ss, ms = five_groups
     assert client(w, "A").post(f"{API}/org/days-off/preview", json=DAY_OFF).status_code == 403          # a teacher: no
     assert client(w, "A").post(f"{API}/org/days-off", json=DAY_OFF).status_code == 403
-    assert client(w, "admin").post(f"{API}/org/days-off/preview", json=DAY_OFF).status_code == 200      # an admin: yes
+    assert client(w, "admin").post(f"{API}/org/days-off/preview", json=DAY_OFF).status_code == 403      # R3 #1: an admin WITHOUT the money right: no (a day off moves the deductions)
+    from tests.ops_helpers import grant_money_right
+    grant_money_right(w)
+    assert client(w, "admin").post(f"{API}/org/days-off/preview", json=DAY_OFF).status_code == 200      # an admin the owner allowed: yes
     c = client(w, "owner")
     assert c.post(f"{API}/org/days-off", json={**DAY_OFF, "reason": "ab"}).status_code == 422             # >= 3 characters (the dry run asks no reason)
     assert c.post(f"{API}/org/days-off/preview", json={k: v for k, v in DAY_OFF.items() if k != "reason"}).status_code == 200

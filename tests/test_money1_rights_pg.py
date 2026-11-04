@@ -1,5 +1,6 @@
 """Money-1 A4 in action: the routes that teachers and administrators use for everyday work answer 403 ``MONEY_RIGHT_REQUIRED`` only for the part that moves money (PostgreSQL)."""
 from datetime import date, timedelta
+from uuid import uuid4
 
 from tests.money1_helpers import hold_lesson, now_4_nov  # noqa: F401  (fixtures)
 from tests.ops_helpers import grant_money_right
@@ -53,3 +54,22 @@ def test_a_student_who_paid_ahead_leaves_with_the_money_right_only(world, now_4_
     assert refused.status_code == 403, refused.text
     grant_money_right(world)
     assert admin.delete(f"{P}/groups/{world.group.id}/students/{s1.id}").status_code == 200
+
+
+def test_r3_1_a_day_off_changes_the_deductions_so_it_is_for_the_money_right_but_the_journal_is_for_any_manager(world, now_4_nov):
+    """«Выходной день центра» turns the cancellations «по вине центра» into «праздник» (and back): the same money as ``cancellation-kind`` - the same right."""
+    days = f"{P}/days-off"
+    body = {"dateFrom": "2026-11-20", "dateTo": "2026-11-20", "reason": "Праздник"}
+    admin, owner, teacher = (make_client(world, user=u) for u in (world.admin, world.owner, world.teacher))
+    for call in (lambda c: c.post(f"{days}/preview", json=body), lambda c: c.post(days, json=body),
+                 lambda c: c.post(f"{days}/{uuid4()}/apply"), lambda c: c.post(f"{days}/{uuid4()}/void")):
+        assert call(admin).status_code == 403 and call(teacher).status_code == 403          # an administrator without the right; a teacher
+    assert admin.get(days).status_code == 200                                               # the journal is a read: any manager
+    made = owner.post(days, json=body)
+    assert made.status_code == 201, made.text
+    day_off_id = made.json()["dayOff"]["id"]
+    assert admin.post(f"{days}/{day_off_id}/void").status_code == 403
+    grant_money_right(world)
+    assert admin.post(f"{days}/preview", json={"dateFrom": "2026-11-23", "dateTo": "2026-11-23"}).status_code == 200
+    assert admin.post(f"{days}/{day_off_id}/apply").status_code == 200
+    assert admin.post(f"{days}/{day_off_id}/void").status_code == 200
