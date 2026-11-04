@@ -369,6 +369,7 @@ class ArchiveBlocker(BaseModel):
     students: Optional[List[Dict[str, Any]]] = None
     lessons: Optional[List[Dict[str, Any]]] = None
     exams: Optional[List[Dict[str, Any]]] = None
+    cancelConsequence: Optional[str] = None       # Money-1 A6 (П8): MISSED_LESSONS - what «Отменить их при архивации» does to money (said before the confirmation)
 
 
 class ArchiveAutoAction(BaseModel):

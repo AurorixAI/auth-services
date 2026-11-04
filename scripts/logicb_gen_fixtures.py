@@ -222,11 +222,13 @@ missed_g3 = [o for o in occurrences("G3", date(2026, 9, 1), ARCH_LOCAL.date()) i
 assert [m[0].isoformat() for m in missed_g3] == ["2026-10-19"]
 assert len(future_g3) == 8  # 26.10 ... 14.12
 s6 = {"id": IDS["s6"], "name": "Каримов А.", "displayId": "AL09-004"}
+# Money-1 A6 (П8): the sentence the dialog of the archive shows BEFORE the confirmation of the cancellation of the missed lessons
+CANCEL_CONSEQUENCE = "Если отменить эти уроки при архивации, за них не начислят ученикам и не заплатят преподавателям. Сначала разберите их, если они были"
 put("c2_archive_impact.json", "ArchiveImpactOut", {
     "groupId": IDS["G3"], "groupName": "8-В", "status": "active", "canArchive": False, "examService": "ok",
     "blockers": [
         {"code": "ACTIVE_STUDENTS", "count": 1, "students": [s6]},
-        {"code": "MISSED_LESSONS", "count": 1, "lessons": [
+        {"code": "MISSED_LESSONS", "count": 1, "cancelConsequence": CANCEL_CONSEQUENCE, "lessons": [
             {"lessonId": LESSON["L4"], "lessonDate": "2026-10-19", "startTime": "10:00", "endTime": "11:30", "teacherName": short("B")}]},
     ],
     "autoActions": [{"code": "RELEASE_EXAMS", "count": 1}, {"code": "STOP_FUTURE_LESSONS", "count": len(future_g3)}],
@@ -234,7 +236,7 @@ put("c2_archive_impact.json", "ArchiveImpactOut", {
 })
 put("c2_archive_blocked.json", "-", error(409, "GROUP_ARCHIVE_BLOCKED", "Группу нельзя архивировать", blockers=[
     {"code": "ACTIVE_STUDENTS", "count": 1, "students": [s6]},
-    {"code": "MISSED_LESSONS", "count": 1, "lessons": [
+    {"code": "MISSED_LESSONS", "count": 1, "cancelConsequence": CANCEL_CONSEQUENCE, "lessons": [
         {"lessonId": LESSON["L4"], "lessonDate": "2026-10-19", "startTime": "10:00", "endTime": "11:30", "teacherName": short("B")}]},
 ]))
 put("c2_archive_ok.json", "ArchiveGroupOut", group_response(

@@ -118,3 +118,35 @@ def test_a_stranger_cannot_be_named_as_the_teacher_who_taught(world, now_4_nov):
     day, lid = lesson(date(2026, 10, 30))
     r = make_client(world, user=world.owner).post(f"{API}/{world.group.id}/attendance/reconcile", json={"lessonDate": day.isoformat(), "lessonId": lid, "taughtBy": str(world.foreign_admin.id)})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "TARGET_NOT_TEACHER"
+
+
+def test_the_journal_says_what_changed_and_that_the_lesson_was_formalised_afterwards(world, now_4_nov):
+    """П9 / Д4: «было → стало» per student from the audit, every earlier correction in ``history``, and the mark «оформлен задним числом» with the teacher who taught."""
+    day, lid = lesson(date(2026, 10, 30))
+    owner = make_client(world, user=world.owner)
+    owner.post(f"{API}/{world.group.id}/attendance/reconcile", json={"lessonDate": day.isoformat(), "lessonId": lid, "taughtBy": str(world.teacher2.id)})
+    s1, s2, s3 = world.students
+    save(world, day, lid, [(s1, "present"), (s2, "present"), (s3, "present")], status="completed")
+    save(world, day, lid, [(s1, "absent"), (s2, "present"), (s3, "present")], status="completed", correctionReason="Первая правка")
+    save(world, day, lid, [(s1, "absent"), (s2, "late"), (s3, "present")], status="completed", correctionReason="Вторая правка")
+    journal = owner.get(f"{API}/{world.group.id}/attendance", params={"date_from": day.isoformat(), "date_to": day.isoformat()}).json()
+    key = f"{day.isoformat()}|{lid}" if f"{day.isoformat()}|{lid}" in journal["corrections"] else next(iter(journal["corrections"]))
+    last = journal["corrections"][key]
+    assert last["reason"] == "Вторая правка" and last["changes"] == [{"studentId": str(s2.id), "from": "present", "to": "late"}]
+    assert [h["reason"] for h in last["history"]] == ["Первая правка"] and last["history"][0]["changes"] == [{"studentId": str(s1.id), "from": "present", "to": "absent"}]
+    mark = journal["backdated"][key]
+    assert mark["taught_by_name"] and mark["by_name"] is not None
+
+
+def test_the_archive_of_a_group_says_before_the_confirmation_which_lessons_it_cancels_and_what_that_costs(world, now_4_nov):
+    """П8: the dialog showed a number; now the lessons (date, teacher) and the sentence «за них не начислят и не заплатят»."""
+    for s in list(world.students):
+        s.group_id = None
+    from src.models.auth import StudentGroup
+
+    world.db.query(StudentGroup).filter_by(group_id=world.group.id).update({"is_active": False})
+    world.db.commit()
+    impact = make_client(world, user=world.admin).get(f"{API}/{world.group.id}/archive-impact").json()
+    missed = next(b for b in impact["blockers"] if b["code"] == "MISSED_LESSONS")
+    assert missed["count"] >= 1 and len(missed["lessons"]) == missed["count"] and missed["lessons"][0]["teacherName"]
+    assert "не начислят" in missed["cancelConsequence"] and "не заплатят" in missed["cancelConsequence"]

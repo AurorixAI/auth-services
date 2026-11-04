@@ -5024,6 +5024,7 @@ class AuthService:
             diagnosticReportNotices=diagnostic_report_notices,
             excuses=excuses_map,
             corrections=corrections_map,
+            backdated=AttendanceExcuseService(self.db).backdated_payload(org_id, attendance_keys),
             versions=versions,
             lessonTeachers=teachers_of_lessons,
         )
@@ -5543,7 +5544,7 @@ class AuthService:
             and att.status == LessonAttendanceStatus.COMPLETED.value
         )
         if att.status != LessonAttendanceStatus.IN_PROGRESS.value and not is_correction_save:
-            raise ValueError("Отметки можно изменять только у начатого урока")
+            raise ValueError("Отметки меняются только у начатого урока. Урок отменён или не начат; проведённый урок исправляет владелец, администратор с правом оплат или преподаватель этого урока")
 
         if matching_slot and lesson_date == today and not is_correction_save:
             start_time = matching_slot.get("startTime")
@@ -5645,9 +5646,9 @@ class AuthService:
             excuses_before = lesson_return.excuse_statuses(self.db, att.id)
 
         if att and att.status == LessonAttendanceStatus.COMPLETED.value and requested_status != before_status:
-            raise ValueError("Завершённый урок нельзя вернуть в другой статус")
+            raise ValueError("Проведённый урок нельзя вернуть в «не проведён» отметками. Это делает владелец или администратор с правом оплат: кнопка «Вернуть урок»")
         if att and att.status == LessonAttendanceStatus.CANCELLED.value and requested_status != before_status:
-            raise ValueError("Отменённый урок нельзя повторно открыть")
+            raise ValueError("Урок отменён. Вернуть его на разбор («Требует разбора») может владелец или администратор с правом оплат: кнопка «Вернуть урок»")
 
         if not att:
             att = GroupAttendance(

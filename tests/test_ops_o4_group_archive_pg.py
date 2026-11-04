@@ -6,7 +6,7 @@ import pytest
 from src.models.auth import Group, GroupAttendance, GroupAudit, StudentGroup
 
 from tests.ops_helpers import (  # noqa: F401  (fixtures)
-    build_d0, clock, client, code_of, exams, fixture, history_row, needs_pg, new_group, new_slot, new_student, pg_session, run_parallel,
+    build_d0, clock, client, code_of, grant_money_right, exams, fixture, history_row, needs_pg, new_group, new_slot, new_student, pg_session, run_parallel,
 )
 
 pytestmark = needs_pg
@@ -238,6 +238,7 @@ def test_archived_group_is_read_only_for_the_writers(w, clock):
 def test_chain2_archive_a_group_with_a_student_missed_lessons_and_an_exam(w, clock, exams):
     """[O4.R1] [O4.R5] [O4.R6] Chain 2 (golden): 8-В, the student s6, the missed Monday 19.10 and a lobby exam E; impact -> move / archive the student -> archive with cancel ->
     start refused -> restore (B inactive: TEACHER_INACTIVE, then C)."""
+    grant_money_right(w)                    # Money-1 A4: this chain transfers a student - for the money right
     ids = w.ids
     exams.group_exams = [{"examId": "EX_9", "title": "Контрольная №4", "status": "lobby", "lessonDate": "2026-10-26", "canRelease": True, "blockerReason": None}]
     cl = client(w, "admin")

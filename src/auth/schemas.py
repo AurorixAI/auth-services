@@ -572,6 +572,8 @@ class GroupAttendanceResponse(BaseModel):
     excuses: Dict[str, Dict[str, Dict[str, Any]]] = Field(default_factory=dict)
     # Latest correction of a completed lesson: { lessonKey: {by_name, at, reason} }.
     corrections: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    # Money-1 A6: lessons formalised afterwards («оформлен задним числом»): { lessonKey: {by_name, at, taught_by_name} }.
+    backdated: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 
 class OpenAttendanceActionResponse(BaseModel):

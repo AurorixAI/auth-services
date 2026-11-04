@@ -7,6 +7,7 @@ from sqlalchemy import func
 
 from src.models.auth import GroupAttendance, GroupAudit, StudentGroup
 
+from tests.ops_helpers import grant_money_right  # noqa: E402
 from tests.ops_helpers import (  # noqa: F401  (fixtures)
     build_d0, clock, client, diff, exams, fixture, history_row, needs_pg, new_group, new_slot, new_student, pg_session,
 )
@@ -33,6 +34,7 @@ def row_of(w, group, lesson, day):
 def test_chain1_teacher_removed_groups_handed_over_substitution_payroll(w, clock):
     """Chain 1: 14:00 impact -> handover G1 -> B is busy -> G1 -> C, G2 -> B -> DELETE A; 14:10 the admin reconciles L3 of 20.10 (A taught it); L2 of 21.10 is C's;
     L1 of 26.10 is given to D who teaches it; the October lesson counts per teacher; A stays in the payroll data."""
+    grant_money_right(w)                    # Money-1 A4: this chain changes who taught a held lesson / transfers a student - for the money right
     ids, owner, admin = w.ids, client(w, "owner"), client(w, "admin")
     mid = lambda key: str(ids("member_" + key))  # noqa: E731
     impact = owner.get(f"{API}/org/members/{mid('A')}/removal-impact").json()
@@ -86,6 +88,7 @@ def test_chain1_teacher_removed_groups_handed_over_substitution_payroll(w, clock
 def test_chain4_phantom_lessons_the_seven_day_window_and_a_missed_lesson_after_a_handover(w, clock):
     """Chain 4: a slot added today has no past lessons (reconcile 19.10 refused); a lesson missed on 13.10 belongs to A (the teacher of that date) although the group went to B on 21.10 and A
     was removed: the administrator reconciles it, B does not (NOT_LESSON_TEACHER), and a teacher would not be allowed to close a lesson older than 7 days anyway."""
+    grant_money_right(w)                    # Money-1 A4: this chain changes who taught a held lesson / transfers a student - for the money right
     ids, admin = w.ids, client(w, "admin")
     g5 = new_group(w.db, w.org, ids, "G5", "10-А", w.D, [], class_level=10)
     new_student(w.db, w.org, ids, "g5a", "Пятый", "Ученик", g5, class_level=10, joined=datetime(2026, 10, 1, 5, 0))
@@ -117,6 +120,7 @@ def test_chain4_phantom_lessons_the_seven_day_window_and_a_missed_lesson_after_a
 def test_chain5_the_running_exam_after_a_transfer_o17_auth_side(w, clock):
     """[O17.R1] [O17.R2] [O17.R3] [O17.R4] [O17.R5] [O17.R6] [O17.R7] [O17.R8] [O17.R9] Chain 5 / O17 (auth side; the exam-service side is in its test_o17_resume_after_transfer): s2 was a member of 9-А when the exam began (as_of 16:45 local = 11:45 UTC); he is moved to 7-Б after the lesson: the ordinary check says no, the check as of the start says yes
     (the golden answer); the boundary rows: left_at == started_at is not enrolled, moved before the start is not enrolled, archived during the exam is enrolled as of the start."""
+    grant_money_right(w)                    # Money-1 A4: this chain transfers a student - for the money right
     clock.set("2026-10-21 17:20")
     as_of = datetime(2026, 10, 21, 11, 45)
     assert client(w, "admin").post(f"{API}/org/groups/{w.G2.id}/students/{w.s2.id}").status_code == 200       # transfer: closes the membership of 9-А at 12:20 UTC

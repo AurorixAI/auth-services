@@ -92,6 +92,17 @@ def _mark_before(excuse: "AttendanceExcuse") -> Dict[str, Any]:
     }
 
 
+def _changes(audit: GroupAttendanceAudit) -> list:
+    """``[{"studentId", "from", "to"}]`` of the marks a correction changed (an absent mark is ``None``)."""
+    before, after = dict(audit.before_records or {}), dict(audit.after_records or {})
+    return [{"studentId": sid, "from": before.get(sid), "to": after.get(sid)} for sid in sorted(set(before) | set(after)) if before.get(sid) != after.get(sid)]
+
+
+def _event(audit: GroupAttendanceAudit, users: Dict[UUID, User]) -> Dict[str, Any]:
+    return {"kind": "returned" if audit.action == "completed_reverted" else "corrected", "by_name": _user_name(users.get(audit.actor_id)), "at": _iso(audit.created_at),
+            "reason": audit.correction_reason, "changes": _changes(audit)}
+
+
 def lesson_key(att: GroupAttendance) -> str:
     """The instance key used by the attendance journal (``date_lessonId``)."""
     return f"{att.lesson_date}_{att.lesson_id or f'lesson_{att.lesson_date}'}"
@@ -533,17 +544,20 @@ class AttendanceExcuseService:
             .filter(
                 GroupAttendanceAudit.org_id == org_id,
                 GroupAttendanceAudit.attendance_id.in_(att_ids),
-                GroupAttendanceAudit.action == "corrected",
+                GroupAttendanceAudit.action.in_(("corrected", "completed_reverted")),
             )
-            .order_by(GroupAttendanceAudit.created_at.desc())
+            .order_by(GroupAttendanceAudit.created_at.desc(), GroupAttendanceAudit.id.desc())
             .all()
         )
         latest_audit: Dict[UUID, GroupAttendanceAudit] = {}
+        every_audit: Dict[UUID, list] = {}
         for audit in audits:
-            latest_audit.setdefault(audit.attendance_id, audit)
+            every_audit.setdefault(audit.attendance_id, []).append(audit)
+            if audit.action == "corrected":
+                latest_audit.setdefault(audit.attendance_id, audit)
 
         user_ids = {r.reason_by for r in rows} | {r.reviewed_by for r in rows if r.reviewed_by}
-        user_ids |= {a.actor_id for a in latest_audit.values()}
+        user_ids |= {a.actor_id for items in every_audit.values() for a in items}
         users = self._users(user_ids)
         with_files = set()
         if rows:
@@ -596,8 +610,25 @@ class AttendanceExcuseService:
                 "by_name": _user_name(users.get(audit.actor_id)),
                 "at": _iso(audit.created_at),
                 "reason": audit.correction_reason,
+                # Money-1 A6 (П9): WHAT changed - «было → стало» per student from the audit (``before_records`` / ``after_records``) - and every earlier correction / return of the lesson,
+                # newest first (LESSONS 11: the journal shows the whole fate of a record, not only the last edit)
+                "changes": _changes(audit),
+                "history": [_event(a, users) for a in every_audit.get(att_id, []) if a.id != audit.id],
             }
         return excuses, corrections
+
+    def backdated_payload(self, org_id: str, attendance_keys: Dict[UUID, str]) -> Dict[str, Dict[str, Any]]:
+        """Money-1 A6 (Д4): ``{lessonKey: {by_name, at, taught_by_name}}`` of the lessons that were FORMALISED AFTERWARDS («Оформить проведённый урок»: audit ``reconciliation_started``) - the journal
+        marks them «оформлен задним числом»; ``taught_by_name`` only when somebody other than the planned teacher was named."""
+        if not attendance_keys:
+            return {}
+        audits = (self.db.query(GroupAttendanceAudit).filter(GroupAttendanceAudit.org_id == org_id, GroupAttendanceAudit.attendance_id.in_(list(attendance_keys)),
+                                                             GroupAttendanceAudit.action == "reconciliation_started").all())
+        taught = {a.attendance_id: (a.details or {}).get("taught_by") for a in audits}
+        users = self._users({a.actor_id for a in audits} | {UUID(t) for t in taught.values() if t})
+        return {attendance_keys[a.attendance_id]: {"by_name": _user_name(users.get(a.actor_id)), "at": _iso(a.created_at),
+                                                    "taught_by_name": _user_name(users.get(UUID(taught[a.attendance_id]))) if taught.get(a.attendance_id) else None}
+                for a in audits if a.attendance_id in attendance_keys}
 
     def _users(self, ids) -> Dict[UUID, User]:
         ids = {i for i in ids if i}
