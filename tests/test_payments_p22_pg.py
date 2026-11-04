@@ -225,7 +225,7 @@ def test_a_taken_number_is_retried_with_the_new_maximum(world, monkeypatch):
 
     monkeypatch.setattr(PaymentService, "_next_receipt_no", stale_once)
     second = pay(world, world.students[1], paid_on=day(-3), valid_to=day(20), amount=2)["payment"]
-    assert second["receipt_no"] == 2 and len(calls) == 2
+    assert second["receipt_no"] == 2 and len(calls) == 3        # Money-1 R3: the pre-pass (rolled back) took the stale number and retried (2), the real run took the right one at once (1)
     # the failed attempt left nothing behind and the session is usable
     assert world.db.query(StudentPayment).filter_by(org_id=world.org.id).count() == 2
 

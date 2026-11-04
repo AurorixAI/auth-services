@@ -169,7 +169,7 @@ def test_f14_the_type_by_day_splits_the_line_and_the_fingerprint_is_mandatory(wo
     assert c.put(f"{API}/org/groups/{world.group.id}/lesson-type", json={"lesson_type": "pair", "valid_from": m.d(20).isoformat()}).status_code == 200
     r = c.put(f"{API}/org/groups/{world.group.id}/lesson-type", json={"lesson_type": "group", "valid_from": (world.org.created_at.date() - timedelta(days=400)).isoformat()})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "LESSON_TYPE_RANGE"
-    r = c.put(f"{API}/org/groups/{world.group.id}/lesson-type", json={"lesson_type": "group", "valid_from": (date.today() + timedelta(days=1)).isoformat()})
+    r = c.put(f"{API}/org/groups/{world.group.id}/lesson-type", json={"lesson_type": "group", "valid_from": (_today() + timedelta(days=1)).isoformat()})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "LESSON_TYPE_RANGE"
     assert c.get(f"{API}/org/groups/{world.group.id}/lesson-types").json()["current"] == "pair"
     # the impact: the saved sheet of the month turns stale by a change from the 1st of the month

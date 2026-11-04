@@ -7,7 +7,7 @@ from src.auth import money_reconcile as mr
 from src.auth.payments_schemas import PaymentCreated, PaymentVoided, RefundCreated, RefundVoided, WriteoffCreated, WriteoffVoided
 from src.models.auth import GroupAttendance
 
-from tests.pg_world import ensure_billing, needs_pg, pg_session, world  # noqa: F401  (fixtures)
+from tests.pg_world import business_today, ensure_billing, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_logicA_payroll_pg import API, g_pay_world, owner, save_sheet
 from tests.test_payments_service_pg import pay
 from tests.test_pay2_api_pg import fixed_today  # noqa: E402,F401  (fixture)
@@ -85,11 +85,11 @@ def test_r3_i5_the_real_answers_of_every_money_action_carry_the_block_of_consequ
         seen.append(effects)
         return response.json()
 
-    paid = block(client.post(f"{API}/org/memberships/{mid(world, s0)}/payments", json={"amount": 450_000, "paid_on": date.today().isoformat(), "method": "cash"}), 201)
+    paid = block(client.post(f"{API}/org/memberships/{mid(world, s0)}/payments", json={"amount": 450_000, "paid_on": business_today().isoformat(), "method": "cash"}), 201)
     block(client.post(f"{API}/org/payments/{paid['payment']['id']}/void", json={"reason": "Внесли дважды"}), 200)
     forgiven = block(client.post(f"{API}/org/memberships/{mid(world, s1)}/writeoffs", json={"all": True, "reason": "Договорённость с родителем"}), 201)
     block(client.post(f"{API}/org/writeoffs/{forgiven['writeoff']['id']}/void", json={"reason": "Ошибка"}), 200)
-    paid2 = block(client.post(f"{API}/org/memberships/{mid(world, s0)}/payments", json={"amount": 2_000_000, "paid_on": date.today().isoformat(), "method": "cash"}), 201)
+    paid2 = block(client.post(f"{API}/org/memberships/{mid(world, s0)}/payments", json={"amount": 2_000_000, "paid_on": business_today().isoformat(), "method": "cash"}), 201)
     refund = block(client.post(f"{API}/org/memberships/{mid(world, s0)}/refunds", json={"amount": 100_000, "method": "cash", "reason": "Выбыл на неделю"}), 201)
     block(client.post(f"{API}/org/refunds/{refund['refund']['id']}/void", json={"reason": "Ошибка"}), 200)
     assert len(seen) == 7 and paid2 and all(e["dryRun"] is False for e in seen)

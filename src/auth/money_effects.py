@@ -352,10 +352,12 @@ def run_with_effects(db, org_id: Any, membership_ids: Iterable[Any], owner: bool
                 logger.exception("money effects (before) could not be worked out")
                 probe = None
         block = probe.block(done=not dry_run) if probe is not None else unavailable(not dry_run)
-    except Exception:
-        if dry_run:
-            raise                                   # a refusal of the action (PaymentError, ...) is the answer of the dry run, too
-        block = unavailable(True)                   # the real run decides: it gives its own refusal or its own answer
+    except Exception as exc:
+        from .payments_service import PaymentError
+
+        if dry_run or isinstance(exc, PaymentError):
+            raise                                   # a refusal of the action (PaymentError, ...) is the answer of the dry run - and of the real run: the pre-pass ran the same code, no second round of attempts
+        block = unavailable(True)                   # any other failure of the pre-pass (not of the action itself): the real run decides, it gives its own refusal or its own answer
     if dry_run:
         return preview, block
     return action(), block

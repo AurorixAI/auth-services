@@ -33,7 +33,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
 
 from sqlalchemy import func, or_, text, tuple_
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.postgresql import distinct_on, insert as pg_insert
 
 from src.models.auth import (
     AttendanceExcuse, Group, GroupAttendance, GroupPrice, GroupScheduleOneOffLesson, GroupScheduleOverride, MembershipOpeningBalance, MembershipPause, MembershipPriceOverride,
@@ -493,7 +493,7 @@ def _previous_keys(db, org_ids: List[UUID]) -> set:
     last = (db.query(MoneyReconcileCentre.org_id, MoneyReconcileCentre.run_id)
             .join(MoneyReconcileRun, MoneyReconcileRun.id == MoneyReconcileCentre.run_id)
             .filter(MoneyReconcileCentre.status == "ok", MoneyReconcileCentre.org_id.in_(org_ids))
-            .distinct(MoneyReconcileCentre.org_id).order_by(MoneyReconcileCentre.org_id, MoneyReconcileRun.started_at.desc()).all())
+            .ext(distinct_on(MoneyReconcileCentre.org_id)).order_by(MoneyReconcileCentre.org_id, MoneyReconcileRun.started_at.desc()).all())
     if not last:
         return set()
     return {(o, i, k) for o, i, k in db.query(MoneyReconcileFinding.org_id, MoneyReconcileFinding.invariant, MoneyReconcileFinding.subject_key).filter(

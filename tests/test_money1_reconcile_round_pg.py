@@ -13,7 +13,7 @@ from src.models.auth import (
 
 from tests.money1_helpers import hold_lesson, lesson, sheet, tashkent  # noqa: F401
 from tests.ops_helpers import grant_money_right
-from tests.pg_world import ensure_billing, make_client, needs_pg, pg_session, world  # noqa: F401  (fixtures)
+from tests.pg_world import business_today, ensure_billing, make_client, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_logicA_payroll_pg import API, g_pay_world, owner, save_sheet
 from tests.test_payments_service_pg import mid, pay, set_settings
 from tests.test_pay2_api_pg import fixed_today  # noqa: E402,F401  (fixture)
@@ -230,7 +230,7 @@ def test_r3_16_an_honest_life_of_the_accounts_gives_no_finding_after_any_event(w
     assert voided.status_code == 200, voided.text
     quiet("void a payment")
     pid = p1["payment"]["id"] if "payment" in p1 else p1["id"]
-    replaced = owner_client.post(f"{API}/org/payments/{pid}/replace", json={"amount": 500_000, "paid_on": date.today().isoformat(), "method": "cash", "reason": "Неверная сумма"})
+    replaced = owner_client.post(f"{API}/org/payments/{pid}/replace", json={"amount": 500_000, "paid_on": business_today().isoformat(), "method": "cash", "reason": "Неверная сумма"})
     assert replaced.status_code == 201, replaced.text
     quiet("replace a payment")
     w = owner_client.post(f"{API}/org/memberships/{mid(world, s1)}/writeoffs", json={"all": True, "reason": "Договорённость с родителем"})
@@ -241,10 +241,10 @@ def test_r3_16_an_honest_life_of_the_accounts_gives_no_finding_after_any_event(w
     refund = owner_client.post(f"{API}/org/memberships/{mid(world, s0)}/refunds", json={"amount": 50_000, "method": "cash", "reason": "Выбыл на неделю"})
     if refund.status_code == 201:
         quiet("refund")
-    pause = owner_client.post(f"{API}/org/memberships/{mid(world, s2)}/pauses", json={"first_day": (date.today() + timedelta(days=3)).isoformat(), "last_day": (date.today() + timedelta(days=9)).isoformat()})
+    pause = owner_client.post(f"{API}/org/memberships/{mid(world, s2)}/pauses", json={"first_day": (business_today() + timedelta(days=3)).isoformat(), "last_day": (business_today() + timedelta(days=9)).isoformat()})
     if pause.status_code == 201:
         quiet("pause")
-    give_group_price(world.db, world.group, 520_000, valid_from=date.today() + timedelta(days=40))
+    give_group_price(world.db, world.group, 520_000, valid_from=business_today() + timedelta(days=40))
     quiet("a price that starts later")
     day, lid = date(2026, 10, 26), "s1"
     world.svc.cancel_missed_group_attendance(str(world.org.id), str(world.group.id), ReconcileMissedLessonRequest(lessonDate=day, lessonId=lid, cancellationReason="Нет света", cancellationKind="centre"),

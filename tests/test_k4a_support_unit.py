@@ -57,7 +57,7 @@ def test_the_role_decides_the_cabinet_page_and_an_unknown_one_falls_back_to_the_
 def test_the_three_letters_are_registered_and_have_both_parts():
     for name in ("support_new", "support_author_reply", "support_reply"):
         assert name in render.SUBJECTS and name in render.LETTERS
-    assert render.TEMPLATE_OF == {"support_new": "support_team", "support_author_reply": "support_team", "money_reconcile": "support_team"}       # Money-1 A7: the nightly reconciliation letter uses the same team template
+    assert render.TEMPLATE_OF == {"support_new": "support_team", "support_author_reply": "support_team", "money_reconcile": "support_team", "money_reconcile_failed": "support_team"}       # Money-1 A7: the nightly reconciliation letter uses the same team template
 
 
 def test_the_limits_are_the_numbers_of_the_spec():
