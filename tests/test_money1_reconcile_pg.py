@@ -59,12 +59,21 @@ def test_i4_a_closed_month_with_open_lessons_is_a_finding():
 # ------------------------------------------------------------------------------------------------------------ over a real centre
 def test_a_sheet_with_a_wrong_total_and_a_paid_lesson_that_was_cancelled_are_found(world, now_4_nov):
     day, lid = hold_lesson(world, date(2026, 10, 28))
-    row = sheet(world, world.teacher, date(2026, 10, 1), tashkent(2026, 10, 30), total=100_000)
+    row = sheet(world, world.teacher, date(2026, 10, 1), tashkent(2026, 10, 30), total=100_000)       # saved MID-month: open
     lines = [{"amount": 100_000, "group_id": str(world.group.id), "marks": [{"date": day.isoformat(), "lesson_id": lid, "state": "counted"}]}]
     row.lines, row.total_amount = lines, 250_000                                                     # the sum of the lines is 100 000, the sheet says 250 000
     world.db.commit()
     found = {(f.invariant, f.subject_key.split(":")[0]) for f in mr.reconcile_org(world.db, world.org.id)}
     assert ("I-3", "sheet-total") in found and ("I-3", "sheet-lessons") not in found                # the lesson is held: fine
+    world.db.query(GroupAttendance).filter_by(group_id=world.group.id, lesson_date=day.isoformat()).update({"status": "cancelled"})
+    world.db.commit()
+    found = {(f.invariant, f.subject_key.split(":")[0]) for f in mr.reconcile_org(world.db, world.org.id)}
+    assert ("I-3", "sheet-lessons") not in found                                                     # R3 #3: an OPEN month's sheet is a stage - the check of the lessons is for closed months only
+    world.db.query(GroupAttendance).filter_by(group_id=world.group.id, lesson_date=day.isoformat()).update({"status": "completed"})
+    row.updated_at = tashkent(2026, 11, 2)                                                           # saved after the month ended: closed
+    world.db.commit()
+    found = {(f.invariant, f.subject_key.split(":")[0]) for f in mr.reconcile_org(world.db, world.org.id)}
+    assert ("I-3", "sheet-lessons") not in found
     world.db.query(GroupAttendance).filter_by(group_id=world.group.id, lesson_date=day.isoformat()).update({"status": "cancelled"})
     world.db.commit()
     found = {(f.invariant, f.subject_key.split(":")[0]) for f in mr.reconcile_org(world.db, world.org.id)}
@@ -82,7 +91,7 @@ def test_a_closed_month_with_a_lesson_still_going_on_is_found_and_an_open_month_
     row.updated_at = tashkent(2026, 11, 2)                                                           # saved after the month: closed, the lesson is still «идёт»
     world.db.commit()
     (found,) = [f for f in mr.reconcile_org(world.db, world.org.id) if f.invariant == "I-4"]
-    assert found.month == "2026-10" and found.actual == 1 and found.subject_id == str(world.teacher.id)
+    assert found.month == "2026-10" and found.actual >= 31 and found.subject_id == str(world.teacher.id)      # R3 #2: the lesson going on AND every never-started lesson of October (a lesson every day here)
 
 
 def test_paid_until_that_moves_under_the_feet_of_the_journal_is_found_and_a_new_payment_is_not(world):
@@ -90,16 +99,16 @@ def test_paid_until_that_moves_under_the_feet_of_the_journal_is_found_and_a_new_
     ensure_billing(world)
     s0 = world.students[0]
     pay(world, s0, amount=450_000)
-    first = mr.run(world.db, apply=True)                                                             # night 1: the snapshots
+    first = mr.run(world.db, apply=True, only=[world.org.id])                                                             # night 1: the snapshots
     assert first["findings"] == 0 or all(i["invariant"] != "I-2" for i in first["items"])
     assert world.db.query(MoneyReconcileSnapshot).filter_by(org_id=world.org.id).count() == 3
     pay(world, s0, amount=450_000)                                                                   # a lawful move: a payment (a record that explains it)
-    second = mr.run(world.db, apply=True)
+    second = mr.run(world.db, apply=True, only=[world.org.id])
     assert all(not (i["invariant"] == "I-2" and i["org"] == str(world.org.id)) for i in second["items"])
     mine = world.db.query(StudentPayment).filter_by(org_id=world.org.id).order_by(StudentPayment.created_at.desc()).first()
     world.db.query(StudentPayment).filter_by(id=mine.id).update({"amount": 1_350_000})              # a silent change in the database: no record explains the move
     world.db.commit()
-    third = mr.run(world.db, apply=True)
+    third = mr.run(world.db, apply=True, only=[world.org.id])
     ours = [i for i in third["items"] if i["org"] == str(world.org.id) and i["invariant"] == "I-2"]
     assert len(ours) == 1 and ours[0]["key"].startswith("membership:")
 
@@ -107,7 +116,7 @@ def test_paid_until_that_moves_under_the_feet_of_the_journal_is_found_and_a_new_
 # ------------------------------------------------------------------------------------------------------------ the run
 def test_the_run_is_a_dry_run_by_default_and_stores_nothing(world, now_4_nov):
     before = world.db.query(MoneyReconcileRun).count()
-    result = mr.run(world.db)
+    result = mr.run(world.db, only=[world.org.id])
     assert result["apply"] is False and "runId" not in result
     assert world.db.query(MoneyReconcileRun).count() == before and world.db.query(MoneyReconcileSnapshot).filter_by(org_id=world.org.id).count() == 0
 
@@ -122,7 +131,7 @@ def test_the_run_stores_the_findings_marks_the_known_ones_and_writes_to_the_team
     row = sheet(world, world.teacher, date(2026, 10, 1), tashkent(2026, 10, 30), total=100_000)
     row.total_amount = 999_000                                                                       # lines [] -> sum 0
     world.db.commit()
-    first = mr.run(world.db, apply=True, mail=True)
+    first = mr.run(world.db, apply=True, mail=True, only=[world.org.id])
     assert first["new"] >= 1 and first["mail"] == "sent" and len(sent) == 1
     letter = sent[0]
     assert letter["To"] == "money-team@example.test" and "Сверка денег" in letter["Subject"]
@@ -130,7 +139,7 @@ def test_the_run_stores_the_findings_marks_the_known_ones_and_writes_to_the_team
     assert world.teacher.last_name not in body and world.teacher.email not in body and "sheet-total" in body        # ids and sums, no names
     run_row = world.db.get(MoneyReconcileRun, first["runId"])
     assert run_row.status == "findings" and run_row.mail_status == "sent"
-    second = mr.run(world.db, apply=True, mail=True)                                                 # the same finding stands: it is in the console, not in the mailbox again
+    second = mr.run(world.db, apply=True, mail=True, only=[world.org.id])                                                 # the same finding stands: it is in the console, not in the mailbox again
     ours = [f for f in world.db.query(MoneyReconcileFinding).filter_by(run_id=second["runId"], org_id=world.org.id)]
     assert ours and not any(f.is_new for f in ours) and second["mail"] == "skipped" and len(sent) == 1
 
@@ -140,8 +149,8 @@ def test_a_clean_night_writes_no_letter(world, monkeypatch):
     from src.mail import sender
 
     monkeypatch.setattr(sender, "deliver", lambda msg, cfg=None: sent.append(msg) or True)
-    result = mr.run(world.db, apply=True, mail=True)
-    quiet = mr.run(world.db, apply=True, mail=True)               # the same state again: whatever was found the first time is not new
+    result = mr.run(world.db, apply=True, mail=True, only=[world.org.id])
+    quiet = mr.run(world.db, apply=True, mail=True, only=[world.org.id])               # the same state again: whatever was found the first time is not new
     assert quiet["new"] == 0 and quiet["mail"] == "skipped" and len(sent) <= 1
 
 
@@ -163,8 +172,8 @@ def test_the_console_reads_the_runs_with_the_right_and_a_centre_cannot(cw):
 
 
 def test_nothing_to_say_is_no_letter():
-    assert mr._mail([], 0, "run") == "skipped"
-    assert mr._mail([mr.Found(ORG, "I-1", "membership:m1")], 0, "run") == "skipped"          # found, but it stood last night too
+    assert mr._mail([], 0, [], "run") == "skipped"
+    assert mr._mail([mr.Found(ORG, "I-1", "membership:m1")], 0, [], "run") == "skipped"          # found, but it stood last night too
 
 
 def test_the_command_is_a_dry_run_by_default_and_prints_counters_and_ids_only(world, capsys):

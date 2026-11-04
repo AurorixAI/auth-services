@@ -120,7 +120,13 @@ def render_support_new(*, ticket_id: str, number: int, centre_name: str, author_
 def render_money_reconcile(*, total: int, new: int, rows: list, run_id: str) -> Rendered:
     """To the team: the nightly reconciliation of the money found something (Money-1 A7) - the count, the first lines, the link to the section «Сверка»."""
     cfg = mail_config.load()
-    return render("money_reconcile", {"total": total, "new": new, "rows": rows, "console_link": f"{cfg.console_url}/reconciliation?run={run_id}"})
+    return render("money_reconcile", {"total": total, "new": new, "rows": rows, "console_link": f"{cfg.console_url}/money-reconcile?run={run_id}"})
+
+
+def render_money_reconcile_failed(*, failed: int, centres: list, run_id: str) -> Rendered:
+    """To the team: the nightly reconciliation could not check some centres (R3 #3) - the count and the first ids; a night with no findings and no letter must not hide that."""
+    cfg = mail_config.load()
+    return render("money_reconcile_failed", {"failed": failed, "centres": centres, "console_link": f"{cfg.console_url}/money-reconcile?run={run_id}"})
 
 
 def render_support_author_reply(*, ticket_id: str, number: int, centre_name: str, author_role: str, text: str) -> Rendered:

@@ -62,4 +62,6 @@ def test_i5_a_forgiven_debt_is_paid_to_the_teacher_and_the_answer_says_how_much_
     (line,) = [p for p in r.json()["money_effects"]["payroll"] if p["month"] == m.label]
     assert (line["savedTotal"], line["changedBy"]) == (475_000, 125_000) and "+125 000" in r.json()["money_effects"]["text"]
     voided = owner(world).post(f"{API}/org/writeoffs/{r.json()['writeoff']['id']}/void", json={"reason": "Ошибка"})
-    assert voided.status_code == 200 and voided.json()["money_effects"]["payroll"] == []           # the debt is back: nothing differs from what was saved
+    assert voided.status_code == 200
+    (back,) = voided.json()["money_effects"]["payroll"]                                              # R3 #21: the effect of THIS action - the debt is back, the sheet moves down by what the forgiveness added
+    assert (back["freshBefore"], back["freshAfter"], back["changedBy"], back["driftAfter"]) == (600_000, 475_000, -125_000, 0)
