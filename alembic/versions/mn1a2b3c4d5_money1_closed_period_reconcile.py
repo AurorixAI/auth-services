@@ -7,7 +7,8 @@ Create Date: 2026-11-04
 * ``payroll_period_reopenings`` (A1): a closed month of a teacher (his last sheet was saved after the month ended) reopened by the owner / an administrator with the payments
   right, with a reason.  Append-only; a reopening lasts until the sheet is saved again.
 * ``money_reconcile_runs`` / ``money_reconcile_findings`` (A7): the result of the nightly check of the invariants I-1..I-4 (the platform console reads them; a centre never does);
-  ``money_reconcile_snapshots`` - the last seen "paid until" / covered lessons of every membership (I-2 compares the next night with it).
+  ``money_reconcile_snapshots`` - the last seen "paid until" / covered lessons of every membership (I-2 compares the next night with it); ``money_reconcile_centres`` - which centres a run
+  checked successfully (a centre that could not be checked is not compared with the next night's findings as if it were clean).
 * ``group_attendance_audit`` accepts ``completed_reverted`` («Вернуть проведённый урок», A2); the CHECK is rebuilt from the
   live definition, so a parallel change of the list by another revision is kept.
 
@@ -43,7 +44,9 @@ def _check_actions(bind) -> list[str]:
 def _set_check_actions(actions: list[str]) -> None:
     op.execute(f"ALTER TABLE {AUDIT} DROP CONSTRAINT IF EXISTS {AUDIT_CHECK}")
     listed = ", ".join(f"'{a}'" for a in actions)
-    op.execute(f"ALTER TABLE {AUDIT} ADD CONSTRAINT {AUDIT_CHECK} CHECK (action IN ({listed}))")
+    # Money-1 R3 #9: NOT VALID + VALIDATE - the constraint is added without scanning the table under ACCESS EXCLUSIVE; the scan runs after, under a lock that lets reads and writes through
+    op.execute(f"ALTER TABLE {AUDIT} ADD CONSTRAINT {AUDIT_CHECK} CHECK (action IN ({listed})) NOT VALID")
+    op.execute(f"ALTER TABLE {AUDIT} VALIDATE CONSTRAINT {AUDIT_CHECK}")
 
 
 def _tables(bind) -> set[str]:
@@ -104,6 +107,16 @@ def upgrade() -> None:
         )
         op.create_index("ix_money_reconcile_findings_run", "money_reconcile_findings", ["run_id"])
         op.create_index("ix_money_reconcile_findings_org_key", "money_reconcile_findings", ["org_id", "invariant", "subject_key"])
+    if "money_reconcile_centres" not in tables:
+        op.create_table(
+            "money_reconcile_centres",
+            sa.Column("run_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("money_reconcile_runs.id", ondelete="CASCADE"), primary_key=True),
+            sa.Column("org_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True),
+            sa.Column("status", sa.String(8), nullable=False),
+            sa.Column("findings_count", sa.Integer(), nullable=False, server_default="0"),
+            sa.CheckConstraint("status IN ('ok', 'failed')", name="ck_money_reconcile_centres_status"),
+        )
+        op.create_index("ix_money_reconcile_centres_org", "money_reconcile_centres", ["org_id", "status"])
     if "money_reconcile_snapshots" not in tables:
         op.create_table(
             "money_reconcile_snapshots",
@@ -128,6 +141,6 @@ def downgrade() -> None:
         op.execute(f"DELETE FROM {AUDIT} WHERE action IN ({', '.join(repr(a) for a in NEW_ACTIONS)})")
         _set_check_actions([a for a in actions if a not in NEW_ACTIONS])
     tables = _tables(bind)
-    for name in ("money_reconcile_snapshots", "money_reconcile_findings", "money_reconcile_runs", "payroll_period_reopenings"):
+    for name in ("money_reconcile_snapshots", "money_reconcile_centres", "money_reconcile_findings", "money_reconcile_runs", "payroll_period_reopenings"):
         if name in tables:
             op.drop_table(name)

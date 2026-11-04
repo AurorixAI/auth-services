@@ -86,15 +86,19 @@ def test_the_teachers_own_correction_has_its_limits_age_month_and_whose_lesson(w
     assert shut.status_code == 409 and shut.json()["detail"]["code"] == "PERIOD_CLOSED"
 
 
-def test_completing_a_lesson_where_nobody_came_asks_for_a_yes(world, now_4_nov):
-    day, lid = lesson(date(2026, 10, 30))
-    world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid), reconciled_by=str(world.admin.id), is_org_admin=True)
+def test_completing_a_lesson_where_nobody_came_asks_for_a_yes_only_a_screen_that_asks(world, now_4_nov):
+    """R3 #8: an older screen does not send the field -> the old behaviour (200); the new one sends ``false`` first (409 + the sentence), then ``true``."""
     owner = make_client(world, user=world.owner)
     url = f"{API}/{world.group.id}/attendance"
-    body = {"lessonDate": day.isoformat(), "lessonId": lid, "status": "completed", "records": {str(s.id): "absent" for s in world.students}}
-    asked = owner.post(url, json=body)
-    assert asked.status_code == 409 and asked.json()["detail"]["code"] == "NOBODY_CAME" and "оплачен преподавателю" in asked.json()["detail"]["message"]
-    assert owner.post(url, json={**body, "confirmNobodyCame": True}).status_code == 200
+    for offset, extra, status in ((30, {}, 200), (29, {"confirmNobodyCame": False}, 409), (28, {"confirmNobodyCame": True}, 200)):
+        day, lid = lesson(date(2026, 10, offset))
+        world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid), reconciled_by=str(world.admin.id), is_org_admin=True)
+        body = {"lessonDate": day.isoformat(), "lessonId": lid, "status": "completed", "records": {str(s.id): "absent" for s in world.students}, **extra}
+        r = owner.post(url, json=body)
+        assert r.status_code == status, (extra, r.text)
+        if status == 409:
+            assert r.json()["detail"]["code"] == "NOBODY_CAME" and "оплачен преподавателю" in r.json()["detail"]["message"]
+            assert owner.post(url, json={**body, "confirmNobodyCame": True}).status_code == 200
 
 
 def test_who_taught_a_lesson_formalised_backwards_is_chosen_by_the_money_right_and_written_to_the_journal(world, now_4_nov):

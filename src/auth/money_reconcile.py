@@ -200,7 +200,7 @@ def reconcile_org(db, org_id: Any, today: Optional[date] = None, *, snapshots: O
             found.append(item)
 
     # ---- I-4: the closed months
-    periods = ClosedPeriods(db, org_uuid)
+    periods = ClosedPeriods.of(db, org_uuid)
     for first in sorted(periods.months_with_closed()):
         closed = periods._load()[first]
         rows = db.query(GroupAttendance.teacher_id, GroupAttendance.group_id, GroupAttendance.lesson_date).filter(

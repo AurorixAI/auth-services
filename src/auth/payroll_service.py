@@ -1179,7 +1179,6 @@ class PayrollService:
         keys = self._line_keys(s.identity for s in teacher.lines)
         given = self._changes_from_body(body.line_overrides, keys)
         self._check_expected(body.expected_fingerprint, teacher.fingerprint)
-        now = _utcnow()
         actor = UUID(str(actor_id))
 
         try:
@@ -1198,6 +1197,7 @@ class PayrollService:
                 raise self._conflict(sheet.revision)
             if sheet is None and body.revision is not None:
                 raise self._conflict(0)
+            now = _utcnow()      # Money-1 R3 #12: AFTER the lock of the sheet - a reopening that was waiting for us must be older than this save (``created_at < updated_at``), or the save would not close the month again
             changes = self._carried_changes(sheet)
             self._apply_overrides(changes, given, keys)
             lines = self._render(teacher, percents, changes, seed.divisor)

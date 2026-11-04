@@ -1031,7 +1031,7 @@ class AttendanceExcuseService:
         group = self.db.get(Group, att.group_id)
         if group is None:
             return
-        periods = ClosedPeriods(self.db, att.org_id)
+        periods = ClosedPeriods.of(self.db, att.org_id)
         if periods.any_closed(att.lesson_date):
             periods.assert_open(lesson_teacher_ids(self.db, group, att.lesson_id, att.lesson_date, att), att.lesson_date)
 
@@ -1153,16 +1153,24 @@ class AttendanceExcuseService:
         self.db.rollback()
         raise ExcuseChanged(item)
 
-    def _effects(self, att: GroupAttendance, excuse: AttendanceExcuse, status_before: str, status_after: str, *, owner: bool, done: bool) -> Dict[str, Any]:
-        """Money-1 A3: a decision on an excuse - ``confirmed`` gives the lesson back to the pack of the student and takes it off the pay of the teacher; ``rejected`` / ``pending`` is a normal lesson."""
+    def _probe(self, att: GroupAttendance, owner: bool):
+        """BEFORE the decision is written: the saved sheets of the lesson's teacher, measured now (only a HELD lesson moves a pay)."""
         from . import money_effects as me
 
         group = self.db.get(Group, att.group_id)
+        if group is None or att.status != "completed":
+            return None
+        return me.lesson_probe(self.db, att.org_id, lesson_teacher_ids(self.db, group, att.lesson_id, att.lesson_date, att), att.lesson_date, owner)
+
+    def _effects(self, att: GroupAttendance, excuse: AttendanceExcuse, status_before: str, status_after: str, probe, *, owner: bool, done: bool) -> Dict[str, Any]:
+        """Money-1 A3: a decision on an excuse - ``confirmed`` gives the lesson back to the pack of the student and takes it off the pay of the teacher; ``rejected`` / ``pending`` is a normal lesson."""
+        from . import money_effects as me
+
         sid = str(excuse.student_id)
         held = att.status == "completed"
         students = me.student_deltas({sid: EXCUSED}, {sid: EXCUSED}, {sid: status_before}, {sid: status_after}, held_before=held, held_after=held)
-        teachers = lesson_teacher_ids(self.db, group, att.lesson_id, att.lesson_date, att) if group is not None else []
-        return me.build(self.db, att.org_id, students=students, pairs=[(t, att.lesson_date) for t in teachers] if held else [], owner=owner, done=done, group_id=att.group_id)
+        self.db.flush()
+        return me.lesson_block(self.db, att.org_id, students=students, probe=probe, owner=owner, done=done, group_id=att.group_id)
 
     def review(
         self, org_id: str, excuse_id: UUID, actor_id: str, decision: str, note: Optional[str],
@@ -1175,9 +1183,10 @@ class AttendanceExcuseService:
         att = self._lesson(excuse)
         self._assert_period_open(att)
         before = excuse.status
+        probe = self._probe(att, owner)
         self._apply_review(excuse, att, actor_id, decision, note)
+        effects = self._effects(att, excuse, before, excuse.status, probe, owner=owner, done=not dry_run)
         if dry_run:                                   # the confirmation before «Подтвердить»: the same effects, nothing written
-            effects = self._effects(att, excuse, before, excuse.status, owner=owner, done=False)
             self.db.rollback()
             item = self._item(org_id, excuse_id)
             item.money_effects = effects
@@ -1185,7 +1194,7 @@ class AttendanceExcuseService:
         self.db.commit()
         logger.info("Attendance excuse %s reviewed by %s: %s", excuse_id, actor_id, decision)
         item = self._item(org_id, excuse_id)
-        item.money_effects = self._effects(att, excuse, before, excuse.status, owner=owner, done=True)
+        item.money_effects = effects
         return item
 
     def review_bulk(
@@ -1231,6 +1240,7 @@ class AttendanceExcuseService:
             att = self._lesson(excuse)
             self._assert_period_open(att)
             before = excuse.status
+            probe = self._probe(att, owner)
             details = {
                 "excuse_id": str(excuse.id),
                 "student_id": str(excuse.student_id),
@@ -1246,7 +1256,7 @@ class AttendanceExcuseService:
             excuse.decided_after_deadline = None
             excuse.deadline_at_decision = None
             self._audit(att, actor_id, "excuse_reset", details)
-            effects = self._effects(att, excuse, before, "pending", owner=owner, done=not dry_run)
+            effects = self._effects(att, excuse, before, "pending", probe, owner=owner, done=not dry_run)
             if dry_run:
                 self.db.rollback()
             else:

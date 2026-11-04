@@ -388,11 +388,8 @@ class SubstitutionsBase:
         return SimpleNamespace(schedule=schedule, rows=rows, members=members)
 
     def _periods(self, org_id: Any) -> ClosedPeriods:
-        """One snapshot of the closed months of the centre per ``Substitutions`` object (a sweep asks it for every pending request)."""
-        cache = self.__dict__.setdefault("_closed_periods", {})
-        if str(org_id) not in cache:
-            cache[str(org_id)] = ClosedPeriods(self.db, org_id)
-        return cache[str(org_id)]
+        """The snapshot of the closed months of the centre of this request (a sweep asks it for every pending request)."""
+        return ClosedPeriods.of(self.db, org_id)
 
     def _period_open(self, group: Group, lesson_id: str, day: date, row: Optional[GroupAttendance], occ: Optional[Dict[str, Any]]) -> bool:
         periods = self._periods(group.org_id)

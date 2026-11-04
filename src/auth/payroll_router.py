@@ -47,6 +47,13 @@ from .payroll_payouts import PayoutError as PayoutError_
 from .payroll_payouts import PayrollPayoutService as PrPayoutService
 from .payroll_service import PayrollError, PayrollService, parse_month
 
+def _month_start_or_none(value) -> Optional[date]:
+    try:
+        return date.fromisoformat(str(value)[:7] + "-01")
+    except ValueError:
+        return None
+
+
 def ps_today() -> date:
     return payment_status.business_today()
 
@@ -83,8 +90,10 @@ def update_payroll_settings(
     db: Session = Depends(get_db),
 ):
     try:
+        first = _month_start_or_none(request.valid_from or ps_today().strftime("%Y-%m"))
+        probe = money_effects.teacher_probe(db, user["org_id"], first, True) if first else None   # A3: the saved sheets from that month, measured BEFORE the divisor changes
         out = PayrollService(db).update_settings(user["org_id"], user["user_id"], request.divisor, request.valid_from)
-        out.money_effects = money_effects.sheets_from(db, user["org_id"], date.fromisoformat((request.valid_from or out.valid_from or ps_today().strftime("%Y-%m")) + "-01"))      # A3
+        out.money_effects = money_effects.lesson_block(db, user["org_id"], students=[], probe=probe, owner=True, done=True)
         return out
     except PayrollError as exc:
         raise _http(exc)
@@ -115,8 +124,10 @@ def put_rates(
 ):
     """Задать ставки преподавателя с месяца ``valid_from`` (ГГГГ-ММ); возвращает его строку списка на текущий месяц."""
     try:
+        first = _month_start_or_none(request.valid_from)                                          # an invalid month is the service's 422, not ours
+        probe = money_effects.teacher_probe(db, user["org_id"], first, True, teacher_id) if first else None          # A3: BEFORE the rate changes
         out = RatesService(db).put_rates(user["org_id"], user["user_id"], teacher_id, request)
-        out.money_effects = money_effects.sheets_from(db, user["org_id"], date.fromisoformat(str(request.valid_from)[:7] + "-01"), teacher_id=teacher_id)      # A3: the saved sheets this rate moves
+        out.money_effects = money_effects.lesson_block(db, user["org_id"], students=[], probe=probe, owner=True, done=True)       # the saved sheets this rate moves, with the sum of THIS change
         return out
     except PayrollError as exc:
         raise _http(exc)

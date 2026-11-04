@@ -68,7 +68,7 @@ class AttendanceRules:
                            row: Optional[GroupAttendance] = None, *, extra_teachers: Tuple[Any, ...] = ()) -> None:
         """Money-1 A1: the ONE rule of a closed period for every action on a lesson (reconcile, cancel, marks of a held lesson, an excuse decision): the month of the lesson date of the
         lesson's teacher must not be closed by a saved sheet (``closed_period.py``) - for everybody, the owner too; he reopens the month first."""
-        periods = ClosedPeriods(self.db, group.org_id)
+        periods = ClosedPeriods.of(self.db, group.org_id)
         if not periods.any_closed(lesson_date):
             return                                    # nobody's month is closed: no need to find the teacher
         end = hhmm_to_minutes(occurrence["endTime"]) if occurrence and occurrence.get("endTime") else None

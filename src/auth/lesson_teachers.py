@@ -810,7 +810,7 @@ class LessonTeachers:
                              sheets=[])
         if row is not None and row.status == COMPLETED and want != row_teacher and not money_right:
             raise forbidden("MONEY_RIGHT_REQUIRED", "Провести урок за другого преподавателя в журнале может владелец или администратор, которому владелец разрешил оплаты: от этого зависит, чья это зарплата")
-        ClosedPeriods(self.db, org_id).assert_open([old_teacher_for_period, want], day)     # Money-1 A1: the month of the old AND of the new teacher must be open (``closed_period.py``)
+        ClosedPeriods.of(self.db, org_id).assert_open([old_teacher_for_period, want], day)     # Money-1 A1: the month of the old AND of the new teacher must be open (``closed_period.py``)
         if not clearing:
             # the target's row first: a removal of him serialises with this assignment.  FOR NO KEY UPDATE (as the move does): the record of the journal that follows takes
             # FOR KEY SHARE on the MAIN teacher's row, and two crossed assignments (X takes D's lesson, D takes X's) must not wait for each other

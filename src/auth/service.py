@@ -5648,6 +5648,7 @@ class AuthService:
             if not req.correctionReason:
                 raise ValueError("Для корректировки завершённого урока укажите причину")
             excuses_before = lesson_return.excuse_statuses(self.db, att.id)
+            correction_probe = lesson_return.start_correction(self.db, group, att, owner)       # R3 #21: the sheets of the teacher, measured BEFORE this correction
 
         if att and att.status == LessonAttendanceStatus.COMPLETED.value and requested_status != before_status:
             raise ValueError("Проведённый урок нельзя вернуть в «не проведён» отметками. Это делает владелец или администратор с правом оплат: кнопка «Вернуть урок»")
@@ -5711,7 +5712,7 @@ class AuthService:
         )
         out = {"version": att.version, "examSync": exam_sync, "warnings": []}
         if is_completed_correction:          # Money-1 A3: what the correction did to money (the packs of the students, the saved sheets of the teacher)
-            out["moneyEffects"] = lesson_return.after_correction(self.db, group, att, before_records, records, excuses_before, owner=owner)
+            out["moneyEffects"] = lesson_return.finish_correction(self.db, group, att, correction_probe, before_records, records, excuses_before, owner=owner)
         return out
 
     def _own_future_one_off(self, group_id: str, lesson_id: str, lesson_date: date, actor_id: Optional[str], att: Optional[GroupAttendance]) -> bool:

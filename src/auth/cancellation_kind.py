@@ -49,7 +49,7 @@ def change_cancellation_kind(db: Session, org_id: str, group_id: str, req: Chang
         raise conflict("CANCELLED_BY_DAY_OFF", "Урок отменён выходным днём центра: измените или отмените сам выходной")
     if row.cancellation_kind is None:
         raise conflict("CANCELLATION_HAS_NO_KIND", "Это отмена до обновления или перенос урока: вид отмены у неё не меняется")
-    ClosedPeriods(db, org_id).assert_open(lesson_teacher_ids(db, group, req.lessonId, req.lessonDate.isoformat(), row), req.lessonDate)   # Money-1 A1: a closed month does not move (the one rule, ``closed_period.py``)
+    ClosedPeriods.of(db, org_id).assert_open(lesson_teacher_ids(db, group, req.lessonId, req.lessonDate.isoformat(), row), req.lessonDate)   # Money-1 A1: a closed month does not move (the one rule, ``closed_period.py``)
     before = row.cancellation_kind
     if before == req.cancellationKind:
         return {"ok": True, "changed": False, "cancellationKind": before, "version": row.version}

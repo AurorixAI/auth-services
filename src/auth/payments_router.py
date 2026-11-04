@@ -59,6 +59,14 @@ from .payments_service import PaymentError, PaymentService
 
 from . import money_effects  # noqa: E402
 
+
+def _membership_of_payment(db, org_id, payment_id) -> list:
+    """The membership of a payment (for the effects of its cancellation / correction); an unknown payment: no ids - the action itself answers 404."""
+    from src.models.auth import StudentPayment
+
+    row = db.query(StudentPayment.membership_id).filter(StudentPayment.id == payment_id, StudentPayment.org_id == org_id).first()
+    return [row[0]] if row else []
+
 router = APIRouter(prefix="/auth", tags=["Payments"])
 router.include_router(pay2_router)  # PAY-2: preview, write-off, refund, statement, receipts report, balances
 router.include_router(income_router)  # INCOME-2: income overview + month collection, payments journal (+ Excel)
@@ -329,16 +337,17 @@ def create_payment(
     membership_id: UUID,
     request: PaymentCreate,
     idempotency_key: Optional[UUID] = Header(None, alias="Idempotency-Key"),
+    dry_run: bool = Query(False, description="только последствия для денег (ничего не записывается); ответ — как после оплаты, ``dry_run: true``"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Внести оплату. PAY-2: только сумма, дата, способ, примечание — период и распределение считает система
-    (``allocation`` в ответе). ``Idempotency-Key`` защищает от двойного клика."""
+    (``allocation`` в ответе). ``Idempotency-Key`` защищает от двойного клика.  ``dry_run`` — окно подтверждения: что изменится в ведомостях (R3 #15)."""
     try:
-        out = PaymentService(db).create_payment(
-            user["org_id"], membership_id, user["user_id"], request, idempotency_key
-        )
-        out.money_effects = money_effects.membership_effects(db, user["org_id"], membership_id, out.payment.paid_on, owner=user.get("org_role") == "owner")     # A3: a late payment moves the saved sheets
+        out, effects = money_effects.run_with_effects(
+            db, user["org_id"], [membership_id], user.get("org_role") == "owner",
+            lambda: PaymentService(db).create_payment(user["org_id"], membership_id, user["user_id"], request, idempotency_key), dry_run=dry_run)
+        out.money_effects, out.dry_run = effects, dry_run                   # A3: a late payment moves the saved sheets - ALL the months it touches (R3 #17)
         return out
     except PaymentError as exc:
         raise _http(exc)
@@ -349,15 +358,16 @@ def replace_payment(
     payment_id: UUID,
     request: PaymentReplace,
     idempotency_key: Optional[UUID] = Header(None, alias="Idempotency-Key"),
+    dry_run: bool = Query(False, description="только последствия для денег (ничего не записывается)"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Исправить оплату: старая отменяется, новая создаётся — одной транзакцией."""
     try:
-        out = PaymentService(db).replace_payment(
-            user["org_id"], payment_id, user["user_id"], request, request.reason, idempotency_key
-        )
-        out.money_effects = money_effects.membership_effects(db, user["org_id"], out.payment.membership_id, out.payment.paid_on, owner=user.get("org_role") == "owner")
+        out, effects = money_effects.run_with_effects(
+            db, user["org_id"], _membership_of_payment(db, user["org_id"], payment_id), user.get("org_role") == "owner",
+            lambda: PaymentService(db).replace_payment(user["org_id"], payment_id, user["user_id"], request, request.reason, idempotency_key), dry_run=dry_run)
+        out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:
         raise _http(exc)
@@ -367,15 +377,16 @@ def replace_payment(
 def void_payment(
     payment_id: UUID,
     request: PaymentVoid,
+    dry_run: bool = Query(False, description="только последствия для денег (ничего не записывается)"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Отменить оплату (удаления нет); причина 3..500 символов."""
     try:
-        out = PaymentService(db).void_payment(
-            user["org_id"], payment_id, user["user_id"], request.reason
-        )
-        out.money_effects = money_effects.membership_effects(db, user["org_id"], out.payment.membership_id, out.payment.paid_on, owner=user.get("org_role") == "owner")
+        out, effects = money_effects.run_with_effects(
+            db, user["org_id"], _membership_of_payment(db, user["org_id"], payment_id), user.get("org_role") == "owner",
+            lambda: PaymentService(db).void_payment(user["org_id"], payment_id, user["user_id"], request.reason), dry_run=dry_run)
+        out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:
         raise _http(exc)

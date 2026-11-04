@@ -192,7 +192,7 @@ class GroupAttendanceResponseB(GroupAttendanceResponse):
 class SaveAttendanceRequestB(SaveAttendanceRequest):
     expectedVersion: Optional[int] = Field(None, ge=1)
     acknowledgeLiveExam: bool = False
-    confirmNobodyCame: bool = False       # Money-1 A6: completing a lesson where nobody is «Был» / «Опоздал» asks for a yes (409 ``NOBODY_CAME``): the lesson is held and paid to the teacher
+    confirmNobodyCame: Optional[bool] = None       # Money-1 A6 / R3 #8: absent (an older screen) = the old behaviour; ``false`` = the screen asks: completing a lesson where nobody is «Был» / «Опоздал» is 409 ``NOBODY_CAME`` until it sends ``true``
 
 
 class ReconcileRequestB(StartAttendanceRequest):

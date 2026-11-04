@@ -304,10 +304,8 @@ class DaysOffService:
 
     def _period_open(self, org_id: Any, group: Group, lesson_id: str, lesson_date: str, row: Optional[GroupAttendance] = None, end_time: Optional[str] = None) -> bool:
         """Money-1 A1 (was W1 R3 (2): the window of the unclosed lessons): a cancellation of a CLOSED month of its teacher is never turned into a holiday and a lesson of it is not cancelled by a day off
-        (a closed or paid month does not change).  One snapshot of the closed months per service object (``closed_period.py``)."""
-        periods = self.__dict__.setdefault("_periods", {}).get(str(org_id))
-        if periods is None:
-            periods = self.__dict__["_periods"][str(org_id)] = ClosedPeriods(self.db, org_id)
+        (a closed or paid month does not change).  One snapshot of the closed months per request (``ClosedPeriods.of``)."""
+        periods = ClosedPeriods.of(self.db, org_id)
         if not periods.any_closed(lesson_date):
             return True
         end = hhmm_to_minutes(end_time) if end_time else None

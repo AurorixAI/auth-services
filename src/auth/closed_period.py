@@ -19,8 +19,12 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass
 from datetime import date
+from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from uuid import UUID
+
+from sqlalchemy import event
+from sqlalchemy.orm import Session
 
 from src.models.auth import PayrollPeriodReopening, PayrollSheet, User
 
@@ -75,18 +79,28 @@ def state_of_sheet(sheet: PayrollSheet, last_reopened_at: Optional[Any]) -> Tupl
 
 
 class ClosedPeriods:
-    """The closed months of ONE centre, loaded once (a handful of rows: teachers x months).  Create one per operation - it is a snapshot, not a cache."""
+    """The closed months of ONE centre, loaded once per REQUEST (``of``): a handful of rows - four columns, never the lines of a sheet - shared by every service of the request."""
 
     def __init__(self, db, org_id: Any) -> None:
         self.db = db
         self.org_id = org_id
         self._closed: Optional[Dict[date, Dict[UUID, ClosedMonth]]] = None
 
+    @classmethod
+    def of(cls, db, org_id: Any) -> "ClosedPeriods":
+        """The snapshot of the session (Money-1 R3 #6): the attendance service, the day-off service and the substitutions used to read the sheets of the centre each on its own.  The cache lives
+        in ``db.info`` and is dropped at the end of every transaction (a commit or a rollback), so a later save of a sheet or a reopening is seen."""
+        cache = db.info.setdefault("closed_periods", {})
+        key = str(org_id)
+        if key not in cache:
+            cache[key] = cls(db, org_id)
+        return cache[key]
+
     # ------------------------------------------------------------------------------------------------ the snapshot
     def _load(self) -> Dict[date, Dict[UUID, ClosedMonth]]:
         if self._closed is not None:
             return self._closed
-        sheets = self.db.query(PayrollSheet).filter(PayrollSheet.org_id == self.org_id).all()
+        sheets = self.db.query(PayrollSheet.id, PayrollSheet.teacher_id, PayrollSheet.period_month, PayrollSheet.updated_at).filter(PayrollSheet.org_id == self.org_id).all()
         last_reopen: Dict[Tuple[UUID, date], Any] = {}
         if sheets:
             for teacher_id, month, latest in (
@@ -97,12 +111,15 @@ class ClosedPeriods:
                 if key not in last_reopen or latest > last_reopen[key]:
                     last_reopen[key] = latest
         out: Dict[date, Dict[UUID, ClosedMonth]] = {}
-        for sheet in sheets:
-            state, saved_on = state_of_sheet(sheet, last_reopen.get((sheet.teacher_id, sheet.period_month)))
+        for sheet_id, teacher_id, period_month, updated_at in sheets:
+            state, saved_on = state_of_sheet(SimpleNamespace(updated_at=updated_at, period_month=period_month), last_reopen.get((teacher_id, period_month)))
             if state == "closed":
-                out.setdefault(sheet.period_month, {})[sheet.teacher_id] = ClosedMonth(sheet.teacher_id, sheet.period_month, saved_on, sheet.id)
+                out.setdefault(period_month, {})[teacher_id] = ClosedMonth(teacher_id, period_month, saved_on, sheet_id)
         self._closed = out
         return out
+
+    def invalidate(self) -> None:
+        self._closed = None
 
     def any_closed(self, day: Any) -> bool:
         """Cheap pre-check for a loop over many lessons: is any teacher's month of this date closed at all (then the teacher of the lesson must be found)."""
@@ -136,22 +153,39 @@ class ClosedPeriods:
         return set(self._load())
 
     # ------------------------------------------------------------------------------------------------ the refusal
-    def refusal(self, closed: ClosedMonth) -> OpsError:
+    def refusal(self, closed: ClosedMonth, what: str = "урок") -> OpsError:
         user = self.db.query(User).filter(User.id == closed.teacher_id).first()
         name = short_name(user)
         text = (f"Месяц {month_title(closed.month)}" + (f" у преподавателя {name}" if name else "") + f" закрыт: ведомость сохранена {closed.closed_on.strftime('%d.%m.%Y')}. "
-                "Чтобы исправить урок, владелец или администратор с правом оплат сначала переоткрывает месяц")
+                f"Чтобы изменить {what}, владелец или администратор с правом оплат сначала переоткрывает месяц")
         return conflict(PERIOD_CLOSED, text, month=closed.label, teacherId=str(closed.teacher_id), teacherName=name, closedOn=closed.closed_on.isoformat())
 
-    def assert_open(self, teacher_ids: Iterable[Any], day: Any) -> None:
+    def _hold_open(self, teacher_ids: Iterable[Any], months: Iterable[date]) -> None:
+        """Money-1 R3 m9: a check that said «open» keeps the SAVED sheets of these teacher-months from being saved until this transaction ends (``FOR SHARE``): a correction that passed the check and
+        a save of the sheet after the month ended are one after another, never at the same moment.  Readers do not wait for each other; only the save of the sheet waits."""
+        ids = [t for t in (_uuid(x) for x in teacher_ids) if t is not None]
+        wanted = sorted({month_first(m) for m in months})
+        if not ids or not wanted:
+            return
+        self.db.query(PayrollSheet.id).filter(PayrollSheet.org_id == self.org_id, PayrollSheet.teacher_id.in_(ids), PayrollSheet.period_month.in_(wanted)).with_for_update(read=True).all()
+
+    def assert_open(self, teacher_ids: Iterable[Any], day: Any, what: str = "урок") -> None:
+        teacher_ids = list(teacher_ids)
         closed = self.closed_for(teacher_ids, day)
         if closed is not None:
-            raise self.refusal(closed)
+            raise self.refusal(closed, what)
+        self._hold_open(teacher_ids, [month_first(day)])
 
-    def assert_range_open(self, teacher_ids: Iterable[Any], first: date, last: date) -> None:
+    def assert_range_open(self, teacher_ids: Iterable[Any], first: date, last: date, what: str = "урок") -> None:
+        teacher_ids = list(teacher_ids)
         closed = self.closed_in_range(teacher_ids, first, last)
         if closed is not None:
-            raise self.refusal(closed)
+            raise self.refusal(closed, what)
+        months, cursor = [], month_first(first)
+        while cursor <= last:
+            months.append(cursor)
+            cursor = date(cursor.year + (cursor.month == 12), cursor.month % 12 + 1, 1)
+        self._hold_open(teacher_ids, months)
 
 
 # ---------------------------------------------------------------------------------------------- the teacher of a lesson / of a group
@@ -243,3 +277,9 @@ def reopen_month(db, org_id: Any, teacher_id: Any, month: str, actor_id: Any, re
                                   reason=text, created_at=bc.utc_now()))
     db.commit()
     return {"ok": True, "changed": True, "teacherId": str(tid), "month": first.strftime("%Y-%m"), **period_state(db, org_id, tid, first)}
+
+
+@event.listens_for(Session, "after_transaction_end")
+def _forget_closed_periods(session, _transaction) -> None:
+    """The snapshot of the closed months lives for one transaction: a commit or a rollback (also of a savepoint) drops it."""
+    session.info.pop("closed_periods", None)

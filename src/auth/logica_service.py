@@ -398,7 +398,7 @@ class PauseService(_Base):
         group = self.db.get(Group, membership.group_id)
         if group is None:
             return
-        periods = ClosedPeriods(self.db, org_id)
+        periods = ClosedPeriods.of(self.db, org_id)
         if not periods.months_with_closed():
             return
         try:

@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 
 from src.core.database import get_db
 
+from src.models.auth import StudentRefund, StudentWriteoff
+
 from .dependencies import require_payments_access
 from . import xlsx_style
 from .payments_reports import PaymentsReports
@@ -41,6 +43,12 @@ from . import money_effects  # noqa: E402
 
 def _owner(user: dict) -> bool:
     return user.get("org_role") == "owner"
+
+
+def _membership_of(db, org_id, model, record_id) -> list:
+    """The membership of a write-off / a refund (for the effects of its cancellation); an unknown record: no ids - the action itself answers 404."""
+    row = db.query(model.membership_id).filter(model.id == record_id, model.org_id == org_id).first()
+    return [row[0]] if row else []
 
 
 router = APIRouter(tags=["Payments"])  # the prefix /auth comes from payments_router
@@ -82,15 +90,18 @@ def payment_preview(
 def create_writeoff(
     membership_id: UUID,
     request: WriteoffCreate,
+    dry_run: bool = Query(False, description="только последствия для денег (ничего не записывается)"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Простить долг (льгота, болезнь, договорённость): ``amount`` ≤ текущего долга или ``all: true``; причина 3..500."""
     try:
-        out = PaymentService(db).create_writeoff(
-            user["org_id"], membership_id, user["user_id"], amount=request.amount, whole=request.all_debt,
-            reason=request.reason, effective_on=request.effective_on, actor_role=_role(user))
-        out.money_effects = money_effects.membership_effects(db, user["org_id"], membership_id, out.writeoff.effective_on, owner=_owner(user))      # A3 (ЗПД-5): a forgiven debt is paid to the teacher
+        out, effects = money_effects.run_with_effects(
+            db, user["org_id"], [membership_id], _owner(user),
+            lambda: PaymentService(db).create_writeoff(
+                user["org_id"], membership_id, user["user_id"], amount=request.amount, whole=request.all_debt,
+                reason=request.reason, effective_on=request.effective_on, actor_role=_role(user)), dry_run=dry_run)
+        out.money_effects, out.dry_run = effects, dry_run                   # A3 (ЗПД-5): a forgiven debt is paid to the teacher - named with the sum
         return out
     except PaymentError as exc:
         raise _http(exc)
@@ -100,13 +111,16 @@ def create_writeoff(
 def void_writeoff(
     writeoff_id: UUID,
     request: RecordVoid,
+    dry_run: bool = Query(False, description="только последствия для денег (ничего не записывается)"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Отменить прощение долга (долг возвращается); причина 3..500."""
     try:
-        out = PaymentService(db).void_writeoff(user["org_id"], writeoff_id, user["user_id"], request.reason, actor_role=_role(user))
-        out.money_effects = money_effects.membership_effects(db, user["org_id"], out.writeoff.membership_id, out.writeoff.effective_on, owner=_owner(user))
+        out, effects = money_effects.run_with_effects(
+            db, user["org_id"], _membership_of(db, user["org_id"], StudentWriteoff, writeoff_id), _owner(user),
+            lambda: PaymentService(db).void_writeoff(user["org_id"], writeoff_id, user["user_id"], request.reason, actor_role=_role(user)), dry_run=dry_run)
+        out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:
         raise _http(exc)
@@ -118,15 +132,18 @@ def void_writeoff(
 def create_refund(
     membership_id: UUID,
     request: RefundCreate,
+    dry_run: bool = Query(False, description="только последствия для денег (ничего не записывается)"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Вернуть аванс: ``amount`` ≤ возвратимого, способ обязателен. Это запись возврата, оплата не удаляется."""
     try:
-        out = PaymentService(db).create_refund(
-            user["org_id"], membership_id, user["user_id"], amount=request.amount, method=request.method,
-            reason=request.reason, note=request.note, effective_on=request.effective_on, actor_role=_role(user))
-        out.money_effects = money_effects.membership_effects(db, user["org_id"], membership_id, out.refund.effective_on, owner=_owner(user))
+        out, effects = money_effects.run_with_effects(
+            db, user["org_id"], [membership_id], _owner(user),
+            lambda: PaymentService(db).create_refund(
+                user["org_id"], membership_id, user["user_id"], amount=request.amount, method=request.method,
+                reason=request.reason, note=request.note, effective_on=request.effective_on, actor_role=_role(user)), dry_run=dry_run)
+        out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:
         raise _http(exc)
@@ -136,13 +153,16 @@ def create_refund(
 def void_refund(
     refund_id: UUID,
     request: RecordVoid,
+    dry_run: bool = Query(False, description="только последствия для денег (ничего не записывается)"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Отменить возврат (аванс возвращается); причина 3..500."""
     try:
-        out = PaymentService(db).void_refund(user["org_id"], refund_id, user["user_id"], request.reason, actor_role=_role(user))
-        out.money_effects = money_effects.membership_effects(db, user["org_id"], out.refund.membership_id, out.refund.effective_on, owner=_owner(user))
+        out, effects = money_effects.run_with_effects(
+            db, user["org_id"], _membership_of(db, user["org_id"], StudentRefund, refund_id), _owner(user),
+            lambda: PaymentService(db).void_refund(user["org_id"], refund_id, user["user_id"], request.reason, actor_role=_role(user)), dry_run=dry_run)
+        out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:
         raise _http(exc)

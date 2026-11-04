@@ -2068,3 +2068,19 @@ class MoneyReconcileSnapshot(Base):
     taken_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
 
     __table_args__ = (Index("ix_money_reconcile_snapshots_org", "org_id"),)
+
+
+class MoneyReconcileCentre(Base):
+    """Money-1 (A7, R3 m6): which centres a run checked (``ok``) or could not check (``failed``) - the findings of a night are compared with the LAST SUCCESSFUL check of the same centre."""
+
+    __tablename__ = "money_reconcile_centres"
+
+    run_id = Column(UUID(as_uuid=True), ForeignKey("money_reconcile_runs.id", ondelete="CASCADE"), primary_key=True)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True)
+    status = Column(String(8), nullable=False)  # ok | failed
+    findings_count = Column(Integer, nullable=False, default=0, server_default="0")
+
+    __table_args__ = (
+        CheckConstraint("status IN ('ok', 'failed')", name="ck_money_reconcile_centres_status"),
+        Index("ix_money_reconcile_centres_org", "org_id", "status"),
+    )

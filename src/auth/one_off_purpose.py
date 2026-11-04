@@ -421,7 +421,7 @@ class OneOffPurpose:
             return {"lessonId": one_off.id, "money": WAIT, "payrollSheet": None}
         if att is None or att.status != "completed":
             raise conflict("LESSON_NOT_COMPLETED", "Урок ещё не проведён")
-        ClosedPeriods(self.db, org_id).assert_open([att.teacher_id], one_off.lesson_date)
+        ClosedPeriods.of(self.db, org_id).assert_open([att.teacher_id], one_off.lesson_date)
         before = one_off.money
         one_off.money = WAIT
         self.db.add(GroupAudit(org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role=actor_role, action=DECIDED_ACTION, assigned_teacher_id=att.teacher_id, created_at=bc.utc_now(),

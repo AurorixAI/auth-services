@@ -33,7 +33,7 @@ def test_the_chain_a_paid_sheet_closes_the_month_a_mistake_is_reopened_returned_
     assert first["state"]["state"] == "settled"
     assert closed_period.period_state(world.db, world.org.id, world.teacher.id, m.first)["state"] == "closed"        # saved after the month ended
     day = m.d(13)                                                                                   # a lesson both students are covered for
-    body = {"lessonDate": day.isoformat(), "lessonId": f"s{day.isoweekday()}", "reason": "Завершили по ошибке"}
+    body = {"lessonDate": day.isoformat(), "lessonId": f"s{day.isoweekday()}", "reason": "Завершили по ошибке", "expectedVersion": 1}        # the version the screen saw (R3 #11)
     url = RET.format(gid=world.group.id)
     shut = owner(world).post(url, json=body)
     assert shut.status_code == 409 and shut.json()["detail"]["code"] == "PERIOD_CLOSED" and shut.json()["detail"]["month"] == m.label
@@ -44,7 +44,7 @@ def test_the_chain_a_paid_sheet_closes_the_month_a_mistake_is_reopened_returned_
     done = owner(world).post(url, json=body)
     assert done.status_code == 200 and done.json()["status"] == "in_progress"
     line = done.json()["moneyEffects"]["payroll"][0]
-    assert (line["savedTotal"], line["freshTotal"], line["changedBy"]) == (475_000, 425_000, -50_000)       # two covered students x 25 000 gone from the pay
+    assert (line["savedTotal"], line["freshBefore"], line["freshAfter"], line["changedBy"]) == (475_000, 475_000, 425_000, -50_000)       # two covered students x 25 000 gone from the pay
     state = owner(world).get(f"{API}/org/payroll/sheets/{sheet_['id']}").json()["payout"]
     assert (state["state"], state["balance"], state["changed_by"]) == ("settled", 0, -50_000)                 # A1b: the payout target is still the saved 475 000
     assert "−50 000" in state["change_text"] and "Пересохраните" in state["change_text"]
@@ -131,7 +131,7 @@ def test_d15_the_refusals_of_a_held_and_of_a_cancelled_lesson_say_who_can_do_wha
 def test_i7_two_returns_at_once_leave_one_record_and_two_reopenings_at_once_one_journal_row(world, now_4_nov):
     day, lid = hold_lesson(world, date(2026, 10, 28))
     sheet(world, world.teacher, date(2026, 10, 1), tashkent(2026, 11, 2))
-    req = ReturnLessonRequest(lessonDate=day, lessonId=lid, reason="Завершили по ошибке")
+    req = ReturnLessonRequest(lessonDate=day, lessonId=lid, reason="Завершили по ошибке", expectedVersion=int(world.db.query(GroupAttendance).filter_by(group_id=world.group.id, lesson_date=day.isoformat(), lesson_id=lid).one().version))
     grant_money_right(world)
     first = run_parallel(world, lambda svc: closed_period.reopen_month(svc.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Исправляем ошибку"),
                          lambda svc: closed_period.reopen_month(svc.db, world.org.id, world.teacher.id, "2026-10", world.admin.id, "Исправляем ошибку"))
@@ -154,7 +154,7 @@ def test_zp04_a_rate_changed_backwards_says_which_saved_sheets_it_moves_and_the_
     assert r.status_code == 200, r.text
     effects = r.json()["money_effects"]
     (line,) = [p for p in effects["payroll"] if p["month"] == m.label]
-    assert (line["savedTotal"], line["freshTotal"], line["changedBy"]) == (475_000, 570_000, 95_000) and "+95 000" in effects["text"]
+    assert (line["savedTotal"], line["freshBefore"], line["freshAfter"], line["changedBy"]) == (475_000, 475_000, 570_000, 95_000) and "+95 000" in effects["text"]
     state = owner(world).get(f"{API}/org/payroll/sheets/{sheet_['id']}").json()["payout"]
     assert (state["state"], state["balance"], state["changed_by"]) == ("settled", 0, 95_000)
 
@@ -165,8 +165,9 @@ def test_zp04_a_divisor_changed_backwards_names_the_sheets_with_the_sum(world):
     r = owner(world).put(f"{API}/org/payroll/settings", json={"divisor": 13, "valid_from": m.label})
     assert r.status_code == 200, r.text
     (line,) = [p for p in r.json()["money_effects"]["payroll"] if p["month"] == m.label]
-    assert line["savedTotal"] == 475_000 and line["changedBy"] < 0 and line["freshTotal"] == 475_000 + line["changedBy"]
-    assert owner(world).put(f"{API}/org/payroll/settings", json={"divisor": 12, "valid_from": m.label}).json()["money_effects"]["payroll"] == []     # back to 12: nothing differs
+    assert line["savedTotal"] == 475_000 and line["changedBy"] < 0 and line["freshAfter"] == 475_000 + line["changedBy"] and line["freshBefore"] == 475_000
+    back = owner(world).put(f"{API}/org/payroll/settings", json={"divisor": 12, "valid_from": m.label}).json()["money_effects"]["payroll"]
+    assert len(back) == 1 and back[0]["changedBy"] == -line["changedBy"] and back[0]["driftAfter"] == 0         # back to 12: THIS change undoes the first one, the sheet equals the saved again (R3 #21)
 
 
 def test_i4_the_month_names_its_unfinished_lessons_before_the_owner_saves_it(world):

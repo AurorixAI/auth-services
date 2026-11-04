@@ -219,7 +219,7 @@ class LessonCancelMixin:
         if past and not money_right:
             raise conflict("RESTORE_PAST", "Урок уже должен был начаться, поэтому в расписание его не вернуть. Снова разобрать его («Требует разбора») может владелец или администратор с правом оплат")
         if past:        # Money-1 A2: a month the sheet of the teacher has closed is reopened first
-            ClosedPeriods(self.db, group.org_id).assert_open(lesson_teacher_ids(self.db, group, lesson_id, iso, row), iso)
+            ClosedPeriods.of(self.db, group.org_id).assert_open(lesson_teacher_ids(self.db, group, lesson_id, iso, row), iso)
         held = DaysOffService(self.svc).live_for_date(org_id, day)
         if row.day_off_id is not None or held is not None:
             why = f" ({held.reason})" if held is not None else ""
@@ -243,14 +243,13 @@ class LessonCancelMixin:
             self._close_restored(record, actor, trace)
         self.db.flush()
         lost = DaysOffService(self.svc)._substitutes_not_restored([row], {group.id: group})          # the substitute the cancellation took off does not come back (R3 12)
-        teachers = lesson_teacher_ids(self.db, group, lesson_id, iso, row) if past else []
         self.db.delete(row)
         self.db.flush()
         out = {"ok": True, "restored": True, "lessonId": lesson_id, "lessonDate": iso, "previousKind": trace["cancellationKind"], "examsNote": EXAMS_NOT_RESTORED,
                "warnings": [{"code": w.code, "message": w.message} for w in lost] + (slot_warnings or [])}
         if past:
             out["returnedToReview"] = True
-            out["moneyEffects"] = money_effects.build(self.db, org_id, students=[], pairs=[(t, iso) for t in teachers], owner=actor_role == "owner", done=True)
+            out["moneyEffects"] = money_effects.lesson_block(self.db, org_id, students=[], probe=None, owner=actor_role == "owner", done=True)       # a lesson nobody held pays nobody: the sheets do not move
             if trace["cancellationKind"] == "centre":
                 out["moneyEffects"]["text"] = "У учеников исчезнет вычет за этот урок (если центр вычитает отмены); урок снова ждёт разбора — преподавателю он оплатится, когда его проведут"
         return out

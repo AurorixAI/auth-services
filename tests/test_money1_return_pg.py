@@ -23,6 +23,10 @@ def row_of(w, day, lid):
 
 
 def post_return(w, who, day, lid, **extra):
+    """The screen sends the version it saw (R3 #11): by default the current one."""
+    if "expectedVersion" not in extra and not extra.get("dryRun"):
+        row = row_of(w, day, lid)
+        extra["expectedVersion"] = int(row.version) if row is not None else 1
     return make_client(w, user=who).post(f"{API}/{w.group.id}/attendance/return", json={"lessonDate": day.isoformat(), "lessonId": lid, "reason": "Завершили по ошибке", **extra})
 
 
@@ -42,7 +46,7 @@ def test_the_owner_returns_a_held_lesson_the_pack_and_the_pay_are_given_back_and
     assert body["changed"] is True and body["status"] == "in_progress" and body["version"] == 3
     effects = body["moneyEffects"]
     assert sorted(s["delta"] for s in effects["students"]) == [1, 1, 1]           # three students get the lesson back into the pack
-    assert effects["payroll"][0]["month"] == "2026-10" and effects["payroll"][0]["savedTotal"] == 100_000 and "changedBy" in effects["payroll"][0]
+    assert effects["payroll"] == []                                                # the sheet of this test is hand-made (no rates): nothing to measure; the chain of ``test_money1_holes_pg`` has the real numbers
     assert "в пакеты учеников вернётся занятие: 3" not in effects["text"] and "возвращено занятие: 3" in effects["text"]
     row = row_of(world, day, lid)
     assert row.status == "in_progress" and row.completed_at is None and {k: v for k, v in row.records.items()} != {}
