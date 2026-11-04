@@ -35,6 +35,11 @@ def test_a_late_payment_names_the_sheet_it_moves_with_the_sum_ЗП05(world, fixe
 
 
 def test_a_decision_on_an_excuse_says_it_before_and_after_what_it_does_to_the_pack_and_the_sheet(world, now_4_nov):
+    from tests.pg_world import ensure_billing
+    from tests.test_payments_service_pg import set_settings
+
+    set_settings(world, period_mode="lessons", lessons_per_payment=12)          # the pack exists only for a student who pays by lessons
+    ensure_billing(world)
     day, lid = lesson(date(2026, 10, 28))
     from src.auth.schemas import StartAttendanceRequest
 

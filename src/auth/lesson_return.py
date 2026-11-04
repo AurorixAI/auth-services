@@ -82,7 +82,7 @@ def return_completed_lesson(db, org_id: Any, group_id: Any, req: ReturnLessonReq
     students = me.student_deltas(marks, marks, statuses, statuses, held_before=True, held_after=False)
     pairs = [(t, row.lesson_date) for t in teachers]
     if req.dryRun:
-        effects = me.build(db, org_id, students=students, pairs=pairs, owner=owner, done=False)
+        effects = me.build(db, org_id, students=students, pairs=pairs, owner=owner, done=False, group_id=group.id)
         db.rollback()
         return {"ok": True, "changed": False, "dryRun": True, "version": int(row.version or 1), "status": COMPLETED, "moneyEffects": effects}
     before_status, before_records = row.status, dict(row.records or {})
@@ -92,7 +92,7 @@ def return_completed_lesson(db, org_id: Any, group_id: Any, req: ReturnLessonReq
                                 after_status=IN_PROGRESS, before_records=before_records, after_records=before_records, correction_reason=req.reason.strip(),
                                 details={"students_released": len(students)}, created_at=bc.utc_now()))
     db.flush()
-    effects = me.build(db, org_id, students=students, pairs=pairs, owner=owner, done=True)
+    effects = me.build(db, org_id, students=students, pairs=pairs, owner=owner, done=True, group_id=group.id)
     db.commit()
     return {"ok": True, "changed": True, "version": int(row.version), "status": IN_PROGRESS, "moneyEffects": effects}
 
@@ -110,7 +110,7 @@ def correction_impact(db, org_id: Any, group_id: Any, req: AttendanceImpactReque
     status_before = excuse_statuses(db, row.id)
     status_after = {sid: (status_before.get(sid, "pending") if mark == "excused" else None) for sid, mark in req.records.items()}   # a new «excused» waits for the decision: it still counts
     students = me.student_deltas(before, dict(req.records), status_before, status_after)
-    return {"ok": True, "moneyEffects": me.build(db, org_id, students=students, pairs=[(t, row.lesson_date) for t in teachers], owner=owner, done=False)}
+    return {"ok": True, "moneyEffects": me.build(db, org_id, students=students, pairs=[(t, row.lesson_date) for t in teachers], owner=owner, done=False, group_id=group.id)}
 
 
 def after_correction(db, group: Group, att: GroupAttendance, before: Dict[str, Any], after: Dict[str, Any], excuses_before: Dict[str, Optional[str]], *, owner: bool) -> Dict[str, Any]:
@@ -119,4 +119,4 @@ def after_correction(db, group: Group, att: GroupAttendance, before: Dict[str, A
     excuses_after = excuse_statuses(db, att.id)
     students = me.student_deltas({str(k): v for k, v in before.items()}, {str(k): v for k, v in after.items()}, excuses_before, excuses_after)
     teachers = lesson_teacher_ids(db, group, att.lesson_id, att.lesson_date, att)
-    return me.build(db, group.org_id, students=students, pairs=[(t, att.lesson_date) for t in teachers], owner=owner, done=True)
+    return me.build(db, group.org_id, students=students, pairs=[(t, att.lesson_date) for t in teachers], owner=owner, done=True, group_id=group.id)

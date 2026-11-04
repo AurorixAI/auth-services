@@ -1162,7 +1162,7 @@ class AttendanceExcuseService:
         held = att.status == "completed"
         students = me.student_deltas({sid: EXCUSED}, {sid: EXCUSED}, {sid: status_before}, {sid: status_after}, held_before=held, held_after=held)
         teachers = lesson_teacher_ids(self.db, group, att.lesson_id, att.lesson_date, att) if group is not None else []
-        return me.build(self.db, att.org_id, students=students, pairs=[(t, att.lesson_date) for t in teachers] if held else [], owner=owner, done=done)
+        return me.build(self.db, att.org_id, students=students, pairs=[(t, att.lesson_date) for t in teachers] if held else [], owner=owner, done=done, group_id=att.group_id)
 
     def review(
         self, org_id: str, excuse_id: UUID, actor_id: str, decision: str, note: Optional[str],

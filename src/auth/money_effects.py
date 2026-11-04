@@ -41,6 +41,22 @@ def student_deltas(before: Dict[str, Optional[str]], after: Dict[str, Optional[s
     return out
 
 
+def package_only(db, org_id: Any, group_id: Any, deltas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Only the students who pay by LESSONS (a package) have a pack to spend: a mark never changes the account of a student who pays by the calendar (area-attendance.md 4.4)."""
+    if not deltas or group_id is None:
+        return deltas
+    from src.models.auth import StudentGroup
+
+    from .payments_service import PaymentService
+
+    members = {str(sid): mid for mid, sid in db.query(StudentGroup.id, StudentGroup.student_id).filter(
+        StudentGroup.group_id == group_id, StudentGroup.student_id.in_([UUID(d["studentId"]) for d in deltas])).all()}
+    if not members:
+        return []
+    modes = {e.membership.id: e.ledger.mode for e in PaymentService(db)._loader(str(org_id), recalc=False).run(list(members.values()))}
+    return [d for d in deltas if modes.get(members.get(d["studentId"])) == "lessons"]
+
+
 def with_names(db, deltas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not deltas:
         return deltas
@@ -99,9 +115,9 @@ def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, do
     return (text[0].upper() + text[1:]) if text else ""
 
 
-def build(db, org_id: Any, *, students: List[Dict[str, Any]], pairs: Iterable[Tuple[Any, Any]], owner: bool, done: bool) -> Dict[str, Any]:
-    """The block ``moneyEffects`` of an answer."""
-    names = with_names(db, students)
+def build(db, org_id: Any, *, students: List[Dict[str, Any]], pairs: Iterable[Tuple[Any, Any]], owner: bool, done: bool, group_id: Any = None) -> Dict[str, Any]:
+    """The block ``moneyEffects`` of an answer (``group_id``: keep the students of a package only)."""
+    names = with_names(db, package_only(db, org_id, group_id, students))
     payroll = payroll_effects(db, org_id, pairs, owner=owner, amounts=done)
     return {"students": names, "payroll": payroll, "text": text_of(names, payroll, done=done), "dryRun": not done}
 

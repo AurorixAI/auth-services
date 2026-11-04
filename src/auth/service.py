@@ -5544,7 +5544,11 @@ class AuthService:
             and att.status == LessonAttendanceStatus.COMPLETED.value
         )
         if att.status != LessonAttendanceStatus.IN_PROGRESS.value and not is_correction_save:
-            raise ValueError("Отметки меняются только у начатого урока. Урок отменён или не начат; проведённый урок исправляет владелец, администратор с правом оплат или преподаватель этого урока")
+            raise ValueError(
+                "Урок отменён. Вернуть его на разбор («Требует разбора») может владелец или администратор с правом оплат: кнопка «Вернуть урок»"
+                if att.status == LessonAttendanceStatus.CANCELLED.value
+                else "Отметки меняются только у начатого урока. Проведённый урок исправляет владелец, администратор с правом оплат или преподаватель этого урока"
+            )
 
         if matching_slot and lesson_date == today and not is_correction_save:
             start_time = matching_slot.get("startTime")

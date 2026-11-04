@@ -9,7 +9,8 @@ from src.models.auth import GroupAttendance, GroupAttendanceAudit
 
 from tests.money1_helpers import hold_lesson, lesson, now_4_nov, sheet, tashkent  # noqa: F401  (fixtures)
 from tests.ops_helpers import grant_money_right
-from tests.pg_world import make_client, needs_pg, pg_session, save, world  # noqa: F401  (fixtures)
+from tests.pg_world import ensure_billing, make_client, needs_pg, pg_session, save, world  # noqa: F401  (fixtures)
+from tests.test_payments_service_pg import set_settings
 
 pytestmark = needs_pg
 API = "/api/v1/auth/org/groups"
@@ -25,7 +26,14 @@ def post_return(w, who, day, lid, **extra):
     return make_client(w, user=who).post(f"{API}/{w.group.id}/attendance/return", json={"lessonDate": day.isoformat(), "lessonId": lid, "reason": "Завершили по ошибке", **extra})
 
 
+def package_centre(w):
+    """The students pay by LESSONS (a package of 12): the only mode in which a held lesson spends a pack (area-attendance.md 4.4)."""
+    set_settings(w, period_mode="lessons", lessons_per_payment=12)
+    ensure_billing(w)
+
+
 def test_the_owner_returns_a_held_lesson_the_pack_and_the_pay_are_given_back_and_the_audit_says_why(world, now_4_nov):
+    package_centre(world)
     day, lid = hold_lesson(world, date(2026, 10, 28))
     sheet(world, world.teacher, OCT, tashkent(2026, 10, 30))                      # the sheet is saved mid-month: the month is OPEN
     r = post_return(world, world.owner, day, lid)
@@ -43,6 +51,7 @@ def test_the_owner_returns_a_held_lesson_the_pack_and_the_pay_are_given_back_and
 
 
 def test_the_return_is_idempotent_and_has_a_dry_run(world, now_4_nov):
+    package_centre(world)
     day, lid = hold_lesson(world, date(2026, 10, 28))
     dry = post_return(world, world.owner, day, lid, dryRun=True).json()
     assert dry["dryRun"] is True and dry["status"] == "completed" and row_of(world, day, lid).status == "completed"       # nothing written
@@ -103,3 +112,10 @@ def test_a_mistaken_lesson_not_held_goes_back_to_review_for_the_money_right_only
     assert row_of(world, day, lid) is None                                          # the lesson is «Требует разбора» again: the teacher can reconcile it
     assert world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), __import__("src.auth.schemas", fromlist=["x"]).StartAttendanceRequest(lessonDate=day, lessonId=lid),
                                                        reconciled_by=str(world.teacher.id), is_org_admin=False) == 1
+
+
+def test_a_centre_that_pays_by_the_calendar_has_no_pack_to_give_back(world, now_4_nov):
+    """area-attendance.md 4.4: with a calendar payment a mark changes nothing for the student; only the sheet of the teacher is named."""
+    day, lid = hold_lesson(world, date(2026, 10, 28))
+    r = post_return(world, world.owner, day, lid, dryRun=True).json()
+    assert r["moneyEffects"]["students"] == [] and "пакет" not in r["moneyEffects"]["text"]
