@@ -7019,6 +7019,17 @@
       },
       "SheetPatch": {
         "properties": {
+          "confirm_open_lessons": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Open Lessons"
+          },
           "expected_fingerprint": {
             "anyOf": [
               {
