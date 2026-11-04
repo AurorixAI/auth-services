@@ -294,3 +294,20 @@ def test_r3_m12_a_range_over_the_turn_of_the_year_finds_the_closed_month_on_eith
     world.db.commit()
     assert periods().closed_in_range([teacher], date(2027, 1, 1), date(2027, 1, 3)).label == "2027-01"
     assert periods().closed_in_range([teacher], date(2027, 2, 1), date(2027, 2, 5)) is None             # February is open
+
+
+def test_r3_6_the_closed_months_are_read_from_four_columns_once_per_request_and_forgotten_when_the_transaction_ends(world, now_4_nov):
+    from tests.pg_world import capture_queries
+
+    row = sheet(world, world.teacher, OCT, tashkent(2026, 11, 2))
+    row.lines = [{"membership_id": str(i), "line_key": str(i), "amount": 1, "marks": [{"date": "2026-10-01", "lesson_id": "s4", "state": "counted"}] * 20} for i in range(500)]      # a heavy sheet
+    world.db.commit()
+    seen, _ = capture_queries(world.db, lambda: closed_period.ClosedPeriods.of(world.db, world.org.id).closed_for([world.teacher.id], date(2026, 10, 5)))
+    sheets_sql = " ".join(s for s in seen if "FROM payroll_sheets" in s)
+    assert sheets_sql and "payroll_sheets.lines" not in sheets_sql and "percent_inputs" not in sheets_sql        # four columns: the lines of the sheets (megabytes) are never read
+    again, hit = capture_queries(world.db, lambda: [closed_period.ClosedPeriods.of(world.db, world.org.id).closed_for([world.teacher.id], date(2026, 10, d)) for d in range(1, 29)] * 10)
+    assert again == [] and all(h is not None for h in hit)                                                          # 280 checks of one request: no further query (one snapshot)
+    world.db.commit()                                                                                               # the request is over
+    sheet(world, world.teacher2, OCT, tashkent(2026, 11, 3))                                                        # a sheet saved meanwhile (commits)
+    fresh, found = capture_queries(world.db, lambda: closed_period.ClosedPeriods.of(world.db, world.org.id).closed_for([world.teacher2.id], date(2026, 10, 5)))
+    assert fresh and found is not None                                                                              # the next request reads again and sees it

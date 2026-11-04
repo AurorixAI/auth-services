@@ -178,3 +178,72 @@ def test_r3_n4_the_effects_of_many_sheets_of_one_month_calculate_the_month_once(
     probe.track(sheets)
     probe.measure("before")
     assert len(calls) == 1 and len(probe.before) == 5                                              # five sheets, one calculation of October
+
+
+def test_r3_7_a_failure_of_the_numbers_after_the_commit_never_turns_a_written_payment_into_an_error(world, fixed_today, monkeypatch):
+    """The payment is committed; the sentence about the sheets cannot be worked out: the answer is 201 with ``unavailable`` - not a 500 over money that is already written."""
+    from src.auth import money_effects
+
+    m, s1, s2 = g_pay_world(world)
+    save_sheet(world, m)
+    mem2 = student_group(world, s2)
+
+    def broken(self, done):
+        raise RuntimeError("the numbers broke")
+
+    monkeypatch.setattr(money_effects.MembershipProbe, "block", broken)
+    before = world.db.query(StudentPayment).filter_by(membership_id=mem2.id).count()
+    r = owner(world).post(f"{API}/org/memberships/{mem2.id}/payments", json={"amount": 300_000, "paid_on": _today().isoformat(), "method": "cash"})
+    assert r.status_code == 201, r.text
+    assert r.json()["money_effects"] == {"students": [], "payroll": [], "text": "", "dryRun": False, "unavailable": True}
+    world.db.expire_all()
+    assert world.db.query(StudentPayment).filter_by(membership_id=mem2.id).count() == before + 1          # the payment is there, once
+    monkeypatch.setattr(money_effects, "_block", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("broke")))
+    day, lid = lesson(m.d(13))
+    reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Проверяем сбой расчёта")          # the month must be open for the impact of a correction
+    r = owner(world).post(f"/api/v1/auth/org/groups/{world.group.id}/attendance/impact", json={"lessonDate": day.isoformat(), "lessonId": lid, "records": {}})
+    assert r.status_code == 200 and r.json()["moneyEffects"]["unavailable"] is True                       # the same for the blocks of the lessons
+
+
+def test_r3_12_a_save_of_the_sheet_that_waited_for_the_lock_is_stamped_after_the_reopening_it_waited_for(world, fixed_today):
+    """A save that WAITS for the lock of the sheet while a reopening holds it: the reopening commits, the save goes on.  ``now`` is taken after the lock, so the save is newer than the reopening and closes
+    the month again (before: ``now`` was taken before the wait - the month stayed «reopened» although the owner had just saved it)."""
+    import threading
+    import time
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+
+    from src.auth import business_clock as bc
+    from src.auth.payroll_schemas import SheetCreate
+    from src.auth.payroll_service import PayrollService
+    from src.models.auth import PayrollPeriodReopening, PayrollSheet
+    from tests.test_logicA_payroll_pg import fp
+
+    m, s1, s2 = g_pay_world(world)
+    saved = save_sheet(world, m)                                                                      # closed: saved after the month ended
+    body = SheetCreate(month=m.label, teacher_id=world.teacher.id, revision=1, expected_fingerprint=fp(world, m))
+    engine = world.db.get_bind()
+    engine = getattr(engine, "engine", engine)
+    holder = Session(engine)                                                                          # the "reopening": holds the sheet
+    holder.execute(text("SELECT id FROM payroll_sheets WHERE id = :i FOR UPDATE"), {"i": saved["id"]})
+    result: dict = {}
+
+    def save():
+        with Session(engine) as db:
+            result["sheet"] = PayrollService(db).save_sheet(str(world.org.id), str(world.owner.id), body)
+
+    thread = threading.Thread(target=save)
+    thread.start()
+    time.sleep(1.0)                                                                                   # the save is waiting for the lock now
+    assert thread.is_alive()
+    holder.add(PayrollPeriodReopening(org_id=world.org.id, teacher_id=world.teacher.id, period_month=m.first, sheet_id=saved["id"], sheet_revision=1, reopened_by=world.owner.id,
+                                      reason="Правим ведомость", created_at=bc.utc_now()))
+    holder.commit()                                                                                   # the reopening is committed, the lock is let go
+    holder.close()
+    thread.join(timeout=30)
+    assert not thread.is_alive() and "sheet" in result
+    world.db.expire_all()
+    row = world.db.query(PayrollSheet).filter_by(id=saved["id"]).one()
+    reopening = world.db.query(PayrollPeriodReopening).filter_by(org_id=world.org.id, teacher_id=world.teacher.id, period_month=m.first).one()
+    assert row.revision == 2 and row.updated_at > reopening.created_at                                 # the save is NEWER than the reopening it waited for
+    assert closed_period.period_state(world.db, world.org.id, world.teacher.id, m.first)["state"] == "closed"
