@@ -229,6 +229,27 @@ def accounting_start(db, org_id: Any) -> date:
     return accounting_start_of(dict(block) if isinstance(block, dict) else {}, row[1] if row else None)
 
 
+def open_lessons_since(db, org_id: Any, today: date) -> date:
+    """The oldest day a lesson that nobody resolved (never started, still running, cancelled by mistake) is offered for a decision (R3 #2): the accounting start of the centre - and never
+    later than the start of last month (the window this list had before, so a young centre loses nothing)."""
+    return min(accounting_start(db, org_id), bc.month_window_start(today))
+
+
+def group_open_actions_by_month(db, org_id: Any, actions: List[Any]) -> Dict[str, Any]:
+    """The list «Требует разбора» grouped by month of the lesson (oldest first) with a counter in each month and in total (R3 #2)."""
+    from .ops_schemas import OpenActionsMonth
+
+    months: Dict[date, List[Any]] = {}
+    for action in sorted(actions, key=lambda a: (a.lessonDate, a.startTime)):
+        months.setdefault(month_first(action.lessonDate), []).append(action)
+    return {
+        "total": len(actions),
+        "since": open_lessons_since(db, org_id, bc.business_today()).isoformat(),
+        "months": [OpenActionsMonth(month=first.strftime("%Y-%m"), title=month_title(first).capitalize(), count=len(items), missed=sum(i.actionType == "missed" for i in items),
+                                    inProgress=sum(i.actionType == "in_progress" for i in items), items=items) for first, items in sorted(months.items())],
+    }
+
+
 def _parse_month(text: str) -> date:
     try:
         first, _last = bc.month_bounds(text)

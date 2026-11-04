@@ -4296,8 +4296,15 @@ class AuthService:
         is_org_admin: bool,
         now: Optional[datetime] = None,
         only_group_id: Optional[str] = None,
+        since: Optional[date] = None,
+        until: Optional[date] = None,
+        include_closed: bool = False,
     ) -> list[OpenAttendanceActionResponse]:
         """Return unfinished and never-started past lessons for follow-up.
+
+        Money-1 R3 #2: there is no calendar window - every lesson of an OPEN month (a month whose sheet of the teacher is not saved after its end) from the accounting start of the
+        centre is here; a lesson of a CLOSED month is not (nobody can resolve it without reopening the month), unless ``include_closed`` (the payroll sheet names them: ``periodClosed``).
+        ``since`` / ``until`` narrow the range for a caller that needs one month.
 
         A started instance remains the source of truth for an open journal.
         A missed occurrence has no attendance row at all, so the server must
@@ -4323,6 +4330,10 @@ class AuthService:
             query = query.filter(func.coalesce(GroupAttendance.teacher_id, Group.teacher_id) == actor_id)
         if only_group_id:
             query = query.filter(GroupAttendance.group_id == only_group_id)
+        if since is not None:
+            query = query.filter(GroupAttendance.lesson_date >= since.isoformat())
+        if until is not None:
+            query = query.filter(GroupAttendance.lesson_date <= until.isoformat())
         open_rows = query.order_by(
             GroupAttendance.lesson_date.asc(),
             GroupAttendance.started_at.asc(),
@@ -4332,7 +4343,10 @@ class AuthService:
         # The missed-lesson candidates are known up front, so the schedule
         # data of every group involved is loaded once (two queries) instead of
         # per group: the cost of this call must not grow with the group count.
-        reconciliation_from = missed_lesson_window_start(today_date)
+        from .closed_period import ClosedPeriods, open_lessons_since
+
+        reconciliation_from = since or open_lessons_since(self.db, org_id, today_date)
+        scan_until = min(today_date, until) if until is not None else today_date
         # LOGIC-B (spec 5.2): an ARCHIVED group stays in the discovery - a lesson that began before the archive and was never started is still to be resolved
         # (the lessons whose start lies inside the archive interval are not occurrences at all)
         groups_query = self.db.query(Group).filter(
@@ -4360,7 +4374,7 @@ class AuthService:
         schedule = self._preload_schedule_data(
             [*(row[1].id for row in open_rows), *group_ids],
             date_from=preload_from_date,
-            date_to=today_date,
+            date_to=scan_until,
         )
         book = lesson_teachers.TeacherBook(self.db)
         book_group_ids = [*(row[1].id for row in open_rows), *group_ids]
@@ -4462,7 +4476,7 @@ class AuthService:
 
         for group in actionable_groups:
             for occurrence in self._resolved_occurrences_for_group(
-                group, date_from=reconciliation_from, date_to=today_date, preloaded=schedule
+                group, date_from=reconciliation_from, date_to=scan_until, preloaded=schedule
             ):
                 occurrence_date = occurrence["occurrenceDate"]
                 key = (str(group.id), occurrence_date, occurrence["id"])
@@ -4521,6 +4535,17 @@ class AuthService:
                         isSubstitution=missed_res.substitution,
                     )
                 )
+
+        periods = ClosedPeriods.of(self.db, org_id)
+        if periods.months_with_closed():                 # R3 #2: a lesson of a month the teacher's sheet has closed is not for the list (it is for the reopening)
+            kept = []
+            for action in actions:
+                if periods.closed_for([action.teacherId] if action.teacherId else [], action.lessonDate) is None:
+                    kept.append(action)
+                elif include_closed:
+                    action.periodClosed = True
+                    kept.append(action)
+            actions = kept
 
         # Teacher names in one batched query (no per-row lookups).
         teacher_ids = {UUID(action.teacherId) for action in actions if action.teacherId}

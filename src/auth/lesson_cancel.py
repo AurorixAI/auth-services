@@ -27,7 +27,7 @@ from src.models.auth import GroupAudit
 from . import business_clock as bc
 from . import exam_release
 from . import money_effects
-from .closed_period import ClosedPeriods, lesson_teacher_ids
+from .closed_period import ClosedPeriods, lesson_teacher_ids, open_lessons_since
 from .days_off import DaysOffService, HOLIDAY
 from .lesson_teachers import TeacherBook, _uuid
 from .models import AttendanceExcuse, Group, GroupAttendance, GroupAttendanceAudit, LessonSubstitutionRequest as Req, LessonTeacherAssignment, User
@@ -220,6 +220,8 @@ class LessonCancelMixin:
             raise conflict("RESTORE_PAST", "Урок уже должен был начаться, поэтому в расписание его не вернуть. Снова разобрать его («Требует разбора») может владелец или администратор с правом оплат")
         if past:        # Money-1 A2: a month the sheet of the teacher has closed is reopened first
             ClosedPeriods.of(self.db, group.org_id).assert_open(lesson_teacher_ids(self.db, group, lesson_id, iso, row), iso)
+            if day < open_lessons_since(self.db, group.org_id, bc.business_today()):         # R3 #2: the lesson would come back to a list that does not reach so far
+                raise conflict("RESTORE_BEFORE_START", "Этот урок был раньше начала учёта центра: вернуть его на разбор нельзя")
         held = DaysOffService(self.svc).live_for_date(org_id, day)
         if row.day_off_id is not None or held is not None:
             why = f" ({held.reason})" if held is not None else ""

@@ -271,6 +271,24 @@ class OpenAttendanceActionResponseB(OpenAttendanceActionResponse):
     requiresAdmin: bool = False
     ageDays: int = 0
     isSubstitution: bool = False
+    periodClosed: bool = False       # R3 #2: only where the caller asked for closed months (the payroll sheet): the month of the teacher is saved, the lesson waits for the reopening
+
+
+class OpenActionsMonth(BaseModel):
+    """R3 #2: the unresolved lessons of ONE month (oldest months first on the screen)."""
+
+    month: str                       # YYYY-MM
+    title: str                       # «Сентябрь 2026»
+    count: int
+    missed: int                      # never started
+    inProgress: int                  # started and not finished
+    items: List[OpenAttendanceActionResponseB]
+
+
+class OpenActionsByMonth(BaseModel):
+    total: int
+    since: str                       # the day the list starts from (the accounting start of the centre, never later than the start of last month)
+    months: List[OpenActionsMonth]
 
 
 class GroupResponseB(GroupResponse):

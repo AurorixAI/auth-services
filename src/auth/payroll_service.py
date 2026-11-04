@@ -413,7 +413,7 @@ class PayrollService:
 
         try:
             actions = AuthService(self.db).get_open_attendance_actions(
-                org_id, actor_id=None, is_org_admin=True
+                org_id, actor_id=None, is_org_admin=True, since=first, until=last, include_closed=True      # R3 #2: one month, a closed one too (its sheet names what is left)
             )
         except Exception:
             logger.exception("Could not count open lessons for org %s", org_id)

@@ -4,7 +4,7 @@ Mounted by ``router.py`` (so under ``/api/v1/auth``).  The state of the months i
 behind the one dependency of the money rights (``require_payments_access``: the owner, an administrator the owner allowed)."""
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -12,7 +12,9 @@ from uuid import UUID
 from src.core.database import get_db
 
 from . import closed_period
-from .dependencies import require_org_admin, require_payments_access
+from .attendance_access import is_org_manager
+from .dependencies import require_org_admin, require_org_member, require_payments_access
+from .ops_schemas import OpenActionsByMonth
 
 router = APIRouter(tags=["ClosedPeriod"])
 
@@ -33,3 +35,16 @@ def list_payroll_periods(month: str = Query(..., max_length=7), user: dict = Dep
 def reopen_payroll_period(month: str, request: ReopenRequest, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
     """Переоткрыть закрытый месяц преподавателя (причина обязательна, пишется в журнал); повтор — ``changed: false``."""
     return closed_period.reopen_month(db, user["org_id"], request.teacher_id, month, user["user_id"], request.reason, request.sheet_revision)
+
+
+@router.get("/org/attendance/open-actions/by-month", response_model=OpenActionsByMonth)
+def open_actions_by_month(user: dict = Depends(require_org_member), db: Session = Depends(get_db)):
+    """«Требует разбора» по месяцам (R3 #2): все неразобранные уроки открытых месяцев от начала учёта центра, самые старые месяцы первыми, с счётчиком в каждом месяце и общим.
+    Тот же отбор, что у ``GET /org/attendance/open-actions`` (преподаватель видит свои уроки, владелец и администратор — все); закрытые месяцы сюда не входят."""
+    from .service import AuthService  # lazy: service imports a great deal
+
+    try:
+        actions = AuthService(db).get_open_attendance_actions(user["org_id"], actor_id=user["user_id"], is_org_admin=is_org_manager(user))
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc))
+    return closed_period.group_open_actions_by_month(db, user["org_id"], actions)

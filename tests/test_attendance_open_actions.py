@@ -176,7 +176,7 @@ def test_open_actions_query_count_does_not_grow_with_group_count(world):
     big_items, big = _statements_for_open_actions(world)
     assert len(big_items) > len(small_items) > 0
     assert len(big) == len(small), (len(small), len(big))
-    assert len(big) <= 10  # +2 for LOGIC-B (the teacher history and the substitutions of ALL the groups, one query each)
+    assert len(big) <= 12  # +2 for LOGIC-B (the teacher history and the substitutions of ALL the groups, one query each); +2 Money-1 R3 #2 (the accounting start of the centre, the closed months: once)
 
 
 def test_preloaded_schedule_gives_the_same_occurrences(world):
@@ -248,7 +248,7 @@ def test_open_actions_missed_lessons_start_on_the_first_of_the_previous_month(wo
     assert not any(d.startswith("2026-09") for d in dates)
     # The preload stays O(1): a window of two months costs the same queries as before.
     _, statements = _statements_for_open_actions(world)
-    assert len(statements) <= 10  # +2 for LOGIC-B (teacher history, substitutions)
+    assert len(statements) <= 12  # +2 for LOGIC-B (teacher history, substitutions); +2 Money-1 R3 #2
 
 
 # ---- N13 P1.5: no student in the group at the lesson start = nothing was missed ----
@@ -406,7 +406,7 @@ def test_empty_roster_check_keeps_the_query_count_constant(world):
     big_items, big = _statements_for_open_actions(world)
     assert len(big_items) > len(small_items) > 0
     assert len(big) == len(small), (len(small), len(big))
-    assert len(big) <= 11  # +2 for LOGIC-B (teacher history, substitutions)
+    assert len(big) <= 13  # +2 for LOGIC-B (teacher history, substitutions); +2 Money-1 R3 #2
 
 
 # ---- N13 P1.5: a lesson nobody could attend cannot be reconciled either ------------
