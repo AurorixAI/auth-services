@@ -1158,22 +1158,33 @@ class PayrollService:
             raise PayrollNotFound("Ведомость не найдена")
         return sheet
 
-    def _open_lessons_answer(self, org_id: str, first: date, teacher_id: UUID, answer: Optional[bool]) -> Optional[List[str]]:
-        """Money-1 R3 #21 + I-4: a save of a sheet whose month is OVER closes the month (A1, variant C), so with an unresolved lesson of the teacher it goes only after the owner said yes.
-        ``answer`` None (an old client): no question, nothing to remember (returns None); ``False``: 409 ``OPEN_LESSONS_CONFIRM_REQUIRED`` with the list when there is something unresolved (else ``[]``);
-        ``True``: the keys of those lessons (``closed_period.open_lesson_key``) - the caller stores them with the sheet, the nightly reconciliation then takes them for the decision of the centre.
-        A month that is not over yet has nothing to ask (None).  Used by the save (POST) and by the re-save (PATCH): the re-save after a reopening is what closes the month again."""
+    def _open_lessons_answer(self, org_id: str, first: date, teacher_id: UUID, answer: Optional[bool], previous: Optional[List[str]]) -> Any:
+        """Money-1 R3 #21 + I-4: ONE rule for the save (POST) and the re-save (PATCH) of a sheet whose month is OVER (such a save closes the month, A1 variant C).
+
+        U = the unresolved lessons of the teacher now, C = ``previous`` = those the owner confirmed at the last save (``payroll_sheets.confirmed_open_lessons``); the keys are ``closed_period.open_lesson_key``.
+        * ``True``  -> save, C := U.
+        * ``False`` -> if U has lessons that are not in C: 409 ``OPEN_LESSONS_CONFIRM_REQUIRED`` with ONLY the new ones (``count`` = their number, ``alreadyConfirmed`` = how many were confirmed before), nothing is
+          written; otherwise (U is inside C) save without a question, C := U - the owner is not asked the same question again.
+        * ``None`` (an old client) -> save without a question, C := C ∩ U: what was resolved leaves, nothing new is confirmed.
+        Returns the C to store, or ``_KEEP`` when there is nothing to remember (the month is not over yet) or the list of the month could not be read (the old C stays)."""
         last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
-        if answer is None or last >= bc.business_today():
-            return None
+        if last >= bc.business_today():
+            return _KEEP
         found = self._open_lessons(org_id, first, last)
-        left = (found or {}).get(str(teacher_id), [])
+        if found is None:
+            return _KEEP
+        left = found.get(str(teacher_id), [])
+        keys = {open_lesson_key(i["lessonDate"], i["groupId"], i["lessonId"]): i for i in left}
+        confirmed = set(previous or [])
+        if answer is None:
+            return sorted(set(keys) & confirmed)
         if answer is False:
-            if left:
+            new = [item for key, item in keys.items() if key not in confirmed]
+            if new:
                 raise OpenLessonsConfirmRequired(
-                    f"В месяце незакрытых уроков: {len(left)}. Они не попадут в ведомость, а месяц закроется. Сохранить всё равно?", count=len(left), items=left[:50])
-            return []
-        return sorted(open_lesson_key(i["lessonDate"], i["groupId"], i["lessonId"]) for i in left) if found is not None else None
+                    f"В месяце незакрытых уроков, которых вы ещё не подтверждали: {len(new)}. Они не попадут в ведомость, а месяц закроется. Сохранить всё равно?",
+                    count=len(new), items=new[:50], alreadyConfirmed=len(keys) - len(new))
+        return sorted(keys)
 
     @staticmethod
     def _conflict(current: int) -> RevisionConflict:
@@ -1222,7 +1233,9 @@ class PayrollService:
         keys = self._line_keys(s.identity for s in teacher.lines)
         given = self._changes_from_body(body.line_overrides, keys)
         self._check_expected(body.expected_fingerprint, teacher.fingerprint)
-        confirmed = self._open_lessons_answer(org_id, first, body.teacher_id, body.confirm_open_lessons)       # the unresolved lessons the owner said «save anyway» to (None: nothing to remember)
+        before = self.db.query(PayrollSheet.confirmed_open_lessons).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == body.teacher_id, PayrollSheet.period_month == first).scalar()
+        confirmed = self._open_lessons_answer(org_id, first, body.teacher_id, body.confirm_open_lessons, before)        # the unresolved lessons the owner said «save anyway» to
+        confirmed = None if confirmed is _KEEP else confirmed
         actor = UUID(str(actor_id))
 
         try:
@@ -1370,11 +1383,9 @@ class PayrollService:
         """
         if not (body.line_overrides or body.recalculate or (body.note or "").strip()):
             raise PayrollInvalid("Нечего менять", code="NOTHING_TO_CHANGE")
-        confirmed: Any = _KEEP                      # I-4: without the field the confirmation of the last save stays as it is (an old client's «Пересчитать» decides nothing)
-        if body.confirm_open_lessons is not None:   # the question is asked BEFORE the lock of the sheet (the list of the month is a heavy read)
-            probe = self.db.query(PayrollSheet.period_month, PayrollSheet.teacher_id).filter(PayrollSheet.id == sheet_id, PayrollSheet.org_id == org_id).first()
-            if probe is not None:
-                confirmed = self._open_lessons_answer(org_id, probe[0], probe[1], body.confirm_open_lessons)
+        # I-4: the same rule as the save (``_open_lessons_answer``); it is applied BEFORE the lock of the sheet (the list of the month is a heavy read)
+        probe = self.db.query(PayrollSheet.period_month, PayrollSheet.teacher_id, PayrollSheet.confirmed_open_lessons).filter(PayrollSheet.id == sheet_id, PayrollSheet.org_id == org_id).first()
+        confirmed: Any = self._open_lessons_answer(org_id, probe[0], probe[1], body.confirm_open_lessons, probe[2]) if probe is not None else _KEEP
         sheet = self._lock_sheet(org_id, sheet_id, lock=True)
         try:
             if body.revision != sheet.revision:
