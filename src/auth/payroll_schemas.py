@@ -109,6 +109,9 @@ class SheetPatch(BaseModel):
     # With ``recalculate``: the ``source_fingerprint`` of the preview the caller looked at (409 if it moved).
     expected_fingerprint: Optional[str] = Field(None, max_length=128)
     note: Optional[str] = Field(None, max_length=MAX_NOTE)
+    # The same question as in ``SheetCreate``: the re-save of a month that is over (after «Переоткрыть») is what closes it again.  ``None`` - no question, the confirmation of the last save stays;
+    # ``false`` - 409 ``OPEN_LESSONS_CONFIRM_REQUIRED`` (``count``, ``items``) when the teacher has unresolved lessons; ``true`` - the owner confirmed them, the list is remembered (replaces the old one).
+    confirm_open_lessons: Optional[bool] = None
 
     @model_validator(mode="after")
     def _check(self):

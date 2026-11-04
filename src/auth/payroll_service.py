@@ -156,6 +156,9 @@ class RevisionConflict(PayrollError):
     code = "SHEET_REVISION_CONFLICT"
 
 
+_KEEP = object()        # «leave as it is» for a value that may be None
+
+
 class OpenLessonsConfirmRequired(PayrollError):
     """Money-1 R3 #21: the month is over, a lesson of the teacher is still unresolved (going on, never started): the sheet is saved only after the owner confirmed it."""
 
@@ -1155,6 +1158,23 @@ class PayrollService:
             raise PayrollNotFound("Ведомость не найдена")
         return sheet
 
+    def _open_lessons_answer(self, org_id: str, first: date, teacher_id: UUID, answer: Optional[bool]) -> Optional[List[str]]:
+        """Money-1 R3 #21 + I-4: a save of a sheet whose month is OVER closes the month (A1, variant C), so with an unresolved lesson of the teacher it goes only after the owner said yes.
+        ``answer`` None (an old client): no question, nothing to remember (returns None); ``False``: 409 ``OPEN_LESSONS_CONFIRM_REQUIRED`` with the list when there is something unresolved (else ``[]``);
+        ``True``: the keys of those lessons (``closed_period.open_lesson_key``) - the caller stores them with the sheet, the nightly reconciliation then takes them for the decision of the centre.
+        A month that is not over yet has nothing to ask (None).  Used by the save (POST) and by the re-save (PATCH): the re-save after a reopening is what closes the month again."""
+        last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
+        if answer is None or last >= bc.business_today():
+            return None
+        found = self._open_lessons(org_id, first, last)
+        left = (found or {}).get(str(teacher_id), [])
+        if answer is False:
+            if left:
+                raise OpenLessonsConfirmRequired(
+                    f"В месяце незакрытых уроков: {len(left)}. Они не попадут в ведомость, а месяц закроется. Сохранить всё равно?", count=len(left), items=left[:50])
+            return []
+        return sorted(open_lesson_key(i["lessonDate"], i["groupId"], i["lessonId"]) for i in left) if found is not None else None
+
     @staticmethod
     def _conflict(current: int) -> RevisionConflict:
         return RevisionConflict(
@@ -1202,15 +1222,7 @@ class PayrollService:
         keys = self._line_keys(s.identity for s in teacher.lines)
         given = self._changes_from_body(body.line_overrides, keys)
         self._check_expected(body.expected_fingerprint, teacher.fingerprint)
-        confirmed: Optional[List[str]] = None            # the unresolved lessons the owner said «save anyway» to (kept for the reconciliation: a decision of the centre, not a failure)
-        if body.confirm_open_lessons is not None and last < bc.business_today():           # R3 #21: a month that is over is closed by this save - with an unresolved lesson only after the owner said yes
-            found = self._open_lessons(org_id, first, last)
-            left = (found or {}).get(str(body.teacher_id), [])
-            if body.confirm_open_lessons is True and found is not None:
-                confirmed = sorted(open_lesson_key(i["lessonDate"], i["groupId"], i["lessonId"]) for i in left)
-            if body.confirm_open_lessons is False and left:
-                raise OpenLessonsConfirmRequired(
-                    f"В месяце незакрытых уроков: {len(left)}. Они не попадут в ведомость, а месяц закроется. Сохранить всё равно?", count=len(left), items=left[:50])
+        confirmed = self._open_lessons_answer(org_id, first, body.teacher_id, body.confirm_open_lessons)       # the unresolved lessons the owner said «save anyway» to (None: nothing to remember)
         actor = UUID(str(actor_id))
 
         try:
@@ -1358,6 +1370,11 @@ class PayrollService:
         """
         if not (body.line_overrides or body.recalculate or (body.note or "").strip()):
             raise PayrollInvalid("Нечего менять", code="NOTHING_TO_CHANGE")
+        confirmed: Any = _KEEP                      # I-4: without the field the confirmation of the last save stays as it is (an old client's «Пересчитать» decides nothing)
+        if body.confirm_open_lessons is not None:   # the question is asked BEFORE the lock of the sheet (the list of the month is a heavy read)
+            probe = self.db.query(PayrollSheet.period_month, PayrollSheet.teacher_id).filter(PayrollSheet.id == sheet_id, PayrollSheet.org_id == org_id).first()
+            if probe is not None:
+                confirmed = self._open_lessons_answer(org_id, probe[0], probe[1], body.confirm_open_lessons)
         sheet = self._lock_sheet(org_id, sheet_id, lock=True)
         try:
             if body.revision != sheet.revision:
@@ -1421,6 +1438,8 @@ class PayrollService:
             sheet.source_fingerprint = fingerprint
             sheet.updated_by = actor
             sheet.updated_at = now
+            if confirmed is not _KEEP:
+                sheet.confirmed_open_lessons = confirmed
             self._add_revision(sheet, actor, now, body.note)
             self.db.commit()
         except PayrollError:
