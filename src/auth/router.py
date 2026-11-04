@@ -1225,6 +1225,7 @@ def bulk_add_students(
     mode: Literal["transfer", "add"] = Query("transfer", description="transfer | add"),
     user: dict = Depends(require_org_admin),
     money_right: bool = Depends(money_rights_flag),
+    dry_run: bool = Query(False, description="только показать, что перенесётся и что откажется (ничего не записывается)"),
     db: Session = Depends(get_db),
 ):
     """Массово добавить учеников в группу.
@@ -1237,7 +1238,7 @@ def bulk_add_students(
         return _svc(db).bulk_add_students(
             user["org_id"], group_id, request.student_ids,
             mode=mode, price_override=request.price_override, actor_id=user["user_id"],
-            payments_detail=has_payments_access(user, db), money_right=money_right,
+            payments_detail=has_payments_access(user, db), money_right=money_right, dry_run=dry_run,
         )
     except OperationalError as e:
         raise _concurrent_edit_or_raise(e, db)
@@ -1255,6 +1256,7 @@ def add_student_to_group(
     mode: Literal["transfer", "add"] = Query("transfer", description="transfer | add"),
     user: dict = Depends(require_org_admin),
     money_right: bool = Depends(money_rights_flag),
+    dry_run: bool = Query(False, description="только показать, что перенесётся (ничего не записывается)"),
     db: Session = Depends(get_db),
 ):
     """Добавить ученика в группу: перевести (по умолчанию) или добавить ещё одну группу."""
@@ -1265,7 +1267,7 @@ def add_student_to_group(
         return _svc(db).add_student_to_group(
             user["org_id"], group_id, student_id,
             mode=mode, price_override=price_override, actor_id=user["user_id"],
-            payments_detail=has_payments_access(user, db), opening_balance=opening_balance, money_right=money_right,
+            payments_detail=has_payments_access(user, db), opening_balance=opening_balance, money_right=money_right, dry_run=dry_run,
         )
     except MembershipConflict as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))

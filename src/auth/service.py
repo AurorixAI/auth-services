@@ -2549,6 +2549,7 @@ class AuthService:
         actor_id: Optional[str] = None,
         payments_detail: bool = False,
         money_right: bool = True,
+        dry_run: bool = False,
     ) -> dict:
         added = 0
         skipped_details: list[dict[str, str]] = []
@@ -2558,7 +2559,7 @@ class AuthService:
                 result = self.add_student_to_group(
                     org_id, group_id, student_id,
                     mode=mode, price_override=price_override, actor_id=actor_id,
-                    payments_detail=payments_detail, money_right=money_right,
+                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run,
                 )
                 added += 1
                 for warning in result.get("warnings", []):
@@ -2579,6 +2580,7 @@ class AuthService:
             "skipped": len(skipped_details),
             "skipped_details": skipped_details,
             "warnings": warnings,
+            "dry_run": dry_run,
         }
 
     def add_student_to_group(
@@ -2594,8 +2596,11 @@ class AuthService:
         opening_balance: Optional[Any] = None,
         opening_source: str = "add",
         money_right: bool = True,
+        dry_run: bool = False,
     ) -> dict:
         """Enrol a student in a group.
+
+        ``dry_run`` (Money-1 R3 #15): everything is done inside the transaction and thrown away - the answer says what a TRANSFER would carry over (``carried``) and what would be refused.
 
         ``money_right`` (Money-1 A4): a TRANSFER (another active group is closed) moves the student's paid time and advance - the owner / an administrator with the payments right only;
         the router passes the real flag.
@@ -2684,13 +2689,15 @@ class AuthService:
             and not other_active_memberships
             and str(student.group_id) == str(group.id)
         ):
-            if price_override is not None:
+            if price_override is not None and not dry_run:
                 # Nothing moves, but an authorised individual price is still the admin's intent.
                 pricing.write_override(
                     self.db, existing.id, actor_id, amount=override_amount,
                     valid_from=ps.business_today(), reason=override_reason,
                 )
                 self.db.commit()
+            elif dry_run:
+                self.db.rollback()
             return {
                 "student_id": str(student_id),
                 "group_id": str(group_id),
@@ -2793,8 +2800,7 @@ class AuthService:
         self.db.flush()
         warnings = self._membership_warnings(student, group)
         warnings.extend(carried)
-        self.db.commit()
-        return {
+        result = {
             "student_id": str(student_id),
             "group_id": str(group_id),
             "status": "added",
@@ -2802,7 +2808,14 @@ class AuthService:
             "mode": mode,
             "membership_id": str(membership.id),
             "warnings": warnings,
+            "carried": carried,
+            "dry_run": dry_run,
         }
+        if dry_run:                    # R3 #15: the answer was built from the real run; nothing of it stays
+            self.db.rollback()
+        else:
+            self.db.commit()
+        return result
 
     @staticmethod
     def _membership_event_at(membership: StudentGroup) -> Optional[datetime]:

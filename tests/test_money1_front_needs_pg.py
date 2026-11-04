@@ -80,3 +80,30 @@ def test_r3_25_a_lesson_that_was_only_returned_is_marked_in_the_journal(world, n
     journal = owner.get(f"{API}/{world.group.id}/attendance", params={"month": "2026-10"}).json()
     entry = journal["corrections"][f"{day.isoformat()}_{lid}"]
     assert entry["kind"] == "returned" and entry["reason"] == "Завершили по ошибке" and entry["changes"] == [] and entry["by_name"]
+
+
+def test_r3_15_a_transfer_has_a_dry_run_that_says_what_travels_and_writes_nothing(world, now_4_nov):
+    from src.models.auth import StudentGroup
+    from tests.pg_world import make_group
+    from tests.test_payroll_pg import pay_calendar
+
+    s0 = world.students[0]
+    pay_calendar(world, s0, date(2026, 9, 1), date(2026, 11, 30))                                  # paid through the end of November
+    other = make_group(world.db, world.org, world.teacher2, "Вторая")
+    world.db.commit()
+    grant_money_right(world)
+    admin = make_client(world, user=world.admin)
+    url = f"/api/v1/auth/org/groups/{other.id}/students/{s0.id}"
+    dry = admin.post(url, params={"mode": "transfer", "dry_run": True})
+    assert dry.status_code == 200, dry.text
+    assert dry.json()["dry_run"] is True and dry.json()["carried"], dry.json()                       # the sentence with the sum that would travel
+    world.db.expire_all()
+    mine = world.db.query(StudentGroup).filter_by(student_id=s0.id).all()
+    assert [(m.group_id == world.group.id, m.is_active) for m in mine] == [(True, True)]               # nothing was written: still in the old group, no membership in the new one
+    done = admin.post(url, params={"mode": "transfer"})
+    assert done.status_code == 200 and done.json()["dry_run"] is False
+    assert done.json()["carried"] == dry.json()["carried"]                                             # what the confirmation said is what travelled
+    bulk = admin.post(f"/api/v1/auth/org/groups/{world.group.id}/students/bulk", params={"mode": "transfer", "dry_run": True}, json={"student_ids": [str(s0.id)]})
+    assert bulk.status_code == 200 and bulk.json()["dry_run"] is True and bulk.json()["added"] == 1
+    world.db.expire_all()
+    assert world.db.query(StudentGroup).filter_by(student_id=s0.id, group_id=world.group.id, is_active=True).count() == 0     # the bulk dry run did not move him back
