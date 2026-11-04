@@ -214,3 +214,51 @@ def test_r3_m1_no_reason_is_our_sentence_not_the_english_422_of_the_schema(world
         assert r.status_code == 422 and r.json()["detail"]["code"] == "REASON_REQUIRED" and "Причина" in r.json()["detail"]["message"], (reason, r.text)
     bad_month = client.post("/api/v1/auth/org/payroll-periods/2026-1/reopen", json={"teacher_id": str(world.teacher.id), "reason": "Исправляем ошибку", "sheet_revision": 1})
     assert bad_month.status_code == 422 and bad_month.json()["detail"]["code"] == "MONTH_INVALID" and "ГГГГ-ММ" in bad_month.json()["detail"]["message"]
+
+
+def test_r3_n1_every_code_of_the_closed_period_is_in_the_catalogue_with_the_status_the_code_gives():
+    """The catalogue is what the contract exports: a code the screens meet (reopening, return of a lesson, restore) and the status the route answers with must be in it."""
+    from src.auth.ops_rules import ERROR_CATALOGUE
+
+    for code, status in (("SHEET_NOT_FOUND", 404), ("REASON_REQUIRED", 422), ("LESSON_IN_PROGRESS", 409), ("MONTH_INVALID", 422), ("REVISION_REQUIRED", 422), ("SHEET_CHANGED", 409),
+                         ("VERSION_REQUIRED", 422), ("RESTORE_BEFORE_START", 409), ("PERIOD_CLOSED", 409), ("MONEY_RIGHT_REQUIRED", 403)):
+        assert ERROR_CATALOGUE[code][0] == status and ERROR_CATALOGUE[code][1], code
+
+
+def test_r3_m9_a_correction_that_passed_the_check_holds_the_sheet_of_the_month_until_it_ends(world, now_4_nov):
+    """The check «the month is open» takes the saved sheets FOR SHARE: the save of the sheet (FOR UPDATE) cannot slip in between the check and the correction."""
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.orm import Session
+
+    row = sheet(world, world.teacher, OCT, tashkent(2026, 10, 15))                                    # a sheet saved mid-month: the month is open
+    closed_period.ClosedPeriods.of(world.db, world.org.id).assert_open([world.teacher.id], date(2026, 10, 28))        # the check of a correction ... the transaction goes on
+    engine = world.db.get_bind()
+    engine = getattr(engine, "engine", engine)
+    with Session(engine) as other:
+        other.execute(text("SET lock_timeout = '300ms'"))
+        with pytest.raises(OperationalError):                                                         # the save of the sheet has to wait
+            other.execute(text("SELECT id FROM payroll_sheets WHERE id = :i FOR UPDATE"), {"i": row.id})
+        other.rollback()
+    world.db.rollback()                                                                               # the correction is done: the hold is let go
+    with Session(engine) as other:
+        other.execute(text("SET lock_timeout = '300ms'"))
+        assert other.execute(text("SELECT id FROM payroll_sheets WHERE id = :i FOR UPDATE"), {"i": row.id}).first() is not None
+        other.rollback()
+
+
+def test_r3_n3_the_list_of_periods_costs_the_same_number_of_queries_for_one_teacher_or_many(world, now_4_nov):
+    from tests.pg_world import capture_queries, make_member, make_user
+
+    sheet(world, world.teacher, OCT, tashkent(2026, 11, 2))
+    few, listed = capture_queries(world.db, lambda: closed_period.list_periods(world.db, world.org.id, "2026-10"))
+    assert len(listed) == 1 and listed[0]["state"] == "closed"
+    for n in range(6):                                                                               # six more teachers with a sheet each (some reopened)
+        teacher = make_user(world.db, "teacher", f"Учитель{n}")
+        make_member(world.db, world.org, teacher, "teacher")
+        sheet(world, teacher, OCT, tashkent(2026, 11, 2))
+        if n % 2:
+            reopen_now(world.db, world.org.id, teacher.id, "2026-10", world.owner.id, "Правим ведомость")
+    many, listed = capture_queries(world.db, lambda: closed_period.list_periods(world.db, world.org.id, "2026-10"))
+    assert len(listed) == 7 and {x["state"] for x in listed} == {"closed", "reopened"}
+    assert len(many) == len(few) <= 4, (len(few), len(many))             # the same few queries for 1 or 7 teachers

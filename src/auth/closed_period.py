@@ -265,11 +265,12 @@ def period_state(db, org_id: Any, teacher_id: Any, first: date) -> Dict[str, Any
         return {"state": "none", "closedOn": None, "sheetId": None, "sheetRevision": None, "reopened": None}
     last = (db.query(PayrollPeriodReopening).filter(PayrollPeriodReopening.org_id == org_id, PayrollPeriodReopening.teacher_id == teacher_id,
                                                     PayrollPeriodReopening.period_month == first).order_by(PayrollPeriodReopening.created_at.desc()).first())
+    return _state_info(sheet, last, {last.reopened_by: db.query(User).filter(User.id == last.reopened_by).first()} if last is not None else {})
+
+
+def _state_info(sheet: PayrollSheet, last: Optional[PayrollPeriodReopening], users: Dict[Any, Any]) -> Dict[str, Any]:
     state, saved_on = state_of_sheet(sheet, last.created_at if last else None)
-    reopened = None
-    if last is not None:
-        who = db.query(User).filter(User.id == last.reopened_by).first()
-        reopened = {"at": last.created_at.isoformat(), "by": short_name(who), "reason": last.reason}
+    reopened = {"at": last.created_at.isoformat(), "by": short_name(users.get(last.reopened_by)), "reason": last.reason} if last is not None else None
     return {"state": state, "closedOn": saved_on.isoformat() if state != "open" else None, "sheetId": str(sheet.id), "sheetRevision": int(sheet.revision), "reopened": reopened}
 
 
@@ -277,11 +278,17 @@ def list_periods(db, org_id: Any, month: str) -> List[Dict[str, Any]]:
     """The saved sheets of a month with their period state, one line per teacher (no sums: this is the owner's / the administrator's view of WHO may still be corrected)."""
     first = _parse_month(month)
     sheets = db.query(PayrollSheet).filter(PayrollSheet.org_id == org_id, PayrollSheet.period_month == first).all()
-    users = {u.id: u for u in db.query(User).filter(User.id.in_([s.teacher_id for s in sheets])).all()} if sheets else {}
+    if not sheets:
+        return []
+    latest: Dict[Any, PayrollPeriodReopening] = {}              # R3 n3: three queries for any number of teachers (the sheets, their reopenings, the people), not three per teacher
+    for row in (db.query(PayrollPeriodReopening).filter(PayrollPeriodReopening.org_id == org_id, PayrollPeriodReopening.period_month == first)
+                .order_by(PayrollPeriodReopening.created_at.desc()).all()):
+        latest.setdefault(row.teacher_id, row)
+    wanted = {s.teacher_id for s in sheets} | {r.reopened_by for r in latest.values()}
+    users = {u.id: u for u in db.query(User).filter(User.id.in_(wanted)).all()}
     out = []
     for sheet in sheets:
-        info = period_state(db, org_id, sheet.teacher_id, first)
-        out.append({"teacherId": str(sheet.teacher_id), "teacherName": short_name(users.get(sheet.teacher_id)), "month": first.strftime("%Y-%m"), **info})
+        out.append({"teacherId": str(sheet.teacher_id), "teacherName": short_name(users.get(sheet.teacher_id)), "month": first.strftime("%Y-%m"), **_state_info(sheet, latest.get(sheet.teacher_id), users)})
     return sorted(out, key=lambda x: x["teacherName"] or "")
 
 
