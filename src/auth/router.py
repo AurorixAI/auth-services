@@ -37,6 +37,7 @@ from . import business_clock as bc, import_limits, import_ops, import_service, x
 from .ops_router import router as ops_router
 from .days_off_router import router as days_off_router
 from .closed_period_router import router as closed_period_router
+from .lesson_return_router import router as lesson_return_router
 from .ops_rules import GroupArchivedForEnrolment, OpsError
 from .ops_schemas import (
     AcceptInviteRequestB,
@@ -1779,3 +1780,4 @@ def cancel_missed_group_attendance(
 router.include_router(ops_router)
 router.include_router(days_off_router)  # PAY-F: «Выходной день центра»
 router.include_router(closed_period_router)  # Money-1 A1: the closed month and its reopening
+router.include_router(lesson_return_router)  # Money-1 A2 / A3: the return of a held lesson, the impact of a correction

@@ -4,7 +4,7 @@ ALGO - LOGIC-A endpoints (pack «деньги»): opening balance, pause, leave 
 Mounted by ``payments_router`` (so under ``/api/v1/auth``).  The routes and their schemas are the FROZEN contract of the
 pack (``artifacts/partner_doc_check/logicA_contract.json``, ``tests/fixtures/logicA``): a change needs a change of the spec
 (``logicA_spec.md``) and of the schemas first.  Guards: opening balance / leave settlement / price - ``require_payments_access``;
-pause, leave, lesson type - ``require_org_admin`` (the sums inside the answer only with access to money).
+pause, lesson type - ``require_payments_access`` too (Money-1 A4: they move money, so the owner or an administrator with the right only); leave - ``require_org_admin``, the part with money asks the right inside.
 """
 from typing import Optional
 from uuid import UUID
@@ -107,7 +107,7 @@ def create_pause(
     request: PauseCreate,
     dry_run: bool = Query(False),
     idempotency_key: Optional[UUID] = Header(None, alias="Idempotency-Key"),
-    user: dict = Depends(require_org_admin),
+    user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Пауза: дни паузы не начисляются, место сохраняется. Те же даты повторно (двойной клик) - ничего нового."""
@@ -124,7 +124,7 @@ def patch_pause(
     pause_id: UUID,
     request: PausePatch,
     dry_run: bool = Query(False),
-    user: dict = Depends(require_org_admin),
+    user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     try:
@@ -136,7 +136,7 @@ def patch_pause(
 
 
 @router.post("/org/pauses/{pause_id}/void", response_model=PauseVoided, responses=_ERRORS)
-def void_pause(pause_id: UUID, request: PauseVoid, user: dict = Depends(require_org_admin), db: Session = Depends(get_db)):
+def void_pause(pause_id: UUID, request: PauseVoid, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
     try:
         return PauseService(db).void(user["org_id"], pause_id, user["user_id"], request.reason, money=has_payments_access(user, db),
                                      actor_role=_role(user))
@@ -199,7 +199,7 @@ def put_lesson_type(
     group_id: UUID,
     request: LessonTypePut,
     dry_run: bool = Query(False),
-    user: dict = Depends(require_org_admin),
+    user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Тип занятий группы с даты (по умолчанию сегодня; не раньше начала прошлого месяца). Список ведомостей — только владельцу."""

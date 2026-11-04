@@ -1,4 +1,4 @@
-"""Money-1 (pack A): the journal of reopened months, the nightly reconciliation, two new actions of the attendance audit.
+"""Money-1 (pack A): the journal of reopened months, the nightly reconciliation, a new action of the attendance audit.
 
 Revision ID: mn1a2b3c4d5
 Revises: wca1b2c3d4e5
@@ -7,10 +7,10 @@ Create Date: 2026-11-04
 * ``payroll_period_reopenings`` (A1): a closed month of a teacher (his last sheet was saved after the month ended) reopened by the owner / an administrator with the payments
   right, with a reason.  Append-only; a reopening lasts until the sheet is saved again.
 * ``money_reconcile_runs`` / ``money_reconcile_findings`` (A7): the result of the nightly check of the invariants I-1..I-4 (the platform console reads them; a centre never does).
-* ``group_attendance_audit`` accepts ``completed_reverted`` («Вернуть проведённый урок», A2) and ``cancel_reverted`` («Вернуть "Урока не было"», A2); the CHECK is rebuilt from the
+* ``group_attendance_audit`` accepts ``completed_reverted`` («Вернуть проведённый урок», A2); the CHECK is rebuilt from the
   live definition, so a parallel change of the list by another revision is kept.
 
-Only ADDS (no data is moved).  Rollback (downgrade): drops the three tables and removes the audit rows with the two new actions (they have no meaning for the old code), then restores
+Only ADDS (no data is moved).  Rollback (downgrade): drops the three tables and removes the audit rows with the new action (they have no meaning for the old code), then restores
 the CHECK.  The journal of reopenings is lost with the table - after the downgrade the old code closes nothing.
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ depends_on = None
 
 AUDIT = "group_attendance_audit"
 AUDIT_CHECK = "ck_group_attendance_audit_action"
-NEW_ACTIONS = ("completed_reverted", "cancel_reverted")
+NEW_ACTIONS = ("completed_reverted",)
 
 
 def _check_actions(bind) -> list[str]:

@@ -287,9 +287,9 @@ def write_sheet(ws, sheet: Mapping[str, Any]) -> None:
     for line in advance_lines(payout):
         row += 1
         _put(ws, row, 1, line, font=xs.FONT_NOTE)
-    if payout and payout.get("basis") == "fresh":
+    if payout and payout.get("change_text"):
         row += 1
-        _put(ws, row, 1, "Расчёт по актуальным данным: ведомость изменилась после сохранения", font=xs.FONT_NOTE)
+        _put(ws, row, 1, payout["change_text"], font=xs.FONT_NOTE)
     items = [item for item in (payout or {}).get("items") or ()]
     if items:
         row += 2

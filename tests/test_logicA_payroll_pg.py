@@ -171,6 +171,11 @@ def test_f14_the_type_by_day_splits_the_line_and_the_fingerprint_is_mandatory(wo
     assert r.json()["impact"]["stale_sheets"][0]["month"] == m.label
     adm = make_client(world, user=world.admin)
     r = adm.put(f"{API}/org/groups/{world.group.id}/lesson-type", params={"dry_run": True}, json={"lesson_type": "individual", "valid_from": m.first.isoformat()})
+    assert r.status_code == 403                                                        # Money-1 A4: the type of lessons moves the pay of the teacher backwards: the money right
+    from tests.ops_helpers import grant_money_right
+
+    grant_money_right(world)
+    r = adm.put(f"{API}/org/groups/{world.group.id}/lesson-type", params={"dry_run": True}, json={"lesson_type": "individual", "valid_from": m.first.isoformat()})
     assert r.status_code == 200 and r.json()["impact"] is None                         # the list of sheets is the owner's
 
 
@@ -259,11 +264,12 @@ def test_g_pay_chain_pay_late_payment_to_pay_recalc_overpaid_void(world):
     world.db.commit()
     got = owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}").json()
     st = got["payout"]
+    # Money-1 A1b: the payout is by the SAVED total (475 000); the later payment is «изменилось на +125 000» with a button to re-save, not a debt put into the sum to pay
     assert got["stale"] is True and (st["saved_total"], st["fresh_total"], st["target"], st["paid"], st["balance"], st["state"], st["basis"]) == (
-        475_000, 600_000, 600_000, 475_000, 125_000, "due", "fresh")
-    assert st["text"] == "Выплачено 475 000 · после изменений данных доплатить 125 000"
+        475_000, 600_000, 475_000, 475_000, 0, "settled", "saved")
+    assert st["changed_by"] == 125_000 and st["change_text"] == "После сохранения ведомость изменилась на +125 000. Пересохраните ведомость, чтобы учесть" and st["text"] == "Выплачено полностью"
     ov = teacher_row(overview(world, m), world.teacher)
-    assert ov["payout"]["balance"] == 125_000 and ov["sheet"]["stale"] is True
+    assert ov["payout"]["balance"] == 0 and ov["sheet"]["stale"] is True
     # recalculate: version 2 totals 600 000, the payout of version 1 stays
     fresh_fp = owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}/diff").json()["source_fingerprint"]
     r = owner(world).patch(f"{API}/org/payroll/sheets/{sheet['id']}", json={"revision": 1, "recalculate": True, "expected_fingerprint": fresh_fp})
@@ -271,15 +277,15 @@ def test_g_pay_chain_pay_late_payment_to_pay_recalc_overpaid_void(world):
     assert r.json()["payout"]["text"] == "Выплачено 475 000 из 600 000 · осталось 125 000" and r.json()["payout"]["state"] == "due"
     second = payout(world, sheet, 125_000)
     assert second["state"]["state"] == "settled" and second["payout"]["sheet_revision"] == 2
-    # the payment of S2 is cancelled: fresh 475 000, paid 600 000 -> «Переплачено 125 000» (information only)
+    # the payment of S2 is cancelled: fresh 475 000, saved 600 000, paid 600 000 -> settled; the sheet says «изменилось на −125 000» (the mirror of the case above, no phantom advance)
     world.db.refresh(late)
     late.voided_at, late.voided_by, late.void_reason = __import__("datetime").datetime.utcnow(), world.owner.id, "ошибка"
     world.db.commit()
     over = owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}").json()["payout"]
-    assert (over["state"], over["balance"], over["text"]) == ("overpaid", -125_000, "Переплачено 125 000")
-    # void of payout 2: settled again against the fresh 475 000
+    assert (over["state"], over["balance"], over["text"], over["changed_by"]) == ("settled", 0, "Выплачено полностью", -125_000)
+    # void of payout 2: the saved 600 000 is paid 475 000 -> «due» 125 000 until the sheet is saved again
     r = owner(world).post(f"{API}/org/payroll/payouts/{second['payout']['id']}/void", json={"reason": "внесли дважды"})
-    assert r.status_code == 200 and r.json()["state"]["state"] == "settled" and r.json()["payout"]["voided_at"]
+    assert r.status_code == 200 and r.json()["state"]["state"] == "due" and r.json()["payout"]["voided_at"]
     assert [i["voided_at"] is not None for i in r.json()["state"]["items"]] == [False, True]
     r = owner(world).post(f"{API}/org/payroll/payouts/{second['payout']['id']}/void", json={"reason": "ещё раз"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "ALREADY_VOIDED"

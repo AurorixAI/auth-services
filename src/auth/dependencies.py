@@ -282,6 +282,16 @@ def require_payments_access(
     return ensure_payments_access(user, db)
 
 
+def money_rights_flag(user: dict = Depends(require_org_member), db: Session = Depends(get_db)) -> bool:
+    """Money-1 A4 (I-6): the SAME right as ``require_payments_access`` as a yes/no, for a route that teachers use too (the save of attendance, the lesson teacher, the roster
+    changes): the part of it that moves money asks this flag and answers 403 ``MONEY_RIGHT_REQUIRED`` without it.  A route that is money from top to bottom has
+    ``require_payments_access`` instead - ``tests/test_money1_rights_guard.py`` lists both kinds and fails on a money route that has neither."""
+    return has_payments_access(user, db)
+
+
+MONEY_RIGHT_REQUIRED_TEXT = "Это действие меняет деньги: его выполняет владелец или администратор, которому владелец разрешил оплаты"
+
+
 def require_payments_settings(user: dict = Depends(require_org_owner)) -> dict:
     """Payment settings: the owner only (and a tenant must exist)."""
     if not user.get("org_id"):

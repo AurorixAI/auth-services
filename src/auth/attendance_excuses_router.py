@@ -29,7 +29,7 @@ from .attendance_excuses import (
     ResetRequest,
     ReviewRequest,
 )
-from .dependencies import require_org_admin
+from .dependencies import require_org_admin, require_payments_access
 
 router = APIRouter(prefix="/auth", tags=["Attendance excuses"])
 
@@ -85,10 +85,10 @@ def excuses_summary(user: dict = Depends(_admin), db: Session = Depends(get_db))
 @router.post("/org/attendance/excuses/review-bulk", response_model=BulkReviewResponse)
 def review_excuses_bulk(
     request: BulkReviewRequest,
-    user: dict = Depends(_admin),
+    user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Подтвердить/отклонить несколько заявок; недоступные попадают в skipped."""
+    """Подтвердить/отклонить несколько заявок; недоступные попадают в skipped.  Решение по справке меняет деньги (пакет ученика, зарплата): право на оплаты (Money-1 A4)."""
     try:
         return AttendanceExcuseService(db).review_bulk(
             user["org_id"], request.ids, user["user_id"], request.decision, request.note, request.expected_status
@@ -101,7 +101,7 @@ def review_excuses_bulk(
 def review_excuse(
     excuse_id: UUID,
     request: ReviewRequest,
-    user: dict = Depends(_admin),
+    user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Подтвердить или отклонить заявку."""
@@ -117,7 +117,7 @@ def review_excuse(
 def reset_excuse(
     excuse_id: UUID,
     request: Optional[ResetRequest] = None,
-    user: dict = Depends(_admin),
+    user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Сбросить решение (заявка снова ожидает).  Тело необязательно: ``expected_status`` — статус, который видел клиент."""

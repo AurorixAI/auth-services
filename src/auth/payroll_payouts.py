@@ -2,7 +2,8 @@
 ALGO - LOGIC-A (decision 6, S-8): payouts of salary.  Owner only.
 
 A payout is a FACT against a SAVED sheet (append-only, cancelled by ``voided_*``).  It belongs to (teacher, month): ``PayoutState`` is
-computed from the live payouts of the teacher and month against a TARGET - the fresh total when the sheet is stale, else the saved total.
+computed from the live payouts of the teacher and month against a TARGET - the SAVED total (Money-1 A1b: it used to be the fresh total when the sheet was stale; now the change after the
+save is a line of its own, ``changed_by`` «изменилось на ±N», with the button «Пересохранить»).
 Whatever happens to the data afterwards, what was paid is never rewritten: the balance says «доплатить» or «переплачено».  A payout never
 changes the sheet (total, lines, fingerprint).
 
@@ -97,10 +98,13 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 
 
 def state_of(*, saved_total: int, fresh_total: Optional[int], items: List[PayoutOut], carry_in: int = 0) -> PayoutState:
-    """The balance of a (teacher, month): see the module docstring.  ``items`` oldest first (voided ones listed, not counted).  ``carry_in``: the advance of the earlier months."""
+    """The balance of a (teacher, month): see the module docstring.  ``items`` oldest first (voided ones listed, not counted).  ``carry_in``: the advance of the earlier months.
+
+    Money-1 A1b: the TARGET is always the SAVED total (the sheet the owner looked at and saved is the truth); what changed in the data afterwards is told by ``changed_by`` (fresh - saved)
+    and ``change_text`` («изменилось на +N» + «Пересохранить»), never silently put into the sum to pay.  One number per month - the one that ``carry_ins`` hands on to the next month, too."""
     paid = sum(p.amount for p in items if p.voided_at is None)
-    stale = fresh_total is not None and fresh_total != saved_total
-    total = fresh_total if stale else saved_total
+    changed_by = fresh_total - saved_total if fresh_total is not None and fresh_total != saved_total else 0
+    total = saved_total
     carry_used = min(max(carry_in, 0), max(total, 0))
     target = total - carry_used
     balance = target - paid
@@ -112,7 +116,7 @@ def state_of(*, saved_total: int, fresh_total: Optional[int], items: List[Payout
         name = "unpaid" if paid == 0 else "due"
     return PayoutState(
         saved_total=saved_total, fresh_total=fresh_total, target=target, paid=paid, balance=balance, state=name,
-        basis="fresh" if stale else "saved",
+        basis="saved", changed_by=changed_by, change_text=tx.payout_change_text(changed_by) if changed_by else None,
         text=tx.payout_text(state=name, saved_total=saved_total, fresh_total=fresh_total, target=target, paid=paid, balance=balance, carry_used=carry_used),
         items=items, carry_in=max(carry_in, 0), carry_used=carry_used, advance_out=max(0, max(carry_in, 0) + paid - total))
 

@@ -464,8 +464,8 @@ class PayoutOut(BaseModel):
 
 
 class PayoutState(BaseModel):
-    """``target`` = ``fresh_total`` when the sheet is stale (``basis="fresh"``), else the saved total (``basis="saved"``;
-    ``fresh_total`` null when there is no rate / a manual price); ``balance = target - paid`` (negative = overpaid)."""
+    """``target`` = the SAVED total less the advance of the earlier months (Money-1 A1b; ``basis`` is always ``"saved"``, the field stays for the front).  ``fresh_total`` is null when there is no rate /
+    a manual price; when it differs from the saved total ``changed_by`` = fresh - saved (the line «изменилось на ±N», ``change_text``) and the owner re-saves the sheet; ``balance = target - paid`` (negative = overpaid)."""
 
     saved_total: int
     fresh_total: Optional[int] = None
@@ -474,6 +474,8 @@ class PayoutState(BaseModel):
     balance: int
     state: PayoutStateName
     basis: Literal["fresh", "saved"] = "saved"
+    changed_by: int = 0
+    change_text: Optional[str] = None
     text: str
     items: List[PayoutOut] = Field(default_factory=list)  # live and voided, oldest first
     # R3 3 (the advance is carried): ``carry_in`` = the advance of the previous months of this teacher (an overpaid month hands its excess on), ``carry_used`` = the part of it that

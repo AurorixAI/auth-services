@@ -26,7 +26,7 @@ def test_up_down_up_the_tables_the_checks_and_the_audit_actions(engine):
     cfg = config()
     command.upgrade(cfg, "head")
     assert version(engine) == REVISION and TABLES <= set(inspect(engine).get_table_names())
-    assert "'completed_reverted'" in audit_check(engine) and "'cancel_reverted'" in audit_check(engine) and "'teacher_changed'" in audit_check(engine)
+    assert "'completed_reverted'" in audit_check(engine) and "'teacher_changed'" in audit_check(engine)
     with engine.begin() as c:
         c.execute(text("INSERT INTO organizations (id, name, org_type, status) VALUES ('00000000-0000-0000-0000-0000000000b1', 'M1', 'center', 'active')"))
         c.execute(text("INSERT INTO money_reconcile_runs (id, status) VALUES ('00000000-0000-0000-0000-0000000000c1', 'findings')"))

@@ -1086,7 +1086,7 @@ class GroupAttendanceAudit(Base):
         nullable=False,
     )
     actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    action = Column(String(30), nullable=False)  # started | reconciliation_started | updated | corrected | cancelled | excuse_* | completed_reverted | cancel_reverted
+    action = Column(String(30), nullable=False)  # started | reconciliation_started | updated | corrected | cancelled | excuse_* | completed_reverted
     before_status = Column(String(20))
     after_status = Column(String(20), nullable=False)
     before_records = Column(JSONB)
@@ -1101,7 +1101,7 @@ class GroupAttendanceAudit(Base):
         CheckConstraint(
             "action IN ('started', 'reconciliation_started', 'created', 'updated', 'corrected', 'cancelled', 'reconciliation_cancelled', "
             "'excuse_reviewed', 'excuse_reset', 'excuse_removed', 'excuse_file_added', 'excuse_file_removed', "
-            "'excuse_closed_pause', 'teacher_changed', 'completed_reverted', 'cancel_reverted')",
+            "'excuse_closed_pause', 'teacher_changed', 'completed_reverted')",
             name="ck_group_attendance_audit_action",
         ),
         Index("idx_group_attendance_audit_attendance", "attendance_id"),

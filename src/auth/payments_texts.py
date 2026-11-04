@@ -225,9 +225,12 @@ def payout_text(*, state: str, saved_total: int, fresh_total: Optional[int], tar
         return "Выплачено полностью"
     if state == "overpaid":
         return f"Переплачено {num(-balance)}"
-    if fresh_total is not None and fresh_total != saved_total:
-        return f"Выплачено {num(paid)} · после изменений данных доплатить {num(balance)}"
     return f"Выплачено {num(paid)} из {num(target)} · осталось {num(balance)}"
+
+
+def payout_change_text(delta: int) -> str:
+    """Money-1 A1b: the line under the payout of a sheet whose data moved after it was saved (the payout stays by the saved total)."""
+    return f"После сохранения ведомость изменилась на {'+' if delta > 0 else '−'}{num(abs(delta))}. Пересохраните ведомость, чтобы учесть"
 
 
 # ---- INCOME-2 («Поступления» v2): the owner's vocabulary ------------------------------------------------------

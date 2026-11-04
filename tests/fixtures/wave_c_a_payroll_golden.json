@@ -3,7 +3,7 @@
   409,
   {
    "detail": {
-    "balance": 428000,
+    "balance": 303000,
     "code": "OVERPAY_CONFIRM_REQUIRED",
     "message": "Выплата больше остатка на 30 000 сум. Если окно не предложило записать аванс — обновите страницу и повторите",
     "overpay": 30000
@@ -14,7 +14,7 @@
   201,
   {
    "payout": {
-    "amount": 458000,
+    "amount": 333000,
     "created_by_name": "Иван Owner",
     "method": "cash",
     "month": "2026-09",
@@ -27,9 +27,10 @@
    "state": {
     "advance_out": 30000,
     "balance": -30000,
-    "basis": "fresh",
+    "basis": "saved",
     "carry_in": 0,
     "carry_used": 0,
+    "change_text": "После сохранения ведомость изменилась на +125 000. Пересохраните ведомость, чтобы учесть",
     "fresh_total": 600000,
     "items": [
      {
@@ -88,7 +89,7 @@
       "void_reason": null
      },
      {
-      "amount": 458000,
+      "amount": 333000,
       "created_by_name": "Иван Owner",
       "method": "cash",
       "month": "2026-09",
@@ -99,10 +100,10 @@
       "void_reason": null
      }
     ],
-    "paid": 630000,
+    "paid": 505000,
     "saved_total": 475000,
     "state": "overpaid",
-    "target": 600000,
+    "target": 475000,
     "text": "Переплачено 30 000"
    }
   }
@@ -445,16 +446,17 @@
    "note": null,
    "payout": {
     "advance_out": 0,
-    "balance": 320000,
+    "balance": 445000,
     "basis": "saved",
-    "carry_in": 155000,
-    "carry_used": 155000,
+    "carry_in": 30000,
+    "carry_used": 30000,
+    "change_text": null,
     "fresh_total": null,
     "items": [],
     "paid": 0,
     "saved_total": 475000,
     "state": "unpaid",
-    "target": 320000,
+    "target": 445000,
     "text": "Не выплачено"
    },
    "pending_excused_total": 0,
@@ -497,10 +499,11 @@
    },
    "state": {
     "advance_out": 0,
-    "balance": 319000,
+    "balance": 444000,
     "basis": "saved",
-    "carry_in": 155000,
-    "carry_used": 155000,
+    "carry_in": 30000,
+    "carry_used": 30000,
+    "change_text": null,
     "fresh_total": null,
     "items": [
      {
@@ -518,8 +521,8 @@
     "paid": 1000,
     "saved_total": 475000,
     "state": "due",
-    "target": 320000,
-    "text": "Выплачено 1 000 из 320 000 · осталось 319 000"
+    "target": 445000,
+    "text": "Выплачено 1 000 из 445 000 · осталось 444 000"
    }
   }
  ],
@@ -876,6 +879,7 @@
     "basis": "saved",
     "carry_in": 0,
     "carry_used": 0,
+    "change_text": null,
     "fresh_total": 475000,
     "items": [
      {
@@ -1273,6 +1277,7 @@
     "basis": "saved",
     "carry_in": 0,
     "carry_used": 0,
+    "change_text": null,
     "fresh_total": 475000,
     "items": [
      {
@@ -1348,6 +1353,7 @@
     "basis": "saved",
     "carry_in": 0,
     "carry_used": 0,
+    "change_text": null,
     "fresh_total": 475000,
     "items": [
      {
@@ -1401,6 +1407,7 @@
     "basis": "saved",
     "carry_in": 0,
     "carry_used": 0,
+    "change_text": null,
     "fresh_total": 475000,
     "items": [
      {
@@ -1461,10 +1468,11 @@
    },
    "state": {
     "advance_out": 0,
-    "balance": 428000,
-    "basis": "fresh",
+    "balance": 303000,
+    "basis": "saved",
     "carry_in": 0,
     "carry_used": 0,
+    "change_text": "После сохранения ведомость изменилась на +125 000. Пересохраните ведомость, чтобы учесть",
     "fresh_total": 600000,
     "items": [
      {
@@ -1526,8 +1534,8 @@
     "paid": 172000,
     "saved_total": 475000,
     "state": "due",
-    "target": 600000,
-    "text": "Выплачено 172 000 · после изменений данных доплатить 428 000"
+    "target": 475000,
+    "text": "Выплачено 172 000 из 475 000 · осталось 303 000"
    }
   }
  ],
@@ -1551,6 +1559,7 @@
     "basis": "saved",
     "carry_in": 0,
     "carry_used": 0,
+    "change_text": null,
     "fresh_total": 475000,
     "items": [
      {
@@ -1588,10 +1597,11 @@
    },
    "state": {
     "advance_out": 0,
-    "balance": 317000,
+    "balance": 442000,
     "basis": "saved",
-    "carry_in": 155000,
-    "carry_used": 155000,
+    "carry_in": 30000,
+    "carry_used": 30000,
+    "change_text": null,
     "fresh_total": null,
     "items": [
      {
@@ -1618,8 +1628,8 @@
     "paid": 3000,
     "saved_total": 475000,
     "state": "due",
-    "target": 320000,
-    "text": "Выплачено 3 000 из 320 000 · осталось 317 000"
+    "target": 445000,
+    "text": "Выплачено 3 000 из 445 000 · осталось 442 000"
    }
   }
  ],
@@ -1968,6 +1978,7 @@
    "basis": "saved",
    "carry_in": 0,
    "carry_used": 0,
+   "change_text": null,
    "fresh_total": 475000,
    "items": [],
    "paid": 0,
@@ -2339,6 +2350,7 @@
    "basis": "saved",
    "carry_in": 0,
    "carry_used": 0,
+   "change_text": null,
    "fresh_total": 475000,
    "items": [
     {
@@ -2742,10 +2754,11 @@
    "note": null,
    "payout": {
     "advance_out": 0,
-    "balance": 440000,
-    "basis": "fresh",
+    "balance": 315000,
+    "basis": "saved",
     "carry_in": 0,
     "carry_used": 0,
+    "change_text": "После сохранения ведомость изменилась на +125 000. Пересохраните ведомость, чтобы учесть",
     "fresh_total": 600000,
     "items": [
      {
@@ -2796,8 +2809,8 @@
     "paid": 160000,
     "saved_total": 475000,
     "state": "due",
-    "target": 600000,
-    "text": "Выплачено 160 000 · после изменений данных доплатить 440 000"
+    "target": 475000,
+    "text": "Выплачено 160 000 из 475 000 · осталось 315 000"
    },
    "pending_excused_total": 0,
    "percents": {
@@ -2852,6 +2865,7 @@
     "basis": "saved",
     "carry_in": 0,
     "carry_used": 0,
+    "change_text": null,
     "fresh_total": 475000,
     "items": [
      {
