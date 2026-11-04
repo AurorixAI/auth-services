@@ -228,6 +228,20 @@ def payout_text(*, state: str, saved_total: int, fresh_total: Optional[int], tar
     return f"Выплачено {num(paid)} из {num(target)} · осталось {num(balance)}"
 
 
+def open_month_payout_text(*, state: str, accrued: int, paid: int, balance: int, carry_used: int = 0) -> str:
+    """Money-1 R3 #20: the sentence of a payout state of an OPEN month - what the data says now, not the (stage) saved sheet; never «Выплачено полностью» while the accrued is more than the paid."""
+    head = f"Месяц открыт: начислено сейчас {num(accrued)}"
+    if state == "settled" and paid == 0 and carry_used:
+        return f"{head}, закрыто авансом прошлого месяца {num(carry_used)}"
+    if state == "unpaid":
+        return f"{head}, выплат нет, к выплате {num(balance)}"
+    if state == "settled":
+        return f"{head}, выплачено {num(paid)}: на сегодня выплачено всё"
+    if state == "overpaid":
+        return f"{head}, выплачено {num(paid)}: переплачено {num(-balance)}"
+    return f"{head}, выплачено {num(paid)}, к выплате {num(balance)}"
+
+
 def payout_change_text(delta: int) -> str:
     """Money-1 A1b: the line under the payout of a sheet whose data moved after it was saved (the payout stays by the saved total)."""
     return f"После сохранения ведомость изменилась на {'+' if delta > 0 else '−'}{num(abs(delta))}. Пересохраните ведомость, чтобы учесть"

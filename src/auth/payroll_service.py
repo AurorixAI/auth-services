@@ -155,6 +155,13 @@ class RevisionConflict(PayrollError):
     code = "SHEET_REVISION_CONFLICT"
 
 
+class OpenLessonsConfirmRequired(PayrollError):
+    """Money-1 R3 #21: the month is over, a lesson of the teacher is still unresolved (going on, never started): the sheet is saved only after the owner confirmed it."""
+
+    status_code = 409
+    code = "OPEN_LESSONS_CONFIRM_REQUIRED"
+
+
 class DataChanged(PayrollError):
     """The data moved between the preview the owner looked at and the save: save nothing."""
 
@@ -1194,6 +1201,11 @@ class PayrollService:
         keys = self._line_keys(s.identity for s in teacher.lines)
         given = self._changes_from_body(body.line_overrides, keys)
         self._check_expected(body.expected_fingerprint, teacher.fingerprint)
+        if body.confirm_open_lessons is False and last < bc.business_today():           # R3 #21: a month that is over is closed by this save - with an unresolved lesson only after the owner said yes
+            left = (self._open_lessons(org_id, first, last) or {}).get(str(body.teacher_id), [])
+            if left:
+                raise OpenLessonsConfirmRequired(
+                    f"В месяце незакрытых уроков: {len(left)}. Они не попадут в ведомость, а месяц закроется. Сохранить всё равно?", count=len(left), items=left[:50])
         actor = UUID(str(actor_id))
 
         try:

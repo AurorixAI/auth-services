@@ -80,6 +80,8 @@ def test_155_7_the_group_form_cannot_unassign_the_teacher_and_a_null_class_clear
 
 
 def test_155_1_the_plan_of_the_cancel_of_a_day_off_has_the_time_of_every_lesson(w, clock):
+    from tests.ops_helpers import grant_money_right
+    grant_money_right(w)                                    # Money-1 R3 #1: a day off moves the deductions of the students - the money right
     cl = client(w, "admin")
     made = cl.post(f"{API}/org/days-off", json={"dateFrom": "2026-10-26", "dateTo": "2026-10-27", "reason": "Праздник"})
     assert made.status_code in (200, 201), made.text

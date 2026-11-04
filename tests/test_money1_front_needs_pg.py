@@ -107,3 +107,19 @@ def test_r3_15_a_transfer_has_a_dry_run_that_says_what_travels_and_writes_nothin
     assert bulk.status_code == 200 and bulk.json()["dry_run"] is True and bulk.json()["added"] == 1
     world.db.expire_all()
     assert world.db.query(StudentGroup).filter_by(student_id=s0.id, group_id=world.group.id, is_active=True).count() == 0     # the bulk dry run did not move him back
+
+
+def test_r3_21_who_taught_defaults_to_the_substitute_of_that_date(world, now_4_nov):
+    """A lesson of 28.10 had a substitute assigned (teacher2).  The list «Требует разбора» names HIM as the one who leads it (the default of «кто провёл»), and «Оформить» without ``taughtBy``
+    gives the lesson to him - not to the teacher of the group."""
+    from src.auth.schemas import StartAttendanceRequest
+    from src.models.auth import LessonTeacherAssignment
+
+    day, lid = lesson(date(2026, 10, 28))
+    world.db.add(LessonTeacherAssignment(org_id=world.org.id, group_id=world.group.id, lesson_id=lid, lesson_date=day.isoformat(), teacher_id=world.teacher2.id, reason="Болезнь", set_by=world.owner.id))
+    world.db.commit()
+    (item,) = [i for i in world.svc.get_open_attendance_actions(str(world.org.id), actor_id=None, is_org_admin=True) if i.lessonDate == day.isoformat() and i.lessonId == lid]
+    assert item.teacherId == str(world.teacher2.id) and item.isSubstitution is True
+    world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid), reconciled_by=str(world.owner.id), is_org_admin=True, money_right=True)
+    row = world.db.query(GroupAttendance).filter_by(group_id=world.group.id, lesson_date=day.isoformat(), lesson_id=lid).one()
+    assert row.teacher_id == world.teacher2.id

@@ -91,6 +91,9 @@ class SheetCreate(BaseModel):
     revision: Optional[int] = Field(None, ge=1)
     # ``source_fingerprint`` of the preview the caller looked at: if the data moved since, nothing is saved.
     expected_fingerprint: Optional[str] = Field(None, max_length=128)
+    # R3 #21: ``None`` (an old client) - saved as before; ``false`` - a month that is over with an unresolved lesson answers 409 ``OPEN_LESSONS_CONFIRM_REQUIRED`` (``count``, ``items``) instead of
+    # saving; ``true`` - the owner confirmed.
+    confirm_open_lessons: Optional[bool] = None
 
     @model_validator(mode="after")
     def _check(self):

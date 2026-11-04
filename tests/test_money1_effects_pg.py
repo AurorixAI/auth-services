@@ -109,3 +109,52 @@ def test_a_decision_on_an_excuse_says_it_before_and_after_what_it_does_to_the_sh
     reset_dry = client.post(f"/api/v1/auth/org/attendance/excuses/{excuse.id}/reset", params={"dry_run": True})
     assert reset_dry.json()["status"] == "confirmed" and reset_dry.json()["money_effects"]["payroll"][0]["changedBy"] == 25_000       # taking the decision back pays the lesson again
     # R3 #21: the effect is THIS action's, not the drift that was there before: a late payment first (+125 000 drift), then the same confirmation still says -25 000
+
+
+def test_r3_20_an_advance_in_the_middle_of_the_month_is_not_settled_while_the_month_is_open(world, fixed_today):
+    """ЗП-05 world: 475 000 saved; S2 pays 300 000 later -> 600 000.  The sheet was saved MID-month with an advance of 475 000 paid: the month is open, the data says 600 000."""
+    from src.models.auth import PayrollSheet
+    from tests.test_logicA_payroll_pg import payout
+
+    m, s1, s2 = g_pay_world(world)
+    saved = save_sheet(world, m)
+    assert saved["total_amount"] == 475_000
+    world.db.query(PayrollSheet).filter(PayrollSheet.id == saved["id"]).update({"updated_at": tashkent(m.first.year, m.first.month, 15)})        # saved on the 15th: the month is still open
+    world.db.commit()
+    first = payout(world, saved, 475_000)
+    assert first["state"]["state"] == "settled"                                                    # the data says 475 000 so far
+    owner(world).post(f"{API}/org/memberships/{student_group(world, s2).id}/payments", json={"amount": 300_000, "paid_on": _today().isoformat(), "method": "cash"})
+    got = owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}").json()["payout"]
+    assert (got["state"], got["basis"], got["target"], got["paid"], got["balance"]) == ("due", "fresh", 600_000, 475_000, 125_000)
+    assert got["text"] == "Месяц открыт: начислено сейчас 600 000, выплачено 475 000, к выплате 125 000"
+    # paying more than the FRESH total is an overpay and needs the confirmation; the exact rest does not
+    more = owner(world).post(f"{API}/org/payroll/sheets/{saved['id']}/payouts", json={"amount": 130_000, "paid_on": _today().isoformat(), "method": "cash"})
+    assert more.status_code == 409 and more.json()["detail"]["code"] == "OVERPAY_CONFIRM_REQUIRED" and more.json()["detail"]["overpay"] == 5_000
+    done = payout(world, saved, 125_000)
+    assert (done["state"]["state"], done["state"]["balance"]) == ("settled", 0)
+    # the next month gets no phantom advance: an open month is not frozen
+    from src.auth.payroll_payouts import PayrollPayoutService
+
+    assert PayrollPayoutService(world.db).carry_ins(str(world.org.id), [world.teacher.id], m.first.replace(day=28) + __import__("datetime").timedelta(days=10)) == {world.teacher.id: 0}
+    # the month is CLOSED by a save after its end: the saved total is the target again (the A1b rule)
+    world.db.query(PayrollSheet).filter(PayrollSheet.id == saved["id"]).update({"updated_at": tashkent(m.last.year, m.last.month, m.last.day) + __import__("datetime").timedelta(days=3)})
+    world.db.commit()
+    shut = owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}").json()["payout"]
+    assert (shut["basis"], shut["target"], shut["state"]) == ("saved", 475_000, "overpaid")
+
+
+def test_r3_21_a_month_that_is_over_is_not_closed_over_an_unresolved_lesson_without_the_confirmation(world, fixed_today):
+    """Saving the sheet of a month that ended with a lesson still going on (a returned one): ``confirm_open_lessons: false`` -> 409 with the list; ``true`` saves; an old client (no field) saves as before."""
+    from tests.test_logicA_payroll_pg import LESSONS, fp
+    from tests.test_payroll_pg import lesson as lesson_row
+
+    m, s1, s2 = g_pay_world(world)
+    free = next(n for n in range(1, 29) if n not in LESSONS)
+    day = m.d(free)
+    lesson_row(world, day, {s1: "present"}, status="in_progress")                    # a returned lesson: going on
+    body = {"month": m.label, "teacher_id": str(world.teacher.id), "expected_fingerprint": fp(world, m)}
+    refused = owner(world).post(f"{API}/org/payroll/sheets", json={**body, "confirm_open_lessons": False})
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "OPEN_LESSONS_CONFIRM_REQUIRED", refused.text
+    detail = refused.json()["detail"]
+    assert detail["count"] >= 1 and any(i["lessonDate"] == day.isoformat() and i["groupName"] for i in detail["items"])
+    assert owner(world).post(f"{API}/org/payroll/sheets", json={**body, "confirm_open_lessons": True}).status_code == 201     # the owner said yes

@@ -97,14 +97,19 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() if value else None
 
 
-def state_of(*, saved_total: int, fresh_total: Optional[int], items: List[PayoutOut], carry_in: int = 0) -> PayoutState:
+def state_of(*, saved_total: int, fresh_total: Optional[int], items: List[PayoutOut], carry_in: int = 0, month_open: bool = False) -> PayoutState:
     """The balance of a (teacher, month): see the module docstring.  ``items`` oldest first (voided ones listed, not counted).  ``carry_in``: the advance of the earlier months.
 
     Money-1 A1b: the TARGET is always the SAVED total (the sheet the owner looked at and saved is the truth); what changed in the data afterwards is told by ``changed_by`` (fresh - saved)
-    and ``change_text`` («изменилось на +N» + «Пересохранить»), never silently put into the sum to pay.  One number per month - the one that ``carry_ins`` hands on to the next month, too."""
+    and ``change_text`` («изменилось на +N» + «Пересохранить»), never silently put into the sum to pay.  One number per month - the one that ``carry_ins`` hands on to the next month, too.
+
+    R3 #20 (an advance in the middle of the month): while the month is OPEN (the sheet is not saved after the month ended: an advance on the 15th, the month still running, or reopened) the saved
+    total is only a stage of it - the target is what the data says NOW (``basis`` ``fresh``): «месяц открыт: начислено сейчас N, выплачено M, к выплате N−M», never «Выплачено полностью»
+    while N > M; a payout above it needs the confirmation of an overpay.  A CLOSED month keeps the saved total as the target.  An open month hands no advance on (``carry_ins``): it is not frozen yet."""
     paid = sum(p.amount for p in items if p.voided_at is None)
     changed_by = fresh_total - saved_total if fresh_total is not None and fresh_total != saved_total else 0
-    total = saved_total
+    fresh_target = month_open and fresh_total is not None
+    total = fresh_total if fresh_target else saved_total
     carry_used = min(max(carry_in, 0), max(total, 0))
     target = total - carry_used
     balance = target - paid
@@ -116,9 +121,10 @@ def state_of(*, saved_total: int, fresh_total: Optional[int], items: List[Payout
         name = "unpaid" if paid == 0 else "due"
     return PayoutState(
         saved_total=saved_total, fresh_total=fresh_total, target=target, paid=paid, balance=balance, state=name,
-        basis="saved", changed_by=changed_by, change_text=tx.payout_change_text(changed_by) if changed_by else None,
-        text=tx.payout_text(state=name, saved_total=saved_total, fresh_total=fresh_total, target=target, paid=paid, balance=balance, carry_used=carry_used),
-        items=items, carry_in=max(carry_in, 0), carry_used=carry_used, advance_out=max(0, max(carry_in, 0) + paid - total))
+        basis="fresh" if fresh_target else "saved", changed_by=changed_by, change_text=tx.payout_change_text(changed_by) if changed_by else None,
+        text=(tx.open_month_payout_text(state=name, accrued=total, paid=paid, balance=balance, carry_used=carry_used) if fresh_target
+              else tx.payout_text(state=name, saved_total=saved_total, fresh_total=fresh_total, target=target, paid=paid, balance=balance, carry_used=carry_used)),
+        items=items, carry_in=max(carry_in, 0), carry_used=carry_used, advance_out=0 if fresh_target else max(0, max(carry_in, 0) + paid - total))
 
 
 def _once_per_revision(fresh_total_of):
@@ -183,10 +189,15 @@ class PayrollPayoutService:
             months.setdefault(teacher, {}).setdefault(first, [0, 0])[0] = int(total)
         for teacher, first, amount in paid:
             months.setdefault(teacher, {}).setdefault(first, [0, 0])[1] = int(amount)
+        from .closed_period import ClosedPeriods
+
+        periods = ClosedPeriods.of(self.db, org_id)
         out: Dict[UUID, int] = {}
         for teacher in ids:
             carry = 0
             for first in sorted(months.get(teacher, {})):
+                if periods.closed_for([teacher], first) is None:
+                    continue                                       # R3 #20: an OPEN month is not frozen: it neither takes nor hands on an advance (its sheet is only a stage of it)
                 total, got = months[teacher][first]
                 carry = max(0, carry + got - total)
             out[teacher] = carry
@@ -198,7 +209,10 @@ class PayrollPayoutService:
                  ).get((sheet.teacher_id, sheet.period_month), [])
         if carry_in is None:
             carry_in = self.carry_ins(org_id, [sheet.teacher_id], sheet.period_month).get(sheet.teacher_id, 0)
-        return state_of(saved_total=int(sheet.total_amount), fresh_total=fresh_total, items=items, carry_in=carry_in)
+        from .closed_period import ClosedPeriods
+
+        month_open = ClosedPeriods.of(self.db, org_id).closed_for([sheet.teacher_id], sheet.period_month) is None        # R3 #20: not saved after the month ended (or reopened)
+        return state_of(saved_total=int(sheet.total_amount), fresh_total=fresh_total, items=items, carry_in=carry_in, month_open=month_open)
 
     def list(self, org_id: str, *, month: Optional[date], teacher_id: Optional[UUID]) -> List[PayoutOut]:
         grouped = self.payouts_of(org_id, month=month, teacher_ids=[teacher_id] if teacher_id else None)

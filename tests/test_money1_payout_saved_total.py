@@ -29,3 +29,22 @@ def test_a_sheet_that_did_not_change_has_no_line_about_a_change():
     state = state_of(saved_total=500_000, fresh_total=500_000, items=[payout(200_000)])
     assert (state.changed_by, state.change_text, state.state, state.balance) == (0, None, "due", 300_000)
     assert state_of(saved_total=500_000, fresh_total=None, items=[]).changed_by == 0                # no rate / a manual price: nothing to compare
+
+
+def test_r3_20_an_advance_in_the_middle_of_the_month_the_open_month_says_what_is_left_to_pay():
+    """R3-деньги НЕТОЧНОСТЬ-6: an advance 350 000 on the 15th (the sheet saved then: 350 000), on 02.11 the data says 650 000.  Before: «Выплачено полностью» and a line «изменилась на +300 000»;
+    now, while the month is open: «начислено сейчас 650 000, выплачено 350 000, к выплате 300 000»."""
+    open_ = state_of(saved_total=350_000, fresh_total=650_000, items=[payout(350_000)], month_open=True)
+    assert (open_.state, open_.basis, open_.target, open_.balance, open_.advance_out) == ("due", "fresh", 650_000, 300_000, 0)
+    assert open_.text == "Месяц открыт: начислено сейчас 650 000, выплачено 350 000, к выплате 300 000"
+    assert open_.changed_by == 300_000 and open_.change_text                                                  # the line about the saved sheet stays: the owner may re-save
+    closed = state_of(saved_total=350_000, fresh_total=650_000, items=[payout(350_000)], month_open=False)    # the same numbers in a CLOSED month: the saved total is the target
+    assert (closed.state, closed.basis, closed.balance, closed.text) == ("settled", "saved", 0, "Выплачено полностью")
+    paid_all = state_of(saved_total=350_000, fresh_total=650_000, items=[payout(650_000)], month_open=True)
+    assert (paid_all.state, paid_all.balance) == ("settled", 0) and "выплачено всё" in paid_all.text
+    over = state_of(saved_total=350_000, fresh_total=650_000, items=[payout(700_000)], month_open=True)
+    assert (over.state, over.balance) == ("overpaid", -50_000)                                                # above the FRESH total: the confirmation of an overpay
+    nothing = state_of(saved_total=350_000, fresh_total=650_000, items=[], month_open=True)
+    assert (nothing.state, nothing.balance, nothing.text) == ("unpaid", 650_000, "Месяц открыт: начислено сейчас 650 000, выплат нет, к выплате 650 000")
+    no_rate = state_of(saved_total=350_000, fresh_total=None, items=[payout(350_000)], month_open=True)       # nothing to compare with: the saved total stays the target
+    assert (no_rate.basis, no_rate.state) == ("saved", "settled")

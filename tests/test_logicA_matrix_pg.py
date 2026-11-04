@@ -274,6 +274,13 @@ def split_world(w, days=(1, 3, 6, 8, 10, 13, 15, 17, 20, 22, 24, 27)):
     return m
 
 
+def reopen_for_type(w, m):
+    """Money-1 R3 #4: the month is saved (closed) - a type that moves its pay backwards needs the month reopened first."""
+    from tests.money1_helpers import reopen_now
+
+    reopen_now(w.db, w.org.id, w.teacher.id, m.label, w.owner.id, "Правим тип занятий")
+
+
 def set_type(w, kind, valid_from):
     r = owner(w).put(f"{API}/org/groups/{w.group.id}/lesson-type", json={"lesson_type": kind, "valid_from": valid_from.isoformat()})
     assert r.status_code == 200, r.text
@@ -313,6 +320,7 @@ def test_logicA_f14_u_taking_a_change_back_with_a_new_row_returns_the_old_type_a
     m = split_world(world)
     set_rate(world, world.teacher, "pair", "60")
     saved = save_sheet(world, m)
+    reopen_for_type(world, m)
     set_type(world, "pair", m.d(15))
     got = owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}").json()
     assert got["stale"] is True
@@ -342,6 +350,7 @@ def test_logicA_f14_a_a_saved_sheet_keeps_its_lines_after_the_type_changes(world
     m = split_world(world)
     set_rate(world, world.teacher, "pair", "60")
     saved = save_sheet(world, m)
+    reopen_for_type(world, m)
     set_type(world, "pair", m.d(15))
     got = owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}").json()
     assert got["total_amount"] == saved["total_amount"] and {l["lesson_type"] for l in got["lines"]} == {"group"} and got["stale"] is True
