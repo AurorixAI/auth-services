@@ -563,7 +563,7 @@ def test_the_month_page_lists_teachers_types_and_suggestions(world):
     row = teacher_row(ov, world.teacher)
     assert row["lesson_types"] == [{"lesson_type": "group", "groups": 1, "suggested_percent": None}]
     assert row["sheet"] is None
-    assert {k: v for k, v in row["warnings"].items() if k != "open_lessons"} == {"pending_excused": 0, "no_fee": 0, "unpaid": 0, "unpaid_students": 0}
+    assert {k: v for k, v in row["warnings"].items() if k not in ("open_lessons", "open_lesson_items")} == {"pending_excused": 0, "no_fee": 0, "unpaid": 0, "unpaid_students": 0, "open_lessons_unknown": False}
     save(world, m, percents=[pct(world, "55.5")])
     ov = overview(world, m)
     row = teacher_row(ov, world.teacher)
@@ -595,7 +595,8 @@ def test_unfinished_lessons_are_counted_per_teacher_in_the_month(world):
     # a teacher that only has an unfinished lesson is listed too: nothing to pay yet, but the owner sees what blocks
     only = teacher_row(ov, world.teacher2)
     assert only["lessons_count"] == 0 and only["sheet"] is None and only["lesson_types"] == []
-    assert only["warnings"] == {"open_lessons": 1, "pending_excused": 0, "no_fee": 0, "unpaid": 0, "unpaid_students": 0}
+    assert {k: v for k, v in only["warnings"].items() if k != "open_lesson_items"} == {"open_lessons": 1, "open_lessons_unknown": False, "pending_excused": 0, "no_fee": 0, "unpaid": 0, "unpaid_students": 0}
+    assert len(only["warnings"]["open_lesson_items"]) == 1                                  # Money-1 I-4: WHICH lesson is open, not only how many
     assert preview(world, m)["warnings"]["open_lessons"] == 1 + never_started
 
 
@@ -880,13 +881,13 @@ def test_edge_cases_of_percents_overrides_and_missing_data(world, monkeypatch):
     world.db.commit()
     row = teacher_row(overview(world, m), world.teacher)
     assert {t["lesson_type"]: t["suggested_percent"] for t in row["lesson_types"]}["group"] is None
-    # the list of unfinished lessons failing must not take the page down
+    # the list of unfinished lessons failing must not take the page down - and must not say «0» (Money-1 A6, П7): «не удалось проверить»
     def broken(self, *args, **kwargs):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(AuthService, "get_open_attendance_actions", broken)
     ov = overview(world, m)
-    assert teacher_row(ov, world.teacher)["warnings"]["open_lessons"] == 0
+    assert teacher_row(ov, world.teacher)["warnings"]["open_lessons"] is None and teacher_row(ov, world.teacher)["warnings"]["open_lessons_unknown"] is True
 
 
 # ============================================================================================

@@ -352,7 +352,7 @@ def test_inv7_who_may_decide_and_when(pg_session, clock):
     assert out["money"] == "paid"
 
 
-def test_c11_a_decision_after_the_payout_warns_and_the_sheet_owes_the_difference(pg_session, clock):
+def test_c11_a_decision_after_the_payout_warns_and_the_sheet_says_by_how_much_it_changed(pg_session, clock):
     w = build_org(pg_session)
     g, st, ms, made = extra_world(w, clock, "wait", "A")
     hold(w, g, "lesson-wed", "2026-10-21", {x: "present" for x in st}, start="10:00", end="11:00")       # an ordinary lesson of October: 5 x 25 000
@@ -371,7 +371,8 @@ def test_c11_a_decision_after_the_payout_warns_and_the_sheet_owes_the_difference
     assert out["payrollSheet"] == {"month": "2026-10", "status": "settled"}                              # said at the moment of the decision
     got = client(w, "owner").get(f"{API}/org/payroll/sheets/{sheet_id}").json()
     st_ = got["payout"]
-    assert got["stale"] is True and (st_["saved_total"], st_["fresh_total"], st_["paid"], st_["balance"], st_["state"]) == (125_000, 250_000, 125_000, 125_000, "due")      # «доплатить 125 000»
+    assert got["stale"] is True and (st_["saved_total"], st_["fresh_total"], st_["paid"], st_["balance"], st_["state"]) == (125_000, 250_000, 125_000, 0, "settled")      # Money-1 A1b: the payout stays by the SAVED 125 000 (was: «доплатить 125 000»)
+    assert st_["changed_by"] == 125_000 and "+125 000" in st_["change_text"]                          # ... and the sheet says «изменилось на +125 000», to be saved again
 
 
 def test_c18_a_teacher_sees_no_sums_and_no_decisions(pg_session, clock):

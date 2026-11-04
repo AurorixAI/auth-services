@@ -75,7 +75,10 @@ def legacy_cancel(w, group, day, kind_="centre"):
 
 
 # ====================================================================================================== 1, 2, 17: the day off
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_r3_1_the_kind_of_a_date_held_by_a_live_day_off_is_not_changed(w, sync):
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     sync.mode = "live"
     made = client(w, "owner").post(DAYS, json={"dateFrom": "2026-10-28", "dateTo": "2026-10-28", "reason": "Хайит"}).json()
     sync.mode = "ok"
@@ -312,6 +315,7 @@ def test_r3_9_lesson_was_not_held_gives_the_same_refusals_as_the_other_roads(w, 
 
 
 def test_r3_9_a_repeated_decision_answers_the_real_version_and_kind(w):
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     item = one(w, "A", "L1", "2026-11-02")
     first = decide(w, "admin", item["id"], decision="cancel", reason="Праздник", cancellationKind="holiday")
     again = decide(w, "admin", item["id"], decision="cancel", reason="Праздник", cancellationKind="holiday")

@@ -75,6 +75,8 @@ def notices(w, student, month):
 
 
 # ================================================================================================ S2: one road, one trace
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_s2_the_lesson_sheet_leaves_the_trace_of_the_decision_of_a_request(w):
     """§8 №13-14: the same cancellation through a request and from the sheet -> the same row, audit, record of «Замены», note of the student (Д1, И1)."""
     item = one(w, "A", "L1", "2026-11-02")
@@ -288,6 +290,7 @@ def test_s7_a_finished_lesson_is_not_cancelled(w):
 
 def test_s7_the_teacher_of_a_lesson_that_is_going_on_is_not_changed_but_a_finished_one_may_be_corrected(w, clock):
     """D20: «Заменить преподавателя» on a started lesson is refused; the finished lesson of the past keeps «назначить того, кто провёл»."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     clock.set("2026-10-26 10:30")
     start_and_mark(w, marks=False)
     put = client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher", json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "teacherId": str(w.D.id), "reason": "Болезнь"})

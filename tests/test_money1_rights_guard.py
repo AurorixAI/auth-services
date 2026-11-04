@@ -146,11 +146,11 @@ from tests.pg_world import make_client, needs_pg, pg_session, world  # noqa: E40
 
 @needs_pg
 def test_an_administrator_without_the_right_is_refused_on_the_money_routes_and_with_it_he_is_not(world):
-    from datetime import date
-
     m = world.db.query(__import__("src.models.auth", fromlist=["StudentGroup"]).StudentGroup).filter_by(student_id=world.students[0].id).one()
     admin = make_client(world, user=world.admin)
-    pause = {"first_day": date.today().isoformat(), "last_day": date.today().isoformat()}
+    from tests.pg_world import business_today
+
+    pause = {"first_day": business_today().isoformat(), "last_day": business_today().isoformat()}
     assert admin.post(f"{P}/org/memberships/{m.id}/pauses", json=pause).status_code == 403
     assert admin.put(f"{P}/org/groups/{world.group.id}/lesson-type", json={"lesson_type": "pair"}).status_code == 403
     assert admin.post(f"{P}/org/attendance/excuses/review-bulk", json={"ids": [str(uuid4())], "decision": "confirmed"}).status_code == 403

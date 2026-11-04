@@ -56,6 +56,8 @@ def handover(w, who, key, pairs, **extra):
     return client(w, who).post(M.format(mid=mid(w, key)) + "/handover", json=body)
 
 
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_r1_removal_needs_the_groups_handed_over_first_chain1(w):
     """[O2.R1] Chain 1: removal-impact says canRemove=false (2 groups), DELETE is 409, the handover G1 -> B is TEACHER_BUSY, G1 -> C and G2 -> B pass, then DELETE works:
     member and user inactive, member_audit(removed)."""
@@ -145,6 +147,7 @@ def test_r4_removal_and_a_start_are_serialised_and_two_admins_changing_a_teacher
 
 def test_r5_missed_lessons_do_not_block_and_stay_with_the_admins(w, clock):
     """[O2.R5] Missed lessons of A do not block the removal; they stay in the admins' list under A; once reconciled the row is A's (who taught), marked_by the admin."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     handover(w, "owner", "A", [("G1", "C"), ("G2", "D")])
     assert client(w, "owner").delete(M.format(mid=mid(w, "A"))).status_code == 200
     items = client(w, "admin").get("/api/v1/auth/org/attendance/open-actions").json()

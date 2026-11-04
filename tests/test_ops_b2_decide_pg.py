@@ -71,6 +71,8 @@ def sub_body(w, who):
 
 
 # ======================================================================================================================== S4
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_s4_r1_substitute_creates_the_assignment_and_the_audit(w, clock):
     """[B2.S4.R1] 200 substituted; one assignment (reason = «Болезнь: <comment>»), GroupAudit lesson_teacher_set, the event; the resolver: D leads, defaultTeacherId A; the schedule of D; A reads only."""
     item = one(w, reason="sick", comment="Температура")
@@ -151,6 +153,7 @@ def test_s4_r4_races_with_the_other_writers(w, clock):
 def test_s4_r5_assigning_the_one_who_taught(w, clock):
     """[B2.S4.R5] The lesson began (nobody started it): decide substitute D -> the lesson is D's missed one; D reconciles it (marked_by D, teacher D); older than 7 days only the admin;
     a closed month of the teacher 409 PERIOD_CLOSED (Money-1 A1) with the request left pending and closed by the next pass."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     clock.set("2026-10-21 15:40")
     item = one(w, "A", "L2", "2026-10-21")
     clock.set("2026-10-21 17:40")

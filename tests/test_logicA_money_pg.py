@@ -101,6 +101,11 @@ def test_leave_rights_and_the_plain_delete(world, fixed_today):
                  json={"settle": [{"membership_id": str(m.id), "action": "refund", "method": "cash"}]})
     assert r.status_code == 403
     assert make_client(world, user=world.teacher).get(f"{API}/org/groups/{world.group.id}/students/{world.students[0].id}/leave-preview").status_code == 403
+    r = adm.delete(f"{API}/org/groups/{world.group.id}/students/{world.students[0].id}")          # Money-1 A4: this student has PAID AHEAD (an advance): the old route is the money right's
+    assert r.status_code == 403
+    from tests.ops_helpers import grant_money_right
+
+    grant_money_right(world)
     r = adm.delete(f"{API}/org/groups/{world.group.id}/students/{world.students[0].id}")          # the old route = leave with «keep»
     assert r.status_code == 200 and r.json()["message"]
     world.db.expire_all()

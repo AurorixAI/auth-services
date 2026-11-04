@@ -248,14 +248,19 @@ def test_pause_over_an_attended_lesson_is_refused_and_absent_marks_are_listed(wo
 def test_pause_rights_closed_membership_and_the_roster_of_a_lesson(world, fixed_today):
     m = chain1_world(world)
     assert make_client(world, user=world.teacher).post(f"{API}/org/memberships/{m.id}/pauses", json={"first_day": "2026-10-20", "last_day": "2026-10-21"}).status_code == 403
-    adm = make_client(world, user=world.admin)                                              # an admin without the money switch: no sums, no row
+    adm = make_client(world, user=world.admin)                                              # an admin without the money switch: Money-1 A4 - a pause moves money, the right is the owner's to give
+    refused = adm.post(f"{API}/org/memberships/{m.id}/pauses", json={"first_day": "2026-10-21", "last_day": "2026-10-24"})
+    assert refused.status_code == 403
+    from tests.ops_helpers import grant_money_right
+
+    grant_money_right(world)
     out = adm.post(f"{API}/org/memberships/{m.id}/pauses", json={"first_day": "2026-10-21", "last_day": "2026-10-24"})
-    assert out.status_code == 201 and out.json()["impact"] is None and out.json()["row"] is None and out.json()["payroll"] is None
+    assert out.status_code == 201 and out.json()["impact"] is not None and out.json()["row"] is not None and out.json()["payroll"] is None       # the sums yes, the payroll list is the owner's
     # the student on a pause is not in the roster of a lesson started today
     roster = world.svc._active_attendance_roster(world.group.id)
     assert str(m.student_id) not in {r["student_id"] for r in roster} and len(roster) == 2
     v = adm.post(f"{API}/org/pauses/{out.json()['pause']['id']}/void", json={"reason": "вернулся"})
-    assert v.status_code == 200 and v.json()["impact"] is None
+    assert v.status_code == 200 and v.json()["impact"] is not None
     assert str(m.student_id) in {r["student_id"] for r in world.svc._active_attendance_roster(world.group.id)}
     m.is_active = False
     world.db.commit()

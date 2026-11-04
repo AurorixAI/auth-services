@@ -112,7 +112,7 @@ def test_get_put_history_shapes(world):
     assert [i["teacher_name"] for i in body["items"]] == sorted(i["teacher_name"] for i in body["items"])
 
     out = put(world, t, "2026-09", {"group": "50", "individual": "40"}, note="С сентября")
-    assert set(out) == {"teacher_id", "teacher_name", "lesson_types", "rates", "next"}
+    assert set(out) == {"teacher_id", "teacher_name", "lesson_types", "rates", "next", "money_effects"}       # Money-1 A3: money_effects
     assert out["teacher_id"] == str(t.id)
     body = rates_of(world, "2026-09")
     one = item_of(body, t)

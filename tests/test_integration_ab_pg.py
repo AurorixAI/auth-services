@@ -96,6 +96,8 @@ def request_one(w, who, group, lesson, day):
 
 
 # ======================================================================================================================== 1. payroll x substitute
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_payroll_pays_the_substitute_that_b_resolved_with_the_price_of_a(w, clock):
     """B: the substitute D leads Wed 21.10 and completes it (row.teacher_id = D).  A: the lesson is paid to D with the price of the period
     (``cover = money``, 600 000 / 12 * 30 % = 15 000 per student); the group teacher A has no mark on that day."""
@@ -154,6 +156,7 @@ def test_payroll_hooks_of_a_name_the_sheets_of_both_teachers_and_never_lock(w, c
 # ======================================================================================================================== 2. pause x roster
 def test_a_paused_student_is_not_in_the_roster_and_not_in_the_roster_of_a_substitute(w, clock):
     """A pause 26.10-31.10 of s3: B's journal of the substitute D (``lessonRoster``) and the roster frozen when D starts the lesson of 26.10 both leave s3 out."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     money(w, w.G1, 600_000)
     paused = client(w, "admin").post(f"{API}/org/memberships/{member(w, w.s3, w.G1).id}/pauses", json={"first_day": "2026-10-26", "last_day": "2026-10-31"})
     assert paused.status_code == 201, paused.text
@@ -427,6 +430,7 @@ def test_the_linear_chain_composes_the_check_constraints_of_a_and_b(monkeypatch)
 def test_the_group_page_flags_the_students_on_pause_today(w, clock):
     """``GET /org/groups/{id}``: every student carries ``on_pause`` / ``paused_until`` (the last day of the pause that covers TODAY), so the lesson panel hides him BEFORE the
     start; a pause of the future or of the past does not flag him; a voided pause neither."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     money(w, w.G1, 600_000)
     adm = client(w, "admin")
     now = adm.post(f"{API}/org/memberships/{member(w, w.s3, w.G1).id}/pauses", json={"first_day": "2026-10-20", "last_day": "2026-10-24"})

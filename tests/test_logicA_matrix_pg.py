@@ -501,13 +501,14 @@ def test_logicA_d6_z_a_sheet_of_zero_is_paid_in_full_without_a_payout_and_zero_i
     assert r.status_code == 422 and r.json()["detail"]["code"] == "AMOUNT_RANGE"
 
 
-def test_logicA_d6_x_a_rate_changed_after_a_payout_shows_the_new_target_and_the_old_payout_stays(world):
+def test_logicA_d6_x_a_rate_changed_after_a_payout_shows_the_change_and_the_old_payout_stays_by_the_saved_total(world):
     m, s1, s2 = g_pay_world(world)
     sheet = save_sheet(world, m)
     payout(world, sheet, 475_000)
     set_rate(world, world.teacher, "group", "60", valid_from=m.first)                                   # a later row of the same month wins
     st = owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}").json()["payout"]
-    assert st["fresh_total"] == 570_000 and st["paid"] == 475_000 and st["balance"] == 95_000 and st["state"] == "due"
+    # Money-1 A1b: the payout is by the SAVED 475 000 (settled); the new rate is «изменилось на +95 000» until the owner saves the sheet again (was: target 570 000, «due» 95 000)
+    assert st["fresh_total"] == 570_000 and st["paid"] == 475_000 and st["balance"] == 0 and st["state"] == "settled" and st["changed_by"] == 95_000
 
 
 def test_logicA_d6_d_without_a_rate_or_with_a_manual_price_the_target_is_the_saved_sum(world):

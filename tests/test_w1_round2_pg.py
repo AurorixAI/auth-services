@@ -1,7 +1,7 @@
 """W1 round 2 (28.10): S2-1 (the money of a teacher is the owner's), #155 (lines of the day off, the group form), #156 («уроки ведёт только преподаватель»).  PostgreSQL.
 
 Sources: artifacts/analysis/W1_FIX2_SPEC.md, only-teachers-teach.md (§5, §10, §11); LESSONS 45, 46, 47, 48, 49."""
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
@@ -34,10 +34,13 @@ def put_teacher(w, who, day, teacher, lesson="lesson-l1", group=None):
 
 
 # ============================================================================================================ S2-1: the money of a teacher
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_s2_1_the_owner_sees_the_sheet_and_its_payout_state_the_admin_only_the_month(w):
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test may change who taught a held lesson
     for teacher_id in (w.A.id, w.D.id):
         w.db.add(PayrollSheet(org_id=w.org.id, teacher_id=teacher_id, period_month=date(2026, 10, 1), source_fingerprint="x", total_amount=100, created_by=w.owner.id,
-                              updated_by=w.owner.id))
+                              updated_by=w.owner.id, created_at=datetime(2026, 10, 15, 6, 0), updated_at=datetime(2026, 10, 15, 6, 0)))        # saved in the middle of October: the month is OPEN (Money-1 A1)
     w.db.commit()
     mine = put_teacher(w, "owner", "2026-10-12", "D")                      # a lesson A held: A's and D's sheets of October become «data changed»
     assert mine.status_code == 200, mine.text
@@ -263,11 +266,12 @@ def test_cleanup_script_dry_run_changes_nothing_and_apply_does_the_three_things(
 # ============================================================================================================ R3 (28.10)
 def test_r3_8_s2_1_the_decision_of_a_request_gives_the_admin_only_the_month(w, monkeypatch):
     """The second road of ``payrollSheetsAffected`` (``decide`` kind=substitute): the owner gets the sheets with the payout state, the admin the month only."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test may change who taught a held lesson
     from src.auth.lesson_teachers import LessonTeachers  # noqa: F401
 
     for teacher_id in (w.A.id, w.D.id):
         w.db.add(PayrollSheet(org_id=w.org.id, teacher_id=teacher_id, period_month=date(2026, 10, 1), source_fingerprint="x", total_amount=100, created_by=w.owner.id,
-                              updated_by=w.owner.id))
+                              updated_by=w.owner.id, created_at=datetime(2026, 10, 15, 6, 0), updated_at=datetime(2026, 10, 15, 6, 0)))        # saved in the middle of October: the month is OPEN (Money-1 A1)
     first, second = one(w, "A", "L1", "2026-10-26"), one(w, "A", "L2", "2026-10-28")
     w.db.info["b2_skip"] = {(str(w.G1.id), "lesson-l1", "2026-10-26"), (str(w.G1.id), "lesson-l2", "2026-10-28")}          # the journal rows below do not close the requests
     for lesson_id, day in (("lesson-l1", "2026-10-26"), ("lesson-l2", "2026-10-28")):

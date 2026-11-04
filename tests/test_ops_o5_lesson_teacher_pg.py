@@ -42,6 +42,8 @@ def occurrences_of(w, who, d_from="2026-10-26", d_to="2026-10-26", teacher=None)
     return client(w, who).get("/api/v1/auth/org/schedule/occurrences", params=params).json()
 
 
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_r1_substitute_leads_the_lesson_and_is_paid_as_the_one_who_taught(w, clock):
     """[O5.R1] Mon 26.10 L1 of 9-А (teacher A) goes to D: it is D's lesson in the schedule, A's is gone; D starts it -> teacher_id = D, marked_by = D;
     an administrator who starts a substituted lesson himself leaves teacher_id = D, marked_by = him."""
@@ -139,6 +141,7 @@ def test_r4c_a_substitution_during_a_start_is_refused_and_the_teacher_keeps_the_
 def test_r5_who_taught_a_finished_lesson_can_be_corrected_while_the_month_is_open(w, monkeypatch, clock):
     """[O5.R5] Admin / owner; a mid-month sheet never blocks the change (it becomes «data changed»), a month CLOSED by a sheet saved after it ended -> 409 PERIOD_CLOSED (Money-1 A1);
     a missed lesson is reconciled by the teacher OF THAT DATE, not by the new teacher."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     r = put(w, "admin", w.G1, "D", lesson="lesson-l1", day="2026-10-19", reason="Исправление")
     assert r.status_code == 200 and r.json()["attendanceUpdated"] is True and r.json()["version"] == 2
     row = w.db.query(GroupAttendance).filter_by(group_id=w.G1.id, lesson_id="lesson-l1", lesson_date="2026-10-19").one()
@@ -202,6 +205,7 @@ def test_r7_no_teacher_candidates_busy_and_cancelled(w):
 
 def test_r7b_a_lesson_without_a_teacher_finished_by_an_admin_has_no_teacher(w, clock):
     """[O5.R7] A group without a teacher: the lesson an admin completes has teacher_id NULL (payroll counts it as "without a teacher")."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     w.G1.teacher_id = None
     w.db.commit()
     clock.set("2026-10-21 16:30")

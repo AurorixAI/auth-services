@@ -29,6 +29,8 @@ def rec(w, who, lesson, day, group=None):
     return client(w, who).post(f"{API}/groups/{(group or w.G7).id}/attendance/reconcile", json={"lessonDate": day, "lessonId": lesson})
 
 
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_r1_monday_and_the_border_day_pass_the_day_before_is_too_old(w):
     """[D7.R1] Wed 21.10: Mon 19.10 yes, Wed 14.10 yes (7 days), Tue 13.10 -> 403 LESSON_TOO_OLD."""
     assert rec(w, "D", "lesson-mon", "2026-10-19").status_code == 200
@@ -40,6 +42,7 @@ def test_r1_monday_and_the_border_day_pass_the_day_before_is_too_old(w):
 
 def test_r2_the_idempotent_reconcile_obeys_the_window_and_an_old_open_lesson_is_the_admins(w, clock):
     """[D7.R2] A reconcile repeated after the window closed is refused for a teacher; a lesson started long ago is completed by an admin only."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     assert rec(w, "D", "lesson-wed", "2026-10-14").status_code == 200
     assert rec(w, "D", "lesson-wed", "2026-10-14").status_code == 200
     clock.set("2026-10-22 09:00")
@@ -55,6 +58,7 @@ def test_r2_the_idempotent_reconcile_obeys_the_window_and_an_old_open_lesson_is_
 def test_r3_an_admin_closes_anything_of_an_open_month_and_nothing_of_a_closed_one(w):
     """[D7.R3] Money-1 A1 (was: the lower bound of the first day of the previous month): 13.10 yes; 26.08 of a month the sheet of the teacher closed -> 409 PERIOD_CLOSED (reconcile and cancel_missed);
     09.02 of an open month yes."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     assert rec(w, "admin", "lesson-tue", "2026-10-13").status_code == 200
     closed_sheet(w, w.D, date(2026, 8, 1))
     gone = rec(w, "admin", "lesson-wed", "2026-08-26")
@@ -70,6 +74,7 @@ def test_r3_an_admin_closes_anything_of_an_open_month_and_nothing_of_a_closed_on
 def test_r4_r6_the_window_is_the_business_day_at_the_moment_of_the_request(w, clock):
     """[D7.R4] [D7.R6] 23:59 Wed 21.10: the lesson of 14.10 is still 7 days old; 00:00:30 Thu 22.10 it is 8 days; the month border moves nothing any more (Money-1 A1: only a sheet saved after
     the month closes it)."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     clock.set("2026-10-21 23:59")
     assert rec(w, "D", "lesson-wed", "2026-10-14").status_code == 200
     clock.set("2026-10-22 00:00:30")

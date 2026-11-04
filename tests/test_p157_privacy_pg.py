@@ -44,6 +44,8 @@ def names_of(w, *keys):
     return [short_name(getattr(w, k)) for k in keys]
 
 
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_a1_a_teacher_does_not_read_the_name_of_the_requester_before_him_in_any_answer(w, sync):
     first, second = chain_of_two(w)
     a_name, d_name = short_name(w.A), short_name(w.D)
@@ -175,6 +177,7 @@ def test_a1_every_key_the_code_writes_is_on_the_list_or_cut_on_purpose(w, sync):
 def test_a2_what_an_administrator_wrote_on_his_own_action_is_not_in_the_teachers_records_but_the_text_of_a_reopened_one_is(w, sync):
     """A2: the record a substitution set from the lesson sheet / a move / a restore / a kind change made carries the reason of the ADMINISTRATOR in ``comment``: the teacher of the lesson
     (the requester of that system record) reads ``null`` there; the record the system REOPENED keeps its text (the explanation, LESSONS 46)."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     assert client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher", json={"lessonDate": DAY, "lessonId": "lesson-l1", "teacherId": str(w.D.id), "reason": "Админская причина"}).status_code == 200
     sheet(w, "admin", w.G1, "lesson-l1", "2026-11-02", reason="Ошибка")
     client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/attendance/cancellation-kind", json={"lessonDate": "2026-11-02", "lessonId": "lesson-l1", "cancellationKind": "holiday", "reason": "Причина смены вида"})

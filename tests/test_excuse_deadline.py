@@ -36,6 +36,8 @@ def cal(lesson, valid_to, days=5, valid_from=date(2026, 9, 1)):
     )
 
 
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_calendar_deadline_is_valid_to_minus_the_configured_days():
     result = cal(date(2026, 10, 2), date(2026, 10, 31))
     assert result == {"kind": "date", "date": "2026-10-26", "overdue": False, "days_left": 11}
@@ -455,6 +457,7 @@ def test_small_package_threshold_through_the_api(world):
 
 @needs_pg
 def test_decided_excuses_have_no_deadline_and_a_reset_one_gets_it_back(world):
+    grant_money_right(world)                    # Money-1 A4: the administrator of this test has the money right of the owner
     excused_lesson(world, offset_days=3)
     item = listing(world)[0]
     assert item["deadline"] is not None

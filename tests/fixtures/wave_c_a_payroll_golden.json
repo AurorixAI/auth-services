@@ -475,6 +475,7 @@
    "updated_by_name": "Иван Owner",
    "warnings": {
     "no_fee": 0,
+    "open_lesson_items": [],
     "open_lessons": null,
     "pending_excused": 0,
     "unpaid": 5,
@@ -927,6 +928,7 @@
    "updated_by_name": "Иван Owner",
    "warnings": {
     "no_fee": 0,
+    "open_lesson_items": [],
     "open_lessons": null,
     "pending_excused": 0,
     "unpaid": 5,
@@ -1325,6 +1327,7 @@
    "updated_by_name": "Иван Owner",
    "warnings": {
     "no_fee": 0,
+    "open_lesson_items": [],
     "open_lessons": null,
     "pending_excused": 0,
     "unpaid": 5,
@@ -2003,6 +2006,7 @@
   "updated_by_name": "Иван Owner",
   "warnings": {
    "no_fee": 0,
+   "open_lesson_items": [],
    "open_lessons": null,
    "pending_excused": 0,
    "unpaid": 5,
@@ -2409,6 +2413,7 @@
   "updated_by_name": "Иван Owner",
   "warnings": {
    "no_fee": 0,
+   "open_lesson_items": [],
    "open_lessons": null,
    "pending_excused": 0,
    "unpaid": 5,
@@ -2828,6 +2833,7 @@
    "updated_by_name": "Иван Owner",
    "warnings": {
     "no_fee": 0,
+    "open_lesson_items": [],
     "open_lessons": null,
     "pending_excused": 0,
     "unpaid": 5,

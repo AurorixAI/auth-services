@@ -48,6 +48,8 @@ def actions(w, request):
 
 
 # ------------------------------------------------------------------------------------------------------ S1
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_s1_a_substitution_set_from_the_sheet_without_a_request_is_in_the_decided_journal(w, sync):
     """[1] The record: origin system, the main teacher as requester, decided ``substituted`` by the administrator in the same transaction; the journal, its filters and its search find it."""
     r = put(w, "admin", "D")
@@ -232,6 +234,7 @@ def test_s6_payroll_pays_the_substitute_one_lesson_and_the_main_teacher_none(w, 
 def test_s7_the_rules_of_the_assignment_are_as_they_were_nothing_widened_and_a_refusal_writes_no_record(w, clock, sync):
     """[7] The window, a cancelled lesson, a stranger as the target: the same refusals as before and no record.  A lesson of the past inside the window and one that has started
     are still allowed - and are in the journal like any other."""
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     stranger = client(w, "admin").put(LT.format(gid=w.G1.id), json={"lessonDate": MON, "lessonId": "lesson-l1", "teacherId": str(w.foreign_admin.id), "reason": REASON})
     assert stranger.status_code == 422 and stranger.json()["detail"]["code"] == "TARGET_NOT_TEACHER"
     gone = one(w, "A", "L2", "2026-10-28")

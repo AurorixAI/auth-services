@@ -573,13 +573,17 @@ def test_internal_call_without_an_actor_still_records_the_link(two):
     assert link.created_by is None
 
 
-def test_admin_without_the_right_gets_the_generic_message(two):
+def test_admin_without_the_right_does_not_transfer_the_money_at_all(two):
+    """Money-1 A4 (was: the transfer went through and told the administrator only the generic message): a transfer carries the paid days and the advance - the money right."""
     billing(two)
     pay(two, paid_on=day(-10), amount=SECRET * 100)
-    result = transfer(two, two.second, client=make_client(two))       # default identity = admin
-    assert [w["code"] for w in carry_warnings(result)] == ["payment_carried_over"]
+    result = transfer(two, two.second, client=make_client(two), expect=403)       # default identity = admin without the right
+    assert result["detail"]["code"] == "MONEY_RIGHT_REQUIRED"
     text = json.dumps(result, ensure_ascii=False)
     assert str(SECRET) not in text and "7 654 321" not in text
+    from src.models.auth import MembershipTransfer
+
+    assert two.db.query(MembershipTransfer).filter_by(org_id=two.org.id).count() == 0           # nothing moved
 
 
 def test_admin_with_the_right_sees_the_sum(two):

@@ -50,6 +50,8 @@ def move(w, who, group, lesson, day, new_day, start="12:00", end="13:30", expect
 
 
 # ============================================================================================================ lead decisions
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_d1_a_teacher_cancelling_his_started_empty_lesson_leaves_the_same_record_as_the_lesson_was_not_held(w, clock):
     """Decision 1: the O6 exception is one road with «Урока не было»: ``teacher_cancel``, kind centre, a record in «Замены»."""
     group = new_group(w.db, w.org, w.ids, "Gl", "Пустая", w.C, [new_slot("lesson-e", 3, "16:00", "17:30", "2026-10-14")])
@@ -123,6 +125,7 @@ def test_s16_a_lesson_of_a_stopped_series_is_not_moved_on_or_after_the_stop(w):
 
 # ============================================================================================================ S17
 def test_s17_the_reason_of_a_cancellation_is_changed_in_the_window_with_a_record_and_not_for_an_old_period(w):
+    grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     sheet(w, "admin", w.G1, "lesson-l1", "2026-10-26", reason="Преподаватель болен")
     kind = lambda day, reason="Это был праздник", kind="holiday", who="admin": client(w, who).put(f"{API}/org/groups/{w.G1.id}/attendance/cancellation-kind", json={
         "lessonDate": day, "lessonId": "lesson-l1", "cancellationKind": kind, "reason": reason})

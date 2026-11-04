@@ -31,6 +31,8 @@ def recalc_days(w, m):
 # ---- 1. the kind of a cancellation by role ----------------------------------------------------------------------------------------------------------------
 
 
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 def test_1_a_teacher_cannot_choose_a_holiday_and_gets_a_clear_403(pg_session, clock):
     w = build_org(pg_session)
     g, s, m = month_world(w, clock)
@@ -58,6 +60,7 @@ def test_1_a_cancellation_without_a_kind_is_by_the_fault_of_the_centre_and_the_a
 
 def test_1_an_owner_or_admin_chooses_and_changes_the_kind_of_a_cancelled_lesson(pg_session, clock):
     w = build_org(pg_session)
+    grant_money_right(w)                    # Money-1 A4: the kind of a cancellation moves the deduction of the students and the pay: the money right
     g, s, m = month_world(w, clock)
     cancel(w, g, "lesson-wed", "2026-10-21")                                                   # «по вине центра» by default
     assert recalc_days(w, m) == ["2026-10-21"] and row_of(w, s)["debt"] == 554_000
