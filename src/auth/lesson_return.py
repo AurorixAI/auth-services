@@ -41,7 +41,7 @@ class AttendanceImpactRequest(BaseModel):
     records: Dict[str, str] = Field(default_factory=dict)
 
 
-def _excuse_statuses(db, attendance_id: Any) -> Dict[str, Optional[str]]:
+def excuse_statuses(db, attendance_id: Any) -> Dict[str, Optional[str]]:
     return {str(sid): status for sid, status in db.query(AttendanceExcuse.student_id, AttendanceExcuse.status).filter(AttendanceExcuse.attendance_id == attendance_id).all()}
 
 
@@ -78,7 +78,7 @@ def return_completed_lesson(db, org_id: Any, group_id: Any, req: ReturnLessonReq
         db.rollback()
         raise
     marks = {str(k): v for k, v in (row.records or {}).items()}
-    statuses = _excuse_statuses(db, row.id)
+    statuses = excuse_statuses(db, row.id)
     students = me.student_deltas(marks, marks, statuses, statuses, held_before=True, held_after=False)
     pairs = [(t, row.lesson_date) for t in teachers]
     if req.dryRun:
@@ -107,7 +107,16 @@ def correction_impact(db, org_id: Any, group_id: Any, req: AttendanceImpactReque
         raise not_found("LESSON_NOT_HELD", "Проведённого урока нет")
     teachers = _assert_open(db, group, row)
     before = {str(k): v for k, v in (row.records or {}).items()}
-    status_before = _excuse_statuses(db, row.id)
+    status_before = excuse_statuses(db, row.id)
     status_after = {sid: (status_before.get(sid, "pending") if mark == "excused" else None) for sid, mark in req.records.items()}   # a new «excused» waits for the decision: it still counts
     students = me.student_deltas(before, dict(req.records), status_before, status_after)
     return {"ok": True, "moneyEffects": me.build(db, org_id, students=students, pairs=[(t, row.lesson_date) for t in teachers], owner=owner, done=False)}
+
+
+def after_correction(db, group: Group, att: GroupAttendance, before: Dict[str, Any], after: Dict[str, Any], excuses_before: Dict[str, Optional[str]], *, owner: bool) -> Dict[str, Any]:
+    """The ``moneyEffects`` of a correction of a held lesson that has just been written (the caller commits after / has committed): the packs of the students whose mark changed what it
+    spends, and the saved sheets of the lesson's teacher.  Read-only."""
+    excuses_after = excuse_statuses(db, att.id)
+    students = me.student_deltas({str(k): v for k, v in before.items()}, {str(k): v for k, v in after.items()}, excuses_before, excuses_after)
+    teachers = lesson_teacher_ids(db, group, att.lesson_id, att.lesson_date, att)
+    return me.build(db, group.org_id, students=students, pairs=[(t, att.lesson_date) for t in teachers], owner=owner, done=True)

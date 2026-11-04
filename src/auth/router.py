@@ -58,6 +58,7 @@ from .ops_schemas import (
     ReconcileOut,
     RemoveMemberOut,
     SaveAttendanceOut,
+    ReconcileRequestB,
     SaveAttendanceRequestB,
     ReviseRecurringLessonRequestB,
     EndRecurringLessonResponseB,
@@ -120,6 +121,7 @@ from .dependencies import (
     require_org_member,
     ensure_payments_access,
     has_payments_access,
+    money_rights_flag,
 )
 
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -1681,6 +1683,7 @@ def save_group_attendance(
     group_id: str,
     request: SaveAttendanceRequestB,
     user: dict = Depends(require_org_member),
+    money_right: bool = Depends(money_rights_flag),
     db: Session = Depends(get_db),
 ):
     """Сохранить отметки посещаемости за урок/дату"""
@@ -1692,8 +1695,10 @@ def save_group_attendance(
             marked_by=user["user_id"],
             is_org_admin=is_org_manager(user),
             is_org_manager=is_org_manager(user),
+            money_right=money_right,
+            owner=user.get("org_role") == "owner",
         )
-        return {"ok": True, "saved": True, "version": result["version"], "examSync": result["examSync"], "warnings": result["warnings"]}
+        return {"ok": True, "saved": True, "version": result["version"], "examSync": result["examSync"], "warnings": result["warnings"], "moneyEffects": result.get("moneyEffects")}
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ExcusePauseRefused as e:  # LOGIC-A: an excuse on a day of the student's pause
@@ -1730,8 +1735,9 @@ def start_group_attendance(
 @router.post("/org/groups/{group_id}/attendance/reconcile", response_model=ReconcileOut)
 def reconcile_missed_group_attendance(
     group_id: str,
-    request: StartAttendanceRequest,
+    request: ReconcileRequestB,
     user: dict = Depends(require_org_member),
+    money_right: bool = Depends(money_rights_flag),
     db: Session = Depends(get_db),
 ):
     """Open the journal for a past occurrence that was never started."""
@@ -1742,6 +1748,7 @@ def reconcile_missed_group_attendance(
             request,
             reconciled_by=user["user_id"],
             is_org_admin=is_org_manager(user),
+            money_right=money_right,
         )
         return {"ok": True, "reconciled": True, "version": version}
     except PermissionError as e:

@@ -29,6 +29,7 @@ from .schemas import (
     ScheduleLessonResponse,
     ScheduleOccurrenceResponse,
     SaveAttendanceRequest,
+    StartAttendanceRequest,
     StudentResponse,
     TeacherDashboardSummaryResponse,
     AcceptInviteRequest,
@@ -191,6 +192,13 @@ class GroupAttendanceResponseB(GroupAttendanceResponse):
 class SaveAttendanceRequestB(SaveAttendanceRequest):
     expectedVersion: Optional[int] = Field(None, ge=1)
     acknowledgeLiveExam: bool = False
+    confirmNobodyCame: bool = False       # Money-1 A6: completing a lesson where nobody is «Был» / «Опоздал» asks for a yes (409 ``NOBODY_CAME``): the lesson is held and paid to the teacher
+
+
+class ReconcileRequestB(StartAttendanceRequest):
+    """Money-1 A6: «Оформить проведённый урок» may name who actually taught it (default: the planned teacher); the money right only."""
+
+    taughtBy: Optional[str] = Field(None, max_length=36)
 
 
 class ExamSyncOut(BaseModel):
@@ -231,6 +239,7 @@ class SaveAttendanceOut(BaseModel):
     version: int
     examSync: Optional[ExamSyncOut] = None
     warnings: List[CancelWarning] = Field(default_factory=list)       # W1 S2: only a cancellation has any
+    moneyEffects: Optional[Dict[str, Any]] = None                      # Money-1 A3: a correction of a held lesson says what it did to money (``money_effects.build``)
 
 
 class AttendanceConflictDetail(OpsErrorDetail):

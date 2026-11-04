@@ -119,7 +119,7 @@ from .ops_schemas import (  # noqa: E402
     TeacherDashboardSummaryResponseB as TeacherDashboardSummaryResponse,
 )
 from . import attendance_rules, business_clock, exam_bridge, exam_release, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
-from . import password_rules, staff_lifecycle, student_views  # noqa: E402
+from . import lesson_return, password_rules, staff_lifecycle, student_views  # noqa: E402
 from .roster_names import roster_payload, student_full_name  # noqa: E402
 from .sql_text import contains  # noqa: E402
 
@@ -5024,6 +5024,7 @@ class AuthService:
         *,
         reconciled_by: Optional[str],
         is_org_admin: bool,
+        money_right: bool = True,
     ) -> int:
         """Open a historical journal without claiming that it was started now.
 
@@ -5062,16 +5063,25 @@ class AuthService:
             .first()
         )
         rules = attendance_rules.AttendanceRules(self)
-        rules.assert_lesson_rights(
+        planned_teacher = rules.assert_lesson_rights(
             group, attendance, occurrence, req.lessonDate, req.lessonId, actor_id=reconciled_by, is_org_admin=is_org_admin
         )
+        taught_by = getattr(req, "taughtBy", None)
+        if is_org_admin and not money_right and str(planned_teacher) != str(reconciled_by):
+            # Money-1 A4 / A6: a lesson formalised backwards by somebody else is pay out of nothing (ЗПД-6): the money right
+            raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Оформить проведённый урок за преподавателя задним числом может владелец или администратор, которому владелец разрешил оплаты")
+        if taught_by and str(taught_by) != str(planned_teacher):
+            if not money_right:
+                raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Указать, кто провёл урок, может владелец или администратор с правом оплат")
+            if lesson_teachers.LessonTeachers(self).teaching_member(org_id, taught_by) is None:
+                raise ops_rules.unprocessable("TARGET_NOT_TEACHER", "Выберите преподавателя центра")
         if attendance:
             if attendance.status == LessonAttendanceStatus.IN_PROGRESS.value:
                 return attendance.version  # Idempotent double click: preserve the original audit row.
             if attendance.status == LessonAttendanceStatus.CANCELLED.value:
                 raise ValueError("Пропущенный урок уже отменён")
             raise ValueError("Пропущенный урок уже завершён")
-        rules.assert_period_open(group, req.lessonId, req.lessonDate, occurrence, None)
+        rules.assert_period_open(group, req.lessonId, req.lessonDate, occurrence, None, extra_teachers=(taught_by,) if taught_by else ())
 
         start_minutes, _ = self._validate_lesson_time_range(
             occurrence.get("startTime"), occurrence.get("endTime")
@@ -5088,7 +5098,7 @@ class AuthService:
         attendance = GroupAttendance(
             org_id=org_id,
             group_id=group_id,
-            teacher_id=self._attendance_teacher_snapshot(group, req.lessonId, req.lessonDate, occurrence),
+            teacher_id=lesson_teachers._uuid(taught_by) if taught_by else self._attendance_teacher_snapshot(group, req.lessonId, req.lessonDate, occurrence),
             version=1,
             lesson_date=req.lessonDate.isoformat(),
             lesson_id=req.lessonId,
@@ -5114,6 +5124,7 @@ class AuthService:
                 after_status=LessonAttendanceStatus.IN_PROGRESS.value,
                 before_records=None,
                 after_records={},
+                details={"backdated": True, "planned_teacher": str(planned_teacher) if planned_teacher else None, "taught_by": str(taught_by) if taught_by else None},
             )
         )
         self.db.commit()
@@ -5401,8 +5412,13 @@ class AuthService:
         marked_by: Optional[str],
         is_org_admin: bool,
         is_org_manager: bool = False,
+        money_right: bool = True,
+        owner: bool = False,
     ) -> Dict[str, Any]:
         """Сохранить полный проверенный снимок отметок одного экземпляра урока.
+
+        ``money_right`` (Money-1 A4): the caller may decide money (the owner / an administrator with the payments right); the router passes the real flag.  A correction of a HELD lesson
+        moves money: an administrator without the right is refused; the teacher of the lesson corrects his own held lesson within 7 days in an open month (A5).
 
         Returns ``{"version": <row version>, "examSync": {...} | None, "warnings": [...]}`` (LOGIC-B O7 / O8).  A cancellation (``status`` ``cancelled``) is THE cancellation
         of ``Substitutions.cancel_lesson`` (W1 S2): its warnings (a day off, a released substitute) come back in ``warnings``."""
@@ -5508,9 +5524,10 @@ class AuthService:
             return {"version": out["version"], "examSync": None, "warnings": warnings}
         # An administrator may correct a completed lesson (a reason is required
         # below); anyone else only edits a lesson that is in progress.
+        teacher_own_correction = bool(att and not is_org_manager and lesson_teacher_id is not None and str(lesson_teacher_id) == str(marked_by))      # A5: his own held lesson (the 7 days were checked by ``assert_lesson_rights``)
         is_correction_save = bool(
             att
-            and is_org_manager
+            and (is_org_manager or teacher_own_correction)
             and att.status == LessonAttendanceStatus.COMPLETED.value
         )
         if att.status != LessonAttendanceStatus.IN_PROGRESS.value and not is_correction_save:
@@ -5580,6 +5597,8 @@ class AuthService:
             missing_student_ids = roster_student_ids - set(records)
             if missing_student_ids:
                 raise ValueError("Перед завершением урока заполните отметки всех учеников из состава урока")
+            if records and att and att.status != LessonAttendanceStatus.COMPLETED.value and not any(m in ("present", "late") for m in records.values()) and not getattr(req, "confirmNobodyCame", False):
+                raise ops_rules.conflict("NOBODY_CAME", "Никто не пришёл. Если завершить, урок будет считаться проведённым и оплачен преподавателю. Если урока не было, нажмите «Урока не было»")
 
         # Reasons for new "excused" marks are validated before any write.
         excuse_service = AttendanceExcuseService(self.db)
@@ -5607,10 +5626,11 @@ class AuthService:
             and (records != before_records or requested_status != before_status)
         )
         if is_completed_correction:
-            if not is_org_manager:
-                raise PermissionError("Корректировать завершённый урок может только owner или admin")
+            if is_org_manager and not money_right:
+                raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Исправить проведённый урок может владелец или администратор, которому владелец разрешил оплаты: он меняет деньги учеников и зарплату")
             if not req.correctionReason:
                 raise ValueError("Для корректировки завершённого урока укажите причину")
+            excuses_before = lesson_return.excuse_statuses(self.db, att.id)
 
         if att and att.status == LessonAttendanceStatus.COMPLETED.value and requested_status != before_status:
             raise ValueError("Завершённый урок нельзя вернуть в другой статус")
@@ -5672,7 +5692,10 @@ class AuthService:
             if completing
             else None
         )
-        return {"version": att.version, "examSync": exam_sync, "warnings": []}
+        out = {"version": att.version, "examSync": exam_sync, "warnings": []}
+        if is_completed_correction:          # Money-1 A3: what the correction did to money (the packs of the students, the saved sheets of the teacher)
+            out["moneyEffects"] = lesson_return.after_correction(self.db, group, att, before_records, records, excuses_before, owner=owner)
+        return out
 
     def _own_future_one_off(self, group_id: str, lesson_id: str, lesson_date: date, actor_id: Optional[str], att: Optional[GroupAttendance]) -> bool:
         """W1 S27 (ОД-24): a one-off lesson that THIS teacher created, still ahead, with no journal row but its own cancellation (so no marks) and not the copy of a move (a move has its own road)."""

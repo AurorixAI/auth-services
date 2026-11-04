@@ -417,6 +417,9 @@ NO_STUDENTS = "На дату урока в группе не было учени
 
 
 def _reconcile_request(world, group, day, lesson_id=None):
+    from tests.ops_helpers import grant_money_right
+
+    grant_money_right(world)          # Money-1 A4: an administrator formalises somebody else's lesson backwards only with the money right
     return make_client(world).post(
         RECONCILE.format(gid=group.id),
         json={"lessonDate": day.isoformat(), "lessonId": lesson_id or f"s{day.isoweekday()}"},
