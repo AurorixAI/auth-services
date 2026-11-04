@@ -14,7 +14,7 @@ from src.auth.lesson_return import ReturnLessonRequest, return_completed_lesson
 from src.auth.service import AuthService
 from src.models.auth import GroupAttendance, GroupAttendanceAudit, PayrollPeriodReopening, StudentGroup
 
-from tests.money1_helpers import hold_lesson, now_4_nov, sheet, tashkent  # noqa: F401  (fixtures)
+from tests.money1_helpers import hold_lesson, now_4_nov, sheet, tashkent, reopen_now  # noqa: F401  (fixtures)
 from tests.ops_helpers import clock, closed_sheet, grant_money_right, run_parallel  # noqa: F401  (fixtures)
 from tests.pg_world import LIVE_SLOT, business_today, make_client, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_logicA_payroll_pg import API, g_pay_world, owner, payout, save_sheet  # noqa: F401
@@ -37,7 +37,7 @@ def test_the_chain_a_paid_sheet_closes_the_month_a_mistake_is_reopened_returned_
     url = RET.format(gid=world.group.id)
     shut = owner(world).post(url, json=body)
     assert shut.status_code == 409 and shut.json()["detail"]["code"] == "PERIOD_CLOSED" and shut.json()["detail"]["month"] == m.label
-    reopened = owner(world).post(f"{API}/org/payroll-periods/{m.label}/reopen", json={"teacher_id": str(world.teacher.id), "reason": "Урок 13-го завершили по ошибке"})
+    reopened = owner(world).post(f"{API}/org/payroll-periods/{m.label}/reopen", json={"teacher_id": str(world.teacher.id), "reason": "Урок 13-го завершили по ошибке", "sheet_revision": 1})
     assert reopened.status_code == 200 and reopened.json()["changed"] is True and reopened.json()["state"] == "reopened"
     dry = owner(world).post(url, json={**body, "dryRun": True}).json()["moneyEffects"]
     assert dry["students"] == [] and dry["payroll"][0]["state"] == "reopened" and dry["dryRun"] is True      # calendar payment: no pack; the sheet is named before the confirmation
@@ -133,8 +133,8 @@ def test_i7_two_returns_at_once_leave_one_record_and_two_reopenings_at_once_one_
     sheet(world, world.teacher, date(2026, 10, 1), tashkent(2026, 11, 2))
     req = ReturnLessonRequest(lessonDate=day, lessonId=lid, reason="Завершили по ошибке", expectedVersion=int(world.db.query(GroupAttendance).filter_by(group_id=world.group.id, lesson_date=day.isoformat(), lesson_id=lid).one().version))
     grant_money_right(world)
-    first = run_parallel(world, lambda svc: closed_period.reopen_month(svc.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Исправляем ошибку"),
-                         lambda svc: closed_period.reopen_month(svc.db, world.org.id, world.teacher.id, "2026-10", world.admin.id, "Исправляем ошибку"))
+    first = run_parallel(world, lambda svc: reopen_now(svc.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Исправляем ошибку"),
+                         lambda svc: reopen_now(svc.db, world.org.id, world.teacher.id, "2026-10", world.admin.id, "Исправляем ошибку"))
     assert [e for _, e in first if e is not None] == [] and sorted(r["changed"] for r, _ in first) == [False, True]
     world.db.expire_all()
     assert world.db.query(PayrollPeriodReopening).filter_by(org_id=world.org.id).count() == 1

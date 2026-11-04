@@ -6,7 +6,7 @@ from src.models.auth import AttendanceExcuse, StudentPayment
 
 from src.auth import closed_period
 
-from tests.money1_helpers import hold_lesson, lesson, now_4_nov, sheet, tashkent  # noqa: F401  (fixtures)
+from tests.money1_helpers import hold_lesson, lesson, now_4_nov, sheet, tashkent, reopen_now  # noqa: F401  (fixtures)
 from tests.ops_helpers import grant_money_right
 from tests.pg_world import make_client, needs_pg, pg_session, save, world  # noqa: F401  (fixtures)
 from tests.test_logicA_payroll_pg import API, _today, g_pay_world, owner, save_sheet, student_group  # noqa: F401
@@ -93,7 +93,7 @@ def test_a_decision_on_an_excuse_says_it_before_and_after_what_it_does_to_the_sh
     assert save_sheet(world, m)["total_amount"] == 475_000
     excuse = world.db.query(AttendanceExcuse).filter_by(org_id=world.org.id).one()
     url = f"/api/v1/auth/org/attendance/excuses/{excuse.id}/review"
-    reopened = closed_period.reopen_month(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Справка пришла позже")
+    reopened = reopen_now(world.db, world.org.id, world.teacher.id, m.label, world.owner.id, "Справка пришла позже")
     assert reopened["changed"] is True
     client = make_client(world, user=world.owner)
     dry = client.post(url, params={"dry_run": True}, json={"decision": "confirmed"})

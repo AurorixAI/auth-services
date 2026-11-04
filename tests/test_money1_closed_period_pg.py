@@ -10,7 +10,7 @@ from src.auth.ops_rules import OpsError
 from src.auth.schemas import ReconcileMissedLessonRequest, StartAttendanceRequest
 from src.models.auth import PayrollPeriodReopening
 
-from tests.money1_helpers import hold_lesson, lesson, now_4_nov, sheet, tashkent  # noqa: F401  (fixtures)
+from tests.money1_helpers import hold_lesson, lesson, now_4_nov, sheet, tashkent, reopen_now  # noqa: F401  (fixtures)
 from tests.ops_helpers import grant_money_right
 from tests.pg_world import make_client, needs_pg, pg_session, save, world  # noqa: F401  (fixtures)
 
@@ -103,7 +103,7 @@ def test_a_decision_on_an_excuse_is_refused_in_a_closed_month(world, now_4_nov):
     with pytest.raises(OpsError) as e:
         AttendanceExcuseService(world.db).review(str(world.org.id), excuse.id, str(world.admin.id), "confirmed", None)
     assert code(e) == "PERIOD_CLOSED"
-    closed_period.reopen_month(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Справка пришла позже")
+    reopen_now(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Справка пришла позже")
     assert AttendanceExcuseService(world.db).review(str(world.org.id), excuse.id, str(world.admin.id), "confirmed", None).status == "confirmed"
 
 
@@ -111,9 +111,9 @@ def test_a_decision_on_an_excuse_is_refused_in_a_closed_month(world, now_4_nov):
 def test_reopen_opens_the_month_writes_the_journal_is_idempotent_and_the_next_save_closes_it_again(world, now_4_nov):
     day, lid = hold_lesson(world, date(2026, 10, 28))
     row = sheet(world, world.teacher, OCT, tashkent(2026, 11, 2))
-    first = closed_period.reopen_month(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Ошибка в отметке")
+    first = reopen_now(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Ошибка в отметке")
     assert first["changed"] is True and first["state"] == "reopened" and first["reopened"]["reason"] == "Ошибка в отметке"
-    again = closed_period.reopen_month(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Ошибка в отметке")
+    again = reopen_now(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Ошибка в отметке")
     assert again["changed"] is False
     assert world.db.query(PayrollPeriodReopening).filter_by(org_id=world.org.id).count() == 1                      # I-7: a repeat writes nothing
     save(world, day, lid, MARKS_ABSENT_FIRST(world), status="completed", correctionReason="ошибся")      # allowed while reopened
@@ -125,16 +125,16 @@ def test_reopen_opens_the_month_writes_the_journal_is_idempotent_and_the_next_sa
 def test_reopen_needs_a_reason_and_a_sheet(world, now_4_nov):
     sheet(world, world.teacher, OCT, tashkent(2026, 11, 2))
     with pytest.raises(OpsError) as e:
-        closed_period.reopen_month(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "  ")
+        reopen_now(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "  ")
     assert code(e) == "REASON_REQUIRED"
     with pytest.raises(OpsError) as e:
-        closed_period.reopen_month(world.db, world.org.id, world.teacher2.id, "2026-10", world.owner.id, "Причина есть")
+        reopen_now(world.db, world.org.id, world.teacher2.id, "2026-10", world.owner.id, "Причина есть")
     assert code(e) == "SHEET_NOT_FOUND"
 
 
 def test_the_reopen_route_is_for_the_money_right_only(world, now_4_nov):
     sheet(world, world.teacher, OCT, tashkent(2026, 11, 2))
-    body = {"teacher_id": str(world.teacher.id), "reason": "Ошибка в отметке"}
+    body = {"teacher_id": str(world.teacher.id), "reason": "Ошибка в отметке", "sheet_revision": 1}
     url = "/api/v1/auth/org/payroll-periods/2026-10/reopen"
     assert make_client(world, user=world.admin).post(url, json=body).status_code == 403          # an administrator without the right
     assert make_client(world, user=world.teacher).post(url, json=body).status_code == 403
@@ -185,3 +185,32 @@ def test_a_pause_over_a_closed_month_is_refused_and_one_older_than_30_days_in_an
     assert e.value.extra["month"] == "2026-09"
     ok = service.create(str(world.org.id), membership.id, str(world.admin.id), PauseCreate(first_day=date(2026, 10, 1), last_day=date(2026, 10, 3), reason="Болезнь"))
     assert ok.pause.first_day == date(2026, 10, 1)                                  # 34 days back, October is open: allowed
+
+
+def test_r3_11_a_late_duplicate_of_the_reopening_is_refused_by_the_revision_and_the_revision_is_required(world, now_4_nov):
+    """The owner reopened (rev 1), fixed, saved the sheet again (rev 2) - the month is closed again; a late duplicate of the first request (rev 1) must NOT reopen it a second time."""
+    row = sheet(world, world.teacher, OCT, tashkent(2026, 11, 2))
+    first = closed_period.reopen_month(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Исправляем ошибку", 1)
+    assert first["changed"] is True and first["sheetRevision"] == 1
+    row.revision, row.updated_at = 2, tashkent(2026, 11, 4, 12, 5)                  # the owner saved the sheet again
+    world.db.commit()
+    assert closed_period.period_state(world.db, world.org.id, world.teacher.id, OCT)["state"] == "closed"
+    with pytest.raises(OpsError) as late:
+        closed_period.reopen_month(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Исправляем ошибку", 1)
+    assert late.value.status_code == 409 and code(late) == "SHEET_CHANGED" and late.value.detail["currentRevision"] == 2
+    assert closed_period.period_state(world.db, world.org.id, world.teacher.id, OCT)["state"] == "closed"        # still closed
+    with pytest.raises(OpsError) as missing:
+        closed_period.reopen_month(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Исправляем ошибку", None)
+    assert missing.value.status_code == 422 and code(missing) == "REVISION_REQUIRED"
+
+
+def test_r3_m1_no_reason_is_our_sentence_not_the_english_422_of_the_schema(world, now_4_nov):
+    """«нет причины» - an empty string AND spaces, over HTTP (R3 m1 / #13)."""
+    sheet(world, world.teacher, OCT, tashkent(2026, 11, 2))
+    url = "/api/v1/auth/org/payroll-periods/2026-10/reopen"
+    client = make_client(world, user=world.owner)
+    for reason in ("", "   ", "ab"):
+        r = client.post(url, json={"teacher_id": str(world.teacher.id), "reason": reason, "sheet_revision": 1})
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "REASON_REQUIRED" and "Причина" in r.json()["detail"]["message"], (reason, r.text)
+    bad_month = client.post("/api/v1/auth/org/payroll-periods/2026-1/reopen", json={"teacher_id": str(world.teacher.id), "reason": "Исправляем ошибку", "sheet_revision": 1})
+    assert bad_month.status_code == 422 and bad_month.json()["detail"]["code"] == "MONTH_INVALID" and "ГГГГ-ММ" in bad_month.json()["detail"]["message"]

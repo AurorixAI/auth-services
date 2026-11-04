@@ -44,3 +44,15 @@ def hold_lesson(w, day: date, marks=("present", "present", "present")):
     w.svc.reconcile_missed_group_attendance(str(w.org.id), str(w.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid), reconciled_by=str(w.admin.id), is_org_admin=True)
     save(w, day, lid, list(zip(w.students, marks)), status="completed")
     return day, lid
+
+
+def reopen_now(db, org_id, teacher_id, month: str, actor_id, reason: str):
+    """«Переоткрыть месяц» the way the screen does: with the revision of the sheet it saw (R3 #11)."""
+    from datetime import date as _date
+
+    from src.auth import closed_period
+    from src.models.auth import PayrollSheet
+
+    first = _date(int(month[:4]), int(month[5:7]), 1)
+    revision = db.query(PayrollSheet.revision).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == teacher_id, PayrollSheet.period_month == first).scalar()
+    return closed_period.reopen_month(db, org_id, teacher_id, month, actor_id, reason, revision)

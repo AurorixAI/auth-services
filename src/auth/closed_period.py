@@ -224,7 +224,7 @@ def _parse_month(text: str) -> date:
     try:
         first, _last = bc.month_bounds(text)
     except ValueError as exc:
-        raise OpsError(422, "MONTH_INVALID", bc.MONTH_FORMAT_MESSAGE) from exc
+        raise OpsError(422, "MONTH_INVALID", "Месяц указывается в формате ГГГГ-ММ, например 2026-09") from exc
     return first
 
 
@@ -232,7 +232,7 @@ def period_state(db, org_id: Any, teacher_id: Any, first: date) -> Dict[str, Any
     """``{"state": "none" | "open" | "closed" | "reopened", "closedOn", "sheetId", "reopened": {...} | None}`` of one teacher's month - what the screen of a lesson / of the month shows."""
     sheet = db.query(PayrollSheet).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == teacher_id, PayrollSheet.period_month == first).first()
     if sheet is None:
-        return {"state": "none", "closedOn": None, "sheetId": None, "reopened": None}
+        return {"state": "none", "closedOn": None, "sheetId": None, "sheetRevision": None, "reopened": None}
     last = (db.query(PayrollPeriodReopening).filter(PayrollPeriodReopening.org_id == org_id, PayrollPeriodReopening.teacher_id == teacher_id,
                                                     PayrollPeriodReopening.period_month == first).order_by(PayrollPeriodReopening.created_at.desc()).first())
     state, saved_on = state_of_sheet(sheet, last.created_at if last else None)
@@ -240,7 +240,7 @@ def period_state(db, org_id: Any, teacher_id: Any, first: date) -> Dict[str, Any
     if last is not None:
         who = db.query(User).filter(User.id == last.reopened_by).first()
         reopened = {"at": last.created_at.isoformat(), "by": short_name(who), "reason": last.reason}
-    return {"state": state, "closedOn": saved_on.isoformat() if state != "open" else None, "sheetId": str(sheet.id), "reopened": reopened}
+    return {"state": state, "closedOn": saved_on.isoformat() if state != "open" else None, "sheetId": str(sheet.id), "sheetRevision": int(sheet.revision), "reopened": reopened}
 
 
 def list_periods(db, org_id: Any, month: str) -> List[Dict[str, Any]]:
@@ -255,9 +255,10 @@ def list_periods(db, org_id: Any, month: str) -> List[Dict[str, Any]]:
     return sorted(out, key=lambda x: x["teacherName"] or "")
 
 
-def reopen_month(db, org_id: Any, teacher_id: Any, month: str, actor_id: Any, reason: str) -> Dict[str, Any]:
+def reopen_month(db, org_id: Any, teacher_id: Any, month: str, actor_id: Any, reason: str, sheet_revision: Optional[int] = None) -> Dict[str, Any]:
     """«Переоткрыть месяц» (owner / administrator with the payments right - checked by the route): the month of ``teacher_id`` is open for corrections until his sheet is saved again.
-    Idempotent: a month that is open already (never closed, or reopened and not saved since) answers ``changed: false`` and writes nothing (I-7)."""
+    Idempotent: a month that is open already (never closed, or reopened and not saved since) answers ``changed: false`` and writes nothing (I-7).  ``sheet_revision`` (R3 #11): the revision of the sheet
+    the person saw; a late duplicate of the request, sent before the owner saved the sheet again, finds another revision and is refused (409 ``SHEET_CHANGED``) instead of reopening the month a second time."""
     first = _parse_month(month)
     text = (reason or "").strip()
     if not REASON_MIN <= len(text) <= REASON_MAX:
@@ -267,6 +268,13 @@ def reopen_month(db, org_id: Any, teacher_id: Any, month: str, actor_id: Any, re
              .with_for_update().populate_existing().first())      # the lock of the sheet: a save of it and a reopening are one after another
     if sheet is None:
         raise OpsError(404, "SHEET_NOT_FOUND", "Ведомости за этот месяц нет: переоткрывать нечего")
+    if sheet_revision is None:
+        db.rollback()
+        raise OpsError(422, "REVISION_REQUIRED", "Обновите страницу и повторите: нужна текущая версия ведомости")
+    if int(sheet_revision) != int(sheet.revision):
+        current = int(sheet.revision)
+        db.rollback()
+        raise OpsError(409, "SHEET_CHANGED", "Ведомость уже изменили. Обновите страницу и проверьте, нужно ли переоткрывать месяц", currentRevision=current)
     last = (db.query(PayrollPeriodReopening.created_at).filter(PayrollPeriodReopening.org_id == org_id, PayrollPeriodReopening.teacher_id == tid,
                                                                 PayrollPeriodReopening.period_month == first).order_by(PayrollPeriodReopening.created_at.desc()).first())
     state, _ = state_of_sheet(sheet, last[0] if last else None)

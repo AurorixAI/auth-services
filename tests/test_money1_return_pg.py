@@ -7,7 +7,7 @@ import pytest
 
 from src.models.auth import GroupAttendance, GroupAttendanceAudit
 
-from tests.money1_helpers import hold_lesson, lesson, now_4_nov, sheet, tashkent  # noqa: F401  (fixtures)
+from tests.money1_helpers import hold_lesson, lesson, now_4_nov, sheet, tashkent, reopen_now  # noqa: F401  (fixtures)
 from tests.ops_helpers import grant_money_right
 from tests.pg_world import ensure_billing, make_client, needs_pg, pg_session, save, world  # noqa: F401  (fixtures)
 from tests.test_payments_service_pg import set_settings
@@ -83,7 +83,7 @@ def test_only_the_money_right_returns_a_lesson_and_a_closed_month_needs_the_reop
     grant_money_right(world)
     from src.auth import closed_period
 
-    closed_period.reopen_month(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Урок завершили по ошибке")
+    reopen_now(world.db, world.org.id, world.teacher.id, "2026-10", world.owner.id, "Урок завершили по ошибке")
     assert post_return(world, world.admin, day, lid).status_code == 200            # the administrator WITH the right, the month reopened
 
 
@@ -123,3 +123,23 @@ def test_a_centre_that_pays_by_the_calendar_has_no_pack_to_give_back(world, now_
     day, lid = hold_lesson(world, date(2026, 10, 28))
     r = post_return(world, world.owner, day, lid, dryRun=True).json()
     assert r["moneyEffects"]["students"] == [] and "пакет" not in r["moneyEffects"]["text"]
+
+
+def test_r3_11_the_return_needs_the_version_and_a_late_duplicate_cannot_return_the_lesson_the_teacher_finished_again(world, now_4_nov):
+    """No version -> 422 (a client that does not send it cannot undo a re-finished lesson). A duplicate of the first request (version v), arriving after the
+    owner returned the lesson and the teacher finished it AGAIN (version v+2), is a conflict - not a second return."""
+    package_centre(world)
+    day, lid = hold_lesson(world, date(2026, 10, 28))
+    url = f"{API}/{world.group.id}/attendance/return"
+    body = {"lessonDate": day.isoformat(), "lessonId": lid, "reason": "Завершили по ошибке"}
+    missing = make_client(world, user=world.owner).post(url, json=body)
+    assert missing.status_code == 422 and missing.json()["detail"]["code"] == "VERSION_REQUIRED"
+    assert row_of(world, day, lid).status == "completed"
+    seen = int(row_of(world, day, lid).version)
+    assert post_return(world, world.owner, day, lid, expectedVersion=seen).json()["changed"] is True
+    row = row_of(world, day, lid)
+    row.status, row.version = "completed", int(row.version) + 1                            # the teacher finished it again
+    world.db.commit()
+    late = post_return(world, world.owner, day, lid, expectedVersion=seen)
+    assert late.status_code == 409 and late.json()["detail"]["code"] == "ATTENDANCE_CONFLICT" and late.json()["detail"]["currentVersion"] == seen + 2
+    assert row_of(world, day, lid).status == "completed"                                    # untouched
