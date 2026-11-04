@@ -253,3 +253,20 @@ def test_r3_16_an_honest_life_of_the_accounts_gives_no_finding_after_any_event(w
     hold_lesson(world, date(2026, 10, 28))
     quiet("a held lesson")
     assert seen is not None
+
+
+def test_r3_16_a_package_account_is_compared_by_lessons_paid_not_by_the_date_that_moves_with_every_held_lesson():
+    """Pure: the same ledger one night later, one more lesson held - the date of «paid until» moved by a day, the lessons paid for did not.  The old snapshot kept the date and cried."""
+    from types import SimpleNamespace
+
+    def ledger(mode, through, covered):
+        return SimpleNamespace(mode=mode, covered_through=through, paid=450_000, lessons=SimpleNamespace(covered=covered) if mode == "lessons" else None)
+
+    org = __import__("uuid").uuid4()
+    night1, night2 = ledger("lessons", date(2026, 10, 28), 12), ledger("lessons", date(2026, 10, 29), 12)
+    assert mr.coverage_of(night1) == (None, 12, 450_000) and mr.coverage_of(night1) == mr.coverage_of(night2)
+    assert mr.check_paid_until(org, "m", mr.coverage_of(night1), mr.coverage_of(night2), False) is None          # not explained by anything - and still nothing to explain
+    assert mr.coverage_of(ledger("calendar", date(2026, 11, 10), 12)) == (date(2026, 11, 10), None, 450_000)
+    moved = mr.check_paid_until(org, "m", mr.coverage_of(ledger("calendar", date(2026, 11, 10), 0)), mr.coverage_of(ledger("calendar", date(2026, 12, 10), 0)), False)
+    assert moved is not None                                                                                      # a calendar account that moved without a record: a finding
+    assert mr.check_paid_until(org, "m", (None, 12, 450_000), (None, 12, 900_000), explained=True, paid_explained=False) is not None       # the coverage is explained, the gross money is not
