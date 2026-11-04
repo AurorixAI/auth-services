@@ -101,13 +101,15 @@ def review_excuses_bulk(
 def review_excuse(
     excuse_id: UUID,
     request: ReviewRequest,
+    dry_run: bool = Query(False, description="только последствия для денег, ничего не записывать"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Подтвердить или отклонить заявку."""
+    """Подтвердить или отклонить заявку; ответ: ``money_effects`` (пакет ученика, ведомость преподавателя). ``dry_run`` — окно подтверждения."""
     try:
         return AttendanceExcuseService(db).review(
-            user["org_id"], excuse_id, user["user_id"], request.decision, request.note, request.expected_status
+            user["org_id"], excuse_id, user["user_id"], request.decision, request.note, request.expected_status,
+            dry_run=dry_run, owner=user.get("org_role") == "owner",
         )
     except ExcuseError as exc:
         raise _http(exc)
@@ -117,13 +119,15 @@ def review_excuse(
 def reset_excuse(
     excuse_id: UUID,
     request: Optional[ResetRequest] = None,
+    dry_run: bool = Query(False, description="только последствия для денег, ничего не записывать"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Сбросить решение (заявка снова ожидает).  Тело необязательно: ``expected_status`` — статус, который видел клиент."""
     try:
         return AttendanceExcuseService(db).reset(
-            user["org_id"], excuse_id, user["user_id"], request.expected_status if request else None
+            user["org_id"], excuse_id, user["user_id"], request.expected_status if request else None,
+            dry_run=dry_run, owner=user.get("org_role") == "owner",
         )
     except ExcuseError as exc:
         raise _http(exc)

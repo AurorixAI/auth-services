@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 from datetime import date as date_type
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
@@ -627,11 +627,13 @@ class PaymentCreated(BaseModel):
     allocation: Optional[AllocationSummary] = None
     warnings: List[PaymentWarningOut]
     row: MembershipPaymentRow
+    money_effects: Optional[Dict[str, Any]] = None  # Money-1 A3: the saved payroll sheets the operation touches (``money_effects.membership_effects``)
 
 
 class PaymentVoided(BaseModel):
     payment: PaymentOut
     row: MembershipPaymentRow
+    money_effects: Optional[Dict[str, Any]] = None  # Money-1 A3: the saved payroll sheets the operation touches (``money_effects.membership_effects``)
 
 
 class QuotePartOut(BaseModel):
@@ -843,11 +845,13 @@ class WriteoffCreated(PayModel):
     debt_before: int = 0
     debt_after: int = 0
     row: MembershipPaymentRow
+    money_effects: Optional[Dict[str, Any]] = None  # Money-1 A3: the saved payroll sheets the operation touches (``money_effects.membership_effects``)
 
 
 class WriteoffVoided(PayModel):
     writeoff: WriteoffOut
     row: MembershipPaymentRow
+    money_effects: Optional[Dict[str, Any]] = None  # Money-1 A3: the saved payroll sheets the operation touches (``money_effects.membership_effects``)
 
 
 class RefundCreate(BaseModel):
@@ -880,11 +884,13 @@ class RefundCreated(PayModel):
     advance_before: int = 0
     advance_after: int = 0
     row: MembershipPaymentRow
+    money_effects: Optional[Dict[str, Any]] = None  # Money-1 A3: the saved payroll sheets the operation touches (``money_effects.membership_effects``)
 
 
 class RefundVoided(PayModel):
     refund: RefundOut
     row: MembershipPaymentRow
+    money_effects: Optional[Dict[str, Any]] = None  # Money-1 A3: the saved payroll sheets the operation touches (``money_effects.membership_effects``)
 
 
 # ---- statement ("выписка") ---------------------------------------------------------------------------------

@@ -104,3 +104,33 @@ def build(db, org_id: Any, *, students: List[Dict[str, Any]], pairs: Iterable[Tu
     names = with_names(db, students)
     payroll = payroll_effects(db, org_id, pairs, owner=owner, amounts=done)
     return {"students": names, "payroll": payroll, "text": text_of(names, payroll, done=done), "dryRun": not done}
+
+
+def _months(first: date, last: date) -> List[date]:
+    out, cursor = [], first.replace(day=1)
+    while cursor <= last:
+        out.append(cursor)
+        cursor = date(cursor.year + (cursor.month == 12), cursor.month % 12 + 1, 1)
+    return out
+
+
+def membership_effects(db, org_id: Any, membership_id: Any, since: date, *, owner: bool, done: bool = True) -> Dict[str, Any]:
+    """A3: what a payment / a write-off / a refund (or its cancellation) of a membership does to the pay of the teachers of its group: the saved sheets of the months from the month BEFORE ``since``
+    (a payment covers the adjacent periods) to now.  The owner gets only the sheets that really differ from what was saved (``changedBy`` != 0); everybody else the candidate months."""
+    from src.models.auth import Group, StudentGroup
+
+    from . import business_clock as bc
+    from .closed_period import group_teacher_ids
+
+    membership = db.query(StudentGroup).filter(StudentGroup.id == membership_id).first()
+    group = db.get(Group, membership.group_id) if membership is not None else None
+    if group is None:
+        return {"students": [], "payroll": [], "text": "", "dryRun": not done}
+    first = month_first(since)
+    first = date(first.year - (first.month == 1), (first.month - 2) % 12 + 1, 1)
+    months = _months(first, bc.business_today())
+    teachers = group_teacher_ids(db, group, first, bc.business_today())
+    payroll = payroll_effects(db, org_id, [(t, m) for t in teachers for m in months], owner=owner, amounts=done and owner)
+    if owner and done:
+        payroll = [p for p in payroll if p.get("changedBy")]
+    return {"students": [], "payroll": payroll, "text": text_of([], payroll, done=done), "dryRun": not done}

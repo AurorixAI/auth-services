@@ -36,6 +36,13 @@ from .payments_schemas import (
     WriteoffVoided,
 )
 
+from . import money_effects  # noqa: E402
+
+
+def _owner(user: dict) -> bool:
+    return user.get("org_role") == "owner"
+
+
 router = APIRouter(tags=["Payments"])  # the prefix /auth comes from payments_router
 
 _ERRORS = {403: {"model": PayError}, 404: {"model": PayError}, 409: {"model": PayError}, 422: {"model": PayError}}
@@ -80,9 +87,11 @@ def create_writeoff(
 ):
     """Простить долг (льгота, болезнь, договорённость): ``amount`` ≤ текущего долга или ``all: true``; причина 3..500."""
     try:
-        return PaymentService(db).create_writeoff(
+        out = PaymentService(db).create_writeoff(
             user["org_id"], membership_id, user["user_id"], amount=request.amount, whole=request.all_debt,
             reason=request.reason, effective_on=request.effective_on, actor_role=_role(user))
+        out.money_effects = money_effects.membership_effects(db, user["org_id"], membership_id, out.writeoff.effective_on, owner=_owner(user))      # A3 (ЗПД-5): a forgiven debt is paid to the teacher
+        return out
     except PaymentError as exc:
         raise _http(exc)
 
@@ -96,8 +105,9 @@ def void_writeoff(
 ):
     """Отменить прощение долга (долг возвращается); причина 3..500."""
     try:
-        return PaymentService(db).void_writeoff(user["org_id"], writeoff_id, user["user_id"], request.reason,
-                                                actor_role=_role(user))
+        out = PaymentService(db).void_writeoff(user["org_id"], writeoff_id, user["user_id"], request.reason, actor_role=_role(user))
+        out.money_effects = money_effects.membership_effects(db, user["org_id"], out.writeoff.membership_id, out.writeoff.effective_on, owner=_owner(user))
+        return out
     except PaymentError as exc:
         raise _http(exc)
 
@@ -113,9 +123,11 @@ def create_refund(
 ):
     """Вернуть аванс: ``amount`` ≤ возвратимого, способ обязателен. Это запись возврата, оплата не удаляется."""
     try:
-        return PaymentService(db).create_refund(
+        out = PaymentService(db).create_refund(
             user["org_id"], membership_id, user["user_id"], amount=request.amount, method=request.method,
             reason=request.reason, note=request.note, effective_on=request.effective_on, actor_role=_role(user))
+        out.money_effects = money_effects.membership_effects(db, user["org_id"], membership_id, out.refund.effective_on, owner=_owner(user))
+        return out
     except PaymentError as exc:
         raise _http(exc)
 
@@ -129,8 +141,9 @@ def void_refund(
 ):
     """Отменить возврат (аванс возвращается); причина 3..500."""
     try:
-        return PaymentService(db).void_refund(user["org_id"], refund_id, user["user_id"], request.reason,
-                                              actor_role=_role(user))
+        out = PaymentService(db).void_refund(user["org_id"], refund_id, user["user_id"], request.reason, actor_role=_role(user))
+        out.money_effects = money_effects.membership_effects(db, user["org_id"], out.refund.membership_id, out.refund.effective_on, owner=_owner(user))
+        return out
     except PaymentError as exc:
         raise _http(exc)
 

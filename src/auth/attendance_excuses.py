@@ -269,6 +269,7 @@ class ExcuseItem(BaseModel):
     # ``reviewed_at``); a changed decision measures again; the journal row keeps the mark it overwrites.
     decided_after_deadline: Optional[bool] = None
     deadline_at_decision: Optional[str] = None
+    money_effects: Optional[Dict[str, Any]] = None  # Money-1 A3: only the answer of a decision / a reset (and its dry run): the pack of the student, the saved sheets of the teacher
 
 
 class ExcuseListResponse(BaseModel):
@@ -1152,9 +1153,20 @@ class AttendanceExcuseService:
         self.db.rollback()
         raise ExcuseChanged(item)
 
+    def _effects(self, att: GroupAttendance, excuse: AttendanceExcuse, status_before: str, status_after: str, *, owner: bool, done: bool) -> Dict[str, Any]:
+        """Money-1 A3: a decision on an excuse - ``confirmed`` gives the lesson back to the pack of the student and takes it off the pay of the teacher; ``rejected`` / ``pending`` is a normal lesson."""
+        from . import money_effects as me
+
+        group = self.db.get(Group, att.group_id)
+        sid = str(excuse.student_id)
+        held = att.status == "completed"
+        students = me.student_deltas({sid: EXCUSED}, {sid: EXCUSED}, {sid: status_before}, {sid: status_after}, held_before=held, held_after=held)
+        teachers = lesson_teacher_ids(self.db, group, att.lesson_id, att.lesson_date, att) if group is not None else []
+        return me.build(self.db, att.org_id, students=students, pairs=[(t, att.lesson_date) for t in teachers] if held else [], owner=owner, done=done)
+
     def review(
         self, org_id: str, excuse_id: UUID, actor_id: str, decision: str, note: Optional[str],
-        expected_status: Optional[str] = None,
+        expected_status: Optional[str] = None, *, dry_run: bool = False, owner: bool = False,
     ) -> ExcuseItem:
         if decision not in DECISIONS:
             raise ExcuseInvalid("Решение: confirmed или rejected")
@@ -1162,10 +1174,19 @@ class AttendanceExcuseService:
         self._check_expected(org_id, excuse, expected_status)
         att = self._lesson(excuse)
         self._assert_period_open(att)
+        before = excuse.status
         self._apply_review(excuse, att, actor_id, decision, note)
+        if dry_run:                                   # the confirmation before «Подтвердить»: the same effects, nothing written
+            effects = self._effects(att, excuse, before, excuse.status, owner=owner, done=False)
+            self.db.rollback()
+            item = self._item(org_id, excuse_id)
+            item.money_effects = effects
+            return item
         self.db.commit()
         logger.info("Attendance excuse %s reviewed by %s: %s", excuse_id, actor_id, decision)
-        return self._item(org_id, excuse_id)
+        item = self._item(org_id, excuse_id)
+        item.money_effects = self._effects(att, excuse, before, excuse.status, owner=owner, done=True)
+        return item
 
     def review_bulk(
         self, org_id: str, ids: List[UUID], actor_id: str, decision: str, note: Optional[str],
@@ -1201,12 +1222,15 @@ class AttendanceExcuseService:
         return BulkReviewResponse(updated=updated, skipped=skipped)
 
     def reset(
-        self, org_id: str, excuse_id: UUID, actor_id: str, expected_status: Optional[str] = None
+        self, org_id: str, excuse_id: UUID, actor_id: str, expected_status: Optional[str] = None, *, dry_run: bool = False, owner: bool = False,
     ) -> ExcuseItem:
         excuse = self._lock_excuse(org_id, excuse_id)
         self._check_expected(org_id, excuse, expected_status)
+        effects = None
         if excuse.status != "pending":
-            self._assert_period_open(self._lesson(excuse))
+            att = self._lesson(excuse)
+            self._assert_period_open(att)
+            before = excuse.status
             details = {
                 "excuse_id": str(excuse.id),
                 "student_id": str(excuse.student_id),
@@ -1221,10 +1245,16 @@ class AttendanceExcuseService:
             excuse.review_note = None
             excuse.decided_after_deadline = None
             excuse.deadline_at_decision = None
-            self._audit(self._lesson(excuse), actor_id, "excuse_reset", details)
-            self.db.commit()
-            logger.info("Attendance excuse %s reset by %s", excuse_id, actor_id)
-        return self._item(org_id, excuse_id)
+            self._audit(att, actor_id, "excuse_reset", details)
+            effects = self._effects(att, excuse, before, "pending", owner=owner, done=not dry_run)
+            if dry_run:
+                self.db.rollback()
+            else:
+                self.db.commit()
+                logger.info("Attendance excuse %s reset by %s", excuse_id, actor_id)
+        item = self._item(org_id, excuse_id)
+        item.money_effects = effects
+        return item
 
     # ---- admin: files ----------------------------------------------------
 

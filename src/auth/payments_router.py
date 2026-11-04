@@ -57,6 +57,8 @@ from .payments_schemas import (
 )
 from .payments_service import PaymentError, PaymentService
 
+from . import money_effects  # noqa: E402
+
 router = APIRouter(prefix="/auth", tags=["Payments"])
 router.include_router(pay2_router)  # PAY-2: preview, write-off, refund, statement, receipts report, balances
 router.include_router(income_router)  # INCOME-2: income overview + month collection, payments journal (+ Excel)
@@ -333,9 +335,11 @@ def create_payment(
     """Внести оплату. PAY-2: только сумма, дата, способ, примечание — период и распределение считает система
     (``allocation`` в ответе). ``Idempotency-Key`` защищает от двойного клика."""
     try:
-        return PaymentService(db).create_payment(
+        out = PaymentService(db).create_payment(
             user["org_id"], membership_id, user["user_id"], request, idempotency_key
         )
+        out.money_effects = money_effects.membership_effects(db, user["org_id"], membership_id, out.payment.paid_on, owner=user.get("org_role") == "owner")     # A3: a late payment moves the saved sheets
+        return out
     except PaymentError as exc:
         raise _http(exc)
 
@@ -350,9 +354,11 @@ def replace_payment(
 ):
     """Исправить оплату: старая отменяется, новая создаётся — одной транзакцией."""
     try:
-        return PaymentService(db).replace_payment(
+        out = PaymentService(db).replace_payment(
             user["org_id"], payment_id, user["user_id"], request, request.reason, idempotency_key
         )
+        out.money_effects = money_effects.membership_effects(db, user["org_id"], out.payment.membership_id, out.payment.paid_on, owner=user.get("org_role") == "owner")
+        return out
     except PaymentError as exc:
         raise _http(exc)
 
@@ -366,9 +372,11 @@ def void_payment(
 ):
     """Отменить оплату (удаления нет); причина 3..500 символов."""
     try:
-        return PaymentService(db).void_payment(
+        out = PaymentService(db).void_payment(
             user["org_id"], payment_id, user["user_id"], request.reason
         )
+        out.money_effects = money_effects.membership_effects(db, user["org_id"], out.payment.membership_id, out.payment.paid_on, owner=user.get("org_role") == "owner")
+        return out
     except PaymentError as exc:
         raise _http(exc)
 
