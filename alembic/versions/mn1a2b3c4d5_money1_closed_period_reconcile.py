@@ -9,10 +9,11 @@ Create Date: 2026-11-04
 * ``money_reconcile_runs`` / ``money_reconcile_findings`` (A7): the result of the nightly check of the invariants I-1..I-4 (the platform console reads them; a centre never does);
   ``money_reconcile_snapshots`` - the last seen "paid until" / covered lessons of every membership (I-2 compares the next night with it); ``money_reconcile_centres`` - which centres a run
   checked successfully (a centre that could not be checked is not compared with the next night's findings as if it were clean).
+* ``payroll_sheets.confirmed_open_lessons`` (I-4): the unresolved lessons the owner confirmed when he saved the sheet of a finished month (a nullable JSONB list of keys; replaced at every save).
 * ``group_attendance_audit`` accepts ``completed_reverted`` («Вернуть проведённый урок», A2); the CHECK is rebuilt from the
   live definition, so a parallel change of the list by another revision is kept.
 
-Only ADDS (no data is moved).  Rollback (downgrade): drops the three tables and removes the audit rows with the new action (they have no meaning for the old code), then restores
+Only ADDS (no data is moved).  Rollback (downgrade): drops the new column and the tables and removes the audit rows with the new action (they have no meaning for the old code), then restores
 the CHECK.  The journal of reopenings is lost with the table - after the downgrade the old code closes nothing.
 """
 from __future__ import annotations
@@ -57,6 +58,8 @@ def upgrade() -> None:
     op.execute("SET LOCAL lock_timeout = '5s'")
     bind = op.get_bind()
     tables = _tables(bind)
+    if "confirmed_open_lessons" not in {c["name"] for c in sa.inspect(bind).get_columns("payroll_sheets")}:
+        op.add_column("payroll_sheets", sa.Column("confirmed_open_lessons", postgresql.JSONB(), nullable=True))
     if "payroll_period_reopenings" not in tables:
         op.create_table(
             "payroll_period_reopenings",
@@ -141,6 +144,8 @@ def downgrade() -> None:
         op.execute(f"DELETE FROM {AUDIT} WHERE action IN ({', '.join(repr(a) for a in NEW_ACTIONS)})")
         _set_check_actions([a for a in actions if a not in NEW_ACTIONS])
     tables = _tables(bind)
+    if "confirmed_open_lessons" in {c["name"] for c in sa.inspect(bind).get_columns("payroll_sheets")}:
+        op.drop_column("payroll_sheets", "confirmed_open_lessons")
     for name in ("money_reconcile_snapshots", "money_reconcile_centres", "money_reconcile_findings", "money_reconcile_runs", "payroll_period_reopenings"):
         if name in tables:
             op.drop_table(name)

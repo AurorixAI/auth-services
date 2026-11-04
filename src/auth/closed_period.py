@@ -250,6 +250,11 @@ def group_open_actions_by_month(db, org_id: Any, actions: List[Any]) -> Dict[str
     }
 
 
+def open_lesson_key(lesson_date: Any, group_id: Any, lesson_id: Any) -> str:
+    """The identity of an unresolved lesson in ``payroll_sheets.confirmed_open_lessons`` and in the reconciliation: ``<date>|<group>|<lesson>``."""
+    return f"{str(lesson_date)[:10]}|{group_id}|{lesson_id}"
+
+
 def _parse_month(text: str) -> date:
     try:
         first, _last = bc.month_bounds(text)

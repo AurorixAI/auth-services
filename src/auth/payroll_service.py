@@ -58,6 +58,7 @@ from src.models.auth import (
 )
 
 from . import business_clock as bc
+from .closed_period import open_lesson_key
 from . import lesson_types
 from . import payment_status as ps
 from . import payroll_engine as engine
@@ -1201,9 +1202,13 @@ class PayrollService:
         keys = self._line_keys(s.identity for s in teacher.lines)
         given = self._changes_from_body(body.line_overrides, keys)
         self._check_expected(body.expected_fingerprint, teacher.fingerprint)
-        if body.confirm_open_lessons is False and last < bc.business_today():           # R3 #21: a month that is over is closed by this save - with an unresolved lesson only after the owner said yes
-            left = (self._open_lessons(org_id, first, last) or {}).get(str(body.teacher_id), [])
-            if left:
+        confirmed: Optional[List[str]] = None            # the unresolved lessons the owner said «save anyway» to (kept for the reconciliation: a decision of the centre, not a failure)
+        if body.confirm_open_lessons is not None and last < bc.business_today():           # R3 #21: a month that is over is closed by this save - with an unresolved lesson only after the owner said yes
+            found = self._open_lessons(org_id, first, last)
+            left = (found or {}).get(str(body.teacher_id), [])
+            if body.confirm_open_lessons is True and found is not None:
+                confirmed = sorted(open_lesson_key(i["lessonDate"], i["groupId"], i["lessonId"]) for i in left)
+            if body.confirm_open_lessons is False and left:
                 raise OpenLessonsConfirmRequired(
                     f"В месяце незакрытых уроков: {len(left)}. Они не попадут в ведомость, а месяц закроется. Сохранить всё равно?", count=len(left), items=left[:50])
         actor = UUID(str(actor_id))
@@ -1239,6 +1244,7 @@ class PayrollService:
                 sheet.source_fingerprint = teacher.fingerprint
                 sheet.updated_by = actor
                 sheet.updated_at = now
+                sheet.confirmed_open_lessons = confirmed
             else:
                 sheet = PayrollSheet(
                     org_id=UUID(str(org_id)),
@@ -1254,6 +1260,7 @@ class PayrollService:
                     created_at=now,
                     updated_by=actor,
                     updated_at=now,
+                    confirmed_open_lessons=confirmed,
                 )
                 self.db.add(sheet)
                 self.db.flush()

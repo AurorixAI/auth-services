@@ -15,7 +15,9 @@ R3 round: the checks verify the CALCULATION, not only its shape, and a check tha
   the settings of the centre.  The first night only takes the snapshot;
 * I-3 a SAVED payroll sheet: its total is the sum of its lines (every saved sheet); and for a CLOSED month (the sheet saved after the month ended) - no line pays without a counted mark, no mark
   pays a lesson that was not held, and the fresh total of the month, recalculated by the payroll itself, equals the saved one (a drift is a teacher who is paid less or more than the data says);
-* I-4 a CLOSED month of a teacher has no unresolved lesson (going on or never started, from the accounting start of the centre): nobody can resolve it without reopening the month.
+* I-4 a CLOSED month of a teacher has no unresolved lesson (going on or never started, from the accounting start of the centre) that the owner did NOT confirm: nobody can resolve it without reopening
+  the month, and a lesson the owner confirmed on saving the sheet («Сохранить всё равно» to the list of the warning, ``payroll_sheets.confirmed_open_lessons``) is the decision of the centre, not a failure -
+  the letters of the reconciliation are about failures of the system only.
 
 Operation: one run at a time (an advisory lock: the second one answers ``busy``); a centre is read in a read-only transaction with a time limit and the run has a budget - a centre it could not
 check is named (the letter says so) and its findings of the next night are compared with its LAST SUCCESSFUL check, not with the failed night.
@@ -43,7 +45,7 @@ from src.models.auth import (
 
 from . import business_clock as bc
 from . import payroll_engine as engine
-from .closed_period import ClosedPeriods, month_first
+from .closed_period import ClosedPeriods, month_first, open_lesson_key
 
 logger = logging.getLogger(__name__)
 
@@ -338,10 +340,18 @@ def reconcile_org(db, org_id: Any, today: Optional[date] = None, *, snapshots: O
     # ---- I-4: the closed months with an unresolved lesson (going on or never started: the same list the screens show, closed months included)
     from .service import AuthService
 
+    # What the owner CONFIRMED when he saved the sheet («Сохранить всё равно» to the warning with the list) is the decision of the centre, not a failure of the system: it is taken off.  The list is the one of the
+    # LAST save of the sheet (a reopening keeps it; a save without the question clears it); a lesson that became unresolved after the closing, or was never in the list, stays a finding.
+    confirmed: Dict[Tuple[str, str], set] = {}
+    for teacher_id, first, keys in db.query(PayrollSheet.teacher_id, PayrollSheet.period_month, PayrollSheet.confirmed_open_lessons).filter(PayrollSheet.org_id == org_uuid).all():
+        confirmed[(str(teacher_id), first.strftime("%Y-%m"))] = set(keys or [])
     by_month: Dict[Tuple[str, str], List[str]] = {}
     for action in AuthService(db).get_open_attendance_actions(str(org_uuid), actor_id=None, is_org_admin=True, include_closed=True):
         if action.periodClosed and action.teacherId:
-            by_month.setdefault((action.teacherId, month_first(action.lessonDate).strftime("%Y-%m")), []).append(f"{action.lessonDate}|{action.groupId}")
+            month = month_first(action.lessonDate).strftime("%Y-%m")
+            if open_lesson_key(action.lessonDate, action.groupId, action.lessonId) in confirmed.get((action.teacherId, month), set()):
+                continue
+            by_month.setdefault((action.teacherId, month), []).append(f"{action.lessonDate}|{action.groupId}")
     for (teacher_id, month), items in sorted(by_month.items()):
         if (item := check_unresolved(org_uuid, teacher_id, month, items)) is not None:
             found.append(item)

@@ -1741,6 +1741,10 @@ class PayrollSheet(Base):
     created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
     updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     updated_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    # Money-1 (I-4): the unresolved lessons of the month that the owner CONFIRMED when he saved the sheet after the month ended (``confirm_open_lessons: true``): a list of keys
+    # ``"<lessonDate>|<groupId>|<lessonId>"``.  Replaced by every save of the sheet (a save without the question clears it); a reopening and a recalculation (PATCH) leave it as it is.
+    # The nightly reconciliation does not call a lesson of this list a failure of the system: it is a decision of the centre.
+    confirmed_open_lessons = Column(JSONB, nullable=True)
 
     revisions = relationship(
         "PayrollSheetRevision",
