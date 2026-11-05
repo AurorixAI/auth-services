@@ -123,9 +123,9 @@ def debt_reason(e) -> Tuple[Optional[str], Optional[str]]:
         return "overdue", f"Просрочено на {days} {tx.days_word(days)}"
     seg = unpaid[0] if unpaid else None
     if seg is None:
-        return "partial", f"Не доплачено: {tx.num(l.debt)}"
+        return "partial", f"Не доплачено: {tx.money(l.debt)}"
     name = _MONTHS[seg.period_start.month - 1] if seg.period_start.day == 1 else tx.period_text(seg.period_start, seg.period_end)
-    return "partial", f"Не доплачено за {name}: {tx.num(seg.unpaid)}"
+    return "partial", f"Не доплачено за {name}: {tx.money(seg.unpaid)}"
 
 
 def due_block(before: bl.Ledger) -> PreviewDue:

@@ -94,7 +94,7 @@ def _price_note(line: Mapping[str, Any]) -> Optional[str]:
         for step in line.get("price_steps") or ():
             day = date.fromisoformat(step["date"])
             amount = step.get("amount")
-            steps.append(f"с {day:%d.%m}: " + ("не задана" if amount is None else f"{amount:,}".replace(",", " ")))
+            steps.append(f"с {day:%d.%m}: " + ("не задана" if amount is None else f"{amount:,}".replace(",", " ") + " сум"))
         parts.append("Цена менялась в этом месяце — " + "; ".join(steps))
     if line.get("price_source") == "override":
         parts.append("Индивидуальная цена ученика")
