@@ -164,7 +164,7 @@ if [ "$LIMITED" = 1 ]; then RC=124; fi
 
 {
   echo "shift: $SHIFT (${OFFSET}s)   workers: $WORKERS   per-test timeout: ${TEST_TIMEOUT}s   duration: $(( $(date +%s) - STARTED ))s   exit code: $RC"
-  if [ "$LIMITED" = 1 ]; then echo "RUN LIMIT (${LIMIT_MIN} min) HIT: the run was killed, the counts below are partial (last progress: $(grep -oE '\[ *[0-9]+%\]' "$LOG" | tail -1))"; fi
+  if [ "$LIMITED" = 1 ]; then echo "RUN LIMIT (${LIMIT_MIN} min) HIT: the run was killed, the counts below are partial (last progress: $(grep -oE '\[ *[0-9]+%\]' "$LOG" | tail -1 | grep . || echo none yet))"; fi
   echo "result: $(grep -E '^=+ .*(passed|failed|error|no tests ran).* in [0-9.]+s' "$LOG" | tail -1 | tr -d '=' | sed 's/^ *//')"
   echo "--- timed out (pytest-timeout ${TEST_TIMEOUT}s / statement_timeout ${PG_STATEMENT_TIMEOUT}) or crashed worker:"
   { grep -E "worker 'gw[0-9]+' crashed while running" "$LOG" || true; grep -E '^(FAILED|ERROR) .*(Timeout \(>|QueryCanceled|statement timeout)' "$LOG" || true; } | sort -u | cut -c1-230
