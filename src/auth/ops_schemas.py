@@ -232,6 +232,12 @@ class ReconcileCancelOut(BaseModel):
     cancelled: bool = True
     version: int
     warnings: List[CancelWarning] = Field(default_factory=list)
+    # Money-1 («Урока не было» with a preview): ``?dry_run=true`` writes nothing and says what the cancellation does to money, ``dryRun`` repeats it; a real call of an owner / an administrator carries the same
+    # block after the action.  ``moneyEffects`` = ``{"students", "payroll", "text", "dryRun", "deductions"}`` (``payroll``: the sheets of the teachers «было -> станет» for the owner, the month and its state
+    # for an administrator); ``deductions`` = ``[{studentId, name, amount}]`` - who gets a recalculation and how much (the money right only; empty when the setting is off or the kind is «Праздник, выходной»).
+    dryRun: bool = False
+    deductions: Optional[List[Dict[str, Any]]] = Field(None, exclude_if=lambda v: v is None)
+    moneyEffects: Optional[Dict[str, Any]] = Field(None, exclude_if=lambda v: v is None)
 
 
 class SaveAttendanceOut(BaseModel):

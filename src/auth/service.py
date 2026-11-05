@@ -5273,8 +5273,8 @@ class AuthService:
             via="request" if manager else "teacher_cancel", archived_ok=True,       # the missed lessons of an archived group are resolved by this very road
         )
         self.db.commit()
-        from . import exam_release
-        warnings = [*out["warnings"], *exam_release.release_pending(self, org_id, group_id)]   # Wave B P4 (SV-15 / LD-23): AFTER the commit, no lock held
+        from . import exam_release, money_effects
+        warnings = list(out["warnings"]) if money_effects.is_preview(self.db) else [*out["warnings"], *exam_release.release_pending(self, org_id, group_id)]   # Wave B P4 (SV-15 / LD-23): AFTER the commit, no lock held
         return {"version": out["version"], "warnings": warnings}
 
     def start_group_attendance(

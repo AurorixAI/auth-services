@@ -113,11 +113,18 @@ def writes_rolled_back(db):
     """Run a money action to its last line WITHOUT writing (R3 #15): ``commit`` only flushes, and at the exit everything is rolled back.  The action sees its own writes (it builds its answer from them),
     nothing reaches the database."""
     db.commit = db.flush
+    db.info["money_preview"] = True
     try:
         yield
     finally:
         db.__dict__.pop("commit", None)
+        db.info.pop("money_preview", None)
         db.rollback()
+
+
+def is_preview(db) -> bool:
+    """True inside ``writes_rolled_back``: the code that runs is a PREVIEW of an action - whatever it does outside the database (a call of exam-service, a letter) must not happen."""
+    return bool(db.info.get("money_preview"))
 
 
 def _fresh(db, org_id: Any, sheet: PayrollSheet) -> Optional[int]:
@@ -413,6 +420,21 @@ def deductions_gone(db, org_id: Any, group_id: Any, was: Dict[str, int]) -> List
     """``[{"studentId", "name", "amount"}]`` of the students whose deduction got smaller since ``was`` (the lesson went back)."""
     now = centre_deductions(db, org_id, group_id)
     return with_names(db, [{"studentId": sid, "amount": amount - now.get(sid, 0)} for sid, amount in sorted(was.items()) if amount - now.get(sid, 0) > 0])
+
+
+def recalc_added(db, org_id: Any, group_id: Any, was: Dict[str, int]) -> List[Dict[str, Any]]:
+    """``[{"studentId", "name", "amount"}]`` of the students whose deduction (the recalculation for the lessons the centre cancelled) got BIGGER since ``was`` - what a cancellation «по вине центра» just
+    added; ``[]`` when the setting «вычитать уроки, отменённые центром» is off or the kind was «Праздник, выходной» (the ledger then has nothing to add)."""
+    now = centre_deductions(db, org_id, group_id)
+    return with_names(db, [{"studentId": sid, "amount": amount - was.get(sid, 0)} for sid, amount in sorted(now.items()) if amount - was.get(sid, 0) > 0])
+
+
+def recalc_text(added: List[Dict[str, Any]], *, done: bool) -> str:
+    """The sentence about the students for the dialog of «Урока не было»: ``Ученикам — перерасчёт: −120 000 сум в следующей оплате (3 ученика)`` / ``Ученикам перерасчёта не будет``."""
+    if not added:
+        return "Ученикам перерасчёта не будет" if not done else "Ученикам перерасчёта нет"
+    count = len(added)
+    return f"Ученикам — перерасчёт: −{num(sum(a['amount'] for a in added))} сум в следующей оплате ({count} {plural(count, 'ученик', 'ученика', 'учеников')})"
 
 
 def deduction_text(gone: List[Dict[str, Any]], *, done: bool, past: bool = True) -> str:

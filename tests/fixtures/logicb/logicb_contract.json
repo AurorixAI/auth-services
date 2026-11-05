@@ -3339,6 +3339,38 @@
             "title": "Cancelled",
             "type": "boolean"
           },
+          "deductions": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deductions"
+          },
+          "dryRun": {
+            "default": false,
+            "title": "Dryrun",
+            "type": "boolean"
+          },
+          "moneyEffects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moneyeffects"
+          },
           "ok": {
             "default": true,
             "title": "Ok",
@@ -5760,7 +5792,7 @@
     },
     "/org/groups/{group_id}/attendance/reconcile/cancel": {
       "post": {
-        "description": "Cancel a missed occurrence with a mandatory reason and audit trail.",
+        "description": "Cancel a missed occurrence with a mandatory reason and audit trail.  ``?dry_run=true``: the same road with the same refusals (the closed month included), rolled back - the answer says what the\ncancellation does to money (``money_effects.run_with_effects``, like every action that moves it).",
         "parameters": [
           {
             "in": "path",
@@ -5769,6 +5801,18 @@
             "schema": {
               "title": "Group Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "только последствия для денег («Урока не было»: перерасчёт ученикам, зарплата преподавателя); ничего не записывается и не отправляется",
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "только последствия для денег («Урока не было»: перерасчёт ученикам, зарплата преподавателя); ничего не записывается и не отправляется",
+              "title": "Dry Run",
+              "type": "boolean"
             }
           }
         ],

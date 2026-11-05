@@ -44,6 +44,7 @@ CONDITIONAL = {
     ("POST", f"{P}/org/groups/{{group_id}}/attendance/reconcile"),          # a lesson formalised backwards, «кто провёл»
     ("PUT", f"{P}/org/groups/{{group_id}}/lesson-teacher"),                 # who taught a held lesson (ЗП-02)
     ("POST", f"{P}/org/groups/{{group_id}}/lessons/restore"),               # the return of «Урока не было» for a lesson that had begun
+    ("POST", f"{P}/org/groups/{{group_id}}/attendance/reconcile/cancel"),   # «Урока не было»: the preview (``?dry_run=true``) names the recalculation of the students and the sheets - the sums for the money right only
     ("POST", f"{P}/org/groups/{{group_id}}/students/{{student_id}}"),       # a transfer
     ("POST", f"{P}/org/groups/{{group_id}}/students/bulk"),                 # a bulk transfer
 }
@@ -79,7 +80,6 @@ NOT_MONEY = {
     ("POST", f"{P}/org/groups/{{group_id}}/archive"): "refused while students are in the group; the cancelled lessons pay nothing",
     ("POST", f"{P}/org/groups/{{group_id}}/restore"): "the group comes back without lessons held",
     ("POST", f"{P}/org/groups/{{group_id}}/attendance/start"): "a lesson begins: the money appears when it is completed (the marks route is CONDITIONAL)",
-    ("POST", f"{P}/org/groups/{{group_id}}/attendance/reconcile/cancel"): "withdraws a request to formalise; no pay arises before «Оформить»",
     ("POST", f"{P}/org/groups/{{group_id}}/lesson-move"): "moves a FUTURE lesson; a held one is protected by the closed-period rule",
     ("POST", f"{P}/org/invitations"): "an invitation to the centre", ("DELETE", f"{P}/org/invitations/{{invite_id}}"): "an invitation",
     ("POST", f"{P}/org/invitations/{{invite_id}}/resend"): "an invitation",
