@@ -181,4 +181,5 @@ def test_i4_the_month_names_its_unfinished_lessons_before_the_owner_saves_it(wor
     warn = r.json()["sheets"][0]["warnings"]
     assert warn["open_lessons"] == 1 and warn["open_lesson_items"][0]["lessonDate"] == m.d(28).isoformat()
     overview = owner(world).get(f"{API}/org/payroll/months/{m.label}").json()["teachers"][0]["warnings"]
-    assert overview["open_lessons"] == 1 and overview["open_lesson_items"] == [{"lessonDate": m.d(28).isoformat(), "groupId": str(world.group.id), "groupName": world.group.name, "lessonId": f"s{m.d(28).isoweekday()}", "kind": "in_progress"}]
+    assert overview["open_lessons"] == 1 and overview["open_lesson_items"] == [{"lessonDate": m.d(28).isoformat(), "groupId": str(world.group.id), "groupName": world.group.name, "lessonId": f"s{m.d(28).isoweekday()}", "kind": "in_progress",
+                                                                                          "teacherId": str(world.teacher.id)}]

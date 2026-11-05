@@ -434,7 +434,8 @@ class PayrollService:
         low, high = first.isoformat(), last.isoformat()
         for action in actions:
             if action.teacherId and low <= action.lessonDate <= high:
-                out.setdefault(action.teacherId, []).append({"lessonDate": action.lessonDate, "groupId": str(action.groupId), "groupName": action.groupName, "lessonId": action.lessonId, "kind": action.actionType})
+                out.setdefault(action.teacherId, []).append({"lessonDate": action.lessonDate, "groupId": str(action.groupId), "groupName": action.groupName, "lessonId": action.lessonId, "kind": action.actionType,
+                                                          "teacherId": str(action.teacherId)})           # whose lesson it is: the question of the save and the list of the month name it, the front opens the journal for him
         return out
 
     def _lesson_times(self, groups: Iterable[Group], first: date, last: date) -> Dict[Tuple[UUID, str, str], str]:
