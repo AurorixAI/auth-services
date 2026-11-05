@@ -175,9 +175,9 @@ def test_i4_the_month_names_its_unfinished_lessons_before_the_owner_saves_it(wor
     from tests.test_payroll_pg import lesson as held
 
     m, s1, s2 = g_pay_world(world)
-    held(world, m.d(29), {}, status="in_progress")                                                 # a lesson of the month that nobody closed
+    held(world, m.d(28), {}, status="in_progress")                                                 # a lesson of the month that nobody closed (the 28th: every month has it - LESSONS 76/102, a February has no 29th)
     r = owner(world).post(f"{API}/org/payroll/months/{m.label}/calculate", json={"teacher_ids": [str(world.teacher.id)]})
     warn = r.json()["sheets"][0]["warnings"]
-    assert warn["open_lessons"] == 1 and warn["open_lesson_items"][0]["lessonDate"] == m.d(29).isoformat()
+    assert warn["open_lessons"] == 1 and warn["open_lesson_items"][0]["lessonDate"] == m.d(28).isoformat()
     overview = owner(world).get(f"{API}/org/payroll/months/{m.label}").json()["teachers"][0]["warnings"]
-    assert overview["open_lessons"] == 1 and overview["open_lesson_items"] == [{"lessonDate": m.d(29).isoformat(), "groupId": str(world.group.id), "groupName": world.group.name, "lessonId": f"s{m.d(29).isoweekday()}", "kind": "in_progress"}]
+    assert overview["open_lessons"] == 1 and overview["open_lesson_items"] == [{"lessonDate": m.d(28).isoformat(), "groupId": str(world.group.id), "groupName": world.group.name, "lessonId": f"s{m.d(28).isoweekday()}", "kind": "in_progress"}]

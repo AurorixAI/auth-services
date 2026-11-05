@@ -34,14 +34,14 @@ def test_i1_the_account_of_every_membership_adds_up_after_payments_a_writeoff_an
 
 
 def test_i3_a_held_lesson_where_everybody_is_absent_is_paid_and_a_lesson_cancelled_by_the_centre_pays_nothing(world):
-    """Numbers: 50 %, price 600 000, divisor 12 -> 25 000 per student per lesson.  S1 paid the whole month (+25 000 for the all-absent lesson of the 29th); S2 only through the 15th (unpaid)."""
+    """Numbers: 50 %, price 600 000, divisor 12 -> 25 000 per student per lesson.  S1 paid the whole month (+25 000 for the all-absent lesson of the 28th); S2 only through the 15th (unpaid)."""
     m, s1, s2 = g_pay_world(world)
     base = save_sheet(world, m)["total_amount"]
     assert base == 475_000
-    held(world, m.d(29), {s1: "absent", s2: "absent"})                                              # held, nobody came: the lesson is HELD (rule 4.3)
+    held(world, m.d(28), {s1: "absent", s2: "absent"})                                              # held, nobody came: the lesson is HELD (rule 4.3); the 28th / 26th exist in every month (LESSONS 76/102: a February has no 29th, 30th)
     r = owner(world).post(f"{API}/org/payroll/months/{m.label}/calculate", json={"teacher_ids": [str(world.teacher.id)]})
     assert r.json()["sheets"][0]["total_amount"] == 500_000
-    held(world, m.d(30), {}, status="cancelled")                                                    # cancelled by the centre: no marks, nobody is paid
+    held(world, m.d(26), {}, status="cancelled")                                                    # cancelled by the centre: no marks, nobody is paid
     r = owner(world).post(f"{API}/org/payroll/months/{m.label}/calculate", json={"teacher_ids": [str(world.teacher.id)]})
     assert r.json()["sheets"][0]["total_amount"] == 500_000
 
