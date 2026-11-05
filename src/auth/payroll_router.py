@@ -16,12 +16,14 @@ from sqlalchemy.orm import Session
 from src.core.database import get_db
 from src.models.auth import Organization
 
-from .dependencies import require_payroll_owner
+from .dependencies import MONEY_RIGHT_REQUIRED_TEXT, money_rights_flag, require_org_admin, require_payroll_owner
+from .ops_rules import forbidden
 from . import money_effects, payment_status, xlsx_style
 from .payroll_export import UNSAVED_NOTE, XLSX_MIME, build_workbook, export_filename
 from .payroll_schemas import (
     CalculateRequest,
     CalculateResponse,
+    ChangedMonths,
     MonthOverview,
     PayoutCreate,
     PayoutCreated,
@@ -143,6 +145,15 @@ def rates_history(teacher_id: UUID, user: dict = Depends(require_payroll_owner),
 
 
 # ---- month ------------------------------------------------------------------------
+
+
+@router.get("/org/payroll/changed-months", response_model=ChangedMonths)
+def changed_months(user: dict = Depends(require_org_admin), money_right: bool = Depends(money_rights_flag), db: Session = Depends(get_db)):
+    """Месяцы (закрытые и переоткрытые, последние 12), где свежий итог сохранённой ведомости не равен сохранённому: ``{"items": [{"month": "2026-09", "teachers": 2}]}``.
+    Владелец и администратор с доступом к деньгам (число преподавателей, без сумм); администратор без доступа — 403 ``MONEY_RIGHT_REQUIRED``, преподаватель — 403."""
+    if not money_right:
+        raise forbidden("MONEY_RIGHT_REQUIRED", MONEY_RIGHT_REQUIRED_TEXT)
+    return {"items": PayrollService(db).changed_months(user["org_id"])}
 
 
 @router.get("/org/payroll/months/{month}", response_model=MonthOverview)

@@ -319,6 +319,17 @@ class MonthOverview(BaseModel):
     lessons_without_teacher: int = 0  # completed lessons whose teacher snapshot is empty: nobody is paid for them
 
 
+class ChangedMonth(BaseModel):
+    month: str          # «2026-09»
+    teachers: int       # how many saved sheets of the month have a fresh total that is not the saved one
+
+
+class ChangedMonths(BaseModel):
+    """``GET /org/payroll/changed-months``: the closed / reopened months (of the last 12) whose saved pay has moved - a number of teachers, never a sum (the owner and an administrator with the money right read it)."""
+
+    items: List[ChangedMonth] = []
+
+
 # ---- history, diff ----------------------------------------------------------------
 
 

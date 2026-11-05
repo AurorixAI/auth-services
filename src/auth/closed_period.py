@@ -305,6 +305,21 @@ def list_periods(db, org_id: Any, month: str) -> List[Dict[str, Any]]:
     return sorted(out, key=lambda x: x["teacherName"] or "")
 
 
+def saved_sheets_in_states(db, org_id: Any, first: date, before: date, states: Tuple[str, ...] = ("closed", "reopened")) -> List[PayrollSheet]:
+    """The saved sheets of the months ``first <= month < before`` whose month is in one of ``states`` by THE rule (``state_of_sheet``): ``closed`` | ``reopened`` (``open`` is a sheet saved inside its month).
+    Two queries for any number of teachers (the sheets, their reopenings); the full rows - the caller works the fresh totals out."""
+    sheets = db.query(PayrollSheet).filter(PayrollSheet.org_id == org_id, PayrollSheet.period_month >= first, PayrollSheet.period_month < before).all()
+    if not sheets:
+        return []
+    last_reopen: Dict[Tuple[UUID, date], Any] = {}
+    for teacher_id, month, created in (db.query(PayrollPeriodReopening.teacher_id, PayrollPeriodReopening.period_month, PayrollPeriodReopening.created_at)
+                                       .filter(PayrollPeriodReopening.org_id == org_id, PayrollPeriodReopening.period_month >= first, PayrollPeriodReopening.period_month < before).all()):
+        key = (teacher_id, month)
+        if key not in last_reopen or created > last_reopen[key]:
+            last_reopen[key] = created
+    return [sheet for sheet in sheets if state_of_sheet(sheet, last_reopen.get((sheet.teacher_id, sheet.period_month)))[0] in states]
+
+
 def reopen_month(db, org_id: Any, teacher_id: Any, month: str, actor_id: Any, reason: str, sheet_revision: Optional[int] = None) -> Dict[str, Any]:
     """«Переоткрыть месяц» (owner / administrator with the payments right - checked by the route): the month of ``teacher_id`` is open for corrections until his sheet is saved again.
     Idempotent: a month that is open already (never closed, or reopened and not saved since) answers ``changed: false`` and writes nothing (I-7).  ``sheet_revision`` (R3 #11): the revision of the sheet

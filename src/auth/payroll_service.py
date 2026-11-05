@@ -1082,6 +1082,36 @@ class PayrollService:
             lessons_without_teacher=seed.lessons_without_teacher,
         )
 
+    # ------------------------------------------------------------ the months whose saved pay has moved
+    # the window: the 12 months before the current one (the same month of the year before .. last month)
+
+    def changed_months(self, org_id: str) -> List[Dict[str, Any]]:
+        """Money-1 (front need): ``[{"month": "2026-09", "teachers": 2}]`` - the CLOSED and REOPENED months of the last 12 (before the current one: its own list shows it) in which the fresh total of a saved
+        sheet is not the saved one (``changed_by != 0`` of the payout state: THE function of the list of the month, ``_fresh_total``).  A sheet that cannot be worked out (a rate is missing, a manual price) is
+        not counted - the list of the month does not say «изменилась» either.  One calculation of the month for all its teachers, never from the beginning of time; oldest month first."""
+        from .closed_period import month_first, saved_sheets_in_states
+
+        current = month_first(ps.business_today())
+        sheets = saved_sheets_in_states(self.db, org_id, current.replace(year=current.year - 1), current)       # 12 months back
+        by_month: Dict[date, List[PayrollSheet]] = {}
+        for sheet in sheets:
+            by_month.setdefault(sheet.period_month, []).append(sheet)
+        out: List[Dict[str, Any]] = []
+        for first in sorted(by_month):
+            group = by_month[first]
+            teachers = {s.teacher_id for s in group}
+            last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
+            seed = self._collect(org_id, first, last, teacher_ids=teachers)
+            book = payroll_rates.load_book(self.db, org_id, list(teachers))
+            changed = 0
+            for sheet in group:
+                fresh = self._fresh_total(org_id, sheet, seed, book)
+                if fresh is not None and fresh != int(sheet.total_amount):
+                    changed += 1
+            if changed:
+                out.append({"month": first.strftime("%Y-%m"), "teachers": changed})
+        return out
+
     # ------------------------------------------------------------ calculate
 
     def calculate(self, org_id: str, month: str, request: CalculateRequest) -> CalculateResponse:

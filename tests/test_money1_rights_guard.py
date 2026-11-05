@@ -62,6 +62,12 @@ SERVICE_CHECKED = {
     ("POST", f"{P}/org/one-off-lessons/{{lesson_id}}/money-decision"): ("«Оплатить / Не оплачивать» an additional lesson: ``OneOffPurpose.decide`` answers 403 MONEY_RIGHT_REQUIRED to an administrator without the right (#159)", OneOffPurpose.decide),
 }
 
+# a READ of the money (a GET): the numbers of the owner's payroll that the administrator with the money right may read too - ``require_org_admin`` + ``money_rights_flag`` and the 403 ``MONEY_RIGHT_REQUIRED``
+# in the handler (a teacher is refused by the role, an administrator without the right by the flag); the answer carries counts, never a sum
+MONEY_READS = {
+    ("GET", f"{P}/org/payroll/changed-months"),                                 # the closed months whose saved pay has moved: ``{"items": [{"month", "teachers"}]}``
+}
+
 # NOT money: the reason is the proof that somebody thought about it (R3 #10).  A route here whose handler calls a money service fails the test below.
 NOT_MONEY = {
     ("POST", f"{P}/org/attendance/excuses/{{excuse_id}}/files"): "a file of a certificate: nobody decides anything",
@@ -144,6 +150,16 @@ def test_the_walk_found_the_routes_this_guard_is_about():
 def test_every_whole_money_route_has_the_one_dependency():
     bad = [r for r in sorted(WHOLE) if dependencies.require_payments_access not in ROUTES[r][0]]
     assert not bad, f"money routes without require_payments_access: {bad}"
+
+
+def test_a_money_read_is_for_the_money_right_and_never_for_a_teacher():
+    """The GET routes of the money that an administrator reads (``MONEY_READS``): the role of a manager + the flag, and the refusal ``MONEY_RIGHT_REQUIRED`` is written in the handler."""
+    assert MONEY_READS and all(r in ROUTES for r in MONEY_READS), "the walk did not find the read routes it is about"
+    for key in sorted(MONEY_READS):
+        deps, route = ROUTES[key]
+        assert dependencies.require_org_admin in deps and dependencies.money_rights_flag in deps, key
+        assert "MONEY_RIGHT_REQUIRED" in inspect.getsource(route.endpoint), key
+        assert dependencies.require_payroll_owner not in deps, f"{key}: an owner-only read is not a money read of the administrator"
 
 
 def test_every_conditional_money_route_asks_the_flag():
