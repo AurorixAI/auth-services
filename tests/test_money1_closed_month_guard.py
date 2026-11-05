@@ -64,6 +64,7 @@ ALLOWED = {
     R("PUT", "/org/memberships/{membership_id}/price-override"): "an individual price: the same as the price of the group",
     R("PUT", "/org/memberships/{membership_id}/opening-balance"): "an opening balance is the money of the student, like a payment",
     R("POST", "/org/opening-balances/{opening_id}/void"): "the same",
+    R("POST", "/org/groups"): "a NEW group has no lesson held and no student: its first price (Money-1 B2, «с самого начала») moves no sheet of a closed month",
     R("PUT", "/org/groups/{group_id}"): "the type of lessons is changed FROM TODAY there (a backdated one is ``lesson-type``, which refuses); the teacher of the group takes the FUTURE lessons - held ones keep theirs",
     R("POST", "/org/groups/{group_id}/students/{student_id}"): _ROSTER, R("POST", "/org/groups/{group_id}/students/bulk"): _ROSTER,
     R("DELETE", "/org/groups/{group_id}/students/{student_id}"): _ROSTER, R("POST", "/org/groups/{group_id}/students/{student_id}/leave"): _ROSTER,

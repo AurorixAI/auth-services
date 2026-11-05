@@ -153,3 +153,28 @@ def test_b1_bulk_add_takes_the_default_for_everybody_and_a_chosen_day_is_the_mon
     assert make_client(w, user=w.admin).post(url, params={"mode": "add"}, json={"student_ids": [str(b.id)], "pay_from": "2026-10-25"}).status_code == 403
     both = owner(w).post(url, params={"mode": "add"}, json={"student_ids": [str(b.id)], "pay_from": "2026-10-25"})
     assert both.status_code == 200 and stay_of(w, b)[1].billing_from == D(2026, 10, 25)
+
+
+def test_b5_in_the_real_flow_taken_out_on_14_10_and_back_on_16_10_is_one_period(world, fixed_today):
+    """B2 of the devil (d8) through the services: «Убрать из группы» and «Добавить в группу» two days later - the period he left in goes on, 300 000, not 97 000 + 300 000."""
+    from src.auth.leave_service import LeaveService
+    from tests.pg_world import make_group
+    from tests.test_pay2_api_pg import seed_payment
+
+    w = world
+    fixed_today(D(2026, 10, 5))
+    settings_block(w, accounting_start_date="2026-09-01")
+    give_group_price(w.db, w.group, 300_000)
+    s = fresh_student(w, "Вернувшийся")
+    add(w, s)                                                                       # the test group meets every day: the first lesson is today, he is charged from 05.10
+    m, _ = stay_of(w, s)
+    seed_payment(w, m, 300_000, D(2026, 10, 5))
+    fixed_today(D(2026, 10, 14))
+    LeaveService(w.db).leave(str(w.org.id), str(w.group.id), str(s.id), str(w.owner.id), "owner", None, money=True)
+    w.db.expire_all()
+    assert account(w, m.id, D(2026, 10, 14)).charged == 97_000                     # 10 of 31 days: he is out
+    fixed_today(D(2026, 10, 16))
+    add(w, s)
+    led = account(w, m.id, D(2026, 10, 20))
+    assert led.charged == 300_000 and led.debt == 0 and led.reconciles              # before the pack: 397 000 and a debt of 97 000 for a second full period from 16.10
+    assert len([x for x in led.segments if x.kind == "period"]) == 1
