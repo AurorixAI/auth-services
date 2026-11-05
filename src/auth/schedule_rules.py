@@ -65,14 +65,25 @@ def ignoring_valid_from():
         _PATTERN_ONLY.reset(token)
 
 
-def slot_valid_from(group: Group, slot: Dict[str, Any]) -> str:
-    if _PATTERN_ONLY.get():
-        return "0001-01-01"
+def _own_valid_from(group: Group, slot: Dict[str, Any], *, warn: bool = True) -> str:
     value = slot.get("validFrom")
     if isinstance(value, str) and len(value) == 10:
         return value
-    logger.warning("schedule_slot_without_valid_from group=%s slot=%s", group.id, slot.get("id"))
+    if warn:
+        logger.warning("schedule_slot_without_valid_from group=%s slot=%s", group.id, slot.get("id"))
     return legacy_valid_from(group)
+
+
+def slot_valid_from(group: Group, slot: Dict[str, Any]) -> str:
+    """From when the slot gives lessons.  In the PATTERN mode (the denominator of a partial month, ``ignoring_valid_from``) the slots of the ORIGINAL schedule - those whose ``validFrom`` is
+    not later than the earliest ``validFrom`` of the group - count from the beginning of time, as before: a group that opens in the middle of a month still has the whole month by its
+    schedule.  A slot added LATER (a new day of the week, Money-1 B4 / ДЫРА-13) counts from its real date: adding Tuesday from 01.12 no longer makes the cell of October cheaper
+    (115 000 -> 88 000 after the fact)."""
+    own = _own_valid_from(group, slot)
+    if _PATTERN_ONLY.get():
+        first = min((_own_valid_from(group, s, warn=False) for s in (getattr(group, "schedule", None) or []) if isinstance(s, dict)), default=own)
+        return "0001-01-01" if own <= first else own
+    return own
 
 
 def slot_has_time(payload: Dict[str, Any]) -> bool:
