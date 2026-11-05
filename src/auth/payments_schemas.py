@@ -381,7 +381,11 @@ class PaymentsSummary(BaseModel):
     students_with_advance: int = 0
     debtors: int = 0
     students_waiting: int = 0   # Money-1 B7: DISTINCT students on «Ждём оплату» (their debt is in ``debt_total`` and ``debt_waiting_total``, they are NOT in ``debtors`` and not in the red banner)
-    debt_waiting_total: int = 0       # Σ debt of the memberships on «Ждём оплату»; the banner of debtors shows ``debt_total - debt_waiting_total``
+    debt_waiting_total: int = 0       # Σ debt of the memberships on «Ждём оплату»
+    # Money-1 B7: the three numbers of the red banner, from ONE place (LESSONS 104): the real debtors, THEIR debt (= ``debt_total - debt_waiting_total``) and how many of them are past the end of the paid period
+    # (``students_expired`` / ``due`` keep counting by the status of the paid period and still include the students who only wait).
+    debtors_debt_total: int = 0
+    students_overdue: int = 0
     students_paused: int = 0  # DISTINCT students with a membership on pause today (== the students of the «На паузе» tab); ``buckets.paused`` counts memberships
 
 

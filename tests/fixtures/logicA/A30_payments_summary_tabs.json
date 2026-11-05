@@ -30,5 +30,7 @@
   "debtors": 3,
   "students_waiting": 0,
   "debt_waiting_total": 0,
+  "debtors_debt_total": 0,
+  "students_overdue": 0,
   "students_paused": 1
 }

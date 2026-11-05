@@ -877,6 +877,7 @@ class PaymentService:
         buckets = {pv.BUCKET_DEBT: 0, pv.BUCKET_WAITING: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0}
         students_waiting: set = set()
         students_debtors: set = set()
+        students_overdue: set = set()
         debt_waiting_total = 0
         price_missing = 0
         for e in entries:
@@ -899,6 +900,8 @@ class PaymentService:
                     debt_waiting_total += l.debt
                 elif bucket == pv.BUCKET_DEBT:
                     students_debtors.add(e.student.id)
+                    if l.status.status == ps.EXPIRED:
+                        students_overdue.add(e.student.id)
             if e.membership.id in tracked and e.price.amount is None and l.status.status != ps.FREE and bucket not in (pv.BUCKET_DEBT, pv.BUCKET_WAITING):
                 price_missing += 1
             if e.membership.id not in tracked:
@@ -932,6 +935,7 @@ class PaymentService:
             paused=counts[ps.PAUSED],
             buckets=PaymentsBuckets(**buckets), price_missing=price_missing, students_with_advance=len(students_advance),
             debtors=len(students_debtors), students_paused=len(students_paused), students_waiting=len(students_waiting), debt_waiting_total=debt_waiting_total,
+            debtors_debt_total=debt_total - debt_waiting_total, students_overdue=len(students_overdue),
         )
         if SUMMARY_TTL_SECONDS > 0:
             _SUMMARY_CACHE[str(org_id)] = (time.monotonic() + SUMMARY_TTL_SECONDS, result)

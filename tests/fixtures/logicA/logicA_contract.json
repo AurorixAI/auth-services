@@ -4791,6 +4791,11 @@
             "title": "Debtors",
             "type": "integer"
           },
+          "debtors_debt_total": {
+            "default": 0,
+            "title": "Debtors Debt Total",
+            "type": "integer"
+          },
           "due": {
             "title": "Due",
             "type": "integer"
@@ -4848,6 +4853,11 @@
           },
           "students_expired": {
             "title": "Students Expired",
+            "type": "integer"
+          },
+          "students_overdue": {
+            "default": 0,
+            "title": "Students Overdue",
             "type": "integer"
           },
           "students_paused": {
