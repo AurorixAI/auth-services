@@ -140,3 +140,44 @@ def test_d6_the_bulk_preview_names_the_new_account_of_every_student(pg_session, 
     assert changed_tables(before, db_fingerprint(w.db)) == []
     (line,) = [x for x in r.json()["warnings"] if x["code"] == "transfer_balance_after"]
     assert line["student_id"] == str(w.u5.id) and line["message"].startswith("Перенесено 640 000 сум; аванс останется 640 000 сум")
+
+
+# ================================================================================================ two transfers at the SAME instant (a frozen clock): the order of the links is the chain, not a random uuid
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("first_link_id_sorts_first", [True, False])
+def test_two_transfers_at_the_same_instant_each_carry_their_own_money_whatever_the_ids_are(pg_session, clock, first_link_id_sorts_first):
+    """G2 -> G1 -> G2 with ONE reading of the clock.  ``x_of`` ordered the links by ``(at, id)`` and a uuid is random: in one order of the ids the second transfer carried 0 (the guard against a cycle
+    fired) and the money stayed on the closed account of G1.  The order of links at one instant is the CHAIN (a link whose ``from`` is the ``to`` of another goes after it) and, in a cycle, the
+    account the student is in now comes last.  Both id orders are forced here (the two ids are rewritten after the transfers) - the answer must not depend on them."""
+    from sqlalchemy import text
+
+    from src.models.auth import MembershipTransfer
+
+    w = _world(pg_session, clock)
+    clock.set(THU_5_NOV)
+    first = _transfer(w, w.g1)
+    second = _transfer(w, w.g2)
+    assert [x["message"] for x in first["carried"] if x["code"] == "payment_carried_over"] == ["Остаток денег 640 000 сум перенесён в «Алгебра 7 (вт/пт)»"]
+    assert [x["message"] for x in second["carried"] if x["code"] == "payment_carried_over"] == ["Остаток денег 640 000 сум перенесён в «Геометрия 8 (пн/чт)»"]
+    w.db.expire_all()
+    links = {(t.from_membership_id, t.to_membership_id): t for t in w.db.query(MembershipTransfer).filter(MembershipTransfer.student_id == w.u5.id).all()}
+    assert len(links) == 2
+    m1 = w.db.query(StudentGroup).filter_by(group_id=w.g1.id, student_id=w.u5.id).one()
+    out_link, back_link = links[(w.m2.id, m1.id)], links[(m1.id, w.m2.id)]
+    assert out_link.at == back_link.at                                                                      # the very case: one instant
+    from uuid import uuid4
+
+    low, high = "00000000" + str(uuid4())[8:], "ffffffff" + str(uuid4())[8:]                               # the smallest and the largest id there can be, unique in this database
+    ids = (low, high) if first_link_id_sorts_first else (high, low)
+    w.db.execute(text("UPDATE membership_transfers SET id = :new WHERE id = :old"), {"new": ids[0], "old": str(out_link.id)})
+    w.db.execute(text("UPDATE membership_transfers SET id = :new WHERE id = :old"), {"new": ids[1], "old": str(back_link.id)})
+    w.db.commit()
+    w.db.expire_all()
+    books = {m.group_id: list(PaymentService(w.db)._loader(str(w.org.id), D(2026, 11, 5), recalc=True).run([m.id]))[0].ledger for m in w.db.query(StudentGroup).filter_by(student_id=w.u5.id).all()}
+    g2, g1 = books[w.g2.id], books[w.g1.id]
+    assert (g2.transferred_out, g2.transferred_in, g1.transferred_in, g1.transferred_out) == (640_000, 640_000, 640_000, 640_000)       # every link carries its own money
+    assert (g2.advance, g2.charged, g2.debt, g1.advance, g1.charged, g1.debt) == (360_000, 1_080_000, 0, 0, 0, 0)                         # the account is what it was before the first transfer
+    assert g2.reconciles and g1.reconciles
+    assert g2.paid + g1.paid == 1_440_000 == g2.charged + g1.charged + g2.advance + g1.advance - g2.debt - g1.debt                            # paid = charged + advance - debt

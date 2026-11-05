@@ -259,6 +259,8 @@ class LedgerLoader:
         self._moved_one_offs: Dict[Any, Set[Tuple[str, str]]] = {}   # group id -> keys (loaded per group, the loader's groups grow)
         self._lesson_days_cache: Dict[Tuple[Any, ...], List[date]] = {}
         self._loaded: Set[UUID] = set()
+        self._links_at: Dict[Tuple[UUID, Any], Dict[UUID, MembershipTransfer]] = {}      # (student, instant) -> the links loaded so far
+        self._link_ranks: Dict[Tuple[UUID, Any], Tuple[Tuple[int, int], Dict[UUID, int]]] = {}      # (student, instant of the links) -> (what was known when it was worked out, link id -> place)
 
     # ---------------------------------------------------------------- selecting
 
@@ -407,6 +409,7 @@ class LedgerLoader:
             or_(MembershipTransfer.from_membership_id.in_(found), MembershipTransfer.to_membership_id.in_(found)),
         ):
             self.transfers[t.id] = t
+            self._links_at.setdefault((t.student_id, t.at), {})[t.id] = t
             # a link is met again from its other end in a later hop: each side is indexed exactly once
             for side, mid, table in (("in", t.to_membership_id, self.t_in), ("out", t.from_membership_id, self.t_out)):
                 if mid in self._loaded and (t.id, side) not in self._indexed:
@@ -414,7 +417,7 @@ class LedgerLoader:
                     table[mid].append(t)
                     touched.add((side, mid))
         for side, mid in touched:
-            (self.t_in if side == "in" else self.t_out)[mid].sort(key=lambda t: (t.at, str(t.id)))
+            (self.t_in if side == "in" else self.t_out)[mid].sort(key=self.link_key)
         if self._needs_lessons():
             self._load_counted(found)
 
@@ -635,6 +638,36 @@ class LedgerLoader:
             stays = moved
         return stays
 
+    def link_key(self, link: MembershipTransfer) -> Tuple[Any, int]:
+        """The place of a link of a student in time: ``(at, place among the links of the same instant)``.  Links are ordered by ``at``; when several of one student have the SAME ``at`` (a frozen clock:
+        the seeding and the tests; a real instant has microseconds) the order is the CHAIN of the money, never a random uuid (stage walk D-6: «Г2 -> Г1 -> Г2» at one reading of the clock carried
+        0 on the second transfer when the id of the first sorted after it, and the money stayed on a closed account): a link whose ``from`` is the ``to`` of another goes after it; in a cycle
+        (G2 -> G1 and G1 -> G2) the one whose ``to`` is the account the student is in NOW goes last; what is left is ordered by ``(created_at, from, to, id)``.  ``x_of`` measures a link
+        by the links BEFORE it in this order."""
+        slot = (link.student_id, link.at)
+        same = list(self._links_at.get(slot, {link.id: link}).values())
+        stamp = (len(same), sum(1 for m in {e for t in same for e in (t.from_membership_id, t.to_membership_id)} if m in self.members))       # the links and the accounts known: both grow while the loader hops
+        known = self._link_ranks.get(slot)
+        if known is None or known[0] != stamp:
+            known = (stamp, {t.id: place for place, t in enumerate(self._chain_order(same))})
+            self._link_ranks[slot] = known
+        return link.at, known[1].get(link.id, len(same))
+
+    def _chain_order(self, links: List[MembershipTransfer]) -> List[MembershipTransfer]:
+        """The links of one student at one instant, the first one first (see ``link_key``)."""
+        if len(links) < 2:
+            return list(links)
+        active = {t.to_membership_id for t in links if t.to_membership_id in self.members and self.members[t.to_membership_id][0].is_active}
+        remaining = sorted(links, key=lambda t: (t.created_at or datetime.min, str(t.from_membership_id), str(t.to_membership_id), str(t.id)))
+        ordered: List[MembershipTransfer] = []
+        while remaining:
+            ready = [t for t in remaining if not any(o is not t and o.to_membership_id == t.from_membership_id for o in remaining)]
+            if not ready:                                       # a cycle: the account the student is in now is the target of the LAST link
+                ready = [t for t in remaining if t.to_membership_id not in active] or remaining
+            ordered.append(ready[0])
+            remaining.remove(ready[0])
+        return ordered
+
     def x_of(self, transfer: MembershipTransfer) -> int:
         """The money a transfer carries: what could leave the old membership on the transfer day.  The old membership is
         seen as it stood JUST BEFORE this transfer (every link is ordered by ``(at, id)``, so the recursion has no cycle).
@@ -679,9 +712,9 @@ class LedgerLoader:
         outflows: List[bl.Outflow] = []
         for r in self.refunds.get(mid, []):
             outflows.append(bl.Outflow(str(r.id), bl.REFUND, r.effective_on, r.created_at or datetime.min, int(r.amount)))
-        key = (before_transfer.at, str(before_transfer.id)) if before_transfer is not None else None
+        key = self.link_key(before_transfer) if before_transfer is not None else None
         for t in self.t_in.get(mid, []):
-            if before_transfer is not None and (t.at, str(t.id)) >= key:
+            if before_transfer is not None and self.link_key(t) >= key:
                 continue  # a transfer in that came after (or with) the one being measured: not there yet
             if as_of is not None and ps.business_date(t.at) > as_of:
                 continue
@@ -689,7 +722,7 @@ class LedgerLoader:
             if amount > 0:
                 credits.append(bl.Credit(f"tr:{t.id}", bl.TRANSFER_IN, ps.business_date(t.at), t.at, amount))
         for t in self.t_out.get(mid, []):
-            if before_transfer is not None and (t.at, str(t.id)) >= key:
+            if before_transfer is not None and self.link_key(t) >= key:
                 continue
             if as_of is not None and ps.business_date(t.at) > as_of:
                 continue
