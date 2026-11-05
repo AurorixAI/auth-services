@@ -60,6 +60,7 @@ class OneOffDecisionItem(BaseModel):
     studentsTotal: int
     studentsPaid: int = 0                              # Money-1 A3: for how many students «Оплатить» pays (rule 4.3: a mark «Не был» counts)
     moneyEstimate: Optional[Dict[str, Any]] = None     # Money-1 A3: the owner only: ``{"amount", "reason"}`` - what «Оплатить» pays the teacher (≈)
+    periodClosed: bool = False                         # the month of the teacher is closed: «Оплатить» / «Не оплачивать» are refused (409 PERIOD_CLOSED) - the owner reopens the month first
     payrollSheet: Optional[OneOffPayrollSheet] = None
 
 
@@ -75,7 +76,6 @@ class OneOffDecidedItem(OneOffDecisionItem):
     decidedAt: Optional[str] = None
     decidedBy: Optional[OneOffPerson] = None
     canUndo: bool = True                               # false: the month of the teacher is closed - reopen it first
-    periodClosed: bool = False
 
 
 class OneOffDecided(BaseModel):
@@ -91,6 +91,9 @@ class MoneyDecisionOut(BaseModel):
     lessonId: str
     money: str
     payrollSheet: Optional[OneOffPayrollSheet] = None
+    month: Optional[str] = None                        # ``YYYY-MM`` of the lesson: the month whose pay the decision touches
+    dryRun: bool = False                               # the preview before the confirmation: nothing was written
+    moneyEffects: Optional[Dict[str, Any]] = None      # the block of every money action (``money_effects.py``): ``payroll[]`` = the saved sheet ``freshBefore -> freshAfter`` (the owner), ``text``
 
 
 def _svc(db: Session):
@@ -137,10 +140,11 @@ def one_off_decisions(user: dict = Depends(_manager), db: Session = Depends(get_
 
 
 @router.post("/org/one-off-lessons/{lesson_id}/money-decision", response_model=MoneyDecisionOut)
-def decide_one_off_money(lesson_id: str, request: MoneyDecisionRequest, user: dict = Depends(_manager), db: Session = Depends(get_db)) -> Dict[str, Any]:
+def decide_one_off_money(lesson_id: str, request: MoneyDecisionRequest, dry_run: bool = Query(False, description="только последствия для ведомости, ничего не записывать"),
+                         user: dict = Depends(_manager), db: Session = Depends(get_db)) -> Dict[str, Any]:
     """«Оплатить» / «Не оплачивать»: один раз, только проведённый урок (повтор — 409 ``ALREADY_DECIDED``); ``undo`` — отменить решение, пока месяц преподавателя открыт."""
     try:
-        return _purposes(db).decide(user["org_id"], user["user_id"], user["org_role"], lesson_id, request.decision, owner=user.get("org_role") == "owner")
+        return _purposes(db).decide(user["org_id"], user["user_id"], user["org_role"], lesson_id, request.decision, owner=user.get("org_role") == "owner", dry_run=dry_run)
     except BaseException:
         db.rollback()
         raise

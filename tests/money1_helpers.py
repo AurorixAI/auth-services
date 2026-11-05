@@ -56,3 +56,24 @@ def reopen_now(db, org_id, teacher_id, month: str, actor_id, reason: str):
     first = _date(int(month[:4]), int(month[5:7]), 1)
     revision = db.query(PayrollSheet.revision).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == teacher_id, PayrollSheet.period_month == first).scalar()
     return closed_period.reopen_month(db, org_id, teacher_id, month, actor_id, reason, revision)
+
+
+def db_fingerprint(db) -> dict:
+    """``{table: (rows, md5 of every row as text)}`` of EVERY table of the schema: «in the database nothing was written» is one comparison of two of these, not a list of the tables somebody thought of
+    (Money-1 round after the stage walk, D-4: a refusal that left a row behind is a defect too)."""
+    from sqlalchemy import text
+
+    from src.models.auth import Organization
+
+    db.flush()
+    out = {}
+    for table in Organization.metadata.sorted_tables:
+        name = f'"{table.name}"'
+        rows, digest = db.execute(text(f"SELECT count(*), md5(coalesce(string_agg(t::text, '|' ORDER BY t::text), '')) FROM {name} t")).one()
+        out[table.name] = (rows, digest)
+    return out
+
+
+def changed_tables(before: dict, after: dict) -> list:
+    """The names of the tables whose rows differ between two ``db_fingerprint`` results (empty = nothing written)."""
+    return sorted(name for name in before if before[name] != after.get(name))

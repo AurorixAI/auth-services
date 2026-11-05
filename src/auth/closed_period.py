@@ -216,6 +216,12 @@ def group_teacher_ids(db, group, first: date, last: date) -> Set[UUID]:
     return ids
 
 
+def assert_lesson_open(db, group, row, what: str = "урок") -> None:
+    """THE refusal for an action on the pay of a HELD lesson (``row`` = its journal row): 409 ``PERIOD_CLOSED`` with the same code, text and way out («Переоткрыть месяц») everywhere.  One call for the
+    decision on an excuse and for the decision on an additional lesson and its undo (stage walk D-4: «Оплатить» in a closed month had no check of its own and the saved sheet drifted by +62 501)."""
+    ClosedPeriods.of(db, row.org_id).assert_open(lesson_teacher_ids(db, group, row.lesson_id, row.lesson_date, row), row.lesson_date, what)
+
+
 # ---------------------------------------------------------------------------------------------- reopening (the journal of the closed period)
 REASON_MIN, REASON_MAX = 3, 500
 

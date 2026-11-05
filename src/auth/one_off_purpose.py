@@ -22,6 +22,7 @@ from sqlalchemy import and_, false, or_
 from . import business_clock as bc
 from . import payment_status as ps
 from .attendance_rules import AttendanceRules
+from .closed_period import ClosedPeriods, assert_lesson_open, lesson_teacher_ids
 from .lesson_teachers import TeacherBook, _s, _uuid
 from .models import Group, GroupAttendance, GroupAudit, GroupScheduleOneOffLesson, LessonSubstitutionRequest as Req, OrganizationMember, User
 from .ops_rules import conflict, forbidden, hhmm_to_minutes, not_found, short_name, unprocessable
@@ -388,6 +389,7 @@ class OneOffPurpose:
         items = []
         estimates = self._estimates(org_id, rows, owner=owner)
         excuses = self._excuse_statuses(rows)
+        periods = ClosedPeriods.of(self.db, org_id)
         for one_off, att, group in rows:
             payload = one_off.payload or {}
             roster = [r for r in (att.roster_snapshot or []) if isinstance(r, dict)]
@@ -403,6 +405,7 @@ class OneOffPurpose:
                 # Money-1 A3 (ЗП-07, ЗПД-4): «Оплатить» pays for EVERY student whose mark counts (rule 4.3: «Не был» counts), not for the ones who came - said with the number; the owner sees the sum
                 "studentsPaid": sum(1 for sid, m in marks.items() if ps.lesson_counts(mark=m, excuse_status=(excuses.get((att.id, str(sid))) or "pending") if m == "excused" else None)),
                 "moneyEstimate": estimates.get(one_off.id),
+                "periodClosed": periods.closed_for(lesson_teacher_ids(self.db, group, one_off.id, one_off.lesson_date, att), one_off.lesson_date) is not None,
                 "payrollSheet": self.sheet_of(org_id, one_off.lesson_date, att.teacher_id, owner=owner),
             })
         return {"total": len(items), "items": items}
@@ -410,8 +413,6 @@ class OneOffPurpose:
     def decided(self, org_id: Any, *, owner: bool, month: Optional[str] = None, limit: int = 200) -> Dict[str, Any]:
         """R3 #28: the additional lessons whose money is DECIDED (paid / not paid), newest first - the list where «Отменить решение» lives.  ``canUndo``: the month of the teacher is open
         (a closed one: ``periodClosed`` - the owner reopens it first).  The same item as ``pending`` plus ``money``, who decided and when."""
-        from .closed_period import ClosedPeriods
-
         query = (self.db.query(GroupScheduleOneOffLesson, GroupAttendance, Group)
                  .join(GroupAttendance, and_(GroupAttendance.group_id == GroupScheduleOneOffLesson.group_id, GroupAttendance.lesson_id == GroupScheduleOneOffLesson.id,
                                              GroupAttendance.lesson_date == GroupScheduleOneOffLesson.lesson_date))
@@ -450,9 +451,13 @@ class OneOffPurpose:
             })
         return {"total": len(items), "items": items}
 
-    def decide(self, org_id: Any, actor_id: Any, actor_role: str, lesson_id: str, decision: str, *, owner: bool) -> Dict[str, Any]:
+    def decide(self, org_id: Any, actor_id: Any, actor_role: str, lesson_id: str, decision: str, *, owner: bool, dry_run: bool = False) -> Dict[str, Any]:
         """«Оплатить» / «Не оплачивать»: once, only a held lesson whose money waits (an additional ``wait``).  Under the lock of the group, so two administrators never both decide.  #159: the owner, or an
-        admin with the right of payments - read under that lock; an admin without it: 403 ``MONEY_RIGHT_REQUIRED``, nothing changes."""
+        admin with the right of payments - read under that lock; an admin without it: 403 ``MONEY_RIGHT_REQUIRED``, nothing changes.
+
+        Stage walk D-4 / D-5: the decision (and its undo) is an action on the pay of the teacher of the lesson, so it is refused in a month that a saved sheet has closed - the SAME 409 ``PERIOD_CLOSED`` as the
+        decision on an excuse (``closed_period.assert_lesson_open``; the month is reopened first).  ``dry_run``: everything runs, the answer carries ``moneyEffects`` (the saved sheet of the month
+        ``freshBefore`` -> ``freshAfter``, ``changedBy``; the owner only has the sums) and nothing is written - the same refusals as the real call."""
         actor = _uuid(actor_id)
         if actor_role not in ("owner", "admin"):                    # the road is closed to the others already; no default role is written to the audit (LESSONS 17)
             raise forbidden("DECISION_FORBIDDEN", "Решать об оплате могут владелец и администратор")
@@ -467,7 +472,7 @@ class OneOffPurpose:
                .with_for_update().first())
         waiting = one_off.purpose == EXTRA and one_off.money == WAIT
         if decision == "undo":
-            return self._undo(org_id, actor, actor_role, group, one_off, att, owner=owner)
+            return self._undo(org_id, actor, actor_role, group, one_off, att, owner=owner, dry_run=dry_run)
         if not waiting:
             decided = self.db.query(GroupAudit.id).filter(GroupAudit.group_id == one_off.group_id, GroupAudit.action == DECIDED_ACTION, GroupAudit.snapshot["lessonId"].astext == lesson_id).first()
             if decided is not None:
@@ -475,6 +480,8 @@ class OneOffPurpose:
             raise unprocessable("DECISION_NOT_ALLOWED", "По этому уроку решение не нужно")
         if att is None or att.status != "completed":
             raise conflict("LESSON_NOT_COMPLETED", "Урок ещё не проведён: решить можно после урока")
+        assert_lesson_open(self.db, group, att)
+        probe = self._probe(org_id, att, one_off, owner)
         before = one_off.money
         one_off.money = PAID if decision == "pay" else NONE
         self.db.add(GroupAudit(
@@ -483,29 +490,46 @@ class OneOffPurpose:
             snapshot={"lessonId": one_off.id, "lessonDate": one_off.lesson_date, "purpose": one_off.purpose, "from": before, "to": one_off.money, "decision": decision,
                       "teacherId": _s(att.teacher_id)},
         ))
-        sheet = self.sheet_of(org_id, one_off.lesson_date, att.teacher_id, owner=owner)
-        self.db.commit()
-        return {"lessonId": lesson_id, "money": one_off.money, "payrollSheet": sheet}
+        return self._finish(org_id, group, one_off, att, probe, owner=owner, dry_run=dry_run)
 
-    def _undo(self, org_id: Any, actor: Any, actor_role: str, group: Group, one_off: GroupScheduleOneOffLesson, att: Optional[GroupAttendance], *, owner: bool) -> Dict[str, Any]:
+    def _undo(self, org_id: Any, actor: Any, actor_role: str, group: Group, one_off: GroupScheduleOneOffLesson, att: Optional[GroupAttendance], *, owner: bool, dry_run: bool = False) -> Dict[str, Any]:
         """Money-1 A3 (ЗП-07): the decision is reversible while the month of the teacher is open - back to «ждёт решения»; the audit keeps both.  A repeat (already waiting) changes nothing."""
-        from .closed_period import ClosedPeriods
-
         if one_off.purpose != EXTRA:
             raise unprocessable("DECISION_NOT_ALLOWED", "По этому уроку решения не было")
         if one_off.money == WAIT:
             self.db.rollback()
-            return {"lessonId": one_off.id, "money": WAIT, "payrollSheet": None}
+            return {"lessonId": one_off.id, "money": WAIT, "payrollSheet": None, "month": one_off.lesson_date[:7], "dryRun": dry_run,
+                    "moneyEffects": {"students": [], "payroll": [], "text": "", "dryRun": dry_run}}
         if att is None or att.status != "completed":
             raise conflict("LESSON_NOT_COMPLETED", "Урок ещё не проведён")
-        ClosedPeriods.of(self.db, org_id).assert_open([att.teacher_id], one_off.lesson_date)
+        assert_lesson_open(self.db, group, att)
+        probe = self._probe(org_id, att, one_off, owner)
         before = one_off.money
         one_off.money = WAIT
         self.db.add(GroupAudit(org_id=group.org_id, group_id=group.id, actor_id=actor, actor_role=actor_role, action=DECIDED_ACTION, assigned_teacher_id=att.teacher_id, created_at=bc.utc_now(),
                                snapshot={"lessonId": one_off.id, "lessonDate": one_off.lesson_date, "purpose": one_off.purpose, "from": before, "to": WAIT, "decision": "undo", "teacherId": _s(att.teacher_id)}))
+        return self._finish(org_id, group, one_off, att, probe, owner=owner, dry_run=dry_run)
+
+    def _probe(self, org_id: Any, att: GroupAttendance, one_off: GroupScheduleOneOffLesson, owner: bool):
+        """BEFORE the decision is written: the saved sheet of the teacher of the lesson for its month, measured now (``money_effects.lesson_probe``; ``None`` - nothing saved)."""
+        from . import money_effects as me
+
+        return me.lesson_probe(self.db, org_id, [att.teacher_id] if att.teacher_id else [], one_off.lesson_date, owner)
+
+    def _finish(self, org_id: Any, group: Group, one_off: GroupScheduleOneOffLesson, att: GroupAttendance, probe, *, owner: bool, dry_run: bool) -> Dict[str, Any]:
+        """The end of a decision / its undo: what it did to the saved sheet (``moneyEffects`` - the SAME block as every other money action; an additional lesson never touches the packs of the
+        students, rule 44), then the commit - or, for the preview, the rollback of everything the decision wrote."""
+        from . import money_effects as me
+
         sheet = self.sheet_of(org_id, one_off.lesson_date, att.teacher_id, owner=owner)
-        self.db.commit()
-        return {"lessonId": one_off.id, "money": one_off.money, "payrollSheet": sheet}
+        self.db.flush()
+        effects = me.lesson_block(self.db, org_id, students=[], probe=probe, owner=owner, done=not dry_run, group_id=group.id)
+        answer = {"lessonId": one_off.id, "money": one_off.money, "payrollSheet": sheet, "month": one_off.lesson_date[:7], "dryRun": dry_run, "moneyEffects": effects}
+        if dry_run:
+            self.db.rollback()
+        else:
+            self.db.commit()
+        return answer
 
     # ============================================================================== what the answers say (the mask)
     def marks(self, keys: Sequence[Tuple[Any, str, str]], *, manager: bool, actor: Optional[Any] = None, money_visible: bool = True, money_right: bool = True) -> Dict[Tuple[str, str, str], Dict[str, Any]]:

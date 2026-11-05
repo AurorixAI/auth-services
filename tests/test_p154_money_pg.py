@@ -8,6 +8,7 @@ from decimal import Decimal
 import pytest
 
 from src.models.auth import AttendanceExcuse, GroupAttendance, GroupAudit, GroupScheduleOneOffLesson, PayrollRate, StudentGroup
+from tests.money1_helpers import reopen_now
 from tests.ops_helpers import clock, grant_money_right, history_row, needs_pg, new_student, pg_session  # noqa: F401  (fixtures)
 from tests.payf_helpers import API, D, build_org as _build_org, cancel, centre, client, pay, pause, rows, statement
 from tests.test_payf_recalc_pg import month_world
@@ -367,12 +368,17 @@ def test_c11_a_decision_after_the_payout_warns_and_the_sheet_says_by_how_much_it
     # the owner sees the month is paid out; an administrator only the month (LESSONS 45)
     assert client(w, "owner").get(f"{API}/org/one-off-decisions").json()["items"][0]["payrollSheet"] == {"month": "2026-10", "status": "settled"}
     assert client(w, "admin").get(f"{API}/org/one-off-decisions").json()["items"][0]["payrollSheet"] == {"month": "2026-10", "status": None}
+    # Money-1, stage walk D-4: October is CLOSED (the sheet was saved on 02.11) - the decision waits for the reopening instead of moving the saved sheet behind the owner's back
+    assert decide(w, "owner", made, "pay", expect=409).json()["detail"]["code"] == "PERIOD_CLOSED"
+    clock.set("2026-11-02 11:00")
+    reopen_now(w.db, w.org.id, w.A.id, "2026-10", w.owner.id, "Решение по доп. уроку")
     out = decide(w, "owner", made, "pay").json()
     assert out["payrollSheet"] == {"month": "2026-10", "status": "settled"}                              # said at the moment of the decision
     got = client(w, "owner").get(f"{API}/org/payroll/sheets/{sheet_id}").json()
     st_ = got["payout"]
-    assert got["stale"] is True and (st_["saved_total"], st_["fresh_total"], st_["paid"], st_["balance"], st_["state"]) == (125_000, 250_000, 125_000, 0, "settled")      # Money-1 A1b: the payout stays by the SAVED 125 000 (was: «доплатить 125 000»)
-    assert st_["changed_by"] == 125_000 and "+125 000" in st_["change_text"]                          # ... and the sheet says «изменилось на +125 000», to be saved again
+    # the month is open again (reopened): the payout is by what the data says NOW (R3 #20), 250 000 - 125 000 paid = 125 000 to pay; the saved sheet says it changed by +125 000, to be saved again
+    assert got["stale"] is True and (st_["saved_total"], st_["fresh_total"], st_["paid"], st_["balance"], st_["state"], st_["basis"]) == (125_000, 250_000, 125_000, 125_000, "due", "fresh")
+    assert st_["changed_by"] == 125_000 and "+125 000" in st_["change_text"]
 
 
 def test_c18_a_teacher_sees_no_sums_and_no_decisions(pg_session, clock):

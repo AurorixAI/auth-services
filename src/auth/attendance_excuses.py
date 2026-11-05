@@ -40,7 +40,7 @@ from src.models.auth import (
 )
 
 from . import business_clock as bc
-from .closed_period import ClosedPeriods, lesson_teacher_ids
+from .closed_period import ClosedPeriods, assert_lesson_open, lesson_teacher_ids
 from .ops_rules import OpsError
 from .roster_names import student_full_name
 from .sql_text import contains
@@ -1034,9 +1034,8 @@ class AttendanceExcuseService:
         group = self.db.get(Group, att.group_id)
         if group is None:
             return
-        periods = ClosedPeriods.of(self.db, att.org_id)
-        if periods.any_closed(att.lesson_date):
-            periods.assert_open(lesson_teacher_ids(self.db, group, att.lesson_id, att.lesson_date, att), att.lesson_date)
+        if ClosedPeriods.of(self.db, att.org_id).any_closed(att.lesson_date):
+            assert_lesson_open(self.db, group, att)
 
     def _audit(
         self, att: GroupAttendance, actor_id: str, action: str, details: Optional[Dict[str, Any]] = None
