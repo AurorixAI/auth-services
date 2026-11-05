@@ -165,6 +165,24 @@ def _earned_words(sheet: Mapping[str, Any]) -> str:
     return " · ".join(parts)
 
 
+def sheet_status(sheet: Mapping[str, Any]) -> str:
+    """The second line of the title block: the revision and when it was saved, the month, the note.  The table below is the SAVED sheet; when the data moved
+    after the save, the line says the current total too (stage re-walk R2-2а: an open month showed «Начислено сейчас 75 834» on the screen and «Итого 120 834»
+    in the Excel without a word that the rows are the saved version)."""
+    status = (f"Редакция {sheet['revision']}" + (f" · сохранено {local_time(sheet['updated_at'])}" if sheet.get("updated_at") else "")
+              if sheet.get("saved") else "Предварительный расчёт — не сохранён")
+    if sheet.get("month_open"):
+        status += " · месяц ещё не закончился"
+    payout = sheet.get("payout") or {}
+    fresh, saved = payout.get("fresh_total"), payout.get("saved_total")
+    if sheet.get("saved") and fresh is not None and saved is not None and int(fresh) != int(saved):
+        status += (" · строки сохранённой ведомости; текущий расчёт: " + f"{int(fresh):,}".replace(",", " ") + " сум"
+                   + (" (месяц открыт)" if payout.get("basis") == "fresh" else " — пересохраните ведомость"))
+    if sheet.get("note"):
+        status += f" · Примечание: {sheet['note']}"
+    return status
+
+
 def write_sheet(ws, sheet: Mapping[str, Any]) -> None:
     """One teacher's sheet (``SheetOut.model_dump()``)."""
     columns, column_of = _columns(sheet)
@@ -179,12 +197,7 @@ def write_sheet(ws, sheet: Mapping[str, Any]) -> None:
     many_groups = len({line["group_id"] for line in lines}) > 1
 
     # ---- title block: who and when, the state of the sheet (+ the note), the totals in words
-    status = (f"Редакция {sheet['revision']}" + (f" · сохранено {local_time(sheet['updated_at'])}" if sheet.get("updated_at") else "")
-              if sheet.get("saved") else "Предварительный расчёт — не сохранён")
-    if sheet.get("month_open"):
-        status += " · месяц ещё не закончился"
-    if sheet.get("note"):
-        status += f" · Примечание: {sheet['note']}"
+    status = sheet_status(sheet)
     header_row = xs.title_block(ws, [
         clean_text(f"Зарплата — {sheet.get('teacher_name') or 'преподаватель'} · {xs.month_title(sheet['month'])}"),
         clean_text(status), _earned_words(sheet)], width)
