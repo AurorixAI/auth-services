@@ -10,6 +10,7 @@
 #
 # It can not hang silently: a test fails after TEST_TIMEOUT s (pytest-timeout ``signal``; ``thread`` would make xdist re-run the whole file after each kill), a statement after PG_STATEMENT_TIMEOUT
 # (a call blocked in libpq is not interrupted by a signal), the whole run is killed after RUN_LIMIT_MIN with a message, and the containers and the network are removed at any exit (Ctrl-C too).
+# The 5000-row Excel test (test_opening_bulk_r3_pg) takes ~90 s alone: on a busy machine it hits the 120 s limit - use TEST_TIMEOUT=240.
 # Switches (env): WORKERS=3, TEST_TIMEOUT=120, RUN_LIMIT_MIN=40, PG_STATEMENT_TIMEOUT=100s, TIMEOUT_METHOD=signal, LOG_DIR=$TMPDIR. One run at a time (a lock). The full pytest log and a summary
 # (counts + FAILED / ERROR / timed-out list) go to LOG_DIR and the summary is printed. Exit: 0 green, 1 red, 124 run limit, 3 postgres not ready. The first run builds the two images; pytest-timeout is in the image only.
 set -euo pipefail
