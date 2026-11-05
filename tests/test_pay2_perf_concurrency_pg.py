@@ -159,7 +159,7 @@ def test_a_refund_and_a_void_of_its_payment_never_both_win(world, engine):
     service = PaymentService(world.db)
     created = service.create_payment(org, m.id, actor, body(12_000_000))
     pid = created.payment.id
-    stay(world, m, D(2026, 1, 5), business_today())                        # he left: the whole advance is refundable
+    stay(world, m, D(2026, 1, 5), D(2026, 10, 31))                         # he left (a literal day, LESSONS 102: with the real day 12 000 000 = 24 months of 500 000 was spent on 04.01.2028): the advance is refundable
     refundable = service._row(org, m.id).refundable
     assert refundable > 0
     t1, o1 = run_in_thread(engine, service_call(org, lambda s: s.create_refund(
