@@ -98,3 +98,19 @@ def test_the_excel_of_a_sheet_says_ahead_for_an_open_month_and_more_for_a_closed
     assert px._balance(payout(-20_000, "saved"), 100_000)[3] == "Выплачено больше на"
     assert px._balance(payout(20_000, "saved"), 100_000)[3] == "К выплате"
     assert px.advance_lines({"balance": -20_000, "carry_used": 0, "advance_out": 20_000, "basis": "saved"}) == ["Вычтем из следующей выплаты: 20 000 сум"]
+
+
+def test_the_refusals_that_the_front_shows_verbatim_speak_the_dictionary():
+    """The ones the front found outside the dictionary (05.11): the pause in a closed month, the labels of an additional lesson, the texts of the open month and of the change after the save."""
+    from src.auth import logica_errors, one_off_purpose, payments_texts as tx
+    from src.auth.ops_rules import ERROR_CATALOGUE
+
+    pause = next(message for _status, code, message in logica_errors.PAUSE if code == "PAUSE_LOCKED")
+    assert pause.startswith("Месяц закрыт:") and "доступом к деньгам" in pause and "ведомост" not in pause
+    assert ERROR_CATALOGUE["PERIOD_CLOSED"][1].startswith("Месяц закрыт (зарплата сохранена)") and "доступом к деньгам" in ERROR_CATALOGUE["PERIOD_CLOSED"][1]
+    manager = [one_off_purpose.money_label(m, manager=True, held=True) for m in ("none", "paid", "wait")]
+    assert manager == ["не входит в зарплату", "входит в зарплату", "ждёт решения"]
+    assert [one_off_purpose.money_label("wait", manager=True, held=False, money_right=r) for r in (True, False)] == ["решите после урока", "решит владелец"]
+    assert [one_off_purpose.money_label(m, manager=False, held=True) for m in ("none", "paid", "wait")] == ["не входит в зарплату", "включён в зарплату", "ждёт решения"]
+    assert "переплачено" not in tx.open_month_payout_text(state="overpaid", accrued=1, paid=2, balance=-1).lower()
+    assert "пересохран" not in tx.payout_change_text(5).lower() and "сохраните новую сумму" in tx.payout_change_text(5).lower()
