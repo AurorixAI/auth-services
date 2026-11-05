@@ -156,8 +156,10 @@ class ClosedPeriods:
     def refusal(self, closed: ClosedMonth, what: str = "урок") -> OpsError:
         user = self.db.query(User).filter(User.id == closed.teacher_id).first()
         name = short_name(user)
-        text = (f"Месяц {month_title(closed.month)}" + (f" у преподавателя {name}" if name else "") + f" закрыт: ведомость сохранена {closed.closed_on.strftime('%d.%m.%Y')}. "
-                f"Чтобы изменить {what}, владелец или администратор с правом оплат сначала переоткрывает месяц")
+        month = MONTH_NAMES[closed.month.month - 1]               # no reliable declension of a name: «Преподаватель: Эргашев К. · октябрь закрыт», not «Октябрь у Эргашева К. закрыт»
+        head = f"Преподаватель: {name} · {month} закрыт" if name else f"{month.capitalize()} закрыт"
+        text = (f"{head} (зарплата сохранена {closed.closed_on.strftime('%d.%m.%Y')}). "
+                f"Чтобы изменить {what}, переоткройте месяц (это делает владелец или администратор с доступом к деньгам).")
         return conflict(PERIOD_CLOSED, text, month=closed.label, teacherId=str(closed.teacher_id), teacherName=name, closedOn=closed.closed_on.isoformat())
 
     def _hold_open(self, teacher_ids: Iterable[Any], months: Iterable[date]) -> None:
@@ -242,7 +244,7 @@ def open_lessons_since(db, org_id: Any, today: date) -> date:
 
 
 def group_open_actions_by_month(db, org_id: Any, actions: List[Any]) -> Dict[str, Any]:
-    """The list «Требует разбора» grouped by month of the lesson (oldest first) with a counter in each month and in total (R3 #2)."""
+    """The list «Уроки без отметки» grouped by month of the lesson (oldest first) with a counter in each month and in total (R3 #2)."""
     from .ops_schemas import OpenActionsMonth
 
     months: Dict[date, List[Any]] = {}
@@ -315,14 +317,14 @@ def reopen_month(db, org_id: Any, teacher_id: Any, month: str, actor_id: Any, re
     sheet = (db.query(PayrollSheet).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == tid, PayrollSheet.period_month == first)
              .with_for_update().populate_existing().first())      # the lock of the sheet: a save of it and a reopening are one after another
     if sheet is None:
-        raise OpsError(404, "SHEET_NOT_FOUND", "Ведомости за этот месяц нет: переоткрывать нечего")
+        raise OpsError(404, "SHEET_NOT_FOUND", "Зарплата за этот месяц не сохранена: переоткрывать нечего")
     if sheet_revision is None:
         db.rollback()
-        raise OpsError(422, "REVISION_REQUIRED", "Обновите страницу и повторите: нужна текущая версия ведомости")
+        raise OpsError(422, "REVISION_REQUIRED", "Обновите страницу и повторите: данные месяца устарели")
     if int(sheet_revision) != int(sheet.revision):
         current = int(sheet.revision)
         db.rollback()
-        raise OpsError(409, "SHEET_CHANGED", "Ведомость уже изменили. Обновите страницу и проверьте, нужно ли переоткрывать месяц", currentRevision=current)
+        raise OpsError(409, "SHEET_CHANGED", "Зарплату за месяц уже изменили. Обновите страницу и проверьте, нужно ли переоткрывать месяц", currentRevision=current)
     last = (db.query(PayrollPeriodReopening.created_at).filter(PayrollPeriodReopening.org_id == org_id, PayrollPeriodReopening.teacher_id == tid,
                                                                 PayrollPeriodReopening.period_month == first).order_by(PayrollPeriodReopening.created_at.desc()).first())
     state, _ = state_of_sheet(sheet, last[0] if last else None)

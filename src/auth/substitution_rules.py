@@ -45,7 +45,7 @@ DIRECT_MOVE_ERRORS: Dict[str, tuple[int, str]] = {
     "FOREIGN_REQUEST_PENDING": (409, "По этому уроку есть запрос другого преподавателя: решит администратор"),
     # W1 S4: after the administrator rejected the teacher's request for a lesson, the teacher does not move it himself (the rejection would mean nothing)
     "SERIES_ENDED": (422, "Постоянный урок прекращается — перенесите на более раннюю дату"),
-    "REASON_CHANGE_TOO_OLD": (422, "Причину отмены можно менять только у уроков не старше окна незакрытых уроков"),
+    "REASON_CHANGE_TOO_OLD": (422, "Причину отмены можно менять только у уроков не старше окна уроков без отметки"),
     "REQUEST_REJECTED": (409, "Администратор отклонил заявку по этому уроку"),
     "LESSON_HAS_MARKS": (409, "У урока есть отметки посещаемости или справки. Сначала снимите отметки"),
     "ALREADY_CANCELLED": (409, "Урок уже отменён"),

@@ -96,7 +96,7 @@ def test_completing_a_lesson_where_nobody_came_asks_for_a_yes_only_a_screen_that
         r = owner.post(url, json=body)
         assert r.status_code == status, (extra, r.text)
         if status == 409:
-            assert r.json()["detail"]["code"] == "NOBODY_CAME" and "оплачен преподавателю" in r.json()["detail"]["message"]
+            assert r.json()["detail"]["code"] == "NOBODY_CAME" and "войдёт в зарплату преподавателя" in r.json()["detail"]["message"]
             assert owner.post(url, json={**body, "confirmNobodyCame": True}).status_code == 200
 
 
@@ -142,7 +142,7 @@ def test_the_journal_says_what_changed_and_that_the_lesson_was_formalised_afterw
 
 
 def test_the_archive_of_a_group_says_before_the_confirmation_which_lessons_it_cancels_and_what_that_costs(world, now_4_nov):
-    """П8: the dialog showed a number; now the lessons (date, teacher) and the sentence «за них не начислят и не заплатят»."""
+    """П8: the dialog showed a number; now the lessons (date, teacher) and the sentence «ученикам перерасчёта не будет, в зарплату они не войдут»."""
     for s in list(world.students):
         s.group_id = None
     from src.models.auth import StudentGroup
@@ -152,7 +152,7 @@ def test_the_archive_of_a_group_says_before_the_confirmation_which_lessons_it_ca
     impact = make_client(world, user=world.admin).get(f"{API}/{world.group.id}/archive-impact").json()
     missed = next(b for b in impact["blockers"] if b["code"] == "MISSED_LESSONS")
     assert missed["count"] >= 1 and len(missed["lessons"]) == missed["count"] and missed["lessons"][0]["teacherName"]
-    assert "не начислят" in missed["cancelConsequence"] and "не заплатят" in missed["cancelConsequence"]
+    assert "перерасчёта не будет" in missed["cancelConsequence"] and "в зарплату преподавателей они не войдут" in missed["cancelConsequence"] and "отметьте посещаемость" in missed["cancelConsequence"]
 
 
 def test_r3_n6_who_taught_is_an_id_nothing_else_a_text_a_stranger_and_a_valid_teacher_are_told_apart(world, now_4_nov):

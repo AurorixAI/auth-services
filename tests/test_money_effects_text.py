@@ -15,10 +15,29 @@ def test_back_to_the_saved_total_is_named_and_not_asked_to_be_saved_again():
     preview = text_of([], [line(-45_000, 0)], done=False)
     assert "снова как сохранённая" in preview and "−0" not in preview and "к сохранённой" not in preview
     done = text_of([], [line(-45_000, 0)], done=True)
-    assert "пересохраните" not in done and "снова как сохранённая" in done
+    assert "сохраните новую сумму" not in done and "снова как сохранённая" in done
 
 
 def test_a_sheet_that_moves_away_from_the_saved_total_is_still_asked_to_be_saved_again():
     done = text_of([], [line(45_000, 120_000)], done=True)
-    assert "(всего к сохранённой +120 000 сум)" in done and "пересохраните её" in done
+    assert "(к сохранённой сумме: +120 000 сум)" in done and "сохраните новую сумму" in done
+    assert "ведомост" not in done and done.startswith("Зарплата за ноябрь 2026 (Эргашев К.) изменилась на +45 000 сум")
     assert "к сохранённой" not in text_of([], [line(45_000, 45_000)], done=True)
+
+
+def test_a_closed_month_is_named_and_the_next_step_is_said_once():
+    done = text_of([], [line(45_000, 120_000, "closed")], done=True)
+    assert done.endswith("— месяц закрыт, сохраните новую сумму") and "ведомост" not in done and "пересохран" not in done
+    refused = text_of([], [line(45_000, 45_000, "closed")], done=False, closed_blocks=True)
+    assert refused.endswith("(месяц закрыт: сначала переоткройте его)")
+    assert text_of([], [line(45_000, 45_000, "closed")], done=False).endswith("(месяц закрыт)")
+
+
+def test_the_return_of_a_cancelled_lesson_says_recalculation_never_deduction():
+    from src.auth.money_effects import deduction_text
+
+    gone = [{"amount": 40_000}, {"amount": 80_000}]
+    assert deduction_text(gone, done=False) == ("Ученикам снимем перерасчёт за этот урок: всего 120 000 сум (2 ученика); "
+                                                "урок снова ждёт отметки — в зарплату преподавателя он войдёт, когда его проведут")
+    assert deduction_text(gone[:1], done=True, past=False) == "Ученикам снят перерасчёт за этот урок: всего 40 000 сум (1 ученик); урок снова в расписании"
+    assert deduction_text([], done=True).startswith("Перерасчёт учеников не изменился") and "вычет" not in deduction_text([], done=False)

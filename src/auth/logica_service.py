@@ -407,7 +407,7 @@ class PauseService(_Base):
         if not periods.months_with_closed():
             return
         try:
-            periods.assert_range_open(group_teacher_ids(self.db, group, past[0], past[-1]), past[0], past[-1])
+            periods.assert_range_open(group_teacher_ids(self.db, group, past[0], past[-1]), past[0], past[-1], "паузу")
         except OpsError as exc:
             raise PauseLocked(exc.message, **exc.extra) from exc
 

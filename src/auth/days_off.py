@@ -176,7 +176,7 @@ def not_cancelled_text(day: date, reason: str, why: Optional[str]) -> str:
 
 
 def converted_text(day: date, reason: str) -> str:
-    return f"{_dm(day)} — выходной день центра ({reason}): отмена урока «по вине центра» переведена в «выходной», вычета у учеников не будет"
+    return f"{_dm(day)} — выходной день центра ({reason}): отмена урока «по вине центра» переведена в «выходной», ученикам перерасчёта не будет"
 
 
 def on_day_off_text(day: date, reason: str) -> str:
@@ -300,7 +300,7 @@ class DaysOffService:
         return self._item(shown, occ or {"id": att.lesson_id or "", "occurrenceDate": att.lesson_date})
 
     OLD_CONVERT = "Отмена «по вине центра» в закрытом месяце преподавателя: её вид не меняется (закрытый месяц не пересчитывается)"
-    CLOSED_LESSON = "Месяц преподавателя закрыт ведомостью: урок не меняется"
+    CLOSED_LESSON = "Месяц закрыт: урок не меняется, пока месяц не переоткрыт"
 
     def _period_open(self, org_id: Any, group: Group, lesson_id: str, lesson_date: str, row: Optional[GroupAttendance] = None, end_time: Optional[str] = None) -> bool:
         """Money-1 A1 (was W1 R3 (2): the window of the unclosed lessons): a cancellation of a CLOSED month of its teacher is never turned into a holiday and a lesson of it is not cancelled by a day off
@@ -567,7 +567,7 @@ class DaysOffService:
             attendance_id=row.id, org_id=row.org_id, group_id=row.group_id, actor_id=UUID(str(actor_id)), action="corrected", before_status="cancelled",
             after_status="cancelled", before_records={}, after_records={}, correction_reason=lesson_reason_text(reason)[:500],
             cancellation_reason=row.cancellation_reason, details={"cancellation_kind": {"from": CENTRE, "to": HOLIDAY}, "day_off_id": str(day_off_id)}))
-        self._journal_kind(group, row, actor_id, CENTRE, HOLIDAY, f"Выходной «{reason}»: отмена урока стала «праздник», вычета у учеников нет", trigger)      # #157 A3 (LESSONS 47): the money moved - the journal says so
+        self._journal_kind(group, row, actor_id, CENTRE, HOLIDAY, f"Выходной «{reason}»: отмена урока стала «праздник», ученикам перерасчёта нет", trigger)      # #157 A3 (LESSONS 47): the money moved - the journal says so
 
     def _journal_kind(self, group: Optional[Group], att: GroupAttendance, actor_id: Any, before: str, after: str, text: str, trigger: str) -> None:
         """#157 A3: a day off turned the kind of a hand cancellation (or gave it back): one record of the journal «Замены» (``KIND_CHANGED``, author - whoever made / cancelled the day off)."""

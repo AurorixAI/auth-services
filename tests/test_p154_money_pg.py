@@ -291,7 +291,7 @@ def test_c9_a_teachers_request_is_not_in_the_sum_until_the_owner_decides_and_the
     queue = client(w, "admin").get(f"{API}/org/one-off-decisions").json()
     (item,) = queue["items"]
     assert (item["lessonId"], item["purpose"], item["title"], item["groupName"], item["lessonDate"], item["studentsPresent"], item["studentsTotal"]) == (
-        made, "extra", "Дополнительный урок — оплатить преподавателю?", g.name, "2026-10-29", 3, 5)
+        made, "extra", "Дополнительный урок — включить в зарплату?", g.name, "2026-10-29", 3, 5)
     assert item["teacher"]["id"] == str(w.A.id) and item["createdBy"]["role"] == "teacher" and item["payrollSheet"] is None
     summary = client(w, "admin").get(f"{API}/org/substitutions/summary").json()
     assert (summary["oneOffDecisionsTotal"], summary["waitingTotal"], summary["pendingTotal"]) == (1, 1, 0)
@@ -391,12 +391,12 @@ def test_c18_a_teacher_sees_no_sums_and_no_decisions(pg_session, clock):
     # what he reads of his lesson: the purpose and the status, no sum
     listed = teacher.get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-29", "date_to": "2026-10-29"}).json()
     item = next(o for o in listed if o["id"] == made)
-    assert (item["purposeLabel"], item["money"], item["moneyLabel"]) == ("Дополнительный", "wait", "не решено")
+    assert (item["purposeLabel"], item["money"], item["moneyLabel"]) == ("Дополнительный", "wait", "ждёт решения")
     blob = str(listed)
     assert "amount" not in blob and "25000" not in blob and "payrollSheet" not in blob
     decide(w, "admin", made, "pay")
     item = next(o for o in teacher.get(f"{API}/org/schedule/occurrences", params={"date_from": "2026-10-29", "date_to": "2026-10-29"}).json() if o["id"] == made)
-    assert (item["money"], item["moneyLabel"]) == ("paid", "оплачено")
+    assert (item["money"], item["moneyLabel"]) == ("paid", "включён в зарплату")
 
 
 # ============================================================================================================ Ц17: a monthly payment and an additional lesson
@@ -521,14 +521,14 @@ def test_the_excel_of_a_sheet_says_the_words_of_the_new_states(pg_session, clock
     out = client(w, "owner").get(f"{API}/org/payroll/sheets/{saved.json()['id']}/export.xlsx")
     assert out.status_code == 200
     cells = [c.value for ws in load_workbook(io.BytesIO(out.content)).worksheets for row in ws.iter_rows() for c in row]
-    assert cells.count("не решено") == 5                                               # the five students of the lesson
+    assert cells.count("ждёт решения") == 5                                               # the five students of the lesson
     decide(w, "owner", made, "skip")
     sheet_id = saved.json()["id"]
     look = client(w, "owner").get(f"{API}/org/payroll/sheets/{sheet_id}/diff").json()
     patched = client(w, "owner").patch(f"{API}/org/payroll/sheets/{sheet_id}", json={"revision": saved.json()["revision"], "recalculate": True, "expected_fingerprint": look["source_fingerprint"]})
     assert patched.status_code == 200, patched.text
     cells = [c.value for ws in load_workbook(io.BytesIO(client(w, "owner").get(f"{API}/org/payroll/sheets/{sheet_id}/export.xlsx").content)).worksheets for row in ws.iter_rows() for c in row]
-    assert cells.count("без оплаты") == 5 and "не решено" not in cells
+    assert cells.count("не включён") == 5 and "ждёт решения" not in cells
 
 
 def test_c3_a_moved_make_up_lifts_the_deduction_by_the_roster_of_the_copy(pg_session, clock):

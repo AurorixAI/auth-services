@@ -61,7 +61,7 @@ class AttendanceRules:
             who = short_name(names.get(str(teacher))) if teacher else None
             raise forbidden("NOT_LESSON_TEACHER", (f"Этот урок ведёт {who}" + ("" if who.endswith(".") else ".")) if who else "Этот урок ведёт другой преподаватель.")
         if check_age and is_too_old_for_teacher(lesson_date, bc.business_today()):
-            raise forbidden("LESSON_TOO_OLD", "Урок старше 7 дней — его закрывает администратор или владелец")
+            raise forbidden("LESSON_TOO_OLD", "Урок старше 7 дней — отметить его может администратор или владелец")
         return teacher
 
     def assert_period_open(self, group: Group, lesson_id: str, lesson_date: date, occurrence: Optional[Dict[str, Any]] = None,

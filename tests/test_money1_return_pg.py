@@ -109,7 +109,7 @@ def test_a_mistaken_lesson_not_held_goes_back_to_review_for_the_money_right_only
     url = f"{API}/{world.group.id}/lessons/restore"
     body = {"lessonDate": day.isoformat(), "lessonId": lid, "reason": "Урок был, нажали по ошибке"}
     denied = make_client(world, user=world.admin).post(url, json=body)             # an administrator without the right: the old refusal, with the text that tells who can
-    assert denied.status_code == 409 and denied.json()["detail"]["code"] == "RESTORE_PAST" and "с правом оплат" in denied.json()["detail"]["message"]
+    assert denied.status_code == 409 and denied.json()["detail"]["code"] == "RESTORE_PAST" and "с доступом к деньгам" in denied.json()["detail"]["message"]
     ok = make_client(world, user=world.owner).post(url, json=body)
     assert ok.status_code == 200, ok.text
     assert ok.json()["returnedToReview"] is True and "moneyEffects" in ok.json()

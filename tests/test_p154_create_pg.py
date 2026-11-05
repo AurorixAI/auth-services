@@ -62,7 +62,7 @@ def test_the_server_requires_the_purpose_of_a_manager_and_defaults_a_teacher_to_
     body = make(w, "A", w.G1, "2026-10-29").json()
     row = one_off(w, body["id"])
     assert (row.purpose, row.money, row.made_up_lesson_id) == ("extra", "wait", None)
-    assert (body["purpose"], body["money"], body["purposeLabel"], body["moneyLabel"]) == ("extra", "wait", "Дополнительный", "не решено")
+    assert (body["purpose"], body["money"], body["purposeLabel"], body["moneyLabel"]) == ("extra", "wait", "Дополнительный", "ждёт решения")
 
 
 def test_the_money_of_an_additional_lesson_by_role(w):
@@ -74,9 +74,9 @@ def test_the_money_of_an_additional_lesson_by_role(w):
     assert code(make(w, "admin", w.G1, "2026-10-30", purpose="extra", expect=422)) == "MONEY_REQUIRED"
     assert code(make(w, "admin", w.G1, "2026-10-30", purpose="extra", money="wait", expect=422)) == "MONEY_INVALID"
     paid = make(w, "admin", w.G1, "2026-10-30", purpose="extra", money="paid").json()
-    assert (one_off(w, paid["id"]).money, paid["moneyLabel"]) == ("paid", "оплачивается")
+    assert (one_off(w, paid["id"]).money, paid["moneyLabel"]) == ("paid", "входит в зарплату")
     free = make(w, "owner", w.G1, "2026-10-30", start="17:00", end="17:30", purpose="extra", money="none").json()
-    assert (one_off(w, free["id"]).money, free["moneyLabel"]) == ("none", "без оплаты")
+    assert (one_off(w, free["id"]).money, free["moneyLabel"]) == ("none", "не входит в зарплату")
     # an additional lesson names no lesson to make up; a make-up has no money of its own
     assert code(make(w, "admin", w.G1, "2026-10-31", purpose="extra", money="none", madeUpLessonId=ORIGIN, madeUpDate=ORIGIN_DAY, expect=422)) == "MAKEUP_TARGET_NOT_ALLOWED"
     assert code(make(w, "admin", w.G1, "2026-10-31", purpose="makeup", money="paid", madeUpLessonId=ORIGIN, madeUpDate=ORIGIN_DAY, expect=422)) == "MONEY_INVALID"
@@ -388,8 +388,8 @@ def test_c18_the_money_of_a_lesson_is_not_shown_to_a_teacher_of_another_group_no
     for who in ("owner", "admin", "A"):
         item = next(o for o in client(w, who).get(f"{API}/org/schedule/occurrences", params=params).json() if o["id"] == paid)
         assert item["money"] == "paid", who
-    assert next(o for o in client(w, "A").get(f"{API}/org/schedule/occurrences", params=params).json() if o["id"] == paid)["moneyLabel"] == "оплачено"
-    assert next(o for o in client(w, "admin").get(f"{API}/org/schedule/occurrences", params=params).json() if o["id"] == paid)["moneyLabel"] == "оплачивается"
+    assert next(o for o in client(w, "A").get(f"{API}/org/schedule/occurrences", params=params).json() if o["id"] == paid)["moneyLabel"] == "включён в зарплату"
+    assert next(o for o in client(w, "admin").get(f"{API}/org/schedule/occurrences", params=params).json() if o["id"] == paid)["moneyLabel"] == "входит в зарплату"
     # a teacher of ANOTHER group who sees the lesson at all (he substitutes there) never reads it
     assert client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher", json={"lessonDate": "2026-10-29", "lessonId": paid, "teacherId": str(w.B.id), "reason": "Замена"}).status_code == 200
     seen = [o for o in client(w, "B").get(f"{API}/org/schedule/occurrences", params=params).json() if o["id"] == paid]
@@ -398,9 +398,9 @@ def test_c18_the_money_of_a_lesson_is_not_shown_to_a_teacher_of_another_group_no
     dash_b = client(w, "B").get(f"{API}/org/teacher/dashboard/summary", params={"business_date": "2026-10-29"}).json()
     assert [(o["money"], o["moneyLabel"]) for o in dash_b["scheduleWindow"] if o["id"] == paid] == [(None, None)]
     dash_a = client(w, "A").get(f"{API}/org/teacher/dashboard/summary", params={"business_date": "2026-10-29"}).json()
-    assert [(o["money"], o["moneyLabel"]) for o in dash_a["scheduleWindow"] if o["id"] == paid] == [("paid", "оплачено")]
+    assert [(o["money"], o["moneyLabel"]) for o in dash_a["scheduleWindow"] if o["id"] == paid] == [("paid", "включён в зарплату")]
     # the journal of the group: the same mask
     journal = client(w, "admin").get(f"{API}/org/groups/{w.G1.id}/attendance", params=params).json()
     assert [l["money"] for l in journal["lessons"] if l.get("id") == paid] == ["paid"]
     mine = client(w, "A").get(f"{API}/org/groups/{w.G1.id}/attendance", params=params).json()
-    assert [l["moneyLabel"] for l in mine["lessons"] if l.get("id") == paid] == ["оплачено"]
+    assert [l["moneyLabel"] for l in mine["lessons"] if l.get("id") == paid] == ["включён в зарплату"]

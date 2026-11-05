@@ -2128,7 +2128,7 @@ class AuthService:
             raise ops_rules.group_archived()  # O4: an archived group is read-only
         if not money_right and "lesson_type" in changes and changes["lesson_type"] != group.lesson_type:
             self.db.rollback()          # nothing of this request is written: the lock is let go before the refusal
-            raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Вид занятий группы задаёт ставку преподавателя: его меняет владелец или администратор, которому владелец разрешил деньги")
+            raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Вид занятий группы задаёт ставку преподавателя: его меняет владелец или администратор с доступом к деньгам")
         teacher_changed = False
         if "teacher_id" in changes:
             try:
@@ -2721,7 +2721,7 @@ class AuthService:
         # every changed group must not rewrite an already started lesson.
         closing = other_active_memberships if mode == "transfer" else []
         if closing and not money_right:
-            raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Перевод ученика переносит его оплаченные дни и аванс: его делает владелец или администратор, которому владелец разрешил оплаты")
+            raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Перевод ученика переносит его оплаченные дни и аванс: его делает владелец или администратор с доступом к деньгам")
         affected_group_ids = [group.id, *(membership.group_id for membership in closing)]
         self._lock_groups_for_membership_change(org_id, affected_group_ids)
         self.db.refresh(group)  # the lock is held now: an archiving that won the race is seen (O4.R4)
@@ -2798,7 +2798,7 @@ class AuthService:
             )
             if payments_detail and carried:      # Money-1 D-6: the window says what the NEW account looks like after the transfer, not only what arrived
                 pay = PaymentService(self.db)
-                carry_after = pay.transfer_balance(carry_before, pay.account_after(org_id, membership.id, now_dt, tomorrow=True))
+                carry_after = pay.transfer_balance(carry_before, pay.account_after(org_id, membership.id, now_dt, tomorrow=True), group.name)
                 if carry_after is not None:
                     carried.append({"code": "transfer_balance_after", "message": carry_after["text"]})
 
@@ -5103,7 +5103,7 @@ class AuthService:
         the historical journal and when.
         """
         if not reconciled_by:
-            raise ValueError("Не удалось определить автора разбора урока")
+            raise ValueError("Не удалось определить, кто отметил урок")
         group = self._require_group_read_access(
             org_id, group_id, actor_id=reconciled_by, is_org_admin=is_org_admin
         )
@@ -5139,10 +5139,10 @@ class AuthService:
         taught_by = getattr(req, "taughtBy", None)
         if is_org_admin and not money_right and str(planned_teacher) != str(reconciled_by):
             # Money-1 A4 / A6: a lesson formalised backwards by somebody else is pay out of nothing (ЗПД-6): the money right
-            raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Оформить проведённый урок за преподавателя задним числом может владелец или администратор, которому владелец разрешил оплаты")
+            raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Оформить проведённый урок за преподавателя задним числом может владелец или администратор с доступом к деньгам")
         if taught_by and str(taught_by) != str(planned_teacher):
             if not money_right:
-                raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Указать, кто провёл урок, может владелец или администратор с правом оплат")
+                raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Указать, кто провёл урок, может владелец или администратор с доступом к деньгам")
             if lesson_teachers.LessonTeachers(self).teaching_member(org_id, taught_by) is None:
                 raise ops_rules.unprocessable("TARGET_NOT_TEACHER", "Выберите преподавателя центра")
         if attendance:
@@ -5602,9 +5602,9 @@ class AuthService:
         )
         if att.status != LessonAttendanceStatus.IN_PROGRESS.value and not is_correction_save:
             raise ValueError(
-                "Урок отменён. Вернуть его на разбор («Требует разбора») может владелец или администратор с правом оплат: кнопка «Вернуть урок»"
+                "Урок отменён. Вернуть его на отметку («Вернуть на отметку») может владелец или администратор с доступом к деньгам"
                 if att.status == LessonAttendanceStatus.CANCELLED.value
-                else "Отметки меняются только у начатого урока. Проведённый урок исправляет владелец, администратор с правом оплат или преподаватель этого урока"
+                else "Отметки меняются только у начатого урока. Проведённый урок исправляет владелец, администратор с доступом к деньгам или преподаватель этого урока"
             )
 
         if matching_slot and lesson_date == today and not is_correction_save:
@@ -5672,7 +5672,7 @@ class AuthService:
             if missing_student_ids:
                 raise ValueError("Перед завершением урока заполните отметки всех учеников из состава урока")
             if records and att and att.status != LessonAttendanceStatus.COMPLETED.value and not any(m in ("present", "late") for m in records.values()) and getattr(req, "confirmNobodyCame", None) is False:     # only the request of the screen carries the field (``SaveAttendanceRequestB``)
-                raise ops_rules.conflict("NOBODY_CAME", "Никто не пришёл. Если завершить, урок будет считаться проведённым и оплачен преподавателю. Если урока не было, нажмите «Урока не было»")
+                raise ops_rules.conflict("NOBODY_CAME", "Никто не пришёл. Если завершить, урок будет считаться проведённым и войдёт в зарплату преподавателя. Если урока не было, нажмите «Урока не было»")
 
         # Reasons for new "excused" marks are validated before any write.
         excuse_service = AttendanceExcuseService(self.db)
@@ -5701,16 +5701,16 @@ class AuthService:
         )
         if is_completed_correction:
             if is_org_manager and not money_right:
-                raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Исправить проведённый урок может владелец или администратор, которому владелец разрешил оплаты: он меняет деньги учеников и зарплату")
+                raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Исправить проведённый урок может владелец или администратор с доступом к деньгам: он меняет деньги учеников и зарплату")
             if not req.correctionReason:
                 raise ValueError("Для корректировки завершённого урока укажите причину")
             excuses_before = lesson_return.excuse_statuses(self.db, att.id)
             correction_probe = lesson_return.start_correction(self.db, group, att, owner)       # R3 #21: the sheets of the teacher, measured BEFORE this correction
 
         if att and att.status == LessonAttendanceStatus.COMPLETED.value and requested_status != before_status:
-            raise ValueError("Проведённый урок нельзя вернуть в «не проведён» отметками. Это делает владелец или администратор с правом оплат: кнопка «Вернуть урок»")
+            raise ValueError("Проведённый урок нельзя вернуть в «не проведён» отметками. Это делает владелец или администратор с доступом к деньгам: кнопка «Вернуть урок»")
         if att and att.status == LessonAttendanceStatus.CANCELLED.value and requested_status != before_status:
-            raise ValueError("Урок отменён. Вернуть его на разбор («Требует разбора») может владелец или администратор с правом оплат: кнопка «Вернуть урок»")
+            raise ValueError("Урок отменён. Вернуть его на отметку («Вернуть на отметку») может владелец или администратор с доступом к деньгам")
 
         if not att:
             att = GroupAttendance(

@@ -39,7 +39,7 @@ def reopen_payroll_period(month: str, request: ReopenRequest, user: dict = Depen
 
 @router.get("/org/attendance/open-actions/by-month", response_model=OpenActionsByMonth)
 def open_actions_by_month(user: dict = Depends(require_org_member), db: Session = Depends(get_db)):
-    """«Требует разбора» по месяцам (R3 #2): все неразобранные уроки открытых месяцев от начала учёта центра, самые старые месяцы первыми, с счётчиком в каждом месяце и общим.
+    """«Уроки без отметки» по месяцам (R3 #2): все уроки без отметки открытых месяцев от начала учёта центра, самые старые месяцы первыми, с счётчиком в каждом месяце и общим.
     Тот же отбор, что у ``GET /org/attendance/open-actions`` (преподаватель видит свои уроки, владелец и администратор — все); закрытые месяцы сюда не входят."""
     from .service import AuthService  # lazy: service imports a great deal
 

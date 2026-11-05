@@ -85,7 +85,7 @@ class LessonCancelMixin:
         warnings: List[Dict[str, str]] = []
         kind, day_off_id, converted = (None, None, None) if archive else self._kind_for(org_id, day, kind, day_off_id)
         if converted is not None:
-            warnings.append({"code": "CANCELLED_AS_HOLIDAY", "message": f"{_dm(day)} — выходной день центра ({converted}): урок отменён как «выходной», вычета у учеников не будет"})
+            warnings.append({"code": "CANCELLED_AS_HOLIDAY", "message": f"{_dm(day)} — выходной день центра ({converted}): урок отменён как «выходной», ученикам перерасчёта не будет"})
         record = None if archive else self._record_of(group, ref, request, reason, MANAGER_CANCEL if by_manager else TEACHER_CANCEL, actor, journal=day_off_id is None)
         if request is None and day_off_id is not None:       # a request that waits for a lesson of a DAY OFF is closed by it, with the day off in the event: «Отменить выходной» opens it again (Д28)
             waiting = next((r for r in self._lesson_requests(group, lesson_id, iso) if r.status == "pending"), None)
@@ -221,11 +221,11 @@ class LessonCancelMixin:
             raise conflict("RESTORE_LESSON_GONE", "Этого урока уже нет в расписании группы: вернуть его нельзя") from exc
         past = ref.starts_at <= self.now()
         if past and not money_right:
-            raise conflict("RESTORE_PAST", "Урок уже должен был начаться, поэтому в расписание его не вернуть. Снова разобрать его («Требует разбора») может владелец или администратор с правом оплат")
+            raise conflict("RESTORE_PAST", "Урок уже должен был начаться, поэтому в расписание его не вернуть. Вернуть его на отметку («Вернуть на отметку») может владелец или администратор с доступом к деньгам")
         if past:        # Money-1 A2: a month the sheet of the teacher has closed is reopened first
             ClosedPeriods.of(self.db, group.org_id).assert_open(lesson_teacher_ids(self.db, group, lesson_id, iso, row), iso)
             if day < open_lessons_since(self.db, group.org_id, bc.business_today()):         # R3 #2: the lesson would come back to a list that does not reach so far
-                raise conflict("RESTORE_BEFORE_START", "Этот урок был раньше начала учёта центра: вернуть его на разбор нельзя")
+                raise conflict("RESTORE_BEFORE_START", "Этот урок был раньше начала учёта центра: вернуть его на отметку нельзя")
         deduction_was = money_effects.centre_deductions(self.db, org_id, group.id) if money_right and row.cancellation_kind == "centre" else {}
         held = DaysOffService(self.svc).live_for_date(org_id, day)
         if row.day_off_id is not None or held is not None:
@@ -262,7 +262,7 @@ class LessonCancelMixin:
                 out["returnedToReview"] = True
             out["moneyEffects"] = money_effects.lesson_block(self.db, org_id, students=[], probe=None, owner=actor_role == "owner", done=not dry_run)       # a lesson nobody held pays nobody: the sheets do not move
             if trace["cancellationKind"] == "centre" and (past or money_right):
-                out["moneyEffects"]["text"] = money_effects.deduction_text(gone, done=not dry_run)
+                out["moneyEffects"]["text"] = money_effects.deduction_text(gone, done=not dry_run, past=bool(past))
         return out
 
     def record_kind_change(self, group: Group, lesson_id: str, day: date, actor: Any, before: str, after: str, reason: str, trigger: str = MANAGER_REASON_CHANGE) -> None:

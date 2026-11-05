@@ -1184,14 +1184,14 @@ class PayrollService:
             new = [item for key, item in keys.items() if key not in confirmed]
             if new:
                 raise OpenLessonsConfirmRequired(
-                    f"В месяце незакрытых уроков, которых вы ещё не подтверждали: {len(new)}. Они не попадут в ведомость, а месяц закроется. Сохранить всё равно?",
+                    f"Уроков без отметки, которых вы ещё не подтверждали: {len(new)}. Они не попадут в зарплату, а месяц закроется. Сохранить всё равно?",
                     count=len(new), items=new[:50], alreadyConfirmed=len(keys) - len(new))
         return sorted(keys)
 
     @staticmethod
     def _conflict(current: int) -> RevisionConflict:
         return RevisionConflict(
-            "Ведомость уже изменили. Обновите страницу и повторите правку.", current_revision=current
+            "Зарплату за месяц уже изменили. Обновите страницу и повторите правку.", current_revision=current
         )
 
     @staticmethod

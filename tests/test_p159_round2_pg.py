@@ -9,7 +9,7 @@ from tests.test_p154_create_pg import make
 from tests.test_p154_money_pg import hold
 
 pytestmark = needs_pg
-BEFORE, AFTER, DAY = "оплата: решит владелец", "оплата: не решено", "2026-10-29"
+BEFORE, AFTER, DAY = "решит владелец", "ждёт решения", "2026-10-29"
 PARAMS = {"date_from": DAY, "date_to": DAY}
 
 
@@ -50,10 +50,10 @@ def test_m3_the_label_before_the_lesson_says_who_decides_on_every_road(w):
     lid = created["id"]
     assert created["moneyLabel"] == BEFORE
     assert labels(w, "admin", lid) == (BEFORE, BEFORE)
-    assert labels(w, "owner", lid) == ("оплата: решите после урока",) * 2                                    # the owner decides: as before
-    assert labels(w, "A", lid) == ("не решено",) * 2                                                         # a teacher: as before
+    assert labels(w, "owner", lid) == ("решите после урока",) * 2                                    # the owner decides: as before
+    assert labels(w, "A", lid) == ("ждёт решения",) * 2                                                         # a teacher: as before
     grant_money_right(w)
-    assert labels(w, "admin", lid) == ("оплата: решите после урока",) * 2                                    # the right is back: the old words
+    assert labels(w, "admin", lid) == ("решите после урока",) * 2                                    # the right is back: the old words
 
 
 def test_m3_after_the_lesson_the_state_is_a_fact_for_everybody(w):

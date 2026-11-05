@@ -154,7 +154,7 @@ def test_d4_a_decision_in_a_closed_month_is_refused_with_the_refusal_of_an_excus
         for dry in (False, True):
             r = _call(w, who, made, decision, dry_run=dry, expect=409)
             assert r.json()["detail"] == want, (who, dry)                                  # the same code, text, month, teacher, day of the closing: «Переоткрыть месяц» is the way out
-    assert want["code"] == "PERIOD_CLOSED" and want["month"] == "2026-10" and want["closedOn"] == "2026-11-02" and "переоткрывает месяц" in want["message"]
+    assert want["code"] == "PERIOD_CLOSED" and want["month"] == "2026-10" and want["closedOn"] == "2026-11-02" and "переоткройте месяц" in want["message"]
     assert changed_tables(before, db_fingerprint(w.db)) == [] and one_off(w, made).money == "wait"
 
 

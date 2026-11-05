@@ -142,7 +142,7 @@ class GroupLifecycle:
         if missed:
             blockers.append({"code": "MISSED_LESSONS", "count": len(missed),
                              # Money-1 A6 (П8): what «Отменить их при архивации» does to money - said BEFORE the confirmation, with the lessons listed below
-                             "cancelConsequence": "Если отменить эти уроки при архивации, за них не начислят ученикам и не заплатят преподавателям. Сначала разберите их, если они были",
+                             "cancelConsequence": "Если отменить эти уроки при архивации, ученикам перерасчёта не будет, а в зарплату преподавателей они не войдут. Если уроки были — сначала отметьте посещаемость",
                              "lessons": [
                 {"lessonId": i.lessonId, "lessonDate": i.lessonDate, "startTime": i.startTime, "endTime": i.endTime,
                  "teacherName": teacher_name(i)} for i in missed]})

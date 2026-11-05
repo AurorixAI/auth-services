@@ -55,7 +55,11 @@ def test_a_closed_month_refuses_the_reconcile_of_its_lesson_with_the_reason_and_
         reconcile(world, day, lid)
     assert e.value.status_code == 409 and code(e) == "PERIOD_CLOSED"
     assert e.value.detail["month"] == "2026-10" and e.value.detail["closedOn"] == "2026-11-02"
-    assert "переоткрывает месяц" in e.value.detail["message"] and "октябрь 2026" in e.value.detail["message"]
+    from src.auth.ops_rules import short_name
+
+    # the dictionary (LESSONS 109): «Месяц закрыт», the teacher by name (no declension of names), «зарплата сохранена», never «закрыт ведомостью» / «с правом оплат»
+    assert e.value.detail["message"] == (f"Преподаватель: {short_name(world.teacher)} · октябрь закрыт (зарплата сохранена 02.11.2026). "
+                                         "Чтобы изменить урок, переоткройте месяц (это делает владелец или администратор с доступом к деньгам).")
 
 
 def test_the_sheet_of_another_teacher_does_not_close_this_lesson(world, now_4_nov):

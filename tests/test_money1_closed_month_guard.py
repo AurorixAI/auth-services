@@ -352,7 +352,7 @@ def test_a_closed_month_refuses_and_nothing_is_written(name, pg_session, clock):
         assert detail["code"] == s.code, (name, detail)
         assert "2026-10" in str(detail) or "октябр" in str(detail).lower(), (name, detail)
         if s.code == "PERIOD_CLOSED":
-            assert detail["month"] == "2026-10" and detail["closedOn"] and "переоткрывает месяц" in detail["message"], (name, detail)
+            assert detail["month"] == "2026-10" and detail["closedOn"] and "переоткройте месяц" in detail["message"] and "закрыт (зарплата сохранена" in detail["message"] and "ведомост" not in detail["message"], (name, detail)
     assert changed_tables(before, db_fingerprint(c.w.db)) == [], (name, changed_tables(before, db_fingerprint(c.w.db)))
 
 
@@ -380,7 +380,7 @@ def test_a_day_off_leaves_the_lessons_of_a_closed_month_alone_and_names_them(pg_
     body = r.json()
     reasons = {item["date"]: item["reason"] for item in body["blocked"]}
     assert body["cancelled"] == [] and body["converted"] == [], body                   # nothing of the closed October was cancelled or turned into a holiday
-    assert reasons["2026-10-23"] == "Месяц преподавателя закрыт ведомостью: урок не меняется"        # a lesson nobody started
+    assert reasons["2026-10-23"] == "Месяц закрыт: урок не меняется, пока месяц не переоткрыт"        # a lesson nobody started
     assert reasons["2026-10-26"].startswith("Отмена «по вине центра» в закрытом месяце") and reasons["2026-10-21"] == "Урок уже проведён"
 
 

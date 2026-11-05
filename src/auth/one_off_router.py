@@ -129,7 +129,7 @@ def makeup_candidates(group_id: str, user: dict = Depends(require_org_member), d
 def one_off_decided(month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$"), limit: int = Query(200, ge=1, le=500), user: dict = Depends(require_payments_access),
                     db: Session = Depends(get_db)):
     """«Решённые»: дополнительные уроки, по которым уже решено «Оплатить» / «Не оплачивать» (новые сверху; ``month`` — YYYY-MM); отсюда решение можно отменить, пока месяц преподавателя открыт.
-    Владелец и администратор с правом на деньги; суммы ведомости видит только владелец."""
+    Владелец и администратор с доступом к деньгам; суммы зарплаты видит только владелец."""
     return _purposes(db).decided(user["org_id"], owner=user.get("org_role") == "owner", month=month, limit=limit)
 
 
@@ -140,7 +140,7 @@ def one_off_decisions(user: dict = Depends(_manager), db: Session = Depends(get_
 
 
 @router.post("/org/one-off-lessons/{lesson_id}/money-decision", response_model=MoneyDecisionOut)
-def decide_one_off_money(lesson_id: str, request: MoneyDecisionRequest, dry_run: bool = Query(False, description="только последствия для ведомости, ничего не записывать"),
+def decide_one_off_money(lesson_id: str, request: MoneyDecisionRequest, dry_run: bool = Query(False, description="только последствия для зарплаты, ничего не записывать"),
                          user: dict = Depends(_manager), db: Session = Depends(get_db)) -> Dict[str, Any]:
     """«Оплатить» / «Не оплачивать»: один раз, только проведённый урок (повтор — 409 ``ALREADY_DECIDED``); ``undo`` — отменить решение, пока месяц преподавателя открыт."""
     try:

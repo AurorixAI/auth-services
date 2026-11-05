@@ -132,9 +132,9 @@ def test_s4_the_cell_of_a_not_decided_or_unpaid_lesson_is_zero_and_the_legend_na
     marks = {state: engine.Mark(day=day, lesson_id="l", state=state).mark for state in engine.STATES}
     assert marks[engine.UNDECIDED] == marks[engine.NO_PAY] == marks[engine.EXCUSED_CONFIRMED] == 0
     assert marks[engine.COUNTED] == marks[engine.UNPAID] == marks[engine.EXCUSED_PENDING] == 1 and marks[engine.NOT_IN_GROUP] is None
-    assert "не решено" in LEGEND_HEAD and "без оплаты" in LEGEND_HEAD
+    assert "ждёт решения" in LEGEND_HEAD and "не включён" in LEGEND_HEAD
     assert "пустой отработки" not in LEGEND_HEAD and "доп. урок" not in LEGEND_HEAD      # #159: an empty make-up is an ordinary lesson, it is never «не решено»
-    assert "не решено" in legend_line(True) and "без оплаты" in legend_line(False)
+    assert "ждёт решения" in legend_line(True) and "не включён" in legend_line(False)
 
 
 # ============================================================================================================ S7: no default role (LESSONS 17)
@@ -336,7 +336,7 @@ def test_undecided_changes_neither_the_total_of_the_sheet_nor_the_total_of_the_e
     saved = client(w, "owner").post(f"{API}/org/payroll/sheets", json={"month": "2026-10", "teacher_id": str(w.A.id), "expected_fingerprint": s["source_fingerprint"]})
     assert saved.status_code == 201, saved.text
     excel, head = excel_totals(saved.json()["id"])
-    assert s["total_amount"] == 0 and excel == [["Итого", 0, 0, 0]] and head and head[0][0].startswith("Заработано 0 ·")      # five students «не решено»: nothing in the sum, nothing in the file
+    assert s["total_amount"] == 0 and excel == [["Итого", 0, 0, 0]] and head and head[0][0].startswith("Заработано 0 сум ·")      # five students «не решено»: nothing in the sum, nothing in the file
     decide(w, "owner", made, "skip")
     look = client(w, "owner").get(f"{API}/org/payroll/sheets/{saved.json()['id']}/diff").json()
     patched = client(w, "owner").patch(f"{API}/org/payroll/sheets/{saved.json()['id']}", json={"revision": saved.json()["revision"], "recalculate": True, "expected_fingerprint": look["source_fingerprint"]})

@@ -289,7 +289,7 @@ def money_rights_flag(user: dict = Depends(require_org_member), db: Session = De
     return has_payments_access(user, db)
 
 
-MONEY_RIGHT_REQUIRED_TEXT = "Это действие меняет деньги: его выполняет владелец или администратор, которому владелец разрешил оплаты"
+MONEY_RIGHT_REQUIRED_TEXT = "Это действие меняет деньги: его выполняет владелец или администратор с доступом к деньгам"
 
 
 def require_payments_settings(user: dict = Depends(require_org_owner)) -> dict:

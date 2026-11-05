@@ -40,12 +40,12 @@ def test_r3_23_the_return_of_a_cancelled_lesson_has_a_dry_run_that_names_the_ded
     assert out["dryRun"] is True and out["returnedToReview"] is True and out["moneyEffects"]["dryRun"] is True
     assert sorted(d["amount"] for d in out["deductions"]) == sorted(before.values()) and all(d["name"] for d in out["deductions"])      # the whole deduction for this lesson goes away
     total = sum(before.values())
-    assert f"{total:,}".replace(",", " ") in out["moneyEffects"]["text"] and "исчезнет вычет" in out["moneyEffects"]["text"]
+    assert f"{total:,}".replace(",", " ") in out["moneyEffects"]["text"] and "снимем перерасчёт" in out["moneyEffects"]["text"]
     world.db.expire_all()
     assert world.db.query(GroupAttendance).filter_by(group_id=world.group.id, lesson_date=day.isoformat(), lesson_id=lid).one().status == "cancelled"        # nothing written
     assert me.centre_deductions(world.db, world.org.id, world.group.id) == before
     done = owner.post(url, json=body).json()
-    assert done["dryRun"] is False and done["moneyEffects"]["dryRun"] is False and "исчез вычет" in done["moneyEffects"]["text"]
+    assert done["dryRun"] is False and done["moneyEffects"]["dryRun"] is False and "снят перерасчёт" in done["moneyEffects"]["text"]
     assert done["deductions"] == out["deductions"]                                                  # what the confirmation said is what happened
     assert sum(me.centre_deductions(world.db, world.org.id, world.group.id).values()) == 0
 

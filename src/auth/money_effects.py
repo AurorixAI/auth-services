@@ -29,6 +29,7 @@ from src.models.auth import Group, PayrollPayout, PayrollSheet, Student, Student
 from . import payment_status as ps
 from .closed_period import month_first, month_title, period_state
 from .ops_rules import short_name
+from .payments_texts import plural
 
 logger = logging.getLogger(__name__)
 
@@ -189,15 +190,18 @@ def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, do
         parts.append(f"в пакеты учеников вернётся занятие: {gave}" if not done else f"в пакеты учеников возвращено занятие: {gave}")
     for line in payroll:
         title = month_title(date.fromisoformat(line["month"] + "-01"))
-        note = " (месяц закрыт: сначала переоткройте его)" if line["state"] == "closed" and closed_blocks and not done else (" (месяц закрыт ведомостью)" if line["state"] == "closed" else "")
+        note = " (месяц закрыт: сначала переоткройте его)" if line["state"] == "closed" and closed_blocks and not done else (" (месяц закрыт)" if line["state"] == "closed" else "")
         if "changedBy" in line:
-            who = f" {line['teacherName']}," if line.get("teacherName") else ""
+            who = f" ({line['teacherName']})" if line.get("teacherName") else ""
             tail = f"{'изменилась' if done else 'изменится'} на {signed(line['changedBy'])} сум"
             if line["driftAfter"] != line["changedBy"]:
-                tail += " (снова как сохранённая)" if line["driftAfter"] == 0 else f" (всего к сохранённой {signed(line['driftAfter'])} сум)"
-            parts.append(f"ведомость{who} {title} {tail}" + (" — пересохраните её" if done and line["driftAfter"] != 0 else "") + note)
+                tail += " (снова как сохранённая)" if line["driftAfter"] == 0 else f" (к сохранённой сумме: {signed(line['driftAfter'])} сум)"
+            if done and line["driftAfter"] != 0:                      # the next step is on the screen all the time (the line «сохраните новую сумму»); the sentence says it once, with the state of the month
+                parts.append(f"зарплата за {title}{who} {tail} — " + ("месяц закрыт, " if line["state"] == "closed" else "") + "сохраните новую сумму")
+            else:
+                parts.append(f"зарплата за {title}{who} {tail}" + note)
         else:
-            parts.append(f"ведомость {title} {'изменилась' if done else 'изменится'}" + note)
+            parts.append(f"зарплата за {title} {'изменилась' if done else 'изменится'}" + note)
     text = "; ".join(parts)
     return (text[0].upper() + text[1:]) if text else ""
 
@@ -390,9 +394,13 @@ def deductions_gone(db, org_id: Any, group_id: Any, was: Dict[str, int]) -> List
     return with_names(db, [{"studentId": sid, "amount": amount - now.get(sid, 0)} for sid, amount in sorted(was.items()) if amount - now.get(sid, 0) > 0])
 
 
-def deduction_text(gone: List[Dict[str, Any]], *, done: bool) -> str:
+def deduction_text(gone: List[Dict[str, Any]], *, done: bool, past: bool = True) -> str:
+    """What the return of a lesson that the centre cancelled does to the students (the word is «перерасчёт», never «вычет») and to the teacher; ``past``: the lesson had begun, so it goes back to the
+    list «Уроки без отметки» (a future one just comes back into the schedule)."""
+    tail = ("урок снова ждёт отметки — в зарплату преподавателя он войдёт, когда его проведут" if past else "урок снова в расписании")
     if not gone:
-        return ("У учеников вычет за этот урок не изменится" if not done else "Вычет учеников не изменился") + "; урок снова ждёт разбора — преподавателю он оплатится, когда его проведут"
+        return ("Перерасчёт учеников за этот урок не изменится" if not done else "Перерасчёт учеников не изменился") + f"; {tail}"
     total = sum(g["amount"] for g in gone)
-    who = f"у {len(gone)} " + ("ученика" if len(gone) == 1 else "учеников")
-    return f"{who.capitalize()} {'исчез' if done else 'исчезнет'} вычет за этот урок: {num(total)} сум; урок снова ждёт разбора — преподавателю он оплатится, когда его проведут"
+    count = len(gone)
+    who = f"{count} {plural(count, 'ученик', 'ученика', 'учеников')}"
+    return f"Ученикам {'снят' if done else 'снимем'} перерасчёт за этот урок: всего {num(total)} сум ({who}); {tail}"

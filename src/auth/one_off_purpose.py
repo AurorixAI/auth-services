@@ -42,7 +42,7 @@ MAKEUP_REFUSALS = {
     "NOT_FOUND": "Этого урока уже нет в расписании группы: отработать его нельзя",
     "NOT_CANCELLED": "Урок не отменён: отрабатывать нечего",
     "ONE_OFF": "Разовый урок отработать нельзя: назначьте новый урок",
-    "HOLIDAY": "Урок отменён как праздник или выходной: вычета нет, отрабатывать нечего. Добавьте дополнительный урок",
+    "HOLIDAY": "Урок отменён как праздник или выходной: перерасчёта нет, отрабатывать нечего. Добавьте дополнительный урок",
     "NO_KIND": "Это отмена до обновления: отработать её нельзя. Добавьте дополнительный урок",
     "MOVED": "Урок перенесён: отрабатывать нечего",
     "TOO_OLD": f"Отработать можно урок не старше {MAKEUP_BACK_DAYS} дней",
@@ -50,8 +50,8 @@ MAKEUP_REFUSALS = {
 MAKEUP_EXISTS_TEXT = "По уроку назначена отработка: сначала отмените её"
 NO_CANDIDATES_TEXT = ("Нет отменённых уроков, которые можно отработать: нужен урок по расписанию, отменённый по вине центра за последние "
                       f"{MAKEUP_BACK_DAYS} дней, без отработки")
-MONEY_RIGHT_TEXT = "Решение об оплате принимает владелец или администратор с правом на оплаты"
-TITLES = {EXTRA: "Дополнительный урок — оплатить преподавателю?"}
+MONEY_RIGHT_TEXT = "Включить урок в зарплату или нет решает владелец или администратор с доступом к деньгам"
+TITLES = {EXTRA: "Дополнительный урок — включить в зарплату?"}
 
 
 def day_label(day: str) -> str:
@@ -68,12 +68,12 @@ def purpose_label(purpose: Optional[str], made_up_date: Optional[str]) -> Option
 
 def money_label(money: Optional[str], *, manager: bool, held: bool, money_right: bool = True) -> Optional[str]:
     """The words of the status of the money; ``held``: the lesson has been held (a ``wait`` before it says when it is decided).  #159 M3: an admin WITHOUT the right of money is not the one who decides - before the lesson
-    he reads «оплата: решит владелец», not «решите после урока»."""
+    he reads «решит владелец», not «решите после урока»."""
     if money is None:
         return None
     if manager:
-        return {NONE: "без оплаты", PAID: "оплачивается", WAIT: "оплата: не решено" if held else ("оплата: решите после урока" if money_right else "оплата: решит владелец")}[money]
-    return {NONE: "без оплаты", PAID: "оплачено", WAIT: "не решено"}[money]
+        return {NONE: "не входит в зарплату", PAID: "входит в зарплату", WAIT: "ждёт решения" if held else ("решите после урока" if money_right else "решит владелец")}[money]
+    return {NONE: "не входит в зарплату", PAID: "включён в зарплату", WAIT: "ждёт решения"}[money]
 
 
 def one_off_of(db, group_id: Any, lesson_id: str) -> Optional[GroupScheduleOneOffLesson]:
@@ -108,7 +108,7 @@ class OneOffPurpose:
             raise unprocessable("PURPOSE_INVALID", "Урок бывает «отработка» или «дополнительный»")
         if purpose == MAKEUP:
             if money is not None:
-                raise unprocessable("MONEY_INVALID", "У отработки оплата не выбирается: деньги как у обычного урока")
+                raise unprocessable("MONEY_INVALID", "У отработки решение о зарплате не нужно: деньги как у обычного урока")
             if not target[0] or not target[1]:
                 raise unprocessable("MAKEUP_TARGET_REQUIRED", "Выберите отменённый урок, который отрабатывается")
             return MAKEUP, None
@@ -118,12 +118,12 @@ class OneOffPurpose:
         allowed = MANAGER_MONEY if decides else TEACHER_MONEY
         if money is None:
             if decides:
-                raise unprocessable("MONEY_REQUIRED", "Выберите оплату преподавателю: без оплаты или оплачивается")
+                raise unprocessable("MONEY_REQUIRED", "Выберите, входит ли урок в зарплату преподавателя: «Включить в зарплату» или «Не включать»")
             money = WAIT
         if money not in allowed:
             if manager and money == PAID:
                 raise forbidden("MONEY_RIGHT_REQUIRED", MONEY_RIGHT_TEXT)
-            raise unprocessable("MONEY_INVALID", "Такой вариант оплаты вам недоступен")
+            raise unprocessable("MONEY_INVALID", "Такой вариант вам недоступен")
         return EXTRA, money
 
     def money_right(self, org_id: Any, org_role: str) -> bool:
@@ -461,7 +461,7 @@ class OneOffPurpose:
         ``freshBefore`` -> ``freshAfter``, ``changedBy``; the owner only has the sums) and nothing is written - the same refusals as the real call."""
         actor = _uuid(actor_id)
         if actor_role not in ("owner", "admin"):                    # the road is closed to the others already; no default role is written to the audit (LESSONS 17)
-            raise forbidden("DECISION_FORBIDDEN", "Решать об оплате могут владелец и администратор")
+            raise forbidden("DECISION_FORBIDDEN", "Включать урок в зарплату могут владелец и администратор с доступом к деньгам")
         one_off = self.db.query(GroupScheduleOneOffLesson).filter(GroupScheduleOneOffLesson.id == lesson_id, GroupScheduleOneOffLesson.org_id == org_id).first()
         if one_off is None:
             raise not_found("ONE_OFF_NOT_FOUND", "Урок не найден")
@@ -537,7 +537,7 @@ class OneOffPurpose:
         """The fields of the purpose of the lessons ``keys`` = ``[(group_id, lesson_id, date)]`` (``GET schedule/occurrences``, the journal, the student card): ``purpose`` / ``purposeLabel`` /
         ``madeUpFor`` of a one-off lesson, ``madeUpBy`` of a cancelled lesson that has a make-up, ``money`` / ``moneyLabel``.  The mask (LESSONS 45 / 51): an owner / admin read the money; a teacher
         only of a lesson of HIS group or one he made; ``money_visible=False`` (the student, the parent) never.  No sums, no decisions - only the state.  ``money_right`` (#159 M3): the reader may decide the money
-        (``viewer_money_right``); an admin without it reads «оплата: решит владелец»."""
+        (``viewer_money_right``); an admin without it reads «решит владелец»."""
         out: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
         if not keys:
             return out
