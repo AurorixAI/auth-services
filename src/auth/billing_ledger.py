@@ -919,9 +919,49 @@ def _window_bounds(starts: List[date]) -> List[Tuple[date, Optional[date]]]:
     return out
 
 
+def _bridge_returns(runs: List[Tuple[date, Optional[date]]], pauses: List[Tuple[date, date]], floor: date,
+                    regimes: Sequence[Regime]) -> Tuple[List[Tuple[date, Optional[date]]], List[Tuple[date, date]]]:
+    """Money-1 B5 (B2 of the analysis): a student who is taken out of the group and comes back INSIDE the period he has already been charged for goes on with
+    that period - the days between are a pause (the chain is extended by them), as a pause of the owner would do - instead of starting a second full period
+    (left 14.10, back 16.10: 300 000, not 97 000 + 300 000).  A return after the period has ended starts a new one, as before (K1).  Only the «свой месяц»
+    chain (calendar, payment date) has periods that can be charged twice; the cells of a fixed billing day count the days of each stay, a package counts lessons.
+    Returns the runs with the bridged ones merged and the pauses with the gaps added (the caller keeps the REAL pauses apart for the statement)."""
+    if len(runs) < 2:
+        return runs, pauses
+    out: List[List] = [list(runs[0])]
+    current = list(pauses)
+    for first, last in runs[1:]:
+        before_first, before_last = out[-1]
+        if before_last is not None and _is_payment_date(regimes, first) and _inside_charged_period(before_first, before_last, first, floor, current):
+            current = _merge_pauses([Pause(a, b) for a, b in current] + [Pause(before_last + timedelta(days=1), first - timedelta(days=1))])
+            out[-1][1] = last
+        else:
+            out.append([first, last])
+    return [(a, b) for a, b in out], current
+
+
+def _is_payment_date(regimes: Sequence[Regime], day: date) -> bool:
+    regime = regime_at(regimes, day)
+    return regime.mode == CALENDAR and regime.anchor == ps.PAYMENT_DATE
+
+
+def _inside_charged_period(first: date, last: date, back: date, floor: date, pauses: List[Tuple[date, date]]) -> bool:
+    """Whether ``back`` (the first day of the next stay) is not later than the end of the chain period that holds ``last`` (the day he left)."""
+    lo = max(first, floor)
+    if lo > last:
+        return False
+    for start, end, _length, _days in _chain_periods(_first_unpaused(pauses, lo), pauses):
+        if start > last:
+            return False
+        if end >= last:
+            return back <= end
+    return False
+
+
 def _pieces_of(inp: LedgerInput):
     """``(opening, floor, runs, pause_days, spans)``: the stay from the floor on (``spans``, the pauses are still inside: a payment-date
-    chain is extended by them); the days that are charged are ``_subtract_pauses`` of a span."""
+    chain is extended by them); the days that are charged are ``_subtract_pauses`` of a span.  ``pause_days`` also holds the gaps of a bridged return
+    (``_bridge_returns``) - the real pauses are ``_merge_pauses(inp.pauses)``."""
     opening = inp.opening
     if opening is not None and not (opening.paid_until or (opening.debt_amount and opening.debt_on)):
         opening = None
@@ -929,6 +969,7 @@ def _pieces_of(inp: LedgerInput):
                 (opening.paid_until + timedelta(days=1)) if opening is not None and opening.paid_until else date.min)
     runs = merge_stays(inp.stays)
     pause_days = _merge_pauses(inp.pauses)
+    runs, pause_days = _bridge_returns(runs, pause_days, floor, inp.regimes)
     spans: List[Tuple[date, Optional[date]]] = []
     for first, last in runs:
         lo = max(first, floor)
@@ -989,22 +1030,34 @@ def _recalc_lines(inp: LedgerInput, gen: "_Gen", segments: Sequence[Segment], fo
     bearable = {s.id: max(0, s.amount - forgiven.get(s.id, 0)) for s in owner.values()}
     left = dict(bearable)
     unit: Dict[str, int] = {}
-    lines: List[RecalcLine] = []
+    lessons_of: Dict[str, int] = {}        # the lessons the period holds (the student's own lessons of a partial one)
+    cancelled: Dict[str, int] = {}         # how many of them the centre cancelled
+    counted = []
     for cancel in sorted(inp.centre_cancels, key=lambda c: (c.day, c.lesson_id)):
         seg = owner.get(cancel.day)
         if seg is None or not recalc_on(inp.recalc_versions, cancel.day) or bearable[seg.id] <= 0:
             continue
+        counted.append((cancel, seg))
+        cancelled[seg.id] = cancelled.get(seg.id, 0) + 1
+    lines: List[RecalcLine] = []
+    seen: Dict[str, int] = {}
+    for cancel, seg in counted:
         if seg.id not in unit:
             inside = set(seg.days)
             if seg.basis == "lessons" and seg.lessons_in_period:
                 # the full month by the schedule is the divisor
                 unit[seg.id] = round_1000(seg.price.amount * bearable[seg.id], seg.lessons_in_period * seg.amount)
+                lessons_of[seg.id] = seg.lessons_in_part or 0
             else:
                 # the price of the month is the price of the REGULAR schedule: an extra one-off lesson of the period never cheapens the deducted lesson
                 # (the recalculation is new, so there is no earlier rule to keep - unlike the share of a partial period, see REGULAR_SCHEDULE_FROM)
                 count = sum(1 for d in gen.pattern_days(seg.period_start, seg.period_end, regular=True) if d in inside)
                 unit[seg.id] = round_1000(bearable[seg.id], count) if count else 0
+                lessons_of[seg.id] = count
+        seen[seg.id] = seen.get(seg.id, 0) + 1
         amount = min(unit[seg.id], left[seg.id])
+        if lessons_of[seg.id] and cancelled[seg.id] >= lessons_of[seg.id] and seen[seg.id] == cancelled[seg.id]:
+            amount = left[seg.id]          # Money-1 B8: every lesson of the period is cancelled - the whole price comes back, the rounding left over goes to the last lesson
         if amount <= 0:
             continue
         left[seg.id] -= amount
@@ -1302,10 +1355,11 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
             unpaid=max(0, used - covered_lessons), paid_flags=flags_paid)
 
     # ---- status
-    has_event = bool(inp.credits) or opening is not None or bool(pause_days)
+    real_pauses = _merge_pauses(inp.pauses)                    # B5: the gap of a bridged return is not a pause the student asked for
+    has_event = bool(inp.credits) or opening is not None or bool(real_pauses)
     open_now = any(last is None or last >= today for _, last in runs)
     price_today = inp.price_at(today).amount
-    paused_until = next((last for first, last in pause_days if first <= today <= last), None) if open_now else None
+    paused_until = next((last for first, last in real_pauses if first <= today <= last), None) if open_now else None
     owed_since = None
     open_debt = next((s for s in segments if s.kind == "opening" and s.unpaid > 0), None)
     if open_debt is not None:
@@ -1323,7 +1377,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     if opening is not None and opening.paid_until:
         shown = min(today, max(min((r[0] for r in runs), default=today), inp.accounting_start))
         events.append(StatementEvent(day=shown, rank=0, kind="opening_paid_until", ref_id="opening:paid_until"))
-    for first, last in pause_days:
+    for first, last in real_pauses:
         events.append(StatementEvent(day=first, rank=4, kind="pause", ref_id=f"pause:{first.isoformat()}:{last.isoformat()}"))
     for c in credits:
         rank = 2 if c.kind == WRITEOFF else 1

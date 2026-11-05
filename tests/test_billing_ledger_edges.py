@@ -157,10 +157,11 @@ def test_accounting_start_cuts_the_first_period_and_grace_covers_the_lessons_bef
 
 
 def test_gap_in_payment_date_mode_starts_a_new_chain():
-    l = led(today=D(2026, 10, 25), stays=[bl.Stay(D(2026, 9, 1), D(2026, 9, 10)), bl.Stay(D(2026, 9, 20))],
+    # Money-1 B5: a return INSIDE the period he left in goes on with it (tests/test_money1b_ledger.py); a return after that period has ended starts a new chain
+    l = led(today=D(2026, 10, 25), stays=[bl.Stay(D(2026, 9, 1), D(2026, 9, 10)), bl.Stay(D(2026, 10, 5))],
             price_at=flat(300_000))
     firsts = [(s.period_start.isoformat(), len(s.days)) for s in l.segments if s.begun]
-    assert firsts[0] == ("2026-09-01", 10) and firsts[1] == ("2026-09-20", 30)
+    assert firsts[0] == ("2026-09-01", 10) and firsts[1] == ("2026-10-05", 31)
     assert l.segments[0].basis == "days" and l.segments[0].amount == 100_000   # 10 of 30 days of 300 000
 
 
