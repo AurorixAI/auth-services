@@ -223,7 +223,7 @@ assert [m[0].isoformat() for m in missed_g3] == ["2026-10-19"]
 assert len(future_g3) == 8  # 26.10 ... 14.12
 s6 = {"id": IDS["s6"], "name": "Каримов А.", "displayId": "AL09-004"}
 # Money-1 A6 (П8): the sentence the dialog of the archive shows BEFORE the confirmation of the cancellation of the missed lessons
-CANCEL_CONSEQUENCE = "Если отменить эти уроки при архивации, за них не начислят ученикам и не заплатят преподавателям. Сначала разберите их, если они были"
+CANCEL_CONSEQUENCE = "Если отменить эти уроки при архивации, ученикам перерасчёта не будет, а в зарплату преподавателей они не войдут. Если уроки были — сначала отметьте посещаемость"
 put("c2_archive_impact.json", "ArchiveImpactOut", {
     "groupId": IDS["G3"], "groupName": "8-В", "status": "active", "canArchive": False, "examService": "ok",
     "blockers": [

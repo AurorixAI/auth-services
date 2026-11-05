@@ -37,7 +37,7 @@ def test_r1_monday_and_the_border_day_pass_the_day_before_is_too_old(w):
     assert rec(w, "D", "lesson-wed", "2026-10-14").status_code == 200
     old = rec(w, "D", "lesson-tue", "2026-10-13")
     assert old.status_code == 403 and old.json()["detail"]["code"] == "LESSON_TOO_OLD"
-    assert old.json()["detail"]["message"] == "Урок старше 7 дней — его закрывает администратор или владелец"
+    assert old.json()["detail"]["message"] == "Урок старше 7 дней — отметить его может администратор или владелец"
 
 
 def test_r2_the_idempotent_reconcile_obeys_the_window_and_an_old_open_lesson_is_the_admins(w, clock):
