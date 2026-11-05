@@ -1584,6 +1584,7 @@ def test_the_lock_order_of_a_cancel_is_the_one_of_the_writes(world, engine):
 def test_a_backdated_price_never_alters_a_payment_already_entered(world, fixed_today):
     """LOGIC-A (decision 4): a price that rewrites a charged period of a student with money is REFUSED; what is allowed never moves a payment."""
     fixed_today(date(2026, 11, 15))             # LESSONS 76/82: built from day(-N); it failed on the 29th-31st (the periods of day(-20) / day(-19) cross a month)
+    set_settings(world, accounting_start_date="2026-09-01")      # LESSONS 102: the default start is the real ``organizations.created_at`` - after 15.11.2026 (Tashkent) it lies past the pinned day, nothing is charged, nothing is refused
     give_group_price(world.db, world.group, 400_000, EPOCH)
     made = pay(world, amount=400_000, paid_on=day(-20))["payment"]
     second = pay(world, world.students[1], amount=123_456, paid_on=day(-5))["payment"]
