@@ -39,7 +39,7 @@ def test_b7_the_tabs_the_summary_and_the_numbers_of_the_banner(world, fixed_toda
     (row,) = waiting["items"]
     assert (row["bucket"], row["debt_reason"], row["reason"], row["waiting_until"], row["debt"]) == ("waiting", "waiting", "Ждём оплату до 07.11", "2026-11-07", 300_000)
     (bad,) = debt["items"]
-    assert (bad["bucket"], bad["debt"], bad["waiting_until"]) == ("debt", 600_000, None) and bad["debt_reason"] == "overdue"
+    assert (bad["bucket"], bad["debt"], bad["waiting_until"]) == ("debt", 600_000, None) and bad["debt_reason"] == "never_paid"
 
 
 def test_b7_on_the_fourth_day_the_same_student_is_a_debtor_and_in_the_banner(world, fixed_today):
