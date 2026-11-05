@@ -237,7 +237,8 @@ def g_pay_world(w):
     month_lessons(w, m, [s1, s2])
     from src.models.auth import StudentPayment
 
-    for s, amount in ((s1, 600_000), (s2, 300_000)):
+    s2_amount = max(300_000, -(-600_000 * 15 // m.last.day))      # LESSONS 76/102: 300 000 is «through the 15th» only in a month of 30-31 days; a 28 / 29-day February needs a bit more
+    for s, amount in ((s1, 600_000), (s2, s2_amount)):
         mem = student_group(w, s)
         w.db.add(StudentPayment(org_id=w.org.id, membership_id=mem.id, student_id=s.id, group_id=mem.group_id, amount=amount, paid_on=m.first,
                                 created_by=w.owner.id, method="cash"))
