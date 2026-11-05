@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 
 def sheets_touched_by_lesson_teacher_change(
-    db, org_id, lesson_date: str, old_teacher_id: Optional[Any], new_teacher_id: Optional[Any], *, owner: bool
+    db, org_id, lesson_date: str, old_teacher_id: Optional[Any], new_teacher_id: Optional[Any], *, owner: bool, status_cache: Optional[Dict[Any, str]] = None
 ) -> List[Dict[str, Any]]:
     """The SAVED sheets (of the lesson's month) of the two teachers - the sheets the change makes "data changed".
 
@@ -20,13 +20,15 @@ def sheets_touched_by_lesson_teacher_change(
     teachers' saved sheets become "data changed" through the fingerprint and the difference shows in the comparison.
 
     LESSONS 45: the state of a teacher's money belongs to the owner.  ``owner=True`` -> ``[{"sheet_id", "teacher_id", "month", "status"}]`` (``status`` = the payout state
-    ``unpaid | due | settled | overpaid``: live payouts against the saved total); otherwise only ``[{"month"}]`` (one entry, no status, sheet or teacher), so that the
-    administrator still sees «Ведомость за октябрь изменится»."""
+    ``unpaid | due | settled | overpaid``); otherwise only ``[{"month"}]`` (one entry, no status, sheet or teacher), so that the
+    administrator still sees «Ведомость за октябрь изменится».
+
+    LESSONS 104 (stage walk D-2, the third formula): ``status`` is THE payout state of the sheet - the very call the sheet, the list of the month and the Excel make
+    (``PayrollPayoutService.state_for``: the open month by the fresh total, the closed one by the saved total, the advance of the earlier months, the live payouts) - not a comparison of
+    the payouts with the saved total of its own.  ``status_cache`` (sheet id -> status) keeps a list of many lessons of one teacher-month from calculating the month again."""
     from datetime import date
 
-    from sqlalchemy import func
-
-    from src.models.auth import PayrollPayout, PayrollSheet
+    from src.models.auth import PayrollSheet
 
     teachers = [t for t in {old_teacher_id, new_teacher_id} if t]
     if not teachers:
@@ -43,16 +45,20 @@ def sheets_touched_by_lesson_teacher_change(
     )
     if not owner:
         return [{"month": str(lesson_date)[:7]}] if sheets else []
+    from .closed_period import ClosedPeriods
+    from .payroll_payouts import PayrollPayoutService
+    from .payroll_service import PayrollService
+
     out: List[Dict[str, Any]] = []
     for sheet in sheets:
-        paid = (
-            db.query(func.coalesce(func.sum(PayrollPayout.amount), 0))
-            .filter(PayrollPayout.teacher_id == sheet.teacher_id, PayrollPayout.period_month == first_of_month,
-                    PayrollPayout.org_id == org_id, PayrollPayout.voided_at.is_(None))
-            .scalar()
-        )
-        total = int(sheet.total_amount or 0)
-        status = "unpaid" if not paid else "settled" if paid == total else "due" if paid < total else "overpaid"
+        if status_cache is not None and sheet.id in status_cache:
+            status = status_cache[sheet.id]
+        else:
+            month_open = ClosedPeriods.of(db, org_id).closed_for([sheet.teacher_id], first_of_month) is None
+            fresh = PayrollService(db)._fresh_total(str(org_id), sheet) if month_open else None          # a closed month is by the saved total: no calculation needed
+            status = PayrollPayoutService(db).state_for(str(org_id), sheet, fresh).state
+            if status_cache is not None:
+                status_cache[sheet.id] = status
         out.append({"sheet_id": str(sheet.id), "teacher_id": str(sheet.teacher_id), "month": str(lesson_date)[:7], "status": status})
     return out
 

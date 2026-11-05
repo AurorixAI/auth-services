@@ -7,7 +7,7 @@ import pytest
 
 from tests.ops_helpers import clock, closed_sheet, grant_money_right, needs_pg, pg_session  # noqa: F401  (fixtures)
 from tests.payf_helpers import API, client
-from tests.test_p154_money_pg import build_org, decide, extra_world, one_off, sheet, states
+from tests.test_p154_money_pg import build_org, decide, extra_world, hold, one_off, sheet, states
 
 pytestmark = needs_pg
 
@@ -235,3 +235,70 @@ def test_d4_the_preview_keeps_the_right_and_the_refusals_of_the_real_call(pg_ses
     grant_money_right(w, True)
     _call(w, "admin", made, "pay", expect=200)
     assert _call(w, "admin", made, "skip", dry_run=True, expect=409).json()["detail"]["code"] == "ALREADY_DECIDED"
+
+
+# ================================================================================================ LESSONS 104: the status of a payout in a warning is THE status of the sheet
+def _advance_world(pg_session, clock):
+    """October of teacher A: five students paid, additional lesson of 29.10 waits for a decision; a lesson of 21.10 held (125 000); the sheet is saved on 30.10 (open month), an advance of 200 000 is
+    paid (the owner confirms the overpay of 75 000); then a lesson of 23.10 is held: the data say 250 000 now."""
+    w = build_org(pg_session)
+    g, st, ms, made = extra_world(w, clock, "wait", "A")
+    hold(w, g, "lesson-wed", "2026-10-21", {x: "present" for x in st}, start="10:00", end="11:00")
+    clock.set("2026-10-30 12:00")
+    calc = sheet(w, "2026-10")
+    assert calc["total_amount"] == 125_000
+    saved = client(w, "owner").post(f"{API}/org/payroll/sheets", json={"month": "2026-10", "teacher_id": str(w.A.id), "expected_fingerprint": calc["source_fingerprint"]})
+    assert saved.status_code == 201, saved.text
+    w.sheet_id = saved.json()["id"]
+    url = f"{API}/org/payroll/sheets/{w.sheet_id}/payouts"
+    asked = client(w, "owner").post(url, json={"amount": 200_000, "paid_on": "2026-10-30", "method": "cash"})
+    assert asked.status_code == 409 and asked.json()["detail"]["overpay"] == 75_000, asked.text
+    assert client(w, "owner").post(url, json={"amount": 200_000, "paid_on": "2026-10-30", "method": "cash", "confirm_overpay": True, "overpay": 75_000}).status_code == 201
+    hold(w, g, "lesson-fri", "2026-10-23", {x: "present" for x in st}, start="10:00", end="11:00")
+    return w, g, made
+
+
+def _sheet_status(w):
+    r = client(w, "owner").get(f"{API}/org/payroll/sheets/{w.sheet_id}")
+    assert r.status_code == 200, r.text
+    return r.json()["payout"]
+
+
+def test_the_status_in_the_warnings_is_the_payout_state_of_the_sheet_in_an_open_and_in_a_closed_month(pg_session, clock):
+    """Before: ``payrollSheet.status`` compared the payouts with the SAVED total only: in the open month the advance of 200 000 against the saved 125 000 said «переплачено» while the sheet said «Месяц открыт:
+    начислено сейчас 250 000, выплачено 200 000, к выплате 50 000» (``due``)."""
+    from src.auth import payroll_hooks
+
+    w, g, made = _advance_world(pg_session, clock)
+    on_sheet = _sheet_status(w)
+    assert (on_sheet["basis"], on_sheet["state"], on_sheet["balance"]) == ("fresh", "due", 50_000)
+    (item,) = client(w, "owner").get(f"{API}/org/one-off-decisions").json()["items"]
+    assert item["payrollSheet"] == {"month": "2026-10", "status": on_sheet["state"]}      # the queue (the owner)
+    hook = payroll_hooks.sheets_touched_by_lesson_teacher_change(w.db, w.org.id, "2026-10-21", w.A.id, w.B.id, owner=True)
+    assert [h["status"] for h in hook] == ["due"]                                                           # the warning of a change of the teacher
+    assert payroll_hooks.sheets_touched_by_lesson_teacher_change(w.db, w.org.id, "2026-10-21", w.A.id, w.B.id, owner=False) == [{"month": "2026-10"}]      # the administrator: the month only
+    # the same month, CLOSED (the sheet is saved again after it ended): by the saved total, the same words as the sheet
+    clock.set("2026-11-02 12:00")
+    calc = sheet(w, "2026-10")
+    again = client(w, "owner").post(f"{API}/org/payroll/sheets", json={"month": "2026-10", "teacher_id": str(w.A.id), "revision": 1, "expected_fingerprint": calc["source_fingerprint"]})
+    assert again.status_code in (200, 201), again.text
+    on_sheet = _sheet_status(w)
+    assert (on_sheet["basis"], on_sheet["saved_total"], on_sheet["paid"], on_sheet["state"]) == ("saved", 250_000, 200_000, "due")
+    (item,) = client(w, "owner").get(f"{API}/org/one-off-decisions").json()["items"]
+    assert item["payrollSheet"]["status"] == on_sheet["state"]
+    assert [h["status"] for h in payroll_hooks.sheets_touched_by_lesson_teacher_change(w.db, w.org.id, "2026-10-21", w.A.id, w.B.id, owner=True)] == [on_sheet["state"]]
+    # overpaid in the closed month: the same word on both
+    pay_more = client(w, "owner").post(f"{API}/org/payroll/sheets/{w.sheet_id}/payouts", json={"amount": 100_000, "paid_on": "2026-11-02", "method": "cash", "confirm_overpay": True, "overpay": 50_000})
+    assert pay_more.status_code == 201, pay_more.text
+    on_sheet = _sheet_status(w)
+    assert on_sheet["state"] == "overpaid"
+    assert [h["status"] for h in payroll_hooks.sheets_touched_by_lesson_teacher_change(w.db, w.org.id, "2026-10-21", w.A.id, w.B.id, owner=True)] == ["overpaid"]
+
+
+def test_the_status_in_the_change_of_the_lesson_teacher_is_the_payout_state_of_the_sheet(pg_session, clock):
+    """The route itself (an open month): the answer of ``PUT …/lesson-teacher`` carries ``payrollSheetsAffected[].status`` = the state of the payout of the sheet."""
+    w, g, made = _advance_world(pg_session, clock)
+    want = _sheet_status(w)["state"]
+    r = client(w, "owner").put(f"{API}/org/groups/{g.id}/lesson-teacher", json={"lessonDate": "2026-10-21", "lessonId": "lesson-wed", "teacherId": str(w.B.id), "reason": "Провёл другой преподаватель"})
+    assert r.status_code == 200, r.text
+    assert [(x["month"], x["status"]) for x in r.json()["payrollSheetsAffected"] if x.get("teacher_id") == str(w.A.id)] == [("2026-10", want)] and want == "due"

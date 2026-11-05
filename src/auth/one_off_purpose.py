@@ -89,6 +89,7 @@ class OneOffPurpose:
     def __init__(self, svc) -> None:
         self.svc = svc
         self.db = svc.db
+        self._status_cache: Dict[Any, str] = {}          # sheet id -> its payout state, for the lists of this request (one calculation of a teacher-month, not one per lesson)
 
     # ================================================================================================ creation
     @staticmethod
@@ -333,7 +334,7 @@ class OneOffPurpose:
         """The saved payroll sheet the decision touches (the month of the lesson, the teacher who held it): the owner reads its payout state, an admin only the month (LESSONS 45)."""
         from .payroll_hooks import sheets_touched_by_lesson_teacher_change
 
-        found = sheets_touched_by_lesson_teacher_change(self.db, org_id, lesson_date, teacher_id, None, owner=owner) if teacher_id else []
+        found = sheets_touched_by_lesson_teacher_change(self.db, org_id, lesson_date, teacher_id, None, owner=owner, status_cache=self._status_cache) if teacher_id else []
         if not found:
             return None
         return {"month": found[0]["month"], **({"status": found[0]["status"]} if owner else {})}
