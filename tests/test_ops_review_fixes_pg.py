@@ -68,14 +68,13 @@ def test_open_interval_on_an_active_group_is_closed_and_restore_without_interval
     h = new_group(w.db, w.org, w.ids, "FH", "Старая", w.C, [new_slot("lesson-h", 3, "18:00", "19:00", "2026-10-12")])
     h.status = "archived"
     h.inactive_intervals = []
+    h.updated_at = datetime(2026, 11, 1, 5, 0)   # 05.11 (lead): the stamp of the old archive is a literal, not the real wall clock (a fixed test date went off on 05.11)
     w.db.commit()
-    # 05.11 (lead): the stamp of the old archive is the REAL wall clock - the test clock goes a week after it, never a fixed date (it went off on 05.11)
-    day = (datetime.utcnow() + timedelta(days=7)).date().isoformat()
-    clock.set(f"{day} 14:00")
+    clock.set("2026-11-05 14:00")
     r = client(w, "admin").post(G.format(gid=h.id) + "/restore", json={})
     assert r.status_code == 200, r.text
     h = refresh(w, h)
-    assert len(h.inactive_intervals) == 1 and h.inactive_intervals[0]["to"] == f"{day}T09:00:00" and h.inactive_intervals[0]["from"] < day
+    assert len(h.inactive_intervals) == 1 and h.inactive_intervals[0] == {"from": "2026-11-01T05:00:00", "to": "2026-11-05T09:00:00"}
 
 
 # ------------------------------------------------------------------------------------------------------------------------------ 3
