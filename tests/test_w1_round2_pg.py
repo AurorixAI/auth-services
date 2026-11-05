@@ -42,10 +42,14 @@ def test_s2_1_the_owner_sees_the_sheet_and_its_payout_state_the_admin_only_the_m
         w.db.add(PayrollSheet(org_id=w.org.id, teacher_id=teacher_id, period_month=date(2026, 10, 1), source_fingerprint="x", total_amount=100, created_by=w.owner.id,
                               updated_by=w.owner.id, created_at=datetime(2026, 10, 15, 6, 0), updated_at=datetime(2026, 10, 15, 6, 0)))        # saved in the middle of October: the month is OPEN (Money-1 A1)
     w.db.commit()
+    state_before = {str(row.id): client(w, "owner").get(f"{API}/org/payroll/sheets/{row.id}").json()["payout"]["state"]
+                    for row in w.db.query(PayrollSheet).filter(PayrollSheet.org_id == w.org.id).all()}          # THE payout state of each sheet BEFORE the change (the warning is said before it, too)
     mine = put_teacher(w, "owner", "2026-10-12", "D")                      # a lesson A held: A's and D's sheets of October become «data changed»
     assert mine.status_code == 200, mine.text
     sheets = mine.json()["payrollSheetsAffected"]
-    assert len(sheets) == 2 and all(set(s) == {"sheet_id", "teacher_id", "month", "status"} and s["status"] == "unpaid" for s in sheets)
+    assert len(sheets) == 2 and all(set(s) == {"sheet_id", "teacher_id", "month", "status"} for s in sheets)
+    # LESSONS 104: the status is THE payout state of the sheet (the open month by what the data say before the change: nothing is earned and nothing paid -> «settled»; it was «unpaid» by the saved 100 of the old formula)
+    assert {s["sheet_id"]: s["status"] for s in sheets} == state_before and set(state_before.values()) == {"settled"}
     theirs = put_teacher(w, "admin", "2026-10-19", "D")
     assert theirs.status_code == 200, theirs.text
     assert theirs.json()["payrollSheetsAffected"] == [{"month": "2026-10"}]          # no sheet, no teacher, no status: the toast «Ведомость за октябрь изменится» only
