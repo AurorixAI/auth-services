@@ -996,11 +996,12 @@ class PayrollService:
                 PayrollSheet.lines.contains([{"fee_overridden": True}]).label("manual_fee"),
             ).filter(PayrollSheet.org_id == org_id, PayrollSheet.period_month == first)
         }
-        from .payroll_payouts import PayrollPayoutService, state_of
+        from .payroll_payouts import PayrollPayoutService
 
-        payouts = PayrollPayoutService(self.db).payouts_of(org_id, month=first)
+        payout_service = PayrollPayoutService(self.db)
+        payouts = payout_service.payouts_of(org_id, month=first)
         teacher_ids = set(seed.teachers) | set(sheets)
-        carries = PayrollPayoutService(self.db).carry_ins(org_id, list(sheets), first)       # R3 3: the advance of the earlier months, one pair of queries for the month
+        carries = payout_service.carry_ins(org_id, list(sheets), first)       # R3 3: the advance of the earlier months, one pair of queries for the month
         names = self._names(teacher_ids)
         suggestions = self._suggested(org_id, teacher_ids)
         book = payroll_rates.load_book(self.db, org_id, teacher_ids)
@@ -1026,7 +1027,8 @@ class PayrollService:
                     t_seed = teacher or TeacherSeed(tid, fingerprint=fresh)
                     if not self._missing_percents(t_seed, in_force):
                         fresh_total = engine.sheet_total(self._render(t_seed, in_force, self._carried_changes(sheet), seed.divisor))
-                payout = state_of(saved_total=int(sheet.total_amount), fresh_total=fresh_total, items=payouts.get((tid, first), []), carry_in=carries.get(tid, 0))
+                payout = payout_service.state_in_month(org_id, tid, first, saved_total=int(sheet.total_amount), fresh_total=fresh_total, items=payouts.get((tid, first), []),
+                                                       carry_in=carries.get(tid, 0))       # D-2: the SAME function as the payout block of the sheet (the open month by the fresh total)
             out.append(
                 MonthTeacher(
                     teacher_id=str(tid),

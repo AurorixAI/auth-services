@@ -203,16 +203,22 @@ class PayrollPayoutService:
             out[teacher] = carry
         return out
 
+    def state_in_month(self, org_id: str, teacher_id: UUID, month: date, *, saved_total: int, fresh_total: Optional[int], items: List[PayoutOut], carry_in: int) -> PayoutState:
+        """THE payout state of a (teacher, month): the sheet, its payout block, the Excel and the LIST of the month (the row of the teacher; its header is the sum of the rows) all call this one function
+        (stage walk D-2: the list called ``state_of`` without the month's openness - an open month showed «переплачено 105 000» against the sheet's «29 166»).  R3 #20: an OPEN month (not saved after
+        it ended, or reopened) is by the fresh total, a CLOSED one by the saved total."""
+        from .closed_period import ClosedPeriods
+
+        month_open = ClosedPeriods.of(self.db, org_id).closed_for([teacher_id], month) is None
+        return state_of(saved_total=saved_total, fresh_total=fresh_total, items=items, carry_in=carry_in, month_open=month_open)
+
     def state_for(self, org_id: str, sheet: PayrollSheet, fresh_total: Optional[int],
                   all_payouts: Optional[Dict[Tuple[UUID, date], List[PayoutOut]]] = None, carry_in: Optional[int] = None) -> PayoutState:
         items = (all_payouts if all_payouts is not None else self.payouts_of(org_id, month=sheet.period_month, teacher_ids=[sheet.teacher_id])
                  ).get((sheet.teacher_id, sheet.period_month), [])
         if carry_in is None:
             carry_in = self.carry_ins(org_id, [sheet.teacher_id], sheet.period_month).get(sheet.teacher_id, 0)
-        from .closed_period import ClosedPeriods
-
-        month_open = ClosedPeriods.of(self.db, org_id).closed_for([sheet.teacher_id], sheet.period_month) is None        # R3 #20: not saved after the month ended (or reopened)
-        return state_of(saved_total=int(sheet.total_amount), fresh_total=fresh_total, items=items, carry_in=carry_in, month_open=month_open)
+        return self.state_in_month(org_id, sheet.teacher_id, sheet.period_month, saved_total=int(sheet.total_amount), fresh_total=fresh_total, items=items, carry_in=carry_in)
 
     def list(self, org_id: str, *, month: Optional[date], teacher_id: Optional[UUID]) -> List[PayoutOut]:
         grouped = self.payouts_of(org_id, month=month, teacher_ids=[teacher_id] if teacher_id else None)
