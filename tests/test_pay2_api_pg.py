@@ -451,7 +451,7 @@ def test_statement_export_filename(world, fixed_today):
     flat = [c.value for row in ws.iter_rows() for c in row if c.value is not None]
     assert 231000 in flat and ws["A1"].value.startswith("Выписка — ") and "Оплата № 17 · наличные" in " ".join(str(x) for x in flat)
     head = next(r for r in range(1, 30) if ws.cell(r, 1).value == "Дата")
-    assert [ws.cell(head, c).value for c in range(1, 7)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Остаток долга", "Подробности"]   # no «Прощено» / «Возвращено» without such operations
+    assert [ws.cell(head, c).value for c in range(1, 7)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Остаток", "Подробности"]   # no «Прощено» / «Возвращено» without such operations
     assert ws.freeze_panes == f"A{head + 1}"
 
 
@@ -783,9 +783,9 @@ def test_the_statement_xlsx_reads_like_the_page(world, fixed_today):
     assert [ws.cell(r, 1).value for r in (1, 2, 3, 4)] == [
         f"Выписка — Каримова Алия · ID A-0042 · {world.group.name} · Пётр Teacher",
         "По состоянию на 21.10.2026 · Учёт ведётся с 01.08.2026 · Период: Все месяцы",
-        "Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Возвращено 40 000 · Остаток долга: Аванс 60 000", None]
+        "Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Возвращено 40 000 · Остаток: Аванс 60 000", None]
     assert ws["A1"].font.bold and all(ws.cell(r, 1).data_type == "s" for r in (1, 2, 3))
-    assert [ws.cell(head, c).value for c in range(1, 9)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Прощено", "Возвращено", "Остаток долга", "Подробности"]
+    assert [ws.cell(head, c).value for c in range(1, 9)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Прощено", "Возвращено", "Остаток", "Подробности"]
     assert all(ws.cell(head, c).font.bold for c in range(1, 9)) and ws.freeze_panes == "A6"
     who = "Иван Owner"
     assert sheet_grid(ws, head + 1) == [

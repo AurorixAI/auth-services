@@ -261,7 +261,7 @@ class PaymentsReports:
             return (data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     statement_file_name(st, date_from, date_to))
         st = self.statement(org_id, membership_id, date_from=date_from, date_to=date_to, include_voided=include_voided)
-        header = ["№", "Дата", "Операция", "Стоимость", "Оплачено / прощено", "Возвращено / деньги в другие группы", "Остаток долга", "Подробности"]
+        header = ["№", "Дата", "Операция", "Стоимость", "Оплачено / прощено", "Возвращено / деньги в другие группы", "Остаток", "Подробности"]
 
         def detail(r: StatementRow) -> str:
             d = r.details
@@ -280,7 +280,7 @@ class PaymentsReports:
             ["Выписка", f"{st.membership.student_name} · {st.membership.group_name}", f"на {st.as_of.strftime('%d.%m.%Y')}"],
             ["Стоимость обучения", st.summary.charged, "Оплачено", st.summary.paid + st.summary.transferred_in],
             ["Прощено", st.summary.written_off, "Возвращено / деньги в другие группы", st.summary.refunded + st.summary.transferred_out],
-            ["Остаток долга", tx.balance_text(st.summary.advance - st.summary.debt)],
+            ["Остаток", tx.balance_text(st.summary.advance - st.summary.debt)],
         ]
         body = [[r.seq, r.date.strftime("%d.%m.%Y"), r.title, r.debit or "", r.credit or "", r.outflow or "",
                  r.balance_after if r.balance_after is not None else "", detail(r)] for r in [*st.rows, *st.voided]]

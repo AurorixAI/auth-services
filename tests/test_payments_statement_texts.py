@@ -231,12 +231,12 @@ def test_cancel_note_and_totals():
     bare = StatementRow(seq=1, date=D(2026, 9, 1), type="payment", title="x", voided_at="x")
     assert t.cancel_note(bare) == "Отменено: причина не указана"
     s = StatementSummary(charged=1_200_000, paid=1_100_000, written_off=100_000, refunded=0, debt=0, advance=0)
-    assert t.total_lines(s) == [("Стоимость обучения", 1_200_000), ("Оплачено", 1_100_000), ("Прощено", 100_000), ("Остаток долга", "0")]
+    assert t.total_lines(s) == [("Стоимость обучения", 1_200_000), ("Оплачено", 1_100_000), ("Прощено", 100_000), ("Остаток", "0")]
     s = StatementSummary(charged=10, paid=100, transferred_in=5, refunded=7, transferred_out=3, advance=92)
     assert [x[0] for x in t.total_lines(s)] == ["Стоимость обучения", "Оплачено", "Деньги из других групп", "Возвращено",
-                                                 "Деньги в другие группы", "Остаток долга"]
-    assert t.total_lines(StatementSummary(debt=92_000))[-1] == ("Остаток долга", "Долг 92 000")
-    assert t.total_lines(StatementSummary(advance=508_000))[-1] == ("Остаток долга", "Аванс 508 000")
+                                                 "Деньги в другие группы", "Остаток"]
+    assert t.total_lines(StatementSummary(debt=92_000))[-1] == ("Остаток", "Долг 92 000")
+    assert t.total_lines(StatementSummary(advance=508_000))[-1] == ("Остаток", "Аванс 508 000")
 
 
 def test_title_lines_and_the_periods_to_come():
@@ -248,8 +248,8 @@ def test_title_lines_and_the_periods_to_come():
     assert t.asof_line(D(2026, 10, 21), D(2026, 8, 1), None, None) == "По состоянию на 21.10.2026 · Учёт ведётся с 01.08.2026 · Период: Все месяцы"
     assert t.asof_line(D(2026, 10, 21), D(2026, 8, 1), D(2026, 10, 1), D(2026, 10, 31)).endswith("Период: Октябрь 2026")
     s = StatementSummary(charged=1_103_000, paid=1_153_000, written_off=50_000, refunded=40_000, advance=60_000)
-    assert t.totals_line(s) == "Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Возвращено 40 000 · Остаток долга: Аванс 60 000"
-    assert t.totals_line(StatementSummary(charged=5, paid=5)) == "Стоимость обучения 5 · Оплачено 5 · Остаток долга: 0"
+    assert t.totals_line(s) == "Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Возвращено 40 000 · Остаток: Аванс 60 000"
+    assert t.totals_line(StatementSummary(charged=5, paid=5)) == "Стоимость обучения 5 · Оплачено 5 · Остаток: 0"
     nov = seg(D(2026, 11, 1), D(2026, 11, 30), charge=500_000)
     assert t.upcoming_line(nov) == "01.11–30.11: к оплате 500 000 сум"
     nov.paid = 274_000

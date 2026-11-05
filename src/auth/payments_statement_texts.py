@@ -371,10 +371,10 @@ def asof_line(as_of: date, accounting_start: date, date_from: Optional[date], da
 
 
 def totals_line(summary) -> str:
-    """Row 3: «Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Остаток долга: Аванс 60 000» (the non-zero extras only)."""
+    """Row 3: «Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Остаток: Аванс 60 000» (the non-zero extras only)."""
     parts = []
     for label, value in total_lines(summary):
-        parts.append(f"{label}: {value}" if label == "Остаток долга" else f"{label} {tx.num(value)}")
+        parts.append(f"{label}: {value}" if label == "Остаток" else f"{label} {tx.num(value)}")
     return " · ".join(parts)
 
 
@@ -392,11 +392,11 @@ def upcoming_line(segment) -> str:
 
 def total_lines(summary) -> List[Tuple[str, object]]:
     """The tiles above the statement (``statementTotals``): Стоимость обучения · Оплачено · (Деньги из других групп · Прощено · Перерасчёт ·
-    Возвращено · Деньги в другие группы, only when there is something) · Остаток долга.  The balance is text («Долг 92 000»)."""
+    Возвращено · Деньги в другие группы, only when there is something) · Остаток.  The balance is text («Долг 92 000»)."""
     out: List[Tuple[str, object]] = [("Стоимость обучения", int(summary.charged)), ("Оплачено", int(summary.paid))]
     for label, value in (("Деньги из других групп", summary.transferred_in), ("Прощено", summary.written_off),
                          ("Перерасчёт", summary.recalculated), ("Возвращено", summary.refunded), ("Деньги в другие группы", summary.transferred_out)):
         if int(value) > 0:
             out.append((label, int(value)))
-    out.append(("Остаток долга", balance_cell(int(summary.advance) - int(summary.debt))[1]))
+    out.append(("Остаток", balance_cell(int(summary.advance) - int(summary.debt))[1]))
     return out

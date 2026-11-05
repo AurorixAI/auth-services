@@ -2,7 +2,7 @@
 ALGO - the statement as an Excel file: it reads like the page (Выписка), in the house style (``xlsx_style``).
 
 Title block (three lines: who, as-of / period, totals), then the table «Дата | Операция | Стоимость | Оплачено | [Прощено] | [Возвращено] | [Деньги в другие группы] |
-Остаток долга | Подробности» with a band per month, the carry line of a single month, a blue «Итого» row and, below, the periods to come and the cancelled
+Остаток | Подробности» with a band per month, the carry line of a single month, a blue «Итого» row and, below, the periods to come and the cancelled
 records.  The words come from ``payments_statement_texts`` (the mirror of the page's rules); this module only draws them.
 
 The rules of the file (owner, 23.10.2026):
@@ -22,7 +22,7 @@ from . import payments_statement_texts as st_tx
 from . import xlsx_style as xs
 
 SHEET_TITLE = "Выписка"
-HEADER = ["Дата", "Операция", "Стоимость", "Оплачено", "Остаток долга", "Подробности"]       # the columns every statement has (the optional ones go after «Оплачено»)
+HEADER = ["Дата", "Операция", "Стоимость", "Оплачено", "Остаток", "Подробности"]       # the columns every statement has (the optional ones go after «Оплачено»)
 OPTIONAL = (("forgiven", "Прощено"), ("recalc", "Перерасчёт"), ("refunded", "Возвращено"), ("transferred", "Деньги в другие группы"))
 CANCELLED_TITLE = "Отменённые записи"
 CANCELLED_EMPTY = "Отменённых записей нет"
@@ -39,7 +39,7 @@ def columns_of(kinds) -> List[Tuple[str, str]]:
     """``[(key, header)]`` of the table: the fixed columns and the optional money columns that the file really uses."""
     out = [("date", "Дата"), ("title", "Операция"), ("charged", "Стоимость"), ("paid", "Оплачено")]
     out += [(key, label) for key, label in OPTIONAL if key in kinds]
-    return out + [("balance", "Остаток долга"), ("details", "Подробности")]
+    return out + [("balance", "Остаток"), ("details", "Подробности")]
 
 
 def build_statement_xlsx(

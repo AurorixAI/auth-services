@@ -87,7 +87,7 @@ def grid(ws, first):
     return [[ws.cell(r, c).value for c in range(1, ws.max_column + 1)] for r in range(first, ws.max_row + 1)]
 
 
-GOLDEN_HEADER = ["Дата", "Операция", "Стоимость", "Оплачено", "Прощено", "Возвращено", "Остаток долга", "Подробности"]
+GOLDEN_HEADER = ["Дата", "Операция", "Стоимость", "Оплачено", "Прощено", "Возвращено", "Остаток", "Подробности"]
 
 
 def test_title_block_header_freeze_and_widths():
@@ -97,7 +97,7 @@ def test_title_block_header_freeze_and_widths():
     assert lines == [
         "Выписка — Иванов Иван · ID A-0042 · Математика 9 · Петрова Анна",
         "По состоянию на 21.10.2026 · Учёт ведётся с 01.08.2026 · Период: Все месяцы",
-        "Стоимость обучения 1 225 806 · Оплачено 1 225 806 · Прощено 100 000 · Возвращено 40 000 · Остаток долга: Аванс 60 000"]
+        "Стоимость обучения 1 225 806 · Оплачено 1 225 806 · Прощено 100 000 · Возвращено 40 000 · Остаток: Аванс 60 000"]
     assert ws["A1"].font.bold and ws["A1"].font.size == 14 and {str(r) for r in ws.merged_cells.ranges} >= {"A1:H1", "A2:H2", "A3:H3"}
     assert all(ws.cell(r, 1).data_type == "s" for r in (1, 2, 3))
     assert [ws.cell(head, c).value for c in range(1, 9)] == GOLDEN_HEADER
@@ -108,7 +108,7 @@ def test_title_block_header_freeze_and_widths():
     widths = {name: ws.column_dimensions[chr(64 + c)].width for name, c in col.items()}
     assert all(w >= 12 for w in widths.values()) and widths["Операция"] <= 60 and widths["Подробности"] <= 60
     # no #### : a date needs 10, the biggest sum 9 characters with the separators, the balance text 13
-    assert widths["Дата"] >= 12 and widths["Стоимость"] >= 12 and widths["Оплачено"] >= 12 and widths["Остаток долга"] >= len("Долг 425 806") + 2
+    assert widths["Дата"] >= 12 and widths["Стоимость"] >= 12 and widths["Оплачено"] >= 12 and widths["Остаток"] >= len("Долг 425 806") + 2
     assert widths["Операция"] >= len("Оплата № 4 · перевод · внёс Айбек О.")
     assert ws.cell(head, 1).alignment.horizontal == "center" and ws.cell(head, col["Оплачено"]).alignment.horizontal == "center"
     # print: landscape, fit to the width, the header repeated on every page
@@ -162,16 +162,16 @@ def test_the_blue_total_row_and_the_one_balance_rule():
     assert [ws.cell(total, col[h]).value for h in ("Стоимость", "Оплачено", "Прощено", "Возвращено")] == [1_225_806, 1_225_806, 100_000, 40_000]
     assert ws.cell(total, col["Стоимость"]).number_format == "#,##0"
     # ONE rule: the balance is the words of the screen - in the rows, in the total and in the title line alike
-    assert ws.cell(total, col["Остаток долга"]).value == "Аванс 60 000" and ws.cell(total, col["Остаток долга"]).data_type == "s"
-    assert ws.cell(1, 1).font.size == 14 and ws.cell(3, 1).value.endswith("Остаток долга: Аванс 60 000")
-    balances = [ws.cell(r, col["Остаток долга"]).value for r in range(head + 1, total) if ws.cell(r, col["Остаток долга"]).value]
+    assert ws.cell(total, col["Остаток"]).value == "Аванс 60 000" and ws.cell(total, col["Остаток"]).data_type == "s"
+    assert ws.cell(1, 1).font.size == 14 and ws.cell(3, 1).value.endswith("Остаток: Аванс 60 000")
+    balances = [ws.cell(r, col["Остаток"]).value for r in range(head + 1, total) if ws.cell(r, col["Остаток"]).value]
     assert all(isinstance(b, str) and (b.startswith(("Долг ", "Аванс ")) or b == "0") for b in balances)
     # a month: the total is of the month, the balance is the balance after its last record
     ws = sheet(golden(), date_from=D(2026, 10, 1), date_to=D(2026, 10, 31))
     _, head = title_block(ws)
     col = columns(ws, head)
     total = next(r for r in range(head + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Итого")
-    assert [ws.cell(total, col[h]).value for h in ("Стоимость", "Оплачено", "Прощено", "Возвращено", "Остаток долга")] == [500_000, 425_806, 100_000, 40_000, "Аванс 60 000"]
+    assert [ws.cell(total, col[h]).value for h in ("Стоимость", "Оплачено", "Прощено", "Возвращено", "Остаток")] == [500_000, 425_806, 100_000, 40_000, "Аванс 60 000"]
 
 
 def test_the_optional_columns_exist_only_when_the_file_has_such_operations():
@@ -179,7 +179,7 @@ def test_the_optional_columns_exist_only_when_the_file_has_such_operations():
     st.rows = [r for r in st.rows if r.type not in ("writeoff", "refund")]
     ws = sheet(st)
     _, head = title_block(ws)
-    assert [ws.cell(head, c).value for c in range(1, ws.max_column + 1)] == HEADER == ["Дата", "Операция", "Стоимость", "Оплачено", "Остаток долга", "Подробности"]
+    assert [ws.cell(head, c).value for c in range(1, ws.max_column + 1)] == HEADER == ["Дата", "Операция", "Стоимость", "Оплачено", "Остаток", "Подробности"]
     assert {str(r) for r in ws.merged_cells.ranges} >= {"A1:F1", "A3:F3"}
     # a transfer to another group has «Деньги в другие группы» (positive); money that came in stays in «Оплачено» as on the page
     st = golden(voided=False)
@@ -190,13 +190,13 @@ def test_the_optional_columns_exist_only_when_the_file_has_such_operations():
     ws = sheet(st)
     _, head = title_block(ws)
     col = columns(ws, head)
-    assert [ws.cell(head, c).value for c in range(1, ws.max_column + 1)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Прощено", "Возвращено", "Деньги в другие группы", "Остаток долга", "Подробности"]
+    assert [ws.cell(head, c).value for c in range(1, ws.max_column + 1)] == ["Дата", "Операция", "Стоимость", "Оплачено", "Прощено", "Возвращено", "Деньги в другие группы", "Остаток", "Подробности"]
     out = next(r for r in range(head, ws.max_row + 1) if ws.cell(r, 2).value == "Перенос в группу Физика")
     inn = next(r for r in range(head, ws.max_row + 1) if ws.cell(r, 2).value == "Перенос из группы Химия")
     assert (ws.cell(out, col["Деньги в другие группы"]).value, ws.cell(out, col["Оплачено"]).value) == (30_000, None)
     assert (ws.cell(inn, col["Оплачено"]).value, ws.cell(inn, col["Деньги в другие группы"]).value) == (10_000, None)
     total = next(r for r in range(head + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Итого")
-    assert ws.cell(total, col["Деньги в другие группы"]).value == 30_000 and ws.cell(total, col["Оплачено"]).value == 1_225_806 + 10_000 and ws.cell(total, col["Остаток долга"]).value == "Аванс 40 000"
+    assert ws.cell(total, col["Деньги в другие группы"]).value == 30_000 and ws.cell(total, col["Оплачено"]).value == 1_225_806 + 10_000 and ws.cell(total, col["Остаток"]).value == "Аванс 40 000"
 
 
 def test_cell_types_formats_alignment_and_merges():
@@ -211,7 +211,7 @@ def test_cell_types_formats_alignment_and_merges():
     # rows: the second row of the table is the August charge
     r = first + 1
     date_cell, op = ws.cell(r, col["Дата"]), ws.cell(r, col["Операция"])
-    charged, paid, balance, details = (ws.cell(r, col[h]) for h in ("Стоимость", "Оплачено", "Остаток долга", "Подробности"))
+    charged, paid, balance, details = (ws.cell(r, col[h]) for h in ("Стоимость", "Оплачено", "Остаток", "Подробности"))
     assert date_cell.is_date and date_cell.number_format == "DD.MM.YYYY" and date_cell.alignment.horizontal == "center"
     assert isinstance(charged.value, int) and charged.number_format == "#,##0" and charged.alignment.horizontal == "center"
     assert paid.value is None and balance.data_type == "s" and balance.value == "Долг 225 806" and balance.alignment.horizontal == "center"
@@ -260,7 +260,7 @@ def test_a_single_month_has_its_carry_line_and_the_period_in_the_title():
     col = columns(ws, head)
     assert lines[1].endswith("Период: Октябрь 2026")
     # the title totals stay for the whole membership
-    assert lines[2] == "Стоимость обучения 1 225 806 · Оплачено 1 225 806 · Прощено 100 000 · Возвращено 40 000 · Остаток долга: Аванс 60 000"
+    assert lines[2] == "Стоимость обучения 1 225 806 · Оплачено 1 225 806 · Прощено 100 000 · Возвращено 40 000 · Остаток: Аванс 60 000"
     got = grid(ws, head + 1)
     assert got[0][0] == "Октябрь 2026" and got[1][0] == "С сентября перенесён аванс 74 194"
     assert [x for x in ws.merged_cells.ranges if x.min_row == head + 2] and ws.cell(head + 2, 1).font.italic
@@ -273,7 +273,7 @@ def test_a_single_month_has_its_carry_line_and_the_period_in_the_title():
     assert not any(isinstance(g[0], str) and g[0] in ("Август 2026", "Сентябрь 2026") for g in got)
     assert not any(g[1] == "Оплата № 99" for g in got)
     # the balance is the ledger's, not recomputed over the cut rows: a charge row keeps its running debt
-    assert got[2][col["Остаток долга"] - 1] == "Долг 425 806"
+    assert got[2][col["Остаток"] - 1] == "Долг 425 806"
 
 
 def test_range_label_and_a_month_without_records_or_carry():
@@ -312,7 +312,7 @@ def test_an_empty_statement():
     st.summary = StatementSummary()
     ws = sheet(st)
     lines, head = title_block(ws)
-    assert lines[2] == "Стоимость обучения 0 · Оплачено 0 · Остаток долга: 0" and ws.cell(head + 1, 1).value == "В выписке пока нет записей"
+    assert lines[2] == "Стоимость обучения 0 · Оплачено 0 · Остаток: 0" and ws.cell(head + 1, 1).value == "В выписке пока нет записей"
 
 
 def test_the_russian_file_name_without_technical_ids():

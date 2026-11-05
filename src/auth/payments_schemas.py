@@ -964,7 +964,7 @@ class StatementRow(PayModel):
     credit: int = 0  # money in (payment, transfer in, write-off)
     outflow: int = 0  # money out (refund, transfer out)
     balance_after: Optional[int] = None  # negative = debt, positive = advance; null on a voided row
-    balance_text: Optional[str] = None  # «Долг 500 000» | «Аванс 21 000» | «0» (the «Остаток долга» column)
+    balance_text: Optional[str] = None  # «Долг 500 000» | «Аванс 21 000» | «0» (the «Остаток» column)
     voided_at: Optional[str] = None
     void_reason: Optional[str] = None
     voided_by_name: Optional[str] = None
