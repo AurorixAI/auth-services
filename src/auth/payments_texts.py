@@ -84,6 +84,11 @@ def recalc_text(amount: int, day: date) -> str:
     return f"\u2212{money(amount)}: урок {ddmm(day)} отменён центром"
 
 
+def waiting_text(until: date) -> str:
+    """Money-1 B7: the reason of a student who owes only the period that has just begun (the debtor texts are «Ещё не платил» / «Просрочено на N дней»)."""
+    return f"Ждём оплату до {ddmm(until)}"
+
+
 def recalc_amount_text(amount: int) -> str:
     """The quiet line under the title of the statement row (the title already names the lesson): ``−46 000 сум``."""
     return f"\u2212{money(amount)}"

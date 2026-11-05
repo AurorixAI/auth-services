@@ -431,6 +431,7 @@
               {
                 "enum": [
                   "debt",
+                  "waiting",
                   "expiring",
                   "active",
                   "paused"
@@ -492,7 +493,8 @@
                 "enum": [
                   "overdue",
                   "partial",
-                  "never_paid"
+                  "never_paid",
+                  "waiting"
                 ],
                 "type": "string"
               },
@@ -732,6 +734,18 @@
               }
             ],
             "title": "Teacher Name"
+          },
+          "waiting_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Until"
           },
           "writeoff_allowed": {
             "default": false,
@@ -2216,6 +2230,11 @@
             "default": 0,
             "title": "Paused",
             "type": "integer"
+          },
+          "waiting": {
+            "default": 0,
+            "title": "Waiting",
+            "type": "integer"
           }
         },
         "title": "PaymentsBuckets",
@@ -2254,6 +2273,11 @@
           "debt_total": {
             "default": 0,
             "title": "Debt Total",
+            "type": "integer"
+          },
+          "debt_waiting_total": {
+            "default": 0,
+            "title": "Debt Waiting Total",
             "type": "integer"
           },
           "debtors": {
@@ -2323,6 +2347,11 @@
           "students_paused": {
             "default": 0,
             "title": "Students Paused",
+            "type": "integer"
+          },
+          "students_waiting": {
+            "default": 0,
+            "title": "Students Waiting",
             "type": "integer"
           },
           "students_with_advance": {
@@ -6664,6 +6693,7 @@
               "default": "all",
               "enum": [
                 "debt",
+                "waiting",
                 "expiring",
                 "active",
                 "paused",

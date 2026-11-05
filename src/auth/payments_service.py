@@ -710,7 +710,7 @@ class PaymentService:
                     writeoff_allowed=l.debt > 0,
                     paused=self._paused_range(e), opening=self._opening_brief(e),
                     price_ends_on_leave=bool(e.membership.is_active and e.price.source == pricing.SOURCE_OVERRIDE and e.price.amount is not None),
-                    bucket=pv.entry_bucket(e), debt_reason=(why := pv.debt_reason(e))[0], reason=why[1],
+                    bucket=pv.entry_bucket(e), debt_reason=(why := pv.debt_reason(e))[0], reason=why[1], waiting_until=pv.waiting_until(e),
                 )
             )
         return rows
@@ -758,7 +758,10 @@ class PaymentService:
         students_debt: set = set()
         students_advance: set = set()
         students_paused: set = set()
-        buckets = {pv.BUCKET_DEBT: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0}
+        buckets = {pv.BUCKET_DEBT: 0, pv.BUCKET_WAITING: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0}
+        students_waiting: set = set()
+        students_debtors: set = set()
+        debt_waiting_total = 0
         price_missing = 0
         for e in entries:
             l = e.ledger
@@ -775,7 +778,12 @@ class PaymentService:
                 buckets[bucket] += 1
                 if bucket == pv.BUCKET_PAUSED:
                     students_paused.add(e.student.id)
-            if e.membership.id in tracked and e.price.amount is None and l.status.status != ps.FREE and bucket != pv.BUCKET_DEBT:
+                elif bucket == pv.BUCKET_WAITING:
+                    students_waiting.add(e.student.id)
+                    debt_waiting_total += l.debt
+                elif bucket == pv.BUCKET_DEBT:
+                    students_debtors.add(e.student.id)
+            if e.membership.id in tracked and e.price.amount is None and l.status.status != ps.FREE and bucket not in (pv.BUCKET_DEBT, pv.BUCKET_WAITING):
                 price_missing += 1
             if e.membership.id not in tracked:
                 continue
@@ -807,7 +815,7 @@ class PaymentService:
             accounting_start_date=loader.settings.accounting_start,
             paused=counts[ps.PAUSED],
             buckets=PaymentsBuckets(**buckets), price_missing=price_missing, students_with_advance=len(students_advance),
-            debtors=len(students_debt), students_paused=len(students_paused),
+            debtors=len(students_debtors), students_paused=len(students_paused), students_waiting=len(students_waiting), debt_waiting_total=debt_waiting_total,
         )
         if SUMMARY_TTL_SECONDS > 0:
             _SUMMARY_CACHE[str(org_id)] = (time.monotonic() + SUMMARY_TTL_SECONDS, result)
@@ -818,7 +826,7 @@ class PaymentService:
         def name(e: ls.MembershipLedger):
             return (person_name(e.student.last_name, e.student.first_name) or "").lower(), e.group.name.lower(), str(e.membership.id)
 
-        if by_debt or bucket == "debt":
+        if by_debt or bucket in ("debt", "waiting"):
             return lambda e: (-e.ledger.debt, *name(e))
         if bucket == "expiring":
             return lambda e: (e.ledger.status.days_left if e.ledger.status.days_left is not None else 10**9, *name(e))
@@ -849,7 +857,7 @@ class PaymentService:
             bucket = pv.BUCKET_DEBT
         scope = "all" if bucket == "debt" else "tracked"
         entries = loader.load(group_id=group_id, teacher_id=teacher_id, search=search, scope=scope)
-        if bucket in (pv.BUCKET_DEBT, pv.BUCKET_EXPIRING, pv.BUCKET_ACTIVE, pv.BUCKET_PAUSED):
+        if bucket in (pv.BUCKET_DEBT, pv.BUCKET_WAITING, pv.BUCKET_EXPIRING, pv.BUCKET_ACTIVE, pv.BUCKET_PAUSED):
             picked = [e for e in entries if pv.entry_bucket(e) == bucket]
         else:
             picked = [e for e in entries if ps.in_bucket(e.ledger.status.status, bucket)]

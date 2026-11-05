@@ -330,9 +330,10 @@ class MembershipPaymentRow(BaseModel):
     # платить (no debt, the next period is due within ``expiring_days``), ``active`` Оплачено (no debt, not due soon; an advance included),
     # ``paused`` На паузе (today is inside a pause, no debt); null: a free student, one without a price, a membership that is not tracked.
     # ``debt_reason`` (code) and ``reason`` (the sentence of the debtor line) say why a debtor is one.
-    bucket: Optional[Literal["debt", "expiring", "active", "paused"]] = None
-    debt_reason: Optional[Literal["overdue", "partial", "never_paid"]] = None
-    reason: Optional[str] = None  # the line of a debtor: «Просрочено на 12 дней» | «Не доплачено за октябрь: 150 000» | «Ещё не платил»
+    bucket: Optional[Literal["debt", "waiting", "expiring", "active", "paused"]] = None       # ``waiting`` (Money-1 B7): «Ждём оплату» - the period began within 3 days, nothing older owed
+    debt_reason: Optional[Literal["overdue", "partial", "never_paid", "waiting"]] = None
+    reason: Optional[str] = None  # the line of a debtor: «Просрочено на 12 дней» | «Не доплачено за октябрь: 150 000» | «Ещё не платил» | «Ждём оплату до 07.11»
+    waiting_until: Optional[date_type] = None     # Money-1 B7: the last day of «ждём оплату» (the student is a debtor the day after); ``None`` when he is not waiting
 
 
 class PaymentsBuckets(BaseModel):
@@ -342,6 +343,7 @@ class PaymentsBuckets(BaseModel):
     expiring: int = 0
     active: int = 0
     paused: int = 0
+    waiting: int = 0       # Money-1 B7: «Ждём оплату» - NOT in ``debt`` (Σ debt of ``debt`` + Σ debt of ``waiting`` = ``debt_total``)
 
 
 class PaymentsSummary(BaseModel):
@@ -375,6 +377,8 @@ class PaymentsSummary(BaseModel):
     price_missing: int = 0
     students_with_advance: int = 0
     debtors: int = 0
+    students_waiting: int = 0   # Money-1 B7: DISTINCT students on «Ждём оплату» (their debt is in ``debt_total`` and ``debt_waiting_total``, they are NOT in ``debtors`` and not in the red banner)
+    debt_waiting_total: int = 0       # Σ debt of the memberships on «Ждём оплату»; the banner of debtors shows ``debt_total - debt_waiting_total``
     students_paused: int = 0  # DISTINCT students with a membership on pause today (== the students of the «На паузе» tab); ``buckets.paused`` counts memberships
 
 

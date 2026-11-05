@@ -82,6 +82,8 @@ def shim_period(ledger: bl.Ledger, payment_id: str):
 
 
 BUCKET_DEBT, BUCKET_EXPIRING, BUCKET_ACTIVE, BUCKET_PAUSED = "debt", "expiring", "active", "paused"
+BUCKET_WAITING = "waiting"       # Money-1 B7: the debt of a period that has just begun - «ждём оплату», not a debtor
+GRACE_DAYS = 3                   # owner, 04.11: three days from the first day of a new period (the first day included) before the student is a debtor
 _MONTHS = ("январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь")
 
 
@@ -90,14 +92,40 @@ def is_tracked(e) -> bool:
     return bool(e.membership.is_active and e.group.status == "active" and e.student.status != "archived")
 
 
+def waiting_until(e):
+    """Money-1 B7 (owner, 04.11): the last day on which the student is only «ждём оплату», or ``None`` when he is a debtor (or owes nothing).
+
+    A student of a calendar mode owes only the period that began less than ``GRACE_DAYS`` days ago (the first day of the period is day one: 05.11 -> 07.11) and nothing older -
+    no overdue period, no opening debt, no package.  The debt is the same number everywhere (I-1); only the NAME changes: «Ждём оплату» instead of «Должник», and the red
+    banner does not count him.  A student who left owes whatever he owes: he is a debtor at once."""
+    l = e.ledger
+    if l.debt <= 0 or l.mode != bl.CALENDAR or not is_tracked(e) or l.past_debt > 0:
+        return None
+    open_segments = [s for s in l.segments if s.begun and s.unpaid > 0]
+    if not open_segments:
+        return None
+    today = e.inp.today
+    last = None
+    for s in open_segments:
+        if s.kind != "period" or s.ended:
+            return None
+        first = s.days[0] if s.days else s.period_start
+        end = first + timedelta(days=GRACE_DAYS - 1)
+        if today > end:
+            return None
+        last = end if last is None else min(last, end)
+    return last
+
+
 def entry_bucket(e) -> Optional[str]:
     """The tab of a membership (owner's rule of 21.10): ``debt`` (Должники) - debt > 0, any reason, a student who left included;
+    ``waiting`` (Ждём оплату, Money-1 B7) - the debt of a period that began within the last three days and nothing older (see ``waiting_until``);
     ``paused`` (На паузе) - today is inside a pause and no debt; ``expiring`` (Скоро платить) - no debt and the next period is due within
     ``expiring_days``; ``active`` (Оплачено) - no debt and not due soon (an advance included).  A free student and a student without a price
     are on no tab (they are counted apart: ``free``, ``price_missing``)."""
     l = e.ledger
     if l.debt > 0:
-        return BUCKET_DEBT
+        return BUCKET_WAITING if waiting_until(e) is not None else BUCKET_DEBT
     if not is_tracked(e) or l.status.status == ps.FREE or e.price.amount is None:
         return None
     if l.status.status == ps.PAUSED:
@@ -108,11 +136,14 @@ def entry_bucket(e) -> Optional[str]:
 
 
 def debt_reason(e) -> Tuple[Optional[str], Optional[str]]:
-    """``(code, text)`` of a debtor: never paid / overdue / the running period not paid up."""
+    """``(code, text)`` of a debtor: waiting (B7) / never paid / overdue / the running period not paid up."""
     l = e.ledger
     if l.debt <= 0:
         return None, None
     today = e.inp.today
+    until = waiting_until(e)
+    if until is not None:
+        return "waiting", tx.waiting_text(until)
     if l.paid == 0 and l.transferred_in == 0 and l.written_off == 0:
         return "never_paid", "Ещё не платил"
     unpaid = [s for s in l.segments if s.begun and s.unpaid > 0]
