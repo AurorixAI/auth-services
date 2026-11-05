@@ -382,3 +382,14 @@ def test_a_day_off_leaves_the_lessons_of_a_closed_month_alone_and_names_them(pg_
     assert body["cancelled"] == [] and body["converted"] == [], body                   # nothing of the closed October was cancelled or turned into a holiday
     assert reasons["2026-10-23"] == "Месяц преподавателя закрыт ведомостью: урок не меняется"        # a lesson nobody started
     assert reasons["2026-10-26"].startswith("Отмена «по вине центра» в закрытом месяце") and reasons["2026-10-21"] == "Урок уже проведён"
+
+
+@needs_pg
+def test_a_lesson_of_a_closed_month_cannot_be_moved_because_it_has_begun_and_nothing_is_written(pg_session, clock):
+    """The record in ALLOWED for ``lesson-move`` says why it needs no check of its own: a lesson of a closed month is past, and a lesson that has begun is not moved (409 LESSON_ALREADY_STARTED)."""
+    c = money_world(pg_session, clock)
+    before = db_fingerprint(c.w.db)
+    r = _rest(c.w, "owner", "POST", f"/org/groups/{c.g.id}/lesson-move",
+              json={"lessonId": "lesson-wed", "lessonDate": "2026-10-28", "newDate": "2026-11-11", "startTime": "10:00", "endTime": "11:00", "reason": "Перенос"})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "LESSON_ALREADY_STARTED", r.text
+    assert changed_tables(before, db_fingerprint(c.w.db)) == []

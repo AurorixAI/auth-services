@@ -60,7 +60,8 @@ def reopen_now(db, org_id, teacher_id, month: str, actor_id, reason: str):
 
 def db_fingerprint(db) -> dict:
     """``{table: (rows, md5 of every row as text)}`` of EVERY table of the schema: «in the database nothing was written» is one comparison of two of these, not a list of the tables somebody thought of
-    (Money-1 round after the stage walk, D-4: a refusal that left a row behind is a defect too)."""
+    (Money-1 round after the stage walk, D-4: a refusal that left a row behind is a defect too).  It reads the WHOLE schema of the database the test runs on, so it needs that database to itself: the copy
+    of an xdist worker (``scripts/test_fast.sh`` / CI do that) - two pytest processes on one database would fail it with each other's rows."""
     from sqlalchemy import text
 
     from src.models.auth import Organization
