@@ -80,7 +80,7 @@ def num(n: int) -> str:
 
 
 def signed(n: int) -> str:
-    return ("+" if n > 0 else "−") + num(n)
+    return ("+" if n > 0 else "−" if n < 0 else "") + num(n)          # 0 has no sign (stage re-walk 05.11: «всего к сохранённой −0 сум»)
 
 
 def unavailable(done: bool) -> Dict[str, Any]:
@@ -194,8 +194,8 @@ def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, do
             who = f" {line['teacherName']}," if line.get("teacherName") else ""
             tail = f"{'изменилась' if done else 'изменится'} на {signed(line['changedBy'])} сум"
             if line["driftAfter"] != line["changedBy"]:
-                tail += f" (всего к сохранённой {signed(line['driftAfter'])} сум)"
-            parts.append(f"ведомость{who} {title} {tail}" + (" — пересохраните её" if done else "") + note)
+                tail += " (снова как сохранённая)" if line["driftAfter"] == 0 else f" (всего к сохранённой {signed(line['driftAfter'])} сум)"
+            parts.append(f"ведомость{who} {title} {tail}" + (" — пересохраните её" if done and line["driftAfter"] != 0 else "") + note)
         else:
             parts.append(f"ведомость {title} {'изменилась' if done else 'изменится'}" + note)
     text = "; ".join(parts)
