@@ -2747,6 +2747,12 @@ class AuthService:
             if group.max_students is not None and active_count >= group.max_students:
                 raise ops_rules.GroupFull(group.max_students, active_count)
 
+        carry_before = None
+        if closing and existing is not None and not already_member and payments_detail:
+            from .payments_service import PaymentService  # lazy: pulls in the status maths
+
+            carry_before = PaymentService(self.db).account_after(org_id, existing.id, now_dt)      # Money-1 D-6: the account the money lands on, BEFORE the transfer
+
         if existing:
             if not already_member:
                 # Returning to a historical group starts a new membership
@@ -2781,6 +2787,7 @@ class AuthService:
         # N13 P2.1: a transfer carries the payments in force over to the new group.  The price is not carried
         # (#105): in the new group the student follows the price of that group.
         carried: list[dict[str, str]] = []
+        carry_after = None
         if closing:
             from .payments_service import PaymentService  # lazy: pulls in the status maths
 
@@ -2789,6 +2796,11 @@ class AuthService:
                 org_id, actor_id, closing, membership,
                 detailed=payments_detail, moment=now_dt,
             )
+            if payments_detail and carried:      # Money-1 D-6: the window says what the NEW account looks like after the transfer, not only what arrived
+                pay = PaymentService(self.db)
+                carry_after = pay.transfer_balance(carry_before, pay.account_after(org_id, membership.id, now_dt, tomorrow=True))
+                if carry_after is not None:
+                    carried.append({"code": "transfer_balance_after", "message": carry_after["text"]})
 
         # The primary group: a transfer always moves it, "add" only fills a gap.
         if mode == "transfer" or student.group_id is None:
@@ -2815,6 +2827,7 @@ class AuthService:
             "membership_id": str(membership.id),
             "warnings": warnings,
             "carried": carried,
+            "carry_after": carry_after,
             "dry_run": dry_run,
         }
         if dry_run:                    # R3 #15: the answer was built from the real run; nothing of it stays

@@ -358,3 +358,20 @@ def short_span_text(first: date, last: date) -> str:
     if (first.year, first.month) == (last.year, last.month):
         return f"{first.day}–{last.day} {mon(last)}"
     return f"{first.day} {mon(first)} – {last.day} {mon(last)}"
+
+
+def transfer_balance_text(*, carried: int, charged_now: int, advance: int, debt: int, charged_tomorrow: int, advance_tomorrow: int) -> str:
+    """The window of a transfer (stage walk D-6): ``Перенесено 640 000 сум; аванс останется 640 000 сум; со следующего дня начислят ещё 350 000 сум (аванс останется 290 000 сум)``.
+    A group the student comes back to charges the rest of the month at once (``сразу … на оплату остатка месяца``); a new one - from the next day."""
+    head = f"Перенесено {money(carried)}"
+    if charged_now:
+        head += f", из них сразу {money(charged_now)} на оплату остатка месяца"
+    parts = [head]
+    if debt:
+        parts.append(f"долг останется {money(debt)}")
+    if advance:
+        parts.append(f"аванс останется {money(advance)}")
+    text = "; ".join(parts)
+    if charged_tomorrow:
+        text += f". Со следующего дня начислят ещё {money(charged_tomorrow)}" + (f" (аванс останется {money(advance_tomorrow)})" if advance_tomorrow else "")
+    return text

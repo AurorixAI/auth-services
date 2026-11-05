@@ -1556,6 +1556,49 @@ class PaymentService:
         group = self.db.query(Group.name).filter(Group.id == target.group_id).scalar() or ""
         return [{"code": CARRY_CODE, "message": f"Остаток денег {_sum(total)} перенесён в «{group}»"}]
 
+    # ------------------------------------------------ transfer: what the account the money lands on looks like (stage walk D-6)
+
+    def account_after(self, org_id: str, membership_id: UUID, moment: datetime, *, tomorrow: bool = False) -> Optional[Dict[str, int]]:
+        """The account of ONE membership (``charged`` / ``transferred_in`` / ``advance`` / ``debt``, the screens' ledger) as of the business day of ``moment``; with ``tomorrow`` also as of the next
+        day - a membership made by a transfer starts being charged the day AFTER it (``first_billable_floor``), so the first lessons of the new group are charged from tomorrow.  Reads only; never
+        raises (the numbers are an addition to a transfer, never a part of it): ``None`` when they could not be worked out."""
+        try:
+            if moment.tzinfo is not None:
+                moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
+            day = ps.business_date(moment)
+
+            def ledger(on: date):
+                return list(self._loader(org_id, on).run([membership_id]))[0].ledger
+
+            now = ledger(day)
+            out = {"charged": int(now.charged), "transferred_in": int(now.transferred_in), "advance": int(now.advance), "debt": int(now.debt)}
+            if tomorrow:
+                later = ledger(day + timedelta(days=1))
+                out.update({"charged_tomorrow": int(later.charged), "advance_tomorrow": int(later.advance), "debt_tomorrow": int(later.debt)})
+            return out
+        except Exception:
+            logger.exception("could not work out the account of membership %s after a transfer", membership_id)
+            return None
+
+    @staticmethod
+    def transfer_balance(before: Optional[Dict[str, int]], after: Optional[Dict[str, int]]) -> Optional[Dict[str, Any]]:
+        """«Перенесено X, из них сразу Y на оплату остатка месяца, аванс останется Z»: the new account after the transfer (D-6, I-5: the window says what the screens will say).  ``before`` - the account
+        the transfer lands on BEFORE it (a membership that comes back to a group it had; ``None`` for a new one), ``after`` - the same after it (``account_after(.., tomorrow=True)``).  ``None``: no money
+        moved, or no numbers.  ``carried`` = what arrived on this account by the transfer, ``charged_now`` = what the account is charged at once because of it (a returning membership: the rest of
+        the month), ``advance`` / ``debt`` = the account after, ``charged_tomorrow`` = what the next day charges more (a NEW membership: the lessons of the rest of the month, ``advance_tomorrow`` is what is left then)."""
+        if after is None:
+            return None
+        was = before or {"charged": 0, "transferred_in": 0}
+        carried = after["transferred_in"] - was["transferred_in"]
+        if carried <= 0:
+            return None
+        charged_now = max(after["charged"] - was["charged"], 0)
+        charged_tomorrow = max(after.get("charged_tomorrow", after["charged"]) - after["charged"], 0)
+        out = {"carried": carried, "charged_now": charged_now, "advance": after["advance"], "debt": after["debt"], "charged_tomorrow": charged_tomorrow,
+               "advance_tomorrow": after.get("advance_tomorrow", after["advance"])}
+        out["text"] = tx.transfer_balance_text(**out)
+        return out
+
     # ------------------------------------------------------------ preview
 
     def preview(
