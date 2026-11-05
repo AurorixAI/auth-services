@@ -47,6 +47,7 @@ CONDITIONAL = {
     ("POST", f"{P}/org/groups/{{group_id}}/attendance/reconcile/cancel"),   # «Урока не было»: the preview (``?dry_run=true``) names the recalculation of the students and the sheets - the sums for the money right only
     ("POST", f"{P}/org/groups/{{group_id}}/students/{{student_id}}"),       # a transfer
     ("POST", f"{P}/org/groups/{{group_id}}/students/bulk"),                 # a bulk transfer
+    ("POST", f"{P}/org/groups"),                                            # Money-1 B2 (LESSONS 99): the field ``price`` - the first price of the group - is money; the group itself is not
 }
 
 # the money check is inside the handler (the answer depends on the student's money): the handler passes ``has_payments_access`` to the service
@@ -76,7 +77,6 @@ NOT_MONEY = {
     ("POST", f"{P}/org/diagnostics"): "diagnostics: tests of the students",
     ("POST", f"{P}/org/diagnostics/quick"): "diagnostics: tests of the students",
     ("POST", f"{P}/org/diagnostics/{{diagnostic_id}}/acknowledge-report"): "a read mark on a report",
-    ("POST", f"{P}/org/groups"): "a new group has no lessons held; the type of lessons is the starting value",
     ("POST", f"{P}/org/groups/{{group_id}}/archive"): "refused while students are in the group; the cancelled lessons pay nothing",
     ("POST", f"{P}/org/groups/{{group_id}}/restore"): "the group comes back without lessons held",
     ("POST", f"{P}/org/groups/{{group_id}}/attendance/start"): "a lesson begins: the money appears when it is completed (the marks route is CONDITIONAL)",

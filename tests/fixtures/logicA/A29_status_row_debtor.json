@@ -49,5 +49,6 @@
   "price_ends_on_leave": false,
   "bucket": "debt",
   "debt_reason": "never_paid",
-  "reason": "Ещё не платил"
+  "reason": "Ещё не платил",
+  "waiting_until": null
 }

@@ -38,7 +38,7 @@ from .ops_router import router as ops_router
 from .days_off_router import router as days_off_router
 from .closed_period_router import router as closed_period_router
 from .lesson_return_router import router as lesson_return_router
-from .ops_rules import GroupArchivedForEnrolment, OpsError
+from .ops_rules import GroupArchivedForEnrolment, OpsError, forbidden
 from .ops_schemas import (
     AcceptInviteRequestB,
     CreateLessonRequestB,
@@ -1091,12 +1091,15 @@ def acknowledge_diagnostic_report(
 def create_group(
     request: GroupCreateRequest,
     user: dict = Depends(require_org_member),
+    money_right: bool = Depends(money_rights_flag),
     db: Session = Depends(get_db),
 ):
     """Создать группу в рамках полномочий текущего сотрудника.
 
-    Money-1 B2: ``price`` — цена группы «с самого начала» (первая цена); только владелец / администратор с доступом к деньгам, иначе 403."""
-    _check_fee_right(request.price, user, db)
+    Money-1 B2: ``price`` — цена группы «с самого начала» (первая цена); только владелец / администратор с доступом к деньгам, иначе 403 ``MONEY_RIGHT_REQUIRED`` и ничего не записано
+    (LESSONS 99: поле, которое задаёт начисление, — деньги)."""
+    if request.price is not None and not money_right:
+        raise forbidden("MONEY_RIGHT_REQUIRED", "Цену группы задаёт владелец или администратор с доступом к деньгам")
     try:
         return _svc(db).create_group(
             user["org_id"],
@@ -1223,6 +1226,22 @@ def _check_fee_right(price_override: Optional[object], user: dict, db: Session) 
         ensure_payments_access(user, db)
 
 
+@router.get("/org/groups/{group_id}/pay-from-default")
+def pay_from_default(
+    group_id: str,
+    user: dict = Depends(require_org_admin),
+    db: Session = Depends(get_db),
+):
+    """Money-1 B1: what the dialog «Добавить в группу» shows in the field «Оплата с»: ``default_pay_from`` (the first lesson of the group from today, else today), ``first_lesson``, ``today``.
+    The sentence about it comes back with the answer of adding (``billing.text``).  Readable by every administrator (it is a date of the schedule); only a chosen value is money."""
+    from . import billing_start
+
+    group = db.query(Group).filter(Group.id == group_id, Group.org_id == user["org_id"]).first()
+    if group is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Группа не найдена")
+    return billing_start.default_pay_from(db, group)
+
+
 @router.post("/org/groups/{group_id}/students/bulk")
 def bulk_add_students(
     group_id: str,
@@ -1238,12 +1257,12 @@ def bulk_add_students(
     Registered before /students/{student_id} — a generic path param would
     otherwise greedily match the literal "bulk" segment first.
     """
-    _check_fee_right(request.price_override, user, db)
+    _check_fee_right(request.price_override or request.pay_from, user, db)       # Money-1 B1: a chosen «Оплата с» is money
     try:
         return _svc(db).bulk_add_students(
             user["org_id"], group_id, request.student_ids,
             mode=mode, price_override=request.price_override, actor_id=user["user_id"],
-            payments_detail=has_payments_access(user, db), money_right=money_right, dry_run=dry_run,
+            payments_detail=has_payments_access(user, db), money_right=money_right, dry_run=dry_run, pay_from=request.pay_from,
         )
     except OperationalError as e:
         raise _concurrent_edit_or_raise(e, db)
@@ -1267,12 +1286,13 @@ def add_student_to_group(
     """Добавить ученика в группу: перевести (по умолчанию) или добавить ещё одну группу."""
     price_override = request.price_override if request else None
     opening_balance = request.opening_balance if request else None
-    _check_fee_right(price_override or opening_balance, user, db)
+    pay_from = request.pay_from if request else None
+    _check_fee_right(price_override or opening_balance or pay_from, user, db)       # Money-1 B1 (LESSONS 99): the field that changes the charge is money
     try:
         return _svc(db).add_student_to_group(
             user["org_id"], group_id, student_id,
             mode=mode, price_override=price_override, actor_id=user["user_id"],
-            payments_detail=has_payments_access(user, db), opening_balance=opening_balance, money_right=money_right, dry_run=dry_run,
+            payments_detail=has_payments_access(user, db), opening_balance=opening_balance, money_right=money_right, dry_run=dry_run, pay_from=pay_from,
         )
     except MembershipConflict as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))

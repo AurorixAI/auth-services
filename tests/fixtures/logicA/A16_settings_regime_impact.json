@@ -9,6 +9,7 @@
   "excuse_deadline_lessons": 2,
   "admin_can_manage": false,
   "centre_cancel_recalc": false,
+  "recalc_hint": null,
   "accounting_start_date": "2026-10-01",
   "updated_by": "Арслан",
   "updated_at": "2026-10-01T08:00:00",
@@ -18,6 +19,14 @@
     "students_affected": 38,
     "first_switch": "2026-11-01",
     "latest_switch": "2026-11-14",
-    "defer": true
+    "defer": true,
+    "horizon_days": 30,
+    "items_total": 0,
+    "truncated": false,
+    "charged_before_total": 0,
+    "charged_after_total": 0,
+    "text": "",
+    "items": [],
+    "override_students": []
   }
 }

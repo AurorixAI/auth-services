@@ -353,6 +353,8 @@ class AddStudentToGroupRequest(BaseModel):
     monthly_fee: Optional[int] = None  # retired (#105): refused with a message, never silently dropped
     # LOGIC-A (decision 1): the opening balance of the new membership (needs access to money); see payments_schemas.OpeningIn
     opening_balance: Optional[OpeningIn] = None
+    # Money-1 B1 «Оплата с»: the day the student is charged from.  Not sent = the first lesson of the group from today (the default of the server); sent = the money right only.  A transfer has its own day.
+    pay_from: Optional[date] = None
 
     @field_validator("monthly_fee")
     @classmethod
@@ -367,6 +369,7 @@ class BulkAddStudentsRequest(BaseModel):
     # One individual price for everybody, or none.  Needs the right to manage payments.
     price_override: Optional[PriceOverrideInput] = None
     monthly_fee: Optional[int] = None  # retired (#105), see AddStudentToGroupRequest
+    pay_from: Optional[date] = None    # Money-1 B1: one «Оплата с» for everybody added (see AddStudentToGroupRequest); the money right only
 
     @field_validator("monthly_fee")
     @classmethod

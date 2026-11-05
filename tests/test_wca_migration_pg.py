@@ -51,7 +51,7 @@ def test_the_revision_follows_wave_b_and_is_the_head():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == ["mn1a2b3c4d5"] and script.get_revision(REVISION).down_revision == BEFORE        # Money-1 sits on top of this revision
+    assert script.get_heads() == ["mn1b2b3c4d5e"] and script.get_revision(REVISION).down_revision == BEFORE        # Money-1 sits on top of this revision
 
 
 def test_up_down_up_on_a_filled_database(engine):
@@ -64,6 +64,8 @@ def test_up_down_up_on_a_filled_database(engine):
         for name in INDEXES:
             c.execute(text(f"DROP INDEX IF EXISTS {name}"))
     assert definitions(engine) == {}
+    with engine.begin() as c:                                    # the ORM of today writes ``billing_from`` (Money-1 pack B); its revision is above this one, so the column is added by hand for the filling
+        c.execute(text("ALTER TABLE student_group_periods ADD COLUMN IF NOT EXISTS billing_from date"))
     with Session(engine) as db:                                  # a filled database: a centre with a member, a group, a student, held and open lessons
         org, user = Organization(name="WC", status="active"), User(email=f"{uuid4()}@wc.test", password_hash="x", first_name="A", last_name="B", role="teacher")
         db.add_all([org, user])

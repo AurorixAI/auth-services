@@ -21,7 +21,7 @@ def legacy_add(db,model,**values):
     revisions: an ORM insert names EVERY mapped column, also the ones of revisions newer than the one the DB is at (the console pack added
     ``users.platform_block*`` and ``organizations.blocked_*``); Core names only what it is given."""
     db.execute(model.__table__.insert().values(**values))
-HEAD='mn1a2b3c4d5'          # W1 (live day off range, restore audit) on top of pf1a2b3c4d5 (PAY-F) on top of cn1a2b3c4d5 (console pack «Консоль-1»)
+HEAD='mn1b2b3c4d5e'          # W1 (live day off range, restore audit) on top of pf1a2b3c4d5 (PAY-F) on top of cn1a2b3c4d5 (console pack «Консоль-1»)
 LOGICB2_HEAD='lb3c4d5e6f7'  # LOGIC-B2: exam release marker, substitution requests
 LOGICB2='lb2b3c4d5e6'       # LOGIC-B (2/2): group archive, member audit, invitations
 LOGICB1='lb1a2b3c4d5'       # LOGIC-B (1/2): marks version, lesson teachers, validFrom
@@ -653,7 +653,7 @@ def _check_n13_periods_objects(engine,config,ids):
     # --- the table as the head leaves it
     assert 'student_group_periods' in inspect(engine).get_table_names()
     c={x['name']:x for x in inspect(engine).get_columns('student_group_periods')}
-    assert set(c)=={'id','membership_id','joined_at','left_at','created_at'}
+    assert set(c)=={'id','membership_id','joined_at','left_at','created_at','billing_from'}        # billing_from: Money-1 pack B («Оплата с»)
     assert not c['joined_at']['nullable'] and c['left_at']['nullable'] and not c['membership_id']['nullable']
     assert {i['name'] for i in inspect(engine).get_indexes('student_group_periods')} >= {'ix_student_group_periods_membership','uq_student_group_periods_open'}
     # the membership of the first check got its period from the backfill (or the model) - exactly one, and open
@@ -1342,6 +1342,8 @@ def _check_logic_a_objects(engine,config,ids):
     user,org_b,grp_pair,grp_b=uuid4(),uuid4(),uuid4(),uuid4()
     studs={k:uuid4() for k in ('closed_price','closed_plain','closed_null','active_price','closed_returned','closed_future')}
     mems={k:uuid4() for k in studs}
+    with engine.begin() as c:   # the ORM of today writes ``billing_from`` of a stay (Money-1 pack B); its revision is above this check, so the column is added by hand for the filling
+        c.execute(text("ALTER TABLE student_group_periods ADD COLUMN IF NOT EXISTS billing_from date"))
     with Session(engine) as db:
         legacy_add(db,User,id=user,email=f'{user}@m.invalid',password_hash='synthetic-only',first_name='L',last_name='A',role='owner')
         legacy_add(db,Organization,id=org_b,name='LOGIC-A second centre',status='active',settings={'payroll':{'divisor':13}}); db.flush()

@@ -12,6 +12,10 @@
       "advance_delta": 0,
       "days_lost_total": 0,
       "backdated": true,
+      "as_of": null,
+      "items_total": 0,
+      "truncated": false,
+      "text": "",
       "items": [
         {
           "membership_id": "00000000-0000-4000-8000-000000000111",
@@ -22,7 +26,12 @@
           "advance_after": 0,
           "paid_until_before": null,
           "paid_until_after": null,
-          "has_money": false
+          "has_money": false,
+          "charged_before": 0,
+          "charged_after": 0,
+          "lessons_before": null,
+          "lessons_after": null,
+          "text": ""
         },
         {
           "membership_id": "00000000-0000-4000-8000-000000000112",
@@ -33,10 +42,17 @@
           "advance_after": 0,
           "paid_until_before": null,
           "paid_until_after": null,
-          "has_money": false
+          "has_money": false,
+          "charged_before": 0,
+          "charged_after": 0,
+          "lessons_before": null,
+          "lessons_after": null,
+          "text": ""
         }
-      ]
-    }
+      ],
+      "override_students": []
+    },
+    "first_price": null
   },
   "group_id": null,
   "group_name": null,

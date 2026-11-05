@@ -125,8 +125,11 @@ class PaymentsReports:
                                          details=StatementDetails(segment=pv.segment_out(seg)), **common))
             elif e.kind == "opening_paid_until":
                 until = ledger.opening.paid_until if ledger.opening and ledger.opening.paid_until else None
+                own = loader._own_paid_until(membership_id)
                 if until is not None and until == loader.settings.accounting_start - timedelta(days=1):
                     title = f"На начало учёта долга нет (оплачено до {until.strftime('%d.%m')})"        # a reviewed «nothing owed» row
+                elif until is not None and until != own:
+                    title = f"Оплаченные дни перешли вместе с учеником: оплачено до {until.strftime('%d.%m')}"        # Money-1 B6: no opening of this membership - the days came with a transfer
                 else:
                     title = f"Остаток на начало: оплачено до {until.strftime('%d.%m')}" if until else "Остаток на начало"
                 rows.append(StatementRow(type="opening_paid_until", title=title, **common))

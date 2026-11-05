@@ -68,6 +68,7 @@ ReceiptItemType = Literal["payment", "writeoff", "refund"]
 PayWarningCode = Literal[
     "price_missing", "horizon_capped", "large_overpay", "student_archived", "left_debt_only", "price_change_ahead",
     "paid_over_60_days_ago",
+    "payment_repeated",      # Money-1 B9 (ДЫРА-12): the same sum was entered for this student a moment ago (a warning, never a ban)
     # LEGACY (period payments of the old model): no longer emitted after PAY-2 stream B, dropped from this list then.
     "overlaps_previous", "gap_before", "period_over_62_days", "short_period_full_amount",
 ]
@@ -191,9 +192,11 @@ class PaymentSettings(BaseModel):
     excuse_deadline_days: int = Field(5, ge=0, le=30)
     excuse_deadline_lessons: int = Field(2, ge=0, le=12)
     admin_can_manage: bool = False
-    # PAY-F.  «Уроки, отменённые центром, при помесячной оплате»: false = не пересчитывать (как раньше), true = вычитать из следующей оплаты.
+    # PAY-F.  «Уроки, отменённые центром, при помесячной оплате»: false = не пересчитывать (как раньше), true = уменьшать долг сразу (перерасчёт).
     # A change acts for the lessons dated from the day it was made (``recalc_history``); it never rewrites the past.
     centre_cancel_recalc: bool = False
+    # Money-1 B8: the sentence of the setting, written by the server (the screen shows it verbatim): «уменьшит долг сразу»
+    recalc_hint: Optional[str] = None
     # PAY-2.  "Начало учёта оплат": days before it are never charged (a student entered with a past join date gets no
     # debt for the months before ALGO).  GET always returns the EFFECTIVE date: the stored setting, else the centre's
     # earliest live payment date / the migration day (stored by the migration), else the day the centre was created.
@@ -1493,11 +1496,42 @@ class PriceImpactMoney(PayModel):
 # ---- billing mode change (F12) ----------------------------------------------------------------------
 
 
+class RegimeItem(PriceImpactItem):
+    """One student of the window of the billing mode / the day of the shared month (Money-1 B3): the account on the last of the first ``horizon_days`` days of the new way, before -> after."""
+
+    switch_on: Optional[date_type] = None             # the first day the new way counts for him (the running period is never cut)
+    as_of: Optional[date_type] = None                 # the day his accounts are compared on (``switch_on`` + ``horizon_days`` - 1)
+    price_amount: Optional[int] = None                # the SAME number of his price: it means another thing in another mode (ДЫРА-02)
+    price_unit_before: Optional[str] = None           # «за месяц» / «за общий месяц с 10-го числа» / «за пакет из 12 уроков»
+    price_unit_after: Optional[str] = None
+    per_lesson_before: Optional[int] = None           # sum per lesson (the price over the lessons of a month by the schedule / of a package); null: not told
+    per_lesson_after: Optional[int] = None
+
+
+class RegimeOverride(PayModel):
+    """A student with an individual price: his number stays what it is, in the new mode it means another thing (B4 of the devil: they are listed apart, not hidden)."""
+
+    membership_id: str
+    student_name: str
+    price: int
+    reason: Optional[str] = None
+    text: str = ""
+
+
 class RegimeImpact(PayModel):
     students_affected: int = 0
     first_switch: Optional[date_type] = None
     latest_switch: Optional[date_type] = None
     defer: bool = True
+    # Money-1 B3 (ДЫРА-02 / ДЫРА-06): every student who switches, before -> after, in sums and lessons
+    horizon_days: int = 30                            # the accounts are compared on the last of this many days from the switch day of each student
+    items_total: int = 0
+    truncated: bool = False
+    charged_before_total: int = 0                     # Σ charged up to the horizon, all the students of ``items``
+    charged_after_total: int = 0
+    text: str = ""
+    items: List[RegimeItem] = Field(default_factory=list)
+    override_students: List[RegimeOverride] = Field(default_factory=list)
 
 
 # ---- lesson type of a group (F14) -------------------------------------------------------------------

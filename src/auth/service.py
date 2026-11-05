@@ -2564,6 +2564,7 @@ class AuthService:
         payments_detail: bool = False,
         money_right: bool = True,
         dry_run: bool = False,
+        pay_from: Optional[date] = None,
     ) -> dict:
         added = 0
         skipped_details: list[dict[str, str]] = []
@@ -2573,7 +2574,7 @@ class AuthService:
                 result = self.add_student_to_group(
                     org_id, group_id, student_id,
                     mode=mode, price_override=price_override, actor_id=actor_id,
-                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run,
+                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from,
                 )
                 added += 1
                 for warning in result.get("warnings", []):
@@ -2611,8 +2612,12 @@ class AuthService:
         opening_source: str = "add",
         money_right: bool = True,
         dry_run: bool = False,
+        pay_from: Optional[date] = None,
     ) -> dict:
         """Enrol a student in a group.
+
+        ``pay_from`` (Money-1 B1 «Оплата с»): the day the student is charged from; ``None`` = the first lesson of the group from today (``billing_start``); an explicit day is the money right's (the router
+        checks it) and is refused for a transfer, which has its own day (the one after it).
 
         ``dry_run`` (Money-1 R3 #15): everything is done inside the transaction and thrown away - the answer says what a TRANSFER would carry over (``carried``) and what would be refused.
 
@@ -2728,6 +2733,13 @@ class AuthService:
         # Only a transfer closes the previous memberships.  The roster of
         # every changed group must not rewrite an already started lesson.
         closing = other_active_memberships if mode == "transfer" else []
+        if pay_from is not None:      # Money-1 B1: checked BEFORE anything is written - a refusal leaves nothing behind
+            if closing or already_member:
+                raise ops_rules.unprocessable("PAY_FROM_NOT_APPLICABLE", "«Оплата с» задаётся только при добавлении ученика в группу: при переводе оплата идёт со следующего дня")
+            from . import billing_start  # lazy: pulls in the payments modules
+            from .payments_service import PaymentService
+
+            billing_start.check_pay_from(pay_from, ps.business_date(now_dt), PaymentService(self.db).get_settings(org_id).accounting_start_date)
         if closing and not money_right:
             raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Перевод ученика переносит его оплаченные дни и аванс: его делает владелец или администратор с доступом к деньгам")
         affected_group_ids = [group.id, *(membership.group_id for membership in closing)]
@@ -2761,12 +2773,13 @@ class AuthService:
 
             carry_before = PaymentService(self.db).account_after(org_id, existing.id, now_dt)      # Money-1 D-6: the account the money lands on, BEFORE the transfer
 
+        new_period = None
         if existing:
             if not already_member:
                 # Returning to a historical group starts a new membership
                 # period (the earlier ones stay in ``student_group_periods``);
                 # recorded attendance stays tied to past lessons.
-                open_period(existing, now_dt)
+                new_period = open_period(existing, now_dt)
                 on_membership_returned(self.db, existing, now_dt, actor_id)  # LOGIC-A (F13): the price of the group again
             if closing:
                 # A transfer into a group the student already belongs to keeps
@@ -2776,7 +2789,7 @@ class AuthService:
             membership = existing
         else:
             membership = StudentGroup(student_id=student_id, group_id=group_id)
-            open_period(membership, now_dt)
+            new_period = open_period(membership, now_dt)
             self.db.add(membership)
 
         if price_override is not None:
@@ -2791,6 +2804,16 @@ class AuthService:
 
             self.db.flush()
             apply_add_opening(self.db, org_id, membership, actor_id, opening_balance, transfer=bool(closing), source=opening_source)
+
+        # Money-1 B1 «Оплата с»: a new stay is charged from the first lesson of the group (or the day the owner chose); a transfer has its own day (the one after it)
+        billing = None
+        if new_period is not None and not closing:
+            from . import billing_start  # lazy: pulls in the payments modules
+            from .payments_service import PaymentService
+
+            billing = billing_start.apply(
+                self.db, group, new_period, today=ps.business_date(now_dt), accounting_start=PaymentService(self.db).get_settings(org_id).accounting_start_date,
+                explicit=pay_from)
 
         # N13 P2.1: a transfer carries the payments in force over to the new group.  The price is not carried
         # (#105): in the new group the student follows the price of that group.
@@ -2836,6 +2859,7 @@ class AuthService:
             "warnings": warnings,
             "carried": carried,
             "carry_after": carry_after,
+            "billing": billing,                  # Money-1 B1: from which day he is charged (``pay_from``) and why; null for a transfer
             "dry_run": dry_run,
         }
         if dry_run:                    # R3 #15: the answer was built from the real run; nothing of it stays

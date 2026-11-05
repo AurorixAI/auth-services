@@ -22,10 +22,13 @@
     "debt": 3,
     "expiring": 1,
     "active": 4,
-    "paused": 1
+    "paused": 1,
+    "waiting": 0
   },
   "price_missing": 1,
   "students_with_advance": 1,
   "debtors": 3,
+  "students_waiting": 0,
+  "debt_waiting_total": 0,
   "students_paused": 1
 }

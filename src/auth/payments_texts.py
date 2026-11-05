@@ -59,7 +59,7 @@ def lessons_word(count: int) -> str:
 # ---- PAY-F: the names of the ways to count a payment - ONE dictionary for the settings, the hints, the statements and the letters.
 # Keys are the stored values (``payment_date`` / ``fixed_day`` are the calendar anchors, ``lessons`` the package); the front mirrors this table in ``src/lib/payments.ts``.
 MODE_NAMES = {
-    "payment_date": ("Свой месяц у каждого ученика", "Месяц считается с первого занятия ученика: 05.10 → 04.11"),
+    "payment_date": ("Свой месяц у каждого ученика", "Месяц считается с даты «Оплата с» — по умолчанию это первое занятие ученика в группе: 05.10 → 04.11"),
     "fixed_day": ("Общий месяц для всех", "У всех один период, например с 1-го по последнее число; первый неполный месяц — по урокам"),
     "lessons": ("Пакет уроков", "Оплата закрывает заданное число проведённых уроков; отменённые уроки не списываются"),
 }
@@ -74,6 +74,11 @@ def mode_hint(key: str) -> str:
 
 
 # ---- PAY-F: the recalculation for the lessons the centre cancelled and the forecast of a package
+# Money-1 B8 (ДЫРА-08): the words of the setting - the deduction is NOT «из следующей оплаты»: it lowers the debt at once (and the «оплачено до»), and a period with every lesson cancelled gives back its whole price
+RECALC_HINT = ("Урок, отменённый центром, уменьшит долг ученика сразу — на стоимость одного занятия периода; "
+               "если отменены все уроки периода, перерасчёт вернёт всю цену. Прошлые отмены не пересчитываются")
+
+
 def recalc_title(day: date) -> str:
     """The row of the statement: ``Перерасчёт: урок 21.10 отменён центром``."""
     return f"Перерасчёт: урок {ddmm(day)} отменён центром"
@@ -82,6 +87,18 @@ def recalc_title(day: date) -> str:
 def recalc_text(amount: int, day: date) -> str:
     """The line of the receipt / of the payment dialog: ``−46 000 сум: урок 21.10 отменён центром`` (a real minus sign)."""
     return f"\u2212{money(amount)}: урок {ddmm(day)} отменён центром"
+
+
+def repeated_payment_text(minutes: int, by: Optional[str] = None) -> str:
+    """Money-1 B9 (ДЫРА-12): ``Такая же оплата внесена 5 минут назад — Иванов А.`` (a warning: two operators, one parent, one payment)."""
+    if minutes < 1:
+        when = "только что"
+    elif minutes < 60:
+        when = f"{minutes} {plural(minutes, 'минуту', 'минуты', 'минут')} назад"
+    else:
+        hours = minutes // 60
+        when = f"{hours} {plural(hours, 'час', 'часа', 'часов')} назад"
+    return f"Такая же оплата внесена {when}" + (f" — {by}" if by else "")
 
 
 def waiting_text(until: date) -> str:

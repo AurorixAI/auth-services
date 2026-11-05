@@ -374,7 +374,7 @@ class LedgerLoader:
         for mid in found:
             membership = self.members[mid][0]
             spans = [
-                bl.Stay(ps.business_date(p.joined_at), ps.business_date(p.left_at) if p.left_at else None, p.joined_at)
+                bl.Stay(p.billing_from or ps.business_date(p.joined_at), ps.business_date(p.left_at) if p.left_at else None, p.joined_at)       # Money-1 B1: «Оплата с»
                 for p in periods.get(mid, [])
             ]
             if not spans and membership.joined_at:  # a legacy row without periods
@@ -753,17 +753,50 @@ class LedgerLoader:
             expiring_days=self.settings.expiring_days,
             expiring_lessons=self.settings.expiring_lessons,
             pauses=tuple(bl.Pause(p.first_day, p.last_day) for p in self.pauses.get(mid, [])),
-            opening=self._opening_of(mid),
+            opening=self._opening_of(mid, as_of=as_of, before_transfer=before_transfer),
             centre_cancels=self._cancels_for(mid, group, membership.student_id),
             recalc_versions=self.recalc_versions,
         )
         return bl.sliced_input(inp, as_of) if as_of is not None else inp
 
-    def _opening_of(self, mid: UUID) -> Optional[bl.Opening]:
+    def _opening_of(self, mid: UUID, *, as_of: Optional[date] = None, before_transfer: Optional[MembershipTransfer] = None) -> Optional[bl.Opening]:
+        """The opening of a membership as the ledger sees it: its own row plus the «оплачено до» that came with a TRANSFER (Money-1 B6, B7 of the devil)."""
         row = self.openings.get(mid)
-        if row is None:
+        carried = self._carried_paid_until(mid, as_of=as_of, before_transfer=before_transfer)
+        if row is None and carried is None:
             return None
-        return bl.Opening(row.paid_until, int(row.debt_amount or 0), row.debt_on)
+        if row is None:
+            return bl.Opening(paid_until=carried)
+        paid_until = max((d for d in (row.paid_until, carried) if d is not None), default=None)
+        return bl.Opening(paid_until, int(row.debt_amount or 0), row.debt_on)
+
+    def _own_paid_until(self, mid: UUID) -> Optional[date]:
+        row = self.openings.get(mid)
+        return row.paid_until if row is not None else None
+
+    def _carried_paid_until(self, mid: UUID, *, as_of: Optional[date] = None, before_transfer: Optional[MembershipTransfer] = None, _hops: int = 0) -> Optional[date]:
+        """Money-1 B6: the days the student had PAID FOR WITHOUT MONEY (the «оплачено до» of an opening balance - a note of a notebook) travel with him: a transfer on 25.10 from a group that was
+        paid until 20.11 gives the new group a student who is paid until 20.11 (the money is carried as an advance by ``x_of``; before, the days were lost and he owed the new group at once).  Derived like
+        the money (never stored): voiding the transfer takes it away.  A chain A -> B -> C carries the same days along; only days after the transfer day count (the day itself belongs to the old group)."""
+        if _hops >= MAX_TRANSFER_HOPS:
+            return None
+        key = self.link_key(before_transfer) if before_transfer is not None else None
+        best: Optional[date] = None
+        for t in self.t_in.get(mid, []):
+            if before_transfer is not None and self.link_key(t) >= key:
+                continue
+            if as_of is not None and ps.business_date(t.at) > as_of:
+                continue
+            until = self.paid_days_of_link(t, _hops=_hops + 1)
+            if until is not None and (best is None or until > best):
+                best = until
+        return best
+
+    def paid_days_of_link(self, t: MembershipTransfer, *, _hops: int = 0) -> Optional[date]:
+        """The «оплачено до» that ONE transfer brings (see ``_carried_paid_until``): the day the old membership was paid until WITHOUT money, if it is after the transfer day; else ``None``."""
+        src, day = t.from_membership_id, ps.business_date(t.at)
+        until = max((d for d in (self._own_paid_until(src), self._carried_paid_until(src, before_transfer=t, _hops=_hops)) if d is not None), default=None)
+        return until if until is not None and until > day else None
 
     # ---------------------------------------------------------------- results
 

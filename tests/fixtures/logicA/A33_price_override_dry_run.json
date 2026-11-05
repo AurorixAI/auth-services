@@ -61,7 +61,8 @@
     "price_ends_on_leave": false,
     "bucket": null,
     "debt_reason": null,
-    "reason": null
+    "reason": null,
+    "waiting_until": null
   },
   "dry_run": true,
   "impact": {
@@ -76,6 +77,10 @@
       "advance_delta": 0,
       "days_lost_total": 2,
       "backdated": false,
+      "as_of": null,
+      "items_total": 0,
+      "truncated": false,
+      "text": "",
       "items": [
         {
           "membership_id": "00000000-0000-4000-8000-000000000102",
@@ -86,9 +91,16 @@
           "advance_after": 200000,
           "paid_until_before": "2026-11-12",
           "paid_until_after": "2026-11-10",
-          "has_money": true
+          "has_money": true,
+          "charged_before": 0,
+          "charged_after": 0,
+          "lessons_before": null,
+          "lessons_after": null,
+          "text": ""
         }
-      ]
-    }
+      ],
+      "override_students": []
+    },
+    "first_price": null
   }
 }

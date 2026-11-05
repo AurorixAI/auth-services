@@ -250,6 +250,45 @@ def _block(db, org_id: Any, students: List[Dict[str, Any]], payroll: List[Dict[s
     return {"students": names, "payroll": payroll, "text": text_of(names, payroll, done=done, closed_blocks=closed_blocks), "dryRun": not done}
 
 
+def calendar_mode_students(db, org_id: Any, group_id: Any, student_ids: List[str]) -> Dict[str, str]:
+    """``{student id: name}`` of the students of the group who pay by the CALENDAR (a month): the ones whose excused lesson gives no lesson back to a pack."""
+    if not student_ids or group_id is None:
+        return {}
+    from src.models.auth import StudentGroup
+
+    from .payments_service import PaymentService
+
+    members = {str(sid): mid for mid, sid in db.query(StudentGroup.id, StudentGroup.student_id).filter(
+        StudentGroup.group_id == group_id, StudentGroup.student_id.in_([UUID(x) for x in student_ids])).all()}
+    if not members:
+        return {}
+    modes = {e.membership.id: e.ledger.mode for e in PaymentService(db)._loader(str(org_id), recalc=False).run(list(members.values()))}
+    wanted = [{"studentId": sid, "delta": 0} for sid, mid in members.items() if modes.get(mid) == "calendar"]
+    return {d["studentId"]: d["name"] for d in with_names(db, wanted)}
+
+
+def makeup_right(db, org_id: Any, group_id: Any, student_id: str, *, gained: bool) -> Optional[Dict[str, Any]]:
+    """Money-1 B8 (the owner, 04.11): an excuse of a student who pays by the month gives him the RIGHT TO MAKE UP the missed lesson - the money is not paid back and the student does not lose the
+    lesson (a package gets the lesson back: ``student_deltas``).  ``gained``: the excuse is confirmed now (the right appears); not: it was confirmed and stops being (the right goes).  ``None``: not a
+    month student or nothing changes.  The right is the fact; the make-up lesson itself is planned by the administrator (the schedule is not a part of the money)."""
+    names = calendar_mode_students(db, org_id, group_id, [student_id])
+    if student_id not in names:
+        return None
+    name = names[student_id]
+    return {"studentId": student_id, "name": name, "right": gained,
+            "text": "Ученик вправе отработать пропущенный урок; деньги не возвращаются" if gained else "Право ученика на отработку этого урока снимается"}
+
+
+def with_makeup(block: Dict[str, Any], makeup: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Add the make-up right to the block of a decision on an excuse: ``makeup`` and one more sentence in ``text``."""
+    if makeup is None:
+        return block
+    block["makeup"] = makeup
+    sentence = makeup["text"]
+    block["text"] = sentence if not block.get("text") else f"{block['text']}; {sentence[0].lower() + sentence[1:]}"
+    return block
+
+
 # ============================================================================================ the probes of the actions
 @safe(lambda *a, **k: k.get("done", True))
 def lesson_block(db, org_id: Any, *, students: List[Dict[str, Any]], probe: Optional[SheetProbe], owner: bool, done: bool, group_id: Any = None) -> Dict[str, Any]:

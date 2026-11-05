@@ -43,3 +43,55 @@ def hold_lessons(w, student, days, group=None):
         w.db.add(GroupAttendance(org_id=w.org.id, group_id=group.id, lesson_date=day.isoformat(), lesson_id=f"s{day.isoweekday()}", status="completed",
                                  records={str(student.id): "present"}, roster_snapshot=[{"student_id": str(student.id)}]))
     w.db.commit()
+
+
+# ---- the world of «Оплата с» and of the transfers (shared by several files) ----------------------------------------------------------------------------------
+
+OPENS = [slot("mon", 1, "2026-11-05"), slot("wed", 3, "2026-11-05"), slot("fri", 5, "2026-11-05")]      # the group opens on Thursday 05.11: the first lesson is Friday 06.11
+
+
+def opening_world(w, fixed_today, today: date = date(2026, 10, 21), schedule=None):
+    from tests.pg_world import give_group_price
+    from tests.test_pay2_api_pg import settings_block
+
+    fixed_today(today)
+    settings_block(w, accounting_start_date="2026-09-01")
+    give_group_price(w.db, w.group, 300_000)
+    set_schedule(w, OPENS if schedule is None else schedule)
+
+
+def fresh_student(w, name="Новенький"):
+    """A student of the centre who is in no group."""
+    from src.models.auth import Student
+
+    student = Student(org_id=w.org.id, first_name=name, last_name="Ученик", class_level=9, status="new")
+    w.db.add(student)
+    w.db.commit()
+    return student
+
+
+def add(w, student, *, client=None, expect=200, mode="add", group=None, **params):
+    """«Добавить в группу» through the route; ``pay_from`` and the like go into the body, ``dry_run`` into the query."""
+    from tests.test_pay2_api_pg import API, owner
+
+    body = {k: v for k, v in params.items() if k != "dry_run"}
+    r = (client or owner(w)).post(f"{API}/org/groups/{(group or w.group).id}/students/{student.id}",
+                                  params={"mode": mode, **({"dry_run": "true"} if params.get("dry_run") else {})}, json=body)
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def opening_until(w, m, until):
+    """An opening balance «оплачено до» (no money): the notebook of the centre."""
+    from src.models.auth import MembershipOpeningBalance
+
+    w.db.add(MembershipOpeningBalance(org_id=w.org.id, membership_id=m.id, student_id=m.student_id, group_id=m.group_id, paid_until=until, source="manual", created_by=w.owner.id))
+    w.db.commit()
+
+
+def transfer(w, student, to, *, dry_run=False):
+    from tests.test_pay2_api_pg import API, owner
+
+    r = owner(w).post(f"{API}/org/groups/{to.id}/students/{student.id}", params={"mode": "transfer", **({"dry_run": "true"} if dry_run else {})}, json={})
+    assert r.status_code == 200, r.text
+    return r.json()

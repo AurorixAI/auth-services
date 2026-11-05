@@ -70,6 +70,18 @@
               }
             ]
           },
+          "pay_from": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pay From"
+          },
           "price_override": {
             "anyOf": [
               {
@@ -768,6 +780,45 @@
           "divisor"
         ],
         "title": "DivisorRow",
+        "type": "object"
+      },
+      "FirstPriceInfo": {
+        "description": "Money-1 B2: the first price of a group acts from the start of the running period of each student.",
+        "properties": {
+          "moved": {
+            "default": false,
+            "title": "Moved",
+            "type": "boolean"
+          },
+          "requested_valid_from": {
+            "format": "date",
+            "title": "Requested Valid From",
+            "type": "string"
+          },
+          "students_without_price": {
+            "default": 0,
+            "title": "Students Without Price",
+            "type": "integer"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "valid_from": {
+            "format": "date",
+            "title": "Valid From",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requested_valid_from",
+          "valid_from",
+          "moved",
+          "students_without_price",
+          "text"
+        ],
+        "title": "FirstPriceInfo",
         "type": "object"
       },
       "FreshBalance": {
@@ -2221,6 +2272,7 @@
               {
                 "enum": [
                   "debt",
+                  "waiting",
                   "expiring",
                   "active",
                   "paused"
@@ -2282,7 +2334,8 @@
                 "enum": [
                   "overdue",
                   "partial",
-                  "never_paid"
+                  "never_paid",
+                  "waiting"
                 ],
                 "type": "string"
               },
@@ -2522,6 +2575,18 @@
               }
             ],
             "title": "Teacher Name"
+          },
+          "waiting_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Until"
           },
           "writeoff_allowed": {
             "default": false,
@@ -3106,6 +3171,78 @@
           "row"
         ],
         "title": "OpeningVoided",
+        "type": "object"
+      },
+      "OverrideStudent": {
+        "description": "A student whose individual price does not follow the group (Money-1 B3 / B4 of the devil): the window lists him apart with the difference from the new group price.",
+        "properties": {
+          "difference_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difference After"
+          },
+          "group_price_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Price After"
+          },
+          "group_price_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Price Before"
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "price": {
+            "title": "Price",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "membership_id",
+          "student_name",
+          "price",
+          "group_price_before",
+          "group_price_after",
+          "difference_after",
+          "reason"
+        ],
+        "title": "OverrideStudent",
         "type": "object"
       },
       "PauseCreate": {
@@ -4313,6 +4450,17 @@
             "title": "Period Mode",
             "type": "string"
           },
+          "recalc_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recalc Hint"
+          },
           "regime_impact": {
             "anyOf": [
               {
@@ -4545,6 +4693,7 @@
               "left_debt_only",
               "price_change_ahead",
               "paid_over_60_days_ago",
+              "payment_repeated",
               "overlaps_previous",
               "gap_before",
               "period_over_62_days",
@@ -4587,6 +4736,11 @@
             "default": 0,
             "title": "Paused",
             "type": "integer"
+          },
+          "waiting": {
+            "default": 0,
+            "title": "Waiting",
+            "type": "integer"
           }
         },
         "title": "PaymentsBuckets",
@@ -4625,6 +4779,11 @@
           "debt_total": {
             "default": 0,
             "title": "Debt Total",
+            "type": "integer"
+          },
+          "debt_waiting_total": {
+            "default": 0,
+            "title": "Debt Waiting Total",
             "type": "integer"
           },
           "debtors": {
@@ -4694,6 +4853,11 @@
           "students_paused": {
             "default": 0,
             "title": "Students Paused",
+            "type": "integer"
+          },
+          "students_waiting": {
+            "default": 0,
+            "title": "Students Waiting",
             "type": "integer"
           },
           "students_with_advance": {
@@ -5496,6 +5660,16 @@
       "PriceImpact": {
         "description": "What a change of the group price touches.  Payments already entered never change.",
         "properties": {
+          "first_price": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FirstPriceInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "money": {
             "anyOf": [
               {
@@ -5535,6 +5709,7 @@
         "type": "object"
       },
       "PriceImpactItem": {
+        "description": "One student of a window (Money-1 B3): the account before -> after on the day the change reaches him, and the sentence for the screen (``text``).",
         "properties": {
           "advance_after": {
             "default": 0,
@@ -5544,6 +5719,16 @@
           "advance_before": {
             "default": 0,
             "title": "Advance Before",
+            "type": "integer"
+          },
+          "charged_after": {
+            "default": 0,
+            "title": "Charged After",
+            "type": "integer"
+          },
+          "charged_before": {
+            "default": 0,
+            "title": "Charged Before",
             "type": "integer"
           },
           "debt_after": {
@@ -5560,6 +5745,26 @@
             "default": false,
             "title": "Has Money",
             "type": "boolean"
+          },
+          "lessons_after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WhatIfLessons"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lessons_before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WhatIfLessons"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "membership_id": {
             "title": "Membership Id",
@@ -5592,6 +5797,11 @@
           "student_name": {
             "title": "Student Name",
             "type": "string"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
           }
         },
         "required": [
@@ -5603,7 +5813,12 @@
           "advance_after",
           "paid_until_before",
           "paid_until_after",
-          "has_money"
+          "has_money",
+          "charged_before",
+          "charged_after",
+          "lessons_before",
+          "lessons_after",
+          "text"
         ],
         "title": "PriceImpactItem",
         "type": "object"
@@ -5614,6 +5829,18 @@
             "default": 0,
             "title": "Advance Delta",
             "type": "integer"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
           },
           "backdated": {
             "default": false,
@@ -5637,6 +5864,11 @@
             "title": "Items",
             "type": "array"
           },
+          "items_total": {
+            "default": 0,
+            "title": "Items Total",
+            "type": "integer"
+          },
           "memberships_with_less_advance": {
             "default": 0,
             "title": "Memberships With Less Advance",
@@ -5646,6 +5878,23 @@
             "default": 0,
             "title": "Memberships With New Debt",
             "type": "integer"
+          },
+          "override_students": {
+            "items": {
+              "$ref": "#/components/schemas/OverrideStudent"
+            },
+            "title": "Override Students",
+            "type": "array"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -5655,7 +5904,12 @@
           "advance_delta",
           "days_lost_total",
           "backdated",
-          "items"
+          "as_of",
+          "items_total",
+          "truncated",
+          "text",
+          "items",
+          "override_students"
         ],
         "title": "PriceImpactMoney",
         "type": "object"
@@ -6297,6 +6551,16 @@
       },
       "RegimeImpact": {
         "properties": {
+          "charged_after_total": {
+            "default": 0,
+            "title": "Charged After Total",
+            "type": "integer"
+          },
+          "charged_before_total": {
+            "default": 0,
+            "title": "Charged Before Total",
+            "type": "integer"
+          },
           "defer": {
             "default": true,
             "title": "Defer",
@@ -6314,6 +6578,23 @@
             ],
             "title": "First Switch"
           },
+          "horizon_days": {
+            "default": 30,
+            "title": "Horizon Days",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RegimeItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "items_total": {
+            "default": 0,
+            "title": "Items Total",
+            "type": "integer"
+          },
           "latest_switch": {
             "anyOf": [
               {
@@ -6326,19 +6607,287 @@
             ],
             "title": "Latest Switch"
           },
+          "override_students": {
+            "items": {
+              "$ref": "#/components/schemas/RegimeOverride"
+            },
+            "title": "Override Students",
+            "type": "array"
+          },
           "students_affected": {
             "default": 0,
             "title": "Students Affected",
             "type": "integer"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
           "students_affected",
           "first_switch",
           "latest_switch",
-          "defer"
+          "defer",
+          "horizon_days",
+          "items_total",
+          "truncated",
+          "charged_before_total",
+          "charged_after_total",
+          "text",
+          "items",
+          "override_students"
         ],
         "title": "RegimeImpact",
+        "type": "object"
+      },
+      "RegimeItem": {
+        "description": "One student of the window of the billing mode / the day of the shared month (Money-1 B3): the account on the last of the first ``horizon_days`` days of the new way, before -> after.",
+        "properties": {
+          "advance_after": {
+            "default": 0,
+            "title": "Advance After",
+            "type": "integer"
+          },
+          "advance_before": {
+            "default": 0,
+            "title": "Advance Before",
+            "type": "integer"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "charged_after": {
+            "default": 0,
+            "title": "Charged After",
+            "type": "integer"
+          },
+          "charged_before": {
+            "default": 0,
+            "title": "Charged Before",
+            "type": "integer"
+          },
+          "debt_after": {
+            "default": 0,
+            "title": "Debt After",
+            "type": "integer"
+          },
+          "debt_before": {
+            "default": 0,
+            "title": "Debt Before",
+            "type": "integer"
+          },
+          "has_money": {
+            "default": false,
+            "title": "Has Money",
+            "type": "boolean"
+          },
+          "lessons_after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WhatIfLessons"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lessons_before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WhatIfLessons"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "paid_until_after": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until After"
+          },
+          "paid_until_before": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until Before"
+          },
+          "per_lesson_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Lesson After"
+          },
+          "per_lesson_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Lesson Before"
+          },
+          "price_amount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Amount"
+          },
+          "price_unit_after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Unit After"
+          },
+          "price_unit_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Unit Before"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          },
+          "switch_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Switch On"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "membership_id",
+          "student_name",
+          "debt_before",
+          "debt_after",
+          "advance_before",
+          "advance_after",
+          "paid_until_before",
+          "paid_until_after",
+          "has_money",
+          "charged_before",
+          "charged_after",
+          "lessons_before",
+          "lessons_after",
+          "text",
+          "switch_on",
+          "as_of",
+          "price_amount",
+          "price_unit_before",
+          "price_unit_after",
+          "per_lesson_before",
+          "per_lesson_after"
+        ],
+        "title": "RegimeItem",
+        "type": "object"
+      },
+      "RegimeOverride": {
+        "description": "A student with an individual price: his number stays what it is, in the new mode it means another thing (B4 of the devil: they are listed apart, not hidden).",
+        "properties": {
+          "membership_id": {
+            "title": "Membership Id",
+            "type": "string"
+          },
+          "price": {
+            "title": "Price",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "membership_id",
+          "student_name",
+          "price",
+          "reason",
+          "text"
+        ],
+        "title": "RegimeOverride",
         "type": "object"
       },
       "Segment": {
@@ -7770,6 +8319,39 @@
           "message"
         ],
         "title": "WarningOut",
+        "type": "object"
+      },
+      "WhatIfLessons": {
+        "description": "The package view of an account in a window: paid lessons, used, left (the lessons mode only).",
+        "properties": {
+          "covered": {
+            "default": 0,
+            "title": "Covered",
+            "type": "integer"
+          },
+          "left": {
+            "default": 0,
+            "title": "Left",
+            "type": "integer"
+          },
+          "package_size": {
+            "default": 0,
+            "title": "Package Size",
+            "type": "integer"
+          },
+          "used": {
+            "default": 0,
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "covered",
+          "used",
+          "left",
+          "package_size"
+        ],
+        "title": "WhatIfLessons",
         "type": "object"
       }
     }
@@ -9675,6 +10257,7 @@
               "default": "all",
               "enum": [
                 "debt",
+                "waiting",
                 "expiring",
                 "active",
                 "paused",

@@ -731,6 +731,8 @@ class StudentGroupPeriod(Base):
     joined_at = Column(DateTime, nullable=False)
     left_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+    # Money-1 B1 «Оплата с»: the first day this stay is CHARGED from (business date); NULL = the day he joined.  The roster / attendance still follow ``joined_at``.
+    billing_from = Column(Date, nullable=True)
 
     membership = relationship("StudentGroup", back_populates="periods")
 
@@ -1861,6 +1863,22 @@ class MembershipPause(Base):
         Index("ix_mp_membership_live", "org_id", "membership_id", postgresql_where=text("voided_at IS NULL")),
         Index("ix_mp_org_first_live", "org_id", "first_day", postgresql_where=text("voided_at IS NULL")),
     )
+
+
+class OrgMoneyAudit(Base):
+    """Money-1 B9: one row per change of the way a centre counts the payments (the mode, the day of the shared month, the package size, the recalculation of the
+    lessons the centre cancelled): who, when, from what to what, and what it did to the students (the sums).  Append-only; read by the owner on the page of the settings."""
+
+    __tablename__ = "org_money_audit"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    action = Column(String(40), nullable=False)
+    occurred_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    details = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+
+    __table_args__ = (Index("ix_org_money_audit_org_time", "org_id", "occurred_at"),)
 
 
 class MembershipOpeningBalance(Base):

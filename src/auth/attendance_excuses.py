@@ -1172,7 +1172,10 @@ class AttendanceExcuseService:
         held = att.status == "completed"
         students = me.student_deltas({sid: EXCUSED}, {sid: EXCUSED}, {sid: status_before}, {sid: status_after}, held_before=held, held_after=held)
         self.db.flush()
-        return me.lesson_block(self.db, att.org_id, students=students, probe=probe, owner=owner, done=done, group_id=att.group_id)
+        block = me.lesson_block(self.db, att.org_id, students=students, probe=probe, owner=owner, done=done, group_id=att.group_id)
+        if (status_after == "confirmed") != (status_before == "confirmed"):          # Money-1 B8: a month student's confirmed excuse is the right to a make-up (the money stays)
+            block = me.with_makeup(block, me.makeup_right(self.db, att.org_id, att.group_id, sid, gained=status_after == "confirmed"))
+        return block
 
     def review(
         self, org_id: str, excuse_id: UUID, actor_id: str, decision: str, note: Optional[str],

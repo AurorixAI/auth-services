@@ -107,6 +107,13 @@ def update_payment_settings(
         raise _http(exc)
 
 
+@router.get("/org/settings/payments/history")
+def payment_settings_history(limit: int = Query(50, ge=1, le=200), user: dict = Depends(require_payments_settings), db: Session = Depends(get_db)):
+    """Money-1 B9: журнал смены способа оплаты, дня общего месяца, размера пакета, перерасчёта за уроки, отменённые центром, и начала учёта: кто, когда, что и сколько это дало ученикам
+    (``items[].text`` — готовая фраза, ``details`` — числа). Только владелец (как сами настройки)."""
+    return PaymentService(db).settings_history(user["org_id"], limit=limit)
+
+
 # ---- status -----------------------------------------------------------------
 
 
