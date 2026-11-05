@@ -47,8 +47,9 @@ def test_the_chain_a_paid_sheet_closes_the_month_a_mistake_is_reopened_returned_
     assert (line["savedTotal"], line["freshBefore"], line["freshAfter"], line["changedBy"]) == (475_000, 475_000, 425_000, -50_000)       # two covered students x 25 000 gone from the pay
     state = owner(world).get(f"{API}/org/payroll/sheets/{sheet_['id']}").json()["payout"]
     assert (state["state"], state["basis"], state["balance"], state["changed_by"]) == ("overpaid", "fresh", -50_000, -50_000)       # R3 #20: the month is REOPENED (open) - the target is what the data says now, 425 000
-    assert state["text"] == "Месяц открыт: начислено сейчас 425 000, выплачено 475 000: переплачено 50 000"
-    assert "−50 000" in state["change_text"] and "Пересохраните" in state["change_text"]
+    assert state["text"] == ("Месяц открыт: начислено сейчас 425 000 сум, выплачено 475 000 сум. Выплачено вперёд 50 000 сум: "
+                            "покроется начислениями до конца месяца; если останется — уменьшит следующую выплату")
+    assert "−50 000 сум" in state["change_text"] and "Сохраните новую сумму" in state["change_text"]
     fp = owner(world).get(f"{API}/org/payroll/sheets/{sheet_['id']}/diff").json()["source_fingerprint"]
     resaved = owner(world).patch(f"{API}/org/payroll/sheets/{sheet_['id']}", json={"revision": 1, "recalculate": True, "expected_fingerprint": fp})
     assert resaved.status_code == 200 and resaved.json()["total_amount"] == 425_000
@@ -78,9 +79,9 @@ def test_p1_a_lesson_cancelled_by_a_slip_costs_230_000_of_deduction_until_it_is_
     org.settings = settings
     pg_session.commit()
     denied = client(w, "admin").post(f"{PAPI}/org/groups/{g.id}/lessons/restore", json=body)
-    assert denied.status_code == 409 and denied.json()["detail"]["code"] == "RESTORE_PAST" and "с правом оплат" in denied.json()["detail"]["message"]
+    assert denied.status_code == 409 and denied.json()["detail"]["code"] == "RESTORE_PAST" and "с доступом к деньгам" in denied.json()["detail"]["message"]
     ok = grant.post(f"{PAPI}/org/groups/{g.id}/lessons/restore", json=body)
-    assert ok.status_code == 200 and ok.json()["returnedToReview"] is True and "вычет" in ok.json()["moneyEffects"]["text"]
+    assert ok.status_code == 200 and ok.json()["returnedToReview"] is True and "перерасчёт" in ok.json()["moneyEffects"]["text"]
     assert [deducted(w, mm) for mm in ms] == [0] * 5                                               # the 230 000 are gone with the cancelled row
     missed = [a for a in client(w, "admin").get(f"{PAPI}/org/attendance/open-actions").json() if a["lessonId"] == "lesson-mon" and a["lessonDate"] == "2026-10-26"]
     assert len(missed) == 1 and missed[0]["actionType"] == "missed"                                # and the teacher can hold it again
@@ -125,7 +126,7 @@ def test_d15_the_refusals_of_a_held_and_of_a_cancelled_lesson_say_who_can_do_wha
     cday, clid = lesson(date(2026, 10, 29))
     world.svc.cancel_missed_group_attendance(str(world.org.id), str(world.group.id), ReconcileMissedLessonRequest(lessonDate=cday, lessonId=clid, cancellationReason="Нажали по ошибке"),
                                              cancelled_by=str(world.admin.id), is_org_admin=True, is_org_manager=True)
-    with pytest.raises(ValueError, match="Требует разбора"):
+    with pytest.raises(ValueError, match="Вернуть на отметку"):
         save_marks(world, cday, clid, [(s, "present") for s in world.students], status="in_progress")
 
 

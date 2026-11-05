@@ -116,8 +116,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_REPLACE_REASON = "Исправлено"
 RECEIPT_INDEX = "uq_student_payments_receipt_no"
 IDEMPOTENCY_INDEX = "uq_student_payments_idempotency"
-FILE_ON_CARRY_OVER = "К переносу оплаты чек не прикрепляется — это не денежная операция"
-FILE_ON_VOIDED = "Оплата аннулирована — чек прикрепить нельзя"
+FILE_ON_CARRY_OVER = "К деньгам, перешедшим из другой группы, чек не прикрепляется — это не денежная операция"
+FILE_ON_VOIDED = "Оплата отменена — чек прикрепить нельзя"
 FILE_LIMIT = f"К оплате можно приложить не более {MAX_FILES_PER_PAYMENT} файлов"
 RECEIPT_ATTEMPTS = 10  # max+1 under a SAVEPOINT; a conflict with a concurrent payment takes the next number
 SOFT_DUPLICATE_SECONDS = 60  # the same student + date + sum within a minute is a double click
@@ -129,7 +129,7 @@ ACCOUNTING_START_MIN = date(2020, 1, 1)
 
 # a transfer between groups (the warning of the response of ``add_student_to_group``)
 CARRY_CODE = "payment_carried_over"
-CARRY_GENERIC_MESSAGE = "Остаток оплаты ученика перенесён в новую группу"
+CARRY_GENERIC_MESSAGE = "Деньги ученика перешли в новую группу"
 
 # the audit trail of write-offs and refunds lives in ``group_audit``
 AUDIT_WRITEOFF = "payment_writeoff"
@@ -1232,7 +1232,7 @@ class PaymentService:
             self._guard_key(org_id, idempotency_key)   # a replay of this replace: the stored result, not ALREADY_VOIDED
             probe = self._probe_payment(org_id, payment_id)
             if probe.kind == "legacy_carry" or probe.carried_from_payment_id is not None:
-                raise PaymentConflict("Перенос оплаты нельзя исправить — это не денежная операция",)
+                raise PaymentConflict("Деньги, перешедшие из другой группы, нельзя исправить — это не денежная операция",)
             family = self._lock_family(org_id, probe.student_id)
             membership = self._membership(org_id, probe.membership_id)
             old = self._lock_payment(org_id, payment_id)
@@ -1267,7 +1267,7 @@ class PaymentService:
             reason = self._check_reason(reason)
             probe = self._probe_payment(org_id, payment_id)
             if probe.kind == "legacy_carry" or probe.carried_from_payment_id is not None:   # MN-50: the same guard as ``replace_payment``
-                raise PaymentConflict("Перенос оплаты нельзя аннулировать — это не денежная операция")
+                raise PaymentConflict("Деньги, перешедшие из другой группы, нельзя отменить — это не денежная операция")
             family = self._lock_family(org_id, probe.student_id)
             self._membership(org_id, probe.membership_id)
             payment = self._lock_payment(org_id, payment_id)
@@ -1554,7 +1554,7 @@ class PaymentService:
         if not detailed:
             return [{"code": CARRY_CODE, "message": CARRY_GENERIC_MESSAGE}]
         group = self.db.query(Group.name).filter(Group.id == target.group_id).scalar() or ""
-        return [{"code": CARRY_CODE, "message": f"Остаток денег {_sum(total)} перенесён в «{group}»"}]
+        return [{"code": CARRY_CODE, "message": f"Деньги ученика — {_sum(total)} — перешли в группу «{group}»"}]
 
     # ------------------------------------------------ transfer: what the account the money lands on looks like (stage walk D-6)
 
@@ -1581,8 +1581,8 @@ class PaymentService:
             return None
 
     @staticmethod
-    def transfer_balance(before: Optional[Dict[str, int]], after: Optional[Dict[str, int]]) -> Optional[Dict[str, Any]]:
-        """«Перенесено X, из них сразу Y на оплату остатка месяца, аванс останется Z»: the new account after the transfer (D-6, I-5: the window says what the screens will say).  ``before`` - the account
+    def transfer_balance(before: Optional[Dict[str, int]], after: Optional[Dict[str, int]], group_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """«Деньги ученика — X — переходят в группу «…»: сразу Y пойдут на остаток месяца; аванс останется Z»: the new account after the transfer (D-6, I-5: the window says what the screens will say).  ``before`` - the account
         the transfer lands on BEFORE it (a membership that comes back to a group it had; ``None`` for a new one), ``after`` - the same after it (``account_after(.., tomorrow=True)``).  ``None``: no money
         moved, or no numbers.  ``carried`` = what arrived on this account by the transfer, ``charged_now`` = what the account is charged at once because of it (a returning membership: the rest of
         the month), ``advance`` / ``debt`` = the account after, ``charged_tomorrow`` = what the next day charges more (a NEW membership: the lessons of the rest of the month, ``advance_tomorrow`` is what is left then)."""
@@ -1596,7 +1596,7 @@ class PaymentService:
         charged_tomorrow = max(after.get("charged_tomorrow", after["charged"]) - after["charged"], 0)
         out = {"carried": carried, "charged_now": charged_now, "advance": after["advance"], "debt": after["debt"], "charged_tomorrow": charged_tomorrow,
                "advance_tomorrow": after.get("advance_tomorrow", after["advance"])}
-        out["text"] = tx.transfer_balance_text(**out)
+        out["text"] = tx.transfer_balance_text(**out, group_name=group_name)
         return out
 
     # ------------------------------------------------------------ preview
@@ -1669,7 +1669,7 @@ class PaymentService:
         """What the printed receipt shows (the snapshot of the moment of the payment).  A legacy carry-over: 409."""
         payment = self._probe_payment(org_id, payment_id)
         if payment.carried_from_payment_id is not None or payment.kind == "legacy_carry":
-            raise PaymentConflict("Перенос оплаты — не денежная операция, квитанции нет")
+            raise PaymentConflict("Деньги перешли из другой группы — это не оплата, квитанции нет")
         if payment.receipt_no is None:  # only a row written around the application
             raise PaymentConflict("У этой оплаты нет номера квитанции")
         org = self.db.query(Organization).filter(Organization.id == org_id).first()

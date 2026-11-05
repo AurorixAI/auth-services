@@ -88,7 +88,7 @@ def test_october_overview_hand_calculated(world, seeded):
     assert cur["to_forward"] == 0 and cur["to_past_debt"] + cur["to_current"] + cur["to_advance"] + cur["refunded_from_received"] == cur["received"]
     assert [(x["kind"], x["label"], x["amount"]) for x in o["strip"]] == [
         ("old_debt", "на старые долги", 1_000_000), ("current", "за текущий период", 1_900_000), ("forward", "вперёд (за будущие периоды)", 0),
-        ("advance", "пока не потрачено (аванс)", 450_000), ("refunded", "возвращено", 100_000), ("transferred", "перенесено в другую группу", 0)]
+        ("advance", "пока не потрачено (аванс)", 450_000), ("refunded", "возвращено", 100_000), ("transferred", "деньги перешли в другую группу", 0)]
     assert o["previous_label"] == "те же дни сентября" and o["previous_hint"] == "1–21 сентября"
     assert [c["code"] for c in o["checks"] if c["code"].startswith("strip_")] == [
         "strip_old_debt_eq_journal", "strip_current_eq_journal", "strip_advance_eq_journal", "strip_refunded_eq_journal"]
@@ -277,7 +277,7 @@ def test_transfers_are_counted_apart(world, fixed_today):
     assert cur["to_past_debt"] + cur["to_current"] + cur["to_forward"] + cur["to_advance"] + cur["refunded_from_received"] + cur["transferred"] == 800_000
     assert o["ok"]
     row = journal(world)["rows"][0]
-    assert row["transferred"] == cur["transferred"] and f"перенесено в другую группу — {tx_num(cur['transferred'])} сум" in row["allocation_text"]
+    assert row["transferred"] == cur["transferred"] and f"деньги перешли в другую группу — {tx_num(cur['transferred'])} сум" in row["allocation_text"]
 
 
 def tx_num(n):

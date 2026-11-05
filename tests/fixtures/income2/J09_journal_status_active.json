@@ -227,7 +227,7 @@
           "days": 12,
           "bucket": "past_debt",
           "closes": true,
-          "label": "Закрыла долг 01.09–30.09",
+          "label": "Погашен долг за 01.09–30.09",
           "price": 500000,
           "segment_remaining_after": 0
         }
@@ -285,7 +285,7 @@
           "days": 30,
           "bucket": "past_debt",
           "closes": true,
-          "label": "Закрыла долг 01.09–30.09",
+          "label": "Погашен долг за 01.09–30.09",
           "price": 500000,
           "segment_remaining_after": 0
         },

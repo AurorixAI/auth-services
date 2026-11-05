@@ -122,9 +122,9 @@ def test_period_name_and_closed_words():
     assert t.period_name(D(2026, 9, 25), D(2026, 10, 21), "package") == "пакет 25.09–21.10"
     month = alloc(D(2026, 8, 1), D(2026, 8, 31), 1)
     other = alloc(D(2026, 9, 15), D(2026, 10, 14), 1)
-    assert t.closed_words("август", "period", month) == "август закрыт"
-    assert t.closed_words("15.09–14.10", "period", other) == "период закрыт"
-    assert t.closed_words("пакет", "package", other) == "пакет закрыт"
+    assert t.closed_words("август", "period", month) == "август оплачен"
+    assert t.closed_words("15.09–14.10", "period", other) == "период оплачен"
+    assert t.closed_words("пакет", "package", other) == "пакет оплачен"
 
 
 # ---- entries ------------------------------------------------------------------------------------------------------
@@ -150,8 +150,8 @@ def test_a_payment_reads_like_the_page_with_allocation_lines_in_the_details():
     first, second = entries_of(rows)[2:]
     assert first.title == "Оплата № 7 · наличные · внёс Айбек О."
     assert first.paid == 700_000 and first.charged is None and first.balance == "Долг 300 000"
-    assert first.allocations == ["за август — 474 000 (август закрыт)", "за сентябрь — 226 000 (осталось 274 000)"]
-    assert first.details == "комментарий: за двоих\nза август — 474 000 (август закрыт)\nза сентябрь — 226 000 (осталось 274 000)"
+    assert first.allocations == ["за август — 474 000 (август оплачен)", "за сентябрь — 226 000 (осталось 274 000)"]
+    assert first.details == "комментарий: за двоих\nза август — 474 000 (август оплачен)\nза сентябрь — 226 000 (осталось 274 000)"
     assert second.title == "Оплата № 8 · карта"
     assert second.allocations == ["аванс на октябрь — 100 000", "за сентябрь — 50 000 (осталось 224 000)"]   # 500 000 - 226 000 - 50 000
     assert second.replaced == "исправлена: было 90 000" and second.details.splitlines()[0] == "исправлена: было 90 000"
@@ -167,7 +167,7 @@ def test_the_remainder_is_recomputed_only_without_the_servers_figure_and_a_write
                 allocations=[alloc(D(2026, 9, 1), D(2026, 9, 30), 300_000, closes=True)])]
     entries = entries_of(rows)
     assert entries[1].allocations == ["за сентябрь — 100 000 (осталось 400 000)"]        # the write-off is not here yet
-    assert entries[3].allocations == ["за сентябрь — 300 000 (сентябрь закрыт)"]
+    assert entries[3].allocations == ["за сентябрь — 300 000 (сентябрь оплачен)"]
 
 
 def test_lines_of_a_package_an_advance_for_lessons_and_a_closed_period_by_the_servers_zero():
@@ -178,7 +178,7 @@ def test_lines_of_a_package_an_advance_for_lessons_and_a_closed_period_by_the_se
                 Allocation(segment_id="advance", period_from=D(2026, 10, 22), period_to=D(2026, 10, 22), amount=100_000, days=0,
                            bucket="advance", closes=False, label="x")])]
     (_, payment) = entries_of(rows)
-    assert payment.allocations == ["за пакет 25.09–21.10 — 500 000 (пакет закрыт)", "аванс на следующие уроки — 100 000"]
+    assert payment.allocations == ["за пакет 25.09–21.10 — 500 000 (пакет оплачен)", "аванс на следующие уроки — 100 000"]
 
 
 def test_writeoff_refund_transfers_opening_pause_and_a_charge_without_a_segment():
@@ -231,12 +231,12 @@ def test_cancel_note_and_totals():
     bare = StatementRow(seq=1, date=D(2026, 9, 1), type="payment", title="x", voided_at="x")
     assert t.cancel_note(bare) == "Отменено: причина не указана"
     s = StatementSummary(charged=1_200_000, paid=1_100_000, written_off=100_000, refunded=0, debt=0, advance=0)
-    assert t.total_lines(s) == [("Стоимость обучения", 1_200_000), ("Оплачено", 1_100_000), ("Прощено", 100_000), ("Баланс", "0")]
+    assert t.total_lines(s) == [("Стоимость обучения", 1_200_000), ("Оплачено", 1_100_000), ("Прощено", 100_000), ("Остаток долга", "0")]
     s = StatementSummary(charged=10, paid=100, transferred_in=5, refunded=7, transferred_out=3, advance=92)
-    assert [x[0] for x in t.total_lines(s)] == ["Стоимость обучения", "Оплачено", "Перенесено из групп", "Возвращено",
-                                                 "Перенесено в группы", "Баланс"]
-    assert t.total_lines(StatementSummary(debt=92_000))[-1] == ("Баланс", "Долг 92 000")
-    assert t.total_lines(StatementSummary(advance=508_000))[-1] == ("Баланс", "Аванс 508 000")
+    assert [x[0] for x in t.total_lines(s)] == ["Стоимость обучения", "Оплачено", "Деньги из других групп", "Возвращено",
+                                                 "Деньги в другие группы", "Остаток долга"]
+    assert t.total_lines(StatementSummary(debt=92_000))[-1] == ("Остаток долга", "Долг 92 000")
+    assert t.total_lines(StatementSummary(advance=508_000))[-1] == ("Остаток долга", "Аванс 508 000")
 
 
 def test_title_lines_and_the_periods_to_come():
@@ -248,8 +248,8 @@ def test_title_lines_and_the_periods_to_come():
     assert t.asof_line(D(2026, 10, 21), D(2026, 8, 1), None, None) == "По состоянию на 21.10.2026 · Учёт ведётся с 01.08.2026 · Период: Все месяцы"
     assert t.asof_line(D(2026, 10, 21), D(2026, 8, 1), D(2026, 10, 1), D(2026, 10, 31)).endswith("Период: Октябрь 2026")
     s = StatementSummary(charged=1_103_000, paid=1_153_000, written_off=50_000, refunded=40_000, advance=60_000)
-    assert t.totals_line(s) == "Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Возвращено 40 000 · Баланс: Аванс 60 000"
-    assert t.totals_line(StatementSummary(charged=5, paid=5)) == "Стоимость обучения 5 · Оплачено 5 · Баланс: 0"
+    assert t.totals_line(s) == "Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Возвращено 40 000 · Остаток долга: Аванс 60 000"
+    assert t.totals_line(StatementSummary(charged=5, paid=5)) == "Стоимость обучения 5 · Оплачено 5 · Остаток долга: 0"
     nov = seg(D(2026, 11, 1), D(2026, 11, 30), charge=500_000)
     assert t.upcoming_line(nov) == "01.11–30.11: к оплате 500 000 сум"
     nov.paid = 274_000

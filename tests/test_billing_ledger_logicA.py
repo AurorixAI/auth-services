@@ -51,7 +51,7 @@ def test_open_b_debt_is_the_oldest_and_paid_first():
     assert lg.segments[0].unpaid == 0 and lg.segments[1].money == 50_000
     a = [(x.segment_id, x.amount, x.bucket, x.closes) for x in lg.allocations]
     assert a == [("seg:opening", 250_000, bl.PAST_DEBT, True), (lg.segments[1].id, 50_000, bl.CURRENT, False)]
-    assert lg.allocations[0].label == "Закрыла долг на начало учёта на 30.09.2026"
+    assert lg.allocations[0].label == "Погашен долг на начало учёта на 30.09.2026"
     # 100 000 only: the opening debt is the only thing paid; "paid until" does not move
     lg = g_open(op, credits=[credit("p1", TODAY, 100_000)])
     assert (lg.debt, lg.covered_through, lg.segments[0].unpaid) == (363_000, None, 150_000)

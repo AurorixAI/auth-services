@@ -253,7 +253,7 @@ class PayrollPayoutService:
             sheet = (self.db.query(PayrollSheet).filter(PayrollSheet.id == sheet_id, PayrollSheet.org_id == org_id)
                      .with_for_update().populate_existing().first())
             if sheet is None:
-                raise SheetNotSaved("Сначала сохраните ведомость")
+                raise SheetNotSaved("Сначала сохраните зарплату за месяц")
             if key is not None:
                 same = self.db.query(PayrollPayout).filter(PayrollPayout.org_id == org_id, PayrollPayout.idempotency_key == key).first()
                 if same is not None:
@@ -272,7 +272,7 @@ class PayrollPayoutService:
             left = max(self.state_for(org_id, sheet, fresh_total_of(sheet)).balance, 0)
             excess = max(amount - left, 0)
             if excess > 0 and not (body.confirm_overpay and body.overpay == excess):
-                raise OverpayConfirmRequired(f"Выплата больше остатка на {tx.num(excess)} сум. Если окно не предложило записать аванс — обновите страницу и повторите",
+                raise OverpayConfirmRequired(f"Выплата больше остатка на {tx.num(excess)} сум. Если окно не предложило записать выплату вперёд — обновите страницу и повторите",
                                              overpay=excess, balance=left)
             row = PayrollPayout(
                 org_id=UUID(str(org_id)), sheet_id=sheet.id, teacher_id=sheet.teacher_id, period_month=sheet.period_month,

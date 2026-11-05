@@ -1,13 +1,13 @@
 """
 ALGO - the statement as an Excel file: it reads like the page (Выписка), in the house style (``xlsx_style``).
 
-Title block (three lines: who, as-of / period, totals), then the table «Дата | Операция | Стоимость | Оплачено | [Прощено] | [Возвращено] | [Переведено] |
-Баланс | Подробности» with a band per month, the carry line of a single month, a blue «Итого» row and, below, the periods to come and the cancelled
+Title block (three lines: who, as-of / period, totals), then the table «Дата | Операция | Стоимость | Оплачено | [Прощено] | [Возвращено] | [Деньги в другие группы] |
+Остаток долга | Подробности» with a band per month, the carry line of a single month, a blue «Итого» row and, below, the periods to come and the cancelled
 records.  The words come from ``payments_statement_texts`` (the mirror of the page's rules); this module only draws them.
 
 The rules of the file (owner, 23.10.2026):
 
-* no signed numbers: a payment is in «Оплачено», a forgiven debt in «Прощено», a recalculation for a lesson the centre cancelled in «Перерасчёт», a refund in «Возвращено», a transfer to another group in «Переведено»
+* no signed numbers: a payment is in «Оплачено», a forgiven debt in «Прощено», a recalculation for a lesson the centre cancelled in «Перерасчёт», a refund in «Возвращено», money that went to another group in «Деньги в другие группы»
   (the last three columns exist only when the file has such an operation; money that came in from another group stays in «Оплачено», as on the page);
 * ONE balance rule everywhere (the table, the «Итого» row, the title line): the balance is the words of the screen - «Долг 92 000» / «Аванс 21 000» / «0»;
 * real dates, whole-number money cells with ``#,##0``, widths from the content, frozen header under the title block, print setup.
@@ -22,8 +22,8 @@ from . import payments_statement_texts as st_tx
 from . import xlsx_style as xs
 
 SHEET_TITLE = "Выписка"
-HEADER = ["Дата", "Операция", "Стоимость", "Оплачено", "Баланс", "Подробности"]       # the columns every statement has (the optional ones go after «Оплачено»)
-OPTIONAL = (("forgiven", "Прощено"), ("recalc", "Перерасчёт"), ("refunded", "Возвращено"), ("transferred", "Переведено"))
+HEADER = ["Дата", "Операция", "Стоимость", "Оплачено", "Остаток долга", "Подробности"]       # the columns every statement has (the optional ones go after «Оплачено»)
+OPTIONAL = (("forgiven", "Прощено"), ("recalc", "Перерасчёт"), ("refunded", "Возвращено"), ("transferred", "Деньги в другие группы"))
 CANCELLED_TITLE = "Отменённые записи"
 CANCELLED_EMPTY = "Отменённых записей нет"
 TOTAL_LABEL = "Итого"
@@ -39,7 +39,7 @@ def columns_of(kinds) -> List[Tuple[str, str]]:
     """``[(key, header)]`` of the table: the fixed columns and the optional money columns that the file really uses."""
     out = [("date", "Дата"), ("title", "Операция"), ("charged", "Стоимость"), ("paid", "Оплачено")]
     out += [(key, label) for key, label in OPTIONAL if key in kinds]
-    return out + [("balance", "Баланс"), ("details", "Подробности")]
+    return out + [("balance", "Остаток долга"), ("details", "Подробности")]
 
 
 def build_statement_xlsx(

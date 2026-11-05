@@ -143,7 +143,7 @@ class Allocation(PayModel):
     days: int  # days this piece adds to the segment's paid days (the pieces of all payments sum to covered_days)
     bucket: AllocationBucket  # relative to the DATE OF THE PAYMENT: ended before it / running / starts after it
     closes: bool  # after this piece the segment is paid in full
-    label: str  # «Закрыла долг 15.09–14.10» | «На текущий период 15.10–14.11» | «Аванс на 15.11–14.12»
+    label: str  # «Погашен долг за 15.09–14.10» | «На текущий период 15.10–14.11» | «Аванс на 15.11–14.12»
     price: Optional[int] = None  # the price of that period (differs from today's price when a price change is announced)
     # LOGIC-A: what is still unpaid of THAT period right after this piece (after the earlier payments / write-offs / refunds in
     # the order of the money line); null on the "advance" line and on a snapshot of a receipt made before LOGIC-A.
@@ -964,7 +964,7 @@ class StatementRow(PayModel):
     credit: int = 0  # money in (payment, transfer in, write-off)
     outflow: int = 0  # money out (refund, transfer out)
     balance_after: Optional[int] = None  # negative = debt, positive = advance; null on a voided row
-    balance_text: Optional[str] = None  # «Долг 500 000» | «Аванс 21 000» | «0» (the «Баланс» column)
+    balance_text: Optional[str] = None  # «Долг 500 000» | «Аванс 21 000» | «0» (the «Остаток долга» column)
     voided_at: Optional[str] = None
     void_reason: Optional[str] = None
     voided_by_name: Optional[str] = None

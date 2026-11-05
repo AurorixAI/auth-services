@@ -419,7 +419,7 @@ def test_a_payment_that_cannot_take_a_cheque_is_refused_before_the_body_is_parse
     r = owner(world).post(f"{API}/org/payments/{full['id']}/files", files=files)
     assert r.status_code == 409 and r.json()["detail"] == "К оплате можно приложить не более 3 файлов"
     r = owner(world).post(f"{API}/org/payments/{voided['id']}/files", files=files)
-    assert r.status_code == 409 and r.json()["detail"] == "Оплата аннулирована — чек прикрепить нельзя"
+    assert r.status_code == 409 and r.json()["detail"] == "Оплата отменена — чек прикрепить нельзя"
     assert owner(world).post(f"{API}/org/payments/{uuid4()}/files", files=files).status_code == 404
     foreign_owner = make_user(world.db, "owner")
     make_member(world.db, world.other_org, foreign_owner, "owner")
@@ -638,11 +638,11 @@ def test_no_cheque_on_a_voided_payment_or_a_legacy_carry_over(world):
     world.db.add(carry)
     world.db.commit()
     r = owner(world).post(f"{API}/org/payments/{carry.id}/files", files={"file": ("x.png", PNG, "image/png")})
-    assert r.status_code == 409 and "перенос" in r.json()["detail"].lower()
+    assert r.status_code == 409 and "перешли из другой группы" in r.json()["detail"].lower() or "перешедшим из другой группы" in r.json()["detail"].lower()
     assert owner(world).get(f"{API}/org/payments/{carry.id}/receipt").status_code == 409
     assert owner(world).post(f"{API}/org/payments/{p['id']}/void", json={"reason": "ошибка"}).status_code == 200
     r = owner(world).post(f"{API}/org/payments/{p['id']}/files", files={"file": ("x.png", PNG, "image/png")})
-    assert r.status_code == 409 and r.json()["detail"] == "Оплата аннулирована — чек прикрепить нельзя"
+    assert r.status_code == 409 and r.json()["detail"] == "Оплата отменена — чек прикрепить нельзя"
     # the cheque of a voided payment stays readable (and removable)
     assert owner(world).get(f"{API}/org/payments/{p['id']}/files/{kept['id']}").content == PNG
     listing = owner(world).get(f"{API}/org/memberships/{mid(world)}/payments").json()

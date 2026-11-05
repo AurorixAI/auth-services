@@ -121,12 +121,12 @@ def allocation_label(*, bucket: str, closes: bool, start: date, end: date, packa
     if package_no is not None:
         what = f"пакет №{package_no} ({span})"
         if bucket == PAST_DEBT:
-            return ("Закрыла долг: " if closes else "Частично погасила долг: ") + what
+            return ("Погашен долг за " if closes else "Частично погашен долг за ") + what
         if bucket == CURRENT:
             return "На текущий " + what
         return "Аванс: " + what
     if bucket == PAST_DEBT:
-        return ("Закрыла долг " if closes else "Частично погасила долг ") + span
+        return ("Погашен долг за " if closes else "Частично погашен долг за ") + span
     if bucket == CURRENT:
         return f"На текущий период {span}"
     return f"Аванс на {span}"
@@ -135,7 +135,7 @@ def allocation_label(*, bucket: str, closes: bool, start: date, end: date, packa
 def opening_label(day: date, closes: bool) -> str:
     """Where a payment went when it landed on the opening debt."""
     on = day.strftime("%d.%m.%Y")
-    return f"Закрыла долг на начало учёта на {on}" if closes else f"Частично погасила долг на начало учёта на {on}"
+    return f"Погашен долг на начало учёта на {on}" if closes else f"Частично погашен долг на начало учёта на {on}"
 
 
 def advance_label_lessons() -> str:
@@ -161,34 +161,34 @@ def summary_text(
 ) -> str:
     """The one-line answer to «что закроет» (calendar: ``paid_until_after``; lessons: ``(covered_after, left_after)``).
 
-    * ``Закроет долг 269 000 · на текущий период 31 000 → оплачено до 15.10 · останется 469 000``
-    * ``… · Переплата 21 000 → аванс на следующий период (15.11–14.12), оплачено до 15.11``
-    * lessons: ``Закроет долг 600 000 → оплачено уроков 12, осталось 0 · аванс 30 000``
+    * ``Погасит долг 269 000 сум · на текущий период 31 000 сум → оплачено до 15.10 · останется 469 000 сум``
+    * ``… · Переплата 21 000 сум → аванс на следующий период (15.11–14.12), оплачено до 15.11``
+    * lessons: ``Погасит долг 600 000 сум → оплачено уроков 12, осталось 0 · аванс 30 000 сум``
     """
     parts = []
     if opening:  # LOGIC-A: the debt of the opening balance is paid before any period
-        parts.append(f"Закроет долг на начало {num(opening)}" if opening >= opening_before
-                     else f"Погасит {num(opening)} из долга на начало {num(opening_before)}")
+        parts.append(f"Погасит долг на начало {money(opening)}" if opening >= opening_before
+                     else f"Погасит {money(opening)} из долга на начало {money(opening_before)}")
     if past:
         parts.append(
-            f"Закроет долг {num(past)}" if past >= past_debt_before else f"Погасит {num(past)} из долга {num(past_debt_before)}"
+            f"Погасит долг {money(past)}" if past >= past_debt_before else f"Погасит {money(past)} из долга {money(past_debt_before)}"
         )
     if current:
-        parts.append(f"на текущий период {num(current)}")
+        parts.append(f"на текущий период {money(current)}")
     if lessons is None and advance:
         where = "следующий период" if len(advance_periods) <= 1 else "следующие периоды"
         if advance_periods:
             where += f" ({period_text(advance_periods[0][0], advance_periods[-1][1])})"
-        parts.append(f"Переплата {num(advance)} → аванс на {where}")
+        parts.append(f"Переплата {money(advance)} → аванс на {where}")
     head = _first_upper(" · ".join(parts)) if parts else ""
     if lessons is not None:
         covered, left = lessons
         tail = f"оплачено уроков {covered}, осталось {left}"
         text = f"{head} → {tail}" if head else _first_upper(tail)
         if debt_after:
-            text += f" · останется {num(debt_after)}"
+            text += f" · останется {money(debt_after)}"
         if advance:
-            text += f" · аванс {num(advance)}"
+            text += f" · аванс {money(advance)}"
         return text
     if advance and paid_until_after is not None:
         text = f"{head}, оплачено до {ddmm(paid_until_after)}"
@@ -198,7 +198,7 @@ def summary_text(
     else:
         text = head
     if debt_after:
-        text += f" · останется {num(debt_after)}"
+        text += f" · останется {money(debt_after)}"
     return text
 
 
@@ -216,35 +216,37 @@ def price_change_warning(start: date, end: date, amount: int, current: int) -> s
 
 def payout_text(*, state: str, saved_total: int, fresh_total: Optional[int], target: int, paid: int, balance: int, carry_used: int = 0) -> str:
     """The sentence of ``PayoutState.text`` (spec §5.8).  A sheet is "stale" when the fresh total differs from the saved one.
-    ``carry_used`` (R3 3): a month that the advance of the earlier months covers whole is «Закрыто авансом»; otherwise the sentence is the old one (the advance has its own line)."""
+    ``carry_used`` (R3 3): a month that the extra payout of the earlier months covers whole is «Закрыто выплатой прошлого месяца»; otherwise the sentence is the old one (that payout has its own line).
+    Words of the dictionary (LESSONS 109): a payout that is more than the saved pay is «Выплачено больше на N сум — вычтем из следующей выплаты»; every sum has its «сум»."""
     if state == "settled" and paid == 0 and carry_used:
-        return f"Закрыто авансом прошлого месяца {num(carry_used)}"
+        return f"Закрыто выплатой прошлого месяца: {money(carry_used)}"
     if state == "unpaid":
         return "Не выплачено"
     if state == "settled":
         return "Выплачено полностью"
     if state == "overpaid":
-        return f"Переплачено {num(-balance)}"
-    return f"Выплачено {num(paid)} из {num(target)} · осталось {num(balance)}"
+        return f"Выплачено больше на {money(-balance)} — вычтем из следующей выплаты"
+    return f"Выплачено {money(paid)} из {money(target)} · осталось {money(balance)}"
 
 
 def open_month_payout_text(*, state: str, accrued: int, paid: int, balance: int, carry_used: int = 0) -> str:
-    """Money-1 R3 #20: the sentence of a payout state of an OPEN month - what the data says now, not the (stage) saved sheet; never «Выплачено полностью» while the accrued is more than the paid."""
-    head = f"Месяц открыт: начислено сейчас {num(accrued)}"
+    """Money-1 R3 #20: the sentence of a payout state of an OPEN month - what the data says now, not the (stage) saved sheet; never «Выплачено полностью» while the accrued is more than the paid.
+    An open month never says «переплачено»: what is paid over the accrued so far is «Выплачено вперёд» and covered by what the month still accrues."""
+    head = f"Месяц открыт: начислено сейчас {money(accrued)}"
     if state == "settled" and paid == 0 and carry_used:
-        return f"{head}, закрыто авансом прошлого месяца {num(carry_used)}"
+        return f"{head}, закрыто выплатой прошлого месяца: {money(carry_used)}"
     if state == "unpaid":
-        return f"{head}, выплат нет, к выплате {num(balance)}"
+        return f"{head}, выплат нет, к выплате {money(balance)}"
     if state == "settled":
-        return f"{head}, выплачено {num(paid)}: на сегодня выплачено всё"
+        return f"{head}, выплачено {money(paid)}: на сегодня выплачено всё"
     if state == "overpaid":
-        return f"{head}, выплачено {num(paid)}: переплачено {num(-balance)}"
-    return f"{head}, выплачено {num(paid)}, к выплате {num(balance)}"
+        return f"{head}, выплачено {money(paid)}. Выплачено вперёд {money(-balance)}: покроется начислениями до конца месяца; если останется — уменьшит следующую выплату"
+    return f"{head}, выплачено {money(paid)}, к выплате {money(balance)}"
 
 
 def payout_change_text(delta: int) -> str:
     """Money-1 A1b: the line under the payout of a sheet whose data moved after it was saved (the payout stays by the saved total)."""
-    return f"После сохранения ведомость изменилась на {'+' if delta > 0 else '−'}{num(abs(delta))}. Пересохраните ведомость, чтобы учесть"
+    return f"После сохранения зарплата изменилась на {'+' if delta > 0 else '−'}{money(abs(delta))}. Сохраните новую сумму, чтобы учесть изменение"
 
 
 # ---- INCOME-2 («Поступления» v2): the owner's vocabulary ------------------------------------------------------
@@ -289,7 +291,7 @@ INCOME_KIND_LABELS = {
     KIND_FORWARD: "вперёд (за будущие периоды)",            # the period starts after the payment's date (and is already consumed today)
     KIND_ADVANCE: "пока не потрачено (аванс)",              # no period has absorbed it yet
     KIND_REFUNDED: "возвращено",
-    KIND_TRANSFERRED: "перенесено в другую группу",
+    KIND_TRANSFERRED: "деньги перешли в другую группу",
 }
 
 
@@ -360,12 +362,13 @@ def short_span_text(first: date, last: date) -> str:
     return f"{first.day} {mon(first)} – {last.day} {mon(last)}"
 
 
-def transfer_balance_text(*, carried: int, charged_now: int, advance: int, debt: int, charged_tomorrow: int, advance_tomorrow: int) -> str:
-    """The window of a transfer (stage walk D-6): ``Перенесено 640 000 сум; аванс останется 640 000 сум; со следующего дня начислят ещё 350 000 сум (аванс останется 290 000 сум)``.
-    A group the student comes back to charges the rest of the month at once (``сразу … на оплату остатка месяца``); a new one - from the next day."""
-    head = f"Перенесено {money(carried)}"
+def transfer_balance_text(*, carried: int, charged_now: int, advance: int, debt: int, charged_tomorrow: int, advance_tomorrow: int, group_name: Optional[str] = None) -> str:
+    """The window of a transfer (stage walk D-6): ``Деньги ученика — 640 000 сум — переходят в группу «Геометрия 8»: сразу 280 000 сум пойдут на остаток месяца; аванс останется 360 000 сум. Со следующего дня начислят ещё 350 000 сум (аванс останется 290 000 сум)``.
+    The same words before the transfer (the window) and after it (the toast).  A group the student comes back to charges the rest of the month at once (``сразу … пойдут на остаток месяца``); a new one - from the next day."""
+    where = f"в группу «{group_name}»" if group_name else "в эту группу"
+    head = f"Деньги ученика — {money(carried)} — переходят {where}"
     if charged_now:
-        head += f", из них сразу {money(charged_now)} на оплату остатка месяца"
+        head += f": сразу {money(charged_now)} пойдут на остаток месяца"
     parts = [head]
     if debt:
         parts.append(f"долг останется {money(debt)}")

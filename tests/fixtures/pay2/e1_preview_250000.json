@@ -92,7 +92,7 @@
         "days": 15,
         "bucket": "past_debt",
         "closes": false,
-        "label": "Частично погасила долг 15.09–14.10",
+        "label": "Частично погашен долг за 15.09–14.10",
         "price": 500000,
         "segment_remaining_after": 19000
       }
@@ -107,7 +107,7 @@
     "days_overdue_after": 9,
     "partial_credit_after": 14334,
     "lessons": null,
-    "summary_text": "Погасит 250 000 из долга 269 000 → оплачено до 12.10 · останется 519 000",
+    "summary_text": "Погасит 250 000 сум из долга 269 000 сум → оплачено до 12.10 · останется 519 000 сум",
     "price_ahead": []
   },
   "warnings": [],

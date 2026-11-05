@@ -39,12 +39,14 @@ MONEY = xs.MONEY
 PERCENT_WHOLE = xs.PERCENT
 PERCENT_FRACTION = xs.PERCENT_FRACTION
 SUMMARY_SHEET = "Итого"
-UNSAVED_NOTE = "ведомость не сохранена — в расчёт не вошла"
+UNSAVED_NOTE = "зарплата за месяц не сохранена — в итог не вошла"
 
 HEADERS_LEFT = ["Группа", "Тип занятий", "Время урока", "Ученик", "Цена в месяц", "Процент"]
 HEADER_COUNTED, HEADER_UNPAID, HEADER_INCLUDED, HEADER_EARNED = "Засчитано уроков", "Не оплачено уроков", "Включено в расчёт", "Заработано"
 BLOCK_HEADERS = ("Заработано", "Выплачено", "К выплате")
-LEGEND_HEAD = "Обозначения: 1 — урок засчитан · 0 — не засчитан (уважительная причина подтверждена) · Ув.? — уважительная причина, ждёт решения владельца · не решено — оплата дополнительного урока ещё не решена (в «Заработано» не входит) · без оплаты — урок без оплаты преподавателю · "
+WORD_AHEAD, WORD_MORE = "Выплачено вперёд", "Выплачено больше на"      # the dictionary (LESSONS 109): an OPEN month has been paid ahead, a CLOSED one has been paid more
+OVER_WORDS = (WORD_AHEAD, WORD_MORE)
+LEGEND_HEAD = "Обозначения: 1 — урок засчитан · 0 — не засчитан (уважительная причина подтверждена) · Ув.? — уважительная причина, ждёт решения владельца · ждёт решения — дополнительный урок: включать ли его в зарплату, ещё не решено (в «Заработано» не входит) · не включён — дополнительный урок не входит в зарплату · "
 LEGEND_TAIL = " · пусто — ученика в группе не было"
 LEGEND_GREY = "серая 1 — засчитан, но ученик не заплатил (в «Заработано» не входит)"          # the column «Включено в расчёт» is not in the file
 LEGEND_GREY_INCLUDED = "серая 1 — засчитан, но ученик не заплатил (в «Заработано» входит только с «да» в колонке «Включено в расчёт»)"
@@ -137,29 +139,35 @@ def _columns(sheet: Mapping[str, Any]) -> Tuple[List[Tuple[str, int]], Dict[Tupl
 
 
 def _balance(payout: Optional[Mapping[str, Any]], total: int) -> Tuple[int, int, int, str]:
-    """``(earned, paid, to pay, header of the third cell)`` of a sheet: no negative number - an overpayment is told by the word «Переплачено»."""
+    """``(earned, paid, to pay, header of the third cell)`` of a sheet: no negative number - a payout above the pay is told by the words «Выплачено вперёд» (an open month) / «Выплачено больше на» (a closed one)."""
     if not payout:
         return int(total), 0, int(total), BLOCK_HEADERS[2]
     balance = int(payout["balance"])
     # R3 3: ``target`` is the total AFTER the advance of the earlier months; «Заработано» stays the whole earned sum, the advance is a line of its own (``advance_lines``)
-    return int(payout["target"]) + int(payout.get("carry_used") or 0), int(payout["paid"]), abs(balance), "Переплачено" if balance < 0 else BLOCK_HEADERS[2]
+    word = BLOCK_HEADERS[2] if balance >= 0 else (WORD_AHEAD if payout.get("basis") == "fresh" else WORD_MORE)
+    return int(payout["target"]) + int(payout.get("carry_used") or 0), int(payout["paid"]), abs(balance), word
+
+
+def _sum(amount: Any) -> str:
+    """``125 000 сум`` - every sum in a sentence has its unit (LESSONS 109)."""
+    return f"{int(amount):,}".replace(",", " ") + " сум"
 
 
 def advance_lines(payout: Optional[Mapping[str, Any]]) -> List[str]:
     """R3 3: the lines about the advance under the blue block: what was taken off this month, what goes on to the next one."""
     lines: List[str] = []
     if payout and int(payout.get("carry_used") or 0):
-        lines.append(f"Аванс прошлого месяца: {int(payout['carry_used']):,}".replace(",", " ") + " сум — зачтён, «К выплате» уменьшена на него")
+        lines.append(f"Выплачено больше в прошлом месяце: {_sum(payout['carry_used'])} — вычтено, «К выплате» уменьшена на эту сумму")
     if payout and int(payout.get("advance_out") or 0):
-        lines.append(f"Аванс {int(payout['advance_out']):,}".replace(",", " ") + " сум зачтётся в выплате следующего месяца")
+        lines.append(f"Вычтем из следующей выплаты: {_sum(payout['advance_out'])}")
     return lines
 
 
 def _earned_words(sheet: Mapping[str, Any]) -> str:
     earned, paid, to_pay, word = _balance(sheet.get("payout"), sheet["total_amount"])
-    parts = [f"Заработано {earned:,}".replace(",", " ")]
+    parts = [f"Заработано {_sum(earned)}"]
     if sheet.get("payout"):
-        parts += [f"Выплачено {paid:,}".replace(",", " "), f"{word} {to_pay:,}".replace(",", " ")]
+        parts += [f"Выплачено {_sum(paid)}", f"{word} {_sum(to_pay)}"]
     if sheet.get("written_off_total"):
         parts.append(f"из них прощено центром: {sheet['written_off_total']} уроков")
     return " · ".join(parts)
@@ -176,8 +184,8 @@ def sheet_status(sheet: Mapping[str, Any]) -> str:
     payout = sheet.get("payout") or {}
     fresh, saved = payout.get("fresh_total"), payout.get("saved_total")
     if sheet.get("saved") and fresh is not None and saved is not None and int(fresh) != int(saved):
-        status += (" · строки сохранённой ведомости; текущий расчёт: " + f"{int(fresh):,}".replace(",", " ") + " сум"
-                   + (" (месяц открыт)" if payout.get("basis") == "fresh" else " — пересохраните ведомость"))
+        status += (" · в таблице сохранённая версия; начислено на сегодня: " + _sum(fresh)
+                   + (" (месяц открыт)" if payout.get("basis") == "fresh" else " — сохраните новую сумму"))
     if sheet.get("note"):
         status += f" · Примечание: {sheet['note']}"
     return status
@@ -270,9 +278,9 @@ def write_sheet(ws, sheet: Mapping[str, Any]) -> None:
             elif state == engine.UNPAID:
                 _put(ws, row, col, 1, **{**style, "fill": unpaid_fill, "font": grey})
             elif state == engine.UNDECIDED:                                  # #154: an additional lesson whose payment is not decided yet (not in the sum)
-                _put(ws, row, col, "не решено", **{**style, "fill": pending_fill, "font": grey})
+                _put(ws, row, col, "ждёт решения", **{**style, "fill": pending_fill, "font": grey})
             elif state == engine.NO_PAY:
-                _put(ws, row, col, "без оплаты", **{**style, "font": grey})
+                _put(ws, row, col, "не включён", **{**style, "font": grey})
             else:
                 _put(ws, row, col, 1, **style)
         for col in range(first_date_col, last_date_col + 1):                 # a day without a mark still has its borders
@@ -344,21 +352,21 @@ def write_month_summary(ws, month: str, sheets: Sequence[Mapping[str, Any]], tit
     totals = [0, 0, 0, 0, 0]
     for sheet in sheets:
         earned, paid, to_pay, word = _balance(sheet.get("payout"), sheet["total_amount"])
-        note = f"переплачено на {to_pay:,}".replace(",", " ") if word == "Переплачено" else ""
+        note = (f"{word} {_sum(to_pay)}" + (" — покроется начислениями до конца месяца" if word == WORD_AHEAD else " — вычтем из следующей выплаты")) if word in OVER_WORDS else ""
         used = int((sheet.get("payout") or {}).get("carry_used") or 0)
         if used:                                                            # R3 3: the earned sum is whole, the advance of the earlier months is told in the note
-            note = (note + " · " if note else "") + f"зачтён аванс прошлого месяца {used:,}".replace(",", " ")
-        shown_to_pay = 0 if word == "Переплачено" else to_pay
+            note = (note + " · " if note else "") + f"из прошлого месяца вычтено {_sum(used)}"
+        shown_to_pay = 0 if word in OVER_WORDS else to_pay
         values = (len({line["group_id"] for line in sheet["lines"]}), _lessons_held(sheet), earned, paid, shown_to_pay)
         rows.append((sheet.get("teacher_name") or "Преподаватель", values, note))
         totals = [a + b for a, b in zip(totals, values)]
     for item in unsaved:
         rows.append((item.get("teacher_name") or "Преподаватель", None, item.get("note") or UNSAVED_NOTE))
     status = xs.words_join([f"По состоянию на {xs.date_ru(as_of)}" if as_of else None, f"Учителей: {len(rows)}",
-                            f"Не сохранено ведомостей: {len(unsaved)}" if unsaved else None, "месяц ещё не закончился" if month_open else None])
+                            f"Не сохранено зарплат: {len(unsaved)}" if unsaved else None, "месяц ещё не закончился" if month_open else None])
     title = f"Зарплата — {xs.month_title(month)}" + (f" · {org_name}" if org_name else "")
     header_row = xs.title_block(ws, [clean_text(title), status,
-                                     f"Заработано {totals[2]:,} · Выплачено {totals[3]:,} · К выплате {totals[4]:,}".replace(",", " ")], width)
+                                     f"Заработано {_sum(totals[2])} · Выплачено {_sum(totals[3])} · К выплате {_sum(totals[4])}"], width)
     xs.header_row(ws, header_row, headers, left=(1, 7))
     ws.freeze_panes = f"A{header_row + 1}"
     row = header_row

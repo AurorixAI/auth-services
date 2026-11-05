@@ -592,7 +592,7 @@ def test_admin_with_the_right_sees_the_sum(two):
     pay(two, paid_on=day(-10), amount=SECRET * 100)
     result = transfer(two, two.second, client=make_client(two))
     (warning,) = carry_warnings(result)
-    assert warning["message"].startswith("Остаток денег") and warning["message"].endswith("перенесён в «Вторая»")
+    assert warning["message"].startswith("Деньги ученика —") and warning["message"].endswith("перешли в группу «Вторая»")
 
 
 def test_a_deadlock_is_a_409_to_repeat_never_a_500(two, monkeypatch):

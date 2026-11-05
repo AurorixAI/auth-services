@@ -92,7 +92,7 @@
         "days": 17,
         "bucket": "past_debt",
         "closes": true,
-        "label": "Закрыла долг 15.09–14.10",
+        "label": "Погашен долг за 15.09–14.10",
         "price": 500000,
         "segment_remaining_after": 0
       },
@@ -119,7 +119,7 @@
     "days_overdue_after": 6,
     "partial_credit_after": 14871,
     "lessons": null,
-    "summary_text": "Закроет долг 269 000 · на текущий период 31 000 → оплачено до 15.10 · останется 469 000",
+    "summary_text": "Погасит долг 269 000 сум · на текущий период 31 000 сум → оплачено до 15.10 · останется 469 000 сум",
     "price_ahead": []
   },
   "warnings": [],

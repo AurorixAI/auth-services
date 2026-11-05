@@ -197,10 +197,10 @@ def period_name(start: date, end: date, kind: Optional[str] = None) -> str:
 
 
 def closed_words(name: str, kind: Optional[str], line) -> str:
-    """«август закрыт» for a month, «период закрыт» / «пакет закрыт» otherwise."""
+    """«август оплачен» for a month, «период оплачен» / «пакет оплачен» otherwise (the dictionary: a debt is paid off, a month is not «закрыт» - that word is for the pay of a teacher)."""
     if kind == "package":
-        return "пакет закрыт"
-    return f"{name} закрыт" if is_calendar_month_period(line.period_from, line.period_to) else "период закрыт"
+        return "пакет оплачен"
+    return f"{name} оплачен" if is_calendar_month_period(line.period_from, line.period_to) else "период оплачен"
 
 
 # ------------------------------------------------------------------------------------------------------------ items
@@ -321,8 +321,8 @@ def build_entries(rows: Sequence, upcoming: Iterable = ()) -> List[Entry]:
 
 
 STATEMENT_TYPE_LABEL = {
-    "charge": "Стоимость", "payment": "Оплата", "writeoff": "Долг прощён", "refund": "Возврат", "transfer_in": "Перенос из группы",
-    "transfer_out": "Перенос в группу", "opening_debt": "Долг на начало учёта", "opening_paid_until": "Оплачено до начала учёта",
+    "charge": "Стоимость", "payment": "Оплата", "writeoff": "Долг прощён", "refund": "Возврат", "transfer_in": "Деньги ученика перешли из группы",
+    "transfer_out": "Деньги ученика перешли в группу", "opening_debt": "Долг на начало учёта", "opening_paid_until": "Оплачено до начала учёта",
     "pause": "Пауза", "recalc": "Перерасчёт",
 }
 
@@ -371,10 +371,10 @@ def asof_line(as_of: date, accounting_start: date, date_from: Optional[date], da
 
 
 def totals_line(summary) -> str:
-    """Row 3: «Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Баланс: Аванс 60 000» (the non-zero extras only)."""
+    """Row 3: «Стоимость обучения 1 103 000 · Оплачено 1 153 000 · Прощено 50 000 · Остаток долга: Аванс 60 000» (the non-zero extras only)."""
     parts = []
     for label, value in total_lines(summary):
-        parts.append(f"{label}: {value}" if label == "Баланс" else f"{label} {tx.num(value)}")
+        parts.append(f"{label}: {value}" if label == "Остаток долга" else f"{label} {tx.num(value)}")
     return " · ".join(parts)
 
 
@@ -391,12 +391,12 @@ def upcoming_line(segment) -> str:
 
 
 def total_lines(summary) -> List[Tuple[str, object]]:
-    """The tiles above the statement (``statementTotals``): Стоимость обучения · Оплачено · (Перенесено из групп · Прощено · Перерасчёт ·
-    Возвращено · Перенесено в группы, only when there is something) · Баланс.  The balance is text («Долг 92 000»)."""
+    """The tiles above the statement (``statementTotals``): Стоимость обучения · Оплачено · (Деньги из других групп · Прощено · Перерасчёт ·
+    Возвращено · Деньги в другие группы, only when there is something) · Остаток долга.  The balance is text («Долг 92 000»)."""
     out: List[Tuple[str, object]] = [("Стоимость обучения", int(summary.charged)), ("Оплачено", int(summary.paid))]
-    for label, value in (("Перенесено из групп", summary.transferred_in), ("Прощено", summary.written_off),
-                         ("Перерасчёт", summary.recalculated), ("Возвращено", summary.refunded), ("Перенесено в группы", summary.transferred_out)):
+    for label, value in (("Деньги из других групп", summary.transferred_in), ("Прощено", summary.written_off),
+                         ("Перерасчёт", summary.recalculated), ("Возвращено", summary.refunded), ("Деньги в другие группы", summary.transferred_out)):
         if int(value) > 0:
             out.append((label, int(value)))
-    out.append(("Баланс", balance_cell(int(summary.advance) - int(summary.debt))[1]))
+    out.append(("Остаток долга", balance_cell(int(summary.advance) - int(summary.debt))[1]))
     return out

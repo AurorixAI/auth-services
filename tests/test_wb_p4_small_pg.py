@@ -47,7 +47,7 @@ def test_mn50_a_carry_over_copy_cannot_be_voided_but_the_payment_it_came_from_ca
     world.db.commit()
     c = owner(world)
     r = c.post(f"{API}/org/payments/{carry.id}/void", json={"reason": "по ошибке"})
-    assert r.status_code == 409 and "Перенос оплаты" in str(r.json()["detail"]), r.text
+    assert r.status_code == 409 and "перешли из другой группы" in str(r.json()["detail"]) or "перешедшие из другой группы" in str(r.json()["detail"]), r.text
     world.db.expire_all()
     assert world.db.get(StudentPayment, carry.id).voided_at is None, "the refusal writes nothing"
     ok = c.post(f"{API}/org/payments/{real.id}/void", json={"reason": "по ошибке"})

@@ -296,7 +296,7 @@ def create_payout(
     user: dict = Depends(require_payroll_owner),
     db: Session = Depends(get_db),
 ):
-    """Отметить выплату зарплаты по сохранённой ведомости (аванс учителю допустим: «переплачено»)."""
+    """Записать выплату зарплаты по сохранённой зарплате месяца (выплата вперёд допустима: «Выплачено вперёд» / «Выплачено больше»)."""
     try:
         return PrPayoutService(db).create(user["org_id"], sheet_id, user["user_id"], request, idempotency_key, _fresh(db, user["org_id"]))
     except PayoutError_ as exc:

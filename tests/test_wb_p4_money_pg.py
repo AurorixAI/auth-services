@@ -245,10 +245,10 @@ def test_r3_3_an_advance_is_taken_off_the_next_month_and_what_does_not_fit_goes_
     first = _pay(world, aug, 600_000, overpay=125_000)
     st = _state(world, aug)
     assert (st.carry_in, st.carry_used, st.target, st.balance, st.advance_out, st.state) == (0, 0, 475_000, -125_000, 125_000, "overpaid")
-    assert st.text == "Переплачено 125 000", "the text of a month without a carry is the old one"
+    assert st.text == "Выплачено больше на 125 000 сум — вычтем из следующей выплаты", "the text of a month without a carry is the old one"
     s = _state(world, sep)
     assert (s.carry_in, s.carry_used, s.target, s.balance, s.advance_out, s.state) == (125_000, 100_000, 0, 0, 25_000, "settled")
-    assert s.text == "Закрыто авансом прошлого месяца 100 000"
+    assert s.text == "Закрыто выплатой прошлого месяца: 100 000 сум"
     o = _state(world, octo)
     assert (o.carry_in, o.carry_used, o.target, o.balance, o.advance_out, o.state) == (25_000, 25_000, 275_000, 275_000, 0, "unpaid")
     assert o.text == "Не выплачено"
@@ -290,9 +290,9 @@ def test_r3_3_the_month_overview_and_the_excel_sheet_tell_the_advance(world):
     _pay(world, aug, 130_000, overpay=30_000)
     payout = _state(world, sep).model_dump()
     assert payout["carry_used"] == 30_000
-    assert payroll_export.advance_lines(payout) == ["Аванс прошлого месяца: 30 000 сум — зачтён, «К выплате» уменьшена на него"]
+    assert payroll_export.advance_lines(payout) == ["Выплачено больше в прошлом месяце: 30 000 сум — вычтено, «К выплате» уменьшена на эту сумму"]
     assert payroll_export._balance(payout, 100_000) == (100_000, 0, 70_000, "К выплате"), "«Заработано» stays the whole total, «К выплате» is after the advance"
-    assert payroll_export.advance_lines(_state(world, aug).model_dump()) == ["Аванс 30 000 сум зачтётся в выплате следующего месяца"]
+    assert payroll_export.advance_lines(_state(world, aug).model_dump()) == ["Вычтем из следующей выплаты: 30 000 сум"]
     assert payroll_export.advance_lines(None) == []
 
 
@@ -314,4 +314,4 @@ def test_r3_3_the_api_and_the_excel_file_of_the_next_month_carry_the_advance_lin
     xlsx = c.get(f"{API}/org/payroll/sheets/{sep.id}/export.xlsx")
     assert xlsx.status_code == 200, xlsx.text[:200]
     cells = [str(cell.value) for sheet in load_workbook(io.BytesIO(xlsx.content)).worksheets for row in sheet.iter_rows() for cell in row if cell.value]
-    assert any("Аванс прошлого месяца: 30 000 сум" in value for value in cells), cells[:40]
+    assert any("Выплачено больше в прошлом месяце: 30 000 сум" in value for value in cells), cells[:40]

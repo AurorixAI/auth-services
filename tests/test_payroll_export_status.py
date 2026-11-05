@@ -9,15 +9,15 @@ def sheet(**payout) -> dict:
 
 def test_an_open_month_that_moved_names_the_current_total():
     line = sheet_status(sheet(saved_total=120_834, fresh_total=75_834, basis="fresh"))
-    assert "строки сохранённой ведомости; текущий расчёт: 75 834 сум (месяц открыт)" in line
+    assert "в таблице сохранённая версия; начислено на сегодня: 75 834 сум (месяц открыт)" in line and "ведомост" not in line
 
 
 def test_a_closed_month_that_moved_asks_to_save_again():
     line = sheet_status(sheet(saved_total=860_000, fresh_total=876_666, basis="saved"))
-    assert "текущий расчёт: 876 666 сум — пересохраните ведомость" in line
+    assert "начислено на сегодня: 876 666 сум — сохраните новую сумму" in line and "пересохран" not in line
 
 
 def test_a_sheet_as_saved_or_without_a_payout_says_nothing_more():
-    assert "текущий расчёт" not in sheet_status(sheet(saved_total=120_834, fresh_total=120_834, basis="fresh"))
-    assert "текущий расчёт" not in sheet_status(sheet())
+    assert "начислено на сегодня" not in sheet_status(sheet(saved_total=120_834, fresh_total=120_834, basis="fresh"))
+    assert "начислено на сегодня" not in sheet_status(sheet())
     assert sheet_status({"saved": False, "payout": None}) == "Предварительный расчёт — не сохранён"

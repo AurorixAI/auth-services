@@ -1017,7 +1017,7 @@ def test_excel_follows_the_partner_table_with_red_zeros_and_a_total(world):
     assert values["A1"].startswith("Зарплата — Пётр Teacher · ") and m.label.split("-")[0] in values["A1"]
     assert ws["A1"].font.bold and ws["A1"].font.size == 14 and {str(x) for x in ws.merged_cells.ranges} >= {"A1:M1", "A2:M2", "A3:M3"}
     assert "Редакция 1" in values["A2"]
-    assert values["A3"] == f"Заработано {saved['total_amount']:,} · Выплачено 0 · К выплате {saved['total_amount']:,}".replace(",", " ")
+    assert values["A3"] == f"Заработано {saved['total_amount']:,} сум · Выплачено 0 сум · К выплате {saved['total_amount']:,} сум".replace(",", " ")
     # the full words; the lesson days are REAL dates; «Включено в расчёт» is absent while nobody used it
     header = [c.value for c in ws[5] if c.value is not None]
     import datetime as dtm
@@ -1129,7 +1129,7 @@ def test_excel_of_a_month_has_a_sheet_per_saved_teacher(world):
     assert [ws.cell(total, c).value for c in (2, 3, 4, 5, 6)] == [2, 2, body[0][3] + body[1][3], 0, body[0][3] + body[1][3]]
     assert all(ws.cell(total, c).fill.fgColor.rgb.endswith("D9E2F3") and ws.cell(total, c).border.top.style == "medium" for c in range(1, 8))
     assert ws.cell(total, 4).number_format == "#,##0" and ws.cell(total + 2, 1).value.startswith("Листы по учителям")
-    assert ws["A3"].value == f"Заработано {body[0][3] + body[1][3]:,} · Выплачено 0 · К выплате {body[0][3] + body[1][3]:,}".replace(",", " ")
+    assert ws["A3"].value == f"Заработано {body[0][3] + body[1][3]:,} сум · Выплачено 0 сум · К выплате {body[0][3] + body[1][3]:,} сум".replace(",", " ")
 
 
 def test_namesake_teachers_get_unique_sheet_names(world):

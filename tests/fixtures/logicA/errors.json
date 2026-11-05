@@ -211,7 +211,7 @@
     "body": {
       "detail": {
         "code": "SHEET_NOT_SAVED",
-        "message": "Сначала сохраните ведомость",
+        "message": "Сначала сохраните зарплату за месяц",
         "debt": null,
         "refundable": null,
         "payment_id": null,

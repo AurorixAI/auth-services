@@ -463,7 +463,7 @@ def payout(n: int, amount: int, paid_on: date, **kw) -> PayoutOut:
 
 
 def state(saved: int, fresh: Optional[int], paid: int, items: List[PayoutOut]) -> PayoutState:
-    # Money-1 A1b: the target is ALWAYS the saved total; what changed after the save is ``changed_by`` + the line «Пересохраните»
+    # Money-1 A1b: the target is ALWAYS the saved total; what changed after the save is ``changed_by`` + the line «Сохраните новую сумму»
     changed = fresh - saved if fresh is not None and fresh != saved else 0
     target = saved
     balance = target - paid
@@ -614,7 +614,7 @@ def errors(store):
         "PRICE_MARKER": (409, err("PRICE_MARKER", "Эту запись создала система при уходе из группы; её нельзя отменить")),
         "FINGERPRINT_REQUIRED": (422, err("FINGERPRINT_REQUIRED", "Откройте расчёт заново: сохранение без проверки данных невозможно")),
         "DUPLICATE_PAYOUT": (409, err("DUPLICATE_PAYOUT", "Выплата уже внесена", payment_id=None)),
-        "SHEET_NOT_SAVED": (409, err("SHEET_NOT_SAVED", "Сначала сохраните ведомость")),
+        "SHEET_NOT_SAVED": (409, err("SHEET_NOT_SAVED", "Сначала сохраните зарплату за месяц")),
         "DIVISOR_RANGE": (422, err("DIVISOR_RANGE", "Делитель: от 1 до 31")),
     }
     # DUPLICATE_PAYOUT carries ``payout_id`` (PayoutError); LogicAError has no such field: use the payroll model for it

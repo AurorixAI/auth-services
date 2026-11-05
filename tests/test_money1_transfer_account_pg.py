@@ -61,12 +61,12 @@ def test_d6_the_window_of_the_first_transfer_says_the_new_account_and_is_the_sta
     assert changed_tables(before, db_fingerprint(w.db)) == []                                              # the preview writes nothing
     real = _transfer(w, w.g1)
     # 1 440 000 paid - Sep 360 000 - Oct 360 000 - Nov 2 lessons of 9 (02.11, 05.11) 80 000 = 640 000 leave the old group
-    assert [x["message"] for x in real["carried"] if x["code"] == "payment_carried_over"] == ["Остаток денег 640 000 сум перенесён в «Алгебра 7 (вт/пт)»"]
+    assert [x["message"] for x in real["carried"] if x["code"] == "payment_carried_over"] == ["Деньги ученика — 640 000 сум — перешли в группу «Алгебра 7 (вт/пт)»"]
     window = preview["carry_after"]
     assert window == real["carry_after"]                                                                    # I-5: the window is what the transfer then says
     assert (window["carried"], window["charged_now"], window["advance"], window["debt"]) == (640_000, 0, 640_000, 0)
     assert (window["charged_tomorrow"], window["advance_tomorrow"]) == (350_000, 290_000)                  # 7 of the 8 lessons of November in the new group (06.11 ... 27.11) x 50 000, from tomorrow
-    assert window["text"] == ("Перенесено 640 000 сум; аванс останется 640 000 сум. Со следующего дня начислят ещё 350 000 сум (аванс останется 290 000 сум)")
+    assert window["text"] == ("Деньги ученика — 640 000 сум — переходят в группу «Алгебра 7 (вт/пт)»; аванс останется 640 000 сум. Со следующего дня начислят ещё 350 000 сум (аванс останется 290 000 сум)")
     assert any(x["code"] == "transfer_balance_after" and x["message"] == window["text"] for x in real["warnings"])
     now = _account(w, w.g1, D(2026, 11, 5), tomorrow=True)                                                  # what the screens say, read after the commit
     assert (now["advance"], now["charged"], now["advance_tomorrow"], now["charged_tomorrow"]) == (640_000, 0, 290_000, 350_000)
@@ -85,7 +85,7 @@ def test_d6_the_way_back_the_same_day_charges_the_rest_of_the_month_at_once_and_
     window = preview["carry_after"]
     assert window == real["carry_after"]
     assert (window["carried"], window["charged_now"], window["advance"], window["debt"], window["charged_tomorrow"]) == (640_000, 280_000, 360_000, 0, 0)       # 7 lessons of 9 x 40 000 at once
-    assert window["text"] == "Перенесено 640 000 сум, из них сразу 280 000 сум на оплату остатка месяца; аванс останется 360 000 сум"
+    assert window["text"] == "Деньги ученика — 640 000 сум — переходят в группу «Геометрия 8 (пн/чт)»: сразу 280 000 сум пойдут на остаток месяца; аванс останется 360 000 сум"
     back = _account(w, w.g2, D(2026, 11, 5))
     assert (back["advance"], back["charged"]) == (360_000, 1_080_000)                                      # the account is exactly what it was before the first transfer: nothing is lost
     gone = _account(w, w.g1, D(2026, 11, 5), tomorrow=True)
@@ -139,7 +139,7 @@ def test_d6_the_bulk_preview_names_the_new_account_of_every_student(pg_session, 
     assert r.status_code == 200, r.text
     assert changed_tables(before, db_fingerprint(w.db)) == []
     (line,) = [x for x in r.json()["warnings"] if x["code"] == "transfer_balance_after"]
-    assert line["student_id"] == str(w.u5.id) and line["message"].startswith("Перенесено 640 000 сум; аванс останется 640 000 сум")
+    assert line["student_id"] == str(w.u5.id) and line["message"].startswith("Деньги ученика — 640 000 сум — переходят в группу «Алгебра 7 (вт/пт)»; аванс останется 640 000 сум")
 
 
 # ================================================================================================ two transfers at the SAME instant (a frozen clock): the order of the links is the chain, not a random uuid
@@ -159,8 +159,8 @@ def test_two_transfers_at_the_same_instant_each_carry_their_own_money_whatever_t
     clock.set(THU_5_NOV)
     first = _transfer(w, w.g1)
     second = _transfer(w, w.g2)
-    assert [x["message"] for x in first["carried"] if x["code"] == "payment_carried_over"] == ["Остаток денег 640 000 сум перенесён в «Алгебра 7 (вт/пт)»"]
-    assert [x["message"] for x in second["carried"] if x["code"] == "payment_carried_over"] == ["Остаток денег 640 000 сум перенесён в «Геометрия 8 (пн/чт)»"]
+    assert [x["message"] for x in first["carried"] if x["code"] == "payment_carried_over"] == ["Деньги ученика — 640 000 сум — перешли в группу «Алгебра 7 (вт/пт)»"]
+    assert [x["message"] for x in second["carried"] if x["code"] == "payment_carried_over"] == ["Деньги ученика — 640 000 сум — перешли в группу «Геометрия 8 (пн/чт)»"]
     w.db.expire_all()
     links = {(t.from_membership_id, t.to_membership_id): t for t in w.db.query(MembershipTransfer).filter(MembershipTransfer.student_id == w.u5.id).all()}
     assert len(links) == 2

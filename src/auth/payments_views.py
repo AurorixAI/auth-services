@@ -225,7 +225,7 @@ def allocation_text(ledger: bl.Ledger, credit_id: str) -> str:
         else:
             parts.append((_segment_word(by_id.get(a.segment_id)), a.amount))
     parts.append(("возвращено", ledger.refunded_from.get(credit_id, 0)))
-    parts.append(("перенесено в другую группу", ledger.transferred_from.get(credit_id, 0)))
+    parts.append(("деньги перешли в другую группу", ledger.transferred_from.get(credit_id, 0)))
     # the advance goes last, the cut-offs after it
-    parts.sort(key=lambda p: {"аванс": 1, "возвращено": 2, "перенесено в другую группу": 3}.get(p[0], 0))
+    parts.sort(key=lambda p: {"аванс": 1, "возвращено": 2, "деньги перешли в другую группу": 3}.get(p[0], 0))
     return tx.allocation_summary(parts)
