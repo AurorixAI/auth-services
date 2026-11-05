@@ -284,6 +284,7 @@ class GroupCreateRequest(BaseModel):
     description: Optional[str] = None
     max_students: int = Field(default=30, ge=1, le=100)
     lesson_type: LessonType = "group"
+    price: Optional[StrictInt] = Field(None, ge=0, le=10_000_000_000)  # Money-1 B2: the first price of the group «с самого начала» (money access only: 403 otherwise); 0 = a free group
 
     @field_validator("lesson_type", mode="before")
     @classmethod

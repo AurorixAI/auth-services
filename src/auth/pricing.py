@@ -151,7 +151,7 @@ PRICE_CONFLICT_MESSAGE = "Цену только что изменили. Обн�
 LEFT_MARKERS = ("left_group", "return_group")   # LOGIC-A (F13): rows the system writes when a stay is closed / reopened
 PRICE_MARKER_MESSAGE = "Эту запись создала система при уходе из группы: её нельзя отменить"
 BACKDATE_LIST = 20          # students named by the refusal
-IMPACT_ITEMS = 50           # items of the money impact
+IMPACT_ITEMS = 200          # items of the money impact (B3: every student who moves; the rest is counted in ``items_total``)
 ARCHIVED_STUDENT_MESSAGE = "Ученик в архиве — сначала верните его"
 
 
@@ -208,6 +208,18 @@ def _guard(method):
 # ============================================================================
 # The rule: books and the effective price
 # ============================================================================
+
+
+def first_price_info(requested: date, valid_from: date, students_unpriced: int) -> Dict[str, Any]:
+    """Money-1 B2: what the window says about the FIRST price of a group (the sentence is the server's, LESSONS 109)."""
+    moved = valid_from != requested
+    if moved:
+        text = f"Это первая цена группы: она действует с {valid_from.strftime('%d.%m.%Y')} — с начала идущего периода у учеников, иначе он остался бы без цены"
+    elif students_unpriced:
+        text = f"Это первая цена группы. У {students_unpriced} {'ученика' if students_unpriced == 1 else 'учеников'} идущий период начался раньше этой даты и останется без цены"
+    else:
+        text = "Это первая цена группы"
+    return {"requested_valid_from": requested, "valid_from": valid_from, "moved": moved, "students_without_price": students_unpriced, "text": text}
 
 
 def _uuid(value: Any) -> Optional[UUID]:
@@ -861,20 +873,31 @@ class PricingService:
             self.db.query(StudentGroup.id).filter(StudentGroup.id.in_(list(ids))).order_by(StudentGroup.id).with_for_update(key_share=True).all()
 
     def money_impact(
-        self, org_id: str, ids: Sequence[UUID], *, what_if, valid_from: date, today: date,
+        self, org_id: str, ids: Sequence[UUID], *, what_if, valid_from: date, today: date, first_price: bool = False,
     ) -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
         """``(PriceImpactMoney as a dict, memberships that are BLOCKED)`` - the ledger "what if" before / after.
 
         ``what_if(books) -> books``: the price books with the change.  A membership is blocked when the price is backdated, it already has
-        money (a payment, a write-off, a refund, a transfer in) and the change alters what was CHARGED for periods that have begun."""
+        money (a payment, a write-off, a refund, a transfer in) and the change alters what was CHARGED for periods that have begun
+        (``first_price``: the very first price of a group is never blocked - there was nothing to rewrite, the period was free by mistake).
+
+        Money-1 B3: the account is read on the day the change REACHES the students, ``as_of = max(valid_from, today)`` - a price announced for 01.12 says what 01.12 does to a package paid
+        in advance (12 -> 10 lessons, ДЫРА-01: the window used to read the account TODAY and said «ничего не меняется»); a backdated price is read today as before.  Every student who
+        moves is listed (up to ``IMPACT_ITEMS``) with the debt, the advance, «оплачено до» and the lessons of a package before -> after and a sentence; the students with an
+        individual price are listed apart (their price does not follow the group)."""
+        from dataclasses import replace
+
         from . import billing_ledger as bl
         from . import ledger_service as ls
+        from . import money_whatif as mw
         from .payments_files import person_name
 
         ids = list(ids)
         backdated = valid_from < today
+        reach = max(valid_from, today)
         empty = {"memberships_with_new_debt": 0, "debt_delta": 0, "memberships_with_less_advance": 0, "advance_delta": 0,
-                 "days_lost_total": 0, "backdated": backdated, "items": []}
+                 "days_lost_total": 0, "backdated": backdated, "as_of": reach, "items_total": 0, "truncated": False,
+                 "text": mw.summary_text(0, 0, 0, 0), "items": [], "override_students": []}
         if not ids:
             return empty, []
         old_loader = ls.LedgerLoader(self.db, str(org_id), today)
@@ -882,24 +905,33 @@ class PricingService:
         new_loader = ls.LedgerLoader(self.db, str(org_id), today)
         new_loader.load_facts(ids)
         new_loader.books = what_if(new_loader.books)
-        items, blocked = [], []
+        items, blocked, overrides = [], [], []
         new_debt = less_adv = days_lost = 0
         debt_delta = advance_delta = 0
         for mid in ids:
             if mid not in old_loader.members:
                 continue
             inp_old, inp_new = old_loader.build_input(mid), new_loader.build_input(mid)
+            if reach != today:
+                inp_old, inp_new = replace(inp_old, today=reach), replace(inp_new, today=reach)
             before, after = bl.run_ledger(inp_old), bl.run_ledger(inp_new)
             membership, student, _group, _t = old_loader.members[mid]
             has_money = bool(inp_old.credits or inp_old.outflows)
             name = person_name(student.last_name, student.first_name) or "—"
-            if backdated and has_money and after.charged != before.charged:
+            if backdated and has_money and after.charged != before.charged and not first_price:
                 blocked.append({"membership_id": str(mid), "student_name": name})
+            price_new = new_loader.books.price(mid, membership.group_id, reach)
+            if price_new.source == SOURCE_OVERRIDE and price_new.amount is not None and membership.is_active:
+                group_before = old_loader.books.price(mid, membership.group_id, reach).group_amount
+                if group_before != price_new.group_amount:
+                    overrides.append({"membership_id": str(mid), "student_name": name, "price": price_new.amount, "group_price_before": group_before,
+                                      "group_price_after": price_new.group_amount, "reason": price_new.reason,
+                                      "difference_after": None if price_new.group_amount is None else price_new.amount - price_new.group_amount})
             lost = 0
             if before.covered_through and after.covered_through and after.covered_through < before.covered_through:
                 lost = (before.covered_through - after.covered_through).days
-            changed = (before.debt, before.advance, before.covered_through) != (after.debt, after.advance, after.covered_through)
-            if not changed:
+            snap_before, snap_after = mw.snapshot(before), mw.snapshot(after)
+            if not mw.changed(snap_before, snap_after):
                 continue
             if after.debt > before.debt:
                 new_debt += 1
@@ -908,14 +940,41 @@ class PricingService:
                 less_adv += 1
                 advance_delta += min(0, after.advance - before.advance)
                 days_lost += lost
-            items.append({
-                "membership_id": str(mid), "student_name": name, "debt_before": before.debt, "debt_after": after.debt,
-                "advance_before": before.advance, "advance_after": after.advance, "paid_until_before": before.covered_through,
-                "paid_until_after": after.covered_through, "has_money": has_money})
+            items.append(mw.item(mid, name, snap_before, snap_after, has_money=has_money))
         items.sort(key=lambda i: (-(i["debt_after"] - i["debt_before"]), i["advance_after"] - i["advance_before"], i["student_name"]))
+        overrides.sort(key=lambda i: i["student_name"])
         return {"memberships_with_new_debt": new_debt, "debt_delta": debt_delta, "memberships_with_less_advance": less_adv,
-                "advance_delta": advance_delta, "days_lost_total": days_lost, "backdated": backdated,
-                "items": items[:IMPACT_ITEMS]}, blocked
+                "advance_delta": advance_delta, "days_lost_total": days_lost, "backdated": backdated, "as_of": reach,
+                "items_total": len(items), "truncated": len(items) > IMPACT_ITEMS, "text": mw.summary_text(len(items), debt_delta, advance_delta, days_lost),
+                "items": items[:IMPACT_ITEMS], "override_students": overrides[:IMPACT_ITEMS]}, blocked
+
+    def _running_periods_without_price(self, org_id: str, ids: Sequence[UUID], today: date) -> Tuple[Optional[date], int]:
+        """``(the earliest first billable day of the period that is running and has no price, how many students have such a period)`` - the day the FIRST price of a group must reach back to.
+
+        Calendar modes: the first billable day of the running period (a period or a cell of the shared month that has begun and has not ended; its price is looked up on that day).  A package: the
+        first lesson of the package in progress (the lessons held since the last full package; a price that begins later leaves them free).  The students who left, and the students with an individual
+        price (their running period has one), are not counted."""
+        from . import billing_ledger as bl
+        from . import ledger_service as ls
+
+        if not ids:
+            return None, 0
+        loader = ls.LedgerLoader(self.db, str(org_id), today)
+        loader.load_facts(list(ids))
+        starts: List[date] = []
+        for mid in ids:
+            if mid not in loader.members or not loader.members[mid][0].is_active:
+                continue
+            ledger = bl.run_ledger(loader.build_input(mid))
+            running = [s for s in ledger.segments if s.kind == "period" and s.unpriced and s.begun and not s.ended]
+            if running:
+                starts.append(min((s.days[0] if s.days else s.period_start) for s in running))
+            elif ledger.lessons is not None and ledger.lessons.package_size and ledger.mode == bl.LESSONS and ledger.counted:
+                size = ledger.lessons.package_size
+                position = len(ledger.counted) % size
+                if position:
+                    starts.append(ledger.counted[-position].day)
+        return (min(starts) if starts else None), len(starts)
 
     @staticmethod
     def _refuse_backdate(blocked: List[Dict[str, str]]) -> None:
@@ -957,13 +1016,24 @@ class PricingService:
             raise PriceInvalid(f"Примечание — не более {MAX_NOTE} символов")
         try:
             group = self._group(org_id, group_id, lock=not dry_run)
-            impact = self.impact(org_id, group, amount, valid_from, today, owner_view=owner_view)
-            book = load_books(self.db, [group.id], []).group_book(group.id).with_step(valid_from, amount)
             money_ids = self._money_ids(org_id, group_id=group.id)
             if not dry_run:       # m4: the family locks (the memberships of the group, ascending id - the order every money write takes) BEFORE the what-if
                 self._lock_memberships(money_ids)
+            # Money-1 B2 (B1 of the devil, ДЫРА-04): the FIRST price of a group acts from the start of the period that is running for each student - a period without a price on its first day
+            # is not charged, so «с сегодня» used to make the running month free (and to forbid the correction: PRICE_BACKDATE_WITH_PAYMENTS)
+            first_price = self.db.query(GroupPrice.id).filter(GroupPrice.group_id == group.id).first() is None
+            requested_from = valid_from
+            unpriced_now = 0
+            if first_price:
+                running_from, unpriced_now = self._running_periods_without_price(org_id, money_ids, today)
+                if running_from is not None and valid_from <= today:
+                    valid_from = check_valid_from(min(valid_from, running_from), today)
+            impact = self.impact(org_id, group, amount, valid_from, today, owner_view=owner_view)
+            if first_price:
+                impact["first_price"] = first_price_info(requested_from, valid_from, unpriced_now)
+            book = load_books(self.db, [group.id], []).group_book(group.id).with_step(valid_from, amount)
             money, blocked = self.money_impact(
-                org_id, money_ids, valid_from=valid_from, today=today,
+                org_id, money_ids, valid_from=valid_from, today=today, first_price=first_price,
                 what_if=lambda books: books.with_group_books({group.id: book}))
             impact["money"] = money
             self._refuse_backdate(blocked)          # LOGIC-A: a backdated price that rewrites charged periods with money in them
@@ -1017,6 +1087,8 @@ class PricingService:
                         "new_amount": amount,
                         "note": note,
                         "corrected": corrected,
+                        "first_price": first_price,
+                        "requested_valid_from": requested_from.isoformat() if requested_from != valid_from else None,
                         "impact": {
                             key: impact[key]
                             for key in ("students_following", "students_with_override", "stale_payroll_sheets")

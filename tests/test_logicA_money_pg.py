@@ -228,7 +228,11 @@ def test_a_future_price_is_always_allowed_and_the_impact_counts_the_days_an_adva
     assert r.status_code == 200, r.text
     money = r.json()["impact"]["money"]
     item = money["items"][0]
-    assert (item["paid_until_before"], item["paid_until_after"], item["advance_after"], item["has_money"]) == ("2026-11-12", "2026-11-10", 200_000, True)
+    # Money-1 B3: the account is read on the day the price REACHES the student (01.11), not today: on that day November has begun, the 200 000 advance is inside it
+    assert money["as_of"] == "2026-11-01"
+    assert (item["paid_until_before"], item["paid_until_after"], item["has_money"]) == ("2026-11-12", "2026-11-10", True)
+    assert (item["debt_before"], item["debt_after"], item["advance_before"], item["advance_after"]) == (300_000, 400_000, 0, 0)
+    assert item["text"] == "Каримова Алия: долг 300 000 сум → 400 000 сум; оплачено до 12.11 → 10.11"
     assert (money["memberships_with_less_advance"], money["days_lost_total"], money["backdated"]) == (1, 2, False)
     assert c.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 600_000, "valid_from": "2026-11-01"}).status_code == 200
     # the individual price: the same refusal for a backdated one (the membership has money)
@@ -386,7 +390,7 @@ def test_the_tabs_debt_due_soon_paid_and_the_summary_invariants(world, fixed_tod
     assert by["debt"][str(c3.id)]["debt_reason"] == "never_paid" and by["debt"][str(c3.id)]["reason"] == "Ещё не платил"
     assert by["debt"][str(a.id)]["bucket"] == "debt" and by["active"][str(b.id)]["bucket"] == "active"
     # the invariants of the summary
-    assert summary["buckets"] == {"debt": 2, "expiring": 0, "active": 1, "paused": 0} and summary["debtors"] == summary["students_with_debt"] == 2
+    assert summary["buckets"] == {"debt": 2, "waiting": 0, "expiring": 0, "active": 1, "paused": 0} and summary["debtors"] == summary["students_with_debt"] == 2
     assert summary["memberships_with_debt"] == pages["debt"]["total"] == summary["buckets"]["debt"] and summary["students_with_debt"] == 2
     assert sum(i["debt"] for i in pages["debt"]["items"]) == summary["debt_total"]
     assert summary["students_with_advance"] == 1 and summary["advance_total"] == sum(i["advance"] for i in c.get(f"{API}/org/payments/status", params={"limit": 100}).json()["items"])

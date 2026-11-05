@@ -159,7 +159,7 @@ def test_the_dry_run_computes_the_impact_and_writes_nothing(world):
     before = group_rows(world)
     out = put_price(world, 999_000, valid_from=day(-5), dry=True)
     assert out["dry_run"] is True and out["current"] is None and out["history"] is None
-    assert {k: v for k, v in out["impact"].items() if k != "money"} == {
+    assert {k: v for k, v in out["impact"].items() if k not in ("money", "first_price")} == {
         "students_following": 3, "students_with_override": 0, "stale_payroll_sheets": 0, "stale_sheets": []}
     assert out["impact"]["money"]["backdated"] is True                     # LOGIC-A: the money window is part of the impact
     assert group_rows(world) == before
@@ -259,7 +259,7 @@ def test_a_group_price_may_be_set_for_a_group_without_students(world):
     empty = make_group(world.db, world.org, world.teacher2, "Пустая")
     world.db.commit()
     out = put_price(world, 100_000, group=empty)
-    assert {k: v for k, v in out["impact"].items() if k != "money"} == {
+    assert {k: v for k, v in out["impact"].items() if k not in ("money", "first_price")} == {
         "students_following": 0, "students_with_override": 0, "stale_payroll_sheets": 0, "stale_sheets": []}
     assert out["impact"]["money"]["items"] == []
 
@@ -889,7 +889,7 @@ def test_a_correction_leaves_two_audit_rows_with_the_right_old_and_new(world):
     assert second.snapshot["old_note"] == "первая" and first.snapshot["old_note"] is None
     # the whole snapshot, the columns and the author
     assert set(first.snapshot) == {"actor_id", "group_id", "valid_from", "old_amount", "old_note", "new_amount", "note",
-                                   "corrected", "impact"}
+                                   "corrected", "impact", "first_price", "requested_valid_from"}
     assert first.snapshot["actor_id"] == str(world.owner.id) and first.snapshot["group_id"] == str(world.group.id)
     assert first.snapshot["impact"] == {"students_following": 3, "students_with_override": 0, "stale_payroll_sheets": 0}
     for r in (first, second, third):

@@ -32,3 +32,14 @@ def charge_of(ledger: bl.Ledger, period_start: date) -> int:
     """The charge of the period (cell) that starts on ``period_start``."""
     (seg,) = [s for s in ledger.segments if s.kind == "period" and s.period_start == period_start]
     return seg.amount
+
+
+def hold_lessons(w, student, days, group=None):
+    """Held (completed) lessons of the group on ``days`` where ``student`` was present (the rows the package counts; the lesson id is the one of the weekday slot of the test group)."""
+    from src.models.auth import GroupAttendance
+
+    group = group or w.group
+    for day in days:
+        w.db.add(GroupAttendance(org_id=w.org.id, group_id=group.id, lesson_date=day.isoformat(), lesson_id=f"s{day.isoweekday()}", status="completed",
+                                 records={str(student.id): "present"}, roster_snapshot=[{"student_id": str(student.id)}]))
+    w.db.commit()

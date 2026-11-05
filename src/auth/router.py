@@ -1093,7 +1093,10 @@ def create_group(
     user: dict = Depends(require_org_member),
     db: Session = Depends(get_db),
 ):
-    """Создать группу в рамках полномочий текущего сотрудника."""
+    """Создать группу в рамках полномочий текущего сотрудника.
+
+    Money-1 B2: ``price`` — цена группы «с самого начала» (первая цена); только владелец / администратор с доступом к деньгам, иначе 403."""
+    _check_fee_right(request.price, user, db)
     try:
         return _svc(db).create_group(
             user["org_id"],

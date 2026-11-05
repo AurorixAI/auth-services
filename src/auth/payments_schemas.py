@@ -494,6 +494,8 @@ class PriceImpact(BaseModel):
     stale_sheets: List[PriceImpactSheet] = Field(default_factory=list)  # the sheets themselves: the owner only
     # LOGIC-A (decision 4): the money effect, computed by the ledger "what if"; null for a caller without access to money.
     money: Optional["PriceImpactMoney"] = None
+    # Money-1 B2: present only when this is the FIRST price of the group (the day it really acts from and why).
+    first_price: Optional["FirstPriceInfo"] = None
 
 
 class GroupPriceUpdate(BaseModel):
@@ -1423,7 +1425,18 @@ class LeaveResult(PayModel):
 # ---- price impact (decision 4) ----------------------------------------------------------------------
 
 
+class WhatIfLessons(PayModel):
+    """The package view of an account in a window: paid lessons, used, left (the lessons mode only)."""
+
+    covered: int = 0
+    used: int = 0
+    left: int = 0
+    package_size: int = 0
+
+
 class PriceImpactItem(PayModel):
+    """One student of a window (Money-1 B3): the account before -> after on the day the change reaches him, and the sentence for the screen (``text``)."""
+
     membership_id: str
     student_name: str
     debt_before: int = 0
@@ -1433,6 +1446,33 @@ class PriceImpactItem(PayModel):
     paid_until_before: Optional[date_type] = None
     paid_until_after: Optional[date_type] = None
     has_money: bool = False
+    charged_before: int = 0
+    charged_after: int = 0
+    lessons_before: Optional[WhatIfLessons] = None      # a package: the paid lessons before / after (null: a calendar mode)
+    lessons_after: Optional[WhatIfLessons] = None
+    text: str = ""
+
+
+class OverrideStudent(PayModel):
+    """A student whose individual price does not follow the group (Money-1 B3 / B4 of the devil): the window lists him apart with the difference from the new group price."""
+
+    membership_id: str
+    student_name: str
+    price: int
+    group_price_before: Optional[int] = None
+    group_price_after: Optional[int] = None
+    difference_after: Optional[int] = None      # price - the new group price (negative: a discount stays whatever the group does)
+    reason: Optional[str] = None
+
+
+class FirstPriceInfo(PayModel):
+    """Money-1 B2: the first price of a group acts from the start of the running period of each student."""
+
+    requested_valid_from: date_type
+    valid_from: date_type
+    moved: bool = False
+    students_without_price: int = 0
+    text: str = ""
 
 
 class PriceImpactMoney(PayModel):
@@ -1442,7 +1482,12 @@ class PriceImpactMoney(PayModel):
     advance_delta: int = 0
     days_lost_total: int = 0
     backdated: bool = False
-    items: List[PriceImpactItem] = Field(default_factory=list)  # at most 50
+    as_of: Optional[date_type] = None     # Money-1 B3: the day the accounts are read on (the day the change reaches the students)
+    items_total: int = 0                  # every student who moves; ``items`` holds the first 200
+    truncated: bool = False
+    text: str = ""
+    items: List[PriceImpactItem] = Field(default_factory=list)
+    override_students: List[OverrideStudent] = Field(default_factory=list)
 
 
 # ---- billing mode change (F12) ----------------------------------------------------------------------

@@ -2069,6 +2069,14 @@ class AuthService:
             )
         )
         self.db.commit()
+        if request.price is not None:
+            # Money-1 B2: the price at the creation of the group acts «с самого начала» (the first price of a group; a student may start before today)
+            from . import pricing  # lazy: pulls in the payments modules
+
+            try:
+                pricing.PricingService(self.db).set_group_price(org_id, group.id, str(actor_uuid), amount=request.price, valid_from=pricing.EPOCH)
+            except pricing.PriceError as exc:
+                raise ValueError(exc.message) from exc
         return self._build_group_response(group)
 
     def _require_active_group_teacher(self, org_id: str, teacher_id: UUID) -> None:
