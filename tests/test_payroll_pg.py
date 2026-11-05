@@ -583,10 +583,12 @@ def test_unfinished_lessons_are_counted_per_teacher_in_the_month(world):
     world.db.query(StudentGroup).filter_by(group_id=world.group.id).update({"joined_at": datetime(2020, 1, 1)})
     world.db.commit()
     pay_calendar(world, s0, m.first, m.last)
-    lesson(world, m.d(1), {s0: "present"})
-    started = lesson(world, m.d(3), {}, status="in_progress")
+    # LESSONS 76/102: the rows carry the id of the slot ("mon"): the month's 1st / 3rd / 4th can be a Monday (the 1st is a Fri / Sat / Mon: Feb, Mar, May, Oct, Nov 2027...), and a row with another id
+    # does not cover that Monday's slot - the count was off by one in those months
+    lesson(world, m.d(1), {s0: "present"}, lesson_id="mon")
+    started = lesson(world, m.d(3), {}, status="in_progress", lesson_id="mon")
     started.started_at = datetime.utcnow()
-    lesson(world, m.d(4), {}, status="in_progress", teacher=world.teacher2)
+    lesson(world, m.d(4), {}, status="in_progress", teacher=world.teacher2, lesson_id="mon")
     world.db.commit()
     mondays = [n for n in range(1, m.last.day + 1) if m.d(n).isoweekday() == 1]
     never_started = len([n for n in mondays if n not in (1, 3, 4)])           # a Monday with no row at all
