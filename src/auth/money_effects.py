@@ -5,7 +5,7 @@
 * ``students`` - the lessons of the packs of the students that the action gives back (+1) or spends (-1), by the rule 4.3 (``payment_status.lesson_counts``);
 * ``payroll`` - the SAVED sheets whose pay the action really moves: ``fresh total BEFORE`` != ``fresh total AFTER`` of THIS action (Money-1 R3 #21: not the drift that was there before it,
   and nothing at all when the difference is 0).  Everybody gets ``{"month", "state"}`` (``open`` | ``closed`` | ``reopened``, see ``closed_period.py``); only the OWNER also gets the sheet, the
-  teacher, the saved total, ``freshBefore`` / ``freshAfter`` (= ``freshTotal``, the same in a dry run: the sum BEFORE the owner confirms), ``changedBy`` (= after - before) and ``driftAfter`` (= after - saved) - LESSONS 45;
+  teacher, the saved total, ``freshBefore`` / ``freshAfter`` (= ``freshTotal``, the same in a dry run: the sum BEFORE the owner confirms), ``changedBy`` (= after - before) ``driftAfter`` (= after - saved), ``paid`` and ``balanceAfter`` (what is left to pay in the month after the action, by ``PayrollPayoutService.state_in_month``: the advance of the earlier months taken off) - LESSONS 45;
 * ``text`` - the sentence for the confirmation / the toast, in the words of the screen (no technical words);
 * ``dryRun`` - the confirmation before the action (``True``: nothing was written) or the toast after it.
 
@@ -164,6 +164,7 @@ class SheetProbe:
 
     def lines(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
+        owner_lines: List[Tuple[Dict[str, Any], PayrollSheet, int]] = []
         for sheet_id, sheet in sorted(self.sheets.items(), key=lambda kv: (kv[1].period_month, str(kv[1].teacher_id))):
             before, after = self.before.get(sheet_id), self.after.get(sheet_id)
             if before is None or after is None or before == after:
@@ -174,8 +175,28 @@ class SheetProbe:
                 paid = int(sum(p.amount for p in self.db.query(PayrollPayout).filter(PayrollPayout.sheet_id == sheet.id, PayrollPayout.voided_at.is_(None)).all()))
                 line.update({"sheetId": str(sheet.id), "teacherId": str(sheet.teacher_id), "teacherName": short_name(user), "savedTotal": int(sheet.total_amount), "paid": paid,
                              "freshBefore": before, "freshAfter": after, "freshTotal": after, "changedBy": after - before, "driftAfter": after - int(sheet.total_amount)})
+                owner_lines.append((line, sheet, after))
             out.append(line)
+        self._balances_after(owner_lines)
         return out
+
+    def _balances_after(self, owner_lines: List[Tuple[Dict[str, Any], PayrollSheet, int]]) -> None:
+        """``balanceAfter`` of the owner's lines: what is left to pay in the month AFTER the action - the number of THE payout function of the list and of the sheet (``state_in_month``: the fresh total
+        of the open month is the target, the saved one of a closed month; the advance of the earlier months is taken off).  ``Уже выплачено 150 000 — до новой суммы останется 15 834``.  Negative: paid
+        ahead.  One query of the payouts for all the sheets, one pair of queries for the carry of each month."""
+        if not owner_lines:
+            return
+        from .payroll_payouts import PayrollPayoutService
+
+        service = PayrollPayoutService(self.db)
+        payouts = service.payouts_of(self.org_id, teacher_ids={sheet.teacher_id for _, sheet, _ in owner_lines})
+        carries: Dict[date, Dict[UUID, int]] = {}
+        for month in {sheet.period_month for _, sheet, _ in owner_lines}:
+            carries[month] = service.carry_ins(self.org_id, {sheet.teacher_id for _, sheet, _ in owner_lines if sheet.period_month == month}, month)
+        for line, sheet, after in owner_lines:
+            state = service.state_in_month(self.org_id, sheet.teacher_id, sheet.period_month, saved_total=int(sheet.total_amount), fresh_total=after,
+                                           items=payouts.get((sheet.teacher_id, sheet.period_month), []), carry_in=carries[sheet.period_month].get(sheet.teacher_id, 0))
+            line["balanceAfter"] = int(state.balance)
 
 
 def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, done: bool, closed_blocks: bool = False) -> str:

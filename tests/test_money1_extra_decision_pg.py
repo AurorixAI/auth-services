@@ -295,6 +295,25 @@ def test_the_status_in_the_warnings_is_the_payout_state_of_the_sheet_in_an_open_
     assert [h["status"] for h in payroll_hooks.sheets_touched_by_lesson_teacher_change(w.db, w.org.id, "2026-10-21", w.A.id, w.B.id, owner=True)] == ["overpaid"]
 
 
+def test_the_effects_say_what_is_left_to_pay_after_the_decision_by_the_payout_function_of_the_list(pg_session, clock):
+    """``moneyEffects.payroll[].balanceAfter`` («Уже выплачено 200 000 — до новой суммы останется …»): the October of the advance world (the data say 250 000, paid 200 000; the decision «Включить в
+    зарплату» adds 5 x 25 000) - the preview says the number that the sheet, the list of the month and the real answer say after it (LESSONS 104: one number, one function)."""
+    w, g, made = _advance_world(pg_session, clock)
+    seen = _call(w, "owner", made, "pay", dry_run=True, expect=200).json()
+    (line,) = seen["moneyEffects"]["payroll"]
+    assert (line["freshBefore"], line["freshAfter"], line["paid"], line["balanceAfter"]) == (250_000, 375_000, 200_000, 175_000)
+    admin_line = _call(w, "admin", made, "pay", dry_run=True, expect=200).json()["moneyEffects"]["payroll"]
+    assert admin_line == [{"month": "2026-10", "state": "open"}]                         # the administrator: no sums, no balance
+    done = _call(w, "owner", made, "pay", expect=200).json()
+    (after,) = done["moneyEffects"]["payroll"]
+    assert after["balanceAfter"] == line["balanceAfter"] == _sheet_status(w)["balance"] == 175_000
+    month = client(w, "owner").get(f"{API}/org/payroll/months/2026-10").json()["teachers"]
+    assert [t["payout"]["balance"] for t in month if t["payout"]] == [175_000]            # the list of the month says the same
+    # paid ahead: a decision that takes the lesson back leaves less than was paid - the balance is negative (paid ahead), never hidden
+    undo = _call(w, "owner", made, "undo", dry_run=True, expect=200).json()["moneyEffects"]["payroll"][0]
+    assert (undo["freshAfter"], undo["balanceAfter"]) == (250_000, 50_000)
+
+
 def test_the_status_in_the_change_of_the_lesson_teacher_is_the_payout_state_of_the_sheet(pg_session, clock):
     """The route itself (an open month): the answer of ``PUT …/lesson-teacher`` carries ``payrollSheetsAffected[].status`` = the state of the payout of the sheet."""
     w, g, made = _advance_world(pg_session, clock)
