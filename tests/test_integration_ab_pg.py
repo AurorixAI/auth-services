@@ -237,8 +237,8 @@ def test_a_leave_without_settle_keeps_the_debt_visible_after_the_group_is_archiv
 
 # ======================================================================================================================== 4. cancelled / moved lesson x A
 def late_joiner(w):
-    """s1 joined 14.10 (an incomplete first month): 5 of the 8 lessons of the full October by the pattern (Mon 5, 12, 19, 26 / Wed 7, 14, 21, 28; the slots' validFrom
-    does not shrink the month) are his: 14.10, 19.10, 21.10, 26.10, 28.10."""
+    """s1 joined 14.10 (an incomplete first month): 5 of the 7 lessons of the full October by the pattern are his: 14.10, 19.10, 21.10, 26.10, 28.10.  Money-1 B4: the Monday slot is the
+    original schedule (all its Mondays: 5, 12, 19, 26), the Wednesday slot was ADDED later (validFrom 14.10) and counts from its day (14, 21, 28) - it was 5 of 8 when every validFrom was ignored."""
     money(w, w.G1, 600_000)
     for s in (w.s2, w.s3):
         pay(w, member(w, s, w.G1), 600_000, date(2026, 10, 1))
@@ -249,7 +249,7 @@ def late_joiner(w):
 def test_a_lesson_cancelled_by_a_b2_decision_leaves_the_calendar_month_price_unchanged(w, clock, sync):
     """A decision 3 meets B2 ``cancel``: the cancelled row stays a lesson of the month for the proration (the price of the month is the same)."""
     debt = late_joiner(w)
-    assert debt == 375_000                                                         # 5 of 8 lessons of 600 000
+    assert debt == 429_000                                                         # 5 of 7 lessons of 600 000 (B4: the Wednesday slot counts from its validFrom; 375 000 = 5 of 8 before)
     item = request_one(w, "A", w.G1, "lesson-l1", "2026-10-26")
     clock.set("2026-10-21 14:02")
     out = decide(w, "admin", item["id"], decision="cancel", reason="Преподаватель болен, замены нет")

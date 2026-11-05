@@ -147,7 +147,7 @@ def test_m3_a_patch_cannot_lengthen_an_old_pause_over_old_days_and_a_money_chang
 
 
 def test_m1_overdue_days_do_not_count_the_paused_days(world, fixed_today):
-    fixed_today(D(2026, 11, 16))
+    fixed_today(D(2026, 11, 20))                                  # Money-1 B7: on 16.11 (the first charged day after the pause) the student only «ждёт оплату» for three days; four days later he is a debtor
     settings_block(world, accounting_start_date="2026-09-01", billing_anchor="fixed_day", billing_day=1)
     give_group_price(world.db, world.group, 600_000, valid_from=D(2026, 1, 1))
     world.group.schedule = []                                    # no schedule: the periods are charged by days
@@ -159,9 +159,12 @@ def test_m1_overdue_days_do_not_count_the_paused_days(world, fixed_today):
     assert r.status_code == 201, r.text
     rows = owner(world).get(f"{API}/org/payments/status", params={"bucket": "debt"}).json()["items"]
     row = next(x for x in rows if x["membership_id"] == str(m.id))
-    # paid through 19.10 (informational), paused 20.10-15.11: the first charged unpaid day is 16.11 = today - overdue for one day, not 28
+    # paid through 19.10 (informational), paused 20.10-15.11: the first charged unpaid day is 16.11 = 20.11 - 4 days: overdue for five days (16, 17, 18, 19, 20), not 32
     assert row["paid_until"] == "2026-10-19" and row["debt"] == 281_000
-    assert row["days_overdue"] == 1 and row["debt_reason"] == "overdue" and row["reason"] == "Просрочено на 1 день", row
+    assert row["days_overdue"] == 5 and row["debt_reason"] == "overdue" and row["reason"] == "Просрочено на 5 дней", row
+    fixed_today(D(2026, 11, 16))                                  # the first charged day: the debt is the period that begins today - «ждём оплату», the days overdue still skip the pause
+    waiting = next(x for x in owner(world).get(f"{API}/org/payments/status", params={"bucket": "waiting"}).json()["items"] if x["membership_id"] == str(m.id))
+    assert waiting["days_overdue"] == 1 and waiting["debt_reason"] == "waiting" and waiting["reason"] == "Ждём оплату до 18.11" and waiting["debt"] == 281_000
 
 
 # ---- m3: a deadlock on «убрать из группы» is a 409 «повторите», not a 500 --------------------------------------------------------------------

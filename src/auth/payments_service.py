@@ -606,7 +606,7 @@ class PaymentService:
             per_before = per_after = None
             if mode_changes and price:
                 size_before, size_after = (old_regime.package_size if old_regime.mode == bl.LESSONS else lessons_in_month), (later.package_size if later.mode == bl.LESSONS else lessons_in_month)
-                per_before, per_after = (price // size_before if size_before else None), (price // size_after if size_after else None)
+                per_before, per_after = ((2 * price + size_before) // (2 * size_before) if size_before else None), ((2 * price + size_after) // (2 * size_after) if size_after else None)         # half up: 300 000 / 13 = 23 077
             item.update({"switch_on": on, "as_of": horizon, "price_amount": price, "price_unit_before": unit_before, "price_unit_after": unit_after,
                          "per_lesson_before": per_before, "per_lesson_after": per_after})
             if mode_changes and price:

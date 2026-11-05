@@ -118,7 +118,7 @@ def test_b3_d1_month_to_package_every_student_is_listed_with_the_price_per_lesso
     assert impact["students_affected"] == 3 and impact["items_total"] == 3 and len(impact["items"]) == 3
     for item in impact["items"]:
         assert (item["price_amount"], item["price_unit_before"], item["price_unit_after"]) == (300_000, "за месяц", "за пакет из 12 уроков")
-        assert item["per_lesson_after"] == 25_000 and 20_000 <= item["per_lesson_before"] <= 30_000
+        assert item["per_lesson_after"] == 25_000 and 20_000 <= item["per_lesson_before"] <= 30_000 and item["per_lesson_before"] == (2 * 300_000 + 13) // 26         # 300 000 / 13 lessons of the month = 23 077
         assert "цена 300 000 сум за месяц → за пакет из 12 уроков" in item["text"] and "за урок" in item["text"]
     assert impact["text"].startswith("Перейдут на новый способ 3 ученика")
 
@@ -162,7 +162,7 @@ def test_b9_a_change_of_the_mode_the_day_and_the_recalculation_go_to_the_journal
     w = world
     mode_world(w, fixed_today)
     assert put_settings(w, period_mode="lessons", lessons_per_payment=12)["dry_run"] is True
-    assert w.db.query(OrgMoneyAudit).count() == 0                                             # a dry run leaves nothing
+    assert w.db.query(OrgMoneyAudit).filter_by(org_id=w.org.id).count() == 0                  # a dry run leaves nothing
     put_settings(w, dry_run=False, period_mode="lessons", lessons_per_payment=12)
     put_settings(w, dry_run=False, centre_cancel_recalc=True)
     w.db.expire_all()
