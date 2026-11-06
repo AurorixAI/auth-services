@@ -660,7 +660,7 @@ class PaymentService:
             if meaning_changes:
                 pieces.append(f"цена {tx.money(price)} {unit_before} → {unit_after}")
                 if per_before and per_after:
-                    pieces.append(f"≈ за урок {tx.num(per_before)} → {tx.num(per_after)} сум")
+                    pieces.append(f"≈ за урок {tx.num(per_before)} → {tx.money(per_after)}")
             if on is None:
                 pieces.append("начнёт действовать, когда закончится пакет")
                 item["text"] = f"{name} (когда закончится пакет): " + "; ".join(pieces)

@@ -34,7 +34,7 @@ def lp(w, group, student, client=None):
 
 
 def money_world(w, *, paid=300_000, price=600_000, first=D(2026, 10, 11)):
-    """fixed_day=1, price 600 000, the student joined on ``first`` and paid ``paid`` on the 16th."""
+    """fixed_day=1, price 600 000, the student joined on ``first`` and paid ``paid`` on the 16th."""
     centre(w, price)
     m = enrolled(w, first)
     if paid:
@@ -232,7 +232,7 @@ def test_a_future_price_is_always_allowed_and_the_impact_counts_the_days_an_adva
     assert money["as_of"] == "2026-11-01"
     assert (item["paid_until_before"], item["paid_until_after"], item["has_money"]) == ("2026-11-12", "2026-11-10", True)
     assert (item["debt_before"], item["debt_after"], item["advance_before"], item["advance_after"]) == (300_000, 400_000, 0, 0)
-    assert item["text"] == "Каримова Алия (на 01.11): долг 300 000 сум → 400 000 сум; оплачено до 12.11 → 10.11"
+    assert item["text"] == "Каримова Алия (на 01.11): долг 300 000 сум → 400 000 сум; оплачено до 12.11 → 10.11"
     assert (money["memberships_with_less_advance"], money["days_lost_total"], money["backdated"]) == (1, 2, False)
     assert c.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 600_000, "valid_from": "2026-11-01"}).status_code == 200
     # the individual price: the same refusal for a backdated one (the membership has money)
@@ -326,7 +326,7 @@ def test_import_creates_opening_balances_in_one_transaction_and_reports_what_was
     centre(world, 600_000)
     data = import_workbook([
         ["Один", "Ученик", 7, "", "Импорт-группа", "", date(2026, 10, 31), None, None],             # paid until 31.10
-        ["Два", "Ученик", 7, "", "Импорт-группа", "", None, "250 000", "30.09.2026"],               # a debt
+        ["Два", "Ученик", 7, "", "Импорт-группа", "", None, "250 000", "30.09.2026"],               # a debt
         ["Три", "Ученик", 7, "", "Импорт-группа", "", date(2026, 10, 10), None, None],              # before the enrolment: skipped with a warning
         ["Четыре", "Ученик", 7, "", "Импорт-группа", "", None, "100000", None],                      # the date defaults to the day before
         ["Пять", "Ученик", 7, "", "Импорт-группа", "", None, None, None],                            # no opening

@@ -225,7 +225,7 @@ def test_r3_lead11_the_dry_run_of_adding_with_a_past_pay_from_says_what_is_charg
     s = fresh_student(w, "Давно ходит")
     lessons = sum(1 for k in range(31) if (D(2026, 10, 7).toordinal() + k - D(2026, 10, 5).toordinal()) % 7 in (0, 2, 4))      # 07.10 .. 06.11 by Mon / Wed / Fri (05.10 is a Monday)
     dry = add(w, s, pay_from="2026-10-07", dry_run=True)
-    assert dry["billing"]["immediate"] == {"amount": 300_000, "lessons": lessons, "text": f"Сразу начислится 300 000 сум (за {lessons} уроков)"}
+    assert dry["billing"]["immediate"] == {"amount": 300_000, "lessons": lessons, "text": f"Сразу начислится 300 000 сум (за {lessons} уроков)"}
     assert w.db.query(StudentGroup).filter_by(student_id=s.id).count() == 0                  # a dry run writes nothing
     today_lesson = add(w, fresh_student(w, "Урок сегодня"), dry_run=True)                    # the default: Wednesday 21.10 is a lesson - the period begins today, the charge is at once too
     assert today_lesson["billing"]["immediate"]["amount"] == 300_000
@@ -255,8 +255,8 @@ def test_r3_4_a_price_from_01_12_names_the_student_who_paid_in_time_and_the_cost
     one = money["items"][0]
     assert (one["debt_before"], one["debt_after"], one["advance_before"], one["advance_after"]) == (0, 0, 0, 0)         # the account on 01.12 is the same ...
     assert one["next_period"] == {"period_from": "2026-12-05", "period_to": "2027-01-04", "amount_before": 300_000, "amount_after": 400_000, "difference": 100_000}      # ... the next period is not
-    assert one["text"].endswith("(на 01.12): следующий период с 05.12: 300 000 → 400 000 сум (+100 000)")
-    assert money["text"] == "Изменится у 3 учеников: следующий период дороже на 300 000 сум у 3 учеников"
+    assert one["text"].endswith("(на 01.12): следующий период с 05.12: 300 000 → 400 000 сум (+100 000)")
+    assert money["text"] == "Изменится у 3 учеников: следующий период дороже на 300 000 сум у 3 учеников"
 
 
 def test_r3_4_a_cheaper_price_and_a_student_whose_next_period_costs_the_same(world, fixed_today):
@@ -273,7 +273,7 @@ def test_r3_4_a_cheaper_price_and_a_student_whose_next_period_costs_the_same(wor
 
     give_price(w.db, membership(w, w.students[2]), 250_000, reason="скидка")                # an individual price does not follow the group: the same next period
     money = put_price(w, 200_000, valid_from=D(2026, 12, 1), dry_run=True)["impact"]["money"]
-    assert money["items_total"] == 2 and money["next_period_delta_total"] == -200_000 and "дешевле на 200 000 сум у 2 учеников" in money["text"]
+    assert money["items_total"] == 2 and money["next_period_delta_total"] == -200_000 and "дешевле на 200 000 сум у 2 учеников" in money["text"]
     assert [o["student_name"] for o in money["override_students"]] == ["Орлова Дана"] and money["override_total"] == 1 and money["override_truncated"] is False
 
 
@@ -436,7 +436,7 @@ def test_r3_4_a_period_that_begins_on_the_day_of_the_price_is_in_the_account_of_
     money = put_price(w, 400_000, valid_from=D(2026, 12, 5), dry_run=True)["impact"]["money"]                   # the price begins on the first day of the next period
     one = money["items"][0]
     assert (one["debt_before"], one["debt_after"]) == (300_000, 400_000) and one["next_period"] is None             # the period of 05.12 is in the debt of 05.12 already
-    assert one["text"] == f"{one['student_name']} (на 05.12): долг 300 000 сум → 400 000 сум"
+    assert one["text"] == f"{one['student_name']} (на 05.12): долг 300 000 сум → 400 000 сум"
 
 
 # ---- №19: one «first day» of a stay for the account and for the table of the openings ------------------------------------------------------------------------

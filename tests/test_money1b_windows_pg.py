@@ -118,8 +118,8 @@ def test_b3_d1_month_to_package_every_student_is_listed_with_the_price_per_lesso
     assert impact["students_affected"] == 3 and impact["items_total"] == 3 and len(impact["items"]) == 3
     for item in impact["items"]:
         assert (item["price_amount"], item["price_unit_before"], item["price_unit_after"]) == (300_000, "за месяц", "за пакет из 12 уроков")
-        assert item["per_lesson_after"] == 25_000 and 20_000 <= item["per_lesson_before"] <= 30_000 and item["per_lesson_before"] == (2 * 300_000 + 13) // 26         # 300 000 / 13 lessons of the month = 23 077
-        assert "цена 300 000 сум за месяц → за пакет из 12 уроков" in item["text"] and "≈ за урок 23 077 → 25 000 сум" in item["text"]      # R3 R-4: an approximation says so
+        assert item["per_lesson_after"] == 25_000 and 20_000 <= item["per_lesson_before"] <= 30_000 and item["per_lesson_before"] == (2 * 300_000 + 13) // 26         # 300 000 / 13 lessons of the month = 23 077
+        assert "цена 300 000 сум за месяц → за пакет из 12 уроков" in item["text"] and "≈ за урок 23 077 → 25 000 сум" in item["text"]      # R3 R-4: an approximation says so
         assert "(с 25.10, на 23.11)" in item["text"]                                                          # R3 R-5: the day of the figures is told
     assert impact["text"].startswith("Перейдут на новый способ 3 ученика")
 
@@ -145,10 +145,10 @@ def test_b3_h1_the_day_of_the_shared_month_1_to_10_tells_the_transitional_cell(w
     assert impact["students_affected"] == 3 and impact["items_total"] == 3
     one = impact["items"][0]
     assert one["switch_on"] == "2026-11-01" and one["as_of"] == "2026-11-30"
-    assert (one["charged_before"], one["charged_after"]) == (300_000, 392_000)            # H1: IN the first 30 days (R3 money R-2; not the history since the accounting began): the cell 01.11-30.11 = 300 000
-    assert one["charged_after"] - one["charged_before"] == 92_000                         # ... against the cell 01.11-09.11 = 4 of 13 lessons = 92 000 and the cell from 10.11 = 300 000
+    assert (one["charged_before"], one["charged_after"]) == (300_000, 392_000)            # H1: IN the first 30 days (R3 money R-2; not the history since the accounting began): the cell 01.11-30.11 = 300 000
+    assert one["charged_after"] - one["charged_before"] == 92_000                         # ... against the cell 01.11-09.11 = 4 of 13 lessons = 92 000 and the cell from 10.11 = 300 000
     assert (impact["charged_before_total"], impact["charged_after_total"]) == (900_000, 1_176_000)
-    assert impact["text"] == "Перейдут на новый способ 3 ученика: за первые 30 дней после перехода начислено 900 000 сум → 1 176 000 сум"
+    assert impact["text"] == "Перейдут на новый способ 3 ученика: за первые 30 дней после перехода начислено 900 000 сум → 1 176 000 сум"
     assert "(с 01.11, на 30.11)" in one["text"]
 
 
@@ -176,8 +176,8 @@ def test_b9_a_change_of_the_mode_the_day_and_the_recalculation_go_to_the_journal
     assert first["students_affected"] == 3 and first["items_total"] == 3 and first["before"]["period_mode"] == "calendar" and first["after"]["period_mode"] == "lessons"
     assert first["text"].startswith("Изменён способ оплаты: способ «Свой месяц у каждого ученика» → «Пакет уроков»")
     assert "Перейдут на новый способ 3 ученика" in first["text"] and rows[0].actor_id == w.owner.id
-    assert first["sums_available"] is True and (first["charged_before_total"], first["charged_after_total"]) == (900_000, 0)           # the first 30 days: 3 x a month of 300 000 now, a package charges lessons as they are held (R3 R-2: not 1 640 000, the history)
-    assert "начислено 900 000 сум → 0 сум" in first["text"]
+    assert first["sums_available"] is True and (first["charged_before_total"], first["charged_after_total"]) == (900_000, 0)           # the first 30 days: 3 x a month of 300 000 now, a package charges lessons as they are held (R3 R-2: not 1 640 000, the history)
+    assert "начислено 900 000 сум → 0 сум" in first["text"]
     assert rows[1].details["text"].startswith("Перерасчёт за уроки, отменённые центром: выключен → включён; действует на уроки с 21.10.2026")
     shown = owner(w).get(f"{API}/org/settings/payments/history").json()["items"]
     assert [i["action"] for i in shown] == ["centre_cancel_recalc_changed", "billing_regime_changed"] and shown[1]["details"]["items"][0]["text"]
