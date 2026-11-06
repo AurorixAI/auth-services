@@ -222,6 +222,9 @@ def test_b1_the_preview_of_a_bulk_adding_says_what_is_charged_at_once_per_studen
     assert w.db.query(StudentGroup).filter(StudentGroup.student_id.in_([a.id, b.id])).count() == 0          # a dry run writes nothing
     single = add(w, fresh_student(w, "Одиночный"), pay_from="2026-10-07", dry_run=True)
     assert single["billing"]["immediate"]["text"] == one                                                    # one dictionary for both windows
+    for item in (*(x["billing"]["immediate"] for x in got["students"]), single["billing"]["immediate"]):        # Money-1 V0: the sum is told by its periods, the same numbers
+        assert item["parts"] and sum(p["amount"] for p in item["parts"]) == item["amount"] == 300_000 and sum(p["lessons"] for p in item["parts"]) == item["lessons"]
+    assert "parts" not in got["immediate_total"]                                                            # the total under a bulk adding has no breakdown
 
 
 def test_b1_the_bulk_preview_has_no_sum_without_the_money_right_and_the_real_answer_has_none(world, fixed_today):

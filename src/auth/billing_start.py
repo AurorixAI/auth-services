@@ -117,15 +117,43 @@ def immediate_charge(db: Session, org_id: Any, membership_id: Any, today: date) 
 
     db.flush()
     (entry,) = PaymentService(db)._loader(str(org_id), today).run([membership_id])
-    begun = [s for s in entry.ledger.segments if s.kind == "period" and s.begun and s.amount > 0]
+    return immediate_from_ledger(entry.ledger, entry.inp.lesson_days)
+
+
+def immediate_from_ledger(ledger: Any, lesson_days: Any) -> Optional[Dict[str, Any]]:
+    """The pure part of ``immediate_charge`` (no database): the begun periods with a charge of an account -> ``{amount, lessons, text, parts}`` or ``None``."""
+    begun = [s for s in ledger.segments if s.kind == "period" and s.begun and s.amount > 0]
     amount = sum(s.amount for s in begun)
     if amount <= 0:
         return None
-    lessons = 0
+    parts = immediate_parts(begun, lesson_days)
+    lessons = sum(p["lessons"] for p in parts)
+    return {"amount": amount, "lessons": lessons, "text": tx.immediate_text(amount, lessons), "parts": parts}
+
+
+def immediate_label(seg: Any) -> str:
+    """The name of a period: the month («октябрь») when it is a calendar month, else its days («06.10\u201305.11»)."""
+    from .closed_period import MONTH_NAMES  # lazy: the same list of month names as the payroll
+
+    last = seg.period_start.replace(day=28) + timedelta(days=4)
+    if seg.period_start.day == 1 and seg.period_end == last.replace(day=1) - timedelta(days=1):
+        return MONTH_NAMES[seg.period_start.month - 1]
+    return f"{tx.ddmm(seg.period_start)}\u2013{tx.ddmm(seg.period_end)}"
+
+
+def immediate_parts(begun: Any, lesson_days: Any) -> list:
+    """Money-1 V0: the sum of ``immediate_charge`` by the periods it is made of - one element per begun period with a charge, read from the SAME segments of the ledger (no second formula):
+    ``{label, from, amount, lessons, lessons_in_period, whole}``.  ``from`` is the first charged day when the period is taken not in full (else ``None``); ``lessons_in_period`` is the lessons
+    of the group in the whole period (the ledger knows it for a period charged by lessons, «2 из 9»), else ``None``.  The amounts add up to ``amount``, the lessons to ``lessons``."""
+    parts = []
     for seg in begun:
         inside = set(seg.days)
-        lessons += sum(1 for d in entry.inp.lesson_days(min(inside), max(inside)) if d in inside)
-    return {"amount": amount, "lessons": lessons, "text": tx.immediate_text(amount, lessons)}
+        whole = seg.basis == "full" or (seg.basis == "lessons" and seg.lessons_in_part is not None and seg.lessons_in_part == seg.lessons_in_period)       # nothing of the period is lost
+        parts.append({
+            "label": immediate_label(seg), "from": None if whole or not seg.days else min(inside).isoformat(), "amount": int(seg.amount),
+            "lessons": sum(1 for d in lesson_days(min(inside), max(inside)) if d in inside) if inside else 0,
+            "lessons_in_period": seg.lessons_in_period, "whole": whole})
+    return parts
 
 
 def immediate_total(items: list) -> Dict[str, Any]:
