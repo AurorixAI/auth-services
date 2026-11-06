@@ -275,14 +275,14 @@ def test_g_pay_chain_pay_late_payment_to_pay_recalc_overpaid_void(world):
     # Money-1 A1b: the payout is by the SAVED total (475 000); the later payment is «изменилось на +125 000» with a button to re-save, not a debt put into the sum to pay
     assert got["stale"] is True and (st["saved_total"], st["fresh_total"], st["target"], st["paid"], st["balance"], st["state"], st["basis"]) == (
         475_000, 600_000, 475_000, 475_000, 0, "settled", "saved")
-    assert st["changed_by"] == 125_000 and st["change_text"] == "После сохранения зарплата изменилась на +125 000 сум. Сохраните новую сумму, чтобы учесть изменение" and st["text"] == "Выплачено полностью"
+    assert st["changed_by"] == 125_000 and st["change_text"] == "После сохранения зарплата изменилась на +125 000 сум. Сохраните новую сумму, чтобы учесть изменение" and st["text"] == "Выплачено полностью"
     ov = teacher_row(overview(world, m), world.teacher)
     assert ov["payout"]["balance"] == 0 and ov["sheet"]["stale"] is True
     # recalculate: version 2 totals 600 000, the payout of version 1 stays
     fresh_fp = owner(world).get(f"{API}/org/payroll/sheets/{sheet['id']}/diff").json()["source_fingerprint"]
     r = owner(world).patch(f"{API}/org/payroll/sheets/{sheet['id']}", json={"revision": 1, "recalculate": True, "expected_fingerprint": fresh_fp})
     assert r.status_code == 200 and r.json()["total_amount"] == 600_000
-    assert r.json()["payout"]["text"] == "Выплачено 475 000 сум из 600 000 сум · осталось 125 000 сум" and r.json()["payout"]["state"] == "due"
+    assert r.json()["payout"]["text"] == "Выплачено 475 000 сум из 600 000 сум · осталось 125 000 сум" and r.json()["payout"]["state"] == "due"
     second = payout(world, sheet, 125_000)
     assert second["state"]["state"] == "settled" and second["payout"]["sheet_revision"] == 2
     # the payment of S2 is cancelled: fresh 475 000, saved 600 000, paid 600 000 -> settled; the sheet says «изменилось на −125 000» (the mirror of the case above, no phantom advance)
@@ -314,7 +314,7 @@ def test_payout_matrix_errors_idempotency_rights_and_listing(world):
         assert r.status_code == 422 and r.json()["detail"]["code"] == code, (body, r.text)
     # P: partial -> due; O: overpay is allowed
     part = payout(world, sheet, 300_000)
-    assert part["state"]["state"] == "due" and part["state"]["text"] == "Выплачено 300 000 сум из 475 000 сум · осталось 175 000 сум"
+    assert part["state"]["state"] == "due" and part["state"]["text"] == "Выплачено 300 000 сум из 475 000 сум · осталось 175 000 сум"
     assert payout(world, sheet, 200_000, confirm_overpay=True, overpay=25_000)["state"]["state"] == "overpaid"
     # R: the same idempotency key twice
     key = str(__import__("uuid").uuid4())

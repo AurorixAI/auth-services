@@ -63,6 +63,13 @@ OUT = ROOT / "tests" / "fixtures" / "pay2"
 D = date
 
 
+def nb(text: str) -> str:
+    """The sentences of the design are written with plain spaces; the server writes a sum with non-breaking ones (``payments_texts.NBSP``): «269 000 сум» -> U+00A0 between the groups and before «сум»."""
+    import re
+
+    return re.sub(r"(?<=\d) (?=\d{3}(?!\d))|(?<=\d) (?=сум)", tx.NBSP, text)
+
+
 def uid(n: int) -> str:
     return f"00000000-0000-4000-8000-{n:012d}"
 
@@ -404,10 +411,10 @@ def e1_previews(store):
             amount=amount, result=result, warnings=[]), store)
     # the headline sentences of the design
     assert json.loads(store["e1_preview_300000.json"])["result"]["summary_text"] == (
-        "Погасит долг 269 000 сум · на текущий период 31 000 сум → оплачено до 15.10 · останется 469 000 сум")
+        nb("Погасит долг 269 000 сум · на текущий период 31 000 сум → оплачено до 15.10 · останется 469 000 сум"))
     assert json.loads(store["e1_preview_790000.json"])["result"]["summary_text"] == (
-        "Погасит долг 269 000 сум · на текущий период 500 000 сум · Переплата 21 000 сум → аванс на следующий период "
-        "(15.11–14.12), оплачено до 15.11")
+        nb("Погасит долг 269 000 сум · на текущий период 500 000 сум · Переплата 21 000 сум → аванс на следующий период "
+           "(15.11–14.12), оплачено до 15.11"))
 
 
 def e1_create_replace_void(store):
@@ -536,7 +543,7 @@ def e1_statement(store):
     add(D(2026, 10, 15), "charge", "Стоимость 15.10–14.11", debit=500_000, details=StatementDetails(segment=sm[1]))
     add(D(2026, 10, 21), "payment", "Оплата № 18", credit=790_000, details=StatementDetails(
         payment_id=uid(18), receipt_no=18, method="cash", created_by_name="Рустам Каримов", note="аванс", allocations=a18))
-    assert bal == 21_000 and rows[-1].balance_text == "Аванс 21 000"
+    assert bal == 21_000 and rows[-1].balance_text == nb("Аванс 21 000")
     summary = StatementSummary(charged=1_000_000, paid=1_021_000, transferred_in=0, written_off=0, refunded=0,
                                transferred_out=0, debt=0, advance=21_000, paid_until=t["through"], status="active",
                                reconciles=(1_000_000 - 1_021_000 == 0 - 21_000))
@@ -826,7 +833,7 @@ def e5(store):
     scenario(14, D(2026, 10, 27), 700_000, "e5_preview_700000_held14.json", 14, 0)
     scenario(14, D(2026, 10, 27), 650_000, "e5_preview_650000_held14.json", 13, 50_000)
     assert json.loads(store["e5_preview_630000_held12.json"])["result"]["summary_text"] == (
-        "Погасит долг 600 000 сум → оплачено уроков 12, осталось 0 · аванс 30 000 сум")
+        nb("Погасит долг 600 000 сум → оплачено уроков 12, осталось 0 · аванс 30 000 сум"))
 
 
 # ================================================================================================================
@@ -1020,7 +1027,7 @@ def build() -> Dict[str, str]:
 
 
 def main() -> int:
-    store = build()
+    store = {name: nb(text) for name, text in build().items()}      # every text of the fixtures carries a sum the way the server writes it
     if "--check" in sys.argv:
         bad = [n for n, text in store.items() if not (OUT / n).exists() or (OUT / n).read_text(encoding="utf-8") != text]
         if bad:

@@ -239,6 +239,13 @@ def price_flat(amount, changes=None):
 # ------------------------------------------------------------------ builders --------------------------------------
 
 
+def nb(text: str) -> str:
+    """The server writes a sum with non-breaking spaces (``payments_texts.NBSP``): «269 000 сум» -> U+00A0 between the groups and before «сум»; the texts of the hand-made fixtures are the same."""
+    import re
+
+    return re.sub(r"(?<=\d) (?=\d{3}(?!\d))|(?<=\d) (?=сум)", tx.NBSP, text)
+
+
 def write(name: str, model, store: Dict[str, str]) -> None:
     store[name] = json.dumps(model.model_dump(mode="json", by_alias=True), ensure_ascii=False, indent=2) + "\n"
 
@@ -655,7 +662,7 @@ def build() -> Dict[str, str]:
 
 
 def main() -> int:
-    store = build()
+    store = {name: nb(text) for name, text in build().items()}      # every text of the fixtures carries a sum the way the server writes it
     if "--check" in sys.argv:
         bad = [n for n, text in store.items() if not (OUT / n).exists() or (OUT / n).read_text(encoding="utf-8") != text]
         if bad:

@@ -637,7 +637,7 @@ def test_the_old_quote_endpoint_is_a_shim_for_one_release(world, fixed_today):
     body = r.json()
     assert body["suggested_amount"] == 769_000 == preview(world, m)["suggested_amount"]
     assert body["valid_from"] == "2026-09-15" and body["valid_to"] == "2026-10-14" and body["price"]["amount"] == 500_000
-    assert body["mode"] == "calendar" and body["explanation"] == "К оплате 769 000 сум"
+    assert body["mode"] == "calendar" and body["explanation"] == "К оплате 769 000 сум"
 
 
 def test_a_student_without_any_money_event_stays_none_with_the_debt_visible(world, fixed_today):

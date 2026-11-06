@@ -47,9 +47,9 @@ def test_the_chain_a_paid_sheet_closes_the_month_a_mistake_is_reopened_returned_
     assert (line["savedTotal"], line["freshBefore"], line["freshAfter"], line["changedBy"]) == (475_000, 475_000, 425_000, -50_000)       # two covered students x 25 000 gone from the pay
     state = owner(world).get(f"{API}/org/payroll/sheets/{sheet_['id']}").json()["payout"]
     assert (state["state"], state["basis"], state["balance"], state["changed_by"]) == ("overpaid", "fresh", -50_000, -50_000)       # R3 #20: the month is REOPENED (open) - the target is what the data says now, 425 000
-    assert state["text"] == ("Месяц открыт: начислено сейчас 425 000 сум, выплачено 475 000 сум. Выплачено вперёд 50 000 сум: "
+    assert state["text"] == ("Месяц открыт: начислено сейчас 425 000 сум, выплачено 475 000 сум. Выплачено вперёд 50 000 сум: "
                             "покроется начислениями до конца месяца; если останется — уменьшит следующую выплату")
-    assert "−50 000 сум" in state["change_text"] and "Сохраните новую сумму" in state["change_text"]
+    assert "−50 000 сум" in state["change_text"] and "Сохраните новую сумму" in state["change_text"]
     fp = owner(world).get(f"{API}/org/payroll/sheets/{sheet_['id']}/diff").json()["source_fingerprint"]
     resaved = owner(world).patch(f"{API}/org/payroll/sheets/{sheet_['id']}", json={"revision": 1, "recalculate": True, "expected_fingerprint": fp})
     assert resaved.status_code == 200 and resaved.json()["total_amount"] == 425_000
@@ -156,7 +156,7 @@ def test_zp04_a_rate_changed_backwards_says_which_saved_sheets_it_moves_and_the_
     assert r.status_code == 200, r.text
     effects = r.json()["money_effects"]
     (line,) = [p for p in effects["payroll"] if p["month"] == m.label]
-    assert (line["savedTotal"], line["freshBefore"], line["freshAfter"], line["changedBy"]) == (475_000, 475_000, 570_000, 95_000) and "+95 000" in effects["text"]
+    assert (line["savedTotal"], line["freshBefore"], line["freshAfter"], line["changedBy"]) == (475_000, 475_000, 570_000, 95_000) and "+95 000" in effects["text"]
     state = owner(world).get(f"{API}/org/payroll/sheets/{sheet_['id']}").json()["payout"]
     assert (state["state"], state["balance"], state["changed_by"]) == ("settled", 0, 95_000)
 

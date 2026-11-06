@@ -45,7 +45,7 @@ def test_mn32_payout_above_the_balance_is_409_until_the_advance_is_confirmed(wor
     assert r.status_code == 409, r.text
     detail = r.json()["detail"]
     assert detail["code"] == "OVERPAY_CONFIRM_REQUIRED" and detail["overpay"] == 25_000 and detail["balance"] == 475_000
-    assert detail["message"].startswith("Выплата больше остатка на 25 000 сум") and "обновите страницу" in detail["message"]    # an OLD tab (no flag) is told what to do (R3 9)
+    assert detail["message"].startswith("Выплата больше остатка на 25 000 сум") and "обновите страницу" in detail["message"]    # an OLD tab (no flag) is told what to do (R3 9)
     assert live_payouts(world, sheet) == []            # nothing was written by the refusal
     assert post_payout(world, sheet, 500_000, confirm_overpay=False).status_code == 409
     assert post_payout(world, sheet, 500_000, confirm_overpay=True).status_code == 409, "the flag alone is no answer to «on how much»: the sum that was shown must come with it (R3 7)"
@@ -245,10 +245,10 @@ def test_r3_3_an_advance_is_taken_off_the_next_month_and_what_does_not_fit_goes_
     first = _pay(world, aug, 600_000, overpay=125_000)
     st = _state(world, aug)
     assert (st.carry_in, st.carry_used, st.target, st.balance, st.advance_out, st.state) == (0, 0, 475_000, -125_000, 125_000, "overpaid")
-    assert st.text == "Выплачено больше на 125 000 сум — вычтем из следующей выплаты", "the text of a month without a carry is the old one"
+    assert st.text == "Выплачено больше на 125 000 сум — вычтем из следующей выплаты", "the text of a month without a carry is the old one"
     s = _state(world, sep)
     assert (s.carry_in, s.carry_used, s.target, s.balance, s.advance_out, s.state) == (125_000, 100_000, 0, 0, 25_000, "settled")
-    assert s.text == "Закрыто выплатой прошлого месяца: 100 000 сум"
+    assert s.text == "Закрыто выплатой прошлого месяца: 100 000 сум"
     o = _state(world, octo)
     assert (o.carry_in, o.carry_used, o.target, o.balance, o.advance_out, o.state) == (25_000, 25_000, 275_000, 275_000, 0, "unpaid")
     assert o.text == "Не выплачено"

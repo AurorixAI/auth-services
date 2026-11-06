@@ -95,7 +95,7 @@ def test_october_overview_hand_calculated(world, seeded):
     prev = o["previous"]
     assert (prev["received"], prev["payments_count"], prev["to_current"], prev["to_past_debt"]) == (1_500_000, 4, 1_500_000, 0)
     assert (o["delta_amount"], o["delta_pct"]) == (1_950_000, 130)
-    assert o["summary_text"] == "За октябрь (по 21-е) пришло 3 450 000 сум — на 130% больше, чем за те же дни сентября. Собрано 76% стоимости месяца."
+    assert o["summary_text"] == "За октябрь (по 21-е) пришло 3 450 000 сум — на 130% больше, чем за те же дни сентября. Собрано 76% стоимости месяца."
     assert [(m["method"], m["amount"], m["count"]) for m in o["by_method"]] == [
         ("click", 1_250_000, 1), ("cash", 950_000, 4), ("bank_transfer", 900_000, 1), ("card", 350_000, 1)]
     assert [m["label"] for m in o["by_method"]] == ["Click", "Наличные", "Перевод", "Карта"]
@@ -117,7 +117,7 @@ def test_collection_hand_calculated_and_identities(world, seeded):
     assert (c["charged"], c["paid"], c["debt"], c["pct"]) == (400_000, 350_000, 50_000, 87)
     assert (a["teacher_name"], b["teacher_name"]) == ("Пётр Иванов", "Мария Ким")
     t = col["total"]
-    assert col["text"] == "Оплачено 1 900 000 из 2 500 000 сум (76%)"
+    assert col["text"] == "Оплачено 1 900 000 из 2 500 000 сум (76%)"
     assert (t["charged"], t["paid"], t["forgiven"], t["debt"], t["students"], t["students_with_debt"], t["pct"]) == (
         2_500_000, 1_900_000, 100_000, 500_000, 6, 3, 76)
     for key in ("charged", "paid", "forgiven", "debt", "students", "students_with_debt"):
@@ -150,7 +150,7 @@ def test_a_closed_month_is_collected_by_later_payments_and_advances(world, seede
     assert o["current"]["received"] == 1_500_000 and o["previous"]["received"] == 0 and o["delta_pct"] is None
     t = o["collection"]["total"]
     assert (t["charged"], t["paid"], t["debt"], t["pct"], t["students_with_debt"]) == (2_500_000, 2_500_000, 0, 100, 0)
-    assert o["summary_text"] == "За сентябрь пришло 1 500 000 сум. Собрано 100% стоимости месяца."
+    assert o["summary_text"] == "За сентябрь пришло 1 500 000 сум. Собрано 100% стоимости месяца."
     assert income(world, "2026-08-01", "2026-08-31")["collection"]["groups"] == []        # the accounting starts on 01.09: nothing charged
 
 
@@ -188,12 +188,12 @@ def test_day_today_with_the_cash_hint(world, seeded):
     assert o["period"]["kind"] == "day" and o["period"]["label"] == "сегодня" and o["previous_period"]["label"] == "вчера"
     assert (o["current"]["received"], o["current"]["payments_count"]) == (250_000, 2)       # a2 100 000 + b2 150 000, both cash
     assert o["previous"]["received"] == 0                                          # 20.10: only a voided payment
-    assert o["summary_text"] == "Сегодня пришло 250 000 сум." and o["delta_direction"] is None and o["delta_text"] is None
+    assert o["summary_text"] == "Сегодня пришло 250 000 сум." and o["delta_direction"] is None and o["delta_text"] is None
     assert o["collection"] is None and [d["bucket"] for d in o["series"]] == ["2026-10-21"]
     assert o["cash"] == {
         "date": "2026-10-21", "label": "Наличные в кассе за сегодня", "cash_received": 250_000, "cash_refunded": 100_000,
         "expected": 150_000, "payments_count": 2,
-        "text": "Наличные в кассе за сегодня: 150 000 сум (принято 250 000 сум, возвращено 100 000 сум)",
+        "text": "Наличные в кассе за сегодня: 150 000 сум (принято 250 000 сум, возвращено 100 000 сум)",
         "scope": "centre", "filtered_view": False, "scope_text": None}
     # R3 #7: the cash hint is the physical till of the WHOLE centre: the method, group and teacher filters never narrow it
     card = income(world, "2026-10-21", "2026-10-21", method="card")
@@ -213,7 +213,7 @@ def test_day_today_with_the_cash_hint(world, seeded):
     past_filtered = income(world, "2026-10-15", "2026-10-15", group_id=str(ga.id))
     assert past_filtered["cash"]["scope_text"] == "в кассе центра за 15 октября (все группы)"
     past = income(world, "2026-10-15", "2026-10-15")
-    assert past["cash"]["label"] == "Наличные в кассе за 15 октября" and past["cash"]["expected"] == 0 and past["cash"]["text"].endswith("0 сум")
+    assert past["cash"]["label"] == "Наличные в кассе за 15 октября" and past["cash"]["expected"] == 0 and past["cash"]["text"].endswith("0 сум")
 
 
 def test_week_and_custom_ranges(world, seeded):
@@ -221,12 +221,12 @@ def test_week_and_custom_ranges(world, seeded):
     assert o["period"]["kind"] == "week" and o["previous_period"]["from"] == "2026-10-05" and o["previous_period"]["to"] == "2026-10-11"
     assert o["current"]["received"] == 550_000 and o["previous"]["received"] == 1_750_000     # 200+350 vs 500+1250
     assert o["delta_pct"] == -69 and (o["delta_direction"], o["delta_text"]) == ("down", "69% к прошлой неделе")
-    assert o["summary_text"] == "За неделю 12–18 октября пришло 550 000 сум — на 69% меньше, чем за предыдущую неделю."
+    assert o["summary_text"] == "За неделю 12–18 октября пришло 550 000 сум — на 69% меньше, чем за предыдущую неделю."
     assert o["cash"] is None and o["collection"] is None and len(o["series"]) == 7
     c = income(world, "2026-10-02", "2026-10-08")                                        # a Friday to a Thursday: custom, 7 days
     assert c["period"]["kind"] == "custom" and c["previous_period"]["from"] == "2026-09-25" and c["period"]["label"] == "период 02.10–08.10"
     assert c["current"]["received"] == 900_000 + 500_000 + 1_250_000 and c["previous"]["received"] == 0
-    assert c["summary_text"] == "За период 02.10–08.10 пришло 2 650 000 сум." and c["previous_label"] == "25 сент. – 1 окт."
+    assert c["summary_text"] == "За период 02.10–08.10 пришло 2 650 000 сум." and c["previous_label"] == "25 сент. – 1 окт."
     forced = income(world, "2026-10-01", "2026-10-21", period="month")
     assert forced["period"]["kind"] == "month" and forced["previous_period"]["to"] == "2026-09-21" and forced["collection"] is not None
     assert forced["current"]["received"] == 3_450_000
@@ -277,11 +277,14 @@ def test_transfers_are_counted_apart(world, fixed_today):
     assert cur["to_past_debt"] + cur["to_current"] + cur["to_forward"] + cur["to_advance"] + cur["refunded_from_received"] + cur["transferred"] == 800_000
     assert o["ok"]
     row = journal(world)["rows"][0]
-    assert row["transferred"] == cur["transferred"] and f"деньги перешли в другую группу — {tx_num(cur['transferred'])} сум" in row["allocation_text"]
+    assert row["transferred"] == cur["transferred"] and f"деньги перешли в другую группу — {tx_num(cur['transferred'])}\u00a0сум" in row["allocation_text"]
+
+
+NB = "\u00a0"
 
 
 def tx_num(n):
-    return f"{n:,}".replace(",", " ")
+    return f"{n:,}".replace(",", NB)
 
 
 def test_lessons_mode_collects_by_the_package_that_began_in_the_month(world, fixed_today):
@@ -378,18 +381,18 @@ def test_journal_rows_order_and_texts(world, seeded):
             top["method_label"], top["created_by_name"], top["paid_on"], top["paid_time"], top["note"]) == (
         "Алиев Тимур", "INC-005", "Английский 7Б", "Мария Ким", 150_000, "cash", "Наличные", "Азиз Хакимов", "2026-10-21", "11:40",
         "=SUM(A1)")                                                                              # 06:40 UTC = 11:40 Tashkent
-    assert top["allocation_text"] == "за октябрь — 150 000 сум" and top["status"] == "active"
-    assert by[7]["allocation_text"] == "за сентябрь — 500 000 сум · за октябрь — 500 000 сум · аванс — 150 000 сум · возвращено — 100 000 сум"
+    assert top["allocation_text"] == "за октябрь — 150 000 сум" and top["status"] == "active"
+    assert by[7]["allocation_text"] == "за сентябрь — 500 000 сум · за октябрь — 500 000 сум · аванс — 150 000 сум · возвращено — 100 000 сум"
     assert (by[7]["refunded"], by[7]["transferred"]) == (100_000, 0)
-    assert by[5]["allocation_text"] == "за сентябрь — 300 000 сум · за октябрь — 300 000 сум · аванс — 300 000 сум"
-    assert by[8]["allocation_text"] == "за сентябрь — 200 000 сум"
-    assert by[6]["allocation_text"] == "за октябрь — 500 000 сум"
+    assert by[5]["allocation_text"] == "за сентябрь — 300 000 сум · за октябрь — 300 000 сум · аванс — 300 000 сум"
+    assert by[8]["allocation_text"] == "за сентябрь — 200 000 сум"
+    assert by[6]["allocation_text"] == "за октябрь — 500 000 сум"
     assert [a["amount"] for a in by[7]["allocations"]] == [500_000, 500_000, 150_000]
     # corrections: shown, grey, linked
     assert (by[9]["status"], by[9]["replaced_by_receipt_no"], by[9]["allocation_text"], by[9]["allocations"], by[9]["void_reason"]) == (
         "replaced", 11, None, [], "Исправлено")
     assert (by[11]["status"], by[11]["replaces_receipt_no"], by[11]["replaces_amount"], by[11]["allocation_text"]) == (
-        "active", 9, 400_000, "за октябрь — 350 000 сум")
+        "active", 9, 400_000, "за октябрь — 350 000 сум")
     assert (by[10]["status"], by[10]["void_reason"], by[10]["voided_by_name"], by[10]["replaced_by_receipt_no"]) == (
         "voided", "Ошибочный ввод", "Нодира Саидова", None)
     assert [a["name"] for a in j["authors"]] == ["Азиз Хакимов", "Нодира Саидова"] and [a["count"] for a in j["authors"]] == [4, 3]
@@ -843,14 +846,14 @@ def test_a_back_dated_payment_is_forward_once_its_period_has_begun(world, seeded
     on 5.11 the period has begun: it is «вперёд (за будущие периоды)», NOT advance - the period starts after the payment's date but the money is spent."""
     ids = add_payments(world, seeded, ("back", D(2026, 10, 13), datetime(2026, 10, 21, 6, 0), 500_000, None))
     row = {r["id"]: r for r in journal(world, "2026-10-01", "2026-10-31", size=100)["rows"]}[ids["back"]]
-    assert [(x["kind"], x["amount"]) for x in row["split"]] == [("advance", 500_000)] and row["allocation_text"] == "аванс — 500 000 сум"
+    assert [(x["kind"], x["amount"]) for x in row["split"]] == [("advance", 500_000)] and row["allocation_text"] == "аванс — 500 000 сум"
     before = split_identities(world, "2026-10-01", "2026-10-31")
     assert {x["kind"]: x["amount"] for x in before["strip"]}["forward"] == 0
     fixed_today(D(2026, 11, 5))
     after = split_identities(world, "2026-10-01", "2026-10-31")
     row = {r["id"]: r for r in journal(world, "2026-10-01", "2026-10-31", size=100)["rows"]}[ids["back"]]
     assert [(x["kind"], x["label"], x["amount"]) for x in row["split"]] == [("forward", "вперёд (за будущие периоды)", 500_000)]
-    assert row["allocation_text"] == "за ноябрь — 500 000 сум" and row["allocations"][0]["bucket"] == "advance"          # relative to ITS date: it is the future period
+    assert row["allocation_text"] == "за ноябрь — 500 000 сум" and row["allocations"][0]["bucket"] == "advance"          # relative to ITS date: it is the future period
     strip = {x["kind"]: x["amount"] for x in after["strip"]}
     assert strip["forward"] >= 500_000
     split_identities(world, "2026-10-12", "2026-10-18")                                                                   # the week of the payment
@@ -865,9 +868,9 @@ def test_a_running_week_is_worded_and_compared_day_for_day(world, seeded):
     assert o["period"]["kind"] == "week" and o["period"]["in_progress"] is True
     assert (o["previous_label"], o["previous_hint"]) == ("те же дни прошлой недели", "тем же дням прошлой недели (12–14 окт.)")
     assert o["current"]["received"] == 250_000 and o["previous"]["received"] == 200_000                     # 12.10: a2 200 000
-    assert o["summary_text"] == "За эту неделю (пн–ср) пришло 250 000 сум — на 25% больше, чем за те же дни прошлой недели."
+    assert o["summary_text"] == "За эту неделю (пн–ср) пришло 250 000 сум — на 25% больше, чем за те же дни прошлой недели."
     month = income(world, "2026-10-01", "2026-10-31")
-    assert month["summary_text"].startswith("За октябрь (по 21-е) пришло 3 450 000 сум — на 130% больше, чем за те же дни сентября.")
+    assert month["summary_text"].startswith("За октябрь (по 21-е) пришло 3 450 000 сум — на 130% больше, чем за те же дни сентября.")
     closed = income(world, "2026-09-01", "2026-09-30")
     assert closed["previous_hint"] == "августу" and income(world, "2026-10-21", "2026-10-21")["previous_hint"] == "вчерашнему дню"
     assert o["delta_text"] == "25% к тем же дням прошлой недели (12–14 окт.)"

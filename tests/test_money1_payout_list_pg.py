@@ -52,7 +52,7 @@ def test_d2_an_open_month_the_list_row_is_the_payout_of_the_sheet(pg_session, cl
     assert listed["month_open"] is True
     assert row == on_sheet                                                                   # the whole block, field by field
     assert (on_sheet["basis"], on_sheet["state"], on_sheet["saved_total"], on_sheet["fresh_total"], on_sheet["paid"], on_sheet["balance"]) == ("fresh", "overpaid", 125_000, 250_000, 300_000, -50_000)
-    assert row["text"].startswith("Месяц открыт: начислено сейчас 250 000") and "50 000" in row["text"]
+    assert row["text"].startswith("Месяц открыт: начислено сейчас 250 000") and "50 000" in row["text"]
     assert row["balance"] != 300_000 - 125_000                                               # before: 175 000 «переплачено» by the saved total of the middle of the month
 
 

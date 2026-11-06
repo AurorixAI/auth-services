@@ -378,7 +378,7 @@ def test_c11_a_decision_after_the_payout_warns_and_the_sheet_says_by_how_much_it
     st_ = got["payout"]
     # the month is open again (reopened): the payout is by what the data says NOW (R3 #20), 250 000 - 125 000 paid = 125 000 to pay; the saved sheet says it changed by +125 000, to be saved again
     assert got["stale"] is True and (st_["saved_total"], st_["fresh_total"], st_["paid"], st_["balance"], st_["state"], st_["basis"]) == (125_000, 250_000, 125_000, 125_000, "due", "fresh")
-    assert st_["changed_by"] == 125_000 and "+125 000" in st_["change_text"]
+    assert st_["changed_by"] == 125_000 and "+125 000" in st_["change_text"]
 
 
 def test_c18_a_teacher_sees_no_sums_and_no_decisions(pg_session, clock):

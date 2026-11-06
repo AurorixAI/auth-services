@@ -34,6 +34,7 @@ from .closed_period import ClosedPeriods, group_teacher_ids
 from .ops_rules import OpsError
 from . import membership_periods
 from . import payment_status as ps
+from . import payments_texts
 from .payments_schemas import (
     ImpactMoney,
     MAX_MONEY,
@@ -206,7 +207,7 @@ class OpeningService(_Base):
             if body.debt_amount is None or body.debt_on is None:
                 raise OpeningRange("Долг на начало: укажите и сумму, и дату долга")
             if not isinstance(body.debt_amount, int) or body.debt_amount < 1 or body.debt_amount > MAX_MONEY:
-                raise AmountRange(f"Сумма долга: от 1 до {MAX_MONEY:,}".replace(",", " "))
+                raise AmountRange(f"Сумма долга: от 1 до {payments_texts.num(MAX_MONEY)}")
             if body.debt_on > floor:
                 raise OpeningRange(f"Долг на дату — не позже {floor.strftime('%d.%m.%Y')}: долг после начала учёта считается сам")
             if body.debt_on < OPENING_MIN_DATE:

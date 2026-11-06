@@ -27,8 +27,8 @@ def test_4_the_statement_names_a_package_from_the_dictionary():
 
 def test_3_the_line_of_a_deduction_and_of_the_receipt():
     assert tx.recalc_title(D(2026, 10, 21)) == "Перерасчёт: урок 21.10 отменён центром"
-    assert tx.recalc_text(46_000, D(2026, 10, 21)) == "−46 000 сум: урок 21.10 отменён центром"
-    assert tx.recalc_text(1_250_000, D(2026, 10, 3)) == "−1 250 000 сум: урок 03.10 отменён центром"
+    assert tx.recalc_text(46_000, D(2026, 10, 21)) == "−46 000 сум: урок 21.10 отменён центром"
+    assert tx.recalc_text(1_250_000, D(2026, 10, 3)) == "−1 250 000 сум: урок 03.10 отменён центром"
 
 
 def test_1_the_forecast_words():
@@ -42,7 +42,7 @@ def test_3_the_statement_file_knows_the_recalc_row_and_its_tile():
                          details=StatementDetails(recalc=line))]
     (entry,) = st.build_entries(rows)
     # the title names the lesson, the quiet line carries the amount only (no repeat)
-    assert (entry.title, entry.sub, entry.paid, entry.charged, entry.balance) == ("Перерасчёт: урок 21.10 отменён центром", "\u221246 000 сум", 46_000, None, "Долг 554 000")
+    assert (entry.title, entry.sub, entry.paid, entry.charged, entry.balance) == ("Перерасчёт: урок 21.10 отменён центром", "\u221246 000 сум", 46_000, None, "Долг 554 000")
     summary = StatementSummary(charged=600_000, paid=0, recalculated=46_000, debt=554_000)
     assert ("Перерасчёт", 46_000) in st.total_lines(summary)
     assert "Перерасчёт" not in [label for label, _ in st.total_lines(StatementSummary(charged=600_000, debt=600_000))]

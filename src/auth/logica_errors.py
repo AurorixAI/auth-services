@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Dict, List, Tuple
 
 PAY_LEFT: List[Tuple[int, str, str]] = [
-    (422, "PAYMENT_EXCEEDS_DEBT", "Ученик ушёл: принять можно не больше долга {N} сум"),
+    (422, "PAYMENT_EXCEEDS_DEBT", "Ученик ушёл: принять можно не больше долга {N} сум"),
     (422, "NOTHING_TO_PAY", "Ученик ушёл, долга нет: принимать нечего"),
 ]
 OPENING: List[Tuple[int, str, str]] = [
@@ -47,7 +47,7 @@ PAYOUT: List[Tuple[int, str, str]] = [
     (409, "SHEET_NOT_SAVED", "Сначала сохраните зарплату за месяц"),
     (409, "DUPLICATE_PAYOUT", "Выплата уже внесена"),
     (409, "ALREADY_VOIDED", "Выплата уже отменена"),
-    (422, "AMOUNT_RANGE", "Сумма: от 1 до 10 000 000 000"),
+    (422, "AMOUNT_RANGE", "Сумма: от 1 до 10 000 000 000"),
     (422, "PAID_ON_RANGE", "Дата выплаты не может быть в будущем | Дата выплаты старше 3 лет"),
     (422, "METHOD_REQUIRED", "Укажите способ выплаты"),
     (422, "REASON_REQUIRED", "Причина: от 3 до 500 символов"),

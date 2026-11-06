@@ -48,7 +48,7 @@ def test_the_decision_cancel_takes_the_kind_the_administrator_chose(pg_session, 
     assert decide(w, "admin", mine[1], decision="cancel", reason="Праздник", cancellationKind="holiday").json()["result"]["cancellationKind"] == "holiday"
     clock.set("2026-10-29 12:00")
     lines = deductions(w, m)
-    assert [x["details"]["recalc"]["text"] for x in lines] == ["−46 000 сум: урок 26.10 отменён центром"]
+    assert [x["details"]["recalc"]["text"] for x in lines] == ["−46 000 сум: урок 26.10 отменён центром"]
 
 
 def test_a_lesson_given_back_deducts_nothing_any_more(pg_session, clock):
@@ -56,7 +56,7 @@ def test_a_lesson_given_back_deducts_nothing_any_more(pg_session, clock):
     g, s, m = month_world(w, clock)                                                       # today Sunday 25.10
     cancel(w, g, "lesson-wed", "2026-10-28")
     clock.set("2026-10-29 12:00")
-    assert [x["details"]["recalc"]["text"] for x in deductions(w, m)] == ["−46 000 сум: урок 28.10 отменён центром"]
+    assert [x["details"]["recalc"]["text"] for x in deductions(w, m)] == ["−46 000 сум: урок 28.10 отменён центром"]
     clock.set("2026-10-25 12:00")
     r = client(w, "owner").post(f"{API}/org/groups/{g.id}/lessons/restore", json={"lessonId": "lesson-wed", "lessonDate": "2026-10-28", "reason": "Отменили по ошибке"})
     assert r.status_code == 200 and r.json()["previousKind"] == "centre", r.text

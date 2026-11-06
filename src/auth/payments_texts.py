@@ -15,14 +15,19 @@ CURRENT = "current"
 ADVANCE = "advance"
 
 
+# THE one way a sum is written in a text of the server (LESSONS 104 / 109): the groups of the thousands and the unit are joined by a NON-BREAKING space (U+00A0, the one the front writes: ``money-format.ts``),
+# so a sum never wraps in the middle («360 / 000 сум» on a phone).  Excel and CSV files do not carry it: ``export_safety.plain`` turns it into a plain space there (a number in a file is a number).
+NBSP = "\u00a0"
+
+
 def num(amount: int) -> str:
-    """``269 000`` (a plain space between the thousands)."""
-    return f"{amount:,}".replace(",", " ")
+    """``269 000`` (non-breaking spaces between the thousands)."""
+    return f"{amount:,}".replace(",", NBSP)
 
 
 def money(amount: int) -> str:
-    """``269 000 сум``."""
-    return num(amount) + " сум"
+    """``269 000 сум`` (a non-breaking space before the unit too)."""
+    return num(amount) + NBSP + "сум"
 
 
 def ddmm(day: date) -> str:
@@ -344,7 +349,7 @@ def collection_text(paid: int, charged: int, pct: Optional[int]) -> str:
     """The line of the card «Собрано за месяц»."""
     if charged <= 0:
         return "За этот месяц стоимость не считалась"
-    return f"Оплачено {num(paid)} из {num(charged)} сум ({pct}%)"
+    return f"Оплачено {num(paid)} из {money(charged)} ({pct}%)"
 
 
 def delta_text(pct: int, previous_ref: str) -> str:

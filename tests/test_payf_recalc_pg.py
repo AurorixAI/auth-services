@@ -14,11 +14,11 @@ from tests.ops_helpers import clock, history_row, needs_pg, pg_session  # noqa: 
 from tests.payf_helpers import API, D, build_org, cancel, centre, client, lesson_id_on, pause, pay, rows, set_payments, statement
 
 pytestmark = needs_pg
-LINE = "−46 000 сум: урок 21.10 отменён центром"      # the text of the deduction (a real minus sign)
+LINE = "−46 000 сум: урок 21.10 отменён центром"      # the text of the deduction (a real minus sign)
 
 
 def month_world(w, clock, *, paid=0, switch_on="2026-10-06", **block):
-    """«Свой месяц у каждого ученика»: joined 06.10, the price 600 000, the period 06.10-05.11 has 13 lessons; the setting is switched on on ``switch_on``."""
+    """«Свой месяц у каждого ученика»: joined 06.10, the price 600 000, the period 06.10-05.11 has 13 lessons; the setting is switched on on ``switch_on``."""
     clock.set(f"{switch_on or '2026-10-06'} 09:00")
     (g,), (s,), (m,) = centre(w, **block)
     if switch_on:
@@ -114,7 +114,7 @@ def test_7_paid_in_full_the_deduction_is_an_advance_and_the_receipt_of_the_next_
     cancel(w, g, "lesson-wed", "2026-10-21")
     row = row_of(w, s)
     assert row["debt"] == 0 and row["advance"] == 46_000
-    clock.set("2026-11-06 12:00")                                              # the second period has begun: 600 000 minus the advance
+    clock.set("2026-11-06 12:00")                                              # the second period has begun: 600 000 minus the advance
     owner = client(w, "owner")
     due = owner.get(f"{API}/org/memberships/{m.id}/payments/preview").json()
     assert due["suggested_amount"] == 554_000 and [r["text"] for r in due["recalc"]] == [LINE]

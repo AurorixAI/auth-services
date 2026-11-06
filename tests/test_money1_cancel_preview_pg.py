@@ -12,9 +12,11 @@ from src.auth import exam_release, money_effects as me
 from tests.money1_helpers import changed_tables, db_fingerprint
 from tests.ops_helpers import clock, closed_sheet, grant_money_right, needs_pg, pg_session  # noqa: F401  (fixtures)
 from tests.payf_helpers import API, client
+from tests.payf_helpers import statement
 from tests.test_p154_money_pg import build_org, deducted, five
 
 pytestmark = needs_pg
+NB = "\u00a0"
 WED = {"lessonDate": "2026-10-28", "lessonId": "lesson-wed", "cancellationReason": "Преподаватель заболел"}
 
 
@@ -50,9 +52,15 @@ def test_the_preview_is_the_state_after_for_both_kinds_and_writes_nothing(pg_ses
     assert seen["dryRun"] is True and seen["moneyEffects"]["dryRun"] is True and seen["cancelled"] is True
     assert sorted(d["amount"] for d in seen["deductions"]) == [each] * 5 * bool(each) and all(d["name"] for d in seen["deductions"])
     assert seen["moneyEffects"]["deductions"] == seen["deductions"]
-    assert seen["moneyEffects"]["text"] == (f"Ученикам — перерасчёт: −{each * 5:,} сум в следующей оплате (5 учеников)".replace(",", " ") if each else "Ученикам перерасчёта не будет")
+    assert seen["moneyEffects"]["text"] == (f"Ученикам — перерасчёт: долг уменьшится сразу на {each * 5:,} сум (5 учеников)".replace(",", NB).replace(" сум", NB + "сум") if each else "Ученикам перерасчёта не будет")
+    def balance():
+        w.db.expire_all()
+        return sum(statement(w, m)["summary"]["advance"] - statement(w, m)["summary"]["debt"] for m in ms)
+
+    account_before = balance()
     real = post(w, "owner", url, body)
     assert real.status_code == 200, real.text
+    assert balance() - account_before == each * 5                                               # the debt is lowered AT ONCE (it is not "the next payment"): the sentence of the dialog is true
     done = real.json()
     assert done["dryRun"] is False and done["moneyEffects"]["dryRun"] is False
     assert as_state_after(done) == as_state_after(seen) | {"effects": {**as_state_after(seen)["effects"], "text": done["moneyEffects"]["text"]}}

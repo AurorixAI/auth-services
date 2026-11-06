@@ -389,7 +389,7 @@ def test_t_a12_a_cancellation_set_in_advance_and_a_stop_that_comes_earlier_lose_
     g, s, m = month_world(w2, clock)                                                    # today 25.10, the setting «вычитать» is on
     cancel(w2, g, "lesson-mon", "2026-11-23")                                          # a Monday of the future, by the fault of the centre
     clock.set("2026-12-01 12:00")
-    assert [x["details"]["recalc"]["text"] for x in statement(w2, m)["rows"] if x["type"] == "recalc"] == ["−46 000 сум: урок 23.11 отменён центром"]
+    assert [x["details"]["recalc"]["text"] for x in statement(w2, m)["rows"] if x["type"] == "recalc"] == ["−46 000 сум: урок 23.11 отменён центром"]
     clock.set("2026-10-25 12:00")
     stopped = pclient(w2, "owner").post(f"{PAPI}/org/schedule/lessons/lesson-mon/recurrence/end", json={"effectiveFrom": "2026-11-16", "reason": "Курс закончен"})
     assert stopped.status_code == 200 and stopped.json()["removedCancellations"] == 1

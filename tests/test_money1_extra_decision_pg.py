@@ -190,11 +190,11 @@ def test_d4_the_preview_of_the_decision_is_the_state_after_it_and_writes_nothing
     (line,) = owner_view["moneyEffects"]["payroll"]
     assert (line["month"], line["state"], line["freshBefore"], line["freshAfter"], line["freshTotal"], line["changedBy"]) == ("2026-10", "open", 0, 125_000, 125_000, 125_000)
     assert admin_view["moneyEffects"]["payroll"] == [{"month": "2026-10", "state": "open"}] and "125" not in admin_view["moneyEffects"]["text"].replace(" ", "")
-    assert "изменится на +125 000" in owner_view["moneyEffects"]["text"]
+    assert "изменится на +125 000" in owner_view["moneyEffects"]["text"]
     done = _call(w, "owner", made, "pay", expect=200).json()
     (after,) = done["moneyEffects"]["payroll"]
     assert after["freshAfter"] == line["freshAfter"] == sheet(w, "2026-10")["total_amount"] and done["moneyEffects"]["dryRun"] is False        # the preview == the state after
-    assert "изменилась на +125 000" in done["moneyEffects"]["text"]
+    assert "изменилась на +125 000" in done["moneyEffects"]["text"]
 
 
 def test_d5_the_preview_of_the_undo_says_what_the_sheet_loses_and_writes_nothing(pg_session, clock):

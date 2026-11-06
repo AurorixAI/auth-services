@@ -140,7 +140,7 @@ def test_a_left_student_pays_the_debt_and_nothing_more(world, fixed_today):
     assert pv["suggested_amount"] == 113_000 and [w["code"] for w in pv["warnings"]] == ["left_debt_only"]
     r = owner(world).post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 400_000, "paid_on": TODAY.isoformat(), "method": "cash"})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "PAYMENT_EXCEEDS_DEBT" and r.json()["detail"]["debt"] == 113_000
-    assert r.json()["detail"]["message"] == "Ученик ушёл: принять можно не больше долга 113 000 сум"
+    assert r.json()["detail"]["message"] == "Ученик ушёл: принять можно не больше долга 113 000 сум"
     created = post_payment(world, m, amount=50_000)               # P: partial is fine
     assert created["row"]["debt"] == 63_000 and created["row"]["advance"] == 0
     post_payment(world, m, amount=63_000)

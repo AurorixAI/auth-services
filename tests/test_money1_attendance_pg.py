@@ -96,7 +96,7 @@ def test_completing_a_lesson_where_nobody_came_asks_for_a_yes_only_a_screen_that
         r = owner.post(url, json=body)
         assert r.status_code == status, (extra, r.text)
         if status == 409:
-            assert r.json()["detail"]["code"] == "NOBODY_CAME" and "войдёт в зарплату преподавателя" in r.json()["detail"]["message"]
+            assert r.json()["detail"]["code"] == "NOBODY_CAME" and "войдёт в зарплату преподавателя" in r.json()["detail"]["message"] and "засчитывается ученикам" in r.json()["detail"]["message"] and "из пакета спишется 1 урок" in r.json()["detail"]["message"]
             assert owner.post(url, json={**body, "confirmNobodyCame": True}).status_code == 200
 
 

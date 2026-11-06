@@ -70,7 +70,7 @@ def test_opening_b_debt_and_the_payment_that_closes_it_first(world, fixed_today)
     assert row["paid_until"] is None
     pv = owner(world).get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 300_000}).json()
     assert pv["result"]["paid_until_after"] == "2026-10-22" and pv["result"]["debt_after"] == 163_000
-    assert pv["result"]["summary_text"] == "Погасит долг на начало 250 000 сум · на текущий период 50 000 сум → оплачено до 22.10 · останется 163 000 сум"
+    assert pv["result"]["summary_text"] == "Погасит долг на начало 250 000 сум · на текущий период 50 000 сум → оплачено до 22.10 · останется 163 000 сум"
     created = post_payment(world, m, amount=300_000)
     items = created["allocation"]["items"]
     assert [(a["amount"], a["bucket"], a["closes"]) for a in items] == [(250_000, "past_debt", True), (50_000, "current", False)]

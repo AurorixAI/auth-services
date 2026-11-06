@@ -36,7 +36,7 @@ def test_a_late_payment_names_the_sheet_it_moves_with_the_sum_ЗП05(world, fixe
     assert (line["savedTotal"], line["freshBefore"], line["freshAfter"], line["changedBy"], line["driftAfter"]) == (475_000, 475_000, 600_000, 125_000, 125_000)
     assert dry_line == line                                                                  # what the confirmation said is what the answer says
     assert line["state"] == "closed"                      # ДП-07: the sheet of the previous month was saved after it ended - the payment is NOT refused, it only says so
-    assert "изменилась на +125 000 сум" in effects["text"] and "сохраните новую сумму" in effects["text"] and f"зарплата за {closed_period.month_title(m.first)} " in effects["text"].lower()
+    assert "изменилась на +125 000 сум" in effects["text"] and "сохраните новую сумму" in effects["text"] and f"зарплата за {closed_period.month_title(m.first)} " in effects["text"].lower()
     # an administrator with the right hears that the sheet changes, without the sums of the teacher
     grant_money_right(world)
     paid_id = r.json()["payment"]["id"]
@@ -126,7 +126,7 @@ def test_r3_20_an_advance_in_the_middle_of_the_month_is_not_settled_while_the_mo
     owner(world).post(f"{API}/org/memberships/{student_group(world, s2).id}/payments", json={"amount": 300_000, "paid_on": _today().isoformat(), "method": "cash"})
     got = owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}").json()["payout"]
     assert (got["state"], got["basis"], got["target"], got["paid"], got["balance"]) == ("due", "fresh", 600_000, 475_000, 125_000)
-    assert got["text"] == "Месяц открыт: начислено сейчас 600 000 сум, выплачено 475 000 сум, к выплате 125 000 сум"
+    assert got["text"] == "Месяц открыт: начислено сейчас 600 000 сум, выплачено 475 000 сум, к выплате 125 000 сум"
     # paying more than the FRESH total is an overpay and needs the confirmation; the exact rest does not
     more = owner(world).post(f"{API}/org/payroll/sheets/{saved['id']}/payouts", json={"amount": 130_000, "paid_on": _today().isoformat(), "method": "cash"})
     assert more.status_code == 409 and more.json()["detail"]["code"] == "OVERPAY_CONFIRM_REQUIRED" and more.json()["detail"]["overpay"] == 5_000

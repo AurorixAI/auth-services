@@ -29,7 +29,8 @@ from src.models.auth import Group, PayrollPayout, PayrollSheet, Student, Student
 from . import payment_status as ps
 from .closed_period import month_first, month_title, period_state
 from .ops_rules import short_name
-from .payments_texts import plural
+from .payments_texts import NBSP, plural
+from .payments_texts import num as tx_num
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +77,17 @@ def with_names(db, deltas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def num(n: int) -> str:
-    """``125 000`` (a thin grouping by spaces; only the digits are touched - a comma in the sentence stays)."""
-    return f"{abs(int(n)):,}".replace(",", " ")
+    """``125 000`` - THE formatter of ``payments_texts`` (non-breaking spaces); the sign is the caller's."""
+    return tx_num(abs(int(n)))
 
 
 def signed(n: int) -> str:
     return ("+" if n > 0 else "−" if n < 0 else "") + num(n)          # 0 has no sign (stage re-walk 05.11: «всего к сохранённой −0 сум»)
+
+
+def signed_money(n: int) -> str:
+    """``+125 000 сум`` / ``−45 000 сум`` (the unit joined to the number by a non-breaking space)."""
+    return signed(n) + NBSP + "сум"
 
 
 def unavailable(done: bool) -> Dict[str, Any]:
@@ -206,6 +212,11 @@ class SheetProbe:
             line["balanceAfter"] = int(state.balance)
 
 
+def _of_students(count: int) -> str:
+    """``у 1 ученика`` / ``у 3 учеников``: every student's pack spends or gets back ONE lesson."""
+    return f"у {count} {plural(count, 'ученика', 'учеников', 'учеников')}"
+
+
 def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, done: bool, closed_blocks: bool = False) -> str:
     """The sentence under the confirmation (``done=False``) or in the toast after (``done=True``); empty when the action moves no money.  ``closed_blocks``: a lesson action is refused
     in a closed month (the sentence says to reopen it first); a payment is not (ДП-07)."""
@@ -213,17 +224,17 @@ def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, do
     gave = sum(1 for s in students if s["delta"] > 0)
     took = sum(1 for s in students if s["delta"] < 0)
     if took:
-        parts.append(f"в пакетах учеников спишется занятие: {took}" if not done else f"в пакетах учеников списано занятие: {took}")
+        parts.append(f"из пакета {'спишется' if not done else 'списан'} 1 урок ({_of_students(took)})")
     if gave:
-        parts.append(f"в пакеты учеников вернётся занятие: {gave}" if not done else f"в пакеты учеников возвращено занятие: {gave}")
+        parts.append(f"в пакет {'вернётся' if not done else 'возвращён'} 1 урок ({_of_students(gave)})")
     for line in payroll:
         title = month_title(date.fromisoformat(line["month"] + "-01"))
         note = " (месяц закрыт: сначала переоткройте его)" if line["state"] == "closed" and closed_blocks and not done else (" (месяц закрыт)" if line["state"] == "closed" else "")
         if "changedBy" in line:
             who = f" ({line['teacherName']})" if line.get("teacherName") else ""
-            tail = f"{'изменилась' if done else 'изменится'} на {signed(line['changedBy'])} сум"
+            tail = f"{'изменилась' if done else 'изменится'} на {signed_money(line['changedBy'])}"
             if line["driftAfter"] != line["changedBy"]:
-                tail += " (снова как сохранённая)" if line["driftAfter"] == 0 else f" (к сохранённой сумме: {signed(line['driftAfter'])} сум)"
+                tail += " (снова как сохранённая)" if line["driftAfter"] == 0 else f" (к сохранённой сумме: {signed_money(line['driftAfter'])})"
             if done and line["driftAfter"] != 0:                      # the next step is on the screen all the time (the line «сохраните новую сумму»); the sentence says it once, with the state of the month
                 parts.append(f"зарплата за {title}{who} {tail} — " + ("месяц закрыт, " if line["state"] == "closed" else "") + "сохраните новую сумму")
             else:
@@ -430,11 +441,11 @@ def recalc_added(db, org_id: Any, group_id: Any, was: Dict[str, int]) -> List[Di
 
 
 def recalc_text(added: List[Dict[str, Any]], *, done: bool) -> str:
-    """The sentence about the students for the dialog of «Урока не было»: ``Ученикам — перерасчёт: −120 000 сум в следующей оплате (3 ученика)`` / ``Ученикам перерасчёта не будет``."""
+    """The sentence about the students for the dialog of «Урока не было»: ``Ученикам — перерасчёт: долг уменьшится сразу на 120 000 сум (3 ученика)`` / ``Ученикам перерасчёта не будет``."""
     if not added:
         return "Ученикам перерасчёта не будет" if not done else "Ученикам перерасчёта нет"
     count = len(added)
-    return f"Ученикам — перерасчёт: −{num(sum(a['amount'] for a in added))} сум в следующей оплате ({count} {plural(count, 'ученик', 'ученика', 'учеников')})"
+    return f"Ученикам — перерасчёт: долг {'уменьшился' if done else 'уменьшится'} сразу на {num(sum(a['amount'] for a in added))}{NBSP}сум ({count} {plural(count, 'ученик', 'ученика', 'учеников')})"
 
 
 def deduction_text(gone: List[Dict[str, Any]], *, done: bool, past: bool = True) -> str:
@@ -446,4 +457,4 @@ def deduction_text(gone: List[Dict[str, Any]], *, done: bool, past: bool = True)
     total = sum(g["amount"] for g in gone)
     count = len(gone)
     who = f"{count} {plural(count, 'ученик', 'ученика', 'учеников')}"
-    return f"Ученикам {'снят' if done else 'снимем'} перерасчёт за этот урок: всего {num(total)} сум ({who}); {tail}"
+    return f"Ученикам {'снят' if done else 'снимем'} перерасчёт за этот урок: всего {num(total)}{NBSP}сум ({who}); {tail}"

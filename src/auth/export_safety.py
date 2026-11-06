@@ -23,7 +23,16 @@ def formula_like(value: Any) -> bool:
     return value[:1] in FORMULA_STARTS or value.lstrip(" ")[:1] in FORMULA_STARTS
 
 
+NBSP = "\u00a0"
+
+
+def plain(value: Any) -> Any:
+    """A text of the server for a FILE: the non-breaking space of a sum (``payments_texts.NBSP``, for the screens) is a plain space here - in Excel and CSV a number is a number, the files are read by a program too."""
+    return value.replace(NBSP, " ") if isinstance(value, str) else value
+
+
 def csv_safe_cell(value: Any) -> Any:
+    value = plain(value)
     return "'" + value if formula_like(value) else value
 
 

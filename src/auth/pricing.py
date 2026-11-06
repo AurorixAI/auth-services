@@ -121,6 +121,7 @@ from src.models.auth import (
 
 from . import business_clock as bc
 from . import payment_status as ps
+from . import payments_texts
 from .payments_files import staff_name
 
 logger = logging.getLogger(__name__)
@@ -403,7 +404,7 @@ def check_amount(amount: Any) -> int:
     if isinstance(amount, bool) or not isinstance(amount, int):
         raise PriceInvalid("Сумма должна быть целым числом")
     if amount < 0 or amount > MAX_MONEY:
-        raise PriceInvalid(f"Сумма — от 0 до {MAX_MONEY:,}".replace(",", " "))
+        raise PriceInvalid(f"Сумма — от 0 до {payments_texts.num(MAX_MONEY)}")
     return amount
 
 

@@ -34,7 +34,7 @@
       "created_by_id": "user:owner",
       "created_by_name": "Азиз Хакимов",
       "note": "=SUM(A1)",
-      "allocation_text": "за октябрь — 150 000 сум",
+      "allocation_text": "за октябрь — 150 000 сум",
       "allocations": [
         {
           "segment_id": "seg:0:2026-10-01",
@@ -92,7 +92,7 @@
       "created_by_id": "user:admin",
       "created_by_name": "Нодира Саидова",
       "note": null,
-      "allocation_text": "за октябрь — 100 000 сум",
+      "allocation_text": "за октябрь — 100 000 сум",
       "allocations": [
         {
           "segment_id": "seg:0:2026-10-01",
@@ -150,7 +150,7 @@
       "created_by_id": "user:owner",
       "created_by_name": "Азиз Хакимов",
       "note": null,
-      "allocation_text": "за октябрь — 350 000 сум",
+      "allocation_text": "за октябрь — 350 000 сум",
       "allocations": [
         {
           "segment_id": "seg:0:2026-10-01",
@@ -217,7 +217,7 @@
       "created_by_id": "user:admin",
       "created_by_name": "Нодира Саидова",
       "note": null,
-      "allocation_text": "за сентябрь — 200 000 сум",
+      "allocation_text": "за сентябрь — 200 000 сум",
       "allocations": [
         {
           "segment_id": "seg:0:2026-09-01",
@@ -275,7 +275,7 @@
       "created_by_id": "user:owner",
       "created_by_name": "Азиз Хакимов",
       "note": null,
-      "allocation_text": "за сентябрь — 500 000 сум · за октябрь — 500 000 сум · аванс — 150 000 сум · возвращено — 100 000 сум",
+      "allocation_text": "за сентябрь — 500 000 сум · за октябрь — 500 000 сум · аванс — 150 000 сум · возвращено — 100 000 сум",
       "allocations": [
         {
           "segment_id": "seg:0:2026-09-01",

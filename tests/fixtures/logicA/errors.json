@@ -4,7 +4,7 @@
     "body": {
       "detail": {
         "code": "PAYMENT_EXCEEDS_DEBT",
-        "message": "Ученик ушёл: принять можно не больше долга 347 000 сум",
+        "message": "Ученик ушёл: принять можно не больше долга 347 000 сум",
         "debt": 347000,
         "refundable": null,
         "payment_id": null,

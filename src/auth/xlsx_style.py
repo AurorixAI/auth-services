@@ -28,7 +28,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.properties import PageSetupProperties
 
-from .export_safety import formula_like
+from .export_safety import formula_like, plain
 
 # ------------------------------------------------------------------------------------------------------------ palette
 
@@ -104,7 +104,7 @@ ALIGN_HEADER_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=Tr
 
 def clean(value: Any) -> Any:
     """A text without the characters a worksheet refuses; any other value is returned as it is."""
-    return _CONTROL.sub("", value) if isinstance(value, str) else value
+    return _CONTROL.sub("", plain(value)) if isinstance(value, str) else value
 
 
 def put(ws, row: int, col: int, value: Any, *, number_format: Optional[str] = None, font: Optional[Font] = None, fill: Optional[PatternFill] = None,

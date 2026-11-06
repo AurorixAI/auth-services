@@ -85,23 +85,23 @@ def text(**kw):
 
 
 def test_summary_sentences():
-    assert text(collected_pct=63) == "За октябрь пришло 7 885 000 сум — на 12% больше, чем за сентябрь. Собрано 63% стоимости месяца."
-    assert text(received=6_000_000, previous_received=8_000_000) == "За октябрь пришло 6 000 000 сум — на 25% меньше, чем за сентябрь."
-    assert text(received=100, previous_received=100) == "За октябрь пришло 100 сум — столько же, сколько за сентябрь."
-    assert text(received=100_001, previous_received=100_000).startswith("За октябрь пришло 100 001 сум — почти столько же, сколько")
-    assert text(previous_received=0) == "За октябрь пришло 7 885 000 сум."                      # S2: no comparison clause when the previous period had no payments
-    assert text(previous_received=0, collected_pct=69) == "За октябрь пришло 7 885 000 сум. Собрано 69% стоимости месяца."
-    assert text(received=0) == "За октябрь оплат не было; за сентябрь пришло 7 040 000 сум."
+    assert text(collected_pct=63) == "За октябрь пришло 7 885 000 сум — на 12% больше, чем за сентябрь. Собрано 63% стоимости месяца."
+    assert text(received=6_000_000, previous_received=8_000_000) == "За октябрь пришло 6 000 000 сум — на 25% меньше, чем за сентябрь."
+    assert text(received=100, previous_received=100) == "За октябрь пришло 100 сум — столько же, сколько за сентябрь."
+    assert text(received=100_001, previous_received=100_000).startswith("За октябрь пришло 100 001 сум — почти столько же, сколько")
+    assert text(previous_received=0) == "За октябрь пришло 7 885 000 сум."                      # S2: no comparison clause when the previous period had no payments
+    assert text(previous_received=0, collected_pct=69) == "За октябрь пришло 7 885 000 сум. Собрано 69% стоимости месяца."
+    assert text(received=0) == "За октябрь оплат не было; за сентябрь пришло 7 040 000 сум."
     assert text(received=0, previous_received=0, collected_pct=0) == "За октябрь оплат не было. Собрано 0% стоимости месяца."
     assert tx.income_summary_text(lead="Сегодня", received=1_200_000, previous_received=1_000_000, previous_ref="вчера") == (
-        "Сегодня пришло 1 200 000 сум — на 20% больше, чем вчера.")
-    assert tx.income_summary_text(lead="Сегодня", received=250_000, previous_received=0, previous_ref="вчера") == "Сегодня пришло 250 000 сум."
+        "Сегодня пришло 1 200 000 сум — на 20% больше, чем вчера.")
+    assert tx.income_summary_text(lead="Сегодня", received=250_000, previous_received=0, previous_ref="вчера") == "Сегодня пришло 250 000 сум."
 
 
 def test_allocation_summary_joins_pieces_in_the_owners_words():
-    assert tx.allocation_summary([("за сентябрь", 200_000), ("аванс", 50_000)]) == "за сентябрь — 200 000 сум · аванс — 50 000 сум"
-    assert tx.allocation_summary([("за сентябрь", 100_000), ("за сентябрь", 100_000), ("возвращено", 0)]) == "за сентябрь — 200 000 сум"
-    assert tx.allocation_summary([("за 22.10–21.11", 450_000)]) == "за 22.10–21.11 — 450 000 сум"
+    assert tx.allocation_summary([("за сентябрь", 200_000), ("аванс", 50_000)]) == "за сентябрь — 200 000 сум · аванс — 50 000 сум"
+    assert tx.allocation_summary([("за сентябрь", 100_000), ("за сентябрь", 100_000), ("возвращено", 0)]) == "за сентябрь — 200 000 сум"
+    assert tx.allocation_summary([("за 22.10–21.11", 450_000)]) == "за 22.10–21.11 — 450 000 сум"
     assert tx.allocation_summary([]) == ""
 
 
@@ -122,7 +122,7 @@ def test_the_short_comparison_phrase():
         cur = resolve_period(first, last, TODAY, "custom" if (first, last) == (D(2026, 9, 1), D(2026, 9, 21)) else None)
         assert _previous_dative(cur, previous_period(cur, TODAY), TODAY) == want, (first, last)
     assert tx.delta_text(-12, "к сентябрю") == "12% к сентябрю"
-    assert tx.collection_text(1_900_000, 2_500_000, 76) == "Оплачено 1 900 000 из 2 500 000 сум (76%)"
+    assert tx.collection_text(1_900_000, 2_500_000, 76) == "Оплачено 1 900 000 из 2 500 000 сум (76%)"
 
 
 def test_short_span_labels():
@@ -189,7 +189,7 @@ def test_running_week_and_month_are_worded_as_running():
     assert _previous_ref(cur, p, TODAY) == "за те же дни прошлой недели" and _previous_label(cur, p, TODAY) == "те же дни прошлой недели"
     assert (p.first, p.last) == (D(2026, 10, 12), D(2026, 10, 14)) and _previous_hint(cur, p, TODAY) == "тем же дням прошлой недели (12–14 окт.)"
     assert tx.income_summary_text(lead=_lead(cur, TODAY), received=2_700_000, previous_received=1_000_000, previous_ref=_previous_ref(cur, p, TODAY)) == (
-        "За эту неделю (пн–ср) пришло 2 700 000 сум — на 170% больше, чем за те же дни прошлой недели.")
+        "За эту неделю (пн–ср) пришло 2 700 000 сум — на 170% больше, чем за те же дни прошлой недели.")
     monday = D(2026, 10, 19)
     cur2, _ = prev(D(2026, 10, 19), D(2026, 10, 25), today=monday)
     assert _lead(cur2, monday) == "За эту неделю (пн)"

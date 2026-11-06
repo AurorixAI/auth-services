@@ -170,7 +170,7 @@ def charge_words(segment) -> Tuple[str, str]:
     elif price == 0:
         sub = "бесплатно"
     else:
-        sub = f"цена {tx.num(price)} сум {unit} · {price_source_text(segment.price.source)}"
+        sub = f"цена {tx.money(price)} {unit} · {price_source_text(segment.price.source)}"
     if segment.days_text:
         part = part_words(segment.days_text)
     elif segment.kind == "package" and segment.lessons:

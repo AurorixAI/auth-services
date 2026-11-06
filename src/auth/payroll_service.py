@@ -61,6 +61,7 @@ from . import business_clock as bc
 from .closed_period import open_lesson_key
 from . import lesson_types
 from . import payment_status as ps
+from . import payments_texts
 from . import payroll_engine as engine
 from . import payroll_rates
 from . import pricing
@@ -1657,12 +1658,12 @@ class PayrollService:
             new = source.get(row["membership_id"])
             if old is None or new is None or "цена в месяц" not in row["changes"]:
                 continue
-            was = f"{int(old['monthly_fee'] or 0):,}".replace(",", " ")
+            was = payments_texts.money(int(old['monthly_fee'] or 0))
             origin = {
                 "group": "цена из «Цен групп»",
                 "override": "индивидуальная цена из карточки ученика",
             }.get(new.get("price_source"), "цена не задана")
-            row["changes"].append(f"{origin} вместо ручной {was} сум")
+            row["changes"].append(f"{origin} вместо ручной {was}")
             found = True
         return found
 

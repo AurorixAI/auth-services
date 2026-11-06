@@ -66,7 +66,7 @@ def details_text(r: JournalRow) -> str:
         return xs.words_join(parts)
     lines = [r.allocation_text] if r.allocation_text else []
     for h in r.history:
-        head = f"исправлена {_dd_mm(h.replaced_at)}: было {tx.num(h.amount)} сум" + (f" (№ {h.receipt_no})" if h.receipt_no else "")
+        head = f"исправлена {_dd_mm(h.replaced_at)}: было {tx.money(h.amount)}" + (f" (№ {h.receipt_no})" if h.receipt_no else "")
         lines.append(xs.words_join([f"{head}, способ: {h.method_label}", f"исправил {h.replaced_by_name}" if h.replaced_by_name else None,
                                     f"причина: {h.reason}" if h.reason and h.reason != DEFAULT_REASON else None]))
     return "\n".join(lines)

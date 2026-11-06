@@ -47,7 +47,7 @@ def test_the_owner_returns_a_held_lesson_the_pack_and_the_pay_are_given_back_and
     effects = body["moneyEffects"]
     assert sorted(s["delta"] for s in effects["students"]) == [1, 1, 1]           # three students get the lesson back into the pack
     assert effects["payroll"] == []                                                # the sheet of this test is hand-made (no rates): nothing to measure; the chain of ``test_money1_holes_pg`` has the real numbers
-    assert "в пакеты учеников вернётся занятие: 3" not in effects["text"] and "возвращено занятие: 3" in effects["text"]
+    assert "вернётся" not in effects["text"] and "В пакет возвращён 1 урок (у 3 учеников)" in effects["text"]
     row = row_of(world, day, lid)
     assert row.status == "in_progress" and row.completed_at is None and {k: v for k, v in row.records.items()} != {}
     audit = world.db.query(GroupAttendanceAudit).filter_by(attendance_id=row.id, action="completed_reverted").one()
@@ -59,7 +59,7 @@ def test_the_return_is_idempotent_and_has_a_dry_run(world, now_4_nov):
     day, lid = hold_lesson(world, date(2026, 10, 28))
     dry = post_return(world, world.owner, day, lid, dryRun=True).json()
     assert dry["dryRun"] is True and dry["status"] == "completed" and row_of(world, day, lid).status == "completed"       # nothing written
-    assert dry["moneyEffects"]["dryRun"] is True and "вернётся занятие: 3" in dry["moneyEffects"]["text"]
+    assert dry["moneyEffects"]["dryRun"] is True and "В пакет вернётся 1 урок (у 3 учеников)" in dry["moneyEffects"]["text"]
     assert post_return(world, world.owner, day, lid).json()["changed"] is True
     again = post_return(world, world.owner, day, lid).json()
     assert again["changed"] is False and again["status"] == "in_progress"
