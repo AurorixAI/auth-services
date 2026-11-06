@@ -181,6 +181,9 @@ def test_b9_a_change_of_the_mode_the_day_and_the_recalculation_go_to_the_journal
     assert rows[1].details["text"].startswith("Перерасчёт за уроки, отменённые центром: выключен → включён; действует на уроки с 21.10.2026")
     shown = owner(w).get(f"{API}/org/settings/payments/history").json()["items"]
     assert [i["action"] for i in shown] == ["centre_cancel_recalc_changed", "billing_regime_changed"] and shown[1]["details"]["items"][0]["text"]
+    from tests.ops_helpers import grant_money_right
+
+    grant_money_right(w)                                                                                       # even an administrator WITH the money right does not read it
     assert make_client(w, user=w.admin).get(f"{API}/org/settings/payments/history").status_code == 403         # the journal is the owner's, like the settings
 
 

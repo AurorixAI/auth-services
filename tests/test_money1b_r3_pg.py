@@ -437,3 +437,18 @@ def test_r3_4_a_period_that_begins_on_the_day_of_the_price_is_in_the_account_of_
     one = money["items"][0]
     assert (one["debt_before"], one["debt_after"]) == (300_000, 400_000) and one["next_period"] is None             # the period of 05.12 is in the debt of 05.12 already
     assert one["text"] == f"{one['student_name']} (на 05.12): долг 300 000 сум → 400 000 сум"
+
+
+# ---- №19: one «first day» of a stay for the account and for the table of the openings ------------------------------------------------------------------------
+
+
+def test_r3_19_the_table_of_the_openings_shows_the_day_the_student_is_charged_from(world, fixed_today):
+    from tests.money1b_helpers import add, fresh_student, opening_world
+
+    w = world
+    opening_world(w, fixed_today)
+    s = fresh_student(w, "Заранее")
+    add(w, s)                                                                               # joined 21.10, charged from 06.11
+    rows = [m for g in owner(w).get(f"{API}/org/opening-balances").json()["groups"] for m in g["memberships"]]
+    mine = [r for r in rows if r["student"]["id"] == str(s.id)]
+    assert [r["enrolled_on"] for r in mine] == ["2026-11-06"]                               # before: 2026-10-21, a second «first day»
