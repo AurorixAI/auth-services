@@ -9,7 +9,8 @@ Create Date: 2026-11-07
 
 * ``group_audit.action`` (``ck_group_audit_action``) also accepts ``payment_void`` / ``payment_replace`` (V2: the journal of money decisions) and ``payment_file_removed`` (V10: a removed cheque).
 
-Only ADDS (no data is moved).  Rollback (downgrade): the rows of the three new actions go first, then the check is put back, then the indexes and the columns are dropped.
+Only ADDS (no data is moved).  Rollback (downgrade): NOTHING IS DELETED - the journal of money decisions stays.  The previous check comes back as ``NOT VALID``: the rows of the three new actions
+stay, a NEW row is checked against the old list (so ``payment_void`` is refused after the rollback); the next ``upgrade`` makes the check cover them again.  The indexes and the columns are dropped.
 """
 from __future__ import annotations
 
@@ -35,10 +36,11 @@ NEW_ACTIONS = ("payment_void", "payment_replace", "payment_file_removed")
 AUDIT_NEW = AUDIT_OLD[:-1] + ", " + ", ".join(f"'{a}'" for a in NEW_ACTIONS) + ")"
 
 
-def _audit_check(definition: str) -> None:
+def _audit_check(definition: str, *, validate: bool = True) -> None:
     op.execute("ALTER TABLE group_audit DROP CONSTRAINT IF EXISTS ck_group_audit_action")
     op.execute(f"ALTER TABLE group_audit ADD CONSTRAINT ck_group_audit_action CHECK ({definition}) NOT VALID")
-    op.execute("ALTER TABLE group_audit VALIDATE CONSTRAINT ck_group_audit_action")
+    if validate:
+        op.execute("ALTER TABLE group_audit VALIDATE CONSTRAINT ck_group_audit_action")
 
 
 TABLES = (("student_writeoffs", "uq_student_writeoffs_idempotency"), ("student_refunds", "uq_student_refunds_idempotency"))
@@ -57,8 +59,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("SET LOCAL lock_timeout = '5s'")
-    op.execute("DELETE FROM group_audit WHERE action IN ('payment_void', 'payment_replace', 'payment_file_removed')")
-    _audit_check(AUDIT_OLD)
+    _audit_check(AUDIT_OLD, validate=False)      # NOT VALID: the rows of the new actions stay (no deletion of the journal of money), new rows follow the old list
     inspector = sa.inspect(op.get_bind())
     for table, index in TABLES:
         if index in {i["name"] for i in inspector.get_indexes(table)}:
