@@ -275,9 +275,10 @@ def test_16_after_a_transfer_each_group_recalculates_its_own_lessons(pg_session,
 # ---- 17. payroll ------------------------------------------------------------------------------------------------------------------------------------------
 
 
-def test_17_payroll_reads_the_students_money_as_it_was(pg_session, clock):
-    """The deduction pushes «paid until» of the student two days into the next period; the teacher is paid by the lessons the students PAID for, so payroll
-    does not see the deduction: its answer is the same with the setting on and off."""
+def test_17_payroll_pays_the_lesson_the_student_covered_by_the_deduction(pg_session, clock):
+    """Money-1 V7 (ЗПД-9, decision 06.11): the deduction for a lesson the centre cancelled pushes «paid until» of the student two days into the next period; the teacher HELD that lesson
+    and is paid for it - the centre carries the deduction itself.  Before V7 payroll did not see the deduction and the lesson of 06.11 was «не оплачено» (the teacher lost ~25 000 per
+    cancelled lesson); with the setting OFF the lesson is still unpaid (the student has not paid for it)."""
     w = build_org(pg_session)
     g, s, m = month_world(w, clock, paid=600_000)
     cancel(w, g, "lesson-wed", "2026-10-21")
@@ -287,7 +288,7 @@ def test_17_payroll_reads_the_students_money_as_it_was(pg_session, clock):
     own = statement(w, m)
     assert own["summary"]["paid_until"] == "2026-11-07"                       # the student's own account: two days into the second period
     on = PaymentService(w.db).lesson_coverage(str(w.org.id), [m.id], D(2026, 11, 6), D(2026, 11, 6))
-    assert [(c.paid, c.cover_source) for c in on.values()] == [(False, "unpaid")]
+    assert [c.paid for c in on.values()] == [True]                           # the lesson of 06.11 is covered by the deduction: the teacher is paid
     set_payments(w, recalc_history=[])                                       # the same facts, the setting off
     off = PaymentService(w.db).lesson_coverage(str(w.org.id), [m.id], D(2026, 11, 6), D(2026, 11, 6))
-    assert on == off
+    assert [(c.paid, c.cover_source) for c in off.values()] == [(False, "unpaid")]

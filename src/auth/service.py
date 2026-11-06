@@ -2581,7 +2581,8 @@ class AuthService:
                     payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from, immediate=True,
                 )
                 added += 1
-                students.append({"student_id": str(student_id), "billing": result.get("billing")})
+                students.append({"student_id": str(student_id), "billing": result.get("billing"), "individual_price_ends": bool(result.get("individual_price_ends")),
+                                 "closing_prices": result.get("closing_prices") or []})
                 for warning in result.get("warnings", []):
                     warnings.append({"student_id": str(student_id), **warning})
             except ValueError as exc:
@@ -2765,6 +2766,9 @@ class AuthService:
         if group.status != "active":
             raise ops_rules.GroupArchivedForEnrolment("Нельзя зачислить ученика в архивную группу")
         self._assert_no_open_attendance_for_groups(org_id, affected_group_ids)
+        closing_prices: list[dict] = []
+        if closing and payments_detail:       # Money-1 V10 (ОП-13): the individual price does NOT go with the student - the preview says it (the sum is money: only for a caller who may see it)
+            closing_prices = self._closing_individual_prices(closing, group, ps.business_date(now_dt))
         for om in closing:
             close_period(om, now_dt)
             on_membership_closed(self.db, om, now_dt, actor_id)  # LOGIC-A: F13 marker, pauses
@@ -2879,6 +2883,8 @@ class AuthService:
             "warnings": warnings,
             "carried": carried,
             "carry_after": carry_after,
+            "closing_prices": closing_prices,
+            "individual_price_ends": bool(closing_prices),
             "billing": billing,                  # Money-1 B1: from which day he is charged (``pay_from``) and why; null for a transfer
             "dry_run": dry_run,
         }
@@ -2887,6 +2893,24 @@ class AuthService:
         else:
             self.db.commit()
         return result
+
+    def _closing_individual_prices(self, closing: list, target: Group, today: date) -> list[dict]:
+        """The individual prices (a sum) in force today in the memberships a transfer closes: ``[{membership_id, group_name, amount, since, reason, new_group_amount, text}]`` (Money-1 V10).
+        The same books and the same rule as the leave of a group (``leave_service``: ``individual_price_ends``)."""
+        from . import pricing  # lazy: pulls in the payments modules
+        from . import payments_texts as tx
+
+        books = pricing.load_books(self.db, [om.group_id for om in closing] + [target.id], [om.id for om in closing])
+        new_group = books.group_price(target.id, today)
+        names = {g.id: g.name for g in self.db.query(Group).filter(Group.id.in_({om.group_id for om in closing})).all()}
+        out = []
+        for om in closing:
+            price = books.price(om.id, om.group_id, today)
+            if price.source == pricing.SOURCE_OVERRIDE and price.amount is not None:
+                new_amount = None if new_group is None else int(new_group[1])
+                out.append({"membership_id": str(om.id), "group_name": names.get(om.group_id, ""), "amount": int(price.amount), "since": price.valid_from.isoformat() if price.valid_from else None,
+                            "reason": price.reason, "new_group_amount": new_amount, "text": tx.individual_price_ends_text(int(price.amount), names.get(om.group_id, ""), new_amount)})
+        return out
 
     @staticmethod
     def _membership_event_at(membership: StudentGroup) -> Optional[datetime]:

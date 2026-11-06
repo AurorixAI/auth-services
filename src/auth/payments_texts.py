@@ -54,6 +54,12 @@ def receipt_state_text(day: date, debt: int, advance: int, paid_until: Optional[
     return f"На {day.strftime('%d.%m.%Y')}: " + ", ".join(parts)
 
 
+def individual_price_ends_text(amount: int, group_name: str, new_amount: Optional[int]) -> str:
+    """Money-1 V10 (ОП-13): the preview of a transfer - the individual price does not go with the student."""
+    after = f"будет цена группы {money(new_amount)}" if new_amount else "будет цена новой группы"
+    return f"У ученика индивидуальная цена {money(amount)} в группе «{group_name}»: в новой группе она не действует — {after}"
+
+
 NOT_FISCAL = "Не является фискальным чеком"            # Money-1 V5/V6: the receipt of the centre is an internal paper, not a cheque of the tax service (owner 04.11)
 REFUND_SIGNATURE = "Получил(а): ____________________  Подпись"
 

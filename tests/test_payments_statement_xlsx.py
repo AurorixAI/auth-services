@@ -260,7 +260,7 @@ def test_a_single_month_has_its_carry_line_and_the_period_in_the_title():
     col = columns(ws, head)
     assert lines[1].endswith("Период: Октябрь 2026")
     # the title totals stay for the whole membership
-    assert lines[2] == "Стоимость обучения 1 225 806 · Оплачено 1 225 806 · Прощено 100 000 · Возвращено 40 000 · Остаток: Аванс 60 000"
+    assert lines[2] == "За период: Стоимость обучения 500 000 · Оплачено 425 806 · Прощено 100 000 · Возвращено 40 000 · Остаток на конец периода: Аванс 60 000. Весь счёт: " + "Стоимость обучения 1 225 806 · Оплачено 1 225 806 · Прощено 100 000 · Возвращено 40 000 · Остаток: Аванс 60 000"     # Money-1 V10 (B10): the header of a month is the totals of the month (the same sums as the blue row); the whole account stays after it
     got = grid(ws, head + 1)
     assert got[0][0] == "Октябрь 2026" and got[1][0] == "С сентября перенесён аванс 74 194"
     assert [x for x in ws.merged_cells.ranges if x.min_row == head + 2] and ws.cell(head + 2, 1).font.italic

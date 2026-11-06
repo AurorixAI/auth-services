@@ -275,7 +275,7 @@ class PaymentsReports:
             d = r.details
             parts: List[str] = []
             if r.type == "payment" and d.method:
-                parts.append(f"способ: {d.method}")
+                parts.append(f"способ: {tx.method_label(d.method)}")
             if d.allocations:
                 parts.append("; ".join(f"{a.label}: {tx.num(a.amount)}" for a in d.allocations))
             if d.reason:

@@ -340,3 +340,62 @@ def test_v5_a_cancelled_payment_prints_with_the_note_and_the_method_of_a_payment
     assert got["void_note"] == f"Оплата отменена {TODAY.strftime('%d.%m')}"
     r = c.post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 10_000, "paid_on": TODAY.isoformat()})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "METHOD_REQUIRED"            # the old code wrote «other»
+
+
+# ---- V10: the small ones and (в) the individual price in the preview of a transfer -----------------------------------------------------------
+
+
+def second_group(w, price=400_000):
+    from tests.pg_world import give_group_price, make_group
+
+    group = make_group(w.db, w.org, w.teacher, "Вторая")
+    w.db.commit()
+    give_group_price(w.db, group, price, valid_from=D(2026, 1, 1))
+    return group
+
+
+def test_v10c_the_preview_of_a_transfer_says_that_the_individual_price_ends_and_what_comes_instead(world, fixed_today):
+    from tests.pg_world import give_price
+
+    e6_world(world)                                                                  # the price of the first group: 500 000
+    give_price(world.db, membership(world, world.students[1]), 300_000)             # the student has an individual price
+    target = second_group(world)                                                     # 400 000
+    c = owner(world)
+    got = c.post(f"{API}/org/groups/{target.id}/students/{world.students[1].id}", params={"dry_run": "true"}).json()
+    assert got["individual_price_ends"] is True and len(got["closing_prices"]) == 1
+    item = got["closing_prices"][0]
+    assert (item["amount"], item["group_name"]) == (300_000, world.group.name)
+    assert item["text"] == f"У ученика индивидуальная цена 300{NB}000{NB}сум в группе «{world.group.name}»: в новой группе она не действует — будет цена группы 400{NB}000{NB}сум"
+    plain = c.post(f"{API}/org/groups/{target.id}/students/{world.students[2].id}", params={"dry_run": "true"}).json()
+    assert plain["individual_price_ends"] is False and plain["closing_prices"] == []
+    bulk = c.post(f"{API}/org/groups/{target.id}/students/bulk", params={"dry_run": "true"}, json={"student_ids": [str(world.students[1].id), str(world.students[2].id)]}).json()
+    assert [x["individual_price_ends"] for x in bulk["students"]] == [True, False]
+
+
+def test_v10_the_photo_of_a_cheque_goes_to_the_corrected_payment_and_its_removal_leaves_a_line_in_the_audit(world, fixed_today):
+    m = e6_world(world)
+    pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).one()
+    c = owner(world)
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+    up = c.post(f"{API}/org/payments/{pay.id}/files", files={"file": ("cheque.png", png, "image/png")})
+    assert up.status_code == 200, up.text
+    new = c.post(f"{API}/org/payments/{pay.id}/replace", json={"amount": 350_000, "paid_on": TODAY.isoformat(), "method": "cash", "reason": "неверная сумма"}).json()["payment"]
+    assert [f["filename"] for f in c.get(f"{API}/org/memberships/{m.id}/payments").json()[0]["files"]] == ["cheque.png"]           # the cheque went with the correction (old code: 0 files)
+    fid = c.get(f"{API}/org/memberships/{m.id}/payments").json()[0]["files"][0]["id"]
+    assert c.delete(f"{API}/org/payments/{new['id']}/files/{fid}").status_code == 200
+    snap = audit(world, "payment_file_removed")
+    assert snap["payment_id"] == new["id"] and snap["filename"] == "cheque.png" and snap["size_bytes"] == len(png)
+
+
+def test_v10_the_header_of_the_excel_of_a_month_is_the_totals_of_the_month_and_the_csv_names_the_method_in_russian(world, fixed_today):
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    m = e6_world(world)                                                              # October: 500 000 charged on 15.10, 400 000 paid
+    c = owner(world)
+    xlsx = c.get(f"{API}/org/memberships/{m.id}/statement/export", params={"format": "xlsx", "from": "2026-10-01", "to": "2026-10-31"})
+    line = load_workbook(BytesIO(xlsx.content)).active["A3"].value
+    assert line.startswith("За период: ") and "Стоимость обучения 500 000" in line and "Оплачено 400 000" in line and "Весь счёт" in line
+    csv = c.get(f"{API}/org/memberships/{m.id}/statement/export", params={"format": "csv"}).text
+    assert "способ: Наличные" in csv and "способ: cash" not in csv

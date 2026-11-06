@@ -19,6 +19,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import payments_statement_texts as st_tx
+from .payments_texts import num as tx_num
 from . import xlsx_style as xs
 
 SHEET_TITLE = "Выписка"
@@ -63,11 +64,29 @@ def build_statement_xlsx(
     last_col = len(cols)
     wrap_cols = (pos["title"], pos["details"])
 
+    # ---- the sums of the columns of the rows shown: the header of a month and the blue total row are ONE calculation (Money-1 V10, B10: the header used to say the whole account, the «Итого» the month)
+    sums: Dict[int, Any] = {}
+    if entries:
+        sums[pos["charged"]] = sum(int(e.charged or 0) for e in entries)
+        for key in ("paid", *[k for k, _ in OPTIONAL]):
+            if key in pos:
+                sums[pos[key]] = sum(abs(int(e.paid)) for e in entries if e.paid and money_column(e.type) == key)
+        closing = next((e.balance for e in reversed(entries) if e.balance), "")
+        if closing:
+            sums[pos["balance"]] = closing
+    totals = st_tx.totals_line(statement.summary)
+    if (date_from or date_to) and entries:
+        labels = {pos["charged"]: "Стоимость обучения", pos["paid"]: "Оплачено", **{pos[k]: label for k, label in OPTIONAL if k in pos}}
+        shown = [f"{labels[col]} {tx_num(value)}" for col, value in sums.items() if col in labels and (value or col == pos["charged"] or col == pos["paid"])]
+        if pos["balance"] in sums:
+            shown.append(f"Остаток на конец периода: {sums[pos['balance']]}")
+        totals = "За период: " + " · ".join(shown) + f". Весь счёт: {totals}"
+
     # ---- title block: three lines (the frozen area stays small), an empty row, then the header
     header_at = xs.title_block(ws, [
         st_tx.title_line(m),
         st_tx.asof_line(statement.as_of, statement.accounting_start, date_from, date_to),
-        st_tx.totals_line(statement.summary),
+        totals,
     ], last_col)
     xs.header_row(ws, header_at, [h for _, h in cols], left=(pos["title"], pos["details"]))
     ws.freeze_panes = f"A{header_at + 1}"
@@ -110,13 +129,6 @@ def build_statement_xlsx(
 
     # ---- the blue total row: the sums of the columns of the rows above and the balance after the last of them
     if entries:
-        sums: Dict[int, Any] = {pos["charged"]: sum(int(e.charged or 0) for e in entries)}
-        for key in ("paid", *[k for k, _ in OPTIONAL]):
-            if key in pos:
-                sums[pos[key]] = sum(abs(int(e.paid)) for e in entries if e.paid and money_column(e.type) == key)
-        closing = next((e.balance for e in reversed(entries) if e.balance), "")
-        if closing:
-            sums[pos["balance"]] = closing
         xs.total_row(ws, next_row(), TOTAL_LABEL, sums, last_col)
 
     # ---- the periods to come (as the page: only for the whole statement, never for a month or a range)

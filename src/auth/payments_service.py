@@ -1517,9 +1517,15 @@ class PaymentService:
             old.void_reason = reason
             self.db.flush()
             payment = self._insert(membership, org_id, actor_id, data, method, idempotency_key, replaces=old)
+            moved = 0
+            for f in self.db.query(StudentPaymentFile).filter(StudentPaymentFile.payment_id == old.id).all():      # Money-1 V10 (ОП-09): the photo of the cheque goes with the correction (the old payment keeps its own copy as the trace)
+                self.db.add(StudentPaymentFile(org_id=f.org_id, payment_id=payment.id, filename=f.filename, content_type=f.content_type, size_bytes=f.size_bytes,
+                                               data=f.data, uploaded_by=f.uploaded_by, uploaded_at=f.uploaded_at))
+                moved += 1
             after_entry = self._loader(org_id, today).run([membership.id])[0]
             self._save_snapshot(org_id, payment, before, after_entry.ledger, after_entry.price, today, method)
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAYMENT_REPLACE, {
+                "files_moved": moved,
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "payment_id": str(old.id), "new_payment_id": str(payment.id), "receipt_no": old.receipt_no, "new_receipt_no": payment.receipt_no,
                 "amount": int(old.amount), "new_amount": int(payment.amount), "paid_on": old.paid_on.isoformat(), "new_paid_on": payment.paid_on.isoformat(),
@@ -2524,6 +2530,11 @@ class PaymentService:
             raise PaymentNotFound("Файл не найден")
         if not is_owner and str(stored.uploaded_by) != str(actor_id):
             raise PaymentForbidden("Удалить чек может владелец или тот, кто его загрузил")
+        payment = self.db.query(StudentPayment).filter(StudentPayment.id == payment_id, StudentPayment.org_id == org_id).first()
+        if payment is not None:                # Money-1 V10 (ОП-09): a removed cheque leaves a line (who, what), the bytes go
+            self.db.add(GroupAudit(org_id=UUID(str(org_id)), group_id=payment.group_id, actor_id=UUID(str(actor_id)), actor_role="owner" if is_owner else "admin",
+                                   action="payment_file_removed", snapshot={"actor_id": str(actor_id), "payment_id": str(payment_id), "receipt_no": payment.receipt_no, "file_id": str(file_id),
+                                                                         "filename": stored.filename, "size_bytes": int(stored.size_bytes), "uploaded_by": str(stored.uploaded_by)}))
         self.db.delete(stored)
         self.db.commit()
         logger.info("payment file removed id=%s payment=%s actor=%s", file_id, payment_id, actor_id)
