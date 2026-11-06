@@ -191,6 +191,13 @@ def full_name(user: Any) -> Optional[str]:
     return name or None
 
 
+def name_parts(user: Any) -> dict:
+    """Money-1 V7/Н7: the parts of a person's name next to a ready ``teacher_name`` - the front assembles «Имя Фамилия» (lists, titles) or «Фамилия И.» (sentences) itself."""
+    if user is None:
+        return {"first_name": None, "last_name": None}
+    return {"first_name": (user.first_name or "").strip() or None, "last_name": (user.last_name or "").strip() or None}
+
+
 def short_name(user: Any) -> Optional[str]:
     """«Рахимов Т.» as the spec shows it (last name + initial of the first name)."""
     if user is None:

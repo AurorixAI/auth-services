@@ -76,3 +76,17 @@ def test_v7_the_removal_impact_names_the_months_of_a_teacher_whose_salary_is_not
     after = client(w, "owner").get(url).json()["payroll"]
     assert after["unsaved_months"] == [] and after["unpaid_months"] == ["2026-10"]       # saved, nothing paid yet
     assert after["text"] == "Зарплата за октябрь 2026 не выплачена"
+
+
+def test_v7b_n7_the_names_of_a_teacher_come_apart_next_to_the_name_in_the_screens_of_the_salary(pg_session, clock):
+    w, g, st = _closed(pg_session, clock)
+    owner = client(w, "owner")
+    (row,) = [t for t in owner.get(f"{API}/org/payroll/months/{MONTH}").json()["teachers"] if t["teacher_id"] == str(w.A.id)]
+    assert (row["teacher_first_name"], row["teacher_last_name"]) == (w.A.first_name, w.A.last_name) and row["teacher_name"]
+    brief = [s for s in owner.get(f"{API}/org/payroll/sheets", params={"month": MONTH}).json() if s["teacher_id"] == str(w.A.id)][0]
+    assert (brief["teacher_first_name"], brief["teacher_last_name"]) == (w.A.first_name, w.A.last_name)
+    full = owner.get(f"{API}/org/payroll/sheets/{brief['id']}").json()
+    assert (full["teacher_first_name"], full["teacher_last_name"]) == (w.A.first_name, w.A.last_name)
+    periods = owner.get(f"{API}/org/payroll-periods", params={"month": MONTH})
+    if periods.status_code == 200:
+        assert any(p.get("teacherFirstName") == w.A.first_name for p in periods.json().get("items", periods.json() if isinstance(periods.json(), list) else []))

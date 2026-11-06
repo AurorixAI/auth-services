@@ -28,7 +28,7 @@ from src.models.auth import Group, PayrollPayout, PayrollSheet, Student, Student
 
 from . import payment_status as ps
 from .closed_period import month_first, month_title, period_state
-from .ops_rules import short_name
+from .ops_rules import name_parts, short_name
 from .payments_texts import NBSP, plural
 from .payments_texts import num as tx_num
 
@@ -186,7 +186,7 @@ class SheetProbe:
             if self.owner:
                 user = self.db.query(User).filter(User.id == sheet.teacher_id).first()
                 paid = int(sum(p.amount for p in self.db.query(PayrollPayout).filter(PayrollPayout.sheet_id == sheet.id, PayrollPayout.voided_at.is_(None)).all()))
-                line.update({"sheetId": str(sheet.id), "teacherId": str(sheet.teacher_id), "teacherName": short_name(user), "savedTotal": int(sheet.total_amount), "paid": paid,
+                line.update({"sheetId": str(sheet.id), "teacherId": str(sheet.teacher_id), "teacherName": short_name(user), **{"teacherFirstName": name_parts(user)["first_name"], "teacherLastName": name_parts(user)["last_name"]}, "savedTotal": int(sheet.total_amount), "paid": paid,
                              "freshBefore": before, "freshAfter": after, "freshTotal": after, "changedBy": after - before, "driftAfter": after - int(sheet.total_amount)})
                 owner_lines.append((line, sheet, after))
             out.append(line)

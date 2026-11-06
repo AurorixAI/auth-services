@@ -7,6 +7,8 @@
   "month_open": false,
   "teacher_id": "00000000-0000-4000-8000-000000000400",
   "teacher_name": "Каримова",
+  "teacher_first_name": null,
+  "teacher_last_name": null,
   "revision": 1,
   "percents": {
     "group": "50"

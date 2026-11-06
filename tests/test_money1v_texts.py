@@ -33,3 +33,13 @@ def test_v9_the_words_about_the_pay_of_the_teacher_in_the_windows_of_a_price_and
     assert me.teacher_share_text(480_000) == "Зарплата преподавателя за этого ученика тоже изменится: процент считается от фактической цены"
     assert me.teacher_share_text(0) == "Зарплата преподавателя за этого ученика станет 0: процент считается от фактической цены"
     assert me.teacher_share_text(None) == "Зарплата преподавателя за этого ученика снова считается от цены группы"
+
+
+def test_n7_the_parts_of_a_name():
+    from types import SimpleNamespace
+
+    from src.auth.ops_rules import name_parts
+
+    assert name_parts(SimpleNamespace(first_name=" Камол ", last_name="Эргашев")) == {"first_name": "Камол", "last_name": "Эргашев"}
+    assert name_parts(SimpleNamespace(first_name=None, last_name="Эргашев")) == {"first_name": None, "last_name": "Эргашев"}
+    assert name_parts(None) == {"first_name": None, "last_name": None}

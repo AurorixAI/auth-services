@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from src.models.auth import Organization, PayrollPeriodReopening, PayrollSheet, User
 
 from . import business_clock as bc
-from .ops_rules import OpsError, conflict, short_name
+from .ops_rules import OpsError, conflict, name_parts, short_name
 
 PERIOD_CLOSED = "PERIOD_CLOSED"
 MONTH_NAMES = ("январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь")
@@ -160,7 +160,7 @@ class ClosedPeriods:
         head = f"Преподаватель: {name} · {month} закрыт" if name else f"{month.capitalize()} закрыт"
         text = (f"{head} (зарплата сохранена {closed.closed_on.strftime('%d.%m.%Y')}). "
                 f"Чтобы изменить {what}, переоткройте месяц (это делает владелец или администратор с доступом к деньгам).")
-        return conflict(PERIOD_CLOSED, text, month=closed.label, teacherId=str(closed.teacher_id), teacherName=name, closedOn=closed.closed_on.isoformat())
+        return conflict(PERIOD_CLOSED, text, month=closed.label, teacherId=str(closed.teacher_id), teacherName=name, teacherFirstName=name_parts(user)["first_name"], teacherLastName=name_parts(user)["last_name"], closedOn=closed.closed_on.isoformat())
 
     def _hold_open(self, teacher_ids: Iterable[Any], months: Iterable[date]) -> None:
         """Money-1 R3 m9: a check that said «open» keeps the SAVED sheets of these teacher-months from being saved until this transaction ends (``FOR SHARE``): a correction that passed the check and
@@ -301,7 +301,7 @@ def list_periods(db, org_id: Any, month: str) -> List[Dict[str, Any]]:
     users = {u.id: u for u in db.query(User).filter(User.id.in_(wanted)).all()}
     out = []
     for sheet in sheets:
-        out.append({"teacherId": str(sheet.teacher_id), "teacherName": short_name(users.get(sheet.teacher_id)), "month": first.strftime("%Y-%m"), **_state_info(sheet, latest.get(sheet.teacher_id), users)})
+        out.append({"teacherId": str(sheet.teacher_id), "teacherName": short_name(users.get(sheet.teacher_id)), "teacherFirstName": name_parts(users.get(sheet.teacher_id))["first_name"], "teacherLastName": name_parts(users.get(sheet.teacher_id))["last_name"], "month": first.strftime("%Y-%m"), **_state_info(sheet, latest.get(sheet.teacher_id), users)})
     return sorted(out, key=lambda x: x["teacherName"] or "")
 
 

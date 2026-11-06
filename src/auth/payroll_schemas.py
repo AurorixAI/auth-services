@@ -227,6 +227,8 @@ class SheetOut(BaseModel):
     month_open: bool
     teacher_id: str
     teacher_name: Optional[str] = None
+    teacher_first_name: Optional[str] = None  # Money-1 Н7: the parts of the name next to the ready one
+    teacher_last_name: Optional[str] = None
     revision: Optional[int] = None
     percents: Dict[str, str] = Field(default_factory=dict)
     divisor_default: int = engine.DEFAULT_DIVISOR
@@ -253,6 +255,8 @@ class SheetBrief(BaseModel):
     id: str
     teacher_id: str
     teacher_name: Optional[str] = None
+    teacher_first_name: Optional[str] = None  # Money-1 Н7
+    teacher_last_name: Optional[str] = None
     month: str
     revision: int
     total_amount: int
@@ -297,6 +301,8 @@ class MonthWarnings(BaseModel):
 class MonthTeacher(BaseModel):
     teacher_id: str
     teacher_name: Optional[str] = None
+    teacher_first_name: Optional[str] = None  # Money-1 Н7
+    teacher_last_name: Optional[str] = None
     lessons_count: int = 0  # completed lessons the teacher held in the month
     undecided_lessons: int = 0  # #154: held additional lessons whose payment is not decided yet (not in the sum)
     lesson_types: List[LessonTypeSuggestion] = Field(default_factory=list)

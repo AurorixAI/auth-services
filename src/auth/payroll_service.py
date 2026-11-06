@@ -771,6 +771,13 @@ class PayrollService:
             for u in self.db.query(User).filter(User.id.in_(wanted)).all()
         }
 
+    def _name_parts(self, ids: Iterable[Optional[UUID]]) -> Dict[UUID, Dict[str, Optional[str]]]:
+        """Money-1 Н7: ``{user: {"first_name", "last_name"}}`` - the same people as ``_names``, the parts apart."""
+        from .ops_rules import name_parts
+
+        wanted = {i for i in ids if i}
+        return {u.id: name_parts(u) for u in self.db.query(User).filter(User.id.in_(wanted)).all()} if wanted else {}
+
     def _suggested(self, org_id: str, teacher_ids: Iterable[UUID]) -> Dict[Tuple[UUID, str], str]:
         """Percent per (teacher, kind of lessons) from the most recently saved sheet that has the kind."""
         ids = list(set(teacher_ids))
@@ -882,6 +889,7 @@ class PayrollService:
             month_open=ps.business_today() <= last,
             teacher_id=str(teacher_id),
             teacher_name=names.get(teacher_id),
+            **{f"teacher_{k}": v for k, v in self._name_parts([teacher_id]).get(teacher_id, {}).items()},
             revision=revision,
             percents=percent_inputs,
             divisor_default=divisor_default,
@@ -1022,6 +1030,7 @@ class PayrollService:
         active = {r[0] for r in self.db.query(OrganizationMember.user_id).filter(OrganizationMember.org_id == org_id, OrganizationMember.user_id.in_(teacher_ids),
                                                                                 OrganizationMember.is_active.is_(True)).all()} if teacher_ids else set()
         names = self._names(teacher_ids)
+        parts = self._name_parts(teacher_ids)
         suggestions = self._suggested(org_id, teacher_ids)
         book = payroll_rates.load_book(self.db, org_id, teacher_ids)
         out: List[MonthTeacher] = []
@@ -1029,7 +1038,7 @@ class PayrollService:
             teacher = seed.teachers.get(tid)
             sheet = sheets.get(tid)
             if tid in advance_only:
-                out.append(MonthTeacher(teacher_id=str(tid), teacher_name=names.get(tid), advance_only=True, carry_in=carries.get(tid, 0), member_active=tid in active))
+                out.append(MonthTeacher(teacher_id=str(tid), teacher_name=names.get(tid), **{f"teacher_{k}": v for k, v in parts.get(tid, {}).items()}, advance_only=True, carry_in=carries.get(tid, 0), member_active=tid in active))
                 continue
             # a teacher with unfinished lessons only is listed too: the owner must see what blocks the month
             if (teacher is None or not (teacher.lessons_count or teacher.open_lessons)) and sheet is None:
@@ -1055,6 +1064,7 @@ class PayrollService:
                 MonthTeacher(
                     teacher_id=str(tid),
                     teacher_name=names.get(tid),
+                    **{f"teacher_{k}": v for k, v in parts.get(tid, {}).items()},
                     lessons_count=teacher.lessons_count if teacher else 0,
                     undecided_lessons=teacher.undecided_lessons if teacher else 0,
                     lesson_types=[
@@ -1572,11 +1582,13 @@ class PayrollService:
             fresh = {tid: t.fingerprint for tid, t in seed.teachers.items()}
             book = payroll_rates.load_book(self.db, org_id, {r.teacher_id for r in rows})
         names = self._names([r.teacher_id for r in rows] + [r.updated_by for r in rows])
+        parts = self._name_parts([r.teacher_id for r in rows])
         return [
             SheetBrief(
                 id=str(r.id),
                 teacher_id=str(r.teacher_id),
                 teacher_name=names.get(r.teacher_id),
+                **{f"teacher_{k}": v for k, v in parts.get(r.teacher_id, {}).items()},
                 month=month_label(r.period_month),
                 revision=r.revision,
                 total_amount=r.total_amount,

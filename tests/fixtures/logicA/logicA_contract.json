@@ -2897,9 +2897,31 @@
               }
             ]
           },
+          "teacher_first_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher First Name"
+          },
           "teacher_id": {
             "title": "Teacher Id",
             "type": "string"
+          },
+          "teacher_last_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Last Name"
           },
           "teacher_name": {
             "anyOf": [
@@ -7896,9 +7918,31 @@
             ],
             "title": "Stale"
           },
+          "teacher_first_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher First Name"
+          },
           "teacher_id": {
             "title": "Teacher Id",
             "type": "string"
+          },
+          "teacher_last_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Last Name"
           },
           "teacher_name": {
             "anyOf": [
