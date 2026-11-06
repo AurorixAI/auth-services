@@ -160,7 +160,8 @@ def test_the_dry_run_computes_the_impact_and_writes_nothing(world):
     out = put_price(world, 999_000, valid_from=day(-5), dry=True)
     assert out["dry_run"] is True and out["current"] is None and out["history"] is None
     assert {k: v for k, v in out["impact"].items() if k not in ("money", "first_price")} == {
-        "students_following": 3, "students_with_override": 0, "stale_payroll_sheets": 0, "stale_sheets": []}
+        "students_following": 3, "students_with_override": 0, "stale_payroll_sheets": 0, "stale_sheets": [],
+        "warnings": [{"code": "price_unusual", "text": "Вы уверены: 999\u00a0000\u00a0сум? Сейчас 400\u00a0000\u00a0сум"}], "correction": None}      # Money-1 V3: 400 000 -> 999 000 is more than twice
     assert out["impact"]["money"]["backdated"] is True                     # LOGIC-A: the money window is part of the impact
     assert group_rows(world) == before
 
@@ -260,7 +261,7 @@ def test_a_group_price_may_be_set_for_a_group_without_students(world):
     world.db.commit()
     out = put_price(world, 100_000, group=empty)
     assert {k: v for k, v in out["impact"].items() if k not in ("money", "first_price")} == {
-        "students_following": 0, "students_with_override": 0, "stale_payroll_sheets": 0, "stale_sheets": []}
+        "students_following": 0, "students_with_override": 0, "stale_payroll_sheets": 0, "stale_sheets": [], "warnings": [], "correction": None}
     assert out["impact"]["money"]["items"] == []
 
 

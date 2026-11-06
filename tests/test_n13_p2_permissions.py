@@ -50,10 +50,10 @@ def endpoints(w):
         ("GET", f"{API}/org/students/{w.students[0].id}/memberships", None, 200, False),
         ("PUT", f"{API}/org/memberships/{m}/fee", {"monthly_fee": 1}, 410, False),     # retired by #105
         ("GET", f"{API}/org/groups/{w.group.id}/prices", None, 200, False),
-        ("PUT", f"{API}/org/groups/{w.group.id}/price", {"amount": 600000}, 200, False),
+        ("PUT", f"{API}/org/groups/{w.group.id}/price", {"amount": 600000, "confirm_unusual": True}, 200, False),      # rule V3 (a price in times is asked again); the aim of this test is the rights
         ("PUT", f"{API}/org/groups/{w.group.id}/price?dry_run=1", {"amount": 600000}, 200, False),
         ("GET", f"{API}/org/memberships/{m}/price-override", None, 200, False),
-        ("PUT", f"{API}/org/memberships/{m}/price-override", {"amount": 1, "reason": "проверка прав"}, 200, False),
+        ("PUT", f"{API}/org/memberships/{m}/price-override", {"amount": 1, "reason": "проверка прав", "confirm_unusual": True}, 200, False),      # rule V3, the aim of this test is the rights
         ("GET", f"{API}/org/memberships/{m}/payments", None, 200, False),
         ("POST", f"{API}/org/memberships/{m}/payments", {"amount": 5, "paid_on": today, "method": "cash"}, 201, False),
         ("POST", f"{API}/org/payments/{p}/replace", {"amount": 6, "paid_on": today, "reason": "проверка прав"}, 201, False),

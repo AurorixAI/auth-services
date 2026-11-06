@@ -118,12 +118,16 @@ def safe(done_of: Callable[..., bool] = lambda *a, **k: True):
 def writes_rolled_back(db):
     """Run a money action to its last line WITHOUT writing (R3 #15): ``commit`` only flushes, and at the exit everything is rolled back.  The action sees its own writes (it builds its answer from them),
     nothing reaches the database."""
+    had = "commit" in db.__dict__
+    previous = db.__dict__.get("commit")                  # something (a test, a wrapper) may have put its own ``commit`` on the session: it comes back, not the class method
     db.commit = db.flush
     db.info["money_preview"] = True
     try:
         yield
     finally:
         db.__dict__.pop("commit", None)
+        if had:
+            db.__dict__["commit"] = previous
         db.info.pop("money_preview", None)
         db.rollback()
 
