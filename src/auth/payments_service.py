@@ -125,6 +125,7 @@ REFUND_IDEMPOTENCY_INDEX = "uq_student_refunds_idempotency"
 FILE_ON_CARRY_OVER = "К деньгам, перешедшим из другой группы, чек не прикрепляется — это не денежная операция"
 FILE_ON_VOIDED = "Оплата отменена — чек прикрепить нельзя"
 FILE_LIMIT = f"К оплате можно приложить не более {MAX_FILES_PER_PAYMENT} файлов"
+PAYROLL_COUNTS_DEDUCTION = True   # Money-1 V7: the lesson covered by the deduction for a cancelled lesson is paid to the teacher; ``scripts/payf_payroll_report.py`` switches it off to print the old answer
 PRINT_DEBOUNCE_SECONDS = 3     # Money-1 V5: a double click on «Печать» is one print
 RECEIPT_ATTEMPTS = 10  # max+1 under a SAVEPOINT; a conflict with a concurrent payment takes the next number
 SOFT_DUPLICATE_SECONDS = 60  # the same student + date + sum within a minute is a double click
@@ -2157,14 +2158,21 @@ class PaymentService:
         detail: Dict[UUID, List[tuple]] = {}
         extra_paid: Dict[UUID, List[tuple]] = {}
         neutral: Dict[UUID, List[tuple]] = {}
-        loader = self._loader(org_id, recalc=False)       # PAY-F: payroll reads the money of the students as they paid it (the deduction for cancelled lessons is not a payment)
+        loader = self._loader(org_id, recalc=False)       # PAY-F: the PRICE of a lesson is read from the money of the students as they paid it (the deduction for cancelled lessons is not a payment)
         entries = {e.membership.id: e for e in loader.run([m.id for m, _, _ in rows])}
+        # Money-1 V7 (ЗПД-9, decision 06.11): WHETHER a lesson is paid is read from the account WITH the deduction - the centre cancelled a lesson, the student was not charged for it, so the
+        # lesson he took instead is covered; the teacher held it and is paid (the centre carries the deduction itself).  Only a centre that has the setting on is read twice.
+        deducted: Dict[UUID, ls.MembershipLedger] = {}
+        if PAYROLL_COUNTS_DEDUCTION and any(v.on for v in loader.settings.recalc_versions):
+            deducted = {e.membership.id: e for e in self._loader(org_id, recalc=True).run([m.id for m, _, _ in rows])}
         # a lesson held on a day of a live pause is nobody's lesson (S-3): the student was not in its class
         skip = {mid: {d for p in e.pauses for d in ls._days(p.first_day, p.last_day)} for mid, e in entries.items() if e.pauses}
         self._counted_lesson_dates(org_id, rows, since=first_day, until=last_day, detail_out=detail, exclude_days=skip, extra_paid_out=extra_paid, neutral_out=neutral)
         origins = self._makeup_origin_days(org_id, {g.id for _, _, g in rows}, first_day, last_day)
         regimes = loader.settings.regimes
         by_segment = {mid: {sg.id: sg for sg in e.ledger.segments} for mid, e in entries.items()}
+        for mid, e in deducted.items():
+            by_segment.setdefault(mid, {}).update({sg.id: sg for sg in e.ledger.segments if sg.id not in by_segment.get(mid, {})})
         out: Dict[Tuple[UUID, date, str], LessonCover] = {}
         for membership, _student, _group in rows:
             entry = entries.get(membership.id)
@@ -2176,6 +2184,10 @@ class PaymentService:
                 if origin is not None and bl.regime_at(regimes, day).mode == ps.CALENDAR and bl.regime_at(regimes, origin).mode == ps.CALENDAR:
                     probe = origin          # #154 (АД-4): a make-up is covered - and priced - as the lesson it makes up for (the day of the ORIGINAL), not by the day of the payment that happens to cover its own date
                 info = entry.ledger.lesson_cover(probe, lesson_id or "") if entry else None
+                if info is not None and not info.paid and membership.id in deducted:      # V7: not paid by the student's money, but covered once the deduction is counted
+                    covered = deducted[membership.id].ledger.lesson_cover(probe, lesson_id or "")
+                    if covered is not None and covered.paid:
+                        info = covered
                 seg = by_segment[membership.id].get(info.segment_id) if info is not None and info.segment_id else None
                 if seg is not None:    # M1: the mode / divisor of a lesson are those of the ledger segment that covers it (a deferred change of the regime lets the running period / package finish)
                     mode, size = (ps.LESSONS, seg.nominal_days) if seg.kind == "package" else (ps.CALENDAR, None)
@@ -2190,6 +2202,10 @@ class PaymentService:
             for day, lesson_id, _attendance, origin in neutral.get(membership.id, ()):
                 if first_day <= day <= last_day and entry is not None:      # #154 (АД-5): covered - and priced - by the calendar day of the lesson it makes up for
                     info = entry.ledger.lesson_cover(origin, lesson_id)
+                    if not info.paid and membership.id in deducted:      # V7: the same as above - covered once the deduction is counted
+                        covered = deducted[membership.id].ledger.lesson_cover(origin, lesson_id)
+                        if covered is not None and covered.paid:
+                            info = covered
                     out[(membership.id, day, lesson_id)] = LessonCover(None, ps.CALENDAR, None, info.paid, info.price, info.source, info.segment_id)
             for day, lesson_id, _attendance in extra_paid.get(membership.id, ()):
                 if first_day <= day <= last_day:        # #154: an additional lesson the owner pays: the seam «before the accounting start» - the price of the day, the divisor of the month, the ledger of the student untouched

@@ -37,7 +37,7 @@ from .payroll_schemas import (
     RatesResponse,
     TeacherRates,
 )
-from .payroll_service import FIRST_YEAR, MONTH_RE, PayrollInvalid, PayrollNotFound, _iso, _utcnow, month_label
+from .payroll_service import FIRST_YEAR, MONTH_RE, PayrollInvalid, PayrollNotFound, RateUnusual, _iso, _utcnow, month_label
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +214,13 @@ class RatesService:
                 parsed[lesson_type] = engine.parse_percent(value)
             except engine.PercentError as exc:
                 raise PayrollInvalid(f"{engine.LESSON_TYPE_LABELS[lesson_type]}: {exc}") from exc
+        in_force = payroll_rates.load_book(self.db, org_id, [teacher_id]).percents_at(teacher_id, valid_from)
+        for lesson_type in engine.LESSON_TYPES:
+            old, new = in_force.get(lesson_type), parsed.get(lesson_type)
+            if old and new is not None and new != old and (new == 0 or new > 2 * old or new * 2 < old) and body.confirm_unusual is not True:
+                nb = "\u00a0"
+                raise RateUnusual(f"Вы уверены: ставка «{engine.LESSON_TYPE_LABELS[lesson_type]}» {engine.format_percent(new)}{nb}% (сейчас {engine.format_percent(old)}{nb}%)?",
+                                  old=engine.format_percent(old), new=engine.format_percent(new), lesson_type=lesson_type)
         note = body.note
         if note is not None and not isinstance(note, str):
             raise PayrollInvalid("Примечание должно быть текстом")

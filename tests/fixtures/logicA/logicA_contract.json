@@ -2810,6 +2810,16 @@
       },
       "MonthTeacher": {
         "properties": {
+          "advance_only": {
+            "default": false,
+            "title": "Advance Only",
+            "type": "boolean"
+          },
+          "carry_in": {
+            "default": 0,
+            "title": "Carry In",
+            "type": "integer"
+          },
           "lesson_types": {
             "items": {
               "$ref": "#/components/schemas/LessonTypeSuggestion"
@@ -2821,6 +2831,11 @@
             "default": 0,
             "title": "Lessons Count",
             "type": "integer"
+          },
+          "member_active": {
+            "default": true,
+            "title": "Member Active",
+            "type": "boolean"
           },
           "missing_rates": {
             "items": {

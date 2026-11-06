@@ -307,6 +307,10 @@ class MonthTeacher(BaseModel):
     sheet: Optional[MonthSheetRef] = None
     warnings: MonthWarnings = Field(default_factory=MonthWarnings)
     payout: Optional["PayoutState"] = None  # LOGIC-A: only when the teacher has a saved sheet
+    # Money-1 V7: ``advance_only`` - no lessons and no sheet in the month, but an ADVANCE of the earlier months (``carry_in``) is carried on; ``member_active`` false - the teacher was removed
+    advance_only: bool = False
+    carry_in: int = 0
+    member_active: bool = True
 
 
 class MonthOverview(BaseModel):
@@ -426,6 +430,7 @@ class RatePut(BaseModel):
     valid_from: Any = None  # "YYYY-MM"
     percents: Any = None  # {"group": "50", ...}
     note: Any = None
+    confirm_unusual: Any = None  # Money-1 V7: true - the person confirmed a rate of 0 / in times (409 RATE_UNUSUAL without it)
 
 
 class RateHistoryRow(BaseModel):

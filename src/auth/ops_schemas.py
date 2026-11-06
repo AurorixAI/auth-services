@@ -484,6 +484,14 @@ class CountOut(BaseModel):
     count: int = 0
 
 
+class RemovalPayroll(BaseModel):
+    """Money-1 V7 (ЗП-11): the months (of the last 12) in which the teacher taught and his salary is not saved / not paid in full - months and words only, never a sum (an administrator reads this too)."""
+
+    unsaved_months: List[str] = Field(default_factory=list)   # «2026-10»
+    unpaid_months: List[str] = Field(default_factory=list)
+    text: str = ""
+
+
 class RemovalImpactOut(BaseModel):
     memberId: str
     userId: str
@@ -496,6 +504,7 @@ class RemovalImpactOut(BaseModel):
     futureSubstitutions: CountOut = Field(default_factory=CountOut)
     missedLessons: CountOut = Field(default_factory=CountOut)
     pendingSubstitutionRequests: CountOut = Field(default_factory=CountOut)  # LOGIC-B2
+    payroll: "RemovalPayroll" = Field(default_factory=lambda: RemovalPayroll())  # Money-1 V7 (ЗП-11)
 
 
 class HandoverAssignment(BaseModel):

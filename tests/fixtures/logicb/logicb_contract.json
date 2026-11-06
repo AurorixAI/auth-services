@@ -3612,6 +3612,9 @@
             "title": "Orgrole",
             "type": "string"
           },
+          "payroll": {
+            "$ref": "#/components/schemas/RemovalPayroll"
+          },
           "pendingSubstitutionRequests": {
             "$ref": "#/components/schemas/CountOut"
           },
@@ -3655,6 +3658,32 @@
           "lessonId"
         ],
         "title": "RemovalLesson",
+        "type": "object"
+      },
+      "RemovalPayroll": {
+        "description": "Money-1 V7 (ЗП-11): the months (of the last 12) in which the teacher taught and his salary is not saved / not paid in full - months and words only, never a sum (an administrator reads this too).",
+        "properties": {
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "unpaid_months": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unpaid Months",
+            "type": "array"
+          },
+          "unsaved_months": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unsaved Months",
+            "type": "array"
+          }
+        },
+        "title": "RemovalPayroll",
         "type": "object"
       },
       "RemoveMemberOut": {

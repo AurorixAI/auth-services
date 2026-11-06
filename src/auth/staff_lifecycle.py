@@ -180,6 +180,7 @@ class StaffLifecycle:
             if a.actionType == "missed" and a.teacherId == str(member.user_id)
         ]
         return {
+            "payroll": self._payroll_of(org_id, member.user_id) if member.org_role == "teacher" else {"unsaved_months": [], "unpaid_months": [], "text": ""},
             "memberId": str(member.id),
             "userId": str(member.user_id),
             "name": short_name(user),
@@ -198,6 +199,39 @@ class StaffLifecycle:
             "pendingSubstitutionRequests": {"count": lesson_substitutions.count_pending_of_teacher(self.db, org_id, member.user_id)},
             "missedLessons": {"count": len(missed)},
         }
+
+    def _payroll_of(self, org_id: Any, user_id: Any) -> Dict[str, Any]:
+        """Money-1 V7 (ЗП-11): the months of the last 12 in which the teacher HELD lessons and his salary is not saved (no sheet) or not paid in full (live payouts < the saved total).
+        Months and words only - no sums (the removal is available to an administrator, the salary is the owner's)."""
+        from sqlalchemy import func
+
+        from src.models.auth import PayrollPayout, PayrollSheet
+
+        from . import payment_status as ps
+        from .closed_period import month_first, month_title
+
+        current = month_first(ps.business_today())
+        since = current.replace(year=current.year - 1)
+        held = {r[0] for r in self.db.query(func.substr(GroupAttendance.lesson_date, 1, 7)).filter(
+            GroupAttendance.org_id == org_id, GroupAttendance.teacher_id == user_id, GroupAttendance.status == "completed",
+            GroupAttendance.lesson_date >= since.isoformat()).distinct().all()}
+        saved = {r[0].strftime("%Y-%m"): int(r[1]) for r in self.db.query(PayrollSheet.period_month, PayrollSheet.total_amount).filter(
+            PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == user_id, PayrollSheet.period_month >= since)}
+        paid = {r[0].strftime("%Y-%m"): int(r[1]) for r in self.db.query(PayrollPayout.period_month, func.sum(PayrollPayout.amount)).filter(
+            PayrollPayout.org_id == org_id, PayrollPayout.teacher_id == user_id, PayrollPayout.period_month >= since,
+            PayrollPayout.voided_at.is_(None)).group_by(PayrollPayout.period_month)}
+        unsaved = sorted(m for m in held if m not in saved)
+        unpaid = sorted(m for m, total in saved.items() if total > paid.get(m, 0))
+
+        def title(key: str) -> str:
+            return month_title(month_first(ps.business_today()).replace(year=int(key[:4]), month=int(key[5:7])))
+
+        parts = []
+        if unsaved:
+            parts.append(f"Зарплата за {', '.join(title(m) for m in unsaved)} не сохранена")
+        if unpaid:
+            parts.append(f"Зарплата за {', '.join(title(m) for m in unpaid)} не выплачена")
+        return {"unsaved_months": unsaved, "unpaid_months": unpaid, "text": ". ".join(parts)}
 
     def _assignments_error(self, impact: Dict[str, Any]) -> OpsError:
         return conflict("MEMBER_HAS_ASSIGNMENTS", ERROR_CATALOGUE["MEMBER_HAS_ASSIGNMENTS"][1], **{k: v for k, v in impact.items() if k not in ("userId", "name", "orgRole")})

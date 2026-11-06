@@ -50,6 +50,7 @@ from src.models.auth import (
     Organization,
     OrganizationMember,
     PayrollDivisor,
+    PayrollPayout,
     PayrollSheet,
     PayrollSheetRevision,
     Student,
@@ -165,6 +166,13 @@ class OpenLessonsConfirmRequired(PayrollError):
 
     status_code = 409
     code = "OPEN_LESSONS_CONFIRM_REQUIRED"
+
+
+class RateUnusual(PayrollError):
+    """Money-1 V7 (ЗП-12): a rate of 0, or more than twice / less than a half of the one in force, is a probable typo - asked again before it is written."""
+
+    status_code = 409
+    code = "RATE_UNUSUAL"
 
 
 class DataChanged(PayrollError):
@@ -1003,7 +1011,16 @@ class PayrollService:
         payout_service = PayrollPayoutService(self.db)
         payouts = payout_service.payouts_of(org_id, month=first)
         teacher_ids = set(seed.teachers) | set(sheets)
-        carries = payout_service.carry_ins(org_id, list(sheets), first)       # R3 3: the advance of the earlier months, one pair of queries for the month
+        # Money-1 V7: a teacher with no lessons and no sheet in the month may still have an ADVANCE from the earlier months (paid forward, then the teacher was removed or just taught nothing):
+        # he is listed with ``advance_only`` - the owner must see money that is owed back / carried on.
+        earlier = {r[0] for r in self.db.query(PayrollSheet.teacher_id).filter(PayrollSheet.org_id == org_id, PayrollSheet.period_month < first).distinct().all()}
+        earlier |= {r[0] for r in self.db.query(PayrollPayout.teacher_id).filter(PayrollPayout.org_id == org_id, PayrollPayout.period_month < first).distinct().all()}
+        carry_ids = set(sheets) | set(seed.teachers) | (earlier - teacher_ids)
+        carries = payout_service.carry_ins(org_id, list(carry_ids), first)       # R3 3: the advance of the earlier months, one pair of queries for the month
+        advance_only = {tid for tid in earlier - teacher_ids if carries.get(tid, 0) > 0}
+        teacher_ids = teacher_ids | advance_only
+        active = {r[0] for r in self.db.query(OrganizationMember.user_id).filter(OrganizationMember.org_id == org_id, OrganizationMember.user_id.in_(teacher_ids),
+                                                                                OrganizationMember.is_active.is_(True)).all()} if teacher_ids else set()
         names = self._names(teacher_ids)
         suggestions = self._suggested(org_id, teacher_ids)
         book = payroll_rates.load_book(self.db, org_id, teacher_ids)
@@ -1011,6 +1028,9 @@ class PayrollService:
         for tid in teacher_ids:
             teacher = seed.teachers.get(tid)
             sheet = sheets.get(tid)
+            if tid in advance_only:
+                out.append(MonthTeacher(teacher_id=str(tid), teacher_name=names.get(tid), advance_only=True, carry_in=carries.get(tid, 0), member_active=tid in active))
+                continue
             # a teacher with unfinished lessons only is listed too: the owner must see what blocks the month
             if (teacher is None or not (teacher.lessons_count or teacher.open_lessons)) and sheet is None:
                 continue
@@ -1062,6 +1082,7 @@ class PayrollService:
                         else None
                     ),
                     payout=payout,
+                    carry_in=carries.get(tid, 0), member_active=tid in active,
                     warnings=MonthWarnings(
                         open_lessons=None if seed.open_unknown else (teacher.open_lessons if teacher else 0),
                         open_lessons_unknown=seed.open_unknown,
