@@ -11,7 +11,9 @@
     "sum": 3450000,
     "voided_count": 2,
     "replaced_count": 1,
-    "kind_sum": null
+    "kind_sum": null,
+    "cancelled_here_count": 0,
+    "cancelled_here_sum": 0
   },
   "rows": [
     {
@@ -70,7 +72,8 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null
+      "voided_by_name": null,
+      "view": "paid"
     },
     {
       "id": "payment:a3-oct7",
@@ -167,7 +170,8 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null
+      "voided_by_name": null,
+      "view": "paid"
     },
     {
       "id": "payment:a1-oct5",
@@ -225,7 +229,8 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null
+      "voided_by_name": null,
+      "view": "paid"
     },
     {
       "id": "payment:b1-oct2",
@@ -317,7 +322,8 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null
+      "voided_by_name": null,
+      "view": "paid"
     }
   ],
   "authors": [

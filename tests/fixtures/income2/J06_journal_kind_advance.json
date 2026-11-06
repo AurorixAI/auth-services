@@ -11,7 +11,9 @@
     "sum": 2150000,
     "voided_count": 0,
     "replaced_count": 0,
-    "kind_sum": 450000
+    "kind_sum": 450000,
+    "cancelled_here_count": 0,
+    "cancelled_here_sum": 0
   },
   "rows": [
     {
@@ -109,7 +111,8 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null
+      "voided_by_name": null,
+      "view": "paid"
     },
     {
       "id": "payment:b1-oct2",
@@ -201,7 +204,8 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null
+      "voided_by_name": null,
+      "view": "paid"
     }
   ],
   "authors": [

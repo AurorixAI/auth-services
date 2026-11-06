@@ -109,6 +109,8 @@
       "override_total": 0,
       "override_truncated": false
     },
-    "first_price": null
+    "first_price": null,
+    "warnings": [],
+    "correction": null
   }
 }

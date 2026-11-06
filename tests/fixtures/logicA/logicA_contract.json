@@ -1426,6 +1426,28 @@
             "title": "Amount",
             "type": "integer"
           },
+          "confirm_unusual": {
+            "default": false,
+            "title": "Confirm Unusual",
+            "type": "boolean"
+          },
+          "correction": {
+            "default": false,
+            "title": "Correction",
+            "type": "boolean"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
+          },
           "note": {
             "anyOf": [
               {
@@ -3674,6 +3696,28 @@
       "PauseVoid": {
         "description": "Cancel a pause: the reason 3..500 characters.",
         "properties": {
+          "expected_advance": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Advance"
+          },
+          "expected_debt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Debt"
+          },
           "reason": {
             "maxLength": 500,
             "title": "Reason",
@@ -5788,6 +5832,18 @@
       "PriceImpact": {
         "description": "What a change of the group price touches.  Payments already entered never change.",
         "properties": {
+          "correction": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction"
+          },
           "first_price": {
             "anyOf": [
               {
@@ -5826,6 +5882,16 @@
           "students_with_override": {
             "title": "Students With Override",
             "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -6544,6 +6610,28 @@
             ],
             "title": "Amount"
           },
+          "confirm_unusual": {
+            "default": false,
+            "title": "Confirm Unusual",
+            "type": "boolean"
+          },
+          "correction": {
+            "default": false,
+            "title": "Correction",
+            "type": "boolean"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
+          },
           "reason": {
             "anyOf": [
               {
@@ -6704,8 +6792,30 @@
         "type": "object"
       },
       "RecordVoid": {
-        "description": "Cancel a write-off / a refund: the reason 3..500 characters.",
+        "description": "Cancel a write-off / a refund: the reason 3..500 characters.  ``expected_debt`` (a write-off) / ``expected_advance`` (a refund): the sum the person SAW (Money-1 V1; null: no check).",
         "properties": {
+          "expected_advance": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Advance"
+          },
+          "expected_debt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Debt"
+          },
           "reason": {
             "maxLength": 500,
             "title": "Reason",

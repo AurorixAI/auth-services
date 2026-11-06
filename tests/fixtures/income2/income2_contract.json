@@ -1180,6 +1180,11 @@
             "title": "Transferred",
             "type": "integer"
           },
+          "view": {
+            "default": "paid",
+            "title": "View",
+            "type": "string"
+          },
           "void_reason": {
             "anyOf": [
               {
@@ -1216,6 +1221,7 @@
         },
         "required": [
           "id",
+          "view",
           "receipt_no",
           "paid_on",
           "paid_time",
@@ -1259,6 +1265,16 @@
       "JournalTotals": {
         "description": "Of the ACTIVE payments of the filtered set; ``sum`` equals the period's «Поступило» for the same filters (with ``kind``: of the rows that have the kind, whole amounts).",
         "properties": {
+          "cancelled_here_count": {
+            "default": 0,
+            "title": "Cancelled Here Count",
+            "type": "integer"
+          },
+          "cancelled_here_sum": {
+            "default": 0,
+            "title": "Cancelled Here Sum",
+            "type": "integer"
+          },
           "count": {
             "default": 0,
             "title": "Count",
@@ -1296,6 +1312,8 @@
           "sum",
           "voided_count",
           "replaced_count",
+          "cancelled_here_count",
+          "cancelled_here_sum",
           "kind_sum"
         ],
         "title": "JournalTotals",
@@ -1812,6 +1830,18 @@
             }
           },
           {
+            "description": "Money-1 V2: также оплаты прошлых периодов, ОТМЕНЁННЫЕ в этом (строки view=cancelled_here; в count / sum не входят)",
+            "in": "query",
+            "name": "cancelled_in_period",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Money-1 V2: также оплаты прошлых периодов, ОТМЕНЁННЫЕ в этом (строки view=cancelled_here; в count / sum не входят)",
+              "title": "Cancelled In Period",
+              "type": "boolean"
+            }
+          },
+          {
             "description": "Только оплаты, в «куда пошли» которых есть этот вид (old_debt | current | forward | advance | refunded | transferred); в строке остаётся весь split, totals.kind_sum = сумма этого вида по отобранным строкам = цифра плашки «Куда ушли деньги» за тот же период и фильтры. Отменённые и исправленные строки вида не имеют и не показываются.",
             "in": "query",
             "name": "kind",
@@ -2035,6 +2065,30 @@
               ],
               "title": "Status",
               "type": "string"
+            }
+          },
+          {
+            "description": "Money-1 V2: также оплаты прошлых периодов, ОТМЕНЁННЫЕ в этом (строки view=cancelled_here; в count / sum не входят)",
+            "in": "query",
+            "name": "cancelled_in_period",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Money-1 V2: также оплаты прошлых периодов, ОТМЕНЁННЫЕ в этом (строки view=cancelled_here; в count / sum не входят)",
+              "title": "Cancelled In Period",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Money-1 V2 (только файл): заменённые версии исправленных оплат тоже строками (статус «Исправлена»)",
+            "in": "query",
+            "name": "with_replaced",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Money-1 V2 (только файл): заменённые версии исправленных оплат тоже строками (статус «Исправлена»)",
+              "title": "With Replaced",
+              "type": "boolean"
             }
           },
           {

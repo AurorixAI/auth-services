@@ -11,7 +11,9 @@
     "sum": 3450000,
     "voided_count": 2,
     "replaced_count": 1,
-    "kind_sum": null
+    "kind_sum": null,
+    "cancelled_here_count": 0,
+    "cancelled_here_sum": 0
   },
   "rows": [
     {
@@ -51,7 +53,8 @@
       "history": [],
       "void_reason": "Исправлено",
       "voided_at": "2026-10-15T06:30:00",
-      "voided_by_name": "Азиз Хакимов"
+      "voided_by_name": "Азиз Хакимов",
+      "view": "paid"
     }
   ],
   "authors": [
