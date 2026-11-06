@@ -6721,14 +6721,28 @@
       "RegimeImpact": {
         "properties": {
           "charged_after_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "default": 0,
-            "title": "Charged After Total",
-            "type": "integer"
+            "title": "Charged After Total"
           },
           "charged_before_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "default": 0,
-            "title": "Charged Before Total",
-            "type": "integer"
+            "title": "Charged Before Total"
           },
           "defer": {
             "default": true,
@@ -6860,14 +6874,26 @@
             "title": "As Of"
           },
           "charged_after": {
-            "default": 0,
-            "title": "Charged After",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Charged After"
           },
           "charged_before": {
-            "default": 0,
-            "title": "Charged Before",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Charged Before"
           },
           "debt_after": {
             "default": 0,

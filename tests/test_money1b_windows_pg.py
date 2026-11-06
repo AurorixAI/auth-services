@@ -9,7 +9,9 @@ from datetime import date, datetime, timedelta
 
 from src.models.auth import OrgMoneyAudit, StudentPayment
 
+from src.auth import billing_ledger as bl
 from tests.money1b_helpers import account, hold_lessons, set_schedule, slot
+from tests.pay2_ledger_helpers import credit, flat, make, weekly
 from tests.pg_world import give_group_price, give_price, make_client, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_pay2_api_pg import API, fixed_today, membership, owner, seed_payment, settings_block, stay  # noqa: F401  (fixtures)
 
@@ -176,8 +178,8 @@ def test_b9_a_change_of_the_mode_the_day_and_the_recalculation_go_to_the_journal
     assert first["students_affected"] == 3 and first["items_total"] == 3 and first["before"]["period_mode"] == "calendar" and first["after"]["period_mode"] == "lessons"
     assert first["text"].startswith("Изменён способ оплаты: способ «Свой месяц у каждого ученика» → «Пакет уроков»")
     assert "Перейдут на новый способ 3 ученика" in first["text"] and rows[0].actor_id == w.owner.id
-    assert first["sums_available"] is True and (first["charged_before_total"], first["charged_after_total"]) == (900_000, 0)           # the first 30 days: 3 x a month of 300 000 now, a package charges lessons as they are held (R3 R-2: not 1 640 000, the history)
-    assert "начислено 900 000 сум → 0 сум" in first["text"]
+    assert first["sums_available"] is True and (first["charged_before_total"], first["charged_after_total"]) == (900_000, 975_000)       # 3 x a month of 300 000 now; the package of 12 charges by the schedule 12 lessons (300 000) + the first of the next package (25 000) = 325 000 each (Д2 of the walk: not 0)
+    assert "начислено 900\u00a0000\u00a0сум → 975\u00a0000\u00a0сум" in first["text"]
     assert rows[1].details["text"].startswith("Перерасчёт за уроки, отменённые центром: выключен → включён; действует на уроки с 21.10.2026")
     shown = owner(w).get(f"{API}/org/settings/payments/history").json()["items"]
     assert [i["action"] for i in shown] == ["centre_cancel_recalc_changed", "billing_regime_changed"] and shown[1]["details"]["items"][0]["text"]
@@ -290,3 +292,72 @@ def test_b9_the_phrase_of_the_repeat_is_in_the_dictionary_and_has_no_relative_wo
     for moment in (datetime(2026, 10, 21, 6, 55), datetime(2026, 10, 20, 13, 40), datetime(2026, 10, 21, 0, 0)):
         text = tx.repeated_payment_text(moment, now)
         assert "назад" not in text and "минут" not in text and text.endswith("— внести ещё одну?")
+
+
+# ---- the walk of 06.11 (Д2, З2, З3) ----------------------------------------------------------------------------------------------------------
+
+
+def _mwf_between(first, last):
+    return sum(1 for k in range((last - first).days + 1) if (first + timedelta(days=k)).weekday() in (0, 2, 4))
+
+
+def test_walk_d2_month_to_package_the_planned_lessons_are_the_forecast_and_the_package_has_no_date(world, fixed_today):
+    w = world
+    mode_world(w, fixed_today)
+    impact = put_settings(w, period_mode="lessons", lessons_per_payment=12)["regime_impact"]
+    lessons = _mwf_between(D(2026, 10, 25), D(2026, 11, 23))                                  # 26.10 .. 23.11 by Mon / Wed / Fri
+    assert lessons == 13
+    each = 300_000 + 25_000 * (lessons - 12)                                                  # a package of 12 at 300 000 = 25 000 a lesson; the 13th lesson opens the next package
+    assert (impact["charged_before_total"], impact["charged_after_total"]) == (900_000, 3 * each) == (900_000, 975_000)
+    assert all((i["charged_before"], i["charged_after"]) == (300_000, each) for i in impact["items"])
+    for i in impact["items"]:
+        assert i["paid_until_after"] is None and "оплачено до" not in i["text"] and "осталось уроков: " in i["text"]       # a package has no date: the lessons that are left
+    assert "→ 0\u00a0сум" not in impact["text"]
+    smaller = put_settings(w, period_mode="lessons", lessons_per_payment=10)["regime_impact"]
+    assert smaller["charged_after_total"] == 3 * (300_000 + 30_000 * (lessons - 10)) == 1_170_000                         # 10 lessons = 300 000, three more at 30 000
+
+
+def test_walk_d2_a_group_without_a_schedule_has_no_total_only_the_sentence(world, fixed_today):
+    w = world
+    mode_world(w, fixed_today)
+    set_schedule(w, [])
+    impact = put_settings(w, period_mode="lessons", lessons_per_payment=12)["regime_impact"]
+    assert impact["charged_before_total"] is None and impact["charged_after_total"] is None
+    assert impact["items"] and all(i["charged_before"] is None and i["charged_after"] is None for i in impact["items"])
+    assert "Начисления по пакету начнутся с первого урока" in impact["text"] and "начислено" not in impact["text"]
+    assert all("начисления по пакету начнутся с первого урока" in i["text"] and "долг" not in i["text"] for i in impact["items"])
+    put_settings(w, dry_run=False, period_mode="lessons", lessons_per_payment=12)
+    (row,) = w.db.query(OrgMoneyAudit).filter_by(org_id=w.org.id, action="billing_regime_changed").all()
+    assert row.details["sums_available"] is False and row.details["charged_after_total"] is None                  # the journal says «no forecast» too, never a zero
+
+
+def test_walk_z2_a_package_gives_whole_lessons_only_the_package_in_progress_keeps_its_price_and_the_rest_is_an_advance():
+    """ONE rule in the ledger (the window of the price, the window of the mode and the account all read it): lessons = the whole lessons the money pays, the lessons of the package in progress at its own price,
+    the lessons of the next packages at the new one; what does not pay a lesson stays an advance, it never becomes a lesson.  The walk of 06.11 counted «550 000 / 62 500 = 8,8 -> 9»
+    (wrong arithmetic: the 20th lesson is of the package in progress at the OLD 50 000): 1 500 000 = 19 held + the 20th (50 000) + 8 x 62 500 = 9 left, nothing over."""
+    def run(paid, held, today):
+        days = [D(2026, 9, 1) + timedelta(days=i) for i in range(held)]
+        inp = make(today=today, stays=[bl.Stay(D(2026, 9, 1))], price_at=flat(500_000, D(2026, 1, 1), {D(2026, 12, 1): 625_000}), credits=[credit("p", D(2026, 9, 1), paid)],
+                   regimes=[bl.Regime(mode=bl.LESSONS, package_size=10)], counted=[bl.CountedLesson(d, f"l{i}") for i, d in enumerate(days)])
+        led = bl.run_ledger(inp)
+        return led.lessons.covered, led.lessons.used, led.lessons.left, led.advance, led.debt
+
+    assert run(1_500_000, 19, D(2026, 11, 30)) == (30, 19, 11, 550_000, 0)
+    assert run(1_500_000, 19, D(2026, 12, 2)) == (28, 19, 9, 550_000, 0)                          # 11 -> 9, exact: 50 000 + 8 x 62 500 = 550 000
+    assert run(1_530_000, 19, D(2026, 12, 2))[:3] == (28, 19, 9)                                  # 30 000 more do not pay a lesson: still 9 left (an advance, not a lesson)
+    assert run(1_562_500, 19, D(2026, 12, 2))[:3] == (29, 19, 10)                                 # 62 500 more pay exactly one
+    nothing = make(today=D(2026, 12, 2), stays=[bl.Stay(D(2026, 9, 1))], price_at=flat(500_000, D(2026, 1, 1), {D(2026, 12, 1): 700_000}), credits=[credit("p", D(2026, 9, 1), 600_000)],
+                   regimes=[bl.Regime(mode=bl.LESSONS, package_size=12)])
+    assert bl.run_ledger(nothing).lessons.covered == 10                                           # nothing held: the whole package is at the new price, 600 000 / 58 333 = 10,29 -> 10 (down)
+
+
+def test_walk_z3_the_price_per_lesson_of_a_month_is_the_lessons_of_THAT_month_by_the_schedule():
+    from src.auth.payments_service import PaymentService
+
+    two = make(today=D(2026, 11, 20), stays=[bl.Stay(D(2026, 9, 1))], price_at=flat(500_000), lesson_days=weekly((0, 3)))        # Monday + Thursday
+    shared = bl.Regime(anchor="fixed_day", billing_day=1)
+    assert PaymentService._first_month_lessons(two, shared, D(2026, 11, 20)) == 9                 # the cell that begins on 01.12: Mon 7, 14, 21, 28 and Thu 3, 10, 17, 24, 31 = 9, not 8
+    assert PaymentService._first_month_lessons(two, shared, D(2026, 12, 1)) == 9
+    assert PaymentService._first_month_lessons(two, shared, D(2026, 12, 2)) == 8                  # January 2027: Mon 4, 11, 18, 25 and Thu 7, 14, 21, 28 = 8
+    own = bl.Regime(anchor="payment_date")
+    assert PaymentService._first_month_lessons(two, own, D(2026, 12, 1)) == len(two.lesson_days(D(2026, 12, 1), D(2026, 12, 31)))

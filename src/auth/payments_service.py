@@ -539,7 +539,7 @@ class PaymentService:
         impact = self._regime_impact(org_id, after, today)
         was, now = self._regime_fields(before), self._regime_fields(after)
         return {
-            "before": was, "after": now, "from": today.isoformat(), "students_affected": impact.students_affected, "sums_available": True,
+            "before": was, "after": now, "from": today.isoformat(), "students_affected": impact.students_affected, "sums_available": impact.charged_after_total is not None,
             "first_switch": impact.first_switch.isoformat() if impact.first_switch else None, "latest_switch": impact.latest_switch.isoformat() if impact.latest_switch else None,
             "charged_before_total": impact.charged_before_total, "charged_after_total": impact.charged_after_total, "horizon_days": impact.horizon_days,
             "pending_package_students": impact.pending_package_students,
@@ -593,6 +593,25 @@ class PaymentService:
             return "за общий месяц" if regime.billing_day == 1 else f"за общий месяц с {regime.billing_day}-го числа"
         return "за месяц"
 
+    @staticmethod
+    def _forecast(inp: bl.LedgerInput, today: date, horizon: date) -> Tuple[bl.LedgerInput, int]:
+        """Walk Д2 (06.11): the lessons the group has NOT held yet are planned: for a window that looks 30 days ahead the scheduled lessons of the stay count as held (a package is charged at the first of them).
+        The same input is used for «было» and «станет».  Returns the input and the number of forecast lessons added."""
+        have = {c.day for c in inp.counted_lessons}
+        days = [d for d in inp.lesson_days(today, horizon) if d not in have and any(st.first <= d and (st.last is None or d <= st.last) for st in inp.stays)]
+        extra = tuple(bl.CountedLesson(d, f"forecast:{d.isoformat()}") for d in days)
+        return replace(inp, counted_lessons=tuple(sorted(tuple(inp.counted_lessons) + extra, key=lambda c: c.day))), len(days)
+
+    @staticmethod
+    def _first_month_lessons(inp: bl.LedgerInput, regime: bl.Regime, from_day: date) -> int:
+        """Walk З3: the lessons of the FIRST month by the schedule after ``from_day`` (December has 9 lessons of a group, not 8): the cell of the shared month that begins on or after the day, else 31 days."""
+        if regime.mode == bl.CALENDAR and regime.anchor == ps.FIXED_DAY:
+            day = regime.billing_day
+            first = date(from_day.year, from_day.month, day) if from_day.day <= day else (date(from_day.year + (from_day.month == 12), from_day.month % 12 + 1, day))
+            nxt = date(first.year + (first.month == 12), first.month % 12 + 1, day)
+            return len(inp.lesson_days(first, nxt - timedelta(days=1)))
+        return len(inp.lesson_days(from_day, from_day + timedelta(days=30)))
+
     def _regime_impact(self, org_id: str, wanted: PaymentSettings, today: date) -> RegimeImpact:
         """Dry run of a change of the billing mode / of the day of the shared month / of the size of a package: who switches, when, and WHAT IT DOES TO HIM in sums and lessons.
 
@@ -630,9 +649,13 @@ class PaymentService:
             old_regime = bl.regime_at(e.inp.regimes, start_day)
             price = e.inp.price_at(start_day).amount
             unit_before, unit_after = self._unit_text(old_regime), self._unit_text(later)
-            lessons_in_month = len(e.inp.lesson_days(start_day, start_day + timedelta(days=30)))
-            size_before = old_regime.package_size if old_regime.mode == bl.LESSONS else lessons_in_month
-            size_after = later.package_size if later.mode == bl.LESSONS else lessons_in_month
+            from_day = start_day
+            if on is None:                                         # a package in progress: the new way begins after the last lesson of the package by the schedule
+                left = (mw.snapshot(bl.run_ledger(replace(e.inp, today=today)))["lessons"] or {}).get("left") or 0
+                ahead = list(e.inp.lesson_days(today + timedelta(days=1), today + timedelta(days=400))) if left else []
+                from_day = ahead[left - 1] + timedelta(days=1) if left and len(ahead) >= left else today
+            size_before = old_regime.package_size if old_regime.mode == bl.LESSONS else self._first_month_lessons(e.inp, old_regime, from_day)
+            size_after = later.package_size if later.mode == bl.LESSONS else self._first_month_lessons(e.inp, later, from_day)
             per_before = per_after = None
             if price and (mode_changes or (old_regime.mode == bl.LESSONS and later.mode == bl.LESSONS and size_before != size_after)):
                 per_before = (2 * price + size_before) // (2 * size_before) if size_before else None            # half up: 300 000 / 13 = 23 077
@@ -646,13 +669,17 @@ class PaymentService:
                 item = mw.item(e.membership.id, name, snap, snap, has_money=bool(e.inp.credits or e.inp.outflows))
                 charged_before = charged_after = 0
             else:
-                before = bl.run_ledger(replace(e.inp, today=horizon))
-                after = bl.run_ledger(replace(e.inp, today=horizon, regimes=tuple(e.inp.regimes) + (later,)))
-                base = bl.run_ledger(replace(e.inp, today=on - timedelta(days=1))).charged                       # what the account had charged the day BEFORE the switch
+                fin, planned = self._forecast(e.inp, today, horizon)          # Д2: the planned lessons count as held, for both accounts
+                before = bl.run_ledger(replace(fin, today=horizon))
+                after = bl.run_ledger(replace(fin, today=horizon, regimes=tuple(e.inp.regimes) + (later,)))
+                base = bl.run_ledger(replace(fin, today=on - timedelta(days=1))).charged                       # what the account had charged the day BEFORE the switch
                 snap_before, snap_after = mw.snapshot(before), mw.snapshot(after)
+                no_forecast = later.mode == bl.LESSONS and not planned and not any(on <= c.day <= horizon for c in e.inp.counted_lessons)       # a package with no lesson in sight: nothing to forecast
+                if no_forecast:
+                    snap_after = snap_before
                 item = mw.item(e.membership.id, name, snap_before, snap_after, has_money=bool(e.inp.credits or e.inp.outflows), on=horizon)
-                charged_before, charged_after = before.charged - base, after.charged - base
-                if not (meaning_changes or mw.parts_of(snap_before, snap_after)):
+                charged_before, charged_after = (None, None) if no_forecast else (before.charged - base, after.charged - base)
+                if not (no_forecast or meaning_changes or mw.parts_of(snap_before, snap_after)):
                     continue                                       # the day of the shared month moves and this student's accounts do not
             item.update({"switch_on": on, "as_of": horizon, "price_amount": price, "price_unit_before": unit_before if price else None, "price_unit_after": unit_after if price else None,
                          "per_lesson_before": per_before, "per_lesson_after": per_after, "charged_before": charged_before, "charged_after": charged_after})
@@ -665,21 +692,23 @@ class PaymentService:
                 pieces.append("начнёт действовать, когда закончится пакет")
                 item["text"] = f"{name} (когда закончится пакет): " + "; ".join(pieces)
             else:
-                pieces.extend(mw.parts_of(snap_before, snap_after))
+                pieces.extend(["начисления по пакету начнутся с первого урока"] if no_forecast else mw.parts_of(snap_before, snap_after))
                 item["text"] = f"{name} (с {tx.ddmm(on)}, на {tx.ddmm(horizon)}): " + "; ".join(pieces)
             items.append(item)
             if e.price.source == pricing.SOURCE_OVERRIDE and e.price.amount is not None:
                 overrides.append({"membership_id": str(e.membership.id), "student_name": name, "price": e.price.amount, "reason": e.price.reason,
                                   "text": f"{name}: индивидуальная цена {tx.money(e.price.amount)} {unit_before} → {unit_after}; число не меняется, смысл — другой" if meaning_changes
                                   else f"{name}: индивидуальная цена {tx.money(e.price.amount)} не меняется"})
-        items.sort(key=lambda i: (-(i["charged_after"] - i["charged_before"]), i["student_name"]))
+        items.sort(key=lambda i: (-((i["charged_after"] or 0) - (i["charged_before"] or 0)), i["student_name"]))
         counted = [i for i in items if i["switch_on"] is not None]
-        charged_before, charged_after = sum(i["charged_before"] for i in counted), sum(i["charged_after"] for i in counted)
+        unforecast = any(i["charged_after"] is None for i in counted)
+        charged_before, charged_after = (None, None) if unforecast else (sum(i["charged_before"] for i in counted), sum(i["charged_after"] for i in counted))
         if not items:
             text = "Способ оплаты не изменит деньги ни у одного ученика"
         else:
-            text = (f"Перейдут на новый способ {len(items)} {tx.plural(len(items), 'ученик', 'ученика', 'учеников')}: за первые {self.REGIME_HORIZON_DAYS} дней после перехода начислено "
-                    f"{tx.money(charged_before)} → {tx.money(charged_after)}")
+            who = f"Перейдут на новый способ {len(items)} {tx.plural(len(items), 'ученик', 'ученика', 'учеников')}"
+            text = (f"{who}. Начисления по пакету начнутся с первого урока" if unforecast else
+                    f"{who}: за первые {self.REGIME_HORIZON_DAYS} дней после перехода начислено {tx.money(charged_before)} → {tx.money(charged_after)}")
             if pending:
                 text += f"; у {pending} {tx.plural(pending, 'ученика', 'учеников', 'учеников')} идёт пакет — новый способ начнётся, когда он закончится"
         overrides.sort(key=lambda i: i["student_name"])

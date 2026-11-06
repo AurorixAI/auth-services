@@ -1561,6 +1561,8 @@ class RegimeItem(PriceImpactItem):
     price_unit_after: Optional[str] = None
     per_lesson_before: Optional[int] = None           # ≈ sum per lesson (the price over the lessons of a month by the schedule / of a package): an APPROXIMATION, the text says «≈»; null: not told
     per_lesson_after: Optional[int] = None
+    charged_before: Optional[int] = None              # null: the forecast is impossible (the group has no schedule) - the screen shows no sum, only the sentence
+    charged_after: Optional[int] = None
 
 
 class RegimeOverride(PayModel):
@@ -1583,8 +1585,8 @@ class RegimeImpact(PayModel):
     pending_package_students: int = 0                 # R3 code №1: students with a package IN PROGRESS - the new way begins when it ends (``switch_on`` null); the dates ``first_switch`` / ``latest_switch`` are 9999-12-31 for them, as before
     items_total: int = 0
     truncated: bool = False
-    charged_before_total: int = 0                     # Σ CHARGED IN the first ``horizon_days`` days of the new way (not the history since the accounting began), the students with a switch day
-    charged_after_total: int = 0
+    charged_before_total: Optional[int] = 0           # null: no forecast for some student (the group has no schedule) - no total is shown. Σ CHARGED IN the first ``horizon_days`` days of the new way (not the history since the accounting began), the students with a switch day
+    charged_after_total: Optional[int] = 0
     text: str = ""
     items: List[RegimeItem] = Field(default_factory=list)
     override_students: List[RegimeOverride] = Field(default_factory=list)

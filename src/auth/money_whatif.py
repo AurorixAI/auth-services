@@ -26,7 +26,9 @@ def lessons_of(ledger: bl.Ledger) -> Optional[Dict[str, int]]:
 
 
 def snapshot(ledger: bl.Ledger) -> Dict[str, Any]:
-    return {"charged": ledger.charged, "debt": ledger.debt, "advance": ledger.advance, "paid_until": ledger.covered_through, "lessons": lessons_of(ledger)}
+    package = ledger.mode == bl.LESSONS
+    return {"charged": ledger.charged, "debt": ledger.debt, "advance": ledger.advance, "paid_until": None if package else ledger.covered_through,      # a package has no date (Д2 of the walk of 06.11)
+            "lessons": lessons_of(ledger), "package": package}
 
 
 def changed(before: Dict[str, Any], after: Dict[str, Any]) -> bool:
@@ -40,10 +42,12 @@ def parts_of(before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
         parts.append(f"долг {tx.money(before['debt'])} → {tx.money(after['debt'])}")
     if before["advance"] != after["advance"]:
         parts.append(f"аванс {tx.money(before['advance'])} → {tx.money(after['advance'])}")
-    if before["paid_until"] != after["paid_until"]:
+    if before["paid_until"] != after["paid_until"] and not after.get("package"):
         parts.append(f"оплачено до {_ddmm(before['paid_until'])} → {_ddmm(after['paid_until'])}")
     lb, la = before["lessons"], after["lessons"]
-    if lb is not None and la is not None:
+    if after.get("package") and not before.get("package") and la is not None:
+        parts.append(f"осталось уроков: {la['left']}")                           # a calendar account becomes a package: no date, the lessons that are left
+    elif lb is not None and la is not None:
         if lb["covered"] != la["covered"]:
             parts.append(f"оплачено уроков {lb['covered']} → {la['covered']}")
         if lb["left"] != la["left"]:
