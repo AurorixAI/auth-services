@@ -25,7 +25,7 @@ def money(world):
     give_group_price(world.db, world.group, SECRET_FEE)
     r = make_client(world, user=world.owner).post(
         f"{API}/org/memberships/{m.id}/payments",
-        json={"amount": SECRET_AMOUNT, "paid_on": business_today().isoformat()},
+        json={"amount": SECRET_AMOUNT, "paid_on": business_today().isoformat(), "method": "cash"},
     )
     assert r.status_code == 201, r.text
     world.membership_id = str(m.id)
@@ -55,7 +55,7 @@ def endpoints(w):
         ("GET", f"{API}/org/memberships/{m}/price-override", None, 200, False),
         ("PUT", f"{API}/org/memberships/{m}/price-override", {"amount": 1, "reason": "проверка прав"}, 200, False),
         ("GET", f"{API}/org/memberships/{m}/payments", None, 200, False),
-        ("POST", f"{API}/org/memberships/{m}/payments", {"amount": 5, "paid_on": today}, 201, False),
+        ("POST", f"{API}/org/memberships/{m}/payments", {"amount": 5, "paid_on": today, "method": "cash"}, 201, False),
         ("POST", f"{API}/org/payments/{p}/replace", {"amount": 6, "paid_on": today, "reason": "проверка прав"}, 201, False),
         ("POST", f"{API}/org/payments/{p}/void", {"reason": "проверка прав"}, 200, False),
     ]

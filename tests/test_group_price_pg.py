@@ -114,7 +114,7 @@ def test_a_group_without_a_price_and_the_first_price(world):
     (row,) = out["history"]
     assert row["amount"] == 450_000 and row["is_current"] is True and row["is_future"] is False
     assert row["created_by"] == str(world.owner.id) and row["created_by_name"] == "Иван Owner" and row["created_at"]
-    assert get_prices(world) == {k: v for k, v in out.items() if k not in ("dry_run", "impact")}
+    assert get_prices(world) == {k: v for k, v in out.items() if k not in ("dry_run", "impact", "money_effects", "teacher_share")}
     set_settings(world, period_mode="lessons")
     assert get_prices(world)["price_label"] == "Цена пакета"                   # the meaning follows the billing mode
 
