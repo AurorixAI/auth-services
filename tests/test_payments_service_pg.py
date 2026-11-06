@@ -142,7 +142,7 @@ def test_business_date_is_tashkent_not_utc(world, monkeypatch):
 def test_replace_keeps_the_given_reason_and_restating_the_same_figures(world):
     old = pay(world, paid_on=day(-3), valid_to=day(20), valid_from=day(-3))["payment"]
     same = {"amount": 450000, "paid_on": day(-3).isoformat(), "valid_from": day(-3).isoformat(),
-            "valid_to": day(20).isoformat(), "reason": "исправление"}
+            "valid_to": day(20).isoformat(), "reason": "исправление", "method": "cash"}
     r = owner(world).post(f"{API}/org/payments/{old['id']}/replace", json=same)
     assert r.status_code == 201, r.text  # same figures + a note-less correction is not a duplicate of the voided row
     world.db.expire_all()
@@ -172,7 +172,7 @@ def test_void_needs_a_reason_and_works_once(world):
     assert body["row"]["status"] == "none" and body["row"]["last_payment"] is None
     r = client.post(f"{API}/org/payments/{p['id']}/void", json={"reason": "ещё раз"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "ALREADY_VOIDED"
-    r = client.post(f"{API}/org/payments/{p['id']}/replace", json={"amount": 1, "paid_on": day().isoformat(), "reason": "исправление"})
+    r = client.post(f"{API}/org/payments/{p['id']}/replace", json={"amount": 1, "paid_on": day().isoformat(), "reason": "исправление", "method": "cash"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "ALREADY_VOIDED"
     assert world.db.query(StudentPayment).filter_by(org_id=world.org.id).count() == 1  # nothing is ever deleted
 
@@ -377,7 +377,7 @@ def test_status_and_summary_use_a_bounded_number_of_queries(world, mode):
         for i in range(count):
             st = make_student(world.db, world.org, world.group, f"Н{i}{uuid4().hex[:4]}", "Запрос", f"Q-{uuid4().hex[:8]}")
             world.db.commit()
-            body = {"amount": 1 + i, "paid_on": day(-3).isoformat()}
+            body = {"amount": 1 + i, "paid_on": day(-3).isoformat(), "method": "cash"}
             r = owner(world).post(f"{API}/org/memberships/{mid(world, st)}/payments", json=body)
             assert r.status_code == 201, r.text
 
@@ -435,14 +435,14 @@ def test_other_organisation_gets_404_everywhere_and_sees_nothing(world):
     world.db.query(__import__("src.models.auth", fromlist=["OrganizationMember"]).OrganizationMember).filter_by(
         user_id=world.foreign_admin.id).update({"org_role": "owner"})
     world.db.commit()
-    day_body = {"amount": 1, "paid_on": day().isoformat()}
+    day_body = {"amount": 1, "paid_on": day().isoformat(), "method": "cash"}
     assert foreign.get(f"{API}/org/memberships/{m}/payments").status_code == 404
     assert foreign.post(f"{API}/org/memberships/{m}/payments", json=day_body).status_code == 404
     assert foreign.put(f"{API}/org/memberships/{m}/price-override", json={"amount": 1, "reason": "чужая"}).status_code == 404
     assert foreign.get(f"{API}/org/memberships/{m}/price-override").status_code == 404
     assert foreign.get(f"{API}/org/groups/{world.group.id}/prices").status_code == 404
     assert foreign.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 1}).status_code == 404
-    assert foreign.post(f"{API}/org/payments/{p['id']}/replace", json=day_body).status_code == 404
+    assert foreign.post(f"{API}/org/payments/{p['id']}/replace", json={**day_body, "reason": "чужая"}).status_code == 404
     assert foreign.post(f"{API}/org/payments/{p['id']}/void", json={"reason": "чужая"}).status_code == 404
     assert foreign.get(f"{API}/org/students/{world.students[0].id}/memberships").status_code == 404
     assert foreign.get(f"{API}/org/payments/status", params={"search": "Каримова"}).json()["total"] == 0

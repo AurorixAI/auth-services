@@ -34,9 +34,11 @@
   "name": "Иванов И.",
   "orgRole": "teacher",
   "payroll": {
-    "text": "",
+    "text": "Зарплата за октябрь 2026 не сохранена",
     "unpaid_months": [],
-    "unsaved_months": []
+    "unsaved_months": [
+      "2026-10"
+    ]
   },
   "pendingSubstitutionRequests": {
     "count": 0

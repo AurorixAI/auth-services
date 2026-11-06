@@ -181,7 +181,7 @@ def test_receipt_numbers_count_inside_the_organisation_and_are_never_reused(worl
     assert c["receipt_no"] == 3
     # a replacement gets a new number, the replaced one keeps its own
     r = owner(world).post(f"{API}/org/payments/{a['id']}/replace",
-                          json={"amount": 9, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat(), "reason": "исправление"})
+                          json={"amount": 9, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat(), "reason": "исправление", "method": "cash"})
     assert r.json()["payment"]["receipt_no"] == 4
     assert stored_payment(world, a["id"]).receipt_no == 1
     listing = {p["id"]: p["receipt_no"] for p in owner(world).get(
@@ -194,7 +194,7 @@ def test_receipt_numbers_count_inside_the_organisation_and_are_never_reused(worl
         {"settings": {"payments": {"admin_can_manage": True}}})
     world.db.commit()
     r = foreign.post(f"{API}/org/memberships/{other_membership}/payments",
-                     json={"amount": 1, "paid_on": day(-1).isoformat(), "valid_to": day(20).isoformat()})
+                     json={"amount": 1, "paid_on": day(-1).isoformat(), "valid_to": day(20).isoformat(), "method": "cash"})
     assert r.status_code == 201 and r.json()["payment"]["receipt_no"] == 1
 
 
@@ -235,7 +235,7 @@ def test_gives_up_after_ten_conflicts_without_writing_anything(world, monkeypatc
     calls = []
     monkeypatch.setattr(PaymentService, "_next_receipt_no", lambda self, org_id: calls.append(1) or 1)
     r = owner(world).post(f"{API}/org/memberships/{mid(world, world.students[1])}/payments",
-                          json={"amount": 2, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat()})
+                          json={"amount": 2, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat(), "method": "cash"})
     assert r.status_code == 409 and "номер квитанции" in r.json()["detail"] and len(calls) == RECEIPT_ATTEMPTS == 10
     monkeypatch.undo()
     assert world.db.query(StudentPayment).filter_by(org_id=world.org.id).count() == 1
@@ -282,7 +282,7 @@ def test_concurrent_payments_of_one_centre_get_distinct_numbers(world, engine, m
             with Session(engine) as session:
                 created = PaymentService(session).create_payment(
                     str(world.org.id), membership_id, str(world.owner.id),
-                    PaymentCreate(amount=1000 + len(results), paid_on=day(-2), valid_to=day(20)))
+                    PaymentCreate(amount=1000 + len(results), paid_on=day(-2), valid_to=day(20), method="cash"))
                 results.append(created.payment.receipt_no)
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
@@ -307,10 +307,10 @@ def test_concurrent_payments_of_one_centre_get_distinct_numbers(world, engine, m
 def test_receipt_follows_the_correction_chain_and_shows_the_void(world):
     a = pay(world, paid_on=day(-3), valid_to=day(20), amount=1)["payment"]
     r = owner(world).post(f"{API}/org/payments/{a['id']}/replace", json={
-        "amount": 2, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat(), "reason": "Неверная сумма"})
+        "amount": 2, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat(), "reason": "Неверная сумма", "method": "cash"})
     b = r.json()["payment"]
     r = owner(world).post(f"{API}/org/payments/{b['id']}/replace", json={
-        "amount": 3, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat(), "reason": "исправление"})
+        "amount": 3, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat(), "reason": "исправление", "method": "cash"})
     c = r.json()["payment"]
     ra, rb, rc = (owner(world).get(f"{API}/org/payments/{p['id']}/receipt").json() for p in (a, b, c))
     assert (ra["receipt_no"], ra["replaced_by_receipt_no"], ra["replaces_receipt_no"]) == (1, 2, None)
@@ -591,6 +591,7 @@ def test_receipt_content(world):
     assert snapshot["mode"] == "calendar"                   # (valid_from / valid_to: the shim, covered by the golden receipt)
     assert snapshot["allocations"] and sum(a["amount"] for a in snapshot["allocations"]) == 1_250_000
     assert snapshot["debt_after"] == 0 and snapshot["advance_after"] >= 0
+    assert body.pop("issued_at") and body.pop("state_on_issue")["debt"] == 0                   # Money-1 V5: the moment of issue and the account of that day (dynamic)
     assert body == {
         "receipt_no": 1, "org_name": "ALGO Math Center", "org_city": "Ташкент", "org_phone": "+998901234567",
         "student_name": "Каримова Алия", "display_id": "N13-001", "group_name": "Группа",
@@ -600,6 +601,7 @@ def test_receipt_content(world):
         "note": "Наличные", "accepted_by_name": "Иван Owner", "created_at": p["created_at"], "voided_at": None,
         "void_reason": None, "replaced_by_receipt_no": None, "replaces_receipt_no": None, "replaces_amount": None,
         "recalc": [],                                           # PAY-F: no cancelled lesson was deducted
+        "is_copy": False, "print_count": 0, "void_note": None, "disclaimer": "Не является фискальным чеком",      # Money-1 V5
     }
 
 

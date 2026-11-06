@@ -332,7 +332,7 @@ def test_debt_without_a_date_gets_the_day_before_the_start_and_money_needs_a_rea
     got = {r["membership_id"]: r for r in pv["items"]}
     assert got[str(a.id)]["target"] == {"paid_until": None, "debt_amount": 250_000, "debt_on": "2026-10-31"}
     assert got[str(c.id)]["needs_reason"] and got[str(c.id)]["has_money_records"] and pv["needs_reason"] == [str(c.id)]
-    assert [w["code"] for w in got[str(c.id)]["warnings"]] == ["HAS_MONEY"]
+    assert [w["code"] for w in got[str(c.id)]["warnings"]] == ["HAS_MONEY", "OPENING_OVER_PAYMENTS"]      # Money-1 V4 adds the second: «оплачено до» on top of payments
     assert_same_shape(preview(world, [it(world, c, paid_until="2026-12-15")]), fixture("O05_preview_errors_and_reason"))
 
 
@@ -649,7 +649,7 @@ def test_batches_of_different_rows_and_a_payment_in_parallel_all_land_without_a_
     mk = lambda m: [{"membership_id": str(m.id), "version": "-", "paid_until": "2026-11-30"}]
     digests = [preview(world, mk(m))["digest"] for m in ms[:2]]
     t = [run_in_thread(engine, lambda s, m=m, d=d: _service_apply(s, world, mk(m), d)) for m, d in zip(ms[:2], digests)]
-    t.append(run_in_thread(engine, lambda s: PaymentService(s).create_payment(str(world.org.id), ms[2].id, str(world.owner.id), PaymentCreate(amount=100_000, paid_on=TODAY))))
+    t.append(run_in_thread(engine, lambda s: PaymentService(s).create_payment(str(world.org.id), ms[2].id, str(world.owner.id), PaymentCreate(amount=100_000, paid_on=TODAY, method="cash"))))
     for th, _ in t:
         th.join(timeout=60)
     for _, o in t:

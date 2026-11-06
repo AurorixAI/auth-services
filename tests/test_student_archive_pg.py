@@ -952,7 +952,7 @@ def test_a_closed_membership_of_a_student_who_is_not_archived_keeps_working_as_b
     assert r.status_code == 422 and r.json()["detail"]["code"] == "NOTHING_TO_PAY"
     put_fee(two, s, two.second, 700000)
     r = owner(two).post(f"{API}/org/payments/{first['id']}/replace",
-                        json={"amount": 99, "paid_on": business_today().isoformat(), "reason": "исправление"})
+                        json={"amount": 99, "paid_on": business_today().isoformat(), "method": "cash", "reason": "исправление"})
     assert r.status_code == 201, r.text
     assert owner(two).post(f"{API}/org/payments/{r.json()['payment']['id']}/void", json={"reason": "ошибка"}).status_code == 200
 
@@ -970,7 +970,7 @@ def test_a_payment_that_waits_for_an_archiving_is_refused_when_it_gets_the_lock(
     held_student = holder.query(Student).filter_by(id=s.id).with_for_update(key_share=True).one()
     held_memberships = holder.query(StudentGroup).filter_by(student_id=s.id).with_for_update(key_share=True).all()
     thread, outcome = run_in_thread(engine, lambda session: PaymentService(session).create_payment(
-        str(two.org.id), m, str(two.owner.id), PaymentCreate(amount=450000, paid_on=business_today())))
+        str(two.org.id), m, str(two.owner.id), PaymentCreate(amount=450000, paid_on=business_today(), method="cash")))
     wait_until_blocked(engine)
     for membership in held_memberships:
         membership.is_active, membership.left_at = False, datetime.utcnow()
@@ -1002,7 +1002,7 @@ def test_archive_and_a_payment_in_parallel_never_deadlock_and_never_leave_a_paym
     def pay_it(session):
         barrier.wait()
         return PaymentService(session).create_payment(
-            str(two.org.id), m, str(two.owner.id), PaymentCreate(amount=450000, paid_on=business_today()))
+            str(two.org.id), m, str(two.owner.id), PaymentCreate(amount=450000, paid_on=business_today(), method="cash"))
 
     t1, archived = run_in_thread(engine, archive_it)
     t2, paid = run_in_thread(engine, pay_it)

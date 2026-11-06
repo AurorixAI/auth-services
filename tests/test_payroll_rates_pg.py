@@ -29,7 +29,7 @@ def month_before(m):
 
 def put(w, teacher, valid_from, percents, expect=200, client=None, **extra):
     r = (client or owner(w)).put(
-        f"{API}/org/payroll/rates/{teacher.id}", json={"valid_from": valid_from, "percents": percents, **extra}
+        f"{API}/org/payroll/rates/{teacher.id}", json={"valid_from": valid_from, "percents": percents, "confirm_unusual": True, **extra}      # V7: a rate of 0 / in times is asked again; the aim of this file is the history of rates
     )
     assert r.status_code == expect, r.text
     return r.json()

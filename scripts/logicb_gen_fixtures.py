@@ -151,7 +151,7 @@ a_groups.sort(key=lambda g: g["name"])  # removal-impact lists the groups by nam
 put("c1_removal_impact_A.json", "RemovalImpactOut", {
     "memberId": IDS["member_A"], "userId": IDS["A"], "name": short("A"), "orgRole": "teacher", "canRemove": False, "canChangeRole": False,
     "groups": a_groups, "inProgressLessons": [], "futureSubstitutions": {"count": 0},
-    "missedLessons": {"count": len(missed_A)}, "pendingSubstitutionRequests": {"count": 0}, "payroll": {"unsaved_months": [], "unpaid_months": [], "text": ""},
+    "missedLessons": {"count": len(missed_A)}, "pendingSubstitutionRequests": {"count": 0}, "payroll": {"unsaved_months": ["2026-10"], "unpaid_months": [], "text": "Зарплата за октябрь 2026 не сохранена"},      # Money-1 V7: A taught in October and the sheet is not saved
 })
 
 # 2. handover G1 -> B is refused: Mondays 10:00-11:30 of G1 (L1) and G3 (L4) overlap

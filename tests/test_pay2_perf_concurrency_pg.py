@@ -255,11 +255,11 @@ def test_the_cached_summary_is_dropped_by_every_write_that_can_change_a_ledger(w
     base = debt()
     assert base == 3 * 1_000_000 and debt() == base                          # cached now
     # a group price change through the API
-    assert c.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 600_000, "valid_from": "2026-01-02"}).status_code == 200
+    assert c.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 600_000, "valid_from": "2026-01-02", "confirm_unusual": True}).status_code == 200      # V3: the aim is the cache
     assert debt() == 3 * 1_200_000
     # an individual price through the API
     m0 = membership(world, world.students[0])
-    assert c.put(f"{API}/org/memberships/{m0.id}/price-override", json={"amount": 100_000, "reason": "льгота", "valid_from": "2026-01-01"}).status_code == 200
+    assert c.put(f"{API}/org/memberships/{m0.id}/price-override", json={"amount": 100_000, "reason": "льгота", "valid_from": "2026-01-01", "confirm_unusual": True}).status_code == 200
     assert debt() == 2 * 1_200_000 + 200_000
     # a membership added (a new student in the group)
     extra = make_student(world.db, world.org, world.group, "Новый", "Ученик", "P2-NEW")

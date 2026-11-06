@@ -56,7 +56,7 @@ def endpoints(w):
         ("PUT", f"{API}/org/memberships/{m}/price-override", {"amount": 1, "reason": "проверка прав", "confirm_unusual": True}, 200, False),      # rule V3, the aim of this test is the rights
         ("GET", f"{API}/org/memberships/{m}/payments", None, 200, False),
         ("POST", f"{API}/org/memberships/{m}/payments", {"amount": 5, "paid_on": today, "method": "cash"}, 201, False),
-        ("POST", f"{API}/org/payments/{p}/replace", {"amount": 6, "paid_on": today, "reason": "проверка прав"}, 201, False),
+        ("POST", f"{API}/org/payments/{p}/replace", {"amount": 6, "paid_on": today, "reason": "проверка прав", "method": "cash"}, 201, False),
         ("POST", f"{API}/org/payments/{p}/void", {"reason": "проверка прав"}, 200, False),
     ]
 
@@ -123,7 +123,7 @@ def test_admin_with_the_switch_can_do_the_whole_flow_and_is_recorded(money):
     allow_admin(money)
     admin = make_client(money, user=money.admin)
     r = admin.post(f"{API}/org/memberships/{money.membership_id}/payments",
-                   json={"amount": 100, "paid_on": business_today().isoformat(), "valid_to": (business_today() + timedelta(days=365)).isoformat()})
+                   json={"amount": 100, "paid_on": business_today().isoformat(), "method": "cash", "valid_to": (business_today() + timedelta(days=365)).isoformat()})
     assert r.status_code == 201 and r.json()["payment"]["created_by"] == str(money.admin.id)
 
 

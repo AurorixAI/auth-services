@@ -33,8 +33,17 @@ pytestmark = needs_pg
 # ---- helpers ------------------------------------------------------------------------------------------------------
 
 
+def confirming(session):
+    """The service as the window uses it after the yes to «Вы уверены?» (rule V3 is not the aim of the concurrency tests of this file)."""
+    import functools
+
+    service = pricing.PricingService(session)
+    return type("Confirming", (), {"set_group_price": staticmethod(functools.partial(service.set_group_price, confirm_unusual=True)),
+                                   "set_override": staticmethod(functools.partial(service.set_override, confirm_unusual=True))})
+
+
 def put_price(w, amount=500_000, group=None, valid_from=None, note=None, client=None, expect=200, dry=False, **extra):
-    body = {"amount": amount, **extra}
+    body = {"amount": amount, "confirm_unusual": True, **extra}      # rule V3 (a price in times is asked again) is not the aim of the tests of this file
     if valid_from is not None:
         body["valid_from"] = valid_from.isoformat() if hasattr(valid_from, "isoformat") else valid_from
     if note is not None:
@@ -52,7 +61,7 @@ def get_prices(w, group=None, client=None, expect=200):
 
 
 def put_override(w, student=None, group=None, amount=300_000, reason="скидка", valid_from=None, client=None, expect=200):
-    body = {"amount": amount}
+    body = {"amount": amount, "confirm_unusual": True}      # rule V3: not the aim of the tests of this file
     if reason is not None:
         body["reason"] = reason
     if valid_from is not None:
@@ -574,7 +583,7 @@ def test_a_month_of_30_students_with_price_history_costs_the_same_queries_as_one
     q_overview_big, ov = count_queries(world, lambda: client2.get(f"{API}/org/payroll/months/{m.label}"))
     assert ov.status_code == 200
     assert q_big == q_small and q_overview_big == q_overview_small, (q_small, q_big, q_overview_small, q_overview_big)
-    assert q_big <= 45 and q_overview_big <= 45
+    assert q_big <= 55 and q_overview_big <= 55
     # the price pages of the whole group list: a fixed number of queries as well
     q_pages_small, _ = count_queries(world, lambda: client.get(f"{API}/org/payments/status"))
     q_pages_big, listed = count_queries(world, lambda: client2.get(f"{API}/org/payments/status", params={"limit": 100}))
@@ -677,7 +686,7 @@ def test_a_price_write_waits_for_a_holder_of_the_group_but_not_for_an_insert_tha
 
     holder = Session(engine)
     holder.execute(text("SELECT id FROM groups WHERE id = :g FOR NO KEY UPDATE"), {"g": world.group.id})
-    thread, outcome = run_in_thread(engine, lambda session: pricing.PricingService(session).set_group_price(
+    thread, outcome = run_in_thread(engine, lambda session: confirming(session).set_group_price(
         str(world.org.id), world.group.id, str(world.owner.id), amount=111_000, valid_from=day(-3)))
     wait_until_blocked(engine)                                                       # the price write waits for the holder ...
     with Session(engine) as other:                                                   # ... an insert that points at the group (KEY SHARE) does not
@@ -704,7 +713,7 @@ def test_two_concurrent_writes_of_the_same_day_end_clean_one_wins_the_other_is_a
     winner had written - has simply corrected the day."""
     results = []
     for amount in (111_000, 222_000):
-        results.append(run_in_thread(engine, lambda session, a=amount: pricing.PricingService(session).set_group_price(
+        results.append(run_in_thread(engine, lambda session, a=amount: confirming(session).set_group_price(
             str(world.org.id), world.group.id, str(world.owner.id), amount=a, valid_from=day(-3))))
     outcomes = [finish(*r) for r in results]
     errors = [o["error"] for o in outcomes if "error" in o]
@@ -714,7 +723,7 @@ def test_two_concurrent_writes_of_the_same_day_end_clean_one_wins_the_other_is_a
     mids = mid(world)
     results = []
     for amount in (10_000, 20_000):
-        results.append(run_in_thread(engine, lambda session, a=amount: pricing.PricingService(session).set_override(
+        results.append(run_in_thread(engine, lambda session, a=amount: confirming(session).set_override(
             str(world.org.id), mids, str(world.owner.id), amount=a, valid_from=day(-3), reason="гонка")))
     outcomes = [finish(*r) for r in results]
     errors = [o["error"] for o in outcomes if "error" in o]
@@ -745,7 +754,7 @@ def test_a_group_price_written_by_somebody_else_while_this_request_waited_is_a_4
                               created_by=world.admin.id, created_at=datetime.utcnow()))
 
     def request(amount, note=None):
-        return lambda session: pricing.PricingService(session).set_group_price(
+        return lambda session: confirming(session).set_group_price(
             str(world.org.id), world.group.id, str(world.owner.id), amount=amount, valid_from=day(-3), note=note)
 
     lock = ("SELECT id FROM groups WHERE id = :g FOR NO KEY UPDATE", {"g": world.group.id})
@@ -772,7 +781,7 @@ def test_an_exception_written_by_somebody_else_while_this_request_waited_is_a_40
                                            created_by=world.admin.id, created_at=datetime.utcnow()))
 
     def request(amount):
-        return lambda session: pricing.PricingService(session).set_override(
+        return lambda session: confirming(session).set_override(
             str(world.org.id), membership_id, str(world.owner.id), amount=amount, valid_from=day(-3), reason="чужая")
 
     lock = ("SELECT id FROM student_groups WHERE id = :m FOR NO KEY UPDATE", {"m": membership_id})
@@ -890,7 +899,7 @@ def test_a_correction_leaves_two_audit_rows_with_the_right_old_and_new(world):
     assert second.snapshot["old_note"] == "первая" and first.snapshot["old_note"] is None
     # the whole snapshot, the columns and the author
     assert set(first.snapshot) == {"actor_id", "group_id", "valid_from", "old_amount", "old_note", "new_amount", "note",
-                                   "corrected", "impact", "first_price", "requested_valid_from"}
+                                   "corrected", "impact", "first_price", "requested_valid_from", "correction_reason", "corrected_with_payments"}      # Money-1 V3 added the last two
     assert first.snapshot["actor_id"] == str(world.owner.id) and first.snapshot["group_id"] == str(world.group.id)
     assert first.snapshot["impact"] == {"students_following": 3, "students_with_override": 0, "stale_payroll_sheets": 0}
     for r in (first, second, third):
@@ -1054,9 +1063,9 @@ def test_the_price_and_its_audit_row_commit_or_roll_back_together(world, engine,
 
     owner = money_owner(world)
     s0 = world.students[0]
-    group_body = {"amount": 450_000, "valid_from": day(-3).isoformat(), "note": "n"}
+    group_body = {"amount": 450_000, "valid_from": day(-3).isoformat(), "note": "n", "confirm_unusual": True}
     override_url = f"{API}/org/memberships/{mid(world, s0)}/price-override"
-    override_body = {"amount": 300_000, "reason": "скидка", "valid_from": day(-3).isoformat()}
+    override_body = {"amount": 300_000, "reason": "скидка", "valid_from": day(-3).isoformat(), "confirm_unusual": True}
     group_url = f"{API}/org/groups/{world.group.id}/price"
 
     def put_group():
@@ -1136,7 +1145,7 @@ def test_a_price_write_holds_the_student_then_waits_for_the_group_before_it_take
     student, membership_id = world.students[0], mid(world)
     holder = Session(engine)
     holder.execute(text("SELECT id FROM groups WHERE id = :g FOR UPDATE"), {"g": world.group.id})      # the group first ...
-    thread, outcome = run_in_thread(engine, lambda session: pricing.PricingService(session).set_override(
+    thread, outcome = run_in_thread(engine, lambda session: confirming(session).set_override(
         str(world.org.id), membership_id, str(world.owner.id), amount=1_000, valid_from=day(-3), reason="порядок"))
     wait_until_blocked(engine)                                                      # the write waits for the group ...
     assert blocked_probe(engine, "SELECT id FROM students WHERE id = :s FOR NO KEY UPDATE NOWAIT", s=student.id)    # ... holding the student
@@ -1160,7 +1169,7 @@ def test_a_price_write_waiting_for_an_archiving_sees_the_archive_and_writes_noth
     student, membership_id = world.students[0], mid(world)
     holder = Session(engine)
     holder.execute(text("UPDATE students SET status = 'archived', archived_at = now() WHERE id = :s"), {"s": student.id})
-    thread, outcome = run_in_thread(engine, lambda session: pricing.PricingService(session).set_override(
+    thread, outcome = run_in_thread(engine, lambda session: confirming(session).set_override(
         str(world.org.id), membership_id, str(world.owner.id), amount=1_000, valid_from=day(-3), reason="архив"))
     wait_until_blocked(engine)                                                      # it waits for the student row
     holder.commit()
@@ -1190,7 +1199,7 @@ def race_price_write_with(world, engine, monkeypatch, caplog, rounds, competitor
     membership_id = mid(world)
     caplog.set_level(logging.WARNING, logger="src.auth.pricing")
     for n in range(rounds):
-        price_thread, price_out = run_in_thread(engine, lambda session, n=n: pricing.PricingService(session).set_override(
+        price_thread, price_out = run_in_thread(engine, lambda session, n=n: confirming(session).set_override(
             str(world.org.id), membership_id, str(world.owner.id), amount=100_000 + n, valid_from=day(-3), reason=f"гонка {n}"))
         deadline = time.time() + 10
         while not blocked_probe(engine, "SELECT id FROM students WHERE id = :s FOR NO KEY UPDATE NOWAIT", s=world.students[0].id):
@@ -1522,11 +1531,11 @@ def test_a_cancel_racing_another_cancel_or_a_write_is_clean_never_a_500(world, e
         return UUID(row_id_of(get_prices(world), day(10))), UUID(row_id_of(get_override(world, s0), day(10)))
 
     def cancel_group_run(row):
-        return lambda session: pricing.PricingService(session).cancel_group_price(
+        return lambda session: confirming(session).cancel_group_price(
             str(world.org.id), world.group.id, row, str(world.owner.id))
 
     def cancel_override_run(row):
-        return lambda session: pricing.PricingService(session).cancel_override(
+        return lambda session: confirming(session).cancel_override(
             str(world.org.id), mid(world, s0), row, str(world.owner.id))
 
     # the other cancel got there first (while this one waited for the lock): 404, never a 500
@@ -1569,7 +1578,7 @@ def test_the_lock_order_of_a_cancel_is_the_one_of_the_writes(world, engine):
     b = UUID(row_id_of(get_override(world, s0), day(10)))
     holder = Session(engine)
     holder.execute(text("SELECT id FROM groups WHERE id = :g FOR UPDATE"), {"g": world.group.id})
-    thread, outcome = run_in_thread(engine, lambda session: pricing.PricingService(session).cancel_override(
+    thread, outcome = run_in_thread(engine, lambda session: confirming(session).cancel_override(
         str(world.org.id), mid(world, s0), b, str(world.owner.id)))
     wait_until_blocked(engine)
     assert blocked_probe(engine, "SELECT id FROM students WHERE id = :s FOR NO KEY UPDATE NOWAIT", s=s0.id)
@@ -1591,12 +1600,12 @@ def test_a_backdated_price_never_alters_a_payment_already_entered(world, fixed_t
     second = pay(world, world.students[1], amount=123_456, paid_on=day(-5))["payment"]
     stored = [(p.id, p.amount, p.paid_on, p.method, p.voided_at, p.receipt_no, p.created_at) for p in
               world.db.query(StudentPayment).filter_by(org_id=world.org.id).order_by(StudentPayment.created_at)]
-    for body in ({"amount": 999_000, "valid_from": day(-40).isoformat()}, {"amount": 1, "valid_from": day(-19).isoformat()}):
+    for body in ({"amount": 999_000, "valid_from": day(-40).isoformat(), "confirm_unusual": True}, {"amount": 1, "valid_from": day(-19).isoformat(), "confirm_unusual": True}):      # V3 confirmed: the aim is the payments
         r = money_owner(world).put(f"{API}/org/groups/{world.group.id}/price", json=body)
         assert r.status_code == 409 and r.json()["detail"]["code"] == "PRICE_BACKDATE_WITH_PAYMENTS", r.text
         assert {s["membership_id"] for s in r.json()["detail"]["students"]} <= {str(mid(world, s)) for s in world.students}
     r = money_owner(world).put(f"{API}/org/memberships/{mid(world, world.students[1])}/price-override",
-                               json={"amount": 5, "reason": "проверка", "valid_from": day(-30).isoformat()})
+                               json={"amount": 5, "reason": "проверка", "valid_from": day(-30).isoformat(), "confirm_unusual": True})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "PRICE_BACKDATE_WITH_PAYMENTS"
     put_price(world, 450_000, valid_from=day(10))                                      # the future is always allowed
     world.db.expire_all()

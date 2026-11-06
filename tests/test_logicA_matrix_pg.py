@@ -251,7 +251,7 @@ def test_logicA_f13_c_a_leave_and_a_price_write_on_the_same_day_of_one_membershi
     real = pricing._utcnow
     early = iter([real() - timedelta(hours=1)])                                    # (b) first: a write that began before the marker was written
     monkeypatch.setattr(pricing, "_utcnow", lambda: next(early, None) or real())
-    r = owner(world).put(url, json={"amount": 500_000, "valid_from": "2026-10-22", "reason": "договорились"})
+    r = owner(world).put(url, json={"amount": 500_000, "valid_from": "2026-10-22", "reason": "договорились", "confirm_unusual": True})      # V3 confirmed: the aim is the race
     assert r.status_code == 409 and r.json()["detail"]["code"] == "PRICE_CONFLICT", r.text
     assert [(x.amount, x.valid_from) for x in markers(world, m)] == [(None, D(2026, 10, 22))]          # nothing was written
     r = owner(world).put(url, json={"amount": 500_000, "valid_from": "2026-10-22", "reason": "договорились"})   # the retry begins after the marker: last wins
@@ -405,7 +405,7 @@ def test_logicA_d4_o_a_big_backdated_rise_shows_the_total_new_debt_and_needs_no_
 def test_logicA_d4_z_a_zero_price_from_today_is_allowed_with_a_window(world, fixed_today):
     centre(world, 500_000)
     enrolled(world, D(2026, 10, 1))
-    r = owner(world).put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 0, "valid_from": TODAY.isoformat()})
+    r = owner(world).put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 0, "valid_from": TODAY.isoformat(), "confirm_unusual": True})      # V3: a zero price is asked again; the aim is the window
     assert r.status_code == 200 and r.json()["impact"]["money"]["backdated"] is False
 
 

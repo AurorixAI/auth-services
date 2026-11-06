@@ -236,7 +236,7 @@ def test_a_future_price_is_always_allowed_and_the_impact_counts_the_days_an_adva
     assert (money["memberships_with_less_advance"], money["days_lost_total"], money["backdated"]) == (1, 2, False)
     assert c.put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 600_000, "valid_from": "2026-11-01"}).status_code == 200
     # the individual price: the same refusal for a backdated one (the membership has money)
-    r = c.put(f"{API}/org/memberships/{a.id}/price-override", json={"amount": 100_000, "valid_from": "2026-10-01", "reason": "скидка"})
+    r = c.put(f"{API}/org/memberships/{a.id}/price-override", json={"amount": 100_000, "valid_from": "2026-10-01", "reason": "скидка", "confirm_unusual": True})      # V3 confirmed: the aim is the payments
     assert r.status_code == 409 and r.json()["detail"]["code"] == "PRICE_BACKDATE_WITH_PAYMENTS"
     r = c.put(f"{API}/org/memberships/{a.id}/price-override", params={"dry_run": True}, json={"amount": 100_000, "valid_from": "2026-11-15", "reason": "скидка"})
     assert r.status_code == 200 and r.json()["dry_run"] is True and r.json()["impact"]["money"]["backdated"] is False

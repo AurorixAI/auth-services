@@ -766,17 +766,23 @@ class PayrollService:
         wanted = {i for i in ids if i}
         if not wanted:
             return {}
-        return {
-            u.id: staff_name(u.first_name, u.last_name)
-            for u in self.db.query(User).filter(User.id.in_(wanted)).all()
-        }
+        users = self.db.query(User).filter(User.id.in_(wanted)).all()
+        from .ops_rules import name_parts
+
+        cache = self.__dict__.setdefault("_parts_cache", {})
+        cache.update({u.id: name_parts(u) for u in users})              # Money-1 Н7: the parts of the same people, from the same query (no query per sheet)
+        return {u.id: staff_name(u.first_name, u.last_name) for u in users}
 
     def _name_parts(self, ids: Iterable[Optional[UUID]]) -> Dict[UUID, Dict[str, Optional[str]]]:
         """Money-1 Н7: ``{user: {"first_name", "last_name"}}`` - the same people as ``_names``, the parts apart."""
         from .ops_rules import name_parts
 
         wanted = {i for i in ids if i}
-        return {u.id: name_parts(u) for u in self.db.query(User).filter(User.id.in_(wanted)).all()} if wanted else {}
+        cache = self.__dict__.setdefault("_parts_cache", {})
+        missing = wanted - set(cache)
+        if missing:
+            cache.update({u.id: name_parts(u) for u in self.db.query(User).filter(User.id.in_(missing)).all()})
+        return {i: cache[i] for i in wanted if i in cache}
 
     def _suggested(self, org_id: str, teacher_ids: Iterable[UUID]) -> Dict[Tuple[UUID, str], str]:
         """Percent per (teacher, kind of lessons) from the most recently saved sheet that has the kind."""

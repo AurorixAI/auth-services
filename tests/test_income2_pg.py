@@ -374,7 +374,7 @@ def test_journal_authors_ignore_created_by_but_follow_the_other_filters(world, s
 def test_journal_rows_order_and_texts(world, seeded):
     j = journal(world, size=50)
     assert (j["total"], j["pages"], j["page"], j["size"]) == (9, 1, 1, 50)
-    assert j["totals"] == {"count": 7, "sum": 3_450_000, "voided_count": 2, "replaced_count": 1, "kind_sum": None}
+    assert j["totals"] == {"count": 7, "sum": 3_450_000, "voided_count": 2, "replaced_count": 1, "kind_sum": None, "cancelled_here_count": 0, "cancelled_here_sum": 0}
     assert [r["receipt_no"] for r in j["rows"]] == [13, 12, 10, 11, 9, 8, 7, 6, 5]                  # date desc, then time desc
     by = {r["receipt_no"]: r for r in j["rows"]}
     top = j["rows"][0]
@@ -431,10 +431,10 @@ def test_journal_filters_and_the_total_equals_the_period_received(world, seeded)
         o = income(world, "2026-10-01", "2026-10-31", **params)
         assert o["current"]["received"] == j["totals"]["sum"] and o["ok"], params
     # the status filter does not change the totals (they are the active money of the set)
-    assert journal(world, status="voided")["totals"] == {"count": 7, "sum": 3_450_000, "voided_count": 2, "replaced_count": 1, "kind_sum": None}
+    assert journal(world, status="voided")["totals"] == {"count": 7, "sum": 3_450_000, "voided_count": 2, "replaced_count": 1, "kind_sum": None, "cancelled_here_count": 0, "cancelled_here_sum": 0}
     only_day = journal(world, "2026-10-21", "2026-10-21")
     assert [r["receipt_no"] for r in only_day["rows"]] == [13, 12] and only_day["totals"]["sum"] == 250_000
-    assert journal(world, "2026-09-01", "2026-09-30")["totals"] == {"count": 4, "sum": 1_500_000, "voided_count": 0, "replaced_count": 0, "kind_sum": None}
+    assert journal(world, "2026-09-01", "2026-09-30")["totals"] == {"count": 4, "sum": 1_500_000, "voided_count": 0, "replaced_count": 0, "kind_sum": None, "cancelled_here_count": 0, "cancelled_here_sum": 0}
 
 
 def test_journal_is_limited_to_the_callers_organisation_and_to_money_access(world, seeded):
@@ -932,7 +932,7 @@ def test_journal_kind_hand_calculated_october(world, seeded):
                                                                     journal(world, size=100)["rows"][[r["receipt_no"] for r in journal(world, size=100)["rows"]].index(7)]["split"]]
     assert kind_part(by[7], "refunded") == 100_000
     r = journal(world, kind="refunded", size=100)
-    assert [x["receipt_no"] for x in r["rows"]] == [7] and r["totals"] == {"count": 1, "sum": 1_250_000, "voided_count": 0, "replaced_count": 0, "kind_sum": 100_000}
+    assert [x["receipt_no"] for x in r["rows"]] == [7] and r["totals"] == {"count": 1, "sum": 1_250_000, "voided_count": 0, "replaced_count": 0, "kind_sum": 100_000, "cancelled_here_count": 0, "cancelled_here_sum": 0}
     # the cancelled / replaced payments have no split: a kind never shows them, whatever the status
     for status in ("all", "active", "voided"):
         rows = journal(world, kind="current", size=100, status=status)["rows"]

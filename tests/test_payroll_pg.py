@@ -1318,7 +1318,7 @@ def test_a_month_of_ten_teachers_and_two_hundred_students_costs_a_fixed_number_o
     assert ov.status_code == 200 and len(ov.json()["teachers"]) == 10
     # bounded: the same number of queries for 2 teachers x 3 students and for 10 teachers x 20 students
     assert q_big == q_small and q_overview_big == q_overview_small, (q_small, q_big, q_overview_small, q_overview_big)
-    assert q_big <= 45 and q_overview_big <= 45, (q_big, q_overview_big)
+    assert q_big <= 55 and q_overview_big <= 55, (q_big, q_overview_big)      # 45 -> 55: Money-1 V7 added a fixed number of queries to the list of the month (the advance of a teacher without lessons, who is still a member) - the same for 2 and for 10 teachers
     # saving one sheet and opening it is bounded as well
     teacher_id = sheets[0]["teacher_id"]
     q_save, saved = count_queries(world, lambda: client.post(f"{API}/org/payroll/sheets", json={

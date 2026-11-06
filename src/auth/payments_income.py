@@ -807,7 +807,8 @@ class IncomeReports:
         users = self.service._users(a.actor_id for a in found)
         rows = []
         for a in found:
-            snap, student = a.snapshot or {}, students.get(UUID(snap["student_id"])) if (a.snapshot or {}).get("student_id") else None
+            snap = a.snapshot or {}
+            student = students.get(UUID(snap["student_id"])) if snap.get("student_id") else None
             rows.append(DecisionRow(
                 id=str(a.id), at=_iso(a.created_at), kind=a.action, kind_label=DECISION_LABELS[a.action], student_id=snap.get("student_id"),
                 student_name=person_name(student.last_name, student.first_name) or "" if student else "", group_name=groups[a.group_id].name if a.group_id in groups else None,

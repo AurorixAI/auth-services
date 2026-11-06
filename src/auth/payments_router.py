@@ -178,10 +178,10 @@ def set_membership_fee_gone(membership_id: UUID, user: dict = Depends(require_pa
 def _price_with_effects(db, user: dict, membership_ids, write, confirmed: bool, dry_run: bool):
     """Money-1 V9: a price write with the block of what it does to the saved sheets of the teachers (``money_effects``).  The window (``dry_run``) keeps its own answer (the impact and the
     ``warnings`` of an unusual sum) and measures the effect with a real write inside a transaction that is rolled back (the sum was asked about separately, so it is confirmed there);
-    a failure of the measurement is ``unavailable``, never an error of the price."""
+    a failure of the measurement is ``unavailable``, never an error of the price.  The real write is not measured again."""
     owner = user.get("org_role") == "owner"
     if not dry_run:
-        return money_effects.run_with_effects(db, user["org_id"], membership_ids, owner, lambda: write(False, confirmed), dry_run=False)
+        return write(False, confirmed), None      # the write itself runs once and in its own order (the lock of the group first: MN-39); the effects are the business of the window before it
     out = write(True, confirmed)
     try:
         _, effects = money_effects.run_with_effects(db, user["org_id"], membership_ids, owner, lambda: write(False, True), dry_run=True)
