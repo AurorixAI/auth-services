@@ -1616,6 +1616,7 @@ class StudentWriteoff(Base):
     voided_at = Column(DateTime, nullable=True)
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     void_reason = Column(String(500), nullable=True)
+    idempotency_key = Column(UUID(as_uuid=True), nullable=True)      # Money-1 V1: a repeated request of one window (a double click) writes one record
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_student_writeoffs_amount"),
@@ -1627,6 +1628,7 @@ class StudentWriteoff(Base):
         ),
         Index("ix_sw_membership_live", "org_id", "membership_id", postgresql_where=text("voided_at IS NULL")),
         Index("ix_sw_org_effective_on", "org_id", "effective_on", postgresql_where=text("voided_at IS NULL")),
+        Index("uq_student_writeoffs_idempotency", "org_id", "idempotency_key", unique=True, postgresql_where=text("idempotency_key IS NOT NULL")),
     )
 
 
@@ -1650,6 +1652,7 @@ class StudentRefund(Base):
     voided_at = Column(DateTime, nullable=True)
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     void_reason = Column(String(500), nullable=True)
+    idempotency_key = Column(UUID(as_uuid=True), nullable=True)      # Money-1 V1: a repeated request of one window (a double click) writes one record
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_student_refunds_amount"),
@@ -1663,6 +1666,7 @@ class StudentRefund(Base):
         ),
         Index("ix_sr_membership_live", "org_id", "membership_id", postgresql_where=text("voided_at IS NULL")),
         Index("ix_sr_org_effective_on", "org_id", "effective_on", postgresql_where=text("voided_at IS NULL")),
+        Index("uq_student_refunds_idempotency", "org_id", "idempotency_key", unique=True, postgresql_where=text("idempotency_key IS NOT NULL")),
     )
 
 

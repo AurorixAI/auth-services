@@ -233,6 +233,20 @@ class AlreadyVoided(PaymentConflict):
     code = "ALREADY_VOIDED"
 
 
+class DuplicateWriteoff(PaymentConflict):
+    code = "DUPLICATE_WRITEOFF"
+
+
+class DuplicateRefund(PaymentConflict):
+    code = "DUPLICATE_REFUND"
+
+
+class StaleAmount(PaymentConflict):
+    """Money-1 V1: the sum the person saw in the window is not the sum now (409 ``BALANCE_CHANGED`` with the fresh numbers)."""
+
+    code = "BALANCE_CHANGED"
+
+
 class VoidBreaksRefund(PaymentConflict):
     code = "VOID_BREAKS_REFUND"
 
@@ -1452,7 +1466,7 @@ class PaymentService:
         if not payment:
             raise PaymentNotFound("Оплата не найдена")
         if payment.voided_at is not None:
-            raise AlreadyVoided("Оплата уже отменена")
+            raise AlreadyVoided("Оплата уже отменена", **self._voided_detail(payment))
         return payment
 
     @deadlock_guard
@@ -1572,10 +1586,28 @@ class PaymentService:
             void_reason=r.void_reason,
         )
 
+    def _same_key(self, model, org_id: str, key: Optional[UUID]) -> Optional[UUID]:
+        """The id of the record that a repeated request (the same ``Idempotency-Key``) already made, else ``None`` (Money-1 V1)."""
+        if key is None:
+            return None
+        found = self.db.query(model.id).filter(model.org_id == org_id, model.idempotency_key == key).first()
+        return found[0] if found else None
+
+    @staticmethod
+    def _check_seen(kind: str, expected: Optional[int], now: int, **fresh: int) -> None:
+        """Money-1 V1: ``expected`` is what the person saw (``None``: no check - an old client); a difference is 409 with the fresh sum."""
+        if expected is not None and expected != now:
+            raise StaleAmount(tx.stale_text(kind, expected, now), **fresh)
+
+    def _voided_detail(self, row: Any) -> Dict[str, Any]:
+        users = self._users([row.voided_by])
+        return {"voided_at": _iso(row.voided_at), "voided_by_name": _person(users.get(row.voided_by))}
+
     @deadlock_guard
     def create_writeoff(
         self, org_id: str, membership_id: UUID, actor_id: str, *, amount: Optional[int], whole: bool, reason: str,
-        effective_on: Optional[date] = None, actor_role: str = "admin",
+        effective_on: Optional[date] = None, actor_role: str = "admin", expected_debt: Optional[int] = None,
+        idempotency_key: Optional[UUID] = None,
     ) -> WriteoffCreated:
         """Write off a debt (≤ the debt now, or ``whole``); the reason 3..500 characters; archived students are allowed."""
         today = ps.business_today()
@@ -1585,7 +1617,11 @@ class PaymentService:
             self._check_date(effective_on, today, "Дата прощения долга")
             membership = self._membership(org_id, membership_id)
             family = self._lock_family(org_id, membership.student_id)
+            twin = self._same_key(StudentWriteoff, org_id, idempotency_key)
+            if twin is not None:
+                raise DuplicateWriteoff("Это прощение уже внесено", writeoff_id=str(twin))
             before = self._entry_of(org_id, membership_id, today).ledger
+            self._check_seen("debt", expected_debt, before.debt, debt=before.debt, advance=before.advance)
             if whole:
                 amount = before.debt
                 if amount < 1:
@@ -1599,7 +1635,7 @@ class PaymentService:
             row = StudentWriteoff(
                 org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,
                 group_id=membership.group_id, amount=amount, reason=reason, effective_on=effective_on,
-                created_by=UUID(str(actor_id)), created_at=_utcnow(),
+                created_by=UUID(str(actor_id)), created_at=_utcnow(), idempotency_key=idempotency_key,
             )
             self.db.add(row)
             self.db.flush()
@@ -1621,7 +1657,7 @@ class PaymentService:
 
     @deadlock_guard
     def void_writeoff(
-        self, org_id: str, writeoff_id: UUID, actor_id: str, reason: str, *, actor_role: str = "admin"
+        self, org_id: str, writeoff_id: UUID, actor_id: str, reason: str, *, actor_role: str = "admin", expected_debt: Optional[int] = None
     ) -> WriteoffVoided:
         try:
             reason = self._check_reason(reason)
@@ -1637,10 +1673,11 @@ class PaymentService:
                 .populate_existing().with_for_update().first()
             )
             if row.voided_at is not None:
-                raise AlreadyVoided("Прощение долга уже отменено")
+                raise AlreadyVoided("Прощение долга уже отменено", **self._voided_detail(row))
             membership = self._membership(org_id, row.membership_id)
             today = ps.business_today()
             before = self._entry_of(org_id, row.membership_id, today).ledger
+            self._check_seen("debt", expected_debt, before.debt, debt=before.debt, advance=before.advance)
             row.voided_at, row.voided_by, row.void_reason = _utcnow(), UUID(str(actor_id)), reason
             self.db.flush()
             after = self._entry_of(org_id, row.membership_id, today).ledger
@@ -1662,6 +1699,7 @@ class PaymentService:
     def create_refund(
         self, org_id: str, membership_id: UUID, actor_id: str, *, amount: int, method: Optional[str],
         reason: Optional[str], note: Optional[str], effective_on: Optional[date] = None, actor_role: str = "admin",
+        expected_refundable: Optional[int] = None, idempotency_key: Optional[UUID] = None,
     ) -> RefundCreated:
         """Return an advance (≤ what can leave the account on that day); the method is mandatory."""
         today = ps.business_today()
@@ -1678,7 +1716,11 @@ class PaymentService:
             loader = self._loader(org_id, today)
             loader.load_facts([membership_id])
             inp = loader.build_input(membership_id)
+            twin = self._same_key(StudentRefund, org_id, idempotency_key)
+            if twin is not None:
+                raise DuplicateRefund("Этот возврат уже внесён", refund_id=str(twin))
             before = bl.run_ledger(inp)
+            self._check_seen("refundable", expected_refundable, before.refundable, refundable=before.refundable, advance=before.advance)
             allowed = min(before.refundable, bl.refundable_at(inp, effective_on))
             if amount > allowed:
                 raise RefundExceedsAdvance(
@@ -1687,7 +1729,7 @@ class PaymentService:
             row = StudentRefund(
                 org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,
                 group_id=membership.group_id, amount=amount, method=method, reason=reason, note=note,
-                effective_on=effective_on, created_by=UUID(str(actor_id)), created_at=_utcnow(),
+                effective_on=effective_on, created_by=UUID(str(actor_id)), created_at=_utcnow(), idempotency_key=idempotency_key,
             )
             self.db.add(row)
             self.db.flush()
@@ -1710,7 +1752,7 @@ class PaymentService:
 
     @deadlock_guard
     def void_refund(
-        self, org_id: str, refund_id: UUID, actor_id: str, reason: str, *, actor_role: str = "admin"
+        self, org_id: str, refund_id: UUID, actor_id: str, reason: str, *, actor_role: str = "admin", expected_advance: Optional[int] = None
     ) -> RefundVoided:
         try:
             reason = self._check_reason(reason)
@@ -1723,10 +1765,11 @@ class PaymentService:
                 .populate_existing().with_for_update().first()
             )
             if row.voided_at is not None:
-                raise AlreadyVoided("Возврат уже отменён")
+                raise AlreadyVoided("Возврат уже отменён", **self._voided_detail(row))
             membership = self._membership(org_id, row.membership_id)
             today = ps.business_today()
             before = self._entry_of(org_id, row.membership_id, today).ledger
+            self._check_seen("advance", expected_advance, before.advance, advance=before.advance, debt=before.debt)
             row.voided_at, row.voided_by, row.void_reason = _utcnow(), UUID(str(actor_id)), reason
             self.db.flush()
             after = self._entry_of(org_id, row.membership_id, today).ledger

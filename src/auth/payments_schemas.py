@@ -841,6 +841,7 @@ class WriteoffCreate(BaseModel):
     all_debt: bool = Field(False, alias="all")
     reason: str = Field(..., max_length=500)
     effective_on: Optional[date_type] = None  # default: the business today
+    expected_debt: Optional[StrictInt] = None  # Money-1 V1: the debt the person SAW; another one now -> 409 BALANCE_CHANGED (null: no check)
 
     @field_validator("reason")
     @classmethod
@@ -849,9 +850,11 @@ class WriteoffCreate(BaseModel):
 
 
 class RecordVoid(BaseModel):
-    """Cancel a write-off / a refund: the reason 3..500 characters."""
+    """Cancel a write-off / a refund: the reason 3..500 characters.  ``expected_debt`` (a write-off) / ``expected_advance`` (a refund): the sum the person SAW (Money-1 V1; null: no check)."""
 
     reason: str = Field(..., max_length=500)
+    expected_debt: Optional[StrictInt] = None
+    expected_advance: Optional[StrictInt] = None
 
     @field_validator("reason")
     @classmethod
@@ -899,6 +902,7 @@ class RefundCreate(BaseModel):
     reason: Optional[str] = Field(None, max_length=500)
     note: Optional[str] = Field(None, max_length=500)
     effective_on: Optional[date_type] = None  # default: the business today
+    expected_refundable: Optional[StrictInt] = None  # Money-1 V1: the sum to return the person SAW; another one now -> 409 BALANCE_CHANGED (null: no check)
 
 
 class RefundOut(PayModel):

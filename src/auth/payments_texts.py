@@ -30,6 +30,12 @@ def money(amount: int) -> str:
     return num(amount) + NBSP + "сум"
 
 
+def stale_text(kind: str, was: int, now: int) -> str:
+    """Money-1 V1: the sum the person SAW is not the sum now - ``Долг изменился: было 100 000 сум, сейчас 70 000 сум`` (kind: debt | refundable | advance)."""
+    lead = {"debt": "Долг изменился", "refundable": "Сумма к возврату изменилась", "advance": "Аванс изменился"}[kind]
+    return f"{lead}: было {money(was)}, сейчас {money(now)}"
+
+
 def ddmm(day: date) -> str:
     return day.strftime("%d.%m")
 

@@ -10,7 +10,7 @@ from datetime import date
 from typing import Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -90,6 +90,7 @@ def payment_preview(
 def create_writeoff(
     membership_id: UUID,
     request: WriteoffCreate,
+    idempotency_key: Optional[UUID] = Header(None, alias="Idempotency-Key"),
     dry_run: bool = Query(False, description="только последствия для денег (ничего не записывается)"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
@@ -100,7 +101,8 @@ def create_writeoff(
             db, user["org_id"], [membership_id], _owner(user),
             lambda: PaymentService(db).create_writeoff(
                 user["org_id"], membership_id, user["user_id"], amount=request.amount, whole=request.all_debt,
-                reason=request.reason, effective_on=request.effective_on, actor_role=_role(user)), dry_run=dry_run)
+                reason=request.reason, effective_on=request.effective_on, actor_role=_role(user),
+                expected_debt=request.expected_debt, idempotency_key=idempotency_key), dry_run=dry_run)
         out.money_effects, out.dry_run = effects, dry_run                   # A3 (ЗПД-5): a forgiven debt is paid to the teacher - named with the sum
         return out
     except PaymentError as exc:
@@ -119,7 +121,8 @@ def void_writeoff(
     try:
         out, effects = money_effects.run_with_effects(
             db, user["org_id"], _membership_of(db, user["org_id"], StudentWriteoff, writeoff_id), _owner(user),
-            lambda: PaymentService(db).void_writeoff(user["org_id"], writeoff_id, user["user_id"], request.reason, actor_role=_role(user)), dry_run=dry_run)
+            lambda: PaymentService(db).void_writeoff(user["org_id"], writeoff_id, user["user_id"], request.reason, actor_role=_role(user),
+                                                                                   expected_debt=request.expected_debt), dry_run=dry_run)
         out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:
@@ -132,6 +135,7 @@ def void_writeoff(
 def create_refund(
     membership_id: UUID,
     request: RefundCreate,
+    idempotency_key: Optional[UUID] = Header(None, alias="Idempotency-Key"),
     dry_run: bool = Query(False, description="только последствия для денег (ничего не записывается)"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
@@ -142,7 +146,8 @@ def create_refund(
             db, user["org_id"], [membership_id], _owner(user),
             lambda: PaymentService(db).create_refund(
                 user["org_id"], membership_id, user["user_id"], amount=request.amount, method=request.method,
-                reason=request.reason, note=request.note, effective_on=request.effective_on, actor_role=_role(user)), dry_run=dry_run)
+                reason=request.reason, note=request.note, effective_on=request.effective_on, actor_role=_role(user),
+                expected_refundable=request.expected_refundable, idempotency_key=idempotency_key), dry_run=dry_run)
         out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:
@@ -161,7 +166,8 @@ def void_refund(
     try:
         out, effects = money_effects.run_with_effects(
             db, user["org_id"], _membership_of(db, user["org_id"], StudentRefund, refund_id), _owner(user),
-            lambda: PaymentService(db).void_refund(user["org_id"], refund_id, user["user_id"], request.reason, actor_role=_role(user)), dry_run=dry_run)
+            lambda: PaymentService(db).void_refund(user["org_id"], refund_id, user["user_id"], request.reason, actor_role=_role(user),
+                                                                                 expected_advance=request.expected_advance), dry_run=dry_run)
         out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:
