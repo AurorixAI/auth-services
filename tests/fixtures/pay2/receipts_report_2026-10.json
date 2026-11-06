@@ -148,7 +148,11 @@
     "advance_total": 21000,
     "memberships_with_debt": 1,
     "students_with_debt": 1,
-    "memberships_with_advance": 1
+    "memberships_with_advance": 1,
+    "debtors_debt_total": 0,
+    "debt_waiting_total": 0,
+    "students_debtors": 0,
+    "students_waiting": 0
   },
   "reconciliation": {
     "ok": true,

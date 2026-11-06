@@ -2068,15 +2068,17 @@ class AuthService:
                 },
             )
         )
-        self.db.commit()
         if request.price is not None:
-            # Money-1 B2: the price at the creation of the group acts «с самого начала» (the first price of a group; a student may start before today)
+            # Money-1 B2: the price at the creation of the group acts «с самого начала» (the first price of a group; a student may start before today).  R3 code №7: in the SAME transaction
+            # as the group - a failure of the price takes the group down with it (no group without the price the owner typed, no second group with the same name on a retry)
             from . import pricing  # lazy: pulls in the payments modules
 
             try:
-                pricing.PricingService(self.db).set_group_price(org_id, group.id, str(actor_uuid), amount=request.price, valid_from=pricing.EPOCH)
+                pricing.PricingService(self.db).set_group_price(org_id, group.id, str(actor_uuid), amount=request.price, valid_from=pricing.EPOCH, commit=False)
             except pricing.PriceError as exc:
+                self.db.rollback()
                 raise ValueError(exc.message) from exc
+        self.db.commit()
         return self._build_group_response(group)
 
     def _require_active_group_teacher(self, org_id: str, teacher_id: UUID) -> None:
@@ -2569,12 +2571,13 @@ class AuthService:
         added = 0
         skipped_details: list[dict[str, str]] = []
         warnings: list[dict[str, str]] = []
+        self._billing_cache = {}          # R3 code №13: the first lesson of the group and the accounting start are the same for every student of one request
         for student_id in student_ids:
             try:
                 result = self.add_student_to_group(
                     org_id, group_id, student_id,
                     mode=mode, price_override=price_override, actor_id=actor_id,
-                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from,
+                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from, immediate=False,
                 )
                 added += 1
                 for warning in result.get("warnings", []):
@@ -2588,6 +2591,7 @@ class AuthService:
                     raise
                 self.db.rollback()      # Money-1 A4: a transfer moves the money of the student - reported per student like every other refusal of a bulk transfer
                 skipped_details.append({"student_id": str(student_id), "reason": exc.message})
+        self._billing_cache = None
         # ``skipped`` stays a number for older clients; the reasons are new.
         return {
             "group_id": str(group_id),
@@ -2613,6 +2617,7 @@ class AuthService:
         money_right: bool = True,
         dry_run: bool = False,
         pay_from: Optional[date] = None,
+        immediate: bool = True,
     ) -> dict:
         """Enrol a student in a group.
 
@@ -2739,7 +2744,7 @@ class AuthService:
             from . import billing_start  # lazy: pulls in the payments modules
             from .payments_service import PaymentService
 
-            billing_start.check_pay_from(pay_from, ps.business_date(now_dt), PaymentService(self.db).get_settings(org_id).accounting_start_date)
+            billing_start.check_pay_from(pay_from, ps.business_date(now_dt), billing_start.accounting_start_of(self.db, org_id, getattr(self, "_billing_cache", None)))
         if closing and not money_right:
             raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Перевод ученика переносит его оплаченные дни и аванс: его делает владелец или администратор с доступом к деньгам")
         affected_group_ids = [group.id, *(membership.group_id for membership in closing)]
@@ -2809,11 +2814,14 @@ class AuthService:
         billing = None
         if new_period is not None and not closing:
             from . import billing_start  # lazy: pulls in the payments modules
-            from .payments_service import PaymentService
 
+            cache = getattr(self, "_billing_cache", None)        # a bulk adding: the schedule and the settings of the centre are read ONCE for all the students (R3 code №13)
             billing = billing_start.apply(
-                self.db, group, new_period, today=ps.business_date(now_dt), accounting_start=PaymentService(self.db).get_settings(org_id).accounting_start_date,
-                explicit=pay_from)
+                self.db, group, new_period, today=ps.business_date(now_dt), accounting_start=billing_start.accounting_start_of(self.db, org_id, cache),
+                explicit=pay_from, cache=cache)
+            if immediate:                                        # R3 / lead 11: the window says what is charged AT ONCE (a past «Оплата с»)
+                self.db.flush()                                  # the new membership gets its id here
+                billing["immediate"] = billing_start.immediate_charge(self.db, org_id, membership.id, ps.business_date(now_dt))
 
         # N13 P2.1: a transfer carries the payments in force over to the new group.  The price is not carried
         # (#105): in the new group the student follows the price of that group.

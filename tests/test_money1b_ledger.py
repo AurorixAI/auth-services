@@ -46,7 +46,7 @@ def test_b5_the_numbers_of_d8_return_on_16_10():
     (seg,) = led.segments
     assert (seg.period_start, seg.period_end, seg.amount) == (D(2026, 10, 5), D(2026, 11, 5), 300_000)      # 31 study days: the gap of 15.10 is not one
     assert led.charged == 300_000 and led.debt == 0 and led.covered_through == D(2026, 11, 5)
-    assert not [e for e in led.statement if e.kind == "pause"]                                                  # the student asked for no pause: the statement shows none
+    assert [(e.day, e.ref_id) for e in led.statement if e.kind == "pause"] == [(D(2026, 10, 15), "gap:2026-10-15:2026-10-15:1")]     # no pause was asked for; R3 money R-6: the statement says the period is one day longer
     assert led.pauses == ((D(2026, 10, 15), D(2026, 10, 15)),)                                                  # ... but the overdue days skip the gap, as the chain does
 
 
@@ -61,7 +61,7 @@ def test_b5_a_real_pause_and_a_bridged_return_are_both_kept():
     led = bl.run_ledger(own_month([bl.Stay(D(2026, 10, 5), D(2026, 10, 14)), bl.Stay(D(2026, 10, 16))], D(2026, 10, 20), pauses=pauses))
     (seg,) = led.segments
     assert (seg.period_start, seg.period_end, seg.amount) == (D(2026, 10, 5), D(2026, 11, 7), 300_000)         # 31 study days: two days of the pause and one of the gap are not study days
-    assert [e.day for e in led.statement if e.kind == "pause"] == [D(2026, 10, 8)]
+    assert [(e.day, e.ref_id.split(":")[0]) for e in led.statement if e.kind == "pause"] == [(D(2026, 10, 8), "pause"), (D(2026, 10, 15), "gap")]
 
 
 def test_b5_only_the_own_month_chain_is_bridged_a_fixed_day_cell_counts_the_days_of_each_stay():
@@ -107,38 +107,38 @@ def entry(inp):
                            student=SimpleNamespace(status="active"), price=SimpleNamespace(amount=300_000))
 
 
-@pytest.mark.parametrize("today, bucket, reason", [
-    (D(2026, 11, 5), "waiting", "Ждём оплату до 07.11"),       # A3: the first day of the new period 05.11 - the debt 300 000 is there, the student is not a debtor
-    (D(2026, 11, 6), "waiting", "Ждём оплату до 07.11"),
-    (D(2026, 11, 7), "waiting", "Ждём оплату до 07.11"),       # the third day
-    (D(2026, 11, 8), "debt", "Просрочено на 4 дня"),           # the fourth day: a debtor
+@pytest.mark.parametrize("today, tab, waiting, old_reason", [
+    (D(2026, 11, 5), "waiting", "Ждём оплату до 07.11", "Просрочено на 1 день"),       # A3: the first day of the new period 05.11 - the debt 300 000 is there, the student is not a debtor
+    (D(2026, 11, 6), "waiting", "Ждём оплату до 07.11", "Просрочено на 2 дня"),
+    (D(2026, 11, 7), "waiting", "Ждём оплату до 07.11", "Просрочено на 3 дня"),       # the third day
+    (D(2026, 11, 8), "debtors", None, "Просрочено на 4 дня"),                          # the fourth day: a debtor
 ])
-def test_b7_the_debt_of_a_new_period_is_waiting_for_three_days_then_a_debtor(today, bucket, reason):
+def test_b7_the_debt_of_a_new_period_is_waiting_for_three_days_then_a_debtor(today, tab, waiting, old_reason):
     e = entry(own_month([bl.Stay(D(2026, 10, 5))], today))                                                  # 300 000 paid for 05.10 - 04.11, nothing for 05.11
     assert e.ledger.debt == 300_000 and e.ledger.reconciles                                                  # I-1: the number does not depend on the name
-    assert pv.entry_bucket(e) == bucket
-    assert pv.debt_reason(e)[1] == reason
+    assert pv.entry_tab(e) == tab and pv.waiting_reason(e) == waiting
+    assert pv.entry_bucket(e) == "debt" and pv.debt_reason(e)[1] == old_reason                               # R3 №21: the OLD fields keep their meaning in this release
 
 
 def test_b7_a_new_student_waits_three_days_too_and_a_part_payment_does_not_end_it():
     new = entry(own_month([bl.Stay(D(2026, 11, 5))], D(2026, 11, 6), paid=0))
-    assert new.ledger.debt == 300_000 and pv.entry_bucket(new) == "waiting" and pv.waiting_until(new) == D(2026, 11, 7)
+    assert new.ledger.debt == 300_000 and pv.entry_tab(new) == "waiting" and pv.waiting_until(new) == D(2026, 11, 7)
     part = entry(own_month([bl.Stay(D(2026, 11, 5))], D(2026, 11, 6), paid=0, credits=(credit("p", D(2026, 11, 6), 100_000),)))
-    assert part.ledger.debt == 200_000 and pv.entry_bucket(part) == "waiting"
+    assert part.ledger.debt == 200_000 and pv.entry_tab(part) == "waiting"
     late = entry(own_month([bl.Stay(D(2026, 11, 5))], D(2026, 11, 9), paid=0))
-    assert pv.entry_bucket(late) == "debt" and pv.debt_reason(late) == ("never_paid", "Ещё не платил")
+    assert pv.entry_tab(late) == "debtors" and pv.debt_reason(late) == ("never_paid", "Ещё не платил")
 
 
 def test_b7_an_old_debt_or_a_student_who_left_is_a_debtor_at_once():
     old = entry(own_month([bl.Stay(D(2026, 10, 5))], D(2026, 11, 5), paid=0))                                # October is not paid and November has begun: 600 000, the past debt is there
-    assert old.ledger.past_debt == 300_000 and pv.entry_bucket(old) == "debt"
+    assert old.ledger.past_debt == 300_000 and pv.entry_tab(old) == "debtors"
     gone = entry(own_month([bl.Stay(D(2026, 11, 5), D(2026, 11, 6))], D(2026, 11, 6), paid=0))
     gone.membership.is_active = False
-    assert gone.ledger.debt > 0 and pv.entry_bucket(gone) == "debt"
+    assert gone.ledger.debt > 0 and pv.entry_tab(gone) == "debtors"
 
 
 def test_b7_a_package_has_no_periods_and_never_waits():
     inp = make(today=D(2026, 11, 5), stays=[bl.Stay(D(2026, 10, 5))], price_at=flat(600_000, D(2026, 1, 1)), start=D(2026, 9, 1),
                regimes=[bl.Regime(mode=bl.LESSONS, package_size=12)], counted=[bl.CountedLesson(D(2026, 11, 2), "l1")])
     e = entry(inp)
-    assert e.ledger.debt > 0 and pv.entry_bucket(e) == "debt"
+    assert e.ledger.debt > 0 and pv.entry_tab(e) == "debtors" and pv.entry_bucket(e) == "debt"

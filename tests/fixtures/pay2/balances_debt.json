@@ -17,10 +17,15 @@
       "past_debt": 0,
       "current_due": 70000,
       "advance": 0,
-      "refundable": 0
+      "refundable": 0,
+      "tab": null,
+      "waiting_until": null
     }
   ],
   "total": 1,
   "limit": 50,
-  "offset": 0
+  "offset": 0,
+  "debt_total": 0,
+  "debtors_debt_total": 0,
+  "debt_waiting_total": 0
 }

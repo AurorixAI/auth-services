@@ -896,8 +896,8 @@ class PricingService:
         backdated = valid_from < today
         reach = max(valid_from, today)
         empty = {"memberships_with_new_debt": 0, "debt_delta": 0, "memberships_with_less_advance": 0, "advance_delta": 0,
-                 "days_lost_total": 0, "backdated": backdated, "as_of": reach, "items_total": 0, "truncated": False,
-                 "text": mw.summary_text(0, 0, 0, 0), "items": [], "override_students": []}
+                 "days_lost_total": 0, "lessons_lost_total": 0, "next_period_students": 0, "next_period_delta_total": 0, "backdated": backdated, "as_of": reach, "items_total": 0,
+                 "truncated": False, "text": mw.summary_text(0, 0, 0, 0), "items": [], "override_students": [], "override_total": 0, "override_truncated": False}
         if not ids:
             return empty, []
         old_loader = ls.LedgerLoader(self.db, str(org_id), today)
@@ -906,8 +906,8 @@ class PricingService:
         new_loader.load_facts(ids)
         new_loader.books = what_if(new_loader.books)
         items, blocked, overrides = [], [], []
-        new_debt = less_adv = days_lost = 0
-        debt_delta = advance_delta = 0
+        new_debt = less_adv = days_lost = lessons_lost = next_count = 0
+        debt_delta = advance_delta = next_delta = 0
         for mid in ids:
             if mid not in old_loader.members:
                 continue
@@ -931,7 +931,8 @@ class PricingService:
             if before.covered_through and after.covered_through and after.covered_through < before.covered_through:
                 lost = (before.covered_through - after.covered_through).days
             snap_before, snap_after = mw.snapshot(before), mw.snapshot(after)
-            if not mw.changed(snap_before, snap_after):
+            nxt = mw.next_period(inp_old, inp_new, reach) if membership.is_active else None     # R3 №4: the student who pays in time and whose NEXT period costs another sum
+            if not mw.changed(snap_before, snap_after) and nxt is None:
                 continue
             if after.debt > before.debt:
                 new_debt += 1
@@ -940,13 +941,20 @@ class PricingService:
                 less_adv += 1
                 advance_delta += min(0, after.advance - before.advance)
                 days_lost += lost
-            items.append(mw.item(mid, name, snap_before, snap_after, has_money=has_money))
+            lb, la = snap_before["lessons"], snap_after["lessons"]
+            if lb and la and la["covered"] < lb["covered"]:
+                lessons_lost += lb["covered"] - la["covered"]
+            if nxt:
+                next_count += 1
+                next_delta += nxt["difference"]
+            items.append(mw.item(mid, name, snap_before, snap_after, has_money=has_money, on=reach, next_period=nxt))
         items.sort(key=lambda i: (-(i["debt_after"] - i["debt_before"]), i["advance_after"] - i["advance_before"], i["student_name"]))
         overrides.sort(key=lambda i: i["student_name"])
         return {"memberships_with_new_debt": new_debt, "debt_delta": debt_delta, "memberships_with_less_advance": less_adv,
-                "advance_delta": advance_delta, "days_lost_total": days_lost, "backdated": backdated, "as_of": reach,
-                "items_total": len(items), "truncated": len(items) > IMPACT_ITEMS, "text": mw.summary_text(len(items), debt_delta, advance_delta, days_lost),
-                "items": items[:IMPACT_ITEMS], "override_students": overrides[:IMPACT_ITEMS]}, blocked
+                "advance_delta": advance_delta, "days_lost_total": days_lost, "lessons_lost_total": lessons_lost, "next_period_students": next_count, "next_period_delta_total": next_delta,
+                "backdated": backdated, "as_of": reach, "items_total": len(items), "truncated": len(items) > IMPACT_ITEMS,
+                "text": mw.summary_text(len(items), debt_delta, advance_delta, days_lost, lessons_lost, next_count, next_delta),
+                "items": items[:IMPACT_ITEMS], "override_students": overrides[:IMPACT_ITEMS], "override_total": len(overrides), "override_truncated": len(overrides) > IMPACT_ITEMS}, blocked
 
     def _running_periods_without_price(self, org_id: str, ids: Sequence[UUID], today: date) -> Tuple[Optional[date], int]:
         """``(the earliest first billable day of the period that is running and has no price, how many students have such a period)`` - the day the FIRST price of a group must reach back to.
@@ -1000,8 +1008,9 @@ class PricingService:
         note: Optional[str] = None,
         dry_run: bool = False,
         owner_view: bool = False,
+        commit: bool = True,
     ) -> Dict[str, Any]:
-        """Set the price of a group from a day (default: today).  A past day is allowed - the impact says what it
+        """Set the price of a group from a day (default: today).  ``commit=False`` (R3 code №7): the caller owns the transaction (the creation of a group with a price) - it is flushed, not committed, and a failure rolls EVERYTHING back.  A past day is allowed - the impact says what it
         touches.  The same day again corrects the amount of that day; a row of that day written by somebody else
         while this request waited for the lock is a 409 ``PRICE_CONFLICT`` (see the module docstring).  The same
         amount and note as the row of that day (a double click) change nothing and leave no audit row; every other
@@ -1046,8 +1055,12 @@ class PricingService:
                 .filter(GroupPrice.group_id == group.id, GroupPrice.valid_from == valid_from)
                 .first()
             )
+            effective = None if row is not None else (
+                self.db.query(GroupPrice).filter(GroupPrice.group_id == group.id, GroupPrice.valid_from < valid_from).order_by(GroupPrice.valid_from.desc()).first())
             if row is not None and (int(row.amount), row.note or None) == (amount, note):
                 pass  # the same request twice (a double click, or one that raced and lost): nothing to write or audit
+            elif effective is not None and (int(effective.amount), effective.note or None) == (amount, note):
+                pass  # R3 code №6: the price in force on that day is already this one - a repeated request of a FIRST price (its day moved back the first time) is not a second row of the history
             elif row is not None and row.created_at is not None and row.created_at >= requested_at:
                 # written while this request waited for the lock: the caller has not seen it
                 raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT")
@@ -1096,7 +1109,10 @@ class PricingService:
                     },
                     at=now,
                 )
-            self.db.commit()
+            if commit:
+                self.db.commit()
+            else:
+                self.db.flush()
         except IntegrityError as exc:  # a concurrent write of the same day slipped through
             self.db.rollback()
             logger.info("group price write lost a race group=%s", group_id)

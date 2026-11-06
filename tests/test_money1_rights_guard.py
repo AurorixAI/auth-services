@@ -93,7 +93,7 @@ NOT_MONEY = {
     ("POST", f"{P}/org/schedule/lessons/{{lesson_id}}/reschedule"): "the schedule", ("POST", f"{P}/org/schedule/occurrences"): "the schedule",
     ("POST", f"{P}/org/students"): "a student card without money (the enrolment and its fee go through the roster routes, CONDITIONAL)",
     ("PUT", f"{P}/org/students/{{student_id}}"): "the card; the archive goes through its own route",
-    ("POST", f"{P}/org/students/{{student_id}}/restore"): "the card comes back and the student is re-enrolled; the accruals begin from today by the normal rule, no money is entered",
+    ("POST", f"{P}/org/students/{{student_id}}/restore"): "the card comes back and the student is re-enrolled; the accruals begin from the first lesson of the group by the normal rule («Оплата с», Money-1 B1), no money is entered",
     ("POST", f"{P}/org/substitutions"): "a request for a substitute for a FUTURE lesson", ("POST", f"{P}/org/substitutions/decide-bulk"): "the same, the decision",
     ("POST", f"{P}/org/substitutions/withdraw"): "the same", ("POST", f"{P}/org/substitutions/{{request_id}}/decide"): "the same",
     ("POST", f"{P}/org/substitutions/{{request_id}}/withdraw"): "the same",

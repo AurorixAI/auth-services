@@ -125,7 +125,7 @@ def payments_summary(user: dict = Depends(require_payments_access), db: Session 
 
 @router.get("/org/payments/status", response_model=PaymentStatusPage)
 def payments_status(
-    bucket: Literal["debt", "waiting", "expiring", "active", "paused", "all", "due", "none"] = "all",
+    bucket: Literal["debt", "debtors", "waiting", "expiring", "active", "paused", "all", "due", "none"] = "all",
     group_id: Optional[UUID] = None,
     teacher_id: Optional[UUID] = None,
     search: Optional[str] = Query(None, max_length=100),

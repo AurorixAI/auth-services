@@ -99,6 +99,9 @@ class CollectionRow(PayModel):
     debt: int = 0  # charged - paid - forgiven
     students: int = 0  # students charged in the month
     students_with_debt: int = 0  # in the total: DISTINCT students (a student who owes in two groups counts once)
+    # Money-1 R3 №20: of this ``debt`` / ``students_with_debt``, how much belongs to students who only «ждут оплату» (the period began within 3 days): ``debt - debt_waiting`` is the debt of the debtors
+    debt_waiting: int = 0
+    students_waiting: int = 0
     pct: Optional[int] = None  # floor(paid * 100 / charged): 100 only when the whole cost is paid; null when nothing is charged
 
 

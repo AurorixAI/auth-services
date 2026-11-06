@@ -271,6 +271,8 @@
       "debt": 150000,
       "students": 2,
       "students_with_debt": 1,
+      "debt_waiting": 0,
+      "students_waiting": 0,
       "pct": 75
     },
     "groups": [
@@ -285,6 +287,8 @@
         "debt": 150000,
         "students": 2,
         "students_with_debt": 1,
+        "debt_waiting": 0,
+        "students_waiting": 0,
         "pct": 75
       }
     ]
@@ -296,6 +300,10 @@
     "memberships_with_debt": 1,
     "students_with_debt": 1,
     "memberships_with_advance": 1,
+    "debtors_debt_total": 150000,
+    "debt_waiting_total": 0,
+    "students_debtors": 1,
+    "students_waiting": 0,
     "students_with_advance": 1
   },
   "checks": [

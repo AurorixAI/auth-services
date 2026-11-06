@@ -263,7 +263,7 @@ def receipts_items(
 
 @router.get("/org/payments/balances", response_model=BalancesPage, responses=_ERRORS)
 def payments_balances(
-    kind: Literal["debt", "advance"] = "debt",
+    kind: Literal["debt", "debtors", "waiting", "advance"] = "debt",
     group_id: Optional[UUID] = None,
     teacher_id: Optional[UUID] = None,
     search: Optional[str] = Query(None, max_length=100),
@@ -272,7 +272,8 @@ def payments_balances(
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
-    """Раскрытие «позиции»: членства с долгом / авансом (в том числе ушедших и архивных)."""
+    """Раскрытие «позиции»: членства с долгом / авансом (в том числе ушедших и архивных). ``debt`` — весь долг, как раньше (ждущие оплату внутри); ``debtors`` / ``waiting`` — по одному определению
+    должника (Money-1 R3 №20); в ответе суммы всех строк фильтра: ``debt_total`` = ``debtors_debt_total`` + ``debt_waiting_total``."""
     try:
         return PaymentsReports(db).balances(
             user["org_id"], kind=kind, group_id=group_id, teacher_id=teacher_id, search=search, limit=limit, offset=offset)

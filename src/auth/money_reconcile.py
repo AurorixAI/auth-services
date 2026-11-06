@@ -258,8 +258,37 @@ def _explaining_events(db, org_id: Any, since_by_membership: Dict[UUID, datetime
     if org_moment is not None and org_moment > oldest and (centre is None or org_moment > centre):
         centre = org_moment
 
+    # Money-1 R3 code №9: the «оплачено до» / the money of a membership that came by a TRANSFER is derived from the facts of the groups it came from (the paid days of their openings, their payments, pauses): a
+    # lawful correction there moves the coverage here without a record on this membership - it explains it (the sources of the sources too)
+    via_sources: Dict[UUID, datetime] = {}
+    sources_of: Dict[UUID, set] = {}
+    frontier = set(ids)
+    for _hop in range(8):
+        found = db.query(MembershipTransfer.to_membership_id, MembershipTransfer.from_membership_id).filter(
+            MembershipTransfer.org_id == org_id, MembershipTransfer.voided_at.is_(None), MembershipTransfer.to_membership_id.in_(list(frontier))).all()
+        if not found:
+            break
+        frontier = set()
+        for target, source in found:
+            for owner_id in [m for m, srcs in sources_of.items() if target in srcs] + [target]:
+                sources_of.setdefault(owner_id, set()).add(source)
+            frontier.add(source)
+    every_source = set().union(*sources_of.values()) if sources_of else set()
+    if every_source:
+        moments: Dict[UUID, datetime] = {}
+        for model in (StudentPayment, StudentWriteoff, StudentRefund, MembershipOpeningBalance, MembershipPause):
+            for membership_id, created, voided in (db.query(model.membership_id, model.created_at, model.voided_at)
+                                                   .filter(model.org_id == org_id, model.membership_id.in_(list(every_source)), or_(model.created_at > oldest, model.voided_at > oldest)).all()):
+                _latest(moments, membership_id, created)
+                _latest(moments, membership_id, voided)
+        for target, sources in sources_of.items():
+            if target in since_by_membership:
+                for source in sources:
+                    if source in moments:
+                        _latest(via_sources, target, moments[source])
+
     money_explained = {m for m, moment in money.items() if moment > since_by_membership[m]}
-    coverage_explained = set(money_explained)
+    coverage_explained = set(money_explained) | {m for m, moment in via_sources.items() if moment > since_by_membership[m]}
     for membership_id, since in since_by_membership.items():
         if (by_group.get(groups.get(membership_id)) or since) > since or (centre is not None and centre > since):
             coverage_explained.add(membership_id)

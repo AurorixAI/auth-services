@@ -21,12 +21,15 @@
     "latest_switch": "2026-11-14",
     "defer": true,
     "horizon_days": 30,
+    "pending_package_students": 0,
     "items_total": 0,
     "truncated": false,
     "charged_before_total": 0,
     "charged_after_total": 0,
     "text": "",
     "items": [],
-    "override_students": []
+    "override_students": [],
+    "override_total": 0,
+    "override_truncated": false
   }
 }

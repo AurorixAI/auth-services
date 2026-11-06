@@ -135,7 +135,9 @@ class _Base:
     def _first_stay_day(self, membership: StudentGroup) -> date:
         periods = membership_periods.periods_by_membership(self.db, [membership.id]).get(membership.id, [])
         if periods:
-            return ps.business_date(periods[0].joined_at)
+            from .ledger_service import first_day_of_period      # the one «first day» of a stay (R3 code №19): «Оплата с» when it was given
+
+            return first_day_of_period(periods[0])
         return ps.business_date(membership.joined_at) if membership.joined_at else ps.business_today()
 
     def _has_money_records(self, membership_id: UUID) -> bool:

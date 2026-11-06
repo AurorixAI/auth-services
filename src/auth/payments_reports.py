@@ -22,6 +22,7 @@ from . import billing_ledger as bl
 from . import ledger_service as ls
 from . import payment_status as ps
 from . import payments_texts as tx
+from .payments_views import debt_split_of
 from .export_safety import csv_safe_row
 from . import payments_views as pv
 from .payments_files import person_name, staff_name
@@ -133,6 +134,10 @@ class PaymentsReports:
                 else:
                     title = f"Остаток на начало: оплачено до {until.strftime('%d.%m')}" if until else "Остаток на начало"
                 rows.append(StatementRow(type="opening_paid_until", title=title, **common))
+            elif e.kind == "pause" and e.ref_id.startswith("gap:"):
+                _tag, first_s, last_s, days_s = e.ref_id.split(":")
+                n = int(days_s)
+                rows.append(StatementRow(type="pause", title=f"Период продлён на {n} {tx.days_word(n)}: ученик возвращался в группу ({tx.period_text(date.fromisoformat(first_s), date.fromisoformat(last_s))})", **common))
             elif e.kind == "pause":
                 first, last = (date.fromisoformat(x) for x in e.ref_id.split(":")[1:3])
                 rows.append(StatementRow(type="pause", title=f"Пауза {tx.period_text(first, last)} — стоимость не считается", **common))
@@ -412,7 +417,8 @@ class PaymentsReports:
             debt_total=sum(e.ledger.debt for e in shown), past_debt_total=sum(e.ledger.past_debt for e in shown),
             advance_total=sum(e.ledger.advance for e in shown), memberships_with_debt=sum(1 for e in shown if e.ledger.debt > 0),
             students_with_debt=len({e.student.id for e in shown if e.ledger.debt > 0}),
-            memberships_with_advance=sum(1 for e in shown if e.ledger.advance > 0))
+            memberships_with_advance=sum(1 for e in shown if e.ledger.advance > 0),
+            **debt_split_of(shown))
         checks = [
             ReconciliationCheck(code="received_eq_allocated_plus_refunded", left=totals["received"],
                                 right=allocated + refunded_from + transferred_from,
@@ -510,8 +516,12 @@ class PaymentsReports:
     ) -> BalancesPage:
         loader = ls.LedgerLoader(self.db, str(org_id), ps.business_today())
         entries = loader.load(group_id=group_id, teacher_id=teacher_id, search=search, scope="all")
-        field_name = "debt" if kind == "debt" else "advance"
+        field_name = "debt" if kind in ("debt", "debtors", "waiting") else "advance"
         picked = [e for e in entries if getattr(e.ledger, field_name) > 0]
+        if kind in ("debtors", "waiting"):          # R3 №20: the new definition: the real debtors / the ones who only wait; ``debt`` keeps its old meaning (every debt)
+            picked = [e for e in picked if pv.entry_tab(e) == kind]
+        waiting_sum = sum(e.ledger.debt for e in picked if pv.waiting_until(e) is not None) if field_name == "debt" else 0
+        debt_sum = sum(e.ledger.debt for e in picked) if field_name == "debt" else 0
         picked.sort(key=lambda e: (-getattr(e.ledger, field_name), (person_name(e.student.last_name, e.student.first_name) or "").lower(),
                                    str(e.membership.id)))
         rows = []
@@ -523,5 +533,6 @@ class PaymentsReports:
                 group_id=str(e.group.id), group_name=e.group.name, teacher_id=str(e.group.teacher_id) if e.group.teacher_id else None,
                 teacher_name=_person(e.teacher), is_active=bool(e.membership.is_active),
                 student_archived=e.student.status == "archived", status=l.status.status, paid_until=l.status.paid_until,
-                debt=l.debt, past_debt=l.past_debt, current_due=l.current_due, advance=l.advance, refundable=l.refundable))
-        return BalancesPage(items=rows, total=len(picked), limit=limit, offset=offset)
+                debt=l.debt, past_debt=l.past_debt, current_due=l.current_due, advance=l.advance, refundable=l.refundable,
+                tab=(pv.entry_tab(e) if l.debt > 0 else None), waiting_until=pv.waiting_until(e)))
+        return BalancesPage(items=rows, total=len(picked), limit=limit, offset=offset, debt_total=debt_sum, debtors_debt_total=debt_sum - waiting_sum, debt_waiting_total=waiting_sum)

@@ -119,7 +119,8 @@ def test_b3_d1_month_to_package_every_student_is_listed_with_the_price_per_lesso
     for item in impact["items"]:
         assert (item["price_amount"], item["price_unit_before"], item["price_unit_after"]) == (300_000, "за месяц", "за пакет из 12 уроков")
         assert item["per_lesson_after"] == 25_000 and 20_000 <= item["per_lesson_before"] <= 30_000 and item["per_lesson_before"] == (2 * 300_000 + 13) // 26         # 300 000 / 13 lessons of the month = 23 077
-        assert "цена 300 000 сум за месяц → за пакет из 12 уроков" in item["text"] and "за урок" in item["text"]
+        assert "цена 300 000 сум за месяц → за пакет из 12 уроков" in item["text"] and "≈ за урок 23 077 → 25 000 сум" in item["text"]      # R3 R-4: an approximation says so
+        assert "(с 25.10, на 23.11)" in item["text"]                                                          # R3 R-5: the day of the figures is told
     assert impact["text"].startswith("Перейдут на новый способ 3 ученика")
 
 
@@ -144,8 +145,11 @@ def test_b3_h1_the_day_of_the_shared_month_1_to_10_tells_the_transitional_cell(w
     assert impact["students_affected"] == 3 and impact["items_total"] == 3
     one = impact["items"][0]
     assert one["switch_on"] == "2026-11-01" and one["as_of"] == "2026-11-30"
-    assert one["charged_after"] - one["charged_before"] == 92_000            # H1: the cell 01.11-09.11 = 4 of 13 lessons = 92 000, then the cells from 10.11
-    assert impact["charged_after_total"] - impact["charged_before_total"] == 3 * 92_000
+    assert (one["charged_before"], one["charged_after"]) == (300_000, 392_000)            # H1: IN the first 30 days (R3 money R-2; not the history since the accounting began): the cell 01.11-30.11 = 300 000
+    assert one["charged_after"] - one["charged_before"] == 92_000                         # ... against the cell 01.11-09.11 = 4 of 13 lessons = 92 000 and the cell from 10.11 = 300 000
+    assert (impact["charged_before_total"], impact["charged_after_total"]) == (900_000, 1_176_000)
+    assert impact["text"] == "Перейдут на новый способ 3 ученика: за первые 30 дней после перехода начислено 900 000 сум → 1 176 000 сум"
+    assert "(с 01.11, на 30.11)" in one["text"]
 
 
 def test_b3_a_change_that_moves_nobody_has_an_empty_list(world, fixed_today):
@@ -172,6 +176,8 @@ def test_b9_a_change_of_the_mode_the_day_and_the_recalculation_go_to_the_journal
     assert first["students_affected"] == 3 and first["items_total"] == 3 and first["before"]["period_mode"] == "calendar" and first["after"]["period_mode"] == "lessons"
     assert first["text"].startswith("Изменён способ оплаты: способ «Свой месяц у каждого ученика» → «Пакет уроков»")
     assert "Перейдут на новый способ 3 ученика" in first["text"] and rows[0].actor_id == w.owner.id
+    assert first["sums_available"] is True and (first["charged_before_total"], first["charged_after_total"]) == (900_000, 0)           # the first 30 days: 3 x a month of 300 000 now, a package charges lessons as they are held (R3 R-2: not 1 640 000, the history)
+    assert "начислено 900 000 сум → 0 сум" in first["text"]
     assert rows[1].details["text"].startswith("Перерасчёт за уроки, отменённые центром: выключен → включён; действует на уроки с 21.10.2026")
     shown = owner(w).get(f"{API}/org/settings/payments/history").json()["items"]
     assert [i["action"] for i in shown] == ["centre_cancel_recalc_changed", "billing_regime_changed"] and shown[1]["details"]["items"][0]["text"]
@@ -192,11 +198,19 @@ def test_b9_the_day_of_the_shared_month_is_in_the_journal(world, fixed_today):
 
 
 def paid_before(w, minutes_ago, amount=300_000):
-    fixed_now = datetime(2026, 10, 21, 7, 0)                  # the frozen clock: 12:00 Tashkent = 07:00 UTC
+    from src.auth import business_clock as bc
+
+    fixed_now = bc.utc_now()                                  # the frozen clock itself (R3 code №14: not a literal «12:00 Ташкента»: the load run sets ALGO_TEST_CLOCK)
     p = seed_payment(w, membership(w), amount, D(2026, 10, 21))
     p.created_at = fixed_now - timedelta(minutes=minutes_ago)
     w.db.commit()
     return p
+
+
+def fixed_now_utc():
+    from src.auth import business_clock as bc
+
+    return bc.utc_now()
 
 
 def repeat_world(w, fixed_today):
@@ -231,12 +245,12 @@ def test_b9_another_sum_or_an_old_payment_or_a_voided_one_is_not_a_repeat(world,
     p = paid_before(w, 5)
     other = owner(w).get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 250_000}).json()
     assert "payment_repeated" not in [x["code"] for x in other["warnings"]]
-    p.created_at = datetime(2026, 10, 20, 6, 0)                                                   # 25 hours ago
+    p.created_at = fixed_now_utc() - timedelta(hours=25)                                          # 25 hours ago
     w.db.commit()
     old = owner(w).get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 300_000}).json()
     assert "payment_repeated" not in [x["code"] for x in old["warnings"]]
-    p.created_at = datetime(2026, 10, 21, 6, 55)
-    p.voided_at = datetime(2026, 10, 21, 6, 56)
+    p.created_at = fixed_now_utc() - timedelta(minutes=5)
+    p.voided_at = fixed_now_utc() - timedelta(minutes=4)
     p.voided_by, p.void_reason = w.owner.id, "ошибка"
     w.db.commit()
     voided = owner(w).get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 300_000}).json()

@@ -94,6 +94,11 @@
             "title": "Debt",
             "type": "integer"
           },
+          "debt_waiting": {
+            "default": 0,
+            "title": "Debt Waiting",
+            "type": "integer"
+          },
           "forgiven": {
             "default": 0,
             "title": "Forgiven",
@@ -142,6 +147,11 @@
             "title": "Students",
             "type": "integer"
           },
+          "students_waiting": {
+            "default": 0,
+            "title": "Students Waiting",
+            "type": "integer"
+          },
           "students_with_debt": {
             "default": 0,
             "title": "Students With Debt",
@@ -181,6 +191,8 @@
           "debt",
           "students",
           "students_with_debt",
+          "debt_waiting",
+          "students_waiting",
           "pct"
         ],
         "title": "CollectionRow",
@@ -600,6 +612,16 @@
             "title": "Debt Total",
             "type": "integer"
           },
+          "debt_waiting_total": {
+            "default": 0,
+            "title": "Debt Waiting Total",
+            "type": "integer"
+          },
+          "debtors_debt_total": {
+            "default": 0,
+            "title": "Debtors Debt Total",
+            "type": "integer"
+          },
           "memberships_with_advance": {
             "default": 0,
             "title": "Memberships With Advance",
@@ -613,6 +635,16 @@
           "past_debt_total": {
             "default": 0,
             "title": "Past Debt Total",
+            "type": "integer"
+          },
+          "students_debtors": {
+            "default": 0,
+            "title": "Students Debtors",
+            "type": "integer"
+          },
+          "students_waiting": {
+            "default": 0,
+            "title": "Students Waiting",
             "type": "integer"
           },
           "students_with_advance": {
@@ -633,6 +665,10 @@
           "memberships_with_debt",
           "students_with_debt",
           "memberships_with_advance",
+          "debtors_debt_total",
+          "debt_waiting_total",
+          "students_debtors",
+          "students_waiting",
           "students_with_advance"
         ],
         "title": "IncomePosition",

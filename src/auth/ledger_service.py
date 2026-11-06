@@ -105,6 +105,22 @@ def _moment(raw: Any) -> Optional[datetime]:
         return None
 
 
+def first_day_of_period(period) -> date:
+    """The first day a stay is CHARGED from (Money-1 B1 «Оплата с»): ``billing_from``, else the business day he joined.  ONE function for the account, the table of the openings and the batch of
+    the openings (R3 code №19: two «first days» of one stay)."""
+    return period.billing_from or ps.business_date(period.joined_at)
+
+
+def stay_of_period(period) -> Optional[bl.Stay]:
+    """The ledger stay of a membership period.  A stay that ended BEFORE the day he was to be charged from (written down on 21.10 «с 06.11», taken out on 22.10) charges NOTHING (R3 code №2 / money R-1:
+    ``merge_stays`` used to turn the upside-down stay into the one day of ``first`` - a ghost debt of 10 000 for a student who never came)."""
+    first = first_day_of_period(period)
+    last = ps.business_date(period.left_at) if period.left_at else None
+    if last is not None and last < first:
+        return None
+    return bl.Stay(first, last, period.joined_at)
+
+
 def regime_from_block(block: Dict[str, Any], effective_from: date) -> bl.Regime:
     """One regime from a settings dict (``period_mode`` / ``billing_anchor`` / ``billing_day`` / ``lessons_per_payment``)."""
     mode = block.get("period_mode") or ps.CALENDAR
@@ -373,11 +389,8 @@ class LedgerLoader:
         periods = membership_periods.periods_by_membership(self.db, found)
         for mid in found:
             membership = self.members[mid][0]
-            spans = [
-                bl.Stay(p.billing_from or ps.business_date(p.joined_at), ps.business_date(p.left_at) if p.left_at else None, p.joined_at)       # Money-1 B1: «Оплата с»
-                for p in periods.get(mid, [])
-            ]
-            if not spans and membership.joined_at:  # a legacy row without periods
+            spans = [stay for stay in (stay_of_period(p) for p in periods.get(mid, [])) if stay is not None]
+            if not periods.get(mid) and membership.joined_at:  # a legacy row without periods (NOT a membership whose only stay charges nothing: R3 №2)
                 spans = [bl.Stay(ps.business_date(membership.joined_at),
                                  None if membership.is_active or not membership.left_at else ps.business_date(membership.left_at), membership.joined_at)]
             self.stays[mid] = spans

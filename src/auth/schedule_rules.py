@@ -74,15 +74,21 @@ def _own_valid_from(group: Group, slot: Dict[str, Any], *, warn: bool = True) ->
     return legacy_valid_from(group)
 
 
+ORIGINAL_SCHEDULE_DAYS = 1          # slots written within a day of the earliest one are the ORIGINAL schedule of the group (an administrator types the days of a new group over a day or two)
+
+
 def slot_valid_from(group: Group, slot: Dict[str, Any]) -> str:
-    """From when the slot gives lessons.  In the PATTERN mode (the denominator of a partial month, ``ignoring_valid_from``) the slots of the ORIGINAL schedule - those whose ``validFrom`` is
-    not later than the earliest ``validFrom`` of the group - count from the beginning of time, as before: a group that opens in the middle of a month still has the whole month by its
-    schedule.  A slot added LATER (a new day of the week, Money-1 B4 / ДЫРА-13) counts from its real date: adding Tuesday from 01.12 no longer makes the cell of October cheaper
-    (115 000 -> 88 000 after the fact)."""
-    own = _own_valid_from(group, slot)
-    if _PATTERN_ONLY.get():
+    """From when the slot gives lessons.  In the PATTERN mode (the denominator of a partial month, ``ignoring_valid_from``) the slots of the ORIGINAL schedule - those whose ``validFrom`` is not later than
+    the earliest ``validFrom`` of the group plus ``ORIGINAL_SCHEDULE_DAYS`` - count from the beginning of time, as before: a group that opens in the middle of a month still has the whole month by its schedule
+    (R3 code №11: Monday typed on 15.10 and Wednesday on 16.10 are one schedule, not a Wednesday «added later»).  A slot added LATER (a new day of the week, Money-1 B4 / ДЫРА-13) counts from its real date:
+    adding Tuesday from 01.12 no longer makes the cell of October cheaper (115 000 -> 88 000 after the fact).  The warning about a slot without ``validFrom`` is written for the real schedule only
+    (R3 code №18: the denominator is worked out at every run - it was a line in the log each time)."""
+    pattern = _PATTERN_ONLY.get()
+    own = _own_valid_from(group, slot, warn=not pattern)
+    if pattern:
         first = min((_own_valid_from(group, s, warn=False) for s in (getattr(group, "schedule", None) or []) if isinstance(s, dict)), default=own)
-        return "0001-01-01" if own <= first else own
+        original_until = (date.fromisoformat(first) + timedelta(days=ORIGINAL_SCHEDULE_DAYS)).isoformat()
+        return "0001-01-01" if own <= original_until else own
     return own
 
 

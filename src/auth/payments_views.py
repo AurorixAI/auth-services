@@ -83,6 +83,7 @@ def shim_period(ledger: bl.Ledger, payment_id: str):
 
 BUCKET_DEBT, BUCKET_EXPIRING, BUCKET_ACTIVE, BUCKET_PAUSED = "debt", "expiring", "active", "paused"
 BUCKET_WAITING = "waiting"       # Money-1 B7: the debt of a period that has just begun - «ждём оплату», not a debtor
+BUCKET_DEBTORS = "debtors"       # the tab of the REAL debtors (debt > 0 and not waiting); ``debt`` keeps its old meaning in this release: every debt, the waiting ones included (R3 code №21)
 GRACE_DAYS = 3                   # owner, 04.11: three days from the first day of a new period (the first day included) before the student is a debtor
 _MONTHS = ("январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь")
 
@@ -119,13 +120,15 @@ def waiting_until(e):
 
 def entry_bucket(e) -> Optional[str]:
     """The tab of a membership (owner's rule of 21.10): ``debt`` (Должники) - debt > 0, any reason, a student who left included;
-    ``waiting`` (Ждём оплату, Money-1 B7) - the debt of a period that began within the last three days and nothing older (see ``waiting_until``);
     ``paused`` (На паузе) - today is inside a pause and no debt; ``expiring`` (Скоро платить) - no debt and the next period is due within
     ``expiring_days``; ``active`` (Оплачено) - no debt and not due soon (an advance included).  A free student and a student without a price
-    are on no tab (they are counted apart: ``free``, ``price_missing``)."""
+    are on no tab (they are counted apart: ``free``, ``price_missing``).
+
+    The OLD meaning, unchanged in this release (R3 code №21, LESSONS 66: the server goes out first and the old front must not break in the minutes before the new one): a student who only
+    «ждёт оплату» is still on ``debt``.  The NEW definition - one for the whole server - is ``entry_tab``."""
     l = e.ledger
     if l.debt > 0:
-        return BUCKET_WAITING if waiting_until(e) is not None else BUCKET_DEBT
+        return BUCKET_DEBT
     if not is_tracked(e) or l.status.status == ps.FREE or e.price.amount is None:
         return None
     if l.status.status == ps.PAUSED:
@@ -135,15 +138,43 @@ def entry_bucket(e) -> Optional[str]:
     return BUCKET_ACTIVE         # active, and «none» (nothing has fallen due yet)
 
 
+def entry_tab(e) -> Optional[str]:
+    """Money-1 B7 / R3 №20: the ONE definition of a debtor of the server (the new screens): ``waiting`` (Ждём оплату) - the debt of a period that began within the last three days and nothing older;
+    ``debtors`` - every other debt; the rest as ``entry_bucket``.  A student is in exactly one tab; the debt is the same number whatever the name (I-1)."""
+    if e.ledger.debt > 0:
+        return BUCKET_WAITING if waiting_until(e) is not None else BUCKET_DEBTORS
+    return entry_bucket(e)
+
+
+def debt_split_of(entries) -> dict:
+    """The sums of a position by ONE definition (R3 №20): the debt of the real debtors, the debt of the ones who only wait, and how many DISTINCT students each (a student is counted in both lines
+    when he owes in two groups and waits in one).  ``debtors_debt_total + debt_waiting_total`` is the old ``debt_total`` of the same entries."""
+    debtors_debt = waiting_debt = 0
+    debtors, waiting = set(), set()
+    for e in entries:
+        if e.ledger.debt <= 0:
+            continue
+        if waiting_until(e) is not None:
+            waiting_debt += e.ledger.debt
+            waiting.add(e.student.id)
+        else:
+            debtors_debt += e.ledger.debt
+            debtors.add(e.student.id)
+    return {"debtors_debt_total": debtors_debt, "debt_waiting_total": waiting_debt, "students_debtors": len(debtors), "students_waiting": len(waiting)}
+
+
+def waiting_reason(e) -> Optional[str]:
+    """«Ждём оплату до 07.11» of a student who only waits, else ``None``."""
+    until = waiting_until(e)
+    return tx.waiting_text(until) if until is not None else None
+
+
 def debt_reason(e) -> Tuple[Optional[str], Optional[str]]:
-    """``(code, text)`` of a debtor: waiting (B7) / never paid / overdue / the running period not paid up."""
+    """``(code, text)`` of a debtor: never paid / overdue / the running period not paid up (the old reasons; ``waiting_reason`` is the new one of a student who only waits)."""
     l = e.ledger
     if l.debt <= 0:
         return None, None
     today = e.inp.today
-    until = waiting_until(e)
-    if until is not None:
-        return "waiting", tx.waiting_text(until)
     if l.paid == 0 and l.transferred_in == 0 and l.written_off == 0:
         return "never_paid", "Ещё не платил"
     unpaid = [s for s in l.segments if s.begun and s.unpaid > 0]

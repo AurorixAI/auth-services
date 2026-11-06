@@ -16,6 +16,9 @@
       "items_total": 0,
       "truncated": false,
       "text": "",
+      "lessons_lost_total": 0,
+      "next_period_students": 0,
+      "next_period_delta_total": 0,
       "items": [
         {
           "membership_id": "00000000-0000-4000-8000-000000000102",
@@ -31,10 +34,13 @@
           "charged_after": 0,
           "lessons_before": null,
           "lessons_after": null,
+          "next_period": null,
           "text": ""
         }
       ],
-      "override_students": []
+      "override_students": [],
+      "override_total": 0,
+      "override_truncated": false
     },
     "first_price": null
   },

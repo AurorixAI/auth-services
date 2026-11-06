@@ -282,6 +282,21 @@
             "title": "Student Name",
             "type": "string"
           },
+          "tab": {
+            "anyOf": [
+              {
+                "enum": [
+                  "debtors",
+                  "waiting"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tab"
+          },
           "teacher_id": {
             "anyOf": [
               {
@@ -303,6 +318,18 @@
               }
             ],
             "title": "Teacher Name"
+          },
+          "waiting_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Until"
           }
         },
         "required": [
@@ -322,13 +349,30 @@
           "past_debt",
           "current_due",
           "advance",
-          "refundable"
+          "refundable",
+          "tab",
+          "waiting_until"
         ],
         "title": "BalanceRow",
         "type": "object"
       },
       "BalancesPage": {
         "properties": {
+          "debt_total": {
+            "default": 0,
+            "title": "Debt Total",
+            "type": "integer"
+          },
+          "debt_waiting_total": {
+            "default": 0,
+            "title": "Debt Waiting Total",
+            "type": "integer"
+          },
+          "debtors_debt_total": {
+            "default": 0,
+            "title": "Debtors Debt Total",
+            "type": "integer"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/BalanceRow"
@@ -356,7 +400,10 @@
           "items",
           "total",
           "limit",
-          "offset"
+          "offset",
+          "debt_total",
+          "debtors_debt_total",
+          "debt_waiting_total"
         ],
         "title": "BalancesPage",
         "type": "object"
@@ -406,6 +453,73 @@
         "title": "CarriedOutOut",
         "type": "object"
       },
+      "DebtSplit": {
+        "description": "Money-1 B7 / R3 №20: the debt of the centre split by ONE definition.  ``debtors`` + ``waiting_students`` (the memberships and the sums too) = the old ``students_with_debt`` /\n``memberships_with_debt`` / ``debt_total``.  ``expired`` / ``due`` / ``students_expired`` / ``students_due`` are the old status counters WITHOUT the students who only wait: the red banner, the\ncard «Просрочено» and the card «К оплате» read these.",
+        "properties": {
+          "all_debt_total": {
+            "default": 0,
+            "title": "All Debt Total",
+            "type": "integer"
+          },
+          "all_students_with_debt": {
+            "default": 0,
+            "title": "All Students With Debt",
+            "type": "integer"
+          },
+          "debtors": {
+            "default": 0,
+            "title": "Debtors",
+            "type": "integer"
+          },
+          "debtors_debt_total": {
+            "default": 0,
+            "title": "Debtors Debt Total",
+            "type": "integer"
+          },
+          "debtors_memberships": {
+            "default": 0,
+            "title": "Debtors Memberships",
+            "type": "integer"
+          },
+          "due": {
+            "default": 0,
+            "title": "Due",
+            "type": "integer"
+          },
+          "expired": {
+            "default": 0,
+            "title": "Expired",
+            "type": "integer"
+          },
+          "students_due": {
+            "default": 0,
+            "title": "Students Due",
+            "type": "integer"
+          },
+          "students_expired": {
+            "default": 0,
+            "title": "Students Expired",
+            "type": "integer"
+          },
+          "waiting_debt_total": {
+            "default": 0,
+            "title": "Waiting Debt Total",
+            "type": "integer"
+          },
+          "waiting_memberships": {
+            "default": 0,
+            "title": "Waiting Memberships",
+            "type": "integer"
+          },
+          "waiting_students": {
+            "default": 0,
+            "title": "Waiting Students",
+            "type": "integer"
+          }
+        },
+        "title": "DebtSplit",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -431,7 +545,6 @@
               {
                 "enum": [
                   "debt",
-                  "waiting",
                   "expiring",
                   "active",
                   "paused"
@@ -493,8 +606,7 @@
                 "enum": [
                   "overdue",
                   "partial",
-                  "never_paid",
-                  "waiting"
+                  "never_paid"
                 ],
                 "type": "string"
               },
@@ -713,6 +825,24 @@
             "title": "Student Name",
             "type": "string"
           },
+          "tab": {
+            "anyOf": [
+              {
+                "enum": [
+                  "debtors",
+                  "waiting",
+                  "expiring",
+                  "active",
+                  "paused"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tab"
+          },
           "teacher_id": {
             "anyOf": [
               {
@@ -734,6 +864,17 @@
               }
             ],
             "title": "Teacher Name"
+          },
+          "waiting_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Reason"
           },
           "waiting_until": {
             "anyOf": [
@@ -764,6 +905,42 @@
           "status"
         ],
         "title": "MembershipPaymentRow",
+        "type": "object"
+      },
+      "NextPeriod": {
+        "description": "Money-1 R3 №4: the first period of the student that begins on or after the day the change reaches him, and what it costs before -> after (a student who pays in time shows no\ndifference in his account that day, but the next period costs another sum).",
+        "properties": {
+          "amount_after": {
+            "title": "Amount After",
+            "type": "integer"
+          },
+          "amount_before": {
+            "title": "Amount Before",
+            "type": "integer"
+          },
+          "difference": {
+            "title": "Difference",
+            "type": "integer"
+          },
+          "period_from": {
+            "format": "date",
+            "title": "Period From",
+            "type": "string"
+          },
+          "period_to": {
+            "format": "date",
+            "title": "Period To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period_from",
+          "period_to",
+          "amount_before",
+          "amount_after",
+          "difference"
+        ],
+        "title": "NextPeriod",
         "type": "object"
       },
       "OpeningBrief": {
@@ -2253,11 +2430,6 @@
             "default": 0,
             "title": "Paused",
             "type": "integer"
-          },
-          "waiting": {
-            "default": 0,
-            "title": "Waiting",
-            "type": "integer"
           }
         },
         "title": "PaymentsBuckets",
@@ -2293,6 +2465,9 @@
           "buckets": {
             "$ref": "#/components/schemas/PaymentsBuckets"
           },
+          "debt_split": {
+            "$ref": "#/components/schemas/DebtSplit"
+          },
           "debt_total": {
             "default": 0,
             "title": "Debt Total",
@@ -2306,11 +2481,6 @@
           "debtors": {
             "default": 0,
             "title": "Debtors",
-            "type": "integer"
-          },
-          "debtors_debt_total": {
-            "default": 0,
-            "title": "Debtors Debt Total",
             "type": "integer"
           },
           "due": {
@@ -2370,11 +2540,6 @@
           },
           "students_expired": {
             "title": "Students Expired",
-            "type": "integer"
-          },
-          "students_overdue": {
-            "default": 0,
-            "title": "Students Overdue",
             "type": "integer"
           },
           "students_paused": {
@@ -3517,6 +3682,16 @@
             "title": "Debt Total",
             "type": "integer"
           },
+          "debt_waiting_total": {
+            "default": 0,
+            "title": "Debt Waiting Total",
+            "type": "integer"
+          },
+          "debtors_debt_total": {
+            "default": 0,
+            "title": "Debtors Debt Total",
+            "type": "integer"
+          },
           "memberships_with_advance": {
             "default": 0,
             "title": "Memberships With Advance",
@@ -3532,6 +3707,16 @@
             "title": "Past Debt Total",
             "type": "integer"
           },
+          "students_debtors": {
+            "default": 0,
+            "title": "Students Debtors",
+            "type": "integer"
+          },
+          "students_waiting": {
+            "default": 0,
+            "title": "Students Waiting",
+            "type": "integer"
+          },
           "students_with_debt": {
             "default": 0,
             "title": "Students With Debt",
@@ -3544,7 +3729,11 @@
           "advance_total",
           "memberships_with_debt",
           "students_with_debt",
-          "memberships_with_advance"
+          "memberships_with_advance",
+          "debtors_debt_total",
+          "debt_waiting_total",
+          "students_debtors",
+          "students_waiting"
         ],
         "title": "ReceiptsPosition",
         "type": "object"
@@ -4272,6 +4461,21 @@
             "title": "Override Students",
             "type": "array"
           },
+          "override_total": {
+            "default": 0,
+            "title": "Override Total",
+            "type": "integer"
+          },
+          "override_truncated": {
+            "default": false,
+            "title": "Override Truncated",
+            "type": "boolean"
+          },
+          "pending_package_students": {
+            "default": 0,
+            "title": "Pending Package Students",
+            "type": "integer"
+          },
           "students_affected": {
             "default": 0,
             "title": "Students Affected",
@@ -4294,13 +4498,16 @@
           "latest_switch",
           "defer",
           "horizon_days",
+          "pending_package_students",
           "items_total",
           "truncated",
           "charged_before_total",
           "charged_after_total",
           "text",
           "items",
-          "override_students"
+          "override_students",
+          "override_total",
+          "override_truncated"
         ],
         "title": "RegimeImpact",
         "type": "object"
@@ -4378,6 +4585,16 @@
           "membership_id": {
             "title": "Membership Id",
             "type": "string"
+          },
+          "next_period": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NextPeriod"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "paid_until_after": {
             "anyOf": [
@@ -4494,6 +4711,7 @@
           "charged_after",
           "lessons_before",
           "lessons_after",
+          "next_period",
           "text",
           "switch_on",
           "as_of",
@@ -6536,7 +6754,7 @@
     },
     "/org/payments/balances": {
       "get": {
-        "description": "Раскрытие «позиции»: членства с долгом / авансом (в том числе ушедших и архивных).",
+        "description": "Раскрытие «позиции»: членства с долгом / авансом (в том числе ушедших и архивных). ``debt`` — весь долг, как раньше (ждущие оплату внутри); ``debtors`` / ``waiting`` — по одному определению\nдолжника (Money-1 R3 №20); в ответе суммы всех строк фильтра: ``debt_total`` = ``debtors_debt_total`` + ``debt_waiting_total``.",
         "parameters": [
           {
             "in": "query",
@@ -6546,6 +6764,8 @@
               "default": "debt",
               "enum": [
                 "debt",
+                "debtors",
+                "waiting",
                 "advance"
               ],
               "title": "Kind",
@@ -7054,6 +7274,7 @@
               "default": "all",
               "enum": [
                 "debt",
+                "debtors",
                 "waiting",
                 "expiring",
                 "active",

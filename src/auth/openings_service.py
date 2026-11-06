@@ -232,7 +232,7 @@ class OpeningsService(_Base):
         out: List[TableRow] = []
         for m, s, g, u in everyone:
             spans = periods.get(m.id) or []
-            first_day = ps.business_date(spans[0].joined_at) if spans else (ps.business_date(m.joined_at) if m.joined_at else today)
+            first_day = ls.first_day_of_period(spans[0]) if spans else (ps.business_date(m.joined_at) if m.joined_at else today)       # the same day as the account (R3 №19)
             price = books.price(m.id, g.id, today)
             row = TableRow(
                 m=m, s=s, g=g, teacher=u, first_day=first_day, floor=OpeningService.floor_of(first_day, start),

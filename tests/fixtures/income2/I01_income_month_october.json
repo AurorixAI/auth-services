@@ -283,6 +283,8 @@
       "debt": 500000,
       "students": 6,
       "students_with_debt": 3,
+      "debt_waiting": 0,
+      "students_waiting": 0,
       "pct": 76
     },
     "groups": [
@@ -297,6 +299,8 @@
         "debt": 300000,
         "students": 3,
         "students_with_debt": 1,
+        "debt_waiting": 0,
+        "students_waiting": 0,
         "pct": 73
       },
       {
@@ -310,6 +314,8 @@
         "debt": 150000,
         "students": 2,
         "students_with_debt": 1,
+        "debt_waiting": 0,
+        "students_waiting": 0,
         "pct": 75
       },
       {
@@ -323,6 +329,8 @@
         "debt": 50000,
         "students": 1,
         "students_with_debt": 1,
+        "debt_waiting": 0,
+        "students_waiting": 0,
         "pct": 87
       }
     ]
@@ -334,6 +342,10 @@
     "memberships_with_debt": 3,
     "students_with_debt": 3,
     "memberships_with_advance": 2,
+    "debtors_debt_total": 500000,
+    "debt_waiting_total": 0,
+    "students_debtors": 3,
+    "students_waiting": 0,
     "students_with_advance": 2
   },
   "checks": [

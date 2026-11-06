@@ -333,10 +333,33 @@ class MembershipPaymentRow(BaseModel):
     # платить (no debt, the next period is due within ``expiring_days``), ``active`` Оплачено (no debt, not due soon; an advance included),
     # ``paused`` На паузе (today is inside a pause, no debt); null: a free student, one without a price, a membership that is not tracked.
     # ``debt_reason`` (code) and ``reason`` (the sentence of the debtor line) say why a debtor is one.
-    bucket: Optional[Literal["debt", "waiting", "expiring", "active", "paused"]] = None       # ``waiting`` (Money-1 B7): «Ждём оплату» - the period began within 3 days, nothing older owed
-    debt_reason: Optional[Literal["overdue", "partial", "never_paid", "waiting"]] = None
-    reason: Optional[str] = None  # the line of a debtor: «Просрочено на 12 дней» | «Не доплачено за октябрь: 150 000» | «Ещё не платил» | «Ждём оплату до 07.11»
-    waiting_until: Optional[date_type] = None     # Money-1 B7: the last day of «ждём оплату» (the student is a debtor the day after); ``None`` when he is not waiting
+    bucket: Optional[Literal["debt", "expiring", "active", "paused"]] = None       # the OLD tab: ``debt`` is every debt, the waiting ones included (unchanged in this release; see ``tab``)
+    debt_reason: Optional[Literal["overdue", "partial", "never_paid"]] = None
+    reason: Optional[str] = None  # the line of a debtor: «Просрочено на 12 дней» | «Не доплачено за октябрь: 150 000» | «Ещё не платил»
+    # Money-1 B7 / R3 №20-21: the NEW tab - ONE definition of a debtor of the server - beside the old ones.  ``debtors`` = debt > 0 and not waiting; ``waiting`` = «Ждём оплату» (the period began within 3
+    # days, nothing older owed); the other values as ``bucket``.  ``waiting_until`` / ``waiting_reason`` only for a student who waits (the line to show instead of ``reason``).
+    tab: Optional[Literal["debtors", "waiting", "expiring", "active", "paused"]] = None
+    waiting_until: Optional[date_type] = None
+    waiting_reason: Optional[str] = None
+
+
+class DebtSplit(BaseModel):
+    """Money-1 B7 / R3 №20: the debt of the centre split by ONE definition.  ``debtors`` + ``waiting_students`` (the memberships and the sums too) = the old ``students_with_debt`` /
+    ``memberships_with_debt`` / ``debt_total``.  ``expired`` / ``due`` / ``students_expired`` / ``students_due`` are the old status counters WITHOUT the students who only wait: the red banner, the
+    card «Просрочено» and the card «К оплате» read these."""
+
+    debtors: int = 0                  # DISTINCT students with a real debt (not waiting)
+    debtors_memberships: int = 0
+    debtors_debt_total: int = 0       # Σ debt of the debtors: the «Долг учеников» of the new screens
+    waiting_students: int = 0
+    waiting_memberships: int = 0
+    waiting_debt_total: int = 0
+    all_debt_total: int = 0           # = debtors_debt_total + waiting_debt_total = the old ``debt_total``
+    all_students_with_debt: int = 0   # = the old ``students_with_debt`` (a student in two groups may be a debtor in one and wait in the other: counted once here, in both lines there)
+    expired: int = 0
+    due: int = 0
+    students_expired: int = 0
+    students_due: int = 0
 
 
 class PaymentsBuckets(BaseModel):
@@ -346,7 +369,6 @@ class PaymentsBuckets(BaseModel):
     expiring: int = 0
     active: int = 0
     paused: int = 0
-    waiting: int = 0       # Money-1 B7: «Ждём оплату» - NOT in ``debt`` (Σ debt of ``debt`` + Σ debt of ``waiting`` = ``debt_total``)
 
 
 class PaymentsSummary(BaseModel):
@@ -373,19 +395,19 @@ class PaymentsSummary(BaseModel):
     students_with_debt: int = 0
     accounting_start_date: Optional[date_type] = None
     paused: int = 0  # LOGIC-A: memberships whose today is inside a pause
-    # LOGIC-A (owner, 21.10): the new tabs.  ``buckets.debt`` == ``memberships_with_debt``; Σ debt of that tab == ``debt_total``;
+    # LOGIC-A (owner, 21.10): the new tabs.  ``buckets.debt`` == ``memberships_with_debt`` (the waiting ones included, see ``debt_split``); Σ debt of that tab == ``debt_total``;
     # ``debtors`` == ``students_with_debt`` (distinct students).  ``free`` (existing) and ``price_missing`` are the students outside the
     # tabs (a warning line); ``students_with_advance`` is the advance card (with ``advance_total``).
     buckets: "PaymentsBuckets" = Field(default_factory=lambda: PaymentsBuckets())
     price_missing: int = 0
     students_with_advance: int = 0
     debtors: int = 0
-    students_waiting: int = 0   # Money-1 B7: DISTINCT students on «Ждём оплату» (their debt is in ``debt_total`` and ``debt_waiting_total``, they are NOT in ``debtors`` and not in the red banner)
-    debt_waiting_total: int = 0       # Σ debt of the memberships on «Ждём оплату»
-    # Money-1 B7: the three numbers of the red banner, from ONE place (LESSONS 104): the real debtors, THEIR debt (= ``debt_total - debt_waiting_total``) and how many of them are past the end of the paid period
-    # (``students_expired`` / ``due`` keep counting by the status of the paid period and still include the students who only wait).
-    debtors_debt_total: int = 0
-    students_overdue: int = 0
+    # Money-1 B7 / R3 №6, №20, №21: «Ждём оплату» - the debt of a period that began within 3 days.  THE OLD FIELDS KEEP THEIR OLD MEANING in this release (``debt_total``, ``debtors``, ``buckets.debt``,
+    # ``students_with_debt``, ``due`` / ``expired`` / ``students_due`` / ``students_expired`` all include the students who only wait): the server goes out first and the old front must not break.  The new
+    # screens read ``debt_split`` - ONE definition of a debtor: the debtors and the waiting ones never overlap and add up to the old numbers.
+    students_waiting: int = 0
+    debt_waiting_total: int = 0
+    debt_split: "DebtSplit" = Field(default_factory=lambda: DebtSplit())
     students_paused: int = 0  # DISTINCT students with a membership on pause today (== the students of the «На паузе» tab); ``buckets.paused`` counts memberships
 
 
@@ -1061,12 +1083,17 @@ class ReceiptsSeriesPoint(PayModel):
 class ReceiptsPosition(PayModel):
     """Where the whole centre stands TODAY (not limited to the range; includes students who left and archived ones)."""
 
-    debt_total: int = 0
+    debt_total: int = 0                       # ALL the debt, the waiting ones included (the old meaning, unchanged in this release) = ``debtors_debt_total`` + ``debt_waiting_total``
     past_debt_total: int = 0
     advance_total: int = 0
     memberships_with_debt: int = 0
     students_with_debt: int = 0
     memberships_with_advance: int = 0
+    # Money-1 R3 №20: the same split as ``PaymentsSummary.debt_split`` - ONE definition of a debtor on every screen
+    debtors_debt_total: int = 0               # Σ debt of the real debtors
+    debt_waiting_total: int = 0               # Σ debt of «Ждём оплату»
+    students_debtors: int = 0
+    students_waiting: int = 0
 
 
 class ReconciliationCheck(PayModel):
@@ -1146,6 +1173,9 @@ class BalanceRow(PayModel):
     current_due: int = 0
     advance: int = 0
     refundable: int = 0
+    # Money-1 R3 №20: the new tab of the row (``debtors`` / ``waiting`` for a debt) and the day «ждём оплату» lasts to
+    tab: Optional[Literal["debtors", "waiting"]] = None
+    waiting_until: Optional[date_type] = None
 
 
 class BalancesPage(PayModel):
@@ -1153,6 +1183,10 @@ class BalancesPage(PayModel):
     total: int = 0
     limit: int = 50
     offset: int = 0
+    # Money-1 R3 №20 (``kind=debt``): the sums of ALL the rows of the filter (not of the page): ``debt_total`` = ``debtors_debt_total`` + ``debt_waiting_total``
+    debt_total: int = 0
+    debtors_debt_total: int = 0
+    debt_waiting_total: int = 0
 
 
 # ---- receipt snapshot (``payment_receipt_snapshots.snapshot``) -----------------------------------------------
@@ -1441,6 +1475,17 @@ class WhatIfLessons(PayModel):
     package_size: int = 0
 
 
+class NextPeriod(PayModel):
+    """Money-1 R3 №4: the first period of the student that begins on or after the day the change reaches him, and what it costs before -> after (a student who pays in time shows no
+    difference in his account that day, but the next period costs another sum)."""
+
+    period_from: date_type
+    period_to: date_type
+    amount_before: int
+    amount_after: int
+    difference: int
+
+
 class PriceImpactItem(PayModel):
     """One student of a window (Money-1 B3): the account before -> after on the day the change reaches him, and the sentence for the screen (``text``)."""
 
@@ -1457,6 +1502,7 @@ class PriceImpactItem(PayModel):
     charged_after: int = 0
     lessons_before: Optional[WhatIfLessons] = None      # a package: the paid lessons before / after (null: a calendar mode)
     lessons_after: Optional[WhatIfLessons] = None
+    next_period: Optional[NextPeriod] = None            # R3 №4 (null: the next period costs the same / a package)
     text: str = ""
 
 
@@ -1493,8 +1539,13 @@ class PriceImpactMoney(PayModel):
     items_total: int = 0                  # every student who moves; ``items`` holds the first 200
     truncated: bool = False
     text: str = ""
+    lessons_lost_total: int = 0           # R3 money R-5: the paid lessons of the packages that the change takes away
+    next_period_students: int = 0         # R3 №4: how many students pay in time and have a dearer / cheaper NEXT period; ``next_period_delta_total`` = Σ of the difference of that period
+    next_period_delta_total: int = 0
     items: List[PriceImpactItem] = Field(default_factory=list)
     override_students: List[OverrideStudent] = Field(default_factory=list)
+    override_total: int = 0               # R3 №16: the list is cut at 200 like ``items``, and says so
+    override_truncated: bool = False
 
 
 # ---- billing mode change (F12) ----------------------------------------------------------------------
@@ -1504,11 +1555,11 @@ class RegimeItem(PriceImpactItem):
     """One student of the window of the billing mode / the day of the shared month (Money-1 B3): the account on the last of the first ``horizon_days`` days of the new way, before -> after."""
 
     switch_on: Optional[date_type] = None             # the first day the new way counts for him (the running period is never cut)
-    as_of: Optional[date_type] = None                 # the day his accounts are compared on (``switch_on`` + ``horizon_days`` - 1)
+    as_of: Optional[date_type] = None                 # the day his accounts are compared on (``switch_on`` + ``horizon_days`` - 1); null with ``switch_on`` null (a package in progress)
     price_amount: Optional[int] = None                # the SAME number of his price: it means another thing in another mode (ДЫРА-02)
     price_unit_before: Optional[str] = None           # «за месяц» / «за общий месяц с 10-го числа» / «за пакет из 12 уроков»
     price_unit_after: Optional[str] = None
-    per_lesson_before: Optional[int] = None           # sum per lesson (the price over the lessons of a month by the schedule / of a package); null: not told
+    per_lesson_before: Optional[int] = None           # ≈ sum per lesson (the price over the lessons of a month by the schedule / of a package): an APPROXIMATION, the text says «≈»; null: not told
     per_lesson_after: Optional[int] = None
 
 
@@ -1529,13 +1580,16 @@ class RegimeImpact(PayModel):
     defer: bool = True
     # Money-1 B3 (ДЫРА-02 / ДЫРА-06): every student who switches, before -> after, in sums and lessons
     horizon_days: int = 30                            # the accounts are compared on the last of this many days from the switch day of each student
+    pending_package_students: int = 0                 # R3 code №1: students with a package IN PROGRESS - the new way begins when it ends (``switch_on`` null); the dates ``first_switch`` / ``latest_switch`` are 9999-12-31 for them, as before
     items_total: int = 0
     truncated: bool = False
-    charged_before_total: int = 0                     # Σ charged up to the horizon, all the students of ``items``
+    charged_before_total: int = 0                     # Σ CHARGED IN the first ``horizon_days`` days of the new way (not the history since the accounting began), the students with a switch day
     charged_after_total: int = 0
     text: str = ""
     items: List[RegimeItem] = Field(default_factory=list)
     override_students: List[RegimeOverride] = Field(default_factory=list)
+    override_total: int = 0
+    override_truncated: bool = False
 
 
 # ---- lesson type of a group (F14) -------------------------------------------------------------------

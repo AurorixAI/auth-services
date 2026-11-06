@@ -1239,7 +1239,7 @@ def pay_from_default(
     group = db.query(Group).filter(Group.id == group_id, Group.org_id == user["org_id"]).first()
     if group is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Группа не найдена")
-    return billing_start.default_pay_from(db, group)
+    return billing_start.default_pay_from(db, group, accounting_start=billing_start.accounting_start_of(db, user["org_id"]))
 
 
 @router.post("/org/groups/{group_id}/students/bulk")

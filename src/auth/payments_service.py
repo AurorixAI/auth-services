@@ -81,6 +81,7 @@ from .payments_schemas import (
     AccountingStartImpact,
     CarriedFromOut,
     CarriedOutOut,
+    DebtSplit,
     MembershipPaymentRow,
     OpeningBrief,
     PaymentsBuckets,
@@ -445,12 +446,13 @@ class PaymentService:
         """Change the settings (an absent field stays).  A change of the period mode / billing day / package size is appended
         to ``billing_history`` from TODAY (what was charged before is never recalculated); ``accounting_start_date`` is
         the owner's (not later than today + 31 days).  ``dry_run``: nothing is written, the result carries the ``impact``."""
+        changes = patch.model_dump(exclude_none=True)
+        today = ps.business_today()
+        pre = None if dry_run else self._precomputed_regime_audit(org_id, {k: v for k, v in changes.items() if k not in ("accounting_start_date", "centre_cancel_recalc")}, today)
         query = self.db.query(Organization).filter(Organization.id == org_id)
         org = query.first() if dry_run else query.with_for_update().first()
         if not org:
             raise PaymentNotFound("Организация не найдена")
-        changes = patch.model_dump(exclude_none=True)
-        today = ps.business_today()
         new_start: Optional[date] = changes.pop("accounting_start_date", None)
         recalc: Optional[bool] = changes.pop("centre_cancel_recalc", None)      # PAY-F: its own history (``recalc_history``), never a billing regime
         if new_start is not None:
@@ -478,7 +480,8 @@ class PaymentService:
                                    and k != "accounting_start_date"})
         audit: List[Tuple[str, Dict[str, Any]]] = []         # Money-1 B9: what goes to the journal of the money settings (written in the same transaction)
         if self._regime_fields(after) != self._regime_fields(before):
-            audit.append(("billing_regime_changed", self._regime_audit(org_id, before, after, today)))       # the sums are read BEFORE the new settings are written
+            ready = pre if pre is not None and pre[0] == self._regime_fields(before) and pre[1] == self._regime_fields(after) else None      # worked out before the lock (R3 №12)
+            audit.append(("billing_regime_changed", ready[2] if ready is not None else self._safe_regime_audit(org_id, before, after, today)))       # the sums are read BEFORE the new settings are written
             history = [dict(h) for h in (block.get("billing_history") or []) if isinstance(h, dict)]
             if not history:
                 history = [{"from": "min", **self._regime_fields(before)}]
@@ -520,9 +523,7 @@ class PaymentService:
         )
         return PaymentSettingsChanged(**self.get_settings(org_id).model_dump())
 
-    def _regime_audit(self, org_id: str, before: PaymentSettings, after: PaymentSettings, today: date) -> Dict[str, Any]:
-        """The record of a change of the way the centre counts the payments (Money-1 B9): from what to what, how many students move and what it does to their accounts (the sums)."""
-        impact = self._regime_impact(org_id, after, today)
+    def _regime_headline(self, before: PaymentSettings, after: PaymentSettings) -> str:
         was, now = self._regime_fields(before), self._regime_fields(after)
         what = []
         if was["period_mode"] != now["period_mode"] or (now["period_mode"] == "calendar" and was["billing_anchor"] != now["billing_anchor"]):
@@ -531,16 +532,42 @@ class PaymentService:
             what.append(f"день общего месяца {was['billing_day']}-е → {now['billing_day']}-е")
         if now["period_mode"] == "lessons" and was["lessons_per_payment"] != now["lessons_per_payment"] and was["period_mode"] == "lessons":
             what.append(f"уроков в пакете {was['lessons_per_payment']} → {now['lessons_per_payment']}")
-        headline = "Изменён способ оплаты: " + "; ".join(what) if what else "Изменены настройки способа оплаты"
+        return "Изменён способ оплаты: " + "; ".join(what) if what else "Изменены настройки способа оплаты"
+
+    def _regime_audit(self, org_id: str, before: PaymentSettings, after: PaymentSettings, today: date) -> Dict[str, Any]:
+        """The record of a change of the way the centre counts the payments (Money-1 B9): from what to what, how many students move and what it does to their accounts (the sums)."""
+        impact = self._regime_impact(org_id, after, today)
+        was, now = self._regime_fields(before), self._regime_fields(after)
         return {
-            "before": was, "after": now, "from": today.isoformat(), "students_affected": impact.students_affected,
+            "before": was, "after": now, "from": today.isoformat(), "students_affected": impact.students_affected, "sums_available": True,
             "first_switch": impact.first_switch.isoformat() if impact.first_switch else None, "latest_switch": impact.latest_switch.isoformat() if impact.latest_switch else None,
             "charged_before_total": impact.charged_before_total, "charged_after_total": impact.charged_after_total, "horizon_days": impact.horizon_days,
+            "pending_package_students": impact.pending_package_students,
             "items": [{"membership_id": i.membership_id, "student_name": i.student_name, "text": i.text, "charged_before": i.charged_before, "charged_after": i.charged_after,
                        "switch_on": i.switch_on.isoformat() if i.switch_on else None} for i in impact.items[:50]],
             "items_total": impact.items_total,
-            "text": f"{headline}. Начнёт действовать для каждого ученика с начала его следующего периода. {impact.text}",
+            "text": f"{self._regime_headline(before, after)}. Начнёт действовать для каждого ученика с начала его следующего периода. {impact.text}",
         }
+
+    def _safe_regime_audit(self, org_id: str, before: PaymentSettings, after: PaymentSettings, today: date) -> Dict[str, Any]:
+        """R3 code №1 / №12: the journal never stops the owner from saving the settings - a failure of the sums gives a record WITHOUT sums (and says so)."""
+        try:
+            with self.db.begin_nested():            # a SAVEPOINT: a failed read never aborts the transaction that holds the lock of the settings
+                return self._regime_audit(org_id, before, after, today)
+        except Exception:
+            logger.exception("the sums of the change of the billing mode could not be worked out org=%s", org_id)
+            return {"before": self._regime_fields(before), "after": self._regime_fields(after), "from": today.isoformat(), "sums_available": False,
+                    "text": f"{self._regime_headline(before, after)}. Начнёт действовать для каждого ученика с начала его следующего периода. Суммы по ученикам не посчитаны"}
+
+    def _precomputed_regime_audit(self, org_id: str, changes: Dict[str, Any], today: date) -> Optional[Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]]:
+        """R3 code №12: the sums of the journal are worked out BEFORE the row of the centre is locked (they read every account of the centre; under ``FOR UPDATE`` every insert with a foreign key
+        to the centre - a payment, a mark - waited for them).  ``(fields before, fields after, the record)`` or ``None`` when the way of counting does not change."""
+        before = self.get_settings(org_id)
+        merged = {k: changes.get(k, getattr(before, k)) for k in PaymentSettings.model_fields if k not in ("accounting_start_date", "updated_by", "updated_at", "centre_cancel_recalc", "recalc_hint")}
+        wanted = PaymentSettings(**merged)
+        if self._regime_fields(wanted) == self._regime_fields(before):
+            return None
+        return self._regime_fields(before), self._regime_fields(wanted), self._safe_regime_audit(org_id, before, wanted, today)
 
     @staticmethod
     def _mode_key(fields: Dict[str, Any]) -> str:
@@ -567,12 +594,14 @@ class PaymentService:
         return "за месяц"
 
     def _regime_impact(self, org_id: str, wanted: PaymentSettings, today: date) -> RegimeImpact:
-        """Dry run of a change of the billing mode / of the day of the shared month: who switches, when, and WHAT IT DOES TO HIM in sums and lessons.
+        """Dry run of a change of the billing mode / of the day of the shared month / of the size of a package: who switches, when, and WHAT IT DOES TO HIM in sums and lessons.
 
-        The running period of a student is never cut: the new way reaches him on his own switch day (``bl.regime_switch_days``).  For every student who switches the account is read
-        the last day of its first ``REGIME_HORIZON_DAYS`` days twice - as it is and as it would be (the same facts, the same ledger function: LESSONS 104) - and the difference is told in the debt,
-        the advance, «оплачено до» and the lessons of a package.  When the mode changes the SAME number of the price means another thing (300 000 a month = 25 000 a lesson of 12; 12 lessons
-        is 8 a month for a group that meets twice a week) - the price per lesson before / after is told.  A student with an individual price is listed apart."""
+        The running period of a student is never cut: the new way reaches him on his own switch day (``bl.regime_switch_days``).  For every student who switches the accounts are read on the last
+        of the first ``REGIME_HORIZON_DAYS`` days of the new way twice - as they are and as they would be (the same facts, the same ledger function: LESSONS 104).  ``charged_*`` is what is charged IN
+        THOSE 30 DAYS (the account on the last day minus the account the day before the switch), not the history since the accounting began (R3 money R-2); the debt / advance / «оплачено до» / lessons are the
+        STATE on that day, and the sentence names the day.  A student with a package in progress (``regime_switch_days`` = never until the lessons are held) switches when the package ends: he is
+        listed with ``switch_on = null`` and the price in its new meaning, no figures of a date that does not exist (R3 code №1: ``date.max + 29`` was an OverflowError = HTTP 500).  When the meaning of the number of the
+        price changes (a month <-> a package of 12; 12 -> 8) the price per lesson is told, as an approximation («≈»); a student with an individual price is listed apart."""
         from dataclasses import replace
 
         from . import money_whatif as mw
@@ -584,6 +613,7 @@ class PaymentService:
         students: set = set()
         items: List[Dict[str, Any]] = []
         overrides: List[Dict[str, Any]] = []
+        pending = 0
         mode_changes = bool(loader.settings.regimes) and new.mode != loader.settings.regimes[-1].mode
         for e in loader.load(scope="tracked"):
             switch = bl.regime_switch_days(e.inp, new, moment)
@@ -591,49 +621,73 @@ class PaymentService:
                 continue
             students.add(e.student.id)
             days.extend(switch)
-            on = max(switch)
-            horizon = max(on, today) + timedelta(days=self.REGIME_HORIZON_DAYS - 1)         # the last day of the first 30 days of the new way (both accounts end the same day)
+            real = [d for d in switch if d != date.max]
+            on = max(real) if real else None                      # None: a package in progress - the new way begins when it is finished (a day nobody knows yet)
+            start_day = on or today
+            horizon = start_day + timedelta(days=self.REGIME_HORIZON_DAYS - 1) if on else None      # the last day of the first 30 days of the new way (both accounts end the same day)
             later = replace(new, defer=True, effective_from=today, at=moment)
-            before = bl.run_ledger(replace(e.inp, today=horizon))
-            after = bl.run_ledger(replace(e.inp, today=horizon, regimes=tuple(e.inp.regimes) + (later,)))
-            snap_before, snap_after = mw.snapshot(before), mw.snapshot(after)
             name = person_name(e.student.last_name, e.student.first_name) or "—"
-            old_regime = bl.regime_at(e.inp.regimes, on)
-            price = e.inp.price_at(on).amount
-            item = mw.item(e.membership.id, name, snap_before, snap_after, has_money=bool(e.inp.credits or e.inp.outflows))
-            lessons_in_month = len(e.inp.lesson_days(on, on + timedelta(days=30)))
+            old_regime = bl.regime_at(e.inp.regimes, start_day)
+            price = e.inp.price_at(start_day).amount
             unit_before, unit_after = self._unit_text(old_regime), self._unit_text(later)
+            lessons_in_month = len(e.inp.lesson_days(start_day, start_day + timedelta(days=30)))
+            size_before = old_regime.package_size if old_regime.mode == bl.LESSONS else lessons_in_month
+            size_after = later.package_size if later.mode == bl.LESSONS else lessons_in_month
             per_before = per_after = None
-            if mode_changes and price:
-                size_before, size_after = (old_regime.package_size if old_regime.mode == bl.LESSONS else lessons_in_month), (later.package_size if later.mode == bl.LESSONS else lessons_in_month)
-                per_before, per_after = ((2 * price + size_before) // (2 * size_before) if size_before else None), ((2 * price + size_after) // (2 * size_after) if size_after else None)         # half up: 300 000 / 13 = 23 077
-            item.update({"switch_on": on, "as_of": horizon, "price_amount": price, "price_unit_before": unit_before, "price_unit_after": unit_after,
-                         "per_lesson_before": per_before, "per_lesson_after": per_after})
-            if mode_changes and price:
-                pieces = [f"цена {tx.money(price)} {unit_before} → {unit_after}"]
-                if per_before and per_after:
-                    pieces.append(f"за урок {tx.num(per_before)} → {tx.num(per_after)} сум")
-                pieces.extend(mw.parts_of(snap_before, snap_after))
-                item["text"] = f"{name} (с {tx.ddmm(on)}): " + "; ".join(pieces)
-            elif mw.parts_of(snap_before, snap_after):
-                item["text"] = f"{name} (с {tx.ddmm(on)}): " + "; ".join(mw.parts_of(snap_before, snap_after))
+            if price and (mode_changes or (old_regime.mode == bl.LESSONS and later.mode == bl.LESSONS and size_before != size_after)):
+                per_before = (2 * price + size_before) // (2 * size_before) if size_before else None            # half up: 300 000 / 13 = 23 077
+                per_after = (2 * price + size_after) // (2 * size_after) if size_after else None
+            meaning_changes = bool(price) and unit_before != unit_after
+            if on is None:
+                pending += 1
+                if not meaning_changes:
+                    continue
+                snap = mw.snapshot(bl.run_ledger(replace(e.inp, today=today)))
+                item = mw.item(e.membership.id, name, snap, snap, has_money=bool(e.inp.credits or e.inp.outflows))
+                charged_before = charged_after = 0
             else:
-                continue                               # the day of the shared month moves and this student's accounts do not
+                before = bl.run_ledger(replace(e.inp, today=horizon))
+                after = bl.run_ledger(replace(e.inp, today=horizon, regimes=tuple(e.inp.regimes) + (later,)))
+                base = bl.run_ledger(replace(e.inp, today=on - timedelta(days=1))).charged                       # what the account had charged the day BEFORE the switch
+                snap_before, snap_after = mw.snapshot(before), mw.snapshot(after)
+                item = mw.item(e.membership.id, name, snap_before, snap_after, has_money=bool(e.inp.credits or e.inp.outflows), on=horizon)
+                charged_before, charged_after = before.charged - base, after.charged - base
+                if not (meaning_changes or mw.parts_of(snap_before, snap_after)):
+                    continue                                       # the day of the shared month moves and this student's accounts do not
+            item.update({"switch_on": on, "as_of": horizon, "price_amount": price, "price_unit_before": unit_before if price else None, "price_unit_after": unit_after if price else None,
+                         "per_lesson_before": per_before, "per_lesson_after": per_after, "charged_before": charged_before, "charged_after": charged_after})
+            pieces = []
+            if meaning_changes:
+                pieces.append(f"цена {tx.money(price)} {unit_before} → {unit_after}")
+                if per_before and per_after:
+                    pieces.append(f"≈ за урок {tx.num(per_before)} → {tx.num(per_after)} сум")
+            if on is None:
+                pieces.append("начнёт действовать, когда закончится пакет")
+                item["text"] = f"{name} (когда закончится пакет): " + "; ".join(pieces)
+            else:
+                pieces.extend(mw.parts_of(snap_before, snap_after))
+                item["text"] = f"{name} (с {tx.ddmm(on)}, на {tx.ddmm(horizon)}): " + "; ".join(pieces)
             items.append(item)
             if e.price.source == pricing.SOURCE_OVERRIDE and e.price.amount is not None:
                 overrides.append({"membership_id": str(e.membership.id), "student_name": name, "price": e.price.amount, "reason": e.price.reason,
-                                  "text": f"{name}: индивидуальная цена {tx.money(e.price.amount)} {unit_before} → {unit_after}; число не меняется, смысл — другой" if mode_changes
+                                  "text": f"{name}: индивидуальная цена {tx.money(e.price.amount)} {unit_before} → {unit_after}; число не меняется, смысл — другой" if meaning_changes
                                   else f"{name}: индивидуальная цена {tx.money(e.price.amount)} не меняется"})
         items.sort(key=lambda i: (-(i["charged_after"] - i["charged_before"]), i["student_name"]))
-        charged_before, charged_after = sum(i["charged_before"] for i in items), sum(i["charged_after"] for i in items)
-        text = "Способ оплаты не изменит деньги ни у одного ученика" if not items else (
-            f"Перейдут на новый способ {len(items)} {tx.plural(len(items), 'ученик', 'ученика', 'учеников')}: за первые {self.REGIME_HORIZON_DAYS} дней после перехода начислено "
-            f"{tx.money(charged_before)} → {tx.money(charged_after)}")
+        counted = [i for i in items if i["switch_on"] is not None]
+        charged_before, charged_after = sum(i["charged_before"] for i in counted), sum(i["charged_after"] for i in counted)
+        if not items:
+            text = "Способ оплаты не изменит деньги ни у одного ученика"
+        else:
+            text = (f"Перейдут на новый способ {len(items)} {tx.plural(len(items), 'ученик', 'ученика', 'учеников')}: за первые {self.REGIME_HORIZON_DAYS} дней после перехода начислено "
+                    f"{tx.money(charged_before)} → {tx.money(charged_after)}")
+            if pending:
+                text += f"; у {pending} {tx.plural(pending, 'ученика', 'учеников', 'учеников')} идёт пакет — новый способ начнётся, когда он закончится"
         overrides.sort(key=lambda i: i["student_name"])
         return RegimeImpact(students_affected=len(students), first_switch=min(days) if days else None,
-                            latest_switch=max(days) if days else None, defer=True, horizon_days=self.REGIME_HORIZON_DAYS,
+                            latest_switch=max(days) if days else None, defer=True, horizon_days=self.REGIME_HORIZON_DAYS, pending_package_students=pending,
                             items_total=len(items), truncated=len(items) > self.REGIME_ITEMS, charged_before_total=charged_before, charged_after_total=charged_after, text=text,
-                            items=items[: self.REGIME_ITEMS], override_students=overrides[: self.REGIME_ITEMS])
+                            items=items[: self.REGIME_ITEMS], override_students=overrides[: self.REGIME_ITEMS], override_total=len(overrides),
+                            override_truncated=len(overrides) > self.REGIME_ITEMS)
 
     def _check_accounting_start(self, org_id: str, new_start: date, today: date) -> None:
         """The start is not before 01.01.2020, not later than today + 31 days, and never later than the earliest live money
@@ -826,7 +880,8 @@ class PaymentService:
                     writeoff_allowed=l.debt > 0,
                     paused=self._paused_range(e), opening=self._opening_brief(e),
                     price_ends_on_leave=bool(e.membership.is_active and e.price.source == pricing.SOURCE_OVERRIDE and e.price.amount is not None),
-                    bucket=pv.entry_bucket(e), debt_reason=(why := pv.debt_reason(e))[0], reason=why[1], waiting_until=pv.waiting_until(e),
+                    bucket=pv.entry_bucket(e), debt_reason=(why := pv.debt_reason(e))[0], reason=why[1],
+                    tab=pv.entry_tab(e), waiting_until=pv.waiting_until(e), waiting_reason=pv.waiting_reason(e),
                 )
             )
         return rows
@@ -874,11 +929,14 @@ class PaymentService:
         students_debt: set = set()
         students_advance: set = set()
         students_paused: set = set()
-        buckets = {pv.BUCKET_DEBT: 0, pv.BUCKET_WAITING: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0}
-        students_waiting: set = set()
+        buckets = {pv.BUCKET_DEBT: 0, pv.BUCKET_EXPIRING: 0, pv.BUCKET_ACTIVE: 0, pv.BUCKET_PAUSED: 0}
+        students_waiting: set = set()          # Money-1 B7 / R3 №20: the split by ONE definition (``debt_split``); the old counters above keep their meaning
         students_debtors: set = set()
-        students_overdue: set = set()
-        debt_waiting_total = 0
+        waiting_memberships = debtors_memberships = 0
+        debt_waiting_total = debt_debtors_total = 0
+        split_expired: set = set()
+        split_due: set = set()
+        split_expired_memberships = split_due_memberships = 0
         price_missing = 0
         for e in entries:
             l = e.ledger
@@ -895,14 +953,17 @@ class PaymentService:
                 buckets[bucket] += 1
                 if bucket == pv.BUCKET_PAUSED:
                     students_paused.add(e.student.id)
-                elif bucket == pv.BUCKET_WAITING:
+            waiting = pv.waiting_until(e) is not None
+            if l.debt > 0:
+                if waiting:
                     students_waiting.add(e.student.id)
+                    waiting_memberships += 1
                     debt_waiting_total += l.debt
-                elif bucket == pv.BUCKET_DEBT:
+                else:
                     students_debtors.add(e.student.id)
-                    if l.status.status == ps.EXPIRED:
-                        students_overdue.add(e.student.id)
-            if e.membership.id in tracked and e.price.amount is None and l.status.status != ps.FREE and bucket not in (pv.BUCKET_DEBT, pv.BUCKET_WAITING):
+                    debtors_memberships += 1
+                    debt_debtors_total += l.debt
+            if e.membership.id in tracked and e.price.amount is None and l.status.status != ps.FREE and bucket != pv.BUCKET_DEBT:
                 price_missing += 1
             if e.membership.id not in tracked:
                 continue
@@ -910,8 +971,14 @@ class PaymentService:
             counts[l.status.status] += 1
             if l.status.status in (ps.EXPIRED, ps.ENDS_TODAY):
                 students_due.add(e.student.id)
+                if not waiting:
+                    split_due.add(e.student.id)
+                    split_due_memberships += 1
             if l.status.status == ps.EXPIRED:
                 students_expired.add(e.student.id)
+                if not waiting:
+                    split_expired.add(e.student.id)
+                    split_expired_memberships += 1
         settings = self.get_settings(org_id)
         result = PaymentsSummary(
             as_of=loader.today.isoformat(),
@@ -934,8 +1001,12 @@ class PaymentService:
             accounting_start_date=loader.settings.accounting_start,
             paused=counts[ps.PAUSED],
             buckets=PaymentsBuckets(**buckets), price_missing=price_missing, students_with_advance=len(students_advance),
-            debtors=len(students_debtors), students_paused=len(students_paused), students_waiting=len(students_waiting), debt_waiting_total=debt_waiting_total,
-            debtors_debt_total=debt_total - debt_waiting_total, students_overdue=len(students_overdue),
+            debtors=len(students_debt), students_paused=len(students_paused), students_waiting=len(students_waiting), debt_waiting_total=debt_waiting_total,
+            debt_split=DebtSplit(
+                debtors=len(students_debtors), debtors_memberships=debtors_memberships, debtors_debt_total=debt_debtors_total,
+                waiting_students=len(students_waiting), waiting_memberships=waiting_memberships, waiting_debt_total=debt_waiting_total,
+                all_debt_total=debt_total, all_students_with_debt=len(students_debt),
+                expired=split_expired_memberships, due=split_due_memberships, students_expired=len(split_expired), students_due=len(split_due)),
         )
         if SUMMARY_TTL_SECONDS > 0:
             _SUMMARY_CACHE[str(org_id)] = (time.monotonic() + SUMMARY_TTL_SECONDS, result)
@@ -946,7 +1017,7 @@ class PaymentService:
         def name(e: ls.MembershipLedger):
             return (person_name(e.student.last_name, e.student.first_name) or "").lower(), e.group.name.lower(), str(e.membership.id)
 
-        if by_debt or bucket in ("debt", "waiting"):
+        if by_debt or bucket in ("debt", "debtors", "waiting"):
             return lambda e: (-e.ledger.debt, *name(e))
         if bucket == "expiring":
             return lambda e: (e.ledger.status.days_left if e.ledger.status.days_left is not None else 10**9, *name(e))
@@ -975,9 +1046,11 @@ class PaymentService:
         loader = self._loader(org_id)
         if bucket == "due":                                  # LEGACY name of the debtors tab
             bucket = pv.BUCKET_DEBT
-        scope = "all" if bucket == "debt" else "tracked"
+        scope = "all" if bucket in ("debt", pv.BUCKET_DEBTORS) else "tracked"      # ``debtors`` (the new definition) includes a student who left; ``waiting`` is a tracked student by definition
         entries = loader.load(group_id=group_id, teacher_id=teacher_id, search=search, scope=scope)
-        if bucket in (pv.BUCKET_DEBT, pv.BUCKET_WAITING, pv.BUCKET_EXPIRING, pv.BUCKET_ACTIVE, pv.BUCKET_PAUSED):
+        if bucket in (pv.BUCKET_DEBTORS, pv.BUCKET_WAITING):
+            picked = [e for e in entries if pv.entry_tab(e) == bucket]
+        elif bucket in (pv.BUCKET_DEBT, pv.BUCKET_EXPIRING, pv.BUCKET_ACTIVE, pv.BUCKET_PAUSED):
             picked = [e for e in entries if pv.entry_bucket(e) == bucket]
         else:
             picked = [e for e in entries if ps.in_bucket(e.ledger.status.status, bucket)]

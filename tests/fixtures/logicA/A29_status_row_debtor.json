@@ -50,5 +50,7 @@
   "bucket": "debt",
   "debt_reason": "never_paid",
   "reason": "Ещё не платил",
-  "waiting_until": null
+  "tab": null,
+  "waiting_until": null,
+  "waiting_reason": null
 }

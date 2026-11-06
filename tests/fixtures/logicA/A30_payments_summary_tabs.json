@@ -22,15 +22,26 @@
     "debt": 3,
     "expiring": 1,
     "active": 4,
-    "paused": 1,
-    "waiting": 0
+    "paused": 1
   },
   "price_missing": 1,
   "students_with_advance": 1,
   "debtors": 3,
   "students_waiting": 0,
   "debt_waiting_total": 0,
-  "debtors_debt_total": 0,
-  "students_overdue": 0,
+  "debt_split": {
+    "debtors": 0,
+    "debtors_memberships": 0,
+    "debtors_debt_total": 0,
+    "waiting_students": 0,
+    "waiting_memberships": 0,
+    "waiting_debt_total": 0,
+    "all_debt_total": 0,
+    "all_students_with_debt": 0,
+    "expired": 0,
+    "due": 0,
+    "students_expired": 0,
+    "students_due": 0
+  },
   "students_paused": 1
 }

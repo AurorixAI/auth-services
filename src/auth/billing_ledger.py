@@ -920,24 +920,27 @@ def _window_bounds(starts: List[date]) -> List[Tuple[date, Optional[date]]]:
 
 
 def _bridge_returns(runs: List[Tuple[date, Optional[date]]], pauses: List[Tuple[date, date]], floor: date,
-                    regimes: Sequence[Regime]) -> Tuple[List[Tuple[date, Optional[date]]], List[Tuple[date, date]]]:
+                    regimes: Sequence[Regime]) -> Tuple[List[Tuple[date, Optional[date]]], List[Tuple[date, date]], List[Tuple[date, date]]]:
     """Money-1 B5 (B2 of the analysis): a student who is taken out of the group and comes back INSIDE the period he has already been charged for goes on with
     that period - the days between are a pause (the chain is extended by them), as a pause of the owner would do - instead of starting a second full period
     (left 14.10, back 16.10: 300 000, not 97 000 + 300 000).  A return after the period has ended starts a new one, as before (K1).  Only the «свой месяц»
     chain (calendar, payment date) has periods that can be charged twice; the cells of a fixed billing day count the days of each stay, a package counts lessons.
-    Returns the runs with the bridged ones merged and the pauses with the gaps added (the caller keeps the REAL pauses apart for the statement)."""
+    Returns the runs with the bridged ones merged, the pauses with the gaps added (the caller keeps the REAL pauses apart) and the gaps themselves (the statement says «период продлён»)."""
     if len(runs) < 2:
-        return runs, pauses
+        return runs, pauses, []
     out: List[List] = [list(runs[0])]
     current = list(pauses)
+    gaps: List[Tuple[date, date]] = []
     for first, last in runs[1:]:
         before_first, before_last = out[-1]
         if before_last is not None and _is_payment_date(regimes, first) and _inside_charged_period(before_first, before_last, first, floor, current):
-            current = _merge_pauses([Pause(a, b) for a, b in current] + [Pause(before_last + timedelta(days=1), first - timedelta(days=1))])
+            gap = (before_last + timedelta(days=1), first - timedelta(days=1))
+            current = _merge_pauses([Pause(a, b) for a, b in current] + [Pause(*gap)])
+            gaps.append(gap)
             out[-1][1] = last
         else:
             out.append([first, last])
-    return [(a, b) for a, b in out], current
+    return [(a, b) for a, b in out], current, gaps
 
 
 def _is_payment_date(regimes: Sequence[Regime], day: date) -> bool:
@@ -959,7 +962,7 @@ def _inside_charged_period(first: date, last: date, back: date, floor: date, pau
 
 
 def _pieces_of(inp: LedgerInput):
-    """``(opening, floor, runs, pause_days, spans)``: the stay from the floor on (``spans``, the pauses are still inside: a payment-date
+    """``(opening, floor, runs, pause_days, spans, gaps)``: the stay from the floor on (``spans``, the pauses are still inside: a payment-date
     chain is extended by them); the days that are charged are ``_subtract_pauses`` of a span.  ``pause_days`` also holds the gaps of a bridged return
     (``_bridge_returns``) - the real pauses are ``_merge_pauses(inp.pauses)``."""
     opening = inp.opening
@@ -969,7 +972,7 @@ def _pieces_of(inp: LedgerInput):
                 (opening.paid_until + timedelta(days=1)) if opening is not None and opening.paid_until else date.min)
     runs = merge_stays(inp.stays)
     pause_days = _merge_pauses(inp.pauses)
-    runs, pause_days = _bridge_returns(runs, pause_days, floor, inp.regimes)
+    runs, pause_days, gaps = _bridge_returns(runs, pause_days, floor, inp.regimes)
     spans: List[Tuple[date, Optional[date]]] = []
     for first, last in runs:
         lo = max(first, floor)
@@ -977,7 +980,7 @@ def _pieces_of(inp: LedgerInput):
             continue
         if _subtract_pauses(lo, last, pause_days):      # a span that lies wholly in a pause has no charged day
             spans.append((lo, last))
-    return opening, floor, runs, pause_days, spans
+    return opening, floor, runs, pause_days, spans, gaps
 
 
 def regime_switch_days(inp: LedgerInput, new: Regime, at: Optional[datetime] = None) -> List[date]:
@@ -985,7 +988,7 @@ def regime_switch_days(inp: LedgerInput, new: Regime, at: Optional[datetime] = N
     open - ``max`` / ``min`` of the list are the last / first switch.  Closed stays do not switch."""
     regimes = list(inp.regimes) + [replace(new, defer=True, effective_from=inp.today, at=at)]
     windows = regime_windows(regimes)
-    _, _, _, pause_days, spans = _pieces_of(inp)
+    _, _, _, pause_days, spans, _ = _pieces_of(inp)
     priced = sorted(c.day for c in inp.counted_lessons if inp.price_at(c.day).amount is not None)
     return [_window_starts(windows, first, priced, pause_days, _fresh_stay_check(inp.stays, first))[-1] for first, last in spans if last is None]
 
@@ -1075,7 +1078,7 @@ def run_ledger(inp: LedgerInput) -> Ledger:
 def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     today = inp.today
     flags: set = set()
-    opening, floor, runs, pause_days, spans_of_stay = _pieces_of(inp)
+    opening, floor, runs, pause_days, spans_of_stay, gaps = _pieces_of(inp)
     credits = sorted(inp.credits, key=_credit_key)
     net, refunded_from, transferred_from, exceeds = apply_outflows(credits, inp.outflows)
     if exceeds:
@@ -1379,6 +1382,10 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
         events.append(StatementEvent(day=shown, rank=0, kind="opening_paid_until", ref_id="opening:paid_until"))
     for first, last in real_pauses:
         events.append(StatementEvent(day=first, rank=4, kind="pause", ref_id=f"pause:{first.isoformat()}:{last.isoformat()}"))
+    for first, last in gaps:       # R3 money R-6: the days he was out of the group inside a charged period make that period LONGER - the statement says so (a month of 32 days looks like a mistake)
+        n = sum(1 for k in range((last - first).days + 1) if not _is_paused(real_pauses, first + timedelta(days=k)))
+        if n:
+            events.append(StatementEvent(day=first, rank=4, kind="pause", ref_id=f"gap:{first.isoformat()}:{last.isoformat()}:{n}"))
     for c in credits:
         rank = 2 if c.kind == WRITEOFF else 1
         events.append(StatementEvent(day=c.on, rank=rank, kind=c.kind, ref_id=c.id, credit=c.amount))
