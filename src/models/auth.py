@@ -575,7 +575,8 @@ class GroupAudit(Base):
             "'membership_pause_set', 'membership_pause_void', 'opening_balance_set', 'opening_balance_void', "
             "'group_lesson_type_set', 'student_left_group', "
             "'group_archived', 'group_restored', 'lesson_teacher_set', 'lesson_teacher_cleared', 'day_off_voided', 'lesson_restored', 'lesson_cancelled', "
-            "'one_off_created', 'one_off_money_decided', 'exam_release_pending', 'exam_release_done')",
+            "'one_off_created', 'one_off_money_decided', 'exam_release_pending', 'exam_release_done', "
+            "'payment_void', 'payment_replace', 'payment_file_removed')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(

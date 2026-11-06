@@ -6,7 +6,7 @@ from sqlalchemy import inspect, text
 from tests.test_k2_1_migration_pg import BASE_URL, config, engine, version  # noqa: F401  (engine is a fixture)
 
 REVISION, BEFORE = "k4a1b2c3d4e5", "k2b1b2c3d4e5"
-HEAD = "mn1b2b3c4d5e"          # wave B P4 sits on top of K4a (its own test: test_wb_p4_migration_pg.py)
+HEAD = "mv5a1b2c3d4"          # wave B P4 sits on top of K4a (its own test: test_wb_p4_migration_pg.py)
 TABLES = {"support_tickets", "support_messages", "support_attachments"}
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
 

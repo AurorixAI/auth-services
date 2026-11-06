@@ -35,6 +35,8 @@ from .business_clock import BUSINESS_TIMEZONE
 from .payments_files import person_name, staff_name
 from .payments_income_schemas import (
     CollectionRow,
+    DecisionRow,
+    DecisionsPage,
     IncomeCash,
     IncomeCheck,
     IncomeDay,

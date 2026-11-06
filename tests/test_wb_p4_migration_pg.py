@@ -29,7 +29,7 @@ def test_the_revision_follows_k4a_and_wave_c_follows_it():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == ["mn1b2b3c4d5e"] and script.get_revision(REVISION).down_revision == BEFORE and script.get_revision("wca1b2c3d4e5").down_revision == REVISION
+    assert script.get_heads() == ["mv5a1b2c3d4"] and script.get_revision(REVISION).down_revision == BEFORE and script.get_revision("wca1b2c3d4e5").down_revision == REVISION
 
 
 def test_up_down_up_the_column_and_the_partial_index(engine):

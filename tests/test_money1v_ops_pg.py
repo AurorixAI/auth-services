@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from src.models.auth import GroupAudit, StudentPayment, StudentRefund, StudentWriteoff
 
-from tests.pg_world import needs_pg, world  # noqa: F401  (fixtures)
+from tests.pg_world import needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_pay2_api_pg import (  # noqa: F401  (fixtures)
     API, D, TODAY, e1_world, e6_world, fixed_today, membership, owner, post_payment, seed_payment, stay,
 )
@@ -85,7 +85,7 @@ def _advance_world(w, fixed_today):
 def test_v1_a_refund_of_an_advance_that_moved_is_refused_and_a_double_click_writes_one(world, fixed_today):
     m = _advance_world(world, fixed_today)
     c, h = owner(world), key()
-    stale = c.post(f"{API}/org/memberships/{m.id}/refunds", json={"amount": 100_000, "method": "cash", "expected_refundable": 300_000})
+    stale = c.post(f"{API}/org/memberships/{m.id}/refunds", json={"amount": 100_000, "method": "cash", "reason": "ученик ушёл", "expected_refundable": 300_000})
     assert stale.status_code == 409 and stale.json()["detail"]["code"] == "BALANCE_CHANGED" and stale.json()["detail"]["refundable"] == 344_000
     assert refunds(world) == []
     body = {"amount": 100_000, "method": "cash", "reason": "ученик ушёл", "expected_refundable": 344_000}

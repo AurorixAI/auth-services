@@ -43,7 +43,7 @@ def test_the_revision_follows_wca_and_pack_b_sits_on_top_of_it():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == ["mn1b2b3c4d5e"] and script.get_revision(REVISION).down_revision == BEFORE and script.get_revision("mn1b2b3c4d5e").down_revision == REVISION
+    assert script.get_heads() == ["mv5a1b2c3d4"] and script.get_revision(REVISION).down_revision == BEFORE and script.get_revision("mn1b2b3c4d5e").down_revision == REVISION
 
 
 def test_up_down_up_the_tables_the_checks_and_the_audit_actions(engine):
