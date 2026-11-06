@@ -32,6 +32,7 @@ from src.auth.router import router as auth_router
 from src.auth.attendance_excuses_router import router as attendance_excuses_router
 from src.auth.payments_router import router as payments_router
 from src.auth.payroll_router import router as payroll_router
+from src.auth.my_payroll_router import router as my_payroll_router
 from src.api.internal_router import router as internal_router
 
 # Platform console (pack «Консоль-1»): /api/v1/platform/*, the public demo request, «Задать пароль» by link
@@ -239,6 +240,7 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(attendance_excuses_router, prefix="/api/v1")
 app.include_router(payments_router, prefix="/api/v1")
 app.include_router(payroll_router, prefix="/api/v1")
+app.include_router(my_payroll_router, prefix="/api/v1")
 app.include_router(internal_router, prefix="/api/v1")
 platform_errors.register(app)  # PlatformError -> {"detail", "code"}; Russian 422 for the new routes only
 app.include_router(platform_router, prefix="/api/v1")
