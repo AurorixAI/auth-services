@@ -175,6 +175,21 @@ def set_membership_fee_gone(membership_id: UUID, user: dict = Depends(require_pa
 # ---- group price and individual price (ROADMAP #105) ------------------------------------------------
 
 
+def _price_with_effects(db, user: dict, membership_ids, write, confirmed: bool, dry_run: bool):
+    """Money-1 V9: a price write with the block of what it does to the saved sheets of the teachers (``money_effects``).  The window (``dry_run``) keeps its own answer (the impact and the
+    ``warnings`` of an unusual sum) and measures the effect with a real write inside a transaction that is rolled back (the sum was asked about separately, so it is confirmed there);
+    a failure of the measurement is ``unavailable``, never an error of the price."""
+    owner = user.get("org_role") == "owner"
+    if not dry_run:
+        return money_effects.run_with_effects(db, user["org_id"], membership_ids, owner, lambda: write(False, confirmed), dry_run=False)
+    out = write(True, confirmed)
+    try:
+        _, effects = money_effects.run_with_effects(db, user["org_id"], membership_ids, owner, lambda: write(False, True), dry_run=True)
+    except Exception:
+        effects = money_effects.unavailable(False)
+    return out, effects
+
+
 @router.get("/org/group-prices", response_model=GroupPriceList)
 def group_price_list(user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
     """Страница «Оплаты → Цены групп»: все НЕ архивные группы центра (архивные не показываются) — название, учитель,
@@ -219,11 +234,19 @@ def set_group_price(
     же транзакции — она видна в ``history[].changes``. Тот же запрос ещё раз (двойной клик: сумма, примечание и
     ``valid_from`` те же) ничего не меняет и вторую строку аудита не пишет."""
     try:
-        return pricing.PricingService(db).set_group_price(
-            user["org_id"], group_id, user["user_id"], amount=request.amount, valid_from=request.valid_from,
-            note=request.note, dry_run=dry_run, owner_view=user.get("org_role") == "owner",
-            confirm_unusual=request.confirm_unusual, correction=request.correction, correction_reason=request.correction_reason,
-        )
+        service = pricing.PricingService(db)
+        ids = service._money_ids(user["org_id"], group_id=group_id)
+
+        def write(dry: bool, confirmed: bool):
+            return service.set_group_price(
+                user["org_id"], group_id, user["user_id"], amount=request.amount, valid_from=request.valid_from,
+                note=request.note, dry_run=dry, owner_view=user.get("org_role") == "owner",
+                confirm_unusual=confirmed, correction=request.correction, correction_reason=request.correction_reason)
+
+        out, effects = _price_with_effects(db, user, ids, write, request.confirm_unusual, dry_run)
+        out["money_effects"] = effects
+        out["teacher_share"] = {"text": "Зарплата преподавателей этой группы тоже изменится: процент считается от фактической цены"}      # Money-1 V9 (ЗПД-7)
+        return out
     except pricing.PriceError as exc:
         raise _http(exc)
 
@@ -271,12 +294,16 @@ def set_price_override(
     той же транзакции — она видна в ``history[].changes``. Повтор того же запроса (сумма, причина, ``valid_from``)
     ничего не меняет и аудит не дублирует."""
     try:
-        out = pricing.PricingService(db).set_override(
-            user["org_id"], membership_id, user["user_id"], amount=request.amount,
-            valid_from=request.valid_from, reason=request.reason, dry_run=dry_run,
-            owner_view=user.get("org_role") == "owner",
-            confirm_unusual=request.confirm_unusual, correction=request.correction, correction_reason=request.correction_reason,
-        )
+        def write(dry: bool, confirmed: bool):
+            return pricing.PricingService(db).set_override(
+                user["org_id"], membership_id, user["user_id"], amount=request.amount,
+                valid_from=request.valid_from, reason=request.reason, dry_run=dry,
+                owner_view=user.get("org_role") == "owner",
+                confirm_unusual=confirmed, correction=request.correction, correction_reason=request.correction_reason)
+
+        out, effects = _price_with_effects(db, user, [membership_id], write, request.confirm_unusual, dry_run)
+        out["money_effects"] = effects
+        out["teacher_share"] = {"text": money_effects.teacher_share_text(request.amount)}               # Money-1 V9 (ДП-03)
         out["row"] = PaymentService(db)._row(user["org_id"], membership_id)
         return out
     except (PaymentError, pricing.PriceError) as exc:

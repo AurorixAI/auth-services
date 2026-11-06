@@ -18,3 +18,18 @@ def test_v3_the_borders_of_a_sensible_price_and_its_question():
         assert pricing.unusual_change(old, new) is unusual, (old, new)
     assert pricing.unusual_warnings(300_000, 3_000_000) == [{"code": "price_unusual", "text": f"Вы уверены: 3{NB}000{NB}000{NB}сум? Сейчас 300{NB}000{NB}сум"}]
     assert pricing.unusual_warnings(300_000, 310_000) == []
+
+
+def test_v9_the_words_about_the_pay_of_the_teacher_in_the_windows_of_a_price_and_of_a_forgiveness():
+    from src.auth import money_effects as me
+
+    closes = {"from": "2026-10-06", "to": "2026-11-05", "label": "06.10–05.11"}
+    owner_lines = [{"month": "2026-10", "state": "open", "changedBy": 133_333, "teacherName": "Эргашев К."}]
+    got = me.forgiveness_block(closes, {"payroll": owner_lines})
+    assert got["text"] == f"Прощение закроет период 06.10–05.11. Эти уроки будут оплачены преподавателю: +133{NB}333{NB}сум" and got["teacher_pay"] == 133_333
+    admin = me.forgiveness_block(closes, {"payroll": [{"month": "2026-10", "state": "open"}]})
+    assert admin["text"] == "Прощение закроет период 06.10–05.11. Эти уроки будут оплачены преподавателю" and admin["teacher_pay"] is None
+    assert me.forgiveness_block(None, {"payroll": []}) is None
+    assert me.teacher_share_text(480_000) == "Зарплата преподавателя за этого ученика тоже изменится: процент считается от фактической цены"
+    assert me.teacher_share_text(0) == "Зарплата преподавателя за этого ученика станет 0: процент считается от фактической цены"
+    assert me.teacher_share_text(None) == "Зарплата преподавателя за этого ученика снова считается от цены группы"

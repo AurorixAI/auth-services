@@ -1270,6 +1270,18 @@
           "impact": {
             "$ref": "#/components/schemas/PriceImpact"
           },
+          "money_effects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Money Effects"
+          },
           "period_mode": {
             "anyOf": [
               {
@@ -1295,6 +1307,20 @@
               }
             ],
             "title": "Price Label"
+          },
+          "teacher_share": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Share"
           }
         },
         "required": [
@@ -6465,6 +6491,18 @@
             "title": "Membership Id",
             "type": "string"
           },
+          "money_effects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Money Effects"
+          },
           "period_mode": {
             "enum": [
               "calendar",
@@ -6482,6 +6520,20 @@
           },
           "row": {
             "$ref": "#/components/schemas/MembershipPaymentRow"
+          },
+          "teacher_share": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Share"
           }
         },
         "required": [

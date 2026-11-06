@@ -399,3 +399,26 @@ def test_v10_the_header_of_the_excel_of_a_month_is_the_totals_of_the_month_and_t
     assert line.startswith("За период: ") and "Стоимость обучения 500 000" in line and "Оплачено 400 000" in line and "Весь счёт" in line
     csv = c.get(f"{API}/org/memberships/{m.id}/statement/export", params={"format": "csv"}).text
     assert "способ: Наличные" in csv and "способ: cash" not in csv
+
+
+# ---- V9: the pay of the teacher in the windows of a forgiveness and of an individual price -----------------------------------------------------
+
+
+def test_v9_the_forgiveness_names_the_period_it_closes_and_that_the_teacher_is_paid_for_it(world, fixed_today):
+    m = e6_world(world)                                                              # 500 000 charged on 15.10, 400 000 paid: debt 100 000 of the period 15.10-14.11
+    got = owner(world).post(f"{API}/org/memberships/{m.id}/writeoffs", params={"dry_run": "true"}, json={"all": True, "reason": "льгота"}).json()
+    block = got["money_effects"]["forgiveness"]
+    assert block["period"]["label"] == "15.10–14.11" and block["text"].startswith("Прощение закроет период 15.10–14.11. Эти уроки будут оплачены преподавателю")
+    assert got["closes"] == block["period"] and writeoffs(world) == []              # the old window said nothing about the period and the teacher
+
+
+def test_v9_the_individual_price_says_that_the_pay_of_the_teacher_follows_the_real_price(world, fixed_today):
+    m = e6_world(world)
+    c = owner(world)
+    got = c.put(f"{API}/org/memberships/{m.id}/price-override", params={"dry_run": "true"}, json={"amount": 300_000, "reason": "скидка"}).json()
+    assert got["teacher_share"]["text"] == "Зарплата преподавателя за этого ученика тоже изменится: процент считается от фактической цены"
+    assert "money_effects" in got and got["money_effects"]["dryRun"] is True
+    zero = c.put(f"{API}/org/memberships/{m.id}/price-override", params={"dry_run": "true"}, json={"amount": 0, "reason": "бесплатно", "confirm_unusual": True}).json()
+    assert zero["teacher_share"]["text"].startswith("Зарплата преподавателя за этого ученика станет 0")
+    group = c.put(f"{API}/org/groups/{world.group.id}/price", params={"dry_run": "true"}, json={"amount": 600_000}).json()
+    assert "money_effects" in group and group["teacher_share"]["text"].startswith("Зарплата преподавателей этой группы тоже изменится")

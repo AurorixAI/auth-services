@@ -1,5 +1,7 @@
 {
   "dry_run": true,
+  "money_effects": null,
+  "teacher_share": null,
   "impact": {
     "students_following": 12,
     "students_with_override": 1,

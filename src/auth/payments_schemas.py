@@ -544,6 +544,8 @@ class GroupPriceChanged(BaseModel):
     """``PUT /org/groups/{id}/price``: the new state + the impact; with ``?dry_run=1`` only the impact."""
 
     dry_run: bool = False
+    money_effects: Optional[Dict[str, Any]] = None  # Money-1 V9: the saved sheets of the teachers whose pay the price moves (the sums only for the owner)
+    teacher_share: Optional[Dict[str, str]] = None  # Money-1 V9: {"text"} - the pay of the teachers follows the price
     impact: PriceImpact
     group_id: Optional[str] = None
     group_name: Optional[str] = None
@@ -600,6 +602,8 @@ class MembershipPriceOut(BaseModel):
     price: PriceOut
     history: List[PriceOverrideRow] = Field(default_factory=list)
     cancelled: List[PriceOverrideCancelled] = Field(default_factory=list)  # the last 20, newest first
+    money_effects: Optional[Dict[str, Any]] = None  # Money-1 V9 (a write of the price): the saved sheets of the teacher whose pay the price moves
+    teacher_share: Optional[Dict[str, str]] = None  # Money-1 V9: {"text"} - the pay of the teacher follows the real price of the student
 
 
 class PriceOverrideUpdate(BaseModel):
@@ -911,6 +915,7 @@ class WriteoffCreated(PayModel):
     writeoff: WriteoffOut
     debt_before: int = 0
     debt_after: int = 0
+    closes: Optional[Dict[str, str]] = None  # Money-1 V9: the period the forgiveness closes: {"from", "to", "label"}; null - it closes nothing
     row: MembershipPaymentRow
     money_effects: Optional[Dict[str, Any]] = None  # Money-1 A3: the saved payroll sheets whose pay the operation moves (``money_effects.run_with_effects``)
     dry_run: bool = False                            # Money-1 R3 #15: the answer of ``?dry_run=true`` - nothing was written, the ids are provisional

@@ -1630,6 +1630,16 @@ class PaymentService:
         if expected is not None and expected != now:
             raise StaleAmount(tx.stale_text(kind, expected, now), **fresh)
 
+    @staticmethod
+    def _closes(before: bl.Ledger, after: bl.Ledger) -> Optional[Dict[str, str]]:
+        """Money-1 V9: the periods whose unpaid part a forgiveness closes (the same segments of the same ledger as the debt): ``{"from", "to", "label"}`` or ``None``."""
+        unpaid = {s.id: s.unpaid for s in before.segments}
+        touched = [s for s in after.segments if s.kind == "period" and unpaid.get(s.id, 0) > s.unpaid]
+        if not touched:
+            return None
+        first, last = min(s.period_start for s in touched), max(s.period_end for s in touched)
+        return {"from": first.isoformat(), "to": last.isoformat(), "label": f"{tx.ddmm(first)}\u2013{tx.ddmm(last)}"}
+
     def _voided_detail(self, row: Any) -> Dict[str, Any]:
         users = self._users([row.voided_by])
         return {"voided_at": _iso(row.voided_at), "voided_by_name": _person(users.get(row.voided_by))}
@@ -1724,7 +1734,7 @@ class PaymentService:
         invalidate_summary(org_id)
         logger.info("writeoff created id=%s membership=%s actor=%s", row.id, membership_id, actor_id)
         entry = self._entry_of(org_id, membership_id, today)
-        return WriteoffCreated(writeoff=self._writeoff_out(row), debt_before=before.debt, debt_after=after.debt,
+        return WriteoffCreated(writeoff=self._writeoff_out(row), debt_before=before.debt, debt_after=after.debt, closes=self._closes(before, after),
                                row=self._rows([entry])[0])
 
     @deadlock_guard

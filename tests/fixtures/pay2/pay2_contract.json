@@ -5848,6 +5848,20 @@
       },
       "WriteoffCreated": {
         "properties": {
+          "closes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closes"
+          },
           "debt_after": {
             "default": 0,
             "title": "Debt After",
@@ -5886,6 +5900,7 @@
           "writeoff",
           "debt_before",
           "debt_after",
+          "closes",
           "row",
           "money_effects",
           "dry_run"

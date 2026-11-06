@@ -33,6 +33,11 @@
   },
   "name": "Иванов И.",
   "orgRole": "teacher",
+  "payroll": {
+    "text": "",
+    "unpaid_months": [],
+    "unsaved_months": []
+  },
   "pendingSubstitutionRequests": {
     "count": 0
   },

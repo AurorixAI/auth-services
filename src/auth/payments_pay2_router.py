@@ -104,6 +104,7 @@ def create_writeoff(
                 user["org_id"], membership_id, user["user_id"], amount=request.amount, whole=request.all_debt,
                 reason=request.reason, effective_on=request.effective_on, actor_role=_role(user),
                 expected_debt=request.expected_debt, idempotency_key=idempotency_key), dry_run=dry_run)
+        effects = {**effects, "forgiveness": money_effects.forgiveness_block(out.closes, effects)}      # V9: the period it closes and «оплачено преподавателю»
         out.money_effects, out.dry_run = effects, dry_run                   # A3 (ЗПД-5): a forgiven debt is paid to the teacher - named with the sum
         return out
     except PaymentError as exc:

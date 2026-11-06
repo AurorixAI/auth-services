@@ -507,3 +507,25 @@ def deduction_text(gone: List[Dict[str, Any]], *, done: bool, past: bool = True)
     count = len(gone)
     who = f"{count} {plural(count, 'ученик', 'ученика', 'учеников')}"
     return f"Ученикам {'снят' if done else 'снимем'} перерасчёт за этот урок: всего {num(total)}{NBSP}сум ({who}); {tail}"
+
+
+# ============================================================================================ Money-1 V9: the pay of the teacher in the windows of a price and of a forgiveness
+def forgiveness_block(closes: Optional[Dict[str, Any]], effects: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The forgiven debt is PAID to the teacher (owner's decision 21.10, confirmed 04.11): the window names the period it closes and the pay (the sum only for the owner: the lines of the saved sheets carry
+    ``changedBy`` only for him).  ``closes`` = ``{"from", "to", "label"}`` of the periods whose unpaid part the forgiveness closes; ``None`` - it closes nothing."""
+    if not closes:
+        return None
+    pay = sum(int(line["changedBy"]) for line in (effects or {}).get("payroll", []) if int(line.get("changedBy") or 0) > 0)
+    text = f"Прощение закроет период {closes['label']}. Эти уроки будут оплачены преподавателю"
+    if pay:
+        text += f": {signed_money(pay)}"
+    return {"period": closes, "teacher_pay": pay or None, "text": text}
+
+
+def teacher_share_text(new_amount: Optional[int]) -> str:
+    """The window of an individual price: the pay of the teacher is a percent of the REAL price of the student (owner's answer 04.11), so a discount lowers it."""
+    if new_amount is None:
+        return "Зарплата преподавателя за этого ученика снова считается от цены группы"
+    if new_amount == 0:
+        return "Зарплата преподавателя за этого ученика станет 0: процент считается от фактической цены"
+    return "Зарплата преподавателя за этого ученика тоже изменится: процент считается от фактической цены"
