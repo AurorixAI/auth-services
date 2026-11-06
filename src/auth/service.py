@@ -2819,7 +2819,7 @@ class AuthService:
             billing = billing_start.apply(
                 self.db, group, new_period, today=ps.business_date(now_dt), accounting_start=billing_start.accounting_start_of(self.db, org_id, cache),
                 explicit=pay_from, cache=cache)
-            if immediate:                                        # R3 / lead 11: the window says what is charged AT ONCE (a past «Оплата с»)
+            if immediate and payments_detail and dry_run:        # R3 / lead 11: the sum is in the PREVIEW (dry_run) and only for a caller who may see money; the real answer carries no sum (test_n13_p2_permissions): the window says what is charged AT ONCE (a past «Оплата с»)
                 self.db.flush()                                  # the new membership gets its id here
                 billing["immediate"] = billing_start.immediate_charge(self.db, org_id, membership.id, ps.business_date(now_dt))
 

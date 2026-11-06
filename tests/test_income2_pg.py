@@ -100,7 +100,8 @@ def test_october_overview_hand_calculated(world, seeded):
         ("click", 1_250_000, 1), ("cash", 950_000, 4), ("bank_transfer", 900_000, 1), ("card", 350_000, 1)]
     assert [m["label"] for m in o["by_method"]] == ["Click", "Наличные", "Перевод", "Карта"]
     assert o["position"] == {"debt_total": 500_000, "past_debt_total": 0, "advance_total": 450_000, "memberships_with_debt": 3,
-                             "students_with_debt": 3, "memberships_with_advance": 2, "students_with_advance": 2}
+                             "students_with_debt": 3, "memberships_with_advance": 2, "students_with_advance": 2,
+                             "debtors_debt_total": 500_000, "debt_waiting_total": 0, "students_debtors": 3, "students_waiting": 0}      # Money-1 R3 №20: the split beside the old numbers
     assert (o["delta_direction"], o["delta_text"]) == ("up", "130% к 1–21 сентября")
     assert o["cash"] is None and o["ok"] and all(c["diff"] == 0 for c in o["checks"])
 

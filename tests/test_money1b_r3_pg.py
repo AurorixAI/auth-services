@@ -233,7 +233,7 @@ def test_r3_lead11_the_dry_run_of_adding_with_a_past_pay_from_says_what_is_charg
     future = add(w, fresh_student(w, "Придёт"), dry_run=True)                                # the first lesson is in the future (06.11) - nothing at once
     assert future["billing"]["immediate"] is None
     real = add(w, s, pay_from="2026-10-07")
-    assert real["billing"]["immediate"]["amount"] == 300_000
+    assert "immediate" not in real["billing"]                                                # the real answer carries no sum (the privacy test of the roster)
 
 
 # ---- №4 (major) / lead 4: the student who pays in time is not «вне списка» - his NEXT period costs another sum --------------------------------------------------------
@@ -452,3 +452,13 @@ def test_r3_19_the_table_of_the_openings_shows_the_day_the_student_is_charged_fr
     rows = [m for g in owner(w).get(f"{API}/org/opening-balances").json()["groups"] for m in g["memberships"]]
     mine = [r for r in rows if r["student"]["id"] == str(s.id)]
     assert [r["enrolled_on"] for r in mine] == ["2026-11-06"]                               # before: 2026-10-21, a second «first day»
+
+
+def test_r3_lead11_the_immediate_sum_is_not_shown_to_an_administrator_without_the_money_right(world, fixed_today):
+    from tests.money1b_helpers import add, fresh_student, opening_world
+    from tests.pg_world import make_client
+
+    w = world
+    opening_world(w, fixed_today)
+    done = add(w, fresh_student(w, "Без права"), client=make_client(w, user=w.admin))
+    assert "immediate" not in done["billing"] or done["billing"]["immediate"] is None and "Сразу" not in str(done)
