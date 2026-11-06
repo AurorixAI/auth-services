@@ -226,3 +226,22 @@ def test_v3_an_individual_price_is_checked_the_same_way(world, fixed_today):
     assert refused.status_code == 409 and refused.json()["detail"]["code"] == "PRICE_UNUSUAL"
     ok = c.put(f"{API}/org/memberships/{m.id}/price-override", json={"amount": 5_000_000, "reason": "договорённость", "confirm_unusual": True})
     assert ok.status_code == 200, ok.text
+
+
+# ---- V4: an opening balance on top of payments ---------------------------------------------------------------------------------------------
+
+
+def test_v4_a_paid_until_on_top_of_payments_names_the_payments_and_the_coverage_it_makes(world, fixed_today):
+    from tests.test_opening_bulk_pg import centre, enrolled, it, preview as open_preview
+
+    fixed_today(D(2026, 11, 12))
+    centre(world)                                                                     # price 600 000, accounting from 01.11, the shared month
+    m = enrolled(world, D(2026, 11, 1))
+    seed_payment(world, m, 600_000, D(2026, 11, 2), receipt_no=1)
+    item = open_preview(world, [it(world, m, paid_until="2026-12-15")], reason="остаток по журналу")["items"][0]
+    over = [x for x in item["warnings"] if x["code"] == "OPENING_OVER_PAYMENTS"]
+    assert len(over) == 1 and item["after"]["paid_until"]
+    day = D.fromisoformat(item["after"]["paid_until"])
+    assert over[0]["message"] == f"У ученика уже есть оплаты на 600{NB}000{NB}сум — покрытие станет до {day.strftime('%d.%m')}"       # the number of the screen «after», the old code was silent
+    clean = enrolled(world, D(2026, 11, 1), student=world.students[1])
+    assert not [x for x in open_preview(world, [it(world, clean, paid_until="2026-12-15")])["items"][0]["warnings"] if x["code"] == "OPENING_OVER_PAYMENTS"]       # no payments - nothing to say

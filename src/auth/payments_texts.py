@@ -41,6 +41,11 @@ def price_unusual_text(old: int, new: int) -> str:
     return f"Вы уверены: {money(new)}? Сейчас {money(old)}"
 
 
+def opening_over_payments_text(total: int, covered_until: date) -> str:
+    """Money-1 V4 (ДП-08): an opening balance on top of payments already entered - ``У ученика уже есть оплаты на 600 000 сум — покрытие станет до 20.01``."""
+    return f"У ученика уже есть оплаты на {money(total)} — покрытие станет до {ddmm(covered_until)}"
+
+
 def ddmm(day: date) -> str:
     return day.strftime("%d.%m")
 

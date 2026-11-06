@@ -394,6 +394,11 @@ class OpeningsService(_Base):
             if p.status != "error":
                 ledger = plan.ledgers_after.get(p.mid)
                 p.after = self._state(ledger, self._target_value(p) if p.changed else p.existing)
+        for p in plan.items:      # Money-1 V4 (ДП-08): «оплачено до» on top of payments - the person is told what the coverage becomes (the number of the screen «after»)
+            if p.status == "ok" and p.changed and p.has_money and p.target is not None and p.target[0] is not None and p.after is not None and p.after.paid_until:
+                paid = sum(int(x.amount) for x in plan.a.payments.get(p.mid, []) if x.voided_at is None)
+                if paid:
+                    p.warn("OPENING_OVER_PAYMENTS", tx.opening_over_payments_text(paid, p.after.paid_until))
         plan.finish()
         return plan
 
