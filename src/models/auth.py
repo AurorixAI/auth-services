@@ -1653,6 +1653,7 @@ class StudentRefund(Base):
     voided_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     void_reason = Column(String(500), nullable=True)
     idempotency_key = Column(UUID(as_uuid=True), nullable=True)      # Money-1 V1: a repeated request of one window (a double click) writes one record
+    receipt_no = Column(Integer, nullable=True)                      # Money-1 V6: the number «В-n» of the receipt of a refund (per centre; older refunds have none)
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_student_refunds_amount"),
@@ -1666,6 +1667,7 @@ class StudentRefund(Base):
         ),
         Index("ix_sr_membership_live", "org_id", "membership_id", postgresql_where=text("voided_at IS NULL")),
         Index("ix_sr_org_effective_on", "org_id", "effective_on", postgresql_where=text("voided_at IS NULL")),
+        Index("uq_student_refunds_receipt_no", "org_id", "receipt_no", unique=True, postgresql_where=text("receipt_no IS NOT NULL")),
         Index("uq_student_refunds_idempotency", "org_id", "idempotency_key", unique=True, postgresql_where=text("idempotency_key IS NOT NULL")),
     )
 

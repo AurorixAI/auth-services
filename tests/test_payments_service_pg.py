@@ -142,7 +142,7 @@ def test_business_date_is_tashkent_not_utc(world, monkeypatch):
 def test_replace_default_reason_and_restating_the_same_figures(world):
     old = pay(world, paid_on=day(-3), valid_to=day(20), valid_from=day(-3))["payment"]
     same = {"amount": 450000, "paid_on": day(-3).isoformat(), "valid_from": day(-3).isoformat(),
-            "valid_to": day(20).isoformat()}
+            "valid_to": day(20).isoformat(), "reason": "исправление"}
     r = owner(world).post(f"{API}/org/payments/{old['id']}/replace", json=same)
     assert r.status_code == 201, r.text  # same figures + a note-less correction is not a duplicate of the voided row
     world.db.expire_all()
@@ -152,7 +152,7 @@ def test_replace_default_reason_and_restating_the_same_figures(world):
 def test_failed_replace_leaves_the_old_payment_untouched(world):
     old = pay(world, paid_on=day(-3), valid_to=day(20))["payment"]
     r = owner(world).post(f"{API}/org/payments/{old['id']}/replace",
-                          json={"amount": 1, "paid_on": day(5).isoformat()})  # future date
+                          json={"amount": 1, "paid_on": day(5).isoformat(), "reason": "исправление"})  # future date
     assert r.status_code == 422
     world.db.expire_all()
     assert world.db.get(StudentPayment, old["id"]).voided_at is None
@@ -171,7 +171,7 @@ def test_void_needs_a_reason_and_works_once(world):
     assert body["row"]["status"] == "none" and body["row"]["last_payment"] is None
     r = client.post(f"{API}/org/payments/{p['id']}/void", json={"reason": "ещё раз"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "ALREADY_VOIDED"
-    r = client.post(f"{API}/org/payments/{p['id']}/replace", json={"amount": 1, "paid_on": day().isoformat()})
+    r = client.post(f"{API}/org/payments/{p['id']}/replace", json={"amount": 1, "paid_on": day().isoformat(), "reason": "исправление"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "ALREADY_VOIDED"
     assert world.db.query(StudentPayment).filter_by(org_id=world.org.id).count() == 1  # nothing is ever deleted
 

@@ -56,7 +56,7 @@ def endpoints(w):
         ("PUT", f"{API}/org/memberships/{m}/price-override", {"amount": 1, "reason": "проверка прав"}, 200, False),
         ("GET", f"{API}/org/memberships/{m}/payments", None, 200, False),
         ("POST", f"{API}/org/memberships/{m}/payments", {"amount": 5, "paid_on": today}, 201, False),
-        ("POST", f"{API}/org/payments/{p}/replace", {"amount": 6, "paid_on": today}, 201, False),
+        ("POST", f"{API}/org/payments/{p}/replace", {"amount": 6, "paid_on": today, "reason": "проверка прав"}, 201, False),
         ("POST", f"{API}/org/payments/{p}/void", {"reason": "проверка прав"}, 200, False),
     ]
 

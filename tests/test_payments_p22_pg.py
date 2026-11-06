@@ -181,7 +181,7 @@ def test_receipt_numbers_count_inside_the_organisation_and_are_never_reused(worl
     assert c["receipt_no"] == 3
     # a replacement gets a new number, the replaced one keeps its own
     r = owner(world).post(f"{API}/org/payments/{a['id']}/replace",
-                          json={"amount": 9, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat()})
+                          json={"amount": 9, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat(), "reason": "исправление"})
     assert r.json()["payment"]["receipt_no"] == 4
     assert stored_payment(world, a["id"]).receipt_no == 1
     listing = {p["id"]: p["receipt_no"] for p in owner(world).get(
@@ -310,7 +310,7 @@ def test_receipt_follows_the_correction_chain_and_shows_the_void(world):
         "amount": 2, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat(), "reason": "Неверная сумма"})
     b = r.json()["payment"]
     r = owner(world).post(f"{API}/org/payments/{b['id']}/replace", json={
-        "amount": 3, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat()})
+        "amount": 3, "paid_on": day(-3).isoformat(), "valid_to": day(20).isoformat(), "reason": "исправление"})
     c = r.json()["payment"]
     ra, rb, rc = (owner(world).get(f"{API}/org/payments/{p['id']}/receipt").json() for p in (a, b, c))
     assert (ra["receipt_no"], ra["replaced_by_receipt_no"], ra["replaces_receipt_no"]) == (1, 2, None)

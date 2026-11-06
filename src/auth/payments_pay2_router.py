@@ -27,6 +27,7 @@ from .payments_schemas import (
     PayError,
     PaymentPreview,
     ReceiptItems,
+    RefundReceiptOut,
     ReceiptsReport,
     RecordVoid,
     RefundCreate,
@@ -170,6 +171,15 @@ def void_refund(
                                                                                  expected_advance=request.expected_advance), dry_run=dry_run)
         out.money_effects, out.dry_run = effects, dry_run
         return out
+    except PaymentError as exc:
+        raise _http(exc)
+
+
+@router.get("/org/refunds/{refund_id}/receipt", response_model=RefundReceiptOut, responses=_ERRORS)
+def refund_receipt(refund_id: UUID, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
+    """«Квитанция о возврате» для печати (Money-1 V6): номер «В-n», сумма и сумма прописью, способ, причина, кто выдал, строка подписи получателя."""
+    try:
+        return PaymentService(db).refund_receipt(user["org_id"], refund_id)
     except PaymentError as exc:
         raise _http(exc)
 

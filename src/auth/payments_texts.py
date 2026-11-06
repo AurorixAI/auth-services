@@ -46,6 +46,10 @@ def opening_over_payments_text(total: int, covered_until: date) -> str:
     return f"У ученика уже есть оплаты на {money(total)} — покрытие станет до {ddmm(covered_until)}"
 
 
+NOT_FISCAL = "Не является фискальным чеком"            # Money-1 V5/V6: the receipt of the centre is an internal paper, not a cheque of the tax service (owner 04.11)
+REFUND_SIGNATURE = "Получил(а): ____________________  Подпись"
+
+
 def ddmm(day: date) -> str:
     return day.strftime("%d.%m")
 

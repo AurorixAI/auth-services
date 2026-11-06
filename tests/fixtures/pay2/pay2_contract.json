@@ -4330,6 +4330,17 @@
             ],
             "title": "Reason"
           },
+          "receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt No"
+          },
           "void_reason": {
             "anyOf": [
               {
@@ -4378,6 +4389,7 @@
         "required": [
           "id",
           "membership_id",
+          "receipt_no",
           "amount",
           "method",
           "reason",

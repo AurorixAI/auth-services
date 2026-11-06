@@ -248,7 +248,7 @@ def test_replacement_that_ended_before_the_carry_over_starts_leaves_none(two):
     r = owner(two).post(
         f"{API}/org/payments/{original['id']}/replace",
         json={"amount": 450000, "paid_on": day(-10).isoformat(), "valid_from": day(-10).isoformat(),
-              "valid_to": day(-3).isoformat()},
+              "valid_to": day(-3).isoformat(), "reason": "исправление"},
     )
     assert r.status_code == 201, r.text
     assert history(two, two.second, include_voided=False) == []
@@ -607,7 +607,7 @@ def test_a_deadlock_is_a_409_to_repeat_never_a_500(two, monkeypatch):
     message = "Операция совпала с другой правкой. Повторите."
     monkeypatch.setattr(PaymentService, "_probe_payment", boom)
     for url, body in ((f"{API}/org/payments/{original['id']}/void", {"reason": "проверка"}),
-                      (f"{API}/org/payments/{original['id']}/replace", {"amount": 1, "paid_on": day(0).isoformat(), "method": "cash"})):
+                      (f"{API}/org/payments/{original['id']}/replace", {"amount": 1, "paid_on": day(0).isoformat(), "method": "cash", "reason": "проверка"})):
         r = owner(two).post(url, json=body)
         assert r.status_code == 409 and r.json()["detail"] == {"code": "CONCURRENT_EDIT", "message": message}, (url, r.text)
     monkeypatch.undo()

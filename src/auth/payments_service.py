@@ -105,6 +105,7 @@ from .payments_schemas import (
     ReceiptSnapshot,
     RefundCreated,
     RefundOut,
+    RefundReceiptOut,
     RefundVoided,
     RegimeImpact,
     SnapshotPrice,
@@ -118,6 +119,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_REPLACE_REASON = "Исправлено"
 RECEIPT_INDEX = "uq_student_payments_receipt_no"
 IDEMPOTENCY_INDEX = "uq_student_payments_idempotency"
+REFUND_NO_INDEX = "uq_student_refunds_receipt_no"
+REFUND_IDEMPOTENCY_INDEX = "uq_student_refunds_idempotency"
 FILE_ON_CARRY_OVER = "К деньгам, перешедшим из другой группы, чек не прикрепляется — это не денежная операция"
 FILE_ON_VOIDED = "Оплата отменена — чек прикрепить нельзя"
 FILE_LIMIT = f"К оплате можно приложить не более {MAX_FILES_PER_PAYMENT} файлов"
@@ -1492,6 +1495,7 @@ class PaymentService:
             self._check_amount(data.amount)
             self._check_date(data.paid_on, today)
             method = self._method_of(data.method)
+            reason = self._check_reason(reason)        # Money-1 V6: a correction of money says why (3..500), nothing is written without it
             self._guard_key(org_id, idempotency_key)   # a replay of this replace: the stored result, not ALREADY_VOIDED
             probe = self._probe_payment(org_id, payment_id)
             if probe.kind == "legacy_carry" or probe.carried_from_payment_id is not None:
@@ -1508,7 +1512,7 @@ class PaymentService:
                 self._check_left_ceiling(data.amount, before.debt)
             old.voided_at = _utcnow()
             old.voided_by = UUID(str(actor_id))
-            old.void_reason = (reason or "").strip() or DEFAULT_REPLACE_REASON
+            old.void_reason = reason
             self.db.flush()
             payment = self._insert(membership, org_id, actor_id, data, method, idempotency_key, replaces=old)
             after_entry = self._loader(org_id, today).run([membership.id])[0]
@@ -1597,7 +1601,7 @@ class PaymentService:
     def _refund_out(self, r: StudentRefund) -> RefundOut:
         users = self._users([r.created_by, r.voided_by])
         return RefundOut(
-            id=str(r.id), membership_id=str(r.membership_id), amount=int(r.amount), method=r.method, reason=r.reason,
+            id=str(r.id), membership_id=str(r.membership_id), receipt_no=r.receipt_no, amount=int(r.amount), method=r.method, reason=r.reason,
             note=r.note, effective_on=r.effective_on, created_by=str(r.created_by),
             created_by_name=_person(users.get(r.created_by)), created_at=_iso(r.created_at), voided_at=_iso(r.voided_at),
             voided_by=str(r.voided_by) if r.voided_by else None, voided_by_name=_person(users.get(r.voided_by)),
@@ -1620,6 +1624,47 @@ class PaymentService:
     def _voided_detail(self, row: Any) -> Dict[str, Any]:
         users = self._users([row.voided_by])
         return {"voided_at": _iso(row.voided_at), "voided_by_name": _person(users.get(row.voided_by))}
+
+    def _add_refund(self, org_id: str, build) -> StudentRefund:
+        """Money-1 V6: insert the refund ``build(number)`` makes under the next number of the centre (``max + 1`` in a SAVEPOINT; a concurrent refund of another student that took
+        the same number is refused by the unique index and the next number is tried, as with the receipts of payments)."""
+        for _attempt in range(RECEIPT_ATTEMPTS):
+            last = self.db.query(func.max(StudentRefund.receipt_no)).filter(StudentRefund.org_id == org_id).scalar()
+            row = build(int(last or 0) + 1)
+            try:
+                with self.db.begin_nested():
+                    self.db.add(row)
+                    self.db.flush()
+                return row
+            except IntegrityError as exc:
+                reason = str(exc.orig)
+                if REFUND_IDEMPOTENCY_INDEX in reason:
+                    raise DuplicateRefund("Этот возврат уже внесён") from exc
+                if REFUND_NO_INDEX not in reason:
+                    raise
+        raise PaymentConflict("Не удалось присвоить номер квитанции о возврате. Повторите.")
+
+    def refund_receipt(self, org_id: str, refund_id: UUID) -> RefundReceiptOut:
+        """The printed «Квитанция о возврате»: number, sum and sum in words, the method, the reason, who gave it, the line for the signature of the receiver (Money-1 V6)."""
+        refund = self.db.query(StudentRefund).filter(StudentRefund.id == refund_id, StudentRefund.org_id == org_id).first()
+        if refund is None:
+            raise PaymentNotFound("Возврат не найден")
+        org = self.db.query(Organization).filter(Organization.id == org_id).first()
+        student = self.db.query(Student).filter(Student.id == refund.student_id, Student.org_id == org_id).first()
+        group = self.db.query(Group).filter(Group.id == refund.group_id, Group.org_id == org_id).first()
+        if not (org and student and group):
+            raise PaymentNotFound("Возврат не найден")
+        users = self._users([refund.created_by, refund.voided_by])
+        return RefundReceiptOut(
+            refund_id=str(refund.id), receipt_no=refund.receipt_no, receipt_label=f"В-{refund.receipt_no}" if refund.receipt_no else None,
+            org_name=org.name, org_city=(org.city or "").strip() or None, org_phone=(org.phone or "").strip() or None,
+            student_name=person_name(student.last_name, student.first_name) or "", display_id=student.display_id, group_name=group.name,
+            amount=int(refund.amount), amount_words=amount_words(int(refund.amount)), method=refund.method, method_label=tx.method_label(refund.method),
+            reason=refund.reason, note=refund.note, effective_on=refund.effective_on, created_at=_iso(refund.created_at),
+            accepted_by_name=_person(users.get(refund.created_by)), voided_at=_iso(refund.voided_at), void_reason=refund.void_reason,
+            voided_by_name=_person(users.get(refund.voided_by)),
+            void_note=f"Возврат отменён {tx.ddmm(bc.utc_to_business_wall(refund.voided_at).date())}" if refund.voided_at else None,
+            disclaimer=tx.NOT_FISCAL, signature_line=tx.REFUND_SIGNATURE)
 
     @deadlock_guard
     def create_writeoff(
@@ -1727,7 +1772,7 @@ class PaymentService:
             self._check_date(effective_on, today, "Дата возврата")
             if not isinstance(amount, int) or isinstance(amount, bool) or amount < 1 or amount > MAX_MONEY:
                 raise AmountRange(f"Сумма: от 1 до {_num(MAX_MONEY)}")
-            reason = (reason or "").strip() or None
+            reason = self._check_reason(reason)         # Money-1 V6: money is returned for a stated reason (3..500)
             note = (note or "").strip() or None
             membership = self._membership(org_id, membership_id)
             family = self._lock_family(org_id, membership.student_id)
@@ -1744,13 +1789,11 @@ class PaymentService:
                 raise RefundExceedsAdvance(
                     f"Вернуть можно не больше {_sum(allowed)}" if allowed else "Возвращать нечего: аванса нет",
                     refundable=allowed)
-            row = StudentRefund(
-                org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,
-                group_id=membership.group_id, amount=amount, method=method, reason=reason, note=note,
-                effective_on=effective_on, created_by=UUID(str(actor_id)), created_at=_utcnow(), idempotency_key=idempotency_key,
-            )
-            self.db.add(row)
-            self.db.flush()
+            row = self._add_refund(
+                org_id, lambda number: StudentRefund(
+                    org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,
+                    group_id=membership.group_id, amount=amount, method=method, reason=reason, note=note,
+                    effective_on=effective_on, created_by=UUID(str(actor_id)), created_at=_utcnow(), idempotency_key=idempotency_key, receipt_no=number))
             after = self._entry_of(org_id, membership_id, today).ledger
             self._family_check(org_id, family)
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_REFUND, {

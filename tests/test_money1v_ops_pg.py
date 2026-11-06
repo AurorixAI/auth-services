@@ -245,3 +245,47 @@ def test_v4_a_paid_until_on_top_of_payments_names_the_payments_and_the_coverage_
     assert over[0]["message"] == f"У ученика уже есть оплаты на 600{NB}000{NB}сум — покрытие станет до {day.strftime('%d.%m')}"       # the number of the screen «after», the old code was silent
     clean = enrolled(world, D(2026, 11, 1), student=world.students[1])
     assert not [x for x in open_preview(world, [it(world, clean, paid_until="2026-12-15")])["items"][0]["warnings"] if x["code"] == "OPENING_OVER_PAYMENTS"]       # no payments - nothing to say
+
+
+# ---- V6: the reason of a refund / a correction and the receipt of a refund -----------------------------------------------------------------------
+
+
+def test_v6_a_refund_and_a_correction_need_a_reason_and_nothing_is_written_without_it(world, fixed_today):
+    m = _advance_world(world, fixed_today)
+    c = owner(world)
+    for body in ({"amount": 100_000, "method": "cash"}, {"amount": 100_000, "method": "cash", "reason": "  "}, {"amount": 100_000, "method": "cash", "reason": "ab"}):
+        r = c.post(f"{API}/org/memberships/{m.id}/refunds", json=body)
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "REASON_REQUIRED", body
+    assert refunds(world) == []                                                      # the old code returned the money without a word
+    pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).first()
+    r = c.post(f"{API}/org/payments/{pay.id}/replace", json={"amount": 700_000, "paid_on": TODAY.isoformat(), "method": "cash"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "REASON_REQUIRED"
+    world.db.expire_all()
+    assert world.db.query(StudentPayment).filter_by(id=pay.id).one().voided_at is None
+
+
+def test_v6_the_receipt_of_a_refund_has_a_number_the_sum_in_words_the_signature_and_the_note_of_a_cancellation(world, fixed_today):
+    from src.auth.money_words import amount_words
+
+    m = _advance_world(world, fixed_today)
+    c = owner(world)
+    first = c.post(f"{API}/org/memberships/{m.id}/refunds", json={"amount": 100_000, "method": "cash", "reason": "ученик ушёл"}).json()["refund"]
+    second = c.post(f"{API}/org/memberships/{m.id}/refunds", json={"amount": 50_000, "method": "card", "reason": "переплата"}).json()["refund"]
+    assert (first["receipt_no"], second["receipt_no"]) == (1, 2)
+    r = c.get(f"{API}/org/refunds/{first['id']}/receipt")
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert got["receipt_label"] == "В-1" and got["amount"] == 100_000 and got["amount_words"] == amount_words(100_000) and got["reason"] == "ученик ушёл"
+    assert got["method_label"] == "Наличные" and got["accepted_by_name"] and got["student_name"] and got["group_name"]
+    assert got["disclaimer"] == "Не является фискальным чеком" and got["signature_line"].startswith("Получил(а)") and got["void_note"] is None
+    assert c.post(f"{API}/org/refunds/{first['id']}/void", json={"reason": "ошибка"}).status_code == 200
+    again = c.get(f"{API}/org/refunds/{first['id']}/receipt").json()
+    assert again["void_note"].startswith("Возврат отменён ") and again["void_reason"] == "ошибка"
+    assert make_client_for(world, "teacher").get(f"{API}/org/refunds/{first['id']}/receipt").status_code == 403
+    assert c.get(f"{API}/org/refunds/{uuid4()}/receipt").status_code == 404
+
+
+def make_client_for(w, role):
+    from tests.pg_world import make_client
+
+    return make_client(w, user={"teacher": w.teacher, "admin": w.admin}[role])

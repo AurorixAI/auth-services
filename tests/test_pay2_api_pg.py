@@ -375,7 +375,7 @@ def test_e7_refund_flow(world, fixed_today):
     c = owner(world)
     row = c.get(f"{API}/org/students/{world.students[0].id}/memberships").json()[0]
     assert (row["advance"], row["refundable"]) == (344_000, 344_000)
-    r = c.post(f"{API}/org/memberships/{m.id}/refunds", json={"amount": 344_001, "method": "cash"})
+    r = c.post(f"{API}/org/memberships/{m.id}/refunds", json={"amount": 344_001, "method": "cash", "reason": "ученик ушёл"})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "REFUND_EXCEEDS_ADVANCE" and r.json()["detail"]["refundable"] == 344_000
     r = c.post(f"{API}/org/memberships/{m.id}/refunds", json={"amount": 344_000})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "METHOD_REQUIRED"
@@ -419,7 +419,7 @@ def test_statement_with_refund_keeps_the_gross_credit_and_voided_rows(world, fix
     m = e6_world(world)
     c = owner(world)
     post_payment(world, m, amount=300_000)                       # advance 200 000 on top of the period
-    r = c.post(f"{API}/org/memberships/{m.id}/refunds", json={"amount": 50_000, "method": "card"})
+    r = c.post(f"{API}/org/memberships/{m.id}/refunds", json={"amount": 50_000, "method": "card", "reason": "переехал"})
     assert r.status_code == 201, r.text
     pay_id = r.json()["row"]["last_payment"]["id"]
     wo = c.post(f"{API}/org/memberships/{m.id}/writeoffs", json={"amount": 1_000, "reason": "тест"})

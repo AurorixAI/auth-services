@@ -645,7 +645,7 @@ class PaymentCreate(BaseModel):
 
 
 class PaymentReplace(PaymentCreate):
-    reason: Optional[str] = Field(None, max_length=500)
+    reason: Optional[str] = Field(None, max_length=500)  # Money-1 V6: mandatory (3..500) - 422 REASON_REQUIRED without it
 
 
 class PaymentVoid(BaseModel):
@@ -918,6 +918,7 @@ class RefundCreate(BaseModel):
 class RefundOut(PayModel):
     id: str
     membership_id: str
+    receipt_no: Optional[int] = None  # Money-1 V6: the number of the receipt of the refund («В-n»); null for a refund older than the numbers
     amount: int
     method: PaymentMethod = "other"
     reason: Optional[str] = None
@@ -1648,3 +1649,32 @@ class GroupLessonTypeChanged(GroupLessonTypes):
 for _model in (MembershipPaymentRow, PriceImpact, PaymentSettingsChanged, LogicAErrorDetail, LogicAError, OpeningSaved,
                OpeningVoided, PauseSaved, PauseVoided):
     _model.model_rebuild()
+
+
+class RefundReceiptOut(PayModel):
+    """Money-1 V6: what the printed «Квитанция о возврате» shows (``GET /org/refunds/{id}/receipt``)."""
+
+    refund_id: str
+    receipt_no: Optional[int] = None
+    receipt_label: Optional[str] = None  # «В-12»
+    org_name: str
+    org_city: Optional[str] = None
+    org_phone: Optional[str] = None
+    student_name: str
+    display_id: Optional[str] = None
+    group_name: str
+    amount: int
+    amount_words: str
+    method: PaymentMethod = "other"
+    method_label: str
+    reason: Optional[str] = None
+    note: Optional[str] = None
+    effective_on: date_type
+    created_at: Optional[str] = None
+    accepted_by_name: Optional[str] = None  # who gave the money
+    voided_at: Optional[str] = None
+    voided_by_name: Optional[str] = None
+    void_reason: Optional[str] = None
+    void_note: Optional[str] = None  # «Возврат отменён 05.11»
+    disclaimer: str  # «Не является фискальным чеком»
+    signature_line: str  # the line for the signature of the receiver
