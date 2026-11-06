@@ -139,14 +139,15 @@ def test_business_date_is_tashkent_not_utc(world, monkeypatch):
 
 
 
-def test_replace_default_reason_and_restating_the_same_figures(world):
+def test_replace_keeps_the_given_reason_and_restating_the_same_figures(world):
     old = pay(world, paid_on=day(-3), valid_to=day(20), valid_from=day(-3))["payment"]
     same = {"amount": 450000, "paid_on": day(-3).isoformat(), "valid_from": day(-3).isoformat(),
             "valid_to": day(20).isoformat(), "reason": "исправление"}
     r = owner(world).post(f"{API}/org/payments/{old['id']}/replace", json=same)
     assert r.status_code == 201, r.text  # same figures + a note-less correction is not a duplicate of the voided row
     world.db.expire_all()
-    assert world.db.get(StudentPayment, old["id"]).void_reason == "Исправлено"
+    # Money-1 V6 (decision 06.11 no.5, plan «Решения ведущего»): the reason of a correction is mandatory, so the old default «Исправлено» is gone - the reason given is stored
+    assert world.db.get(StudentPayment, old["id"]).void_reason == "исправление"
 
 
 def test_failed_replace_leaves_the_old_payment_untouched(world):

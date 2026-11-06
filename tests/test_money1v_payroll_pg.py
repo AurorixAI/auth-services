@@ -19,6 +19,11 @@ def _closed(pg_session, clock):
 
 def test_v7_the_advance_of_a_teacher_without_lessons_is_listed_in_the_next_month(pg_session, clock):
     w, g, st = _closed(pg_session, clock)                                              # October closed at 250 000, paid 300 000: 50 000 goes forward
+    g.schedule = []                                                                     # no lessons planned in November: nothing unresolved either - the teacher has no row of his own
+    from sqlalchemy.orm.attributes import flag_modified
+
+    flag_modified(g, "schedule")
+    w.db.commit()
     listed = client(w, "owner").get(f"{API}/org/payroll/months/2026-11")
     assert listed.status_code == 200, listed.text
     rows = [t for t in listed.json()["teachers"] if t["teacher_id"] == str(w.A.id)]
@@ -31,7 +36,7 @@ def test_v7_a_teacher_with_lessons_in_the_month_is_not_marked_advance_only(pg_se
     w, g, st = _closed(pg_session, clock)
     hold(w, g, "lesson-wed", "2026-11-02", {x: "present" for x in st}, start="10:00", end="11:00")
     (row,) = [t for t in client(w, "owner").get(f"{API}/org/payroll/months/2026-11").json()["teachers"] if t["teacher_id"] == str(w.A.id)]
-    assert row["advance_only"] is False and row["lessons_count"] == 1
+    assert row["advance_only"] is False and row["lessons_count"] == 1 and row["carry_in"] == 50_000
 
 
 def test_v7_the_signal_of_a_changed_month_has_no_false_alarm_on_a_zero_difference(pg_session, clock):
