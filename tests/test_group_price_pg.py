@@ -34,12 +34,17 @@ pytestmark = needs_pg
 
 
 def confirming(session):
-    """The service as the window uses it after the yes to «Вы уверены?» (rule V3 is not the aim of the concurrency tests of this file)."""
+    """The service as the window uses it after the yes to «Вы уверены?» (rule V3 is not the aim of the concurrency tests of this file); everything else is the service itself."""
     import functools
 
     service = pricing.PricingService(session)
-    return type("Confirming", (), {"set_group_price": staticmethod(functools.partial(service.set_group_price, confirm_unusual=True)),
-                                   "set_override": staticmethod(functools.partial(service.set_override, confirm_unusual=True))})
+
+    class Confirming:
+        def __getattr__(self, name):
+            attr = getattr(service, name)
+            return functools.partial(attr, confirm_unusual=True) if name in ("set_group_price", "set_override") else attr
+
+    return Confirming()
 
 
 def put_price(w, amount=500_000, group=None, valid_from=None, note=None, client=None, expect=200, dry=False, **extra):
