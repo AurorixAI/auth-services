@@ -2571,15 +2571,17 @@ class AuthService:
         added = 0
         skipped_details: list[dict[str, str]] = []
         warnings: list[dict[str, str]] = []
+        students: list[dict] = []
         self._billing_cache = {}          # R3 code №13: the first lesson of the group and the accounting start are the same for every student of one request
         for student_id in student_ids:
             try:
                 result = self.add_student_to_group(
                     org_id, group_id, student_id,
                     mode=mode, price_override=price_override, actor_id=actor_id,
-                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from, immediate=False,
+                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from, immediate=True,
                 )
                 added += 1
+                students.append({"student_id": str(student_id), "billing": result.get("billing")})
                 for warning in result.get("warnings", []):
                     warnings.append({"student_id": str(student_id), **warning})
             except ValueError as exc:
@@ -2592,6 +2594,14 @@ class AuthService:
                 self.db.rollback()      # Money-1 A4: a transfer moves the money of the student - reported per student like every other refusal of a bulk transfer
                 skipped_details.append({"student_id": str(student_id), "reason": exc.message})
         self._billing_cache = None
+        # Money-1 B (lead): the preview of a bulk adding says per student and in total what is charged at once - the same phrase as the single adding (``billing.immediate.text``); only for a caller with the money access
+        # (``immediate`` is filled only then, and only in a dry run).
+        charged = [s["billing"]["immediate"] for s in students if s["billing"] and s["billing"].get("immediate")]
+        total = None
+        if dry_run and payments_detail and charged:
+            from . import billing_start  # lazy: pulls in the payments modules
+
+            total = billing_start.immediate_total(charged)
         # ``skipped`` stays a number for older clients; the reasons are new.
         return {
             "group_id": str(group_id),
@@ -2600,6 +2610,8 @@ class AuthService:
             "skipped_details": skipped_details,
             "warnings": warnings,
             "dry_run": dry_run,
+            "students": students,
+            "immediate_total": total,
         }
 
     def add_student_to_group(

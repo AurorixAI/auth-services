@@ -77,6 +77,17 @@ def default_pay_from(db: Session, group: Group, today: Optional[date] = None, ac
     return {"today": today, "first_lesson": first, "default_pay_from": chosen}
 
 
+def default_text(info: Dict[str, Any], accounting_start: Optional[date] = None) -> str:
+    """The sentence under the field «Оплата с» of the dialog (ONE phrase, LESSONS 104): ``Оплата с 25.10.2026 — первое занятие группы с сегодня``."""
+    chosen = info["default_pay_from"]
+    when = chosen.strftime("%d.%m.%Y")
+    if info["first_lesson"] is not None and chosen == info["first_lesson"]:
+        return f"Оплата с {when} — первое занятие группы с сегодня"
+    if accounting_start is not None and chosen == accounting_start and chosen > info["today"]:
+        return f"Оплата с {when} — начало учёта центра"
+    return f"Оплата с {when} — у группы нет занятий в ближайшие дни"
+
+
 def check_pay_from(value: date, today: date, accounting_start: date) -> date:
     """The explicit day: from the start of the accounting of the centre to ``PAY_FROM_MAX_AHEAD_DAYS`` ahead (422 ``PAY_FROM_RANGE``)."""
     if value < accounting_start or value > today + timedelta(days=PAY_FROM_MAX_AHEAD_DAYS):
@@ -114,8 +125,14 @@ def immediate_charge(db: Session, org_id: Any, membership_id: Any, today: date) 
     for seg in begun:
         inside = set(seg.days)
         lessons += sum(1 for d in entry.inp.lesson_days(min(inside), max(inside)) if d in inside)
-    word = f" (за {lessons} {tx.lessons_word(lessons)})" if lessons else ""
-    return {"amount": amount, "lessons": lessons, "text": f"Сразу начислится {tx.money(amount)}{word}"}
+    return {"amount": amount, "lessons": lessons, "text": tx.immediate_text(amount, lessons)}
+
+
+def immediate_total(items: list) -> Dict[str, Any]:
+    """The line under a bulk adding: what is charged at once for all the students (``items``: the ``immediate`` of the students that have one)."""
+    amount = sum(i["amount"] for i in items)
+    lessons = sum(i["lessons"] for i in items)
+    return {"amount": amount, "lessons": lessons, "students": len(items), "text": tx.immediate_text(amount, lessons, total=True)}
 
 
 def text_of(chosen: date, today: date, explicit: bool, first_lesson: Optional[date]) -> str:

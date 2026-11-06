@@ -1317,7 +1317,7 @@ class PaymentService:
         return out
 
     def _repeated_payment_warning(self, org_id: str, membership_id: UUID, amount: int, *, exclude: Optional[UUID] = None) -> Optional[PaymentWarningOut]:
-        """Money-1 B9 (ДЫРА-12): «Такая же оплата внесена N минут назад»: a live payment of the same student for the same sum entered within ``REPEAT_WINDOW_HOURS``.  The soft guard only caught a
+        """Money-1 B9 (ДЫРА-12): «Такая же оплата уже внесена сегодня в 10:15 — внести ещё одну?»: a live payment of the same student for the same sum entered within ``REPEAT_WINDOW_HOURS``.  The soft guard only caught a
         double click of ONE operator without a key (the screen always sends one); two operators with two keys made two payments and an advance of a period nobody asked for (M1)."""
         now = _utcnow()
         query = self.db.query(StudentPayment).filter(
@@ -1328,9 +1328,7 @@ class PaymentService:
         row = query.order_by(StudentPayment.created_at.desc()).first()
         if row is None:
             return None
-        by = self._users([row.created_by]).get(row.created_by) if row.created_by else None
-        minutes = max(0, int((now - row.created_at).total_seconds() // 60))
-        return PaymentWarningOut(code="payment_repeated", message=tx.repeated_payment_text(minutes, person_name(by.last_name, by.first_name) if by is not None else None))
+        return PaymentWarningOut(code="payment_repeated", message=tx.repeated_payment_text(row.created_at, now))
 
     def _recalc_news(self, membership_id: UUID, ledger: bl.Ledger, *, exclude_payment: Optional[UUID] = None) -> List[RecalcOut]:
         """PAY-F: the deductions for cancelled lessons that this payment is the first to take into account (the ones the previous receipt of the membership did not

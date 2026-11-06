@@ -7,7 +7,7 @@ printed statement and the receipt can never disagree.  The golden fixtures (``te
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional, Sequence
 
 PAST_DEBT = "past_debt"
@@ -89,16 +89,21 @@ def recalc_text(amount: int, day: date) -> str:
     return f"\u2212{money(amount)}: урок {ddmm(day)} отменён центром"
 
 
-def repeated_payment_text(minutes: int, by: Optional[str] = None) -> str:
-    """Money-1 B9 (ДЫРА-12): ``Такая же оплата внесена 5 минут назад — Иванов А.`` (a warning: two operators, one parent, one payment)."""
-    if minutes < 1:
-        when = "только что"
-    elif minutes < 60:
-        when = f"{minutes} {plural(minutes, 'минуту', 'минуты', 'минут')} назад"
-    else:
-        hours = minutes // 60
-        when = f"{hours} {plural(hours, 'час', 'часа', 'часов')} назад"
-    return f"Такая же оплата внесена {when}" + (f" — {by}" if by else "")
+def repeated_payment_text(moment: datetime, now: datetime) -> str:
+    """Money-1 B9 (ДЫРА-12): ``Такая же оплата уже внесена сегодня в 10:15 — внести ещё одну?`` (or ``вчера в 18:40``): the absolute time of the business
+    timezone (Tashkent), not «N минут назад» - the screen may stay open.  Both moments are naive UTC (the convention of the audit columns); the window is 24 hours, so the day is today or yesterday."""
+    from . import business_clock as bc
+
+    local = moment.replace(tzinfo=timezone.utc).astimezone(bc.BUSINESS_TIMEZONE)
+    today = now.replace(tzinfo=timezone.utc).astimezone(bc.BUSINESS_TIMEZONE).date()
+    day = "сегодня" if local.date() >= today else "вчера"
+    return f"Такая же оплата уже внесена {day} в {local.strftime('%H:%M')} — внести ещё одну?"
+
+
+def immediate_text(amount: int, lessons: int, *, total: bool = False) -> str:
+    """Money-1 B (R3 lead 11): ``Сразу начислится 300 000 сум (за 14 уроков)``; under a bulk adding ``Всего сразу начислится ...``."""
+    word = f" (за {lessons} {lessons_word(lessons)})" if lessons else ""
+    return f"{'Всего сразу' if total else 'Сразу'} начислится {money(amount)}{word}"
 
 
 def waiting_text(until: date) -> str:

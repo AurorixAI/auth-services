@@ -235,7 +235,7 @@ def test_b9_m1_the_same_sum_for_the_same_student_a_few_minutes_later_is_a_warnin
     paid_before(w, 5)
     preview = owner(w).get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 300_000}).json()
     (warning,) = [x for x in preview["warnings"] if x["code"] == "payment_repeated"]
-    assert warning["message"].startswith("Такая же оплата внесена 5 минут назад — ")
+    assert warning["message"] == "Такая же оплата уже внесена сегодня в 11:55 — внести ещё одну?"          # 12:00 of Tashkent minus 5 minutes (the clock of the tests)
     made = owner(w).post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 300_000, "paid_on": "2026-10-21", "method": "cash"}, headers={"Idempotency-Key": "3f2504e0-4f89-41d3-9a0c-0305e82c3301"})
     assert made.status_code == 201 and "payment_repeated" in codes(made.json())                  # never a ban: the payment is made
     assert w.db.query(StudentPayment).filter_by(membership_id=m.id, voided_at=None).count() == 2
@@ -260,10 +260,33 @@ def test_b9_another_sum_or_an_old_payment_or_a_voided_one_is_not_a_repeat(world,
     assert "payment_repeated" not in [x["code"] for x in voided["warnings"]]
 
 
-def test_b9_hours_are_told_in_hours(world, fixed_today):
+def _repeat_message(w, p, created_at_utc):
+    m = membership(w)
+    p.created_at = created_at_utc
+    w.db.commit()
+    got = owner(w).get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 300_000}).json()
+    return [x["message"] for x in got["warnings"] if x["code"] == "payment_repeated"]
+
+
+def test_b9_the_time_of_the_repeat_is_absolute_in_the_business_timezone_today_or_yesterday(world, fixed_today):
+    from datetime import datetime
+
     w = world
     repeat_world(w, fixed_today)
-    m = membership(w)
-    paid_before(w, 130)
-    got = owner(w).get(f"{API}/org/memberships/{m.id}/payments/preview", params={"amount": 300_000}).json()
-    assert [x["message"] for x in got["warnings"] if x["code"] == "payment_repeated"][0].startswith("Такая же оплата внесена 2 часа назад")
+    tashkent = lambda d, h, mi: datetime(d.year, d.month, d.day, h, mi) - timedelta(hours=5)                 # the wall time of Tashkent as naive UTC
+    p = paid_before(w, 5)
+    assert _repeat_message(w, p, tashkent(D(2026, 10, 21), 10, 15)) == ["Такая же оплата уже внесена сегодня в 10:15 — внести ещё одну?"]
+    assert _repeat_message(w, p, tashkent(D(2026, 10, 20), 18, 40)) == ["Такая же оплата уже внесена вчера в 18:40 — внести ещё одну?"]
+    assert _repeat_message(w, p, tashkent(D(2026, 10, 21), 3, 5)) == ["Такая же оплата уже внесена сегодня в 03:05 — внести ещё одну?"]         # UTC would say 22:05 of yesterday
+    assert _repeat_message(w, p, tashkent(D(2026, 10, 20), 12, 0) - timedelta(minutes=1)) == []                       # older than 24 hours: not a repeat
+
+
+def test_b9_the_phrase_of_the_repeat_is_in_the_dictionary_and_has_no_relative_words():
+    from datetime import datetime
+
+    from src.auth import payments_texts as tx
+
+    now = datetime(2026, 10, 21, 7, 0)
+    for moment in (datetime(2026, 10, 21, 6, 55), datetime(2026, 10, 20, 13, 40), datetime(2026, 10, 21, 0, 0)):
+        text = tx.repeated_payment_text(moment, now)
+        assert "назад" not in text and "минут" not in text and text.endswith("— внести ещё одну?")

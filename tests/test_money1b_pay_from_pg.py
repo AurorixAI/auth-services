@@ -88,7 +88,7 @@ def test_b1_a_lesson_cancelled_by_the_centre_is_not_the_first_lesson(world, fixe
     w.db.add(GroupAttendance(org_id=w.org.id, group_id=w.group.id, lesson_date="2026-11-06", lesson_id="fri", status="cancelled", cancellation_kind="centre", records={}))
     w.db.commit()
     got = owner(w).get(f"{API}/org/groups/{w.group.id}/pay-from-default").json()
-    assert got == {"today": "2026-10-21", "first_lesson": "2026-11-09", "default_pay_from": "2026-11-09"}      # Friday 06.11 is cancelled: Monday 09.11
+    assert got == {"today": "2026-10-21", "first_lesson": "2026-11-09", "default_pay_from": "2026-11-09", "text": "Оплата с 09.11.2026 — первое занятие группы с сегодня"}      # Friday 06.11 is cancelled: Monday 09.11
 
 
 def test_b1_the_default_of_the_dialog_is_readable_by_an_administrator_and_not_across_centres(world, fixed_today):
@@ -178,3 +178,60 @@ def test_b5_in_the_real_flow_taken_out_on_14_10_and_back_on_16_10_is_one_period(
     led = account(w, m.id, D(2026, 10, 20))
     assert led.charged == 300_000 and led.debt == 0 and led.reconciles              # before the pack: 397 000 and a debt of 97 000 for a second full period from 16.10
     assert len([x for x in led.segments if x.kind == "period"]) == 1
+
+
+def test_b1_the_default_of_the_dialog_carries_the_ready_phrase_of_every_case(world, fixed_today):
+    """LESSONS 104: the sentence under «Оплата с» is the server's, the front does not build it."""
+    w = world
+    opening_world(w, fixed_today, schedule=[])
+    got = owner(w).get(f"{API}/org/groups/{w.group.id}/pay-from-default").json()
+    assert got["first_lesson"] is None and got["text"] == "Оплата с 21.10.2026 — у группы нет занятий в ближайшие дни"
+    opening_world(w, fixed_today)                                                       # Monday .. Friday lessons: the first one from 21.10
+    got = owner(w).get(f"{API}/org/groups/{w.group.id}/pay-from-default").json()
+    assert got["text"] == f"Оплата с {D.fromisoformat(got['default_pay_from']).strftime('%d.%m.%Y')} — первое занятие группы с сегодня"
+    assert got["text"] == make_client(w, user=w.admin).get(f"{API}/org/groups/{w.group.id}/pay-from-default").json()["text"]       # a phrase without a sum: the same for the administrator
+
+
+def test_b1_the_phrase_of_the_default_names_the_start_of_the_accounting_when_it_moves_the_day(world, fixed_today):
+    w = world
+    opening_world(w, fixed_today, schedule=[])
+    settings_block(w, accounting_start_date="2026-10-30")
+    got = owner(w).get(f"{API}/org/groups/{w.group.id}/pay-from-default").json()
+    assert got["default_pay_from"] == "2026-10-30" and got["text"] == "Оплата с 30.10.2026 — начало учёта центра"
+
+
+def _bulk(w, students, *, client=None, dry_run=True, **body):
+    r = (client or owner(w)).post(f"{API}/org/groups/{w.group.id}/students/bulk", params={"mode": "add", **({"dry_run": "true"} if dry_run else {})},
+                                  json={"student_ids": [str(x.id) for x in students], **body})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_b1_the_preview_of_a_bulk_adding_says_what_is_charged_at_once_per_student_and_in_total(world, fixed_today):
+    w = world
+    opening_world(w, fixed_today, schedule=[slot("mon", 1, "2026-09-01"), slot("wed", 3, "2026-09-01"), slot("fri", 5, "2026-09-01")])
+    a, b = fresh_student(w, "Первый"), fresh_student(w, "Второй")
+    got = _bulk(w, [a, b], pay_from="2026-10-07")
+    lessons = got["students"][0]["billing"]["immediate"]["lessons"]
+    assert lessons > 0 and [x["student_id"] for x in got["students"]] == [str(a.id), str(b.id)]
+    word = "уроков" if lessons % 10 not in (2, 3, 4) or lessons // 10 == 1 else "урока"
+    one = f"Сразу начислится 300\u00a0000\u00a0сум (за {lessons} {word})"
+    assert [x["billing"]["immediate"]["text"] for x in got["students"]] == [one, one]                      # the same phrase as the single adding
+    assert got["immediate_total"] == {"amount": 600_000, "lessons": 2 * lessons, "students": 2,
+                                      "text": f"Всего сразу начислится 600\u00a0000\u00a0сум (за {2 * lessons} {'уроков' if (2 * lessons) % 10 not in (2, 3, 4) or (2 * lessons) // 10 == 1 else 'урока'})"}
+    assert w.db.query(StudentGroup).filter(StudentGroup.student_id.in_([a.id, b.id])).count() == 0          # a dry run writes nothing
+    single = add(w, fresh_student(w, "Одиночный"), pay_from="2026-10-07", dry_run=True)
+    assert single["billing"]["immediate"]["text"] == one                                                    # one dictionary for both windows
+
+
+def test_b1_the_bulk_preview_has_no_sum_without_the_money_right_and_the_real_answer_has_none(world, fixed_today):
+    w = world
+    opening_world(w, fixed_today, schedule=[slot("mon", 1, "2026-09-01"), slot("wed", 3, "2026-09-01"), slot("fri", 5, "2026-09-01")])
+    a, b, c = fresh_student(w, "Первый"), fresh_student(w, "Второй"), fresh_student(w, "Третий")
+    admin = _bulk(w, [a], client=make_client(w, user=w.admin))                                              # an administrator without the money right: no pay_from, so the default day
+    assert admin["immediate_total"] is None and all("immediate" not in (x["billing"] or {}) for x in admin["students"])
+    assert "начислится" not in str(admin)
+    real = _bulk(w, [b, c], dry_run=False, pay_from="2026-10-07")
+    assert real["immediate_total"] is None and all("immediate" not in x["billing"] for x in real["students"]) and "начислится" not in str(real)
+    empty = _bulk(w, [fresh_student(w, "Позже")], pay_from="2026-11-30")                                    # nothing is charged at once: no total line
+    assert empty["immediate_total"] is None

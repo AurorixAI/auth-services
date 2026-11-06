@@ -171,13 +171,13 @@ def test_r3_8_the_suggested_day_is_accepted_at_62_days_and_at_the_accounting_sta
     w = world
     opening_world(w, fixed_today, schedule=[slot("tue", 2, "2026-12-22")])                   # today 21.10 + 62 days = Tuesday 22.12: the first lesson is the last allowed day
     got = owner(w).get(f"{API}/org/groups/{w.group.id}/pay-from-default").json()
-    assert got == {"today": "2026-10-21", "first_lesson": "2026-12-22", "default_pay_from": "2026-12-22"}
+    assert got == {"today": "2026-10-21", "first_lesson": "2026-12-22", "default_pay_from": "2026-12-22", "text": "Оплата с 22.12.2026 — первое занятие группы с сегодня"}
     s = fresh_student(w, "Граница")
     done = add(w, s, pay_from=got["default_pay_from"])                                       # before the round the window searched 70 days: 63..70 was suggested and then refused
     assert done["billing"]["pay_from"] == "2026-12-22"
     set_schedule(w, [slot("wed", 3, "2026-12-23")])                                          # the 63rd day: no lesson in the window - today, never a day outside the range
     got = owner(w).get(f"{API}/org/groups/{w.group.id}/pay-from-default").json()
-    assert got == {"today": "2026-10-21", "first_lesson": None, "default_pay_from": "2026-10-21"}
+    assert got == {"today": "2026-10-21", "first_lesson": None, "default_pay_from": "2026-10-21", "text": "Оплата с 21.10.2026 — у группы нет занятий в ближайшие дни"}
     add(w, fresh_student(w, "После"), pay_from=got["default_pay_from"])
     # the centre moved the start of the accounting 31 days ahead: «сегодня» is before it, the suggestion is the start itself
     settings_block(w, accounting_start_date="2026-11-21")
