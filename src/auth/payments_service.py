@@ -140,6 +140,9 @@ AUDIT_WRITEOFF = "payment_writeoff"
 AUDIT_WRITEOFF_VOID = "payment_writeoff_void"
 AUDIT_REFUND = "payment_refund"
 AUDIT_REFUND_VOID = "payment_refund_void"
+AUDIT_PAYMENT_VOID = "payment_void"          # Money-1 V2: a cancelled payment / a corrected one leave a line of the journal of decisions, as a forgiveness and a refund do
+AUDIT_PAYMENT_REPLACE = "payment_replace"
+DECISION_ACTIONS = (AUDIT_PAYMENT_VOID, AUDIT_PAYMENT_REPLACE, AUDIT_WRITEOFF, AUDIT_WRITEOFF_VOID, AUDIT_REFUND, AUDIT_REFUND_VOID)
 
 # /org/payments/summary is asked by the banner and the menu of every administrator: a few seconds of cache.
 SUMMARY_TTL_SECONDS = float(os.getenv("PAYMENTS_SUMMARY_TTL", "15"))
@@ -1478,6 +1481,7 @@ class PaymentService:
         data: PaymentCreate,
         reason: Optional[str] = None,
         idempotency_key: Optional[UUID] = None,
+        actor_role: str = "admin",
     ) -> PaymentCreated:
         """Void the old payment and insert the corrected one - one transaction.  The "before" of the answer is the account
         WITHOUT the replaced payment (the same as the preview with ``replace_payment_id``).
@@ -1495,6 +1499,7 @@ class PaymentService:
             family = self._lock_family(org_id, probe.student_id)
             membership = self._membership(org_id, probe.membership_id)
             old = self._lock_payment(org_id, payment_id)
+            account_was = self._entry_of(org_id, membership.id, today).ledger          # Money-1 V2: the account WITH the old payment (the line of the journal of decisions)
             loader = self._loader(org_id, today)
             loader.load_facts([membership.id])
             before_inp = loader.build_input(membership.id, exclude_payment=old.id)
@@ -1508,6 +1513,12 @@ class PaymentService:
             payment = self._insert(membership, org_id, actor_id, data, method, idempotency_key, replaces=old)
             after_entry = self._loader(org_id, today).run([membership.id])[0]
             self._save_snapshot(org_id, payment, before, after_entry.ledger, after_entry.price, today, method)
+            self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAYMENT_REPLACE, {
+                "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
+                "payment_id": str(old.id), "new_payment_id": str(payment.id), "receipt_no": old.receipt_no, "new_receipt_no": payment.receipt_no,
+                "amount": int(old.amount), "new_amount": int(payment.amount), "paid_on": old.paid_on.isoformat(), "new_paid_on": payment.paid_on.isoformat(),
+                "method": old.method, "new_method": payment.method, "reason": old.void_reason,
+                "debt_before": account_was.debt, "debt_after": after_entry.ledger.debt, "advance_before": account_was.advance, "advance_after": after_entry.ledger.advance})
             self._family_check(org_id, family)
             self.db.commit()
         except PaymentError:
@@ -1520,7 +1531,7 @@ class PaymentService:
         return self._created(org_id, payment, before, today)
 
     @deadlock_guard
-    def void_payment(self, org_id: str, payment_id: UUID, actor_id: str, reason: str) -> PaymentVoided:
+    def void_payment(self, org_id: str, payment_id: UUID, actor_id: str, reason: str, actor_role: str = "admin") -> PaymentVoided:
         """Cancel a payment (no delete).  Under the lock of the family it is checked that no refund is left without money."""
         try:
             reason = self._check_reason(reason)
@@ -1528,12 +1539,19 @@ class PaymentService:
             if probe.kind == "legacy_carry" or probe.carried_from_payment_id is not None:   # MN-50: the same guard as ``replace_payment``
                 raise PaymentConflict("Деньги, перешедшие из другой группы, нельзя отменить — это не денежная операция")
             family = self._lock_family(org_id, probe.student_id)
-            self._membership(org_id, probe.membership_id)
+            membership = self._membership(org_id, probe.membership_id)
             payment = self._lock_payment(org_id, payment_id)
+            account_was = self._entry_of(org_id, payment.membership_id, ps.business_today()).ledger
             payment.voided_at = _utcnow()
             payment.voided_by = UUID(str(actor_id))
             payment.void_reason = reason
             self.db.flush()
+            account_now = self._entry_of(org_id, payment.membership_id, ps.business_today()).ledger
+            self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAYMENT_VOID, {
+                "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
+                "payment_id": str(payment.id), "receipt_no": payment.receipt_no, "amount": int(payment.amount), "paid_on": payment.paid_on.isoformat(),
+                "method": payment.method, "reason": reason, "debt_before": account_was.debt, "debt_after": account_now.debt,
+                "advance_before": account_was.advance, "advance_after": account_now.advance})
             self._family_check(org_id, family)
             self.db.commit()
         except PaymentError:

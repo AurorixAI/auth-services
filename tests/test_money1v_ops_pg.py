@@ -3,7 +3,7 @@
 Numbers of ``test_pay2_api_pg`` worlds: ``e6_world`` debt 100 000 (price 500 000, 400 000 paid), ``e7`` an advance of 344 000 (790 000 paid, left on 25.10)."""
 from uuid import uuid4
 
-from src.models.auth import GroupAudit, StudentRefund, StudentWriteoff
+from src.models.auth import GroupAudit, StudentPayment, StudentRefund, StudentWriteoff
 
 from tests.pg_world import needs_pg, world  # noqa: F401  (fixtures)
 from tests.test_pay2_api_pg import (  # noqa: F401  (fixtures)
@@ -113,3 +113,65 @@ def test_v1_a_forgiveness_in_a_closed_month_is_allowed_and_the_key_of_another_ce
     h = key()
     assert owner(world).post(f"{API}/org/memberships/{m.id}/writeoffs", json={"amount": 5_000, "reason": "льгота"}, headers=h).status_code == 201
     assert len(writeoffs(world)) == 1                                           # ДП-07: money of a student is not blocked by a closed month of a teacher (the answer warns)
+
+
+# ---- V2: the journal of money decisions ---------------------------------------------------------------------------------------------------
+
+
+def journal(w, first, last, **params):
+    r = owner(w).get(f"{API}/org/payments/journal", params={"from": first, "to": last, **params})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def audit(w, action):
+    w.db.expire_all()
+    rows = w.db.query(GroupAudit).filter(GroupAudit.org_id == w.org.id, GroupAudit.action == action).all()
+    assert len(rows) == 1, (action, len(rows))
+    return rows[0].snapshot
+
+
+def test_v2_a_payment_cancelled_in_november_is_a_line_of_november_too_and_the_totals_do_not_double(world, fixed_today):
+    fixed_today(D(2026, 11, 12))
+    m = e6_world(world)                                                           # 400 000 paid on 15.10 for the price 500 000: debt 100 000
+    pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).one()
+    assert owner(world).post(f"{API}/org/payments/{pay.id}/void", json={"reason": "ошиблись суммой"}).status_code == 200
+    october = journal(world, "2026-10-01", "2026-10-31")
+    assert october["total"] == 1 and october["rows"][0]["status"] == "voided" and october["rows"][0]["view"] == "paid" and october["totals"]["sum"] == 0
+    assert journal(world, "2026-11-01", "2026-11-30")["total"] == 0                 # as before: the month of the cancellation did not show it
+    november = journal(world, "2026-11-01", "2026-11-30", cancelled_in_period="true")
+    assert november["total"] == 1 and november["rows"][0]["view"] == "cancelled_here" and november["rows"][0]["amount"] == 400_000
+    assert (november["totals"]["count"], november["totals"]["sum"]) == (0, 0)       # the sum of the month is the money that stays
+    assert (november["totals"]["cancelled_here_count"], november["totals"]["cancelled_here_sum"]) == (1, 400_000)
+    snap = audit(world, "payment_void")
+    assert (snap["amount"], snap["reason"], snap["debt_before"], snap["debt_after"]) == (400_000, "ошиблись суммой", 100_000, 500_000)
+
+
+def test_v2_a_corrected_payment_leaves_the_old_and_the_new_sum_and_the_debt_before_and_after(world, fixed_today):
+    m = e6_world(world)
+    pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).one()
+    r = owner(world).post(f"{API}/org/payments/{pay.id}/replace", json={"amount": 350_000, "paid_on": TODAY.isoformat(), "method": "cash", "reason": "неверная сумма"})
+    assert r.status_code == 201, r.text
+    snap = audit(world, "payment_replace")
+    assert (snap["amount"], snap["new_amount"], snap["debt_before"], snap["debt_after"]) == (400_000, 350_000, 100_000, 150_000)
+    csv = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "format": "csv"}).text
+    csv_all = owner(world).get(f"{API}/org/payments/journal/export", params={"from": "2026-10-01", "to": "2026-10-31", "format": "csv", "with_replaced": "true"}).text
+    assert "Исправлена (заменена новой)" not in csv and "Исправлена (заменена новой)" in csv_all           # the old file is not changed; the replaced version only when asked for
+
+
+def test_v2_the_list_of_decisions_has_author_reason_and_debt_before_and_after_and_is_closed_to_others(world, fixed_today):
+    m = e6_world(world)
+    c = owner(world)
+    c.post(f"{API}/org/memberships/{m.id}/writeoffs", json={"amount": 40_000, "reason": "болезнь"})
+    pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).one()
+    c.post(f"{API}/org/payments/{pay.id}/void", json={"reason": "ошибка ввода"})
+    got = c.get(f"{API}/org/payments/decisions", params={"from": "2026-10-01", "to": "2026-10-31"})
+    assert got.status_code == 200, got.text
+    rows = got.json()["rows"]
+    assert [x["kind"] for x in rows] == ["payment_void", "payment_writeoff"] and got.json()["total"] == 2
+    assert (rows[1]["amount"], rows[1]["reason"], rows[1]["debt_before"], rows[1]["debt_after"]) == (40_000, "болезнь", 100_000, 60_000)
+    assert rows[0]["actor_name"] and rows[0]["student_name"] and rows[0]["kind_label"] == "Оплата отменена"
+    only = c.get(f"{API}/org/payments/decisions", params={"from": "2026-10-01", "to": "2026-10-31", "kind": "payment_writeoff"}).json()
+    assert only["total"] == 1
+    from tests.pg_world import make_client
+    assert make_client(world, user=world.teacher).get(f"{API}/org/payments/decisions", params={"from": "2026-10-01", "to": "2026-10-31"}).status_code == 403

@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from sqlalchemy import and_, exists, func, or_
+from sqlalchemy import Date, and_, cast, exists, func, or_
 from sqlalchemy.orm import Session, aliased
 
 from src.models.auth import Group, Organization, Student, StudentPayment, StudentRefund, StudentWriteoff
@@ -53,11 +53,17 @@ from .payments_income_schemas import (
 )
 from .export_safety import FORMULA_STARTS, csv_safe_row  # noqa: F401  (one rule for every export; re-exported for the callers of this module)
 from .payments_reports import MAX_DAY_SERIES_DAYS, PaymentsReports, method_clause, validate_range
-from .payments_service import InvalidPeriod, PaymentInvalid, PaymentService
+from .payments_service import (
+    AUDIT_PAYMENT_REPLACE, AUDIT_PAYMENT_VOID, AUDIT_REFUND, AUDIT_REFUND_VOID, AUDIT_WRITEOFF, AUDIT_WRITEOFF_VOID, DECISION_ACTIONS, InvalidPeriod, PaymentInvalid, PaymentService)
 
 MAX_JOURNAL_PAGE = 100
 MAX_EXPORT_ROWS = 20_000
 MAX_CHAIN_DEPTH = 8                                       # corrections of a correction of a correction ...: the history goes this far back
+
+
+DECISION_LABELS = {
+    AUDIT_PAYMENT_VOID: "Оплата отменена", AUDIT_PAYMENT_REPLACE: "Оплата исправлена", AUDIT_WRITEOFF: "Долг прощён", AUDIT_WRITEOFF_VOID: "Прощение отменено",
+    AUDIT_REFUND: "Аванс возвращён", AUDIT_REFUND_VOID: "Возврат отменён"}
 
 
 class ExportTooLong(PaymentInvalid):
@@ -554,10 +560,17 @@ class IncomeReports:
 
     # ------------------------------------------------------------------ journal
 
-    def _journal_filters(self, query, org_id, first, last, method, group_id, teacher_id, created_by, q):
+    @staticmethod
+    def _cancelled_here(first: date, last: date):
+        """SQL (Money-1 V2): a payment CANCELLED (not corrected) on a business day of the period - it is a line of that month as well as of the month it was paid in."""
+        day = cast(func.timezone(str(BUSINESS_TIMEZONE), func.timezone("UTC", StudentPayment.voided_at)), Date)
+        return and_(StudentPayment.voided_at.isnot(None), ~IncomeReports._corrected(), day >= first, day <= last)
+
+    def _journal_filters(self, query, org_id, first, last, method, group_id, teacher_id, created_by, q, *, with_cancelled: bool = False):
+        in_period = and_(StudentPayment.paid_on >= first, StudentPayment.paid_on <= last)
         query = query.filter(
             StudentPayment.org_id == org_id, Student.org_id == org_id, Group.org_id == org_id,
-            StudentPayment.kind == "payment", StudentPayment.paid_on >= first, StudentPayment.paid_on <= last)
+            StudentPayment.kind == "payment", or_(in_period, self._cancelled_here(first, last)) if with_cancelled else in_period)
         if method:
             query = query.filter(method_clause(StudentPayment.method, method))
         if group_id:
@@ -594,6 +607,15 @@ class IncomeReports:
         count, total, voided, replaced = query.one()
         return int(count), int(total), int(voided), int(replaced)
 
+    def _cancelled_here_totals(self, org_id, first, last, method, group_id, teacher_id, created_by, q) -> Tuple[int, int]:
+        """``(count, sum)`` of the payments of an EARLIER period cancelled in this one (Money-1 V2) - the same filters as the journal."""
+        query = self._journal_filters(
+            self._journal_base(func.count(StudentPayment.id), func.coalesce(func.sum(StudentPayment.amount), 0)),
+            org_id, first, last, method, group_id, teacher_id, created_by, q, with_cancelled=True)
+        query = query.filter(~and_(StudentPayment.paid_on >= first, StudentPayment.paid_on <= last))
+        count, total = query.one()
+        return int(count), int(total)
+
     @staticmethod
     def _corrected():
         """SQL: a newer payment corrects this one (it was replaced, not cancelled alone)."""
@@ -628,12 +650,15 @@ class IncomeReports:
     def journal(
         self, org_id: str, first: date, last: date, *, page: int = 1, size: int = 25, method: Optional[str] = None,
         group_id: Optional[UUID] = None, teacher_id: Optional[UUID] = None, created_by: Optional[UUID] = None,
-        q: Optional[str] = None, status: str = "all", kind: Optional[str] = None,
+        q: Optional[str] = None, status: str = "all", kind: Optional[str] = None, cancelled_in_period: bool = False,
     ) -> PaymentsJournal:
         validate_range(first, last)
         size = max(1, min(size, MAX_JOURNAL_PAGE))
         page = max(1, page)
         count, total_sum, voided, replaced = self._journal_totals(org_id, first, last, method, group_id, teacher_id, created_by, q)
+        here_count = here_sum = 0
+        if cancelled_in_period and not kind:          # with a ``kind`` only active rows (they have a split) are listed
+            here_count, here_sum = self._cancelled_here_totals(org_id, first, last, method, group_id, teacher_id, created_by, q)
         if kind:
             ids, ledgers, total_sum, kind_sum = self._kind_set(org_id, first, last, method, group_id, teacher_id, created_by, q, status, kind)
             count, voided, replaced = len(ids), 0, 0           # cancelled / replaced payments have no split: with a kind they are not part of the set
@@ -643,17 +668,18 @@ class IncomeReports:
             rows = self._rows(org_id, self._journal_order(query).all(), ledgers) if query is not None else []
         else:
             kind_sum = None
-            rows_total = {"active": count, "voided": voided, "cancelled": voided - replaced, "replaced": replaced}.get(status, count + voided)
+            rows_total = {"active": count, "voided": voided + here_count, "cancelled": voided - replaced + here_count, "replaced": replaced}.get(status, count + voided + here_count)
             query = self._journal_filters(
-                self._journal_base(StudentPayment, Student, Group), org_id, first, last, method, group_id, teacher_id, created_by, q)
+                self._journal_base(StudentPayment, Student, Group), org_id, first, last, method, group_id, teacher_id, created_by, q, with_cancelled=cancelled_in_period)
             query = self._status_filter(query, status)
             query = self._journal_order(query).offset((page - 1) * size).limit(size)
-            rows = self._rows(org_id, query.all())
+            rows = self._rows(org_id, query.all(), first=first, last=last, mark_cancelled_here=cancelled_in_period)
         authors = self._authors(org_id, first, last, method, group_id, teacher_id, q)
         return PaymentsJournal(
             as_of=ps.business_today(), **{"from": first}, to=last, page=page, size=size, total=rows_total,
             pages=(rows_total + size - 1) // size,
-            totals=JournalTotals(count=count, sum=total_sum, voided_count=voided, replaced_count=replaced, kind_sum=kind_sum),
+            totals=JournalTotals(count=count, sum=total_sum, voided_count=voided, replaced_count=replaced, kind_sum=kind_sum,
+                                 cancelled_here_count=here_count, cancelled_here_sum=here_sum),
             rows=rows, authors=authors)
 
     @classmethod
@@ -684,7 +710,8 @@ class IncomeReports:
         out.sort(key=lambda a: (-a.count, a.name or ""))
         return out
 
-    def _rows(self, org_id: str, triples: Sequence[Tuple[StudentPayment, Student, Group]], ledgers: Optional[Dict[UUID, bl.Ledger]] = None) -> List[JournalRow]:
+    def _rows(self, org_id: str, triples: Sequence[Tuple[StudentPayment, Student, Group]], ledgers: Optional[Dict[UUID, bl.Ledger]] = None, *,
+              first: Optional[date] = None, last: Optional[date] = None, mark_cancelled_here: bool = False) -> List[JournalRow]:
         """Journal rows of a set of payments: the ledgers of their memberships (one batch, or the ones the caller already ran), the correction chain (two queries),
         the names (one query: authors, voiders, correctors, teachers)."""
         payments = [p for p, _s, _g in triples]
@@ -731,7 +758,7 @@ class IncomeReports:
             old = was.get(p.replaces_payment_id)
             paid_time, entered_at_text = entry_times(p.created_at, p.paid_on)
             out.append(JournalRow(
-                id=str(p.id), receipt_no=p.receipt_no, paid_on=p.paid_on, paid_time=paid_time, entered_at_text=entered_at_text, created_at=_iso(p.created_at), student_id=str(student.id),
+                id=str(p.id), view="cancelled_here" if mark_cancelled_here and first is not None and not (first <= p.paid_on <= last) else "paid", receipt_no=p.receipt_no, paid_on=p.paid_on, paid_time=paid_time, entered_at_text=entered_at_text, created_at=_iso(p.created_at), student_id=str(student.id),
                 student_name=person_name(student.last_name, student.first_name) or "", display_id=student.display_id,
                 membership_id=str(p.membership_id), group_id=str(group.id), group_name=group.name,
                 teacher_name=_staff(users.get(group.teacher_id)), amount=int(p.amount), method=p.method or "unknown",
@@ -751,12 +778,47 @@ class IncomeReports:
                 voided_at=_iso(p.voided_at), voided_by_name=_staff(users.get(p.voided_by))))
         return out
 
+    # ------------------------------------------------------------------ the money decisions (Money-1 V2)
+
+    def decisions(self, org_id: str, first: date, last: date, *, kind: Optional[str] = None, actor: Optional[UUID] = None, page: int = 1, size: int = 25) -> DecisionsPage:
+        """«Денежные решения»: who cancelled / corrected a payment, forgave a debt, returned an advance - and cancelled that - in the period (business days), newest first.
+        Read from ``group_audit`` (one line per decision, written in the transaction of the decision): the author, the reason, the debt before -> after."""
+        from src.models.auth import GroupAudit
+
+        validate_range(first, last)
+        size = max(1, min(size, MAX_JOURNAL_PAGE))
+        page = max(1, page)
+        actions = list(DECISION_ACTIONS)
+        if kind:
+            if kind not in DECISION_LABELS:
+                raise PaymentInvalid("Неизвестный вид решения")
+            actions = [kind]
+        day = cast(func.timezone(str(BUSINESS_TIMEZONE), func.timezone("UTC", GroupAudit.created_at)), Date)
+        query = self.db.query(GroupAudit).filter(GroupAudit.org_id == org_id, GroupAudit.action.in_(actions), day >= first, day <= last)
+        if actor:
+            query = query.filter(GroupAudit.actor_id == actor)
+        total = query.count()
+        found = query.order_by(GroupAudit.created_at.desc(), GroupAudit.id.desc()).offset((page - 1) * size).limit(size).all()
+        student_ids = [UUID(a.snapshot["student_id"]) for a in found if a.snapshot.get("student_id")]
+        students = {s.id: s for s in self.db.query(Student).filter(Student.org_id == org_id, Student.id.in_(student_ids)).all()} if student_ids else {}
+        groups = {g.id: g for g in self.db.query(Group).filter(Group.org_id == org_id, Group.id.in_({a.group_id for a in found})).all()} if found else {}
+        users = self.service._users(a.actor_id for a in found)
+        rows = []
+        for a in found:
+            snap, student = a.snapshot or {}, students.get(UUID(snap["student_id"])) if (a.snapshot or {}).get("student_id") else None
+            rows.append(DecisionRow(
+                id=str(a.id), at=_iso(a.created_at), kind=a.action, kind_label=DECISION_LABELS[a.action], student_id=snap.get("student_id"),
+                student_name=person_name(student.last_name, student.first_name) or "" if student else "", group_name=groups[a.group_id].name if a.group_id in groups else None,
+                amount=int(snap.get("amount") or 0), new_amount=snap.get("new_amount"), receipt_no=snap.get("receipt_no"), reason=snap.get("reason"),
+                actor_name=_staff(users.get(a.actor_id)), debt_before=snap.get("debt_before"), debt_after=snap.get("debt_after")))
+        return DecisionsPage(as_of=ps.business_today(), **{"from": first}, to=last, page=page, size=size, total=total, pages=(total + size - 1) // size, rows=rows)
+
     # ------------------------------------------------------------------ journal file
 
     def journal_file(
         self, org_id: str, first: date, last: date, *, fmt: str = "xlsx", method: Optional[str] = None,
         group_id: Optional[UUID] = None, teacher_id: Optional[UUID] = None, created_by: Optional[UUID] = None,
-        q: Optional[str] = None, status: str = "all", kind: Optional[str] = None,
+        q: Optional[str] = None, status: str = "all", kind: Optional[str] = None, with_replaced: bool = False, cancelled_in_period: bool = False,
     ) -> Tuple[bytes, str, str]:
         """``(bytes, content type, filename)`` of the whole filtered journal (xlsx / csv); a cell that starts with = + - @ TAB CR never runs.  ``kind`` keeps the rows
         that have the kind in their split (the same set as the page).
@@ -774,16 +836,21 @@ class IncomeReports:
             rows = self._rows(org_id, self._journal_order(self._journal_base(StudentPayment, Student, Group).filter(
                 StudentPayment.id.in_(ids))).all(), ledgers) if ids else []
         else:
-            if {"active": count, "voided": cancelled, "cancelled": cancelled, "replaced": 0}.get(status, count + cancelled) > MAX_EXPORT_ROWS:
+            if {"active": count, "voided": cancelled, "cancelled": cancelled, "replaced": replaced if with_replaced else 0}.get(status, count + cancelled + (replaced if with_replaced else 0)) > MAX_EXPORT_ROWS:
                 raise ExportTooLong("Слишком много оплат для файла — сузьте период или фильтры")
             rows = []
-            if status != "replaced":
+            if status != "replaced" or with_replaced:
                 query = self._journal_filters(
-                    self._journal_base(StudentPayment, Student, Group), org_id, first, last, method, group_id, teacher_id, created_by, q)
-                query = query.filter(or_(StudentPayment.voided_at.is_(None), ~self._corrected())) if status == "all" else self._status_filter(
-                    query, "active" if status == "active" else "cancelled")
-                rows = self._rows(org_id, self._journal_order(query).all())
-        rows = jx.emitted(rows)
+                    self._journal_base(StudentPayment, Student, Group), org_id, first, last, method, group_id, teacher_id, created_by, q, with_cancelled=cancelled_in_period)
+                if status == "all":
+                    if not with_replaced:
+                        query = query.filter(or_(StudentPayment.voided_at.is_(None), ~self._corrected()))
+                elif status == "replaced":
+                    query = self._status_filter(query, "replaced")
+                else:
+                    query = self._status_filter(query, "active" if status == "active" else "cancelled")
+                rows = self._rows(org_id, self._journal_order(query).all(), first=first, last=last, mark_cancelled_here=cancelled_in_period)
+        rows = rows if with_replaced else jx.emitted(rows)
         as_of = ps.business_today()
         org = self.db.get(Organization, org_id)
         filters = self._filter_words(org_id, method, group_id, teacher_id, created_by, q, status, kind)

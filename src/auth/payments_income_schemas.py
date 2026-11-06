@@ -180,6 +180,7 @@ class JournalHistoryItem(PayModel):
 
 class JournalRow(PayModel):
     id: str
+    view: str = "paid"  # Money-1 V2: "paid" - the payment of the period; "cancelled_here" - paid earlier, CANCELLED in this period (only with ``cancelled_in_period``)
     receipt_no: Optional[int] = None
     paid_on: date_type
     paid_time: Optional[str] = None  # "14:35" - the entry time, Tashkent; ONLY when the payment was entered on its own day (paid_on), null for a back-dated one
@@ -225,6 +226,8 @@ class JournalTotals(PayModel):
     sum: int = 0
     voided_count: int = 0  # cancelled + replaced rows of the same set (they are in ``rows`` for status all / voided, but not in count / sum); NOT affected by ``status``; with ``kind`` 0 (such rows have no split)
     replaced_count: int = 0  # of them: the ones that were corrected by a new payment (status replaced); cancelled alone = voided_count - replaced_count
+    cancelled_here_count: int = 0  # Money-1 V2 (``cancelled_in_period``): payments of an earlier period cancelled in this one (rows ``view=cancelled_here``); NOT in count / sum
+    cancelled_here_sum: int = 0
     kind_sum: Optional[int] = None  # only with ``kind``: the sum of THAT kind's part over the filtered active rows == the strip's amount of the kind (same period and filters); else null
 
 
@@ -246,3 +249,35 @@ class PaymentsJournal(PayModel):
                     "but IGNORING ``created_by`` (and ``status``), so choosing a person does not collapse the options to that person.")
 
     model_config = ConfigDict(populate_by_name=True, json_schema_serialization_defaults_required=True)
+
+
+class DecisionRow(PayModel):
+    """Money-1 V2: one money decision of the staff (a cancelled / corrected payment, a forgiveness, a refund and their cancellation) with its author and reason."""
+
+    id: str
+    at: Optional[str] = None  # naive UTC, ISO
+    kind: str
+    kind_label: str
+    student_id: Optional[str] = None
+    student_name: str = ""
+    group_name: Optional[str] = None
+    amount: int = 0
+    new_amount: Optional[int] = None  # a corrected payment: the new sum
+    receipt_no: Optional[int] = None
+    reason: Optional[str] = None
+    actor_name: Optional[str] = None
+    debt_before: Optional[int] = None
+    debt_after: Optional[int] = None
+
+
+class DecisionsPage(PayModel):
+    as_of: date_type
+    from_: date_type = Field(..., alias="from")
+    to: date_type
+    page: int
+    size: int
+    total: int
+    pages: int
+    rows: List[DecisionRow]
+
+    model_config = {"populate_by_name": True}

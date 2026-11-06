@@ -373,7 +373,7 @@ def replace_payment(
     try:
         out, effects = money_effects.run_with_effects(
             db, user["org_id"], _membership_of_payment(db, user["org_id"], payment_id), user.get("org_role") == "owner",
-            lambda: PaymentService(db).replace_payment(user["org_id"], payment_id, user["user_id"], request, request.reason, idempotency_key), dry_run=dry_run)
+            lambda: PaymentService(db).replace_payment(user["org_id"], payment_id, user["user_id"], request, request.reason, idempotency_key, actor_role=user["org_role"]), dry_run=dry_run)
         out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:
@@ -392,7 +392,7 @@ def void_payment(
     try:
         out, effects = money_effects.run_with_effects(
             db, user["org_id"], _membership_of_payment(db, user["org_id"], payment_id), user.get("org_role") == "owner",
-            lambda: PaymentService(db).void_payment(user["org_id"], payment_id, user["user_id"], request.reason), dry_run=dry_run)
+            lambda: PaymentService(db).void_payment(user["org_id"], payment_id, user["user_id"], request.reason, actor_role=user["org_role"]), dry_run=dry_run)
         out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:

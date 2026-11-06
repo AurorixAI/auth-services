@@ -31,7 +31,7 @@ FREEZE = "D6"                              # the receipt, the date and the stude
 WRAP_COLS = (COL["note"], COL["details"])
 METHODS_TITLE = "Итого по способам"
 TOTAL_LABEL = "Итого"
-STATUS_TEXT = {"active": "Действует", "corrected": "Действует (исправлена)", "voided": "Отменена"}
+STATUS_TEXT = {"active": "Действует", "corrected": "Действует (исправлена)", "voided": "Отменена", "replaced": "Исправлена (заменена новой)"}
 STATUS_WORDS = {"active": "только действующие", "voided": "только отменённые", "cancelled": "только отменённые",
                 "replaced": "только исправленные (заменённые версии в файл не выводятся — их история в «Подробности»)"}
 
@@ -44,6 +44,8 @@ def emitted(rows: Sequence[JournalRow]) -> List[JournalRow]:
 def status_text(r: JournalRow) -> str:
     if r.status == "voided":
         return STATUS_TEXT["voided"]
+    if r.status == "replaced":
+        return STATUS_TEXT["replaced"]
     return STATUS_TEXT["corrected" if (r.replaces_receipt_no or r.history) else "active"]
 
 
@@ -92,17 +94,20 @@ def by_method(rows: Sequence[JournalRow]) -> List[Tuple[str, int, int]]:
 def title_lines(rows: Sequence[JournalRow], *, org_name: Optional[str], as_of: date, first: date, last: date, filters: Sequence[str],
                 kind_label: Optional[str] = None, kind_sum: Optional[int] = None) -> List[str]:
     active = [r for r in rows if r.status == "active"]
-    cancelled = len(rows) - len(active)
+    cancelled = sum(1 for r in rows if r.status == "voided")
+    replaced = sum(1 for r in rows if r.status == "replaced")        # Money-1 V2: the replaced versions are in the file only when asked for (``with_replaced``)
     total = sum(int(r.amount) for r in active)
     line1 = f"Журнал оплат — {org_name}" if org_name else "Журнал оплат"
     line2 = xs.words_join([f"По состоянию на {xs.date_ru(as_of)}", f"Период: {st_tx.period_label(first, last)}", *filters])
     parts = []
-    if active or not cancelled:
+    if active or not (cancelled or replaced):
         parts += [f"Оплат {len(active)}", f"Оплачено {tx.num(total)}"]
     if kind_label and kind_sum is not None:
         parts.append(f"{kind_label}: {tx.num(kind_sum)}")
     if cancelled:
         parts.append(f"Отменённых {cancelled}")
+    if replaced:
+        parts.append(f"Исправленных {replaced}")
     return [line1, line2, xs.words_join(parts)]
 
 

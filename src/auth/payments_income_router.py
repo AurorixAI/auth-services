@@ -17,7 +17,7 @@ from src.core.database import get_db
 from . import xlsx_style
 from .dependencies import require_payments_access
 from .payments_income import IncomeReports
-from .payments_income_schemas import IncomeOverview, JournalKind, PaymentsJournal
+from .payments_income_schemas import DecisionsPage, IncomeOverview, JournalKind, PaymentsJournal
 from .payments_schemas import PayError
 from .payments_service import PaymentError
 
@@ -63,6 +63,7 @@ def payments_journal(
     created_by: Optional[UUID] = None,
     q: Optional[str] = Query(None, max_length=100, description="Имя / фамилия / ID ученика (или № квитанции)"),
     status: Literal["all", "active", "voided", "cancelled", "replaced"] = "all",
+    cancelled_in_period: bool = Query(False, description="Money-1 V2: также оплаты прошлых периодов, ОТМЕНЁННЫЕ в этом (строки view=cancelled_here; в count / sum не входят)"),
     kind: Optional[JournalKind] = Query(
         None, description="Только оплаты, в «куда пошли» которых есть этот вид (old_debt | current | forward | advance | refunded | transferred); "
                           "в строке остаётся весь split, totals.kind_sum = сумма этого вида по отобранным строкам = цифра плашки «Куда ушли деньги» "
@@ -74,7 +75,25 @@ def payments_journal(
     try:
         return IncomeReports(db).journal(
             user["org_id"], from_, to, page=page, size=size, method=method, group_id=group_id, teacher_id=teacher_id,
-            created_by=created_by, q=q, status=status, kind=kind)
+            created_by=created_by, q=q, status=status, kind=kind, cancelled_in_period=cancelled_in_period)
+    except PaymentError as exc:
+        raise _http(exc)
+
+
+@router.get("/org/payments/decisions", response_model=DecisionsPage, responses=_ERRORS)
+def payments_decisions(
+    from_: date = Query(..., alias="from"),
+    to: date = Query(...),
+    page: int = Query(1, ge=1),
+    size: int = Query(25, ge=1, le=100),
+    kind: Optional[str] = Query(None, description="payment_void | payment_replace | payment_writeoff | payment_writeoff_void | payment_refund | payment_refund_void"),
+    actor: Optional[UUID] = None,
+    user: dict = Depends(require_payments_access),
+    db: Session = Depends(get_db),
+):
+    """«Денежные решения» на «Поступлениях» (Money-1 V2): кто отменил / исправил оплату, простил долг, вернул аванс — и отменил это; автор, причина, «долг до → после»."""
+    try:
+        return IncomeReports(db).decisions(user["org_id"], from_, to, kind=kind, actor=actor, page=page, size=size)
     except PaymentError as exc:
         raise _http(exc)
 
@@ -97,6 +116,8 @@ def payments_journal_export(
     created_by: Optional[UUID] = None,
     q: Optional[str] = Query(None, max_length=100),
     status: Literal["all", "active", "voided", "cancelled", "replaced"] = "all",
+    cancelled_in_period: bool = Query(False, description="Money-1 V2: также оплаты прошлых периодов, ОТМЕНЁННЫЕ в этом (строки view=cancelled_here; в count / sum не входят)"),
+    with_replaced: bool = Query(False, description="Money-1 V2 (только файл): заменённые версии исправленных оплат тоже строками (статус «Исправлена»)"),
     kind: Optional[JournalKind] = Query(
         None, description="Только оплаты, в «куда пошли» которых есть этот вид (old_debt | current | forward | advance | refunded | transferred); "
                           "в строке остаётся весь split, totals.kind_sum = сумма этого вида по отобранным строкам = цифра плашки «Куда ушли деньги» "
@@ -108,7 +129,7 @@ def payments_journal_export(
     try:
         data, content_type, filename = IncomeReports(db).journal_file(
             user["org_id"], from_, to, fmt=format, method=method, group_id=group_id, teacher_id=teacher_id,
-            created_by=created_by, q=q, status=status, kind=kind)
+            created_by=created_by, q=q, status=status, kind=kind, with_replaced=with_replaced, cancelled_in_period=cancelled_in_period)
     except PaymentError as exc:
         raise _http(exc)
     return Response(
