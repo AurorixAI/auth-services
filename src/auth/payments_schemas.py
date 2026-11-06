@@ -525,12 +525,19 @@ class PriceImpact(BaseModel):
     money: Optional["PriceImpactMoney"] = None
     # Money-1 B2: present only when this is the FIRST price of the group (the day it really acts from and why).
     first_price: Optional["FirstPriceInfo"] = None
+    # Money-1 V3: what the person should know BEFORE saving: ``[{"code": "price_unusual", "text": "Вы уверены: 3 000 000 сум? Сейчас 300 000 сум"}]``
+    warnings: List[Dict[str, str]] = Field(default_factory=list)
+    # Money-1 V3: a correction that released ``students`` blocked by their payments (``correction=true``)
+    correction: Optional[Dict[str, Any]] = None
 
 
 class GroupPriceUpdate(BaseModel):
     amount: StrictInt = Field(..., ge=0, le=MAX_MONEY)   # R3 2: ``true`` / "500000" are 422
     valid_from: Optional[date_type] = None  # default: today (Tashkent); a past day is allowed
     note: Optional[str] = Field(None, max_length=200)
+    confirm_unusual: bool = False  # Money-1 V3: the sum is more than twice / less than a half of the price in force (or zero) and the person confirmed it
+    correction: bool = False  # Money-1 V3: a typo corrected backdated although the students have payments (with ``correction_reason``)
+    correction_reason: Optional[str] = Field(None, max_length=200)
 
 
 class GroupPriceChanged(BaseModel):
@@ -602,6 +609,9 @@ class PriceOverrideUpdate(BaseModel):
     amount: Optional[StrictInt] = Field(None, ge=0, le=MAX_MONEY)   # R3 2
     valid_from: Optional[date_type] = None
     reason: Optional[str] = Field(None, max_length=200)
+    confirm_unusual: bool = False  # Money-1 V3
+    correction: bool = False
+    correction_reason: Optional[str] = Field(None, max_length=200)
 
 
 class PriceOverrideChanged(MembershipPriceOut):

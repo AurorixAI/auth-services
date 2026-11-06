@@ -222,6 +222,7 @@ def set_group_price(
         return pricing.PricingService(db).set_group_price(
             user["org_id"], group_id, user["user_id"], amount=request.amount, valid_from=request.valid_from,
             note=request.note, dry_run=dry_run, owner_view=user.get("org_role") == "owner",
+            confirm_unusual=request.confirm_unusual, correction=request.correction, correction_reason=request.correction_reason,
         )
     except pricing.PriceError as exc:
         raise _http(exc)
@@ -274,6 +275,7 @@ def set_price_override(
             user["org_id"], membership_id, user["user_id"], amount=request.amount,
             valid_from=request.valid_from, reason=request.reason, dry_run=dry_run,
             owner_view=user.get("org_role") == "owner",
+            confirm_unusual=request.confirm_unusual, correction=request.correction, correction_reason=request.correction_reason,
         )
         out["row"] = PaymentService(db)._row(user["org_id"], membership_id)
         return out

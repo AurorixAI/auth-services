@@ -175,3 +175,54 @@ def test_v2_the_list_of_decisions_has_author_reason_and_debt_before_and_after_an
     assert only["total"] == 1
     from tests.pg_world import make_client
     assert make_client(world, user=world.teacher).get(f"{API}/org/payments/decisions", params={"from": "2026-10-01", "to": "2026-10-31"}).status_code == 403
+
+
+# ---- V3: a reasonable price and the correction of a typo -------------------------------------------------------------------------------------
+
+
+def put_price(w, amount, expect=200, **body):
+    r = owner(w).put(f"{API}/org/groups/{w.group.id}/price", params={"dry_run": "true"} if body.pop("dry", False) else {}, json={"amount": amount, **body})
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def test_v3_a_price_in_times_needs_a_confirmation_the_window_warns_and_the_row_is_not_written_without_it(world, fixed_today):
+    e6_world(world)                                                                # the price of the group: 500 000
+    refused = owner(world).put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 5_000_000})
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "PRICE_UNUSUAL"
+    assert refused.json()["detail"]["message"] == f"Вы уверены: 5{NB}000{NB}000{NB}сум? Сейчас 500{NB}000{NB}сум"
+    assert owner(world).get(f"{API}/org/groups/{world.group.id}/prices").json()["current"]["amount"] == 500_000          # the old code wrote 5 000 000
+    assert put_price(world, 5_000_000, dry=True)["impact"]["warnings"][0]["code"] == "price_unusual"                   # the window asks BEFORE it saves
+    assert put_price(world, 5_000_000, confirm_unusual=True)["current"]["amount"] == 5_000_000
+
+
+def test_v3_the_borders_of_the_sensible_price_are_twice_and_a_half_and_zero(world, fixed_today):
+    e6_world(world)                                                                # 500 000
+    for amount, warned in ((1_000_000, False), (1_000_001, True), (250_000, False), (249_999, True), (0, True), (500_000, False)):
+        got = put_price(world, amount, dry=True)["impact"]["warnings"]
+        assert bool(got) is warned, (amount, got)
+
+
+def test_v3_a_typo_in_the_price_is_corrected_backdated_with_a_reason_and_the_window_says_it_can(world, fixed_today):
+    m = e6_world(world)                                                            # 400 000 paid on 15.10 for the price 500 000: debt 100 000
+    blocked = owner(world).put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 300_000, "valid_from": "2026-10-01"})
+    assert blocked.status_code == 409 and blocked.json()["detail"]["code"] == "PRICE_BACKDATE_WITH_PAYMENTS" and blocked.json()["detail"]["can_correct"] is True
+    no_reason = owner(world).put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 300_000, "valid_from": "2026-10-01", "correction": True})
+    assert no_reason.status_code == 422 and no_reason.json()["detail"]["code"] == "REASON_REQUIRED"
+    done = put_price(world, 300_000, valid_from="2026-10-01", correction=True, correction_reason="опечатка в цене")
+    assert done["current"]["amount"] == 300_000 and done["impact"]["money"]["items"][0]["advance_after"] == 100_000       # the window had said: debt 100 000 -> advance 100 000
+    row = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]
+    assert (row["debt"], row["advance"]) == (0, 100_000)
+    world.db.expire_all()
+    from src.models.auth import GroupAudit
+    snaps = [a.snapshot for a in world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action == "group_price_set")]
+    assert any(s.get("correction_reason") == "опечатка в цене" and s.get("corrected_with_payments") == 1 for s in snaps)
+
+
+def test_v3_an_individual_price_is_checked_the_same_way(world, fixed_today):
+    m = e6_world(world)
+    c = owner(world)
+    refused = c.put(f"{API}/org/memberships/{m.id}/price-override", json={"amount": 5_000_000, "reason": "договорённость"})
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "PRICE_UNUSUAL"
+    ok = c.put(f"{API}/org/memberships/{m.id}/price-override", json={"amount": 5_000_000, "reason": "договорённость", "confirm_unusual": True})
+    assert ok.status_code == 200, ok.text

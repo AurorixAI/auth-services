@@ -433,6 +433,26 @@ def clean_text(value: Optional[str]) -> Optional[str]:
     return value or None
 
 
+def unusual_change(old: Optional[int], new: int) -> bool:
+    """Money-1 V3 (ОП-08): a price in times - more than twice, less than a half of the price in force, or zero when there was one - is a probable typo (3 000 000 for 300 000)."""
+    if old is None or old <= 0 or new == old:
+        return False
+    return new == 0 or new > 2 * old or new * 2 < old
+
+
+def unusual_warnings(old: Optional[int], new: int) -> List[Dict[str, str]]:
+    return [{"code": "price_unusual", "text": payments_texts.price_unusual_text(int(old), int(new))}] if unusual_change(old, new) else []
+
+
+def check_correction_reason(reason: Optional[str]) -> str:
+    reason = clean_text(reason)
+    if reason is None or len(reason) < MIN_REASON:
+        raise PriceInvalid(f"Укажите причину исправления — от {MIN_REASON} до {MAX_REASON} символов", code="REASON_REQUIRED")
+    if len(reason) > MAX_REASON:
+        raise PriceInvalid(f"Причина — не более {MAX_REASON} символов")
+    return reason
+
+
 def check_override_input(amount: Optional[int], reason: Optional[str]) -> Tuple[Optional[int], Optional[str]]:
     """The rules of an individual price: a sum needs a reason of 3..200 characters; "back to the group price" does not."""
     reason = clean_text(reason)
@@ -992,7 +1012,7 @@ class PricingService:
         raise PriceConflict(
             f"Нельзя изменить цену задним числом: у {len(blocked)} {'ученика' if len(blocked) == 1 else 'учеников'} уже есть оплаты за период, "
             f"который это затронет ({names}). Разницу за прошлое закройте прощением долга или возвратом.",
-            code="PRICE_BACKDATE_WITH_PAYMENTS", students=blocked[:BACKDATE_LIST])
+            code="PRICE_BACKDATE_WITH_PAYMENTS", students=blocked[:BACKDATE_LIST], can_correct=True)    # Money-1 V3: the window offers «Исправляю опечатку»
 
     # ----------------------------------------------------------------- writing
 
@@ -1009,6 +1029,9 @@ class PricingService:
         dry_run: bool = False,
         owner_view: bool = False,
         commit: bool = True,
+        confirm_unusual: bool = False,
+        correction: bool = False,
+        correction_reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Set the price of a group from a day (default: today).  ``commit=False`` (R3 code №7): the caller owns the transaction (the creation of a group with a price) - it is flushed, not committed, and a failure rolls EVERYTHING back.  A past day is allowed - the impact says what it
         touches.  The same day again corrects the amount of that day; a row of that day written by somebody else
@@ -1037,7 +1060,12 @@ class PricingService:
                 running_from, unpriced_now = self._running_periods_without_price(org_id, money_ids, today)
                 if running_from is not None and valid_from <= today:
                     valid_from = check_valid_from(min(valid_from, running_from), today)
+            in_force = None if first_price else self.db.query(GroupPrice).filter(GroupPrice.group_id == group.id, GroupPrice.valid_from <= valid_from).order_by(GroupPrice.valid_from.desc()).first()
+            warnings = unusual_warnings(None if in_force is None else int(in_force.amount), amount)
+            if warnings and not dry_run and not confirm_unusual:       # Money-1 V3: «Вы уверены: 3 000 000 сум?» - the window asks first (dry_run answers ``warnings``), the server refuses the write without the yes
+                raise PriceConflict(warnings[0]["text"], code="PRICE_UNUSUAL", old=int(in_force.amount), new=amount)
             impact = self.impact(org_id, group, amount, valid_from, today, owner_view=owner_view)
+            impact["warnings"] = warnings
             if first_price:
                 impact["first_price"] = first_price_info(requested_from, valid_from, unpriced_now)
             book = load_books(self.db, [group.id], []).group_book(group.id).with_step(valid_from, amount)
@@ -1045,6 +1073,11 @@ class PricingService:
                 org_id, money_ids, valid_from=valid_from, today=today, first_price=first_price,
                 what_if=lambda books: books.with_group_books({group.id: book}))
             impact["money"] = money
+            released = len(blocked) if correction else 0
+            if correction:                          # Money-1 V3 (ДП-02): a typo corrected backdated although the students have payments - with a reason; the window already showed every student «было -> станет»
+                correction_reason = check_correction_reason(correction_reason) if not dry_run else clean_text(correction_reason)
+                impact["correction"] = {"students": released, "reason": correction_reason}
+                blocked = []
             self._refuse_backdate(blocked)          # LOGIC-A: a backdated price that rewrites charged periods with money in them
             if dry_run:
                 self.db.rollback()
@@ -1102,6 +1135,8 @@ class PricingService:
                         "corrected": corrected,
                         "first_price": first_price,
                         "requested_valid_from": requested_from.isoformat() if requested_from != valid_from else None,
+                        "correction_reason": correction_reason if correction else None,
+                        "corrected_with_payments": released,
                         "impact": {
                             key: impact[key]
                             for key in ("students_following", "students_with_override", "stale_payroll_sheets")
@@ -1267,6 +1302,9 @@ class PricingService:
         reason: Optional[str] = None,
         dry_run: bool = False,
         owner_view: bool = False,
+        confirm_unusual: bool = False,
+        correction: bool = False,
+        correction_reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """The individual price of a student from a day (reason mandatory), or ``amount=None``: the group price again.
 
@@ -1280,12 +1318,19 @@ class PricingService:
             student, membership = self._lock_membership(org_id, membership_id)
             if student.status == "archived":  # read after the locks: an archiving that held the student is seen
                 raise PriceConflict(ARCHIVED_STUDENT_MESSAGE)
-            old_book = load_books(self.db, [membership.group_id], [membership.id]).override_book(membership.id)
+            old_books = load_books(self.db, [membership.group_id], [membership.id])
+            old_book = old_books.override_book(membership.id)
+            warnings = unusual_warnings(old_books.price(membership.id, membership.group_id, valid_from).amount, amount) if amount is not None else []
+            if warnings and not dry_run and not confirm_unusual:                 # Money-1 V3: the same question as for the price of a group
+                raise PriceConflict(warnings[0]["text"], code="PRICE_UNUSUAL", new=amount)
             rows = [(d, a, r) for d, a, r in old_book._rows if d != valid_from] + [(valid_from, amount, reason)]
             new_book = OverrideBook(rows)
             money, blocked = self.money_impact(
                 org_id, [membership.id], valid_from=valid_from, today=today,
                 what_if=lambda books: books.with_override_books({membership.id: new_book}))
+            released = len(blocked) if correction else 0
+            if correction:                                                        # Money-1 V3: a typo of the individual price (the reason of the price is the reason of the correction)
+                blocked = []
             self._refuse_backdate(blocked)
             from .payroll_service import PayrollService  # lazy: payroll pulls in the payments service
 
@@ -1295,7 +1340,7 @@ class PricingService:
                 "stale_payroll_sheets": len(sheets),
                 "stale_sheets": [{"sheet_id": s["sheet_id"], "month": s["month"], "teacher_id": s["teacher_id"],
                                   "teacher_name": s["teacher_name"]} for s in sheets] if owner_view else [],
-                "money": money}
+                "money": money, "warnings": warnings, "correction": {"students": released, "reason": reason} if correction else None}
             if dry_run:
                 self.db.rollback()
                 out = self.override_history(org_id, membership_id)

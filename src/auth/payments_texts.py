@@ -36,6 +36,11 @@ def stale_text(kind: str, was: int, now: int) -> str:
     return f"{lead}: было {money(was)}, сейчас {money(now)}"
 
 
+def price_unusual_text(old: int, new: int) -> str:
+    """Money-1 V3: a price in times (more than twice, less than a half, zero) is asked again - ``Вы уверены: 3 000 000 сум? Сейчас 300 000 сум``."""
+    return f"Вы уверены: {money(new)}? Сейчас {money(old)}"
+
+
 def ddmm(day: date) -> str:
     return day.strftime("%d.%m")
 
