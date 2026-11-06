@@ -289,3 +289,54 @@ def make_client_for(w, role):
     from tests.pg_world import make_client
 
     return make_client(w, user={"teacher": w.teacher, "admin": w.admin}[role])
+
+
+# ---- V5: the receipt -------------------------------------------------------------------------------------------------------------------------
+
+
+def test_v5_the_first_print_is_the_original_the_next_ones_are_copies_and_a_reading_changes_nothing(world, fixed_today):
+    m = e6_world(world)
+    pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).one()
+    c = owner(world)
+    read = c.get(f"{API}/org/payments/{pay.id}/receipt").json()
+    assert read["is_copy"] is False and read["print_count"] == 0 and read["disclaimer"] == "Не является фискальным чеком" and read["issued_at"]
+    first = c.post(f"{API}/org/payments/{pay.id}/receipt/print")
+    assert first.status_code == 200, first.text
+    assert first.json()["is_copy"] is False and first.json()["print_count"] == 1
+    c.get(f"{API}/org/payments/{pay.id}/receipt")                                       # a reading is not a print
+    assert c.get(f"{API}/org/payments/{pay.id}/receipt").json()["print_count"] == 1
+    assert c.get(f"{API}/org/payments/{pay.id}/receipt").json()["is_copy"] is True
+    world.db.query(StudentPayment).filter_by(id=pay.id).update({"last_printed_at": None})
+    world.db.commit()                                                                   # (the debounce of a double click has its own check below)
+    second = c.post(f"{API}/org/payments/{pay.id}/receipt/print").json()
+    assert second["is_copy"] is True and second["print_count"] == 2
+
+
+def test_v5_a_double_click_on_print_is_one_print(world, fixed_today):
+    m = e6_world(world)
+    pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).one()
+    c = owner(world)
+    a, b = c.post(f"{API}/org/payments/{pay.id}/receipt/print").json(), c.post(f"{API}/org/payments/{pay.id}/receipt/print").json()
+    assert (a["print_count"], b["print_count"]) == (1, 1) and a["is_copy"] is False and b["is_copy"] is False
+
+
+def test_v5_the_state_on_the_day_of_issue_is_the_account_now_not_the_snapshot_of_the_payment(world, fixed_today):
+    m = e6_world(world)                                                                 # 400 000 paid for 500 000: debt 100 000 today
+    pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).one()
+    got = owner(world).get(f"{API}/org/payments/{pay.id}/receipt").json()
+    state = got["state_on_issue"]
+    assert (state["debt"], state["advance"]) == (100_000, 0) and state["as_of"] == TODAY.isoformat()
+    assert state["text"].startswith(f"На {TODAY.strftime('%d.%m.%Y')}: долг 100{NB}000{NB}сум")
+    post_payment(world, m, amount=40_000)                                               # later the student pays more: the old receipt shows the debt of TODAY
+    assert owner(world).get(f"{API}/org/payments/{pay.id}/receipt").json()["state_on_issue"]["debt"] == 60_000
+
+
+def test_v5_a_cancelled_payment_prints_with_the_note_and_the_method_of_a_payment_is_mandatory(world, fixed_today):
+    m = e6_world(world)
+    pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).one()
+    c = owner(world)
+    assert c.post(f"{API}/org/payments/{pay.id}/void", json={"reason": "ошиблись"}).status_code == 200
+    got = c.get(f"{API}/org/payments/{pay.id}/receipt").json()
+    assert got["void_note"] == f"Оплата отменена {TODAY.strftime('%d.%m')}"
+    r = c.post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 10_000, "paid_on": TODAY.isoformat()})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "METHOD_REQUIRED"            # the old code wrote «other»

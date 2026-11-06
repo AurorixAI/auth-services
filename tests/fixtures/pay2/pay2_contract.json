@@ -3292,6 +3292,11 @@
             ],
             "title": "Debt Before"
           },
+          "disclaimer": {
+            "default": "Не является фискальным чеком",
+            "title": "Disclaimer",
+            "type": "string"
+          },
           "display_id": {
             "anyOf": [
               {
@@ -3310,6 +3315,22 @@
           "group_name": {
             "title": "Group Name",
             "type": "string"
+          },
+          "is_copy": {
+            "default": false,
+            "title": "Is Copy",
+            "type": "boolean"
+          },
+          "issued_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued At"
           },
           "lessons_count": {
             "anyOf": [
@@ -3436,6 +3457,11 @@
               }
             ]
           },
+          "print_count": {
+            "default": 0,
+            "title": "Print Count",
+            "type": "integer"
+          },
           "recalc": {
             "items": {
               "$ref": "#/components/schemas/RecalcOut"
@@ -3480,6 +3506,16 @@
             ],
             "title": "Replaces Receipt No"
           },
+          "state_on_issue": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReceiptState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "student_id": {
             "title": "Student Id",
             "type": "string"
@@ -3511,6 +3547,17 @@
               }
             ],
             "title": "Valid To"
+          },
+          "void_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Void Note"
           },
           "void_reason": {
             "anyOf": [
@@ -3549,6 +3596,51 @@
           "paid_on"
         ],
         "title": "ReceiptOut",
+        "type": "object"
+      },
+      "ReceiptState": {
+        "description": "Money-1 V5: the account of the membership on the day the receipt is ISSUED (not the snapshot of the day of the payment).",
+        "properties": {
+          "advance": {
+            "default": 0,
+            "title": "Advance",
+            "type": "integer"
+          },
+          "as_of": {
+            "format": "date",
+            "title": "As Of",
+            "type": "string"
+          },
+          "debt": {
+            "default": 0,
+            "title": "Debt",
+            "type": "integer"
+          },
+          "paid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Until"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "as_of",
+          "debt",
+          "advance",
+          "paid_until",
+          "text"
+        ],
+        "title": "ReceiptState",
         "type": "object"
       },
       "ReceiptsByMethod": {

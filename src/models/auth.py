@@ -1510,6 +1510,9 @@ class StudentPayment(Base):
     # N13 P2.2: the receipt number, 1, 2, 3... inside the organisation (never reused, also not after a
     # void).  NULL for a carry-over (it is not money).  A replacement gets a new number.
     receipt_no = Column(Integer, nullable=True)
+    # Money-1 V5: how many times the receipt was PRINTED (the first print is the original, the next ones are marked «копия»); a reading is not a print.
+    print_count = Column(Integer, nullable=False, default=0, server_default="0")
+    last_printed_at = Column(DateTime, nullable=True)
     # N13 P2.2: with one payment day for the centre, the payment did not cover whole periods of the
     # centre (a student who came mid-month).  Honest history: settings changes do not touch it.
     partial_period = Column(Boolean, nullable=False, default=False, server_default=text("false"))

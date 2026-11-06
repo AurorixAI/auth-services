@@ -243,12 +243,12 @@ def test_payment_validation_codes(world, fixed_today):
                        ({"amount": 1000, "method": "unknown"}, "METHOD_REQUIRED")):
         r = owner(world).post(f"{API}/org/memberships/{m.id}/payments", json={"paid_on": TODAY.isoformat(), "method": "cash", **body})
         assert r.status_code == 422 and r.json()["detail"]["code"] == code, (body, r.text)
-    # no method at all: the old front - stored as "other"
+    # no method at all: Money-1 V5 - the method is chosen, never «other» by silence
     r = owner(world).post(f"{API}/org/memberships/{m.id}/payments", json={"amount": 1000, "paid_on": TODAY.isoformat()})
-    assert r.status_code == 201 and r.json()["payment"]["method"] == "other"
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "METHOD_REQUIRED"
     # the legacy period fields are accepted and ignored
     r = owner(world).post(f"{API}/org/memberships/{m.id}/payments", json={
-        "amount": 2000, "paid_on": TODAY.isoformat(), "valid_from": "2026-01-01", "valid_to": "2026-01-31", "lessons_count": 5})
+        "amount": 2000, "paid_on": TODAY.isoformat(), "method": "cash", "valid_from": "2026-01-01", "valid_to": "2026-01-31", "lessons_count": 5})
     assert r.status_code == 201
     row = world.db.get(StudentPayment, r.json()["payment"]["id"])
     assert (row.valid_from, row.valid_to, row.lessons_count) == (None, None, None)

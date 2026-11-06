@@ -46,6 +46,14 @@ def opening_over_payments_text(total: int, covered_until: date) -> str:
     return f"У ученика уже есть оплаты на {money(total)} — покрытие станет до {ddmm(covered_until)}"
 
 
+def receipt_state_text(day: date, debt: int, advance: int, paid_until: Optional[date]) -> str:
+    """Money-1 V5: ``На 21.10.2026: долг 100 000 сум, оплачено до 14.11`` (the account of the student on the day the receipt is issued)."""
+    parts = [f"долг {money(debt)}" if debt else (f"аванс {money(advance)}" if advance else "долга нет")]
+    if paid_until:
+        parts.append(f"оплачено до {ddmm(paid_until)}")
+    return f"На {day.strftime('%d.%m.%Y')}: " + ", ".join(parts)
+
+
 NOT_FISCAL = "Не является фискальным чеком"            # Money-1 V5/V6: the receipt of the centre is an internal paper, not a cheque of the tax service (owner 04.11)
 REFUND_SIGNATURE = "Получил(а): ____________________  Подпись"
 

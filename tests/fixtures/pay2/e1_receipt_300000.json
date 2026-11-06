@@ -60,6 +60,12 @@
   "created_at": "2026-10-21T09:12:00",
   "voided_at": null,
   "void_reason": null,
+  "issued_at": null,
+  "state_on_issue": null,
+  "is_copy": false,
+  "print_count": 0,
+  "void_note": null,
+  "disclaimer": "Не является фискальным чеком",
   "replaced_by_receipt_no": 19,
   "replaces_receipt_no": null,
   "replaces_amount": null

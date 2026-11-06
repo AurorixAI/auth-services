@@ -29,7 +29,7 @@ WHOLE = {
     # payments (the ones of the earlier packs; the full list is the one below)
     ("POST", f"{P}/org/memberships/{{membership_id}}/payments"), ("POST", f"{P}/org/payments/{{payment_id}}/void"), ("POST", f"{P}/org/payments/{{payment_id}}/replace"),
     ("POST", f"{P}/org/memberships/{{membership_id}}/writeoffs"), ("POST", f"{P}/org/memberships/{{membership_id}}/refunds"),
-    ("POST", f"{P}/org/writeoffs/{{writeoff_id}}/void"), ("POST", f"{P}/org/refunds/{{refund_id}}/void"),
+    ("POST", f"{P}/org/payments/{{payment_id}}/receipt/print"), ("POST", f"{P}/org/writeoffs/{{writeoff_id}}/void"), ("POST", f"{P}/org/refunds/{{refund_id}}/void"),
     ("PUT", f"{P}/org/groups/{{group_id}}/price"), ("PUT", f"{P}/org/memberships/{{membership_id}}/price-override"), ("PUT", f"{P}/org/memberships/{{membership_id}}/opening-balance"),
     ("POST", f"{P}/org/opening-balances/{{opening_id}}/void"),
     # R3 #1: a day off turns the cancellations «по вине центра» into «праздник» (and back): the deductions of the students move

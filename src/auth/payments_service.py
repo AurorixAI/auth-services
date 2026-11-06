@@ -105,6 +105,7 @@ from .payments_schemas import (
     ReceiptSnapshot,
     RefundCreated,
     RefundOut,
+    ReceiptState,
     RefundReceiptOut,
     RefundVoided,
     RegimeImpact,
@@ -124,6 +125,7 @@ REFUND_IDEMPOTENCY_INDEX = "uq_student_refunds_idempotency"
 FILE_ON_CARRY_OVER = "К деньгам, перешедшим из другой группы, чек не прикрепляется — это не денежная операция"
 FILE_ON_VOIDED = "Оплата отменена — чек прикрепить нельзя"
 FILE_LIMIT = f"К оплате можно приложить не более {MAX_FILES_PER_PAYMENT} файлов"
+PRINT_DEBOUNCE_SECONDS = 3     # Money-1 V5: a double click on «Печать» is one print
 RECEIPT_ATTEMPTS = 10  # max+1 under a SAVEPOINT; a conflict with a concurrent payment takes the next number
 SOFT_DUPLICATE_SECONDS = 60  # the same student + date + sum within a minute is a double click
 REPEAT_WINDOW_HOURS = 24     # Money-1 B9: the same sum for the same student within a day is shown as a warning (two operators, one parent); never a ban
@@ -1432,7 +1434,7 @@ class PaymentService:
         try:
             self._check_amount(data.amount)
             self._check_date(data.paid_on, today)
-            method = self._method_of(data.method)
+            method = self._method_of(data.method, required=True)      # Money-1 V5: the method is chosen, never «other» by silence
             membership = self._membership(org_id, membership_id, lock=True)
             self._guard_duplicate(org_id, membership, data, idempotency_key)
             before_entry = self._loader(org_id, today).run([membership_id])
@@ -1494,7 +1496,7 @@ class PaymentService:
         try:
             self._check_amount(data.amount)
             self._check_date(data.paid_on, today)
-            method = self._method_of(data.method)
+            method = self._method_of(data.method, required=True)
             reason = self._check_reason(reason)        # Money-1 V6: a correction of money says why (3..500), nothing is written without it
             self._guard_key(org_id, idempotency_key)   # a replay of this replace: the stored result, not ALREADY_VOIDED
             probe = self._probe_payment(org_id, payment_id)
@@ -2054,6 +2056,10 @@ class PaymentService:
             else None
         )
         users = self._users([payment.created_by])
+        today = ps.business_today()
+        account = self._entry_of(org_id, payment.membership_id, today).ledger
+        extra_state = ReceiptState(as_of=today, debt=account.debt, advance=account.advance, paid_until=account.status.paid_until,
+                                   text=tx.receipt_state_text(today, account.debt, account.advance, account.status.paid_until))
         snap = self.db.query(PaymentReceiptSnapshot.snapshot).filter(PaymentReceiptSnapshot.payment_id == payment.id).scalar()
         extra: Dict[str, Any] = {"valid_from": payment.valid_from, "valid_to": payment.valid_to}   # legacy receipts
         if isinstance(snap, dict):
@@ -2088,11 +2094,32 @@ class PaymentService:
             created_at=_iso(payment.created_at),
             voided_at=_iso(payment.voided_at),
             void_reason=payment.void_reason,
+            issued_at=_iso(_utcnow()), state_on_issue=extra_state, is_copy=int(payment.print_count or 0) > 0, print_count=int(payment.print_count or 0),
+            void_note=f"Оплата отменена {tx.ddmm(bc.utc_to_business_wall(payment.voided_at).date())}" if payment.voided_at else None,
             replaced_by_receipt_no=replaced_by[0] if replaced_by else None,
             replaces_receipt_no=replaces[0] if replaces else None,
             replaces_amount=int(replaces[1]) if replaces else None,
             **extra,
         )
+
+    def print_receipt(self, org_id: str, payment_id: UUID) -> ReceiptOut:
+        """A PRINT of the receipt (Money-1 V5): the first is the original, every next one is a «копия»; a double click within ``PRINT_DEBOUNCE_SECONDS`` is one print.
+        A cancelled payment prints too (with its note)."""
+        probe = self._probe_payment(org_id, payment_id)
+        if probe.carried_from_payment_id is not None or probe.kind == "legacy_carry" or probe.receipt_no is None:
+            return self.receipt(org_id, payment_id)                       # the same refusals as the reading
+        row = (self.db.query(StudentPayment).filter(StudentPayment.id == payment_id, StudentPayment.org_id == org_id).populate_existing().with_for_update().first())
+        now = _utcnow()
+        before = int(row.print_count or 0)
+        if row.last_printed_at is not None and (now - row.last_printed_at).total_seconds() < PRINT_DEBOUNCE_SECONDS:
+            copy = before > 1                                               # the same click again: the same paper as the first
+        else:
+            copy = before > 0
+            row.print_count, row.last_printed_at = before + 1, now
+        self.db.commit()
+        out = self.receipt(org_id, payment_id)
+        out.is_copy = copy
+        return out
 
     # ------------------------------------------------- coverage (payroll, excuses)
 

@@ -415,6 +415,17 @@ def payment_receipt(
         raise _http(exc)
 
 
+@router.post("/org/payments/{payment_id}/receipt/print", response_model=ReceiptOut)
+def print_payment_receipt(
+    payment_id: UUID, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)
+):
+    """Печать квитанции (Money-1 V5): первая печать — оригинал, каждая следующая — «копия» (`is_copy`); двойной клик за несколько секунд — одна печать. Чтение (GET) печатью не считается."""
+    try:
+        return PaymentService(db).print_receipt(user["org_id"], payment_id)
+    except PaymentError as exc:
+        raise _http(exc)
+
+
 @router.post(
     "/org/payments/{payment_id}/files",
     response_model=PaymentFileOut,

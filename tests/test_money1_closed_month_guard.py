@@ -59,6 +59,7 @@ ALLOWED = {
     R("POST", "/org/payroll-periods/{month}/reopen"): "this IS the way out of a closed month (a reason, the journal, the revision of the sheet)",
     R("POST", "/org/memberships/{membership_id}/payments"): _PAYMENT, R("POST", "/org/payments/{payment_id}/void"): _PAYMENT, R("POST", "/org/payments/{payment_id}/replace"): _PAYMENT,
     R("POST", "/org/memberships/{membership_id}/writeoffs"): _PAYMENT, R("POST", "/org/memberships/{membership_id}/refunds"): _PAYMENT,
+    R("POST", "/org/payments/{payment_id}/receipt/print"): "a print of a paper changes no money and no lesson",
     R("POST", "/org/writeoffs/{writeoff_id}/void"): _PAYMENT, R("POST", "/org/refunds/{refund_id}/void"): _PAYMENT,
     R("PUT", "/org/groups/{group_id}/price"): "a price of a group is the decision of the centre about the money of the students; the closed sheet is told «изменилось на ±N» (A3), not rewritten",
     R("PUT", "/org/memberships/{membership_id}/price-override"): "an individual price: the same as the price of the group",

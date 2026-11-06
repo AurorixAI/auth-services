@@ -731,6 +731,16 @@ class RecalcOut(PayModel):
     text: str  # «−46 000 сум: урок 21.10 отменён центром»
 
 
+class ReceiptState(PayModel):
+    """Money-1 V5: the account of the membership on the day the receipt is ISSUED (not the snapshot of the day of the payment)."""
+
+    as_of: date
+    debt: int = 0
+    advance: int = 0
+    paid_until: Optional[date] = None
+    text: str
+
+
 class ReceiptOut(BaseModel):
     """Everything the printed receipt shows (no other payment data)."""
 
@@ -771,6 +781,13 @@ class ReceiptOut(BaseModel):
     created_at: Optional[str] = None
     voided_at: Optional[str] = None
     void_reason: Optional[str] = None
+    # Money-1 V5 (additive): the moment of issue (naive UTC), the account on that day, «копия» for every print after the first, the note of a cancelled payment, the line that this is not a fiscal cheque
+    issued_at: Optional[str] = None
+    state_on_issue: Optional[ReceiptState] = None
+    is_copy: bool = False
+    print_count: int = 0
+    void_note: Optional[str] = None
+    disclaimer: str = "Не является фискальным чеком"
     replaced_by_receipt_no: Optional[int] = None
     replaces_receipt_no: Optional[int] = None
     replaces_amount: Optional[int] = None  # LOGIC-A: the sum of the payment this one corrects («исправлена: было 450 000»)
