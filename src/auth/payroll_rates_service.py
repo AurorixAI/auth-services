@@ -217,10 +217,12 @@ class RatesService:
         in_force = payroll_rates.load_book(self.db, org_id, [teacher_id]).percents_at(teacher_id, valid_from)
         for lesson_type in engine.LESSON_TYPES:
             old, new = in_force.get(lesson_type), parsed.get(lesson_type)
-            if old and new is not None and new != old and (new == 0 or new > 2 * old or new * 2 < old) and body.confirm_unusual is not True:
+            unusual = new is not None and ((new == 0 and old is None) or (old and new != old and (new == 0 or new > 2 * old or new * 2 < old)))      # R3 К8: a rate of 0 is asked again even where there is no rate in force
+            if unusual and body.confirm_unusual is not True:
                 nb = "\u00a0"
-                raise RateUnusual(f"Вы уверены: ставка «{engine.LESSON_TYPE_LABELS[lesson_type]}» {engine.format_percent(new)}{nb}% (сейчас {engine.format_percent(old)}{nb}%)?",
-                                  old=engine.format_percent(old), new=engine.format_percent(new), lesson_type=lesson_type)
+                now = f"сейчас {engine.format_percent(old)}{nb}%" if old is not None else "сейчас ставки нет"
+                raise RateUnusual(f"Вы уверены: ставка «{engine.LESSON_TYPE_LABELS[lesson_type]}» {engine.format_percent(new)}{nb}% ({now})?",
+                                  old=engine.format_percent(old) if old is not None else None, new=engine.format_percent(new), lesson_type=lesson_type)
         note = body.note
         if note is not None and not isinstance(note, str):
             raise PayrollInvalid("Примечание должно быть текстом")

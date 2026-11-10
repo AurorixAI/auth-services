@@ -11,6 +11,7 @@ ROADMAP #105 - the price of a group and the individual price of a student live h
 guard, so a teacher never sees a price and an admin sees it only when the owner allowed money.
 """
 from datetime import date
+import logging
 from typing import Annotated, Literal, Optional
 from uuid import UUID
 
@@ -66,6 +67,8 @@ def _membership_of_payment(db, org_id, payment_id) -> list:
 
     row = db.query(StudentPayment.membership_id).filter(StudentPayment.id == payment_id, StudentPayment.org_id == org_id).first()
     return [row[0]] if row else []
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Payments"])
 router.include_router(pay2_router)  # PAY-2: preview, write-off, refund, statement, receipts report, balances
@@ -184,8 +187,9 @@ def _price_with_effects(db, user: dict, membership_ids, write, confirmed: bool, 
         return write(False, confirmed), None      # the write itself runs once and in its own order (the lock of the group first: MN-39); the effects are the business of the window before it
     out = write(True, confirmed)
     try:
-        _, effects = money_effects.run_with_effects(db, user["org_id"], membership_ids, owner, lambda: write(False, True), dry_run=True)
+        _, effects = money_effects.run_with_effects(db, user["org_id"], membership_ids, owner, lambda: write(False, True, True), dry_run=True)
     except Exception:
+        logger.exception("the effects of a price on the sheets could not be measured org=%s", user.get("org_id"))      # R3 К7: not silent; the answer says «недоступно»
         effects = money_effects.unavailable(False)
     return out, effects
 
@@ -237,11 +241,11 @@ def set_group_price(
         service = pricing.PricingService(db)
         ids = service._money_ids(user["org_id"], group_id=group_id)
 
-        def write(dry: bool, confirmed: bool):
+        def write(dry: bool, confirmed: bool, measure: bool = False):
             return service.set_group_price(
                 user["org_id"], group_id, user["user_id"], amount=request.amount, valid_from=request.valid_from,
                 note=request.note, dry_run=dry, owner_view=user.get("org_role") == "owner",
-                confirm_unusual=confirmed, correction=request.correction, correction_reason=request.correction_reason)
+                confirm_unusual=confirmed, correction=request.correction, correction_reason=request.correction_reason or ("замер" if measure else None), lock=not measure)
 
         out, effects = _price_with_effects(db, user, ids, write, request.confirm_unusual, dry_run)
         out["money_effects"] = effects
@@ -294,12 +298,12 @@ def set_price_override(
     той же транзакции — она видна в ``history[].changes``. Повтор того же запроса (сумма, причина, ``valid_from``)
     ничего не меняет и аудит не дублирует."""
     try:
-        def write(dry: bool, confirmed: bool):
+        def write(dry: bool, confirmed: bool, measure: bool = False):
             return pricing.PricingService(db).set_override(
                 user["org_id"], membership_id, user["user_id"], amount=request.amount,
                 valid_from=request.valid_from, reason=request.reason, dry_run=dry,
                 owner_view=user.get("org_role") == "owner",
-                confirm_unusual=confirmed, correction=request.correction, correction_reason=request.correction_reason)
+                confirm_unusual=confirmed, correction=request.correction, correction_reason=request.correction_reason or ("замер" if measure else None), lock=not measure)
 
         out, effects = _price_with_effects(db, user, [membership_id], write, request.confirm_unusual, dry_run)
         out["money_effects"] = effects

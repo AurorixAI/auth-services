@@ -523,6 +523,7 @@ def write_override(
     valid_from: date,
     reason: Optional[str],
     seen_before: Optional[datetime] = None,
+    extra: Optional[Dict[str, Any]] = None,
 ) -> MembershipPriceOverride:
     """Insert (or, for the same day, replace) an exception row inside the caller's transaction, with its audit row.
 
@@ -586,6 +587,7 @@ def write_override(
             "new_amount": amount,
             "reason": reason,
             "corrected": corrected,
+            **(extra or {}),                      # Money-1 R3 Д6: the reason and the number of the students released from the block of the payments
         },
         at=now,
     )
@@ -1032,6 +1034,7 @@ class PricingService:
         confirm_unusual: bool = False,
         correction: bool = False,
         correction_reason: Optional[str] = None,
+        lock: bool = True,
     ) -> Dict[str, Any]:
         """Set the price of a group from a day (default: today).  ``commit=False`` (R3 code №7): the caller owns the transaction (the creation of a group with a price) - it is flushed, not committed, and a failure rolls EVERYTHING back.  A past day is allowed - the impact says what it
         touches.  The same day again corrects the amount of that day; a row of that day written by somebody else
@@ -1047,9 +1050,10 @@ class PricingService:
         if note is not None and len(note) > MAX_NOTE:
             raise PriceInvalid(f"Примечание — не более {MAX_NOTE} символов")
         try:
-            group = self._group(org_id, group_id, lock=not dry_run)
+            locking = lock and not dry_run          # Money-1 R3 К2: the window (and the measurement of its effect, ``lock=False``) takes NO row lock - a payment of the group never waits for a preview
+            group = self._group(org_id, group_id, lock=locking)
             money_ids = self._money_ids(org_id, group_id=group.id)
-            if not dry_run:       # m4: the family locks (the memberships of the group, ascending id - the order every money write takes) BEFORE the what-if
+            if locking:       # m4: the family locks (the memberships of the group, ascending id - the order every money write takes) BEFORE the what-if
                 self._lock_memberships(money_ids)
             # Money-1 B2 (B1 of the devil, ДЫРА-04): the FIRST price of a group acts from the start of the period that is running for each student - a period without a price on its first day
             # is not charged, so «с сегодня» used to make the running month free (and to forbid the correction: PRICE_BACKDATE_WITH_PAYMENTS)
@@ -1075,7 +1079,13 @@ class PricingService:
             impact["money"] = money
             released = len(blocked) if correction else 0
             if correction:                          # Money-1 V3 (ДП-02): a typo corrected backdated although the students have payments - with a reason; the window already showed every student «было -> станет»
-                correction_reason = check_correction_reason(correction_reason) if not dry_run else clean_text(correction_reason)
+                same_day = self.db.query(GroupPrice).filter(GroupPrice.group_id == group.id, GroupPrice.valid_from == valid_from).first()       # R3 Д6 (a): only the correction of a record of the SAME day with another sum
+                if same_day is None or int(same_day.amount) == amount:
+                    raise PriceInvalid("Исправить можно только цену с той же датой «действует с» и другой суммой: для новой цены укажите новую дату", code="CORRECTION_NOT_APPLICABLE")
+                from .payroll_service import PayrollService  # lazy: payroll pulls in the payments service
+
+                self._refuse_closed(org_id, PayrollService(self.db).sheets_changed_by_group_price(org_id, group.id, book, valid_from))          # (б) a closed month is not bypassed
+                correction_reason = check_correction_reason(correction_reason) if not dry_run else clean_text(correction_reason)           # (в)
                 impact["correction"] = {"students": released, "reason": correction_reason}
                 blocked = []
             self._refuse_backdate(blocked)          # LOGIC-A: a backdated price that rewrites charged periods with money in them
@@ -1163,22 +1173,28 @@ class PricingService:
         out.update({"dry_run": False, "impact": impact})
         return out
 
-    def _lock_membership(self, org_id: str, membership_id: UUID) -> Tuple[Student, StudentGroup]:
+    def _refuse_closed(self, org_id: str, sheets: List[Dict[str, Any]]) -> None:
+        """Money-1 R3 Д6 (б): a correction of a price does not bypass a CLOSED month of a teacher - 409 ``PERIOD_CLOSED`` that says to reopen it (the rule of the closed month is one: ``closed_period``)."""
+        from .closed_period import ClosedPeriods, month_title
+
+        periods = ClosedPeriods.of(self.db, org_id)
+        for sheet in sheets:
+            first = date.fromisoformat(f"{sheet['month']}-01")
+            if periods.closed_for([sheet["teacher_id"]], first) is not None:
+                raise PriceConflict(f"Зарплата за {month_title(first)} уже сохранена, месяц закрыт. Чтобы исправить цену, переоткройте месяц",
+                                    code="PERIOD_CLOSED", month=first.strftime("%Y-%m"), can_reopen=True)
+
+    def _lock_membership(self, org_id: str, membership_id: UUID, *, lock: bool = True) -> Tuple[Student, StudentGroup]:
         """The lock order of an individual price (module docstring): student -> group -> membership, every one FOR NO
         KEY UPDATE.  The ids come from an unlocked read (a membership never changes its student or its group); the
         student's status is read by the caller AFTER the locks."""
         known = self._membership(org_id, membership_id)
-        student = (
-            self.db.query(Student)
-            .filter(Student.id == known.student_id, Student.org_id == org_id)
-            .with_for_update(key_share=True)
-            .populate_existing()
-            .first()
-        )
+        query = self.db.query(Student).filter(Student.id == known.student_id, Student.org_id == org_id)
+        student = (query.with_for_update(key_share=True).populate_existing() if lock else query).first()
         if student is None:
             raise PriceNotFound("Членство не найдено")
-        self._group(org_id, known.group_id, lock=True)
-        membership = self._membership(org_id, membership_id, lock=True)
+        self._group(org_id, known.group_id, lock=lock)
+        membership = self._membership(org_id, membership_id, lock=lock)
         if membership.student_id != student.id or membership.group_id != known.group_id:
             raise PriceConflict(PRICE_CONFLICT_MESSAGE, code="PRICE_CONFLICT")
         return student, membership
@@ -1305,6 +1321,7 @@ class PricingService:
         confirm_unusual: bool = False,
         correction: bool = False,
         correction_reason: Optional[str] = None,
+        lock: bool = True,
     ) -> Dict[str, Any]:
         """The individual price of a student from a day (reason mandatory), or ``amount=None``: the group price again.
 
@@ -1315,7 +1332,7 @@ class PricingService:
         amount, reason = check_override_input(amount, reason)
         valid_from = check_valid_from(valid_from or today, today)
         try:
-            student, membership = self._lock_membership(org_id, membership_id)
+            student, membership = self._lock_membership(org_id, membership_id, lock=lock and not dry_run)       # R3 К2: no lock for a window
             if student.status == "archived":  # read after the locks: an archiving that held the student is seen
                 raise PriceConflict(ARCHIVED_STUDENT_MESSAGE)
             old_books = load_books(self.db, [membership.group_id], [membership.id])
@@ -1328,13 +1345,18 @@ class PricingService:
             money, blocked = self.money_impact(
                 org_id, [membership.id], valid_from=valid_from, today=today,
                 what_if=lambda books: books.with_override_books({membership.id: new_book}))
-            released = len(blocked) if correction else 0
-            if correction:                                                        # Money-1 V3: a typo of the individual price (the reason of the price is the reason of the correction)
-                blocked = []
-            self._refuse_backdate(blocked)
             from .payroll_service import PayrollService  # lazy: payroll pulls in the payments service
 
             sheets = PayrollService(self.db).sheets_changed_by_override(org_id, membership, new_book, valid_from)
+            released = len(blocked) if correction else 0
+            if correction:                                                        # Money-1 V3: a typo of the individual price; R3 Д6: the same four conditions as for the price of a group
+                same_day = next((r for d, r_amount, r_reason in old_book._rows if d == valid_from for r in [(r_amount, r_reason)]), None)
+                if same_day is None or (same_day[0] == amount and (same_day[1] or None) == (reason or None)):
+                    raise PriceInvalid("Исправить можно только цену с той же датой «действует с» и другой суммой или причиной: для новой цены укажите новую дату", code="CORRECTION_NOT_APPLICABLE")
+                self._refuse_closed(org_id, sheets)
+                correction_reason = check_correction_reason(correction_reason or reason) if not dry_run else clean_text(correction_reason or reason)      # also for «вернуть цену группы»
+                blocked = []
+            self._refuse_backdate(blocked)
             impact = {
                 "students_following": 1 if amount is None else 0, "students_with_override": 0 if amount is None else 1,
                 "stale_payroll_sheets": len(sheets),
@@ -1349,6 +1371,7 @@ class PricingService:
             write_override(
                 self.db, membership.id, actor_id, amount=amount, valid_from=valid_from, reason=reason,
                 seen_before=requested_at,
+                extra={"correction_reason": correction_reason, "corrected_with_payments": released} if correction else None,
             )
             self.db.commit()
         except IntegrityError as exc:

@@ -203,20 +203,113 @@ def test_v3_the_borders_of_the_sensible_price_are_twice_and_a_half_and_zero(worl
         assert bool(got) is warned, (amount, got)
 
 
+def typo_world(w):
+    """e6 (price 500 000 from 01.01, 400 000 paid on 15.10) + a typo of the SAME day: 5 000 000 from 01.10 - the student owes 4 600 000 for the period of 15.10."""
+    from tests.pg_world import give_group_price
+
+    from datetime import datetime
+
+    from src.models.auth import GroupPrice
+
+    m = e6_world(w)
+    give_group_price(w.db, w.group, 5_000_000, valid_from=D(2026, 10, 1))
+    w.db.query(GroupPrice).filter_by(group_id=w.group.id, valid_from=D(2026, 10, 1)).update({"created_at": datetime(2026, 10, 2, 8, 0)})      # a row of the past: not «written while the request waited»
+    w.db.commit()
+    return m
+
+
 def test_v3_a_typo_in_the_price_is_corrected_backdated_with_a_reason_and_the_window_says_it_can(world, fixed_today):
-    m = e6_world(world)                                                            # 400 000 paid on 15.10 for the price 500 000: debt 100 000
-    blocked = owner(world).put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 300_000, "valid_from": "2026-10-01"})
+    m = typo_world(world)
+    blocked = owner(world).put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 500_000, "valid_from": "2026-10-01", "confirm_unusual": True})
     assert blocked.status_code == 409 and blocked.json()["detail"]["code"] == "PRICE_BACKDATE_WITH_PAYMENTS" and blocked.json()["detail"]["can_correct"] is True
-    no_reason = owner(world).put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 300_000, "valid_from": "2026-10-01", "correction": True})
+    no_reason = owner(world).put(f"{API}/org/groups/{world.group.id}/price", json={"amount": 500_000, "valid_from": "2026-10-01", "correction": True, "confirm_unusual": True})
     assert no_reason.status_code == 422 and no_reason.json()["detail"]["code"] == "REASON_REQUIRED"
-    done = put_price(world, 300_000, valid_from="2026-10-01", correction=True, correction_reason="опечатка в цене")
-    assert done["current"]["amount"] == 300_000 and done["impact"]["money"]["items"][0]["advance_after"] == 100_000       # the window had said: debt 100 000 -> advance 100 000
+    done = put_price(world, 500_000, valid_from="2026-10-01", correction=True, correction_reason="опечатка в цене", confirm_unusual=True)
+    assert done["current"]["amount"] == 500_000
+    paid_one = [i for i in done["impact"]["money"]["items"] if i["has_money"]][0]                   # the student with the payment: 4 600 000 -> 100 000
+    assert (paid_one["debt_before"], paid_one["debt_after"]) == (4_600_000, 100_000)
     row = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]
-    assert (row["debt"], row["advance"]) == (0, 100_000)
+    assert (row["debt"], row["advance"]) == (100_000, 0)
     world.db.expire_all()
     from src.models.auth import GroupAudit
     snaps = [a.snapshot for a in world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action == "group_price_set")]
     assert any(s.get("correction_reason") == "опечатка в цене" and s.get("corrected_with_payments") == 1 for s in snaps)
+
+
+def test_r3_d6_a_correction_is_only_the_correction_of_a_record_of_the_same_day_with_another_sum(world, fixed_today):
+    typo_world(world)
+    c = owner(world)
+    url = f"{API}/org/groups/{world.group.id}/price"
+    base = {"correction": True, "correction_reason": "опечатка в цене", "confirm_unusual": True}
+    new_date = c.put(url, json={"amount": 500_000, "valid_from": "2026-09-15", **base})            # a NEW day is not a correction: it would move six months of money for three letters
+    assert new_date.status_code == 422 and new_date.json()["detail"]["code"] == "CORRECTION_NOT_APPLICABLE"
+    same_sum = c.put(url, json={"amount": 5_000_000, "valid_from": "2026-10-01", **base})
+    assert same_sum.status_code == 422 and same_sum.json()["detail"]["code"] == "CORRECTION_NOT_APPLICABLE"
+    assert c.put(url, json={"amount": 500_000, "valid_from": "2026-10-01", **base}).status_code == 200
+
+
+def test_r3_d6_a_closed_month_is_not_bypassed_by_a_correction(world, fixed_today, monkeypatch):
+    from uuid import uuid4
+
+    from src.auth import closed_period, pricing
+
+    class Closed:
+        def closed_for(self, teachers, day):
+            return object()
+
+    monkeypatch.setattr(closed_period.ClosedPeriods, "of", staticmethod(lambda db, org: Closed()))
+    import pytest
+
+    with pytest.raises(pricing.PriceConflict) as caught:
+        pricing.PricingService(world.db)._refuse_closed(str(world.org.id), [{"month": "2026-10", "teacher_id": str(uuid4())}])
+    detail = caught.value.detail
+    assert detail["code"] == "PERIOD_CLOSED" and "переоткройте месяц" in detail["message"] and detail["can_reopen"] is True
+
+
+def test_r3_d6_the_individual_price_back_to_the_group_with_a_correction_needs_a_reason_and_is_in_the_audit(world, fixed_today):
+    from tests.pg_world import give_price
+
+    m = e6_world(world)
+    give_price(world.db, m, 300_000, valid_from=D(2026, 10, 1))                          # the individual price of the same day (a typo to be taken back)
+    from datetime import datetime
+
+    from src.models.auth import MembershipPriceOverride
+
+    world.db.query(MembershipPriceOverride).filter_by(membership_id=m.id).update({"created_at": datetime(2026, 10, 2, 8, 0)})
+    world.db.commit()
+    c = owner(world)
+    url = f"{API}/org/memberships/{m.id}/price-override"
+    body = {"amount": None, "valid_from": "2026-10-01", "correction": True, "confirm_unusual": True}
+    no_reason = c.put(url, json=body)
+    assert no_reason.status_code == 422 and no_reason.json()["detail"]["code"] == "REASON_REQUIRED"      # the old code let «вернуть цену группы» through without a reason
+    ok = c.put(url, json={**body, "correction_reason": "ошибочная скидка"})
+    assert ok.status_code == 200, ok.text
+    snaps = [a.snapshot for a in world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action == "membership_price_set")]
+    assert any(x.get("correction_reason") == "ошибочная скидка" and "corrected_with_payments" in x for x in snaps)
+    assert c.put(url, json={"amount": 300_000, "valid_from": "2026-09-20", "reason": "скидка", "correction": True, "correction_reason": "x" * 3, "confirm_unusual": True}).json()["detail"]["code"] == "CORRECTION_NOT_APPLICABLE"
+
+
+def test_r3_k2_the_window_of_a_price_takes_no_row_lock(world, fixed_today):
+    from tests.pg_world import capture_queries
+
+    m = e6_world(world)
+    c = owner(world)
+    for call in (lambda: c.put(f"{API}/org/groups/{world.group.id}/price", params={"dry_run": "true"}, json={"amount": 600_000, "confirm_unusual": True}),
+                 lambda: c.put(f"{API}/org/memberships/{m.id}/price-override", params={"dry_run": "true"}, json={"amount": 400_000, "reason": "скидка"})):
+        statements, r = capture_queries(world, call)
+        assert r.status_code == 200, r.text
+        assert [s for s in statements if "FOR UPDATE" in s.upper() or "FOR NO KEY UPDATE" in s.upper() or "FOR KEY SHARE" in s.upper()] == []      # the old window held the locks of the group and of the families
+
+
+def test_r3_k7_a_failure_of_the_measurement_is_logged_with_the_centre_and_the_answer_says_unavailable(world, fixed_today, monkeypatch, caplog):
+    from src.auth import money_effects
+
+    e6_world(world)
+    monkeypatch.setattr(money_effects, "run_with_effects", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    with caplog.at_level("ERROR"):
+        r = owner(world).put(f"{API}/org/groups/{world.group.id}/price", params={"dry_run": "true"}, json={"amount": 600_000})
+    assert r.status_code == 200 and r.json()["money_effects"]["unavailable"] is True
+    assert any(str(world.org.id) in rec.getMessage() and "could not be measured" in rec.getMessage() for rec in caplog.records)
 
 
 def test_v3_an_individual_price_is_checked_the_same_way(world, fixed_today):

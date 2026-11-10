@@ -95,3 +95,12 @@ def test_v7b_n7_the_names_of_a_teacher_come_apart_next_to_the_name_in_the_screen
     periods = owner.get(f"{API}/org/payroll-periods", params={"month": MONTH})
     if periods.status_code == 200:
         assert any(p.get("teacherFirstName") == w.A.first_name for p in periods.json().get("items", periods.json() if isinstance(periods.json(), list) else []))
+
+
+def test_r3_k8_a_rate_of_zero_is_asked_again_even_where_there_is_no_rate_in_force(pg_session, clock):
+    w, g, st = _world(pg_session, clock)
+    r = client(w, "owner").put(f"{API}/org/payroll/rates/{w.B.id}", json={"valid_from": "2026-11", "percents": {"group": "0"}})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "RATE_UNUSUAL" and r.json()["detail"]["old"] is None and "ставки нет" in r.json()["detail"]["message"]
+    ok = client(w, "owner").put(f"{API}/org/payroll/rates/{w.B.id}", json={"valid_from": "2026-11", "percents": {"group": "0"}, "confirm_unusual": True})
+    assert ok.status_code == 200, ok.text
+    assert client(w, "owner").put(f"{API}/org/payroll/rates/{w.B.id}", json={"valid_from": "2026-12", "percents": {"group": "0"}}).status_code == 200      # 0 -> 0 is no change: not asked again
