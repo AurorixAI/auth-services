@@ -289,6 +289,12 @@ def test_17_payroll_pays_the_lesson_the_student_covered_by_the_deduction(pg_sess
     assert own["summary"]["paid_until"] == "2026-11-07"                       # the student's own account: two days into the second period
     on = PaymentService(w.db).lesson_coverage(str(w.org.id), [m.id], D(2026, 11, 6), D(2026, 11, 6))
     assert [c.paid for c in on.values()] == [True]                           # the lesson of 06.11 is covered by the deduction: the teacher is paid
+    # R3 К14б: not only «paid» - the SUM the teacher gets for the lesson: the price of the period 600 000 x 50 % / 12 = 25 000 (the numbers of the run), the old rule gives nothing
+    from tests.test_p154_money_pg import rate, sheet as owner_sheet
+
+    rate(w)
+    assert owner_sheet(w, "2026-11")["total_amount"] == 25_000
     set_payments(w, recalc_history=[])                                       # the same facts, the setting off
     off = PaymentService(w.db).lesson_coverage(str(w.org.id), [m.id], D(2026, 11, 6), D(2026, 11, 6))
     assert [(c.paid, c.cover_source) for c in off.values()] == [(False, "unpaid")]
+    assert owner_sheet(w, "2026-11")["total_amount"] == 0                      # the setting off: the lesson is not covered, the sheet pays nothing for it

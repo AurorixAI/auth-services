@@ -326,6 +326,9 @@ class _Change:
 # ============================================================================
 
 
+ADVANCE_LOOKBACK_YEARS = 2          # Money-1 R3 К10: how far back the list of a month looks for a teacher who only has an advance
+
+
 class PayrollService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -1043,8 +1046,9 @@ class PayrollService:
         teacher_ids = set(seed.teachers) | set(sheets)
         # Money-1 V7: a teacher with no lessons and no sheet in the month may still have an ADVANCE from the earlier months (paid forward, then the teacher was removed or just taught nothing):
         # he is listed with ``advance_only`` - the owner must see money that is owed back / carried on.
-        earlier = {r[0] for r in self.db.query(PayrollSheet.teacher_id).filter(PayrollSheet.org_id == org_id, PayrollSheet.period_month < first).distinct().all()}
-        earlier |= {r[0] for r in self.db.query(PayrollPayout.teacher_id).filter(PayrollPayout.org_id == org_id, PayrollPayout.period_month < first).distinct().all()}
+        window = date(first.year - ADVANCE_LOOKBACK_YEARS, first.month, 1)       # R3 К10: the history of two years, not the whole life of the centre (an advance older than that is a matter of the owner, not of the list)
+        earlier = {r[0] for r in self.db.query(PayrollSheet.teacher_id).filter(PayrollSheet.org_id == org_id, PayrollSheet.period_month < first, PayrollSheet.period_month >= window).distinct().all()}
+        earlier |= {r[0] for r in self.db.query(PayrollPayout.teacher_id).filter(PayrollPayout.org_id == org_id, PayrollPayout.period_month < first, PayrollPayout.period_month >= window).distinct().all()}
         carry_ids = set(sheets) | set(seed.teachers) | (earlier - teacher_ids)
         carries = payout_service.carry_ins(org_id, list(carry_ids), first)       # R3 3: the advance of the earlier months, one pair of queries for the month
         advance_only = {tid for tid in earlier - teacher_ids if carries.get(tid, 0) > 0}

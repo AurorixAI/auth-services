@@ -44,7 +44,7 @@ from . import membership_periods
 from . import payment_status as ps
 from . import payments_texts as tx
 from . import pricing
-from .logica_service import AUDIT_OPENING_SET, AUDIT_OPENING_VOID, OpeningFacts, OpeningService, _Base
+from .logica_service import AUDIT_OPENING_SET, AUDIT_OPENING_VOID, OpeningFacts, OpeningService, _Base, over_payments_warning
 from .openings_schemas import (
     OpeningBatchApplied,
     OpeningBatchImpact,
@@ -396,9 +396,9 @@ class OpeningsService(_Base):
                 p.after = self._state(ledger, self._target_value(p) if p.changed else p.existing)
         for p in plan.items:      # Money-1 V4 (ДП-08): «оплачено до» on top of payments - the person is told what the coverage becomes (the number of the screen «after»)
             if p.status == "ok" and p.changed and p.has_money and p.target is not None and p.target[0] is not None and p.after is not None and p.after.paid_until:
-                paid = sum(int(x.amount) for x in plan.a.payments.get(p.mid, []) if x.voided_at is None)
-                if paid:
-                    p.warn("OPENING_OVER_PAYMENTS", tx.opening_over_payments_text(paid, p.after.paid_until))
+                warning = over_payments_warning(sum(int(x.amount) for x in plan.a.payments.get(p.mid, []) if x.voided_at is None), p.after.paid_until)
+                if warning:
+                    p.warn(warning["code"], warning["message"])
         plan.finish()
         return plan
 

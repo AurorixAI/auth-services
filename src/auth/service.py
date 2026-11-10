@@ -2820,11 +2820,12 @@ class AuthService:
                 valid_from=ps.business_date(now_dt), reason=override_reason,
             )
 
+        opening_warning = None
         if opening_balance is not None:  # LOGIC-A (decision 1): the opening balance of the new membership
             from .leave_service import apply_add_opening  # lazy
 
             self.db.flush()
-            apply_add_opening(self.db, org_id, membership, actor_id, opening_balance, transfer=bool(closing), source=opening_source)
+            opening_warning = apply_add_opening(self.db, org_id, membership, actor_id, opening_balance, transfer=bool(closing), source=opening_source)
 
         # Money-1 B1 «Оплата с»: a new stay is charged from the first lesson of the group (or the day the owner chose); a transfer has its own day (the one after it)
         billing = None
@@ -2873,6 +2874,8 @@ class AuthService:
         self.db.flush()
         warnings = self._membership_warnings(student, group)
         warnings.extend(carried)
+        if opening_warning:                  # Money-1 R3 Д4: «оплачено до» on top of payments is named (the same function as the batch and the single window)
+            warnings.append(opening_warning)
         result = {
             "student_id": str(student_id),
             "group_id": str(group_id),

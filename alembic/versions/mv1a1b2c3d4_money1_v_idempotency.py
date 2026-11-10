@@ -9,6 +9,9 @@ Create Date: 2026-11-07
 
 * ``group_audit.action`` (``ck_group_audit_action``) also accepts ``payment_void`` / ``payment_replace`` (V2: the journal of money decisions) and ``payment_file_removed`` (V10: a removed cheque).
 
+Lock of ``group_audit`` (R3 К13, accepted before the launch: the centres are test centres and the table is small): ``DROP CONSTRAINT`` takes ACCESS EXCLUSIVE and ``VALIDATE`` scans the table inside the
+same transaction; ``lock_timeout = 5s`` limits only the WAIT for the lock.  For a big table the check would be added ``NOT VALID`` here and validated by a separate command after the release.
+
 Only ADDS (no data is moved).  Rollback (downgrade): NOTHING IS DELETED - the journal of money decisions stays.  The previous check comes back as ``NOT VALID``: the rows of the three new actions
 stay, a NEW row is checked against the old list (so ``payment_void`` is refused after the rollback); the next ``upgrade`` makes the check cover them again.  The indexes and the columns are dropped.
 """

@@ -306,7 +306,7 @@ class LeaveService:
         return LeaveResult(message="Ученик удалён из группы", settled=settled)
 
 
-def apply_add_opening(db: Session, org_id: str, membership: StudentGroup, actor_id: Optional[str], opening, *, transfer: bool, source: str = "add") -> None:
+def apply_add_opening(db: Session, org_id: str, membership: StudentGroup, actor_id: Optional[str], opening, *, transfer: bool, source: str = "add") -> Optional[Dict[str, str]]:
     """The opening balance given with «Добавить в группу» (needs access to money - the router checks).  A transfer that closes other
     memberships carries money along: no opening balance then (422 ``OPENING_NOT_ALLOWED``)."""
     from .logica_service import OpeningService
@@ -314,6 +314,8 @@ def apply_add_opening(db: Session, org_id: str, membership: StudentGroup, actor_
     if transfer:
         raise OpeningNotAllowedAdd("Остаток нельзя внести: ученик переводится из другой группы, его деньги переходят вместе с ним")
     if opening.paid_until is None and opening.debt_amount is None and opening.debt_on is None:
-        return
-    OpeningService(db).apply(org_id, membership, actor_id, "admin", opening, source=source, today=ps.business_today(),
-                             reason=getattr(opening, "reason", None), require_reason_when_money=False)
+        return None
+    service = OpeningService(db)
+    today = ps.business_today()
+    service.apply(org_id, membership, actor_id, "admin", opening, source=source, today=today, reason=getattr(opening, "reason", None), require_reason_when_money=False)
+    return service.over_payments(org_id, membership.id, today) if opening.paid_until is not None else None       # Money-1 R3 Д4: «оплачено до» on top of payments is named

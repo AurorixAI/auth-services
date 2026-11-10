@@ -609,3 +609,108 @@ def test_r3_p3_p5_the_collection_row_names_what_the_debtors_owe_and_a_cancelled_
     assert row["debtors_debt"] == row["debt"] - row["debt_waiting"]
     line = [x for x in journal(world, "2026-11-01", "2026-11-30", cancelled_in_period="true")["rows"] if x["view"] == "cancelled_here"][0]
     assert line["voided_at"] and line["void_reason"] == "ошибка"
+
+
+# ---- R3 Д4: the warning «оплачено до поверх оплат» in all three places, ONE function ---------------------------------------------------------
+
+
+def test_r3_d4_the_single_window_of_an_opening_balance_says_it_too(world, fixed_today):
+    from datetime import date as _date
+
+    from src.auth import payments_texts as tx
+
+    m = e6_world(world)                                                                 # 400 000 paid
+    r = owner(world).put(f"{API}/org/memberships/{m.id}/opening-balance", params={"dry_run": "true"}, json={"paid_until": "2026-12-15", "reason": "остаток по журналу"})
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert [w["code"] for w in got["warnings"]] == ["OPENING_OVER_PAYMENTS"]            # the old window: no warnings at all
+    assert got["warnings"][0]["message"] == tx.opening_over_payments_text(400_000, _date.fromisoformat(got["row"]["paid_until"]))
+    clean = owner(world).put(f"{API}/org/memberships/{membership(world, world.students[2]).id}/opening-balance", params={"dry_run": "true"}, json={"paid_until": "2026-12-15"})
+    assert clean.status_code == 200 and clean.json()["warnings"] == []                    # no payments - nothing to say
+
+
+def test_r3_d4_the_adding_to_a_group_with_an_opening_balance_says_it_through_the_same_function(world, fixed_today):
+    from datetime import date as _date
+
+    from src.auth import payments_texts as tx
+    from src.auth.leave_service import apply_add_opening
+    from src.auth.payments_schemas import OpeningPut
+
+    m = e6_world(world)
+    warning = apply_add_opening(world.db, str(world.org.id), m, str(world.owner.id), OpeningPut(paid_until=_date(2026, 12, 15)), transfer=False)
+    assert warning and warning["code"] == "OPENING_OVER_PAYMENTS" and warning["message"].startswith(f"У ученика уже есть оплаты на 400{NB}000{NB}сум — покрытие станет до ")
+    world.db.rollback()
+    assert tx.opening_over_payments_text(1, _date(2026, 1, 20)) == f"У ученика уже есть оплаты на 1{NB}сум — покрытие станет до 20.01"
+
+
+# ---- R3 К5: two at once (real threads) ---------------------------------------------------------------------------------------------------------
+
+from tests.test_payment_carry_over_pg import engine, run_in_thread  # noqa: E402,F401  (engine = fixture)
+
+
+def _join(*threads):
+    for t in threads:
+        t.join(timeout=60)
+
+
+def test_r3_k5_two_requests_with_one_key_write_one_forgiveness(world, fixed_today, engine):
+    import threading
+
+    from src.auth.payments_service import DuplicateWriteoff, PaymentService
+
+    m = e6_world(world)
+    barrier, key_ = threading.Barrier(2), uuid4()
+
+    def call(session):
+        barrier.wait()
+        return PaymentService(session).create_writeoff(str(world.org.id), m.id, str(world.owner.id), amount=20_000, whole=False, reason="льгота", idempotency_key=key_)
+
+    (t1, o1), (t2, o2) = run_in_thread(engine, call), run_in_thread(engine, call)
+    _join(t1, t2)
+    errors = [o["error"] for o in (o1, o2) if "error" in o]
+    assert sum("value" in o for o in (o1, o2)) == 1 and len(errors) == 1 and isinstance(errors[0], DuplicateWriteoff), (o1, o2)
+    assert [w.amount for w in writeoffs(world)] == [20_000]
+
+
+def test_r3_k5_two_different_keys_with_the_sum_they_saw_the_second_gets_balance_changed(world, fixed_today, engine):
+    import threading
+
+    from src.auth.payments_service import PaymentService, StaleAmount
+
+    m = e6_world(world)                                                                  # debt 100 000: both saw it and both forgive all of it
+    barrier = threading.Barrier(2)
+
+    def call(session):
+        barrier.wait()
+        return PaymentService(session).create_writeoff(str(world.org.id), m.id, str(world.owner.id), amount=None, whole=True, reason="льгота",
+                                                       expected_debt=100_000, idempotency_key=uuid4())
+
+    (t1, o1), (t2, o2) = run_in_thread(engine, call), run_in_thread(engine, call)
+    _join(t1, t2)
+    errors = [o["error"] for o in (o1, o2) if "error" in o]
+    assert sum("value" in o for o in (o1, o2)) == 1 and len(errors) == 1 and isinstance(errors[0], StaleAmount), (o1, o2)
+    assert [w.amount for w in writeoffs(world)] == [100_000]
+
+
+def test_r3_k5_two_refunds_of_two_students_of_one_centre_never_get_one_number(world, fixed_today, engine):
+    import threading
+
+    from src.auth.payments_service import PaymentService
+
+    m0 = _advance_world(world, fixed_today)
+    m1 = membership(world, world.students[1])
+    stay(world, m1, D(2026, 9, 15), D(2026, 10, 25))
+    seed_payment(world, m1, 790_000, TODAY, receipt_no=19)
+    world.db.commit()
+    barrier = threading.Barrier(2)
+
+    def call(mid):
+        def run(session):
+            barrier.wait()
+            return PaymentService(session).create_refund(str(world.org.id), mid, str(world.owner.id), amount=10_000, method="cash", reason="возврат", note=None)
+        return run
+
+    (t1, o1), (t2, o2) = run_in_thread(engine, call(m0.id)), run_in_thread(engine, call(m1.id))
+    _join(t1, t2)
+    assert "value" in o1 and "value" in o2, (o1, o2)
+    assert sorted([o1["value"].refund.receipt_no, o2["value"].refund.receipt_no]) == [1, 2]

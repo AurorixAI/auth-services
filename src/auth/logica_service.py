@@ -172,6 +172,15 @@ class OpeningFacts:
     transfer_target: bool
 
 
+def over_payments_warning(paid_total: int, covered_until: Optional[date]) -> Optional[Dict[str, str]]:
+    """Money-1 R3 Д4: the ONE function of the warning «У ученика уже есть оплаты на N сум — покрытие станет до ДД.ММ» (the batch of openings, the single window, the adding to a group)."""
+    if paid_total <= 0 or covered_until is None:
+        return None
+    from . import payments_texts as tx
+
+    return {"code": "OPENING_OVER_PAYMENTS", "message": tx.opening_over_payments_text(int(paid_total), covered_until)}
+
+
 class OpeningService(_Base):
     def _out(self, row: MembershipOpeningBalance) -> OpeningOut:
         users = self.pay._users([row.created_by])
@@ -277,6 +286,13 @@ class OpeningService(_Base):
                 self.db.flush()
         return new, True
 
+    def over_payments(self, org_id: str, membership_id: UUID, today: date) -> Optional[Dict[str, str]]:
+        """Money-1 R3 Д4: the warning «оплачено до поверх оплат» of ONE membership as it stands NOW (after the write was flushed): the live payments and the coverage the ledger gives.  The batch plan
+        (``openings_service``) and the window of adding use the same ``over_payments_warning``."""
+        paid = self.db.query(func.coalesce(func.sum(StudentPayment.amount), 0)).filter(
+            StudentPayment.org_id == org_id, StudentPayment.membership_id == membership_id, StudentPayment.kind == "payment", StudentPayment.voided_at.is_(None)).scalar()
+        return over_payments_warning(int(paid or 0), self.pay._entry_of(org_id, membership_id, today).ledger.status.paid_until)
+
     @deadlock_guard
     def put(
         self, org_id: str, membership_id: UUID, actor_id: str, body: OpeningPut, *, dry_run: bool = False, actor_role: str = "admin",
@@ -300,8 +316,9 @@ class OpeningService(_Base):
                         "debt_on": row.debt_on.isoformat() if row and row.debt_on else None,
                         "reason": (body.reason or "").strip() or None, "debt_before": before.debt, "debt_after": after.debt,
                         "advance_before": before.advance, "advance_after": after.advance})
+            warning = self.over_payments(org_id, membership_id, today) if (changed and row is not None and row.paid_until is not None) else None
             out = OpeningSaved(opening=self._out(row) if row else None, impact=impact_of(before, after), dry_run=dry_run,
-                               row=self._row(org_id, membership_id, today))
+                               row=self._row(org_id, membership_id, today), warnings=[warning] if warning else [])
             if dry_run:
                 self.db.rollback()
                 return out
@@ -312,7 +329,7 @@ class OpeningService(_Base):
         invalidate_summary(org_id)
         logger.info("opening balance set membership=%s actor=%s changed=%s", membership_id, actor_id, changed)
         return OpeningSaved(opening=self._out(row) if row else None, impact=out.impact, dry_run=False,
-                            row=self._row(org_id, membership_id, today))
+                            row=self._row(org_id, membership_id, today), warnings=out.warnings)
 
     @deadlock_guard
     def void(self, org_id: str, opening_id: UUID, actor_id: str, reason: str, *, actor_role: str = "admin") -> OpeningVoided:

@@ -4183,6 +4183,7 @@
                 "type": "null"
               }
             ],
+            "description": "Отмена возврата: ТЕКУЩИЙ аванс ученика ДО отмены (`row.advance`), а не «аванс станет X». null - без проверки.",
             "title": "Expected Advance"
           },
           "expected_debt": {
@@ -4194,6 +4195,7 @@
                 "type": "null"
               }
             ],
+            "description": "Отмена прощения: ТЕКУЩИЙ долг ученика ДО отмены - то, что человек видит сейчас (`row.debt`), а не «долг станет X». Другое число сейчас - 409 BALANCE_CHANGED. null - без проверки.",
             "title": "Expected Debt"
           },
           "reason": {

@@ -330,7 +330,7 @@ def lesson_probe(db, org_id: Any, teachers: Iterable[Any], day: Any, owner: bool
             probe.measure("before")
         return probe
     except Exception:
-        logger.exception("money effects probe of a lesson could not be started")
+        logger.exception("money effects probe of a lesson could not be started org=%s", org_id)
         return None
 
 
@@ -349,7 +349,7 @@ def teacher_probe(db, org_id: Any, first: date, owner: bool, teacher_id: Any = N
             probe.measure("before")
         return probe
     except Exception:
-        logger.exception("money effects probe of a rate could not be started")
+        logger.exception("money effects probe of a rate could not be started org=%s", org_id)
         return None
 
 
@@ -428,7 +428,7 @@ def run_with_effects(db, org_id: Any, membership_ids: Iterable[Any], owner: bool
         with db.begin_nested():
             probe = MembershipProbe(db, org_id, membership_ids, owner).start()
     except Exception:
-        logger.exception("money effects probe of a student could not be started")
+        logger.exception("money effects probe of a student could not be started org=%s", org_id)
     preview = None
     try:
         with writes_rolled_back(db):
@@ -438,14 +438,14 @@ def run_with_effects(db, org_id: Any, membership_ids: Iterable[Any], owner: bool
                     with db.begin_nested():
                         probe.after_in_transaction(after_ids(preview))
                 except Exception:
-                    logger.exception("money effects (after) could not be worked out")
+                    logger.exception("money effects (after) could not be worked out org=%s", org_id)
                     probe = None
         if probe is not None:
             try:
                 with db.begin_nested():
                     probe.before_after_rollback()
             except Exception:
-                logger.exception("money effects (before) could not be worked out")
+                logger.exception("money effects (before) could not be worked out org=%s", org_id)
                 probe = None
         block = probe.block(done=not dry_run) if probe is not None else unavailable(not dry_run)
     except Exception as exc:

@@ -14,7 +14,7 @@ Lock order (SPEC 0.4): the member row -> the groups of the member (ascending id)
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -205,7 +205,7 @@ class StaffLifecycle:
         Months and words only - no sums (the removal is available to an administrator, the salary is the owner's)."""
         from sqlalchemy import func
 
-        from src.models.auth import PayrollPayout, PayrollSheet
+        from src.models.auth import PayrollSheet
 
         from . import payment_status as ps
         from .closed_period import month_first, month_title
@@ -217,11 +217,23 @@ class StaffLifecycle:
             GroupAttendance.lesson_date >= since.isoformat()).distinct().all()}
         saved = {r[0].strftime("%Y-%m"): int(r[1]) for r in self.db.query(PayrollSheet.period_month, PayrollSheet.total_amount).filter(
             PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == user_id, PayrollSheet.period_month >= since)}
-        paid = {r[0].strftime("%Y-%m"): int(r[1]) for r in self.db.query(PayrollPayout.period_month, func.sum(PayrollPayout.amount)).filter(
-            PayrollPayout.org_id == org_id, PayrollPayout.teacher_id == user_id, PayrollPayout.period_month >= since,
-            PayrollPayout.voided_at.is_(None)).group_by(PayrollPayout.period_month)}
         unsaved = sorted(m for m in held if m not in saved)
-        unpaid = sorted(m for m, total in saved.items() if total > paid.get(m, 0))
+        # R3 К4 / Д9: «выплачено / остаток» is the function of the screen of the salary - ``PayrollPayoutService.state_in_month`` (the advance of the earlier months is taken off, an open month is told from a closed one)
+        from .closed_period import ClosedPeriods
+        from .payroll_payouts import PayrollPayoutService
+
+        payouts = PayrollPayoutService(self.db)
+        items = payouts.payouts_of(org_id, teacher_ids=[user_id])
+        sheet_months = {datetime.strptime(m, "%Y-%m").date(): total for m, total in saved.items()}
+        carries = payouts.carry_chain(org_id, user_id, list(sheet_months))
+        periods = ClosedPeriods.of(self.db, org_id)
+        unpaid, ahead = [], []
+        for first, total in sorted(sheet_months.items()):
+            state = payouts.state_in_month(org_id, user_id, first, saved_total=total, fresh_total=None, items=items.get((user_id, first), []), carry_in=carries.get(first, 0))
+            if state.balance > 0:
+                unpaid.append(first.strftime("%Y-%m"))
+            elif state.balance < 0 and periods.closed_for([user_id], first) is None:
+                ahead.append(first.strftime("%Y-%m"))             # paid ahead and the month is not closed: it may be taken back by the sheet
 
         def title(key: str) -> str:
             return month_title(month_first(ps.business_today()).replace(year=int(key[:4]), month=int(key[5:7])))
@@ -231,6 +243,8 @@ class StaffLifecycle:
             parts.append(f"Зарплата за {', '.join(title(m) for m in unsaved)} не сохранена")
         if unpaid:
             parts.append(f"Зарплата за {', '.join(title(m) for m in unpaid)} не выплачена")
+        if ahead:
+            parts.append(f"Есть выплата вперёд за {', '.join(title(m) for m in ahead)}: месяц не закрыт")
         return {"unsaved_months": unsaved, "unpaid_months": unpaid, "text": ". ".join(parts)}
 
     def _assignments_error(self, impact: Dict[str, Any]) -> OpsError:

@@ -884,8 +884,8 @@ class RecordVoid(BaseModel):
     """Cancel a write-off / a refund: the reason 3..500 characters.  ``expected_debt`` (a write-off) / ``expected_advance`` (a refund): the sum the person SAW (Money-1 V1; null: no check)."""
 
     reason: str = Field(..., max_length=500)
-    expected_debt: Optional[StrictInt] = None
-    expected_advance: Optional[StrictInt] = None
+    expected_debt: Optional[StrictInt] = Field(None, description="Отмена прощения: ТЕКУЩИЙ долг ученика ДО отмены - то, что человек видит сейчас (`row.debt`), а не «долг станет X». Другое число сейчас - 409 BALANCE_CHANGED. null - без проверки.")
+    expected_advance: Optional[StrictInt] = Field(None, description="Отмена возврата: ТЕКУЩИЙ аванс ученика ДО отмены (`row.advance`), а не «аванс станет X». null - без проверки.")
 
     @field_validator("reason")
     @classmethod
@@ -1375,6 +1375,7 @@ class OpeningSaved(PayModel):
     impact: ImpactMoney
     dry_run: bool = False
     row: MembershipPaymentRow
+    warnings: List[Dict[str, str]] = Field(default_factory=list)  # Money-1 R3 Д4: ``[{"code": "OPENING_OVER_PAYMENTS", "message": "У ученика уже есть оплаты на N сум — покрытие станет до ДД.ММ"}]``
 
 
 class OpeningVoided(PayModel):

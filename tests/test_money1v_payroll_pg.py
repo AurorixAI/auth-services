@@ -46,6 +46,31 @@ def test_v7_the_signal_of_a_changed_month_has_no_false_alarm_on_a_zero_differenc
     assert client(w, "owner").get(f"{API}/org/payroll/changed-months").json()["items"] == [{"month": "2026-10", "teachers": 1}]
 
 
+def test_r3_k5_the_signal_lists_the_month_that_only_the_rule_of_payf_changed(pg_session, clock, monkeypatch):
+    """The rewrite of the signal test (R3 К5): on e21c532 the rule of PAY-F does not exist - the sheet saved after the month and the fresh total are the same, the list is EMPTY and this test is red.
+    Now: November is saved and closed under the old rule (the lesson covered by the deduction is «не оплачено», nothing for it), then the rule moves - the month is in the list, ONE teacher."""
+    from src.auth import payments_service
+    from tests.payf_helpers import cancel
+    from tests.test_p154_money_pg import build_org, rate
+    from tests.test_payf_recalc_pg import month_world
+    from tests.ops_helpers import history_row
+
+    w = build_org(pg_session)
+    g, s, m = month_world(w, clock, paid=600_000)
+    rate(w)
+    cancel(w, g, "lesson-wed", "2026-10-21")
+    clock.set("2026-11-06 12:00")
+    history_row(w.db, w.org, g, "lesson-fri", "2026-11-06", w.A, [s], start="10:00", end="10:55")
+    w.db.commit()
+    clock.set("2026-12-02 12:00")                                                        # November is over: the sheet saved now closes it
+    monkeypatch.setattr(payments_service, "PAYROLL_COUNTS_DEDUCTION", False)               # the old rule
+    calc = sheet(w, "2026-11")
+    assert client(w, "owner").post(f"{API}/org/payroll/sheets", json={"month": "2026-11", "teacher_id": str(w.A.id), "expected_fingerprint": calc["source_fingerprint"]}).status_code == 201
+    assert client(w, "owner").get(f"{API}/org/payroll/changed-months").json()["items"] == []        # under the old rule: saved == fresh
+    monkeypatch.setattr(payments_service, "PAYROLL_COUNTS_DEDUCTION", True)                # the new rule: the lesson is paid
+    assert client(w, "owner").get(f"{API}/org/payroll/changed-months").json()["items"] == [{"month": "2026-11", "teachers": 1}]
+
+
 def put_rate(w, percent, expect=200, **extra):
     r = client(w, "owner").put(f"{API}/org/payroll/rates/{w.A.id}", json={"valid_from": "2026-11", "percents": {"group": percent}, **extra})
     assert r.status_code == expect, (percent, r.text)
@@ -104,3 +129,58 @@ def test_r3_k8_a_rate_of_zero_is_asked_again_even_where_there_is_no_rate_in_forc
     ok = client(w, "owner").put(f"{API}/org/payroll/rates/{w.B.id}", json={"valid_from": "2026-11", "percents": {"group": "0"}, "confirm_unusual": True})
     assert ok.status_code == 200, ok.text
     assert client(w, "owner").put(f"{API}/org/payroll/rates/{w.B.id}", json={"valid_from": "2026-12", "percents": {"group": "0"}}).status_code == 200      # 0 -> 0 is no change: not asked again
+
+
+def test_r3_k4_d9_the_removal_impact_counts_the_payouts_as_the_screen_does(pg_session, clock):
+    """October closed at 250 000 with 300 000 paid: 50 000 goes forward.  November: a sheet of 125 000 (one lesson), 75 000 paid - with the 50 000 of October the month is PAID IN FULL: the old formula
+    (``total > paid``) cried «не выплачена».  Then 100 000 paid: more than the month needs and the month is not closed - «Есть выплата вперёд за ноябрь 2026: месяц не закрыт»."""
+    w, g, st = _closed(pg_session, clock)                                              # the clock stands on 02.11
+    hold(w, g, "lesson-mon", "2026-11-02", {x: "present" for x in st}, start="10:00", end="11:00")
+    calc = sheet(w, "2026-11")
+    saved = client(w, "owner").post(f"{API}/org/payroll/sheets", json={"month": "2026-11", "teacher_id": str(w.A.id), "expected_fingerprint": calc["source_fingerprint"]})
+    assert saved.status_code == 201, saved.text
+    url = f"{API}/org/payroll/sheets/{saved.json()['id']}/payouts"
+    assert client(w, "owner").post(url, json={"amount": 75_000, "paid_on": "2026-11-02", "method": "cash"}).status_code == 201
+    impact = client(w, "owner").get(f"{API}/org/members/{w.ids('member_A')}/removal-impact").json()["payroll"]
+    assert "2026-11" not in impact["unpaid_months"] and "ноябрь" not in impact["text"]      # the old formula: 125 000 > 75 000
+    more = client(w, "owner").post(url, json={"amount": 25_000, "paid_on": "2026-11-02", "method": "cash", "confirm_overpay": True, "overpay": 25_000})
+    assert more.status_code in (201, 409), more.text
+    if more.status_code == 409:
+        more = client(w, "owner").post(url, json={"amount": 25_000, "paid_on": "2026-11-02", "method": "cash", "confirm_overpay": True, "overpay": more.json()["detail"]["overpay"]})
+    assert more.status_code == 201, more.text
+    impact = client(w, "owner").get(f"{API}/org/members/{w.ids('member_A')}/removal-impact").json()["payroll"]
+    assert "Есть выплата вперёд за ноябрь 2026: месяц не закрыт" in impact["text"]
+
+
+def test_r3_k10_k14_the_list_of_a_month_and_the_window_of_a_payment_cost_the_same_queries_with_payf_on(pg_session, clock):
+    """The centre with «вычитать уроки, отменённые центром» (the setting that makes the account be read twice): the number of queries of the list of the month and of the window of a payment does not
+    grow with the number of students (R3 К14а), and stays inside a budget."""
+    from tests.pg_world import capture_queries
+    from tests.test_p154_money_pg import build_org, five
+
+    w = build_org(pg_session)
+    g, st, ms = five(w, clock)                                                          # the setting is ON in this world (``five``)
+    clock.set("2026-10-24 12:00")
+    hold(w, g, "lesson-wed", "2026-10-21", {x: "present" for x in st}, start="10:00", end="11:00")
+    owner = client(w, "owner")
+
+    def measure():
+        q_list, r1 = capture_queries(w, lambda: owner.get(f"{API}/org/payroll/months/2026-10"))
+        q_window, r2 = capture_queries(w, lambda: owner.get(f"{API}/org/memberships/{ms[0].id}/payments/preview", params={"amount": 100_000}))
+        assert r1.status_code == 200 and r2.status_code == 200, (r1.text, r2.text)
+        return len(q_list), len(q_window)
+
+    small = measure()
+    from datetime import date as _d, datetime as _dt
+
+    from src.models.auth import StudentGroup
+    from tests.ops_helpers import new_student
+    from tests.payf_helpers import pay
+
+    for i in range(6):                                                                  # six more students, each with his own payment (``classmates`` reuses the keys of ``five``)
+        extra = new_student(w.db, w.org, w.ids, f"k10_{i}", f"Доп{i}", "Тест", g, joined=_dt(2026, 10, 6, 6, 0))
+        w.db.commit()
+        pay(w, w.db.query(StudentGroup).filter_by(group_id=g.id, student_id=extra.id).one(), 600_000, _d(2026, 10, 6))
+    big = measure()
+    assert big == small, (small, big)                                                  # bounded: not one more query for six more students
+    assert small[0] <= 70 and small[1] <= 25, small                                    # the budget (the numbers of the run + a margin)
