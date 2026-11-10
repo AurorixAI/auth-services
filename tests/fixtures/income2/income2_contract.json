@@ -504,6 +504,27 @@
           "previous_period": {
             "$ref": "#/components/schemas/IncomePeriod"
           },
+          "refunded_from_earlier": {
+            "default": 0,
+            "title": "Refunded From Earlier",
+            "type": "integer"
+          },
+          "refunded_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refunded Text"
+          },
+          "refunded_total": {
+            "default": 0,
+            "title": "Refunded Total",
+            "type": "integer"
+          },
           "series": {
             "items": {
               "$ref": "#/components/schemas/IncomeDay"
@@ -545,6 +566,9 @@
           "delta_direction",
           "delta_text",
           "summary_text",
+          "refunded_total",
+          "refunded_from_earlier",
+          "refunded_text",
           "by_method",
           "strip",
           "series",

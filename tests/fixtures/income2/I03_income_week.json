@@ -49,6 +49,9 @@
   "delta_direction": "down",
   "delta_text": "69% к прошлой неделе",
   "summary_text": "За неделю 12–18 октября пришло 550 000 сум — на 69% меньше, чем за предыдущую неделю.",
+  "refunded_total": 0,
+  "refunded_from_earlier": 0,
+  "refunded_text": null,
   "by_method": [
     {
       "method": "card",
@@ -86,7 +89,7 @@
     },
     {
       "kind": "refunded",
-      "label": "возвращено",
+      "label": "возвращено из этих денег",
       "amount": 0
     },
     {

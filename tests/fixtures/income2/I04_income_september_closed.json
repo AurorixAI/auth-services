@@ -49,6 +49,9 @@
   "delta_direction": null,
   "delta_text": null,
   "summary_text": "За сентябрь пришло 1 500 000 сум. Собрано 100% стоимости месяца.",
+  "refunded_total": 0,
+  "refunded_from_earlier": 0,
+  "refunded_text": null,
   "by_method": [
     {
       "method": "cash",
@@ -86,7 +89,7 @@
     },
     {
       "kind": "refunded",
-      "label": "возвращено",
+      "label": "возвращено из этих денег",
       "amount": 0
     },
     {

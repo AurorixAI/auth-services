@@ -11,13 +11,14 @@
     "sum": 250000,
     "voided_count": 0,
     "replaced_count": 0,
-    "kind_sum": 250000,
     "cancelled_here_count": 0,
-    "cancelled_here_sum": 0
+    "cancelled_here_sum": 0,
+    "kind_sum": 250000
   },
   "rows": [
     {
       "id": "payment:b2-oct21",
+      "view": "paid",
       "receipt_no": 13,
       "paid_on": "2026-10-21",
       "paid_time": "11:40",
@@ -72,11 +73,11 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null,
-      "view": "paid"
+      "voided_by_name": null
     },
     {
       "id": "payment:a2-oct21",
+      "view": "paid",
       "receipt_no": 12,
       "paid_on": "2026-10-21",
       "paid_time": "08:10",
@@ -131,8 +132,7 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null,
-      "view": "paid"
+      "voided_by_name": null
     }
   ],
   "authors": [

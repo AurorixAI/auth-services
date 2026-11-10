@@ -224,6 +224,6 @@ def test_the_kinds_of_a_payment_split_by_the_current_allocation():
     parts = strip_parts(got, only_nonzero=True)
     assert [(x.kind, x.label, x.amount) for x in parts] == [
         ("old_debt", "на старые долги", 100), ("current", "за текущий период", 200), ("forward", "вперёд (за будущие периоды)", 300),
-        ("advance", "пока не потрачено (аванс)", 40), ("refunded", "возвращено", 10), ("transferred", "деньги перешли в другую группу", 5)]
+        ("advance", "пока не потрачено (аванс)", 40), ("refunded", "возвращено из этих денег", 10), ("transferred", "деньги перешли в другую группу", 5)]
     assert [x.kind for x in strip_parts({"current": 5}, only_nonzero=False)] == ["old_debt", "current", "forward", "advance", "refunded", "transferred"]
     assert [x.kind for x in strip_parts({"current": 5}, only_nonzero=True)] == ["current"]

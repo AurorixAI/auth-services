@@ -744,3 +744,20 @@ def test_r3_d3_cancelling_a_payment_does_not_move_the_refunded_of_the_period(wor
     assert sum(p["amount"] for p in after["strip"]) == cur["received"]                              # the strip still adds up to «поступило»
     check = [c for c in after["checks"] if c["code"] == "refunded_eq_rows"][0]
     assert (check["left"], check["right"]) == (140_000, 140_000)
+
+
+def test_r3_d3_the_summary_names_all_refunds_and_the_part_taken_from_earlier_periods(world, fixed_today):
+    """Lead's decision: the strip row stays a part of «поступило» («возвращено из этих денег»); ``refunded_total`` is every refund of the period, ``refunded_from_earlier`` the rest."""
+    m, fifty = _refunded_world(world, fixed_today)
+    income = lambda: owner(world).get(f"{API}/org/payments/income", params={"from": "2026-10-01", "to": "2026-10-31"}).json()
+    before = income()
+    assert (before["refunded_total"], before["refunded_from_earlier"]) == (140_000, 0)
+    assert before["refunded_text"] == f"Всего возвращено за период: 140{NB}000{NB}сум"
+    assert owner(world).post(f"{API}/org/payments/{fifty.id}/void", json={"reason": "ошиблись суммой"}).status_code == 200
+    after = income()
+    row = {p["kind"]: p for p in after["strip"]}["refunded"]
+    assert (row["label"], row["amount"]) == ("возвращено из этих денег", 90_000)
+    assert (after["refunded_total"], after["refunded_from_earlier"]) == (140_000, 50_000)
+    assert after["refunded_text"] == f"Всего возвращено за период: 140{NB}000{NB}сум (из них 50{NB}000 — из денег прошлых периодов)"
+    assert sum(p["amount"] for p in after["strip"]) == after["current"]["received"] == 90_000
+    assert after["refunded_total"] - row["amount"] == after["refunded_from_earlier"]

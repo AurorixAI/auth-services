@@ -88,7 +88,7 @@ def test_october_overview_hand_calculated(world, seeded):
     assert cur["to_forward"] == 0 and cur["to_past_debt"] + cur["to_current"] + cur["to_advance"] + cur["refunded_from_received"] == cur["received"]
     assert [(x["kind"], x["label"], x["amount"]) for x in o["strip"]] == [
         ("old_debt", "на старые долги", 1_000_000), ("current", "за текущий период", 1_900_000), ("forward", "вперёд (за будущие периоды)", 0),
-        ("advance", "пока не потрачено (аванс)", 450_000), ("refunded", "возвращено", 100_000), ("transferred", "деньги перешли в другую группу", 0)]
+        ("advance", "пока не потрачено (аванс)", 450_000), ("refunded", "возвращено из этих денег", 100_000), ("transferred", "деньги перешли в другую группу", 0)]
     assert o["previous_label"] == "те же дни сентября" and o["previous_hint"] == "1–21 сентября"
     assert [c["code"] for c in o["checks"] if c["code"].startswith("strip_")] == [
         "strip_old_debt_eq_journal", "strip_current_eq_journal", "strip_advance_eq_journal", "strip_refunded_eq_journal"]
@@ -980,7 +980,7 @@ def test_journal_export_honours_the_kind(world, seeded):
         want = sorted(r["receipt_no"] for r in j["rows"])
         top, header, body = journal_csv(world, kind=kind)
         assert sorted(int(row[0]) for row in body) == want, kind
-        label = {"advance": "пока не потрачено (аванс)", "current": "за текущий период", "refunded": "возвращено"}[kind]
+        label = {"advance": "пока не потрачено (аванс)", "current": "за текущий период", "refunded": "возвращено из этих денег"}[kind]
         assert any(line == [f"Оплат {len(want)} · Оплачено {sum(r['amount'] for r in j['rows']):,} · Сумма «{label}»: {j['totals']['kind_sum']:,}".replace(",", " ")]
                    for line in top), kind
         assert any(f"Только оплаты, где есть: {label}" in line[0] for line in top), kind

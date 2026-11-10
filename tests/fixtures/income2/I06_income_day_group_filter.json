@@ -49,6 +49,9 @@
   "delta_direction": null,
   "delta_text": null,
   "summary_text": "Сегодня пришло 150 000 сум.",
+  "refunded_total": 0,
+  "refunded_from_earlier": 0,
+  "refunded_text": null,
   "by_method": [
     {
       "method": "cash",
@@ -80,7 +83,7 @@
     },
     {
       "kind": "refunded",
-      "label": "возвращено",
+      "label": "возвращено из этих денег",
       "amount": 0
     },
     {

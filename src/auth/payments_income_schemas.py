@@ -151,6 +151,9 @@ class IncomeOverview(PayModel):
     delta_direction: Optional[Literal["up", "down", "same"]] = None  # null when there is nothing to compare with
     delta_text: Optional[str] = None  # «12% к сентябрю» (the front adds ▲ / ▼ and the colour by ``delta_direction``)
     summary_text: str
+    refunded_total: int = 0  # all live refunds dated in the period (== ``current.refunded``); the strip row «возвращено из этих денег» is only the part taken from the period's own receipts
+    refunded_from_earlier: int = 0  # ``refunded_total`` - the strip row (>= 0): refunds that took the money of earlier periods
+    refunded_text: Optional[str] = None  # «Всего возвращено за период: 140 000 сум (из них 50 000 сум — из денег прошлых периодов)»; null when nothing was refunded
     by_method: List[IncomeMethod] = Field(default_factory=list)  # only the methods that were used
     strip: List[IncomeStripPart] = Field(default_factory=list)  # «Куда ушли деньги»: the six parts of ``current`` (zeros included) with the server's labels; the amounts sum to ``current.received``
     series: List[IncomeDay] = Field(default_factory=list)

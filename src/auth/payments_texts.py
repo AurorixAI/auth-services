@@ -30,6 +30,12 @@ def money(amount: int) -> str:
     return num(amount) + NBSP + "сум"
 
 
+def refunded_total_text(total: int, from_earlier: int) -> str:
+    """R-В Д3: ``Всего возвращено за период: 140 000 сум (из них 50 000 — из денег прошлых периодов)``; the bracket only when the refunds took older money too."""
+    text = f"Всего возвращено за период: {money(total)}"
+    return text + f" (из них {num(from_earlier)} — из денег прошлых периодов)" if from_earlier > 0 else text
+
+
 def stale_text(kind: str, was: int, now: int) -> str:
     """Money-1 V1: the sum the person SAW is not the sum now - ``Долг изменился: было 100 000 сум, сейчас 70 000 сум`` (kind: debt | refundable | advance)."""
     lead = {"debt": "Долг изменился", "refundable": "Сумма к возврату изменилась", "advance": "Аванс изменился"}[kind]
@@ -356,7 +362,7 @@ INCOME_KIND_LABELS = {
     KIND_CURRENT: "за текущий период",                      # the period contains the payment's date
     KIND_FORWARD: "вперёд (за будущие периоды)",            # the period starts after the payment's date (and is already consumed today)
     KIND_ADVANCE: "пока не потрачено (аванс)",              # no period has absorbed it yet
-    KIND_REFUNDED: "возвращено",
+    KIND_REFUNDED: "возвращено из этих денег",
     KIND_TRANSFERRED: "деньги перешли в другую группу",
 }
 

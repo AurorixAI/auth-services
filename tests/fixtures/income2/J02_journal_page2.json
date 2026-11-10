@@ -11,13 +11,14 @@
     "sum": 3450000,
     "voided_count": 2,
     "replaced_count": 1,
-    "kind_sum": null,
     "cancelled_here_count": 0,
-    "cancelled_here_sum": 0
+    "cancelled_here_sum": 0,
+    "kind_sum": null
   },
   "rows": [
     {
       "id": "payment:a2-oct12",
+      "view": "paid",
       "receipt_no": 8,
       "paid_on": "2026-10-12",
       "paid_time": "08:45",
@@ -72,11 +73,11 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null,
-      "view": "paid"
+      "voided_by_name": null
     },
     {
       "id": "payment:a3-oct7",
+      "view": "paid",
       "receipt_no": 7,
       "paid_on": "2026-10-07",
       "paid_time": "15:25",
@@ -152,7 +153,7 @@
         },
         {
           "kind": "refunded",
-          "label": "возвращено",
+          "label": "возвращено из этих денег",
           "amount": 100000
         }
       ],
@@ -170,11 +171,11 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null,
-      "view": "paid"
+      "voided_by_name": null
     },
     {
       "id": "payment:a1-oct5",
+      "view": "paid",
       "receipt_no": 6,
       "paid_on": "2026-10-05",
       "paid_time": "14:05",
@@ -229,11 +230,11 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null,
-      "view": "paid"
+      "voided_by_name": null
     },
     {
       "id": "payment:b1-oct2",
+      "view": "paid",
       "receipt_no": 5,
       "paid_on": "2026-10-02",
       "paid_time": "09:15",
@@ -322,8 +323,7 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null,
-      "view": "paid"
+      "voided_by_name": null
     }
   ],
   "authors": [

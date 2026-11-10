@@ -11,13 +11,14 @@
     "sum": 2150000,
     "voided_count": 0,
     "replaced_count": 0,
-    "kind_sum": 450000,
     "cancelled_here_count": 0,
-    "cancelled_here_sum": 0
+    "cancelled_here_sum": 0,
+    "kind_sum": 450000
   },
   "rows": [
     {
       "id": "payment:a3-oct7",
+      "view": "paid",
       "receipt_no": 7,
       "paid_on": "2026-10-07",
       "paid_time": "15:25",
@@ -93,7 +94,7 @@
         },
         {
           "kind": "refunded",
-          "label": "возвращено",
+          "label": "возвращено из этих денег",
           "amount": 100000
         }
       ],
@@ -111,11 +112,11 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null,
-      "view": "paid"
+      "voided_by_name": null
     },
     {
       "id": "payment:b1-oct2",
+      "view": "paid",
       "receipt_no": 5,
       "paid_on": "2026-10-02",
       "paid_time": "09:15",
@@ -204,8 +205,7 @@
       "history": [],
       "void_reason": null,
       "voided_at": null,
-      "voided_by_name": null,
-      "view": "paid"
+      "voided_by_name": null
     }
   ],
   "authors": [

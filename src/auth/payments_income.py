@@ -379,7 +379,10 @@ class IncomeReports:
                 checks.append(IncomeCheck(code=f"strip_{kind}_eq_journal", left=amount, right=journal_kinds.get(kind, 0), diff=0))
         for c in checks:
             c.diff = c.left - c.right
+        refunded_from_earlier = max(0, current.refunded - current.refunded_from_received)
         return IncomeOverview(
+            refunded_total=current.refunded, refunded_from_earlier=refunded_from_earlier,
+            refunded_text=tx.refunded_total_text(current.refunded, refunded_from_earlier) if current.refunded else None,
             as_of=today, period=_period_out(cur), previous_period=_period_out(prev), previous_label=_previous_label(cur, prev, today),
             previous_hint=_previous_hint(cur, prev, today), current=current, previous=previous,
             delta_amount=current.received - previous.received, delta_pct=pct, delta_direction=direction,

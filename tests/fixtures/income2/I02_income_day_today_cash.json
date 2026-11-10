@@ -49,6 +49,9 @@
   "delta_direction": null,
   "delta_text": null,
   "summary_text": "Сегодня пришло 250 000 сум.",
+  "refunded_total": 100000,
+  "refunded_from_earlier": 100000,
+  "refunded_text": "Всего возвращено за период: 100 000 сум (из них 100 000 — из денег прошлых периодов)",
   "by_method": [
     {
       "method": "cash",
@@ -80,7 +83,7 @@
     },
     {
       "kind": "refunded",
-      "label": "возвращено",
+      "label": "возвращено из этих денег",
       "amount": 0
     },
     {
