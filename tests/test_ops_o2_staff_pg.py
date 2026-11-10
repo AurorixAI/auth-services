@@ -141,8 +141,14 @@ def test_r4_removal_and_a_start_are_serialised_and_two_admins_changing_a_teacher
     )
     assert all(err is None for _r, err in out), out
     w.db.expire_all()
-    chain = [a.snapshot["teacher_id"] for a in w.db.query(GroupAudit).filter_by(group_id=w.G2.id, action="teacher_changed").order_by(GroupAudit.created_at)]
-    assert len(chain) == 2 and chain[0][0] == str(w.A.id) and chain[1][0] == chain[0][1]           # the second saw the first: no lost update
+    # The chain is followed by its LINKS, not by ``created_at``: ``now()`` of PostgreSQL is the start of the TRANSACTION, so the update that began first but got the lock second has the earlier stamp
+    # (a flake on a slow runner, CI shard 2 of 10.11).  A lost update would show as two links that both start from A.
+    rows = [a.snapshot["teacher_id"] for a in w.db.query(GroupAudit).filter_by(group_id=w.G2.id, action="teacher_changed")]
+    assert len(rows) == 2
+    first = [r for r in rows if r[0] == str(w.A.id)]
+    assert len(first) == 1, rows                                                                    # exactly ONE update saw the old teacher A
+    (second,) = [r for r in rows if r is not first[0]]
+    assert second[0] == first[0][1]                                                                 # the other saw the result of the first: no lost update
 
 
 def test_r5_missed_lessons_do_not_block_and_stay_with_the_admins(w, clock):

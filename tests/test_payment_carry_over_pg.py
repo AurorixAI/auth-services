@@ -374,7 +374,7 @@ def run_in_thread(engine, fn):
     return thread, outcome
 
 
-def wait_until_blocked(engine, seconds=10):
+def wait_until_blocked(engine, seconds=30):      # 10 -> 30 s: a loaded CI runner (2 cores) needs longer than a laptop to get the request to the lock; the wait ends at the FIRST lock, a healthy run does not wait longer
     import time
 
     from sqlalchemy import text

@@ -145,7 +145,12 @@ jobs:
       - name: Run tests (shard ${{ matrix.shard }}/8)
         run: |
           FILES=$(python .github/scripts/ci_shard.py ${{ matrix.shard }} 8)
-          pytest $FILES -q --tb=short --junitxml=junit-${{ matrix.shard }}.xml
+          set +e
+          pytest $FILES -q --tb=short -rfE --junitxml=junit-${{ matrix.shard }}.xml 2>&1 | tee pytest-${{ matrix.shard }}.log
+          code=${PIPESTATUS[0]}
+          # the failed tests as annotations: the log needs a login, the check marks do not (LESSONS 106 / the shard 2 of 10.11 had only "exit code 1")
+          grep -E '^(FAILED|ERROR) ' pytest-${{ matrix.shard }}.log | head -50 | sed -E 's/^(FAILED|ERROR) ([^ ]+)( - (.{0,160}))?.*/::error title=pytest::\1 \2 \4/'
+          exit $code
 
       - name: Upload junit report (feeds .github/ci_test_durations.json)
         if: always()

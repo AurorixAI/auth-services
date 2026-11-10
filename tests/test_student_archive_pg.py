@@ -706,7 +706,7 @@ def run_in_thread(engine, fn):
     return thread, outcome
 
 
-def wait_until_blocked(engine, seconds=10):
+def wait_until_blocked(engine, seconds=30):      # 10 -> 30 s: a slow CI runner (R3 of the shard 2 of 10.11)
     import time
 
     from sqlalchemy import text
