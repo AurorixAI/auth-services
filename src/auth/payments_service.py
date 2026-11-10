@@ -30,7 +30,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import event, func
+from sqlalchemy import event, func, insert, literal, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, defer
 from sqlalchemy.orm.attributes import flag_modified
@@ -1518,11 +1518,12 @@ class PaymentService:
             old.void_reason = reason
             self.db.flush()
             payment = self._insert(membership, org_id, actor_id, data, method, idempotency_key, replaces=old)
-            moved = 0
-            for f in self.db.query(StudentPaymentFile).filter(StudentPaymentFile.payment_id == old.id).all():      # Money-1 V10 (ОП-09): the photo of the cheque goes with the correction (the old payment keeps its own copy as the trace)
-                self.db.add(StudentPaymentFile(org_id=f.org_id, payment_id=payment.id, filename=f.filename, content_type=f.content_type, size_bytes=f.size_bytes,
-                                               data=f.data, uploaded_by=f.uploaded_by, uploaded_at=f.uploaded_at))
-                moved += 1
+            # Money-1 V10 (ОП-09): the photo of the cheque goes with the correction (the old payment keeps its own copy as the trace); R3 К9: ONE ``INSERT ... SELECT`` in the database, the bytes never reach Python
+            copied = self.db.execute(insert(StudentPaymentFile).from_select(
+                ["id", "org_id", "payment_id", "filename", "content_type", "size_bytes", "data", "uploaded_by", "uploaded_at"],
+                select(func.gen_random_uuid(), StudentPaymentFile.org_id, literal(payment.id), StudentPaymentFile.filename, StudentPaymentFile.content_type,
+                       StudentPaymentFile.size_bytes, StudentPaymentFile.data, StudentPaymentFile.uploaded_by, StudentPaymentFile.uploaded_at).where(StudentPaymentFile.payment_id == old.id)))
+            moved = int(copied.rowcount or 0)
             after_entry = self._loader(org_id, today).run([membership.id])[0]
             self._save_snapshot(org_id, payment, before, after_entry.ledger, after_entry.price, today, method)
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAYMENT_REPLACE, {
@@ -1657,8 +1658,9 @@ class PaymentService:
                 return row
             except IntegrityError as exc:
                 reason = str(exc.orig)
-                if REFUND_IDEMPOTENCY_INDEX in reason:
-                    raise DuplicateRefund("Этот возврат уже внесён") from exc
+                if REFUND_IDEMPOTENCY_INDEX in reason:       # a race of two requests with one key: the record of the winner, by the key (R3 Д8)
+                    twin = self._same_key(StudentRefund, org_id, row.idempotency_key)
+                    raise DuplicateRefund("Этот возврат уже внесён", **({"refund_id": str(twin)} if twin else {})) from exc
                 if REFUND_NO_INDEX not in reason:
                     raise
         raise PaymentConflict("Не удалось присвоить номер квитанции о возврате. Повторите.")

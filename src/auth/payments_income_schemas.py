@@ -97,6 +97,7 @@ class CollectionRow(PayModel):
     paid: int = 0  # how much of it is covered by money (any payment, advances of earlier months included)
     forgiven: int = 0
     debt: int = 0  # charged - paid - forgiven
+    debtors_debt: int = 0  # Money-1 R3 (Р3): of ``debt``, what the DEBTORS owe (``debt - debt_waiting``) - the number the new front reads instead of ``debt``
     students: int = 0  # students charged in the month
     students_with_debt: int = 0  # in the total: DISTINCT students (a student who owes in two groups counts once)
     # Money-1 R3 №20: of this ``debt`` / ``students_with_debt``, how much belongs to students who only «ждут оплату» (the period began within 3 days): ``debt - debt_waiting`` is the debt of the debtors
@@ -278,6 +279,7 @@ class DecisionsPage(PayModel):
     size: int
     total: int
     pages: int
+    since: Optional[date_type] = None  # the business day of the earliest record of the new actions (cancelled / corrected payment); null - none yet: the journal is kept from that day
     rows: List[DecisionRow]
 
     model_config = {"populate_by_name": True}

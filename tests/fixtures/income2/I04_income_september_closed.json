@@ -268,7 +268,8 @@
       "students_with_debt": 0,
       "debt_waiting": 0,
       "students_waiting": 0,
-      "pct": 100
+      "pct": 100,
+      "debtors_debt": 0
     },
     "groups": [
       {
@@ -284,7 +285,8 @@
         "students_with_debt": 0,
         "debt_waiting": 0,
         "students_waiting": 0,
-        "pct": 100
+        "pct": 100,
+        "debtors_debt": 0
       },
       {
         "group_id": "group:A",
@@ -299,7 +301,8 @@
         "students_with_debt": 0,
         "debt_waiting": 0,
         "students_waiting": 0,
-        "pct": 100
+        "pct": 100,
+        "debtors_debt": 0
       },
       {
         "group_id": "group:C",
@@ -314,7 +317,8 @@
         "students_with_debt": 0,
         "debt_waiting": 0,
         "students_waiting": 0,
-        "pct": 100
+        "pct": 100,
+        "debtors_debt": 0
       }
     ]
   },

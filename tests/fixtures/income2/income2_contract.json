@@ -99,6 +99,11 @@
             "title": "Debt Waiting",
             "type": "integer"
           },
+          "debtors_debt": {
+            "default": 0,
+            "title": "Debtors Debt",
+            "type": "integer"
+          },
           "forgiven": {
             "default": 0,
             "title": "Forgiven",
@@ -189,6 +194,7 @@
           "paid",
           "forgiven",
           "debt",
+          "debtors_debt",
           "students",
           "students_with_debt",
           "debt_waiting",

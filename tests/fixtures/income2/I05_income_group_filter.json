@@ -273,7 +273,8 @@
       "students_with_debt": 1,
       "debt_waiting": 0,
       "students_waiting": 0,
-      "pct": 75
+      "pct": 75,
+      "debtors_debt": 150000
     },
     "groups": [
       {
@@ -289,7 +290,8 @@
         "students_with_debt": 1,
         "debt_waiting": 0,
         "students_waiting": 0,
-        "pct": 75
+        "pct": 75,
+        "debtors_debt": 150000
       }
     ]
   },

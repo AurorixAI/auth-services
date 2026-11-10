@@ -422,3 +422,97 @@ def test_v9_the_individual_price_says_that_the_pay_of_the_teacher_follows_the_re
     assert zero["teacher_share"]["text"].startswith("Зарплата преподавателя за этого ученика станет 0")
     group = c.put(f"{API}/org/groups/{world.group.id}/price", params={"dry_run": "true"}, json={"amount": 600_000}).json()
     assert "money_effects" in group and group["teacher_share"]["text"].startswith("Зарплата преподавателей этой группы тоже изменится")
+
+
+# ---- R3: one way to create a refund, the winner of a race, photos in the database, the journal --------------------------------------------------
+
+
+def test_r3_k3_no_second_path_creates_a_refund():
+    """Only ``PaymentService._add_refund`` builds a ``StudentRefund`` (R3 К3 = Д5): the window of leaving asks it too."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "src"
+    builders = {}
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"StudentRefund\(", text):
+            line = text[: match.start()].count("\n") + 1
+            if text.splitlines()[line - 1].lstrip().startswith("class "):
+                continue
+            builders.setdefault(str(path.relative_to(root)), []).append(line)
+    assert set(builders) <= {"auth/payments_service.py", "auth/leave_service.py"}, builders
+    leave = (root / "auth" / "leave_service.py").read_text(encoding="utf-8")
+    assert "_add_refund" in leave and leave.count("StudentRefund(") == 1                 # the one construction is the lambda handed to ``_add_refund``
+
+
+def test_r3_k3_the_refund_of_the_window_of_leaving_goes_through_the_numbered_path(world, fixed_today):
+    from tests.pg_world import make_student
+
+    m = e6_world(world)
+    seed_payment(world, m, 400_000, D(2026, 10, 16), receipt_no=40)                  # an advance above the price: 800 000 paid, 500 000 charged
+    body = {"settle": [{"membership_id": str(m.id), "action": "refund", "method": "cash", "reason": "уход"}]}
+    r = owner(world).post(f"{API}/org/groups/{world.group.id}/students/{world.students[1].id}/leave", json=body)
+    assert r.status_code == 200, r.text
+    done = [x for x in r.json()["settled"] if x["action"] == "refund"][0]
+    receipt = owner(world).get(f"{API}/org/refunds/{done['refund_id']}/receipt").json()
+    assert receipt["receipt_no"] == 1 and receipt["receipt_label"] == "В-1"           # the old path left NULL
+    snap = audit(world, "payment_refund")
+    assert snap["at_leave"] is True and "advance_after" in snap and "debt_before" in snap
+    again = owner(world).post(f"{API}/org/memberships/{m.id}/refunds", json={"amount": 1, "method": "cash", "reason": "ещё"})
+    assert again.status_code in (201, 422)                                            # the next number is 2, not 1 again (checked in the race test below)
+
+
+def test_r3_d8_a_race_with_one_key_names_the_record_of_the_winner(world, fixed_today):
+    from uuid import UUID
+
+    from src.auth.payments_service import DuplicateRefund, PaymentService
+    from src.models.auth import StudentRefund as R
+    from tests.test_payment_carry_over_pg import run_in_thread
+
+    m = _advance_world(world, fixed_today)
+    key_ = uuid4()
+    winner = owner(world).post(f"{API}/org/memberships/{m.id}/refunds", json={"amount": 10_000, "method": "cash", "reason": "первый"}, headers={"Idempotency-Key": str(key_)}).json()["refund"]
+    svc = PaymentService(world.db)
+    with __import__("pytest").raises(DuplicateRefund) as caught:                       # the same key arrives from another family's request that was not serialised by the lock
+        svc._add_refund(str(world.org.id), lambda n: R(org_id=world.org.id, membership_id=m.id, student_id=m.student_id, group_id=m.group_id, amount=5_000, method="cash",
+                                                        reason="гонка", effective_on=TODAY, created_by=world.owner.id, idempotency_key=key_, receipt_no=n))
+    assert caught.value.extra.get("refund_id") == winner["id"]
+
+
+def test_r3_k9_the_photo_of_a_cheque_moves_in_the_database_and_never_through_python(world, fixed_today):
+    from tests.pg_world import capture_queries
+
+    m = e6_world(world)
+    pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).one()
+    c = owner(world)
+    png = b"\x89PNG\r\n\x1a\n" + b"1" * 5000
+    assert c.post(f"{API}/org/payments/{pay.id}/files", files={"file": ("a.png", png, "image/png")}).status_code == 200
+    statements, r = capture_queries(world, lambda: c.post(f"{API}/org/payments/{pay.id}/replace", json={"amount": 350_000, "paid_on": TODAY.isoformat(), "method": "cash", "reason": "сумма"}))
+    assert r.status_code == 201, r.text
+    reads = [s for s in statements if s.lstrip().upper().startswith("SELECT") and "student_payment_files" in s and ".data" in s]
+    assert reads == []                                                                # no SELECT of the bytes
+    assert any("INSERT INTO student_payment_files" in s and "SELECT" in s.upper() for s in statements)
+    assert audit(world, "payment_replace")["files_moved"] == 1
+    assert world.db.execute(__import__("sqlalchemy").text("SELECT count(*) FROM student_payment_files WHERE size_bytes = :n AND org_id = :o"), {"n": len(png), "o": world.org.id}).scalar() == 2      # the copy and the old one
+
+
+def test_r3_d11_the_list_of_decisions_says_since_when_it_is_kept(world, fixed_today):
+    m = e6_world(world)
+    c = owner(world)
+    first = c.get(f"{API}/org/payments/decisions", params={"from": "2026-10-01", "to": "2026-10-31"}).json()
+    assert first["since"] is None                                                      # nothing of the new actions yet
+    pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).one()
+    c.post(f"{API}/org/payments/{pay.id}/void", json={"reason": "ошибка"})
+    assert c.get(f"{API}/org/payments/decisions", params={"from": "2026-10-01", "to": "2026-10-31"}).json()["since"] == TODAY.isoformat()
+
+
+def test_r3_p3_p5_the_collection_row_names_what_the_debtors_owe_and_a_cancelled_here_line_has_its_moment(world, fixed_today):
+    fixed_today(D(2026, 11, 12))
+    m = e6_world(world)
+    pay = world.db.query(StudentPayment).filter_by(membership_id=m.id).one()
+    owner(world).post(f"{API}/org/payments/{pay.id}/void", json={"reason": "ошибка"})
+    row = owner(world).get(f"{API}/org/payments/income", params={"from": "2026-10-01", "to": "2026-10-31"}).json()["collection"]["total"]
+    assert row["debtors_debt"] == row["debt"] - row["debt_waiting"]
+    line = [x for x in journal(world, "2026-11-01", "2026-11-30", cancelled_in_period="true")["rows"] if x["view"] == "cancelled_here"][0]
+    assert line["voided_at"] and line["void_reason"] == "ошибка"

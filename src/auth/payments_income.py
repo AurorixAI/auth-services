@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from sqlalchemy import Date, and_, cast, exists, func, or_
+from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session, aliased
 
 from src.models.auth import Group, Organization, Student, StudentPayment, StudentRefund, StudentWriteoff
@@ -548,14 +548,14 @@ class IncomeReports:
             teacher = g["teacher"]
             rows.append(CollectionRow(
                 group_id=str(group.id), group_name=group.name, teacher_id=str(group.teacher_id) if group.teacher_id else None,
-                teacher_name=_staff(teacher), charged=g["charged"], paid=g["paid"], forgiven=g["forgiven"], debt=g["debt"],
+                teacher_name=_staff(teacher), charged=g["charged"], paid=g["paid"], forgiven=g["forgiven"], debt=g["debt"], debtors_debt=g["debt"] - g["waiting_debt"],
                 students=len(g["students"]), students_with_debt=len(g["debtors"]), debt_waiting=g["waiting_debt"], students_waiting=len(g["waiting"]), pct=pct(g["paid"], g["charged"])))
         rows.sort(key=lambda r: (r.paid / r.charged, -r.debt, r.group_name or ""))
         name = tx.MONTHS_NOMINATIVE[first.month - 1]
         return MonthCollection(
             month=first.strftime("%Y-%m"), month_label=f"{name} {first.year}", **{"from": first}, to=month_end(first),
             text=tx.collection_text(total["paid"], total["charged"], pct(total["paid"], total["charged"])),
-            total=CollectionRow(charged=total["charged"], paid=total["paid"], forgiven=total["forgiven"], debt=total["debt"],
+            total=CollectionRow(charged=total["charged"], paid=total["paid"], forgiven=total["forgiven"], debt=total["debt"], debtors_debt=total["debt"] - total["waiting_debt"],
                                 students=len(all_students), students_with_debt=len(debtors), debt_waiting=total["waiting_debt"], students_waiting=len(waiting_all),
                                 pct=pct(total["paid"], total["charged"])),
             groups=rows)
@@ -563,10 +563,17 @@ class IncomeReports:
     # ------------------------------------------------------------------ journal
 
     @staticmethod
+    def utc_bounds(first: date, last: date) -> Tuple[datetime, datetime]:
+        """Money-1 R3 (К12): the business days ``first .. last`` as a range of naive UTC moments ``[lo, hi)`` - a range on the column (the index of ``created_at`` works), not a ``cast(...)::date`` of every row."""
+        lo = datetime.combine(first, datetime.min.time(), tzinfo=BUSINESS_TIMEZONE).astimezone(timezone.utc).replace(tzinfo=None)
+        hi = datetime.combine(last + timedelta(days=1), datetime.min.time(), tzinfo=BUSINESS_TIMEZONE).astimezone(timezone.utc).replace(tzinfo=None)
+        return lo, hi
+
+    @staticmethod
     def _cancelled_here(first: date, last: date):
         """SQL (Money-1 V2): a payment CANCELLED (not corrected) on a business day of the period - it is a line of that month as well as of the month it was paid in."""
-        day = cast(func.timezone(str(BUSINESS_TIMEZONE), func.timezone("UTC", StudentPayment.voided_at)), Date)
-        return and_(StudentPayment.voided_at.isnot(None), ~IncomeReports._corrected(), day >= first, day <= last)
+        lo, hi = IncomeReports.utc_bounds(first, last)
+        return and_(StudentPayment.voided_at.isnot(None), ~IncomeReports._corrected(), StudentPayment.voided_at >= lo, StudentPayment.voided_at < hi)
 
     def _journal_filters(self, query, org_id, first, last, method, group_id, teacher_id, created_by, q, *, with_cancelled: bool = False):
         in_period = and_(StudentPayment.paid_on >= first, StudentPayment.paid_on <= last)
@@ -795,8 +802,8 @@ class IncomeReports:
             if kind not in DECISION_LABELS:
                 raise PaymentInvalid("Неизвестный вид решения")
             actions = [kind]
-        day = cast(func.timezone(str(BUSINESS_TIMEZONE), func.timezone("UTC", GroupAudit.created_at)), Date)
-        query = self.db.query(GroupAudit).filter(GroupAudit.org_id == org_id, GroupAudit.action.in_(actions), day >= first, day <= last)
+        lo, hi = self.utc_bounds(first, last)                               # a range on ``created_at``: the index ``(org_id, created_at)`` serves it (R3 К12)
+        query = self.db.query(GroupAudit).filter(GroupAudit.org_id == org_id, GroupAudit.action.in_(actions), GroupAudit.created_at >= lo, GroupAudit.created_at < hi)
         if actor:
             query = query.filter(GroupAudit.actor_id == actor)
         total = query.count()
@@ -805,6 +812,7 @@ class IncomeReports:
         students = {s.id: s for s in self.db.query(Student).filter(Student.org_id == org_id, Student.id.in_(student_ids)).all()} if student_ids else {}
         groups = {g.id: g for g in self.db.query(Group).filter(Group.org_id == org_id, Group.id.in_({a.group_id for a in found})).all()} if found else {}
         users = self.service._users(a.actor_id for a in found)
+        earliest = self.db.query(func.min(GroupAudit.created_at)).filter(GroupAudit.org_id == org_id, GroupAudit.action.in_((AUDIT_PAYMENT_VOID, AUDIT_PAYMENT_REPLACE))).scalar()
         rows = []
         for a in found:
             snap = a.snapshot or {}
@@ -814,7 +822,8 @@ class IncomeReports:
                 student_name=person_name(student.last_name, student.first_name) or "" if student else "", group_name=groups[a.group_id].name if a.group_id in groups else None,
                 amount=int(snap.get("amount") or 0), new_amount=snap.get("new_amount"), receipt_no=snap.get("receipt_no"), reason=snap.get("reason"),
                 actor_name=_staff(users.get(a.actor_id)), debt_before=snap.get("debt_before"), debt_after=snap.get("debt_after")))
-        return DecisionsPage(as_of=ps.business_today(), **{"from": first}, to=last, page=page, size=size, total=total, pages=(total + size - 1) // size, rows=rows)
+        return DecisionsPage(as_of=ps.business_today(), **{"from": first}, to=last, page=page, size=size, total=total, pages=(total + size - 1) // size,
+                             since=_business_moment(earliest).date() if earliest else None, rows=rows)
 
     # ------------------------------------------------------------------ journal file
 
@@ -839,7 +848,8 @@ class IncomeReports:
             rows = self._rows(org_id, self._journal_order(self._journal_base(StudentPayment, Student, Group).filter(
                 StudentPayment.id.in_(ids))).all(), ledgers) if ids else []
         else:
-            if {"active": count, "voided": cancelled, "cancelled": cancelled, "replaced": replaced if with_replaced else 0}.get(status, count + cancelled + (replaced if with_replaced else 0)) > MAX_EXPORT_ROWS:
+            here = self._cancelled_here_totals(org_id, first, last, method, group_id, teacher_id, created_by, q)[0] if cancelled_in_period else 0       # R3 Д10: the lines added by ``cancelled_in_period`` count too
+            if {"active": count, "voided": cancelled + here, "cancelled": cancelled + here, "replaced": replaced if with_replaced else 0}.get(status, count + cancelled + here + (replaced if with_replaced else 0)) > MAX_EXPORT_ROWS:
                 raise ExportTooLong("Слишком много оплат для файла — сузьте период или фильтры")
             rows = []
             if status != "replaced" or with_replaced:

@@ -226,16 +226,16 @@ class LeaveService:
                     raise MethodRequired("Укажите способ возврата")
                 if refundable < 1:
                     raise PaymentInvalid("Возвращать нечего: аванса нет")
-                row = StudentRefund(org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,
-                                    group_id=membership.group_id, amount=refundable, method=item.method,
-                                    reason=(item.reason or "").strip() or "уход из группы", note=None, effective_on=today,
-                                    created_by=UUID(str(actor_id)), created_at=now)
-                self.db.add(row)
-                self.db.flush()
+                row = self.pay._add_refund(          # Money-1 R3 (К3 = Д5): ONE way to create a refund - the number «В-n», the receipt of a refund (LESSONS 104)
+                    org_id, lambda number: StudentRefund(
+                        org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,
+                        group_id=membership.group_id, amount=refundable, method=item.method,
+                        reason=(item.reason or "").strip() or "уход из группы", note=None, effective_on=today,
+                        created_by=UUID(str(actor_id)), created_at=now, receipt_no=number))
                 self.pay._audit(org_id, membership, actor_id, actor_role, AUDIT_REFUND, {
                     "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                     "refund_id": str(row.id), "amount": int(refundable), "method": item.method, "effective_on": today.isoformat(),
-                    "advance_before": ledger.advance, "at_leave": True,
+                    "advance_before": ledger.advance, "advance_after": max(0, ledger.advance - int(refundable)), "debt_before": ledger.debt, "debt_after": ledger.debt, "at_leave": True,
                     "expected_refundable": item.expected_refundable, "refundable_used": refundable})
                 out.append(SettledOut(membership_id=item.membership_id, action="refund", amount=int(refundable), refund_id=str(row.id)))
         self.pay._family_check(org_id, [m.id for m in memberships])
