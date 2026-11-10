@@ -203,6 +203,33 @@ class PayrollPayoutService:
             out[teacher] = carry
         return out
 
+    def carry_chain(self, org_id: str, teacher_id: UUID, months: Iterable[date]) -> Dict[date, int]:
+        """Money-1 R3 (К11): ``carry_ins`` of ONE teacher for several months in one pass - the same walk over the earlier months (an open month neither takes nor hands on an advance), two queries
+        and one load of the closed months for any number of months."""
+        wanted = sorted(set(months))
+        if not wanted:
+            return {}
+        sheets = {r[0]: int(r[1]) for r in self.db.query(PayrollSheet.period_month, PayrollSheet.total_amount).filter(
+            PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == teacher_id, PayrollSheet.period_month < wanted[-1])}
+        paid = {r[0]: int(r[1]) for r in self.db.query(PayrollPayout.period_month, func.sum(PayrollPayout.amount)).filter(
+            PayrollPayout.org_id == org_id, PayrollPayout.teacher_id == teacher_id, PayrollPayout.period_month < wanted[-1],
+            PayrollPayout.voided_at.is_(None)).group_by(PayrollPayout.period_month)}
+        from .closed_period import ClosedPeriods
+
+        periods = ClosedPeriods.of(self.db, org_id)
+        events = sorted(set(sheets) | set(paid))
+        out: Dict[date, int] = {}
+        carry, at = 0, 0
+        for month in wanted:
+            while at < len(events) and events[at] < month:
+                first = events[at]
+                at += 1
+                if periods.closed_for([teacher_id], first) is None:
+                    continue
+                carry = max(0, carry + paid.get(first, 0) - sheets.get(first, 0))
+            out[month] = carry
+        return out
+
     def state_in_month(self, org_id: str, teacher_id: UUID, month: date, *, saved_total: int, fresh_total: Optional[int], items: List[PayoutOut], carry_in: int) -> PayoutState:
         """THE payout state of a (teacher, month): the sheet, its payout block, the Excel and the LIST of the month (the row of the teacher; its header is the sum of the rows) all call this one function
         (stage walk D-2: the list called ``state_of`` without the month's openness - an open month showed «переплачено 105 000» against the sheet's «29 166»).  R3 #20: an OPEN month (not saved after

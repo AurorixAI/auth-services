@@ -1,9 +1,9 @@
 """Money-1 V8: «Моя зарплата» - a teacher reads HIS month: lessons counted, the sum, paid, the rest (owner's decision 05.11).
 
-No second formula (LESSONS 104): the saved sum is the saved sheet, the payout block is ``payroll_payouts.state_of`` (the function of the list of the owner), a current month is the
-fresh calculation of the payroll itself (``PayrollService._collect`` + ``_render``).  Nothing about prices, students or debts leaves this module (LESSONS 95): the answer is built from numbers
-and words only.  A closed month is the SAVED sheet (the truth; a later change of the data does not move it under his eyes); an open one is «предварительно»; a finished month the owner has
-not saved yet is «не сохранена»."""
+No second formula (LESSONS 104; R3 Д1, Д2): the numbers are the owner's.  The sum of an open month is the FRESH calculation of the payroll itself with the ticks of the saved sheet
+(``PayrollService.fresh_lines``), the sum of a closed month is the saved sheet, and «выплачено / остаток» of every month is ``PayrollPayoutService.state_in_month`` - the function of the list of the
+owner, which knows an open month (a sheet saved inside it, a reopened one) from a closed one and takes the advance of the earlier months off.  Nothing about prices, students or debts leaves
+this module (LESSONS 95): the answer is built from numbers and words only.  A finished month the owner has not saved at all is «не сохранена»."""
 from __future__ import annotations
 
 from datetime import date
@@ -17,9 +17,8 @@ from src.models.auth import GroupAttendance, PayrollSheet
 from . import payment_status as ps
 from . import payments_texts as tx
 from . import payroll_engine as engine
-from . import payroll_rates
 from .closed_period import ClosedPeriods, month_first
-from .payroll_payouts import PayrollPayoutService, state_of
+from .payroll_payouts import PayrollPayoutService
 from .payroll_service import MonthInvalid, PayrollService, month_label, parse_month
 
 PRELIMINARY_TEXT = "Предварительно: сумма может измениться до сохранения зарплаты"
@@ -54,45 +53,51 @@ class MyPayroll:
         self.payouts = PayrollPayoutService(db)
 
     def month(self, org_id: str, teacher_id: UUID, month: str) -> Dict[str, Any]:
-        first, last = parse_month(month)
-        today_first = month_first(ps.business_today())
-        if first > today_first:
+        first, _last = parse_month(month)
+        if first > month_first(ps.business_today()):
             raise MonthInvalid("Этот месяц ещё не наступил")
         sheet = self.db.query(PayrollSheet).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == teacher_id, PayrollSheet.period_month == first).first()
-        closed = ClosedPeriods.of(self.db, org_id).closed_for([teacher_id], first) is not None
-        base = {"month": first.strftime("%Y-%m"), "month_label": month_label(first), "state": "not_saved", "preliminary": False, "lessons_counted": 0, "total": None,
-                "paid": 0, "balance": 0, "carry_in": 0, "text": NOT_SAVED_TEXT, "updated_at": None}
-        if first < today_first and not closed:
-            return base                                                   # the month is over and the owner has not saved it (or has reopened it)
         items = self.payouts.payouts_of(org_id, month=first, teacher_ids=[teacher_id]).get((teacher_id, first), [])
         carry = self.payouts.carry_ins(org_id, [teacher_id], first).get(teacher_id, 0)
-        if closed and sheet is not None:
-            state = state_of(saved_total=int(sheet.total_amount), fresh_total=None, items=items, carry_in=carry, month_open=False)
-            return {**base, "state": "saved", "lessons_counted": lessons_counted(sheet.lines or []), "total": int(sheet.total_amount), "paid": state.paid, "balance": state.balance,
+        return self._build(org_id, teacher_id, first, sheet, items, carry)
+
+    def _build(self, org_id: str, teacher_id: UUID, first: date, sheet: Optional[PayrollSheet], items: List[Any], carry: int) -> Dict[str, Any]:
+        today_first = month_first(ps.business_today())
+        closed = ClosedPeriods.of(self.db, org_id).closed_for([teacher_id], first) is not None
+        out = {"month": first.strftime("%Y-%m"), "month_label": month_label(first), "state": "not_saved", "preliminary": False, "lessons_counted": 0, "total": None,
+               "paid": 0, "balance": 0, "carry_in": 0, "text": NOT_SAVED_TEXT, "updated_at": None}
+        if first < today_first and sheet is None:
+            return out                                                    # the month is over and the owner has not saved a sheet at all
+        if closed and sheet is not None:                                  # the saved sheet is the truth
+            state = self.payouts.state_in_month(org_id, teacher_id, first, saved_total=int(sheet.total_amount), fresh_total=None, items=items, carry_in=carry)
+            return {**out, "state": "saved", "lessons_counted": lessons_counted(sheet.lines or []), "total": int(sheet.total_amount), "paid": state.paid, "balance": state.balance,
                     "carry_in": state.carry_in, "text": _balance_text(state.balance), "updated_at": sheet.updated_at.isoformat() if sheet.updated_at else None}
-        # the current month (or a reopened one): the fresh calculation of the payroll, «предварительно»
-        seed = self.payroll._collect(org_id, first, last, teacher_ids={teacher_id})
-        teacher = seed.teachers.get(teacher_id)
-        out = {**base, "state": "open_preliminary", "preliminary": True, "text": PRELIMINARY_TEXT, "carry_in": carry}
-        if teacher is None:
-            out.update(total=0, balance=0)
-            return out
-        percents = payroll_rates.load_book(self.db, org_id, [teacher_id]).percents_at(teacher_id, first)
-        if self.payroll._missing_percents(teacher, percents):
-            out.update(text=NO_RATE_TEXT)
-            return out
-        lines = self.payroll._render(teacher, percents, {}, seed.divisor)
-        total = engine.sheet_total(lines)
-        state = state_of(saved_total=int(sheet.total_amount) if sheet is not None else 0, fresh_total=total, items=items, carry_in=carry, month_open=True)
-        out.update(lessons_counted=lessons_counted(lines), total=total, paid=state.paid, balance=state.balance, carry_in=state.carry_in)
+        # an open month (the current one, a sheet saved inside it, a reopened one): the owner's fresh calculation with the ticks of the saved sheet, «предварительно»
+        lines = self.payroll.fresh_lines(org_id, first, teacher_id, sheet)
+        out.update(state="open_preliminary", preliminary=True, text=PRELIMINARY_TEXT, carry_in=carry)
+        if lines is None:                                                 # a rate is missing / a manual price: the owner's list falls back on the saved sheet - so do we
+            if sheet is None:
+                out.update(text=NO_RATE_TEXT)
+                return out
+            lines, total = sheet.lines or [], int(sheet.total_amount)
+            fresh = None
+        else:
+            total = engine.sheet_total(lines)
+            fresh = total
+        state = self.payouts.state_in_month(org_id, teacher_id, first, saved_total=int(sheet.total_amount) if sheet is not None else 0, fresh_total=fresh, items=items, carry_in=carry)
+        out.update(lessons_counted=lessons_counted(lines), total=total, paid=state.paid, balance=state.balance, carry_in=state.carry_in,
+                   updated_at=sheet.updated_at.isoformat() if sheet is not None and sheet.updated_at else None)
         return out
 
     def months(self, org_id: str, teacher_id: UUID) -> List[Dict[str, Any]]:
-        """The current month and the last 12 in which the teacher has a sheet or held a lesson, newest first."""
+        """The current month and the last 12 in which the teacher has a sheet or held a lesson, newest first - one pass: the sheets and the payouts of the range in two queries, the advance
+        chain once (R3 К11), the fresh calculation only for the months that are open."""
         current = month_first(ps.business_today())
         since = date(current.year - 1, current.month, 1)
-        keys = {current.strftime("%Y-%m")}
-        keys |= {r[0].strftime("%Y-%m") for r in self.db.query(PayrollSheet.period_month).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == teacher_id, PayrollSheet.period_month >= since)}
-        held = {r[0][:7] for r in self.db.query(GroupAttendance.lesson_date).filter(GroupAttendance.org_id == org_id, GroupAttendance.teacher_id == teacher_id,
-                                                                                  GroupAttendance.status == "completed", GroupAttendance.lesson_date >= since.isoformat()).all()}
-        return [self.month(org_id, teacher_id, key) for key in sorted(keys | held, reverse=True)]
+        sheets = {s.period_month: s for s in self.db.query(PayrollSheet).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == teacher_id, PayrollSheet.period_month >= since)}
+        held = {date(int(r[0][:4]), int(r[0][5:7]), 1) for r in self.db.query(GroupAttendance.lesson_date).filter(
+            GroupAttendance.org_id == org_id, GroupAttendance.teacher_id == teacher_id, GroupAttendance.status == "completed", GroupAttendance.lesson_date >= since.isoformat())}
+        keys = sorted({current} | set(sheets) | held, reverse=True)
+        payouts = self.payouts.payouts_of(org_id, teacher_ids=[teacher_id])
+        carries = self.payouts.carry_chain(org_id, teacher_id, keys)
+        return [self._build(org_id, teacher_id, first, sheets.get(first), payouts.get((teacher_id, first), []), carries.get(first, 0)) for first in keys]
