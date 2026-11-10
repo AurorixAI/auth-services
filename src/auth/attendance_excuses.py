@@ -196,6 +196,11 @@ class IdName(BaseModel):
     name: Optional[str] = None
 
 
+class ExcuseGroup(IdName):
+    # The group is archived (its excuses stay in the queue: the decision is still the administrator's).
+    archived: bool = False
+
+
 class ExcuseStudent(BaseModel):
     id: str
     full_name: str
@@ -240,7 +245,7 @@ class ExcuseItem(BaseModel):
     attendance_id: str
     lesson_date: str
     lesson_key: str
-    group: IdName
+    group: ExcuseGroup
     teacher: Optional[IdName] = None
     student: ExcuseStudent
     reason: str
@@ -666,13 +671,13 @@ class AttendanceExcuseService:
                 pass
             return None
 
+    def _pending_query(self, org_id: str):
+        """THE pending set: the one definition behind the badge (``summary``), the tab counter and the queue rows.  An excuse
+        counts only with its attendance lesson and its group alive (archived groups included); an orphan counts nowhere."""
+        return self._base_query(org_id).filter(AttendanceExcuse.status == "pending")
+
     def _pending_count(self, org_id: str) -> int:
-        return (
-            self.db.query(func.count(AttendanceExcuse.id))
-            .filter(AttendanceExcuse.org_id == org_id, AttendanceExcuse.status == "pending")
-            .scalar()
-            or 0
-        )
+        return self._pending_query(org_id).count()
 
     @staticmethod
     def resolve_period(date_from: Optional[str], date_to: Optional[str]) -> tuple[str, str]:
@@ -723,10 +728,15 @@ class AttendanceExcuseService:
         limit: int = 50,
         offset: int = 0,
     ) -> ExcuseListResponse:
-        start, end = self.resolve_period(date_from, date_to)
-        query = self._base_query(org_id).filter(
-            GroupAttendance.lesson_date >= start, GroupAttendance.lesson_date <= end
-        )
+        # No dates = no window for the queue: every pending excuse of every period (the badge counts them all too).
+        # Any other list (decided statuses, "all", explicit dates) keeps the window (default: the current month).
+        no_dates = not date_from and not date_to
+        queue = no_dates and status == "pending"
+        window = ()
+        if not queue:
+            start, end = self.resolve_period(date_from, date_to)
+            window = (GroupAttendance.lesson_date >= start, GroupAttendance.lesson_date <= end)
+        query = self._base_query(org_id)
         if group_id:
             query = query.filter(GroupAttendance.group_id == group_id)
         if teacher_id:
@@ -741,24 +751,55 @@ class AttendanceExcuseService:
                     Student.display_id.ilike(pattern, escape="\\"),
                 )
             )
-        # The tab counter follows the same period / group / teacher / search.
-        pending_total = query.filter(AttendanceExcuse.status == "pending").count()
+        windowed = query.filter(*window)
+        # The tab counter follows the group / teacher / search; the period only when the caller gave one (or asked for a decided tab).
+        pending_scope = query if no_dates else windowed
+        pending_total = pending_scope.filter(AttendanceExcuse.status == "pending").count()
         if status != "all":
-            query = query.filter(AttendanceExcuse.status == status)
-        total = query.count()
-        rows = (
-            query.order_by(
-                GroupAttendance.lesson_date.desc(),
-                AttendanceExcuse.reason_at.desc(),
-                AttendanceExcuse.id,
+            windowed = windowed.filter(AttendanceExcuse.status == status)
+        total = windowed.count()
+        if queue:
+            rows = self._queue_page(windowed, limit, offset)
+        else:
+            rows = (
+                windowed.order_by(
+                    GroupAttendance.lesson_date.desc(),
+                    AttendanceExcuse.reason_at.desc(),
+                    AttendanceExcuse.id,
+                )
+                .limit(limit)
+                .offset(offset)
+                .all()
             )
-            .limit(limit)
-            .offset(offset)
-            .all()
-        )
         return ExcuseListResponse(
             items=self._items(rows), total=total, pending_total=pending_total
         )
+
+    @staticmethod
+    def _deadline_rank(deadline: Optional[Dict[str, Any]]) -> tuple:
+        """Sort key «sooner decision first»: a date deadline by its day (``days_left``; negative = overdue); a lessons deadline
+        overdue before everything, ``due_now`` as today, the rest after the dated ones by lessons left; none - last."""
+        if not deadline:
+            return (3, 0)
+        data = deadline if isinstance(deadline, dict) else deadline.model_dump()
+        if data.get("kind") == "date":
+            return (1, data["days_left"])
+        if data.get("overdue"):
+            return (0, data["lessons_left"])
+        if data.get("due_now"):
+            return (1, 0)
+        return (2, data["lessons_left"])
+
+    def _queue_page(self, query, limit: int, offset: int) -> list:
+        """The pending queue of all periods: deadline (sooner first), then lesson date ascending, then id.  The deadline is worked
+        out in Python (payments), so the whole pending set is loaded and ordered here, then paged."""
+        rows = query.order_by(GroupAttendance.lesson_date, AttendanceExcuse.id).all()
+        if not rows:
+            return []
+        pairs = {(e.student_id, a.group_id) for e, a, _, _ in rows}
+        deadlines = self._deadlines(rows, self._payment_context(rows[0][0].org_id, pairs))
+        rows.sort(key=lambda r: self._deadline_rank(deadlines.get(r[0].id)))  # stable: ties keep (lesson date, id)
+        return rows[offset: offset + limit]
 
     def _items(self, rows) -> List[ExcuseItem]:
         if not rows:
@@ -801,7 +842,7 @@ class AttendanceExcuseService:
                     attendance_id=str(att.id),
                     lesson_date=att.lesson_date,
                     lesson_key=lesson_key(att),
-                    group=IdName(id=str(group.id), name=group.name),
+                    group=ExcuseGroup(id=str(group.id), name=group.name, archived=group.status == "archived"),
                     teacher=IdName(id=str(teacher_uuid), name=_user_name(users.get(teacher_uuid)))
                     if teacher_uuid
                     else None,

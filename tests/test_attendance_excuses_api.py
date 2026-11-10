@@ -122,7 +122,7 @@ def test_list_shape_filters_and_counters(world, lesson):
     item = data["items"][0]
     assert item["id"] == str(excuse.id) and item["lesson_date"] == day.isoformat()
     assert item["lesson_key"] == key_of(day, lesson_id)
-    assert item["group"] == {"id": str(world.group.id), "name": world.group.name}
+    assert item["group"] == {"id": str(world.group.id), "name": world.group.name, "archived": False}
     assert item["teacher"]["id"] == str(world.teacher.id) and item["teacher"]["name"]
     student = world.students[0]
     assert item["student"] == {"id": str(student.id), "full_name": f"{student.last_name} {student.first_name}",
