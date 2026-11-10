@@ -6,6 +6,7 @@ owner, which knows an open month (a sheet saved inside it, a reopened one) from 
 this module (LESSONS 95): the answer is built from numbers and words only.  A finished month the owner has not saved at all is «не сохранена»."""
 from __future__ import annotations
 
+import calendar
 from datetime import date
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -27,15 +28,19 @@ NO_RATE_TEXT = "Сумма появится, когда владелец зад�
 MONTHS_BACK = 12
 
 
-def lessons_counted(lines: List[Dict[str, Any]]) -> int:
-    """Distinct lessons that pay (counted, or unpaid with the tick «начислить») - the lessons of the teacher, not lesson x student."""
-    seen = set()
-    for line in lines:
-        include = bool(line.get("include_unpaid"))
-        for mark in engine.marks_of(line):
-            if mark.state == engine.COUNTED or (include and mark.state == engine.UNPAID):
-                seen.add((mark.day, mark.lesson_id))
-    return len(seen)
+def lessons_held(db: Session, org_id: str, teacher_id: UUID, first: date, last: date) -> Dict[date, int]:
+    """Д6: the LESSONS the teacher held (completed), by month - the number of the owner's list (``MonthTeacher.lessons_count`` counts the same rows).  The attendances
+    (lesson x student, «засчитано посещений» of the sheet) are another metric and are not shown here."""
+    out: Dict[date, int] = {}
+    for (day,) in db.query(GroupAttendance.lesson_date).filter(
+            GroupAttendance.org_id == org_id, GroupAttendance.teacher_id == teacher_id, GroupAttendance.status == "completed",
+            GroupAttendance.lesson_date >= first.isoformat(), GroupAttendance.lesson_date <= last.isoformat()):
+        try:
+            key = date(int(day[:4]), int(day[5:7]), 1)
+        except (TypeError, ValueError):
+            continue
+        out[key] = out.get(key, 0) + 1
+    return out
 
 
 def _balance_text(balance: int) -> str:
@@ -59,18 +64,19 @@ class MyPayroll:
         sheet = self.db.query(PayrollSheet).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == teacher_id, PayrollSheet.period_month == first).first()
         items = self.payouts.payouts_of(org_id, month=first, teacher_ids=[teacher_id]).get((teacher_id, first), [])
         carry = self.payouts.carry_ins(org_id, [teacher_id], first).get(teacher_id, 0)
-        return self._build(org_id, teacher_id, first, sheet, items, carry)
+        last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
+        return self._build(org_id, teacher_id, first, sheet, items, carry, lessons_held(self.db, org_id, teacher_id, first, last).get(first, 0))
 
-    def _build(self, org_id: str, teacher_id: UUID, first: date, sheet: Optional[PayrollSheet], items: List[Any], carry: int) -> Dict[str, Any]:
+    def _build(self, org_id: str, teacher_id: UUID, first: date, sheet: Optional[PayrollSheet], items: List[Any], carry: int, held: int) -> Dict[str, Any]:
         today_first = month_first(ps.business_today())
         closed = ClosedPeriods.of(self.db, org_id).closed_for([teacher_id], first) is not None
-        out = {"month": first.strftime("%Y-%m"), "month_label": month_label(first), "state": "not_saved", "preliminary": False, "lessons_counted": 0, "total": None,
+        out = {"month": first.strftime("%Y-%m"), "month_label": month_label(first), "state": "not_saved", "preliminary": False, "lessons_counted": held, "total": None,
                "paid": 0, "balance": 0, "carry_in": 0, "text": NOT_SAVED_TEXT, "updated_at": None}
         if first < today_first and sheet is None:
             return out                                                    # the month is over and the owner has not saved a sheet at all
         if closed and sheet is not None:                                  # the saved sheet is the truth
             state = self.payouts.state_in_month(org_id, teacher_id, first, saved_total=int(sheet.total_amount), fresh_total=None, items=items, carry_in=carry)
-            return {**out, "state": "saved", "lessons_counted": lessons_counted(sheet.lines or []), "total": int(sheet.total_amount), "paid": state.paid, "balance": state.balance,
+            return {**out, "state": "saved", "total": int(sheet.total_amount), "paid": state.paid, "balance": state.balance,
                     "carry_in": state.carry_in, "text": _balance_text(state.balance), "updated_at": sheet.updated_at.isoformat() if sheet.updated_at else None}
         # an open month (the current one, a sheet saved inside it, a reopened one): the owner's fresh calculation with the ticks of the saved sheet, «предварительно»
         lines = self.payroll.fresh_lines(org_id, first, teacher_id, sheet)
@@ -85,7 +91,7 @@ class MyPayroll:
             total = engine.sheet_total(lines)
             fresh = total
         state = self.payouts.state_in_month(org_id, teacher_id, first, saved_total=int(sheet.total_amount) if sheet is not None else 0, fresh_total=fresh, items=items, carry_in=carry)
-        out.update(lessons_counted=lessons_counted(lines), total=total, paid=state.paid, balance=state.balance, carry_in=state.carry_in,
+        out.update(total=total, paid=state.paid, balance=state.balance, carry_in=state.carry_in,
                    updated_at=sheet.updated_at.isoformat() if sheet is not None and sheet.updated_at else None)
         return out
 
@@ -95,9 +101,8 @@ class MyPayroll:
         current = month_first(ps.business_today())
         since = date(current.year - 1, current.month, 1)
         sheets = {s.period_month: s for s in self.db.query(PayrollSheet).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == teacher_id, PayrollSheet.period_month >= since)}
-        held = {date(int(r[0][:4]), int(r[0][5:7]), 1) for r in self.db.query(GroupAttendance.lesson_date).filter(
-            GroupAttendance.org_id == org_id, GroupAttendance.teacher_id == teacher_id, GroupAttendance.status == "completed", GroupAttendance.lesson_date >= since.isoformat())}
-        keys = sorted({current} | set(sheets) | held, reverse=True)
+        held = lessons_held(self.db, org_id, teacher_id, since, date(current.year + 1, 12, 31))
+        keys = sorted({current} | set(sheets) | set(held), reverse=True)
         payouts = self.payouts.payouts_of(org_id, teacher_ids=[teacher_id])
         carries = self.payouts.carry_chain(org_id, teacher_id, keys)
-        return [self._build(org_id, teacher_id, first, sheets.get(first), payouts.get((teacher_id, first), []), carries.get(first, 0)) for first in keys]
+        return [self._build(org_id, teacher_id, first, sheets.get(first), payouts.get((teacher_id, first), []), carries.get(first, 0), held.get(first, 0)) for first in keys]

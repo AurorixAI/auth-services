@@ -363,6 +363,8 @@ class IncomeReports:
                 current.to_past_debt + current.to_current + current.to_forward + current.to_advance + current.refunded_from_received
                 + current.transferred),
                 diff=0),
+            IncomeCheck(code="refunded_eq_rows", left=current.refunded, right=self._refund_rows_sum(org_id, cur.first, cur.last, method, group_id, teacher_id),
+                        diff=0),         # rule 104: «возвращено за период» = Σ of the live refund rows (what the statements show), cancelling a payment never moves it
             IncomeCheck(code="received_eq_methods", left=current.received, right=sum(m.amount for m in by_method), diff=0),
             IncomeCheck(code="received_eq_series", left=current.received, right=sum(d.received for d in series), diff=0),
             IncomeCheck(code="received_eq_journal", left=current.received, right=journal_sum, diff=0),
@@ -384,6 +386,19 @@ class IncomeReports:
             delta_text=tx.delta_text(pct, _previous_dative(cur, prev, today)) if pct is not None else None, summary_text=text, by_method=by_method,
             strip=strip_parts(self._strip_amounts(current), only_nonzero=False), series=series, series_by=series_by, cash=self._cash(org_id, cur, today, pay_rows, refund_rows, group_id, teacher_id), collection=collection,
             position=position, checks=checks, ok=all(c.diff == 0 for c in checks))
+
+    def _refund_rows_sum(self, org_id: str, first: date, last: date, method: Optional[str], group_id: Optional[UUID], teacher_id: Optional[UUID]) -> int:
+        """Σ of the live (not voided) refunds dated in the period - straight from the rows, the second way to ``IncomeTotals.refunded``."""
+        query = self.db.query(func.coalesce(func.sum(StudentRefund.amount), 0))
+        if teacher_id:
+            query = query.join(Group, Group.id == StudentRefund.group_id).filter(Group.teacher_id == teacher_id)
+        query = query.filter(StudentRefund.org_id == org_id, StudentRefund.voided_at.is_(None),
+                             StudentRefund.effective_on >= first, StudentRefund.effective_on <= last)
+        if group_id:
+            query = query.filter(StudentRefund.group_id == group_id)
+        if method:
+            query = query.filter(func.coalesce(StudentRefund.method, "unknown") == method)
+        return int(query.scalar() or 0)
 
     def _journal_kind_sums(self, org_id: str, entries, first: date, last: date, method, group_id, teacher_id) -> Dict[str, int]:
         """The kinds of the ACTIVE payments of the journal set (the journal's own filters, one query) from the ledgers: what the rows' ``split`` add up to."""

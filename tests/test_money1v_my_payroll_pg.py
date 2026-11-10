@@ -39,7 +39,7 @@ def test_v8_the_teacher_sees_the_saved_sum_even_when_the_data_moved_after_the_cl
     w, g, st = _closed(pg_session, clock)
     hold(w, g, "lesson-wed", "2026-10-28", {x: "present" for x in st}, start="10:00", end="11:00")      # the fresh total is 375 000 now; the sheet says 250 000
     got = client(w, "A").get(URL, params={"month": "2026-10"}).json()
-    assert got["total"] == 250_000 and got["lessons_counted"] == 2 and got["state"] == "saved"        # the saved sheet is the truth: money does not change under his eyes
+    assert got["total"] == 250_000 and got["lessons_counted"] == 3 and got["state"] == "saved"        # money: the saved sheet is the truth; lessons: the number of the owner's list (R3 Д6, held lessons)
 
 
 def test_v8_the_current_month_is_preliminary_and_a_finished_month_without_a_saved_sheet_says_so(pg_session, clock):
@@ -142,3 +142,18 @@ def test_d2_a_reopened_month_and_a_closed_month_are_the_numbers_of_the_owner(pg_
     reopen_now(w.db, w.org.id, w.A.id, "2026-10", w.owner.id, "Исправление")
     mine, payout = same_numbers(w, "2026-10")
     assert mine["state"] == "open_preliminary" and payout["basis"] == "fresh"
+
+
+def test_r3_d6_lessons_in_my_payroll_are_the_lessons_of_the_owners_list_not_the_paid_ones(pg_session, clock):
+    """Stage walk: «Засчитано уроков 3» here, «5 уроков» in the owner's list: one number, one meaning - the lessons the teacher HELD (rule 104)."""
+    w, g, st = _closed(pg_session, clock)
+    hold(w, g, "lesson-mon", "2026-11-02", {x: "present" for x in st}, start="10:00", end="11:00")
+    hold(w, g, "lesson-wed", "2026-11-04", {x: "absent" for x in st}, start="10:00", end="11:00")          # held, nobody came: pays nothing, still a lesson
+    listed = client(w, "owner").get(f"{API}/org/payroll/months/2026-11").json()["teachers"]
+    (row,) = [t for t in listed if t["teacher_id"] == str(w.A.id)]
+    mine = client(w, "A").get(URL, params={"month": "2026-11"}).json()
+    assert row["lessons_count"] == mine["lessons_counted"] == 2                                              # the old code: 1 here
+    months = {m["month"]: m for m in client(w, "A").get(f"{URL}/months").json()["items"]}
+    assert months["2026-11"]["lessons_counted"] == 2 and months["2026-10"]["lessons_counted"] == 2
+    october = [t for t in client(w, "owner").get(f"{API}/org/payroll/months/2026-10").json()["teachers"] if t["teacher_id"] == str(w.A.id)][0]
+    assert october["lessons_count"] == months["2026-10"]["lessons_counted"]

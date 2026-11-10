@@ -281,12 +281,12 @@
       "paid": 1900000,
       "forgiven": 100000,
       "debt": 500000,
+      "debtors_debt": 500000,
       "students": 6,
       "students_with_debt": 3,
       "debt_waiting": 0,
       "students_waiting": 0,
-      "pct": 76,
-      "debtors_debt": 500000
+      "pct": 76
     },
     "groups": [
       {
@@ -298,12 +298,12 @@
         "paid": 1100000,
         "forgiven": 100000,
         "debt": 300000,
+        "debtors_debt": 300000,
         "students": 3,
         "students_with_debt": 1,
         "debt_waiting": 0,
         "students_waiting": 0,
-        "pct": 73,
-        "debtors_debt": 300000
+        "pct": 73
       },
       {
         "group_id": "group:B",
@@ -314,12 +314,12 @@
         "paid": 450000,
         "forgiven": 0,
         "debt": 150000,
+        "debtors_debt": 150000,
         "students": 2,
         "students_with_debt": 1,
         "debt_waiting": 0,
         "students_waiting": 0,
-        "pct": 75,
-        "debtors_debt": 150000
+        "pct": 75
       },
       {
         "group_id": "group:C",
@@ -330,12 +330,12 @@
         "paid": 350000,
         "forgiven": 0,
         "debt": 50000,
+        "debtors_debt": 50000,
         "students": 1,
         "students_with_debt": 1,
         "debt_waiting": 0,
         "students_waiting": 0,
-        "pct": 87,
-        "debtors_debt": 50000
+        "pct": 87
       }
     ]
   },
@@ -357,6 +357,12 @@
       "code": "received_eq_strip",
       "left": 3450000,
       "right": 3450000,
+      "diff": 0
+    },
+    {
+      "code": "refunded_eq_rows",
+      "left": 100000,
+      "right": 100000,
       "diff": 0
     },
     {

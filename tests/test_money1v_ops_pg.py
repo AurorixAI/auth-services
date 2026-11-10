@@ -1,6 +1,7 @@
 """Money-1 pack V (PostgreSQL): operations on the money of a student - the amount a person SAW and a repeated request (V1).
 
 Numbers of ``test_pay2_api_pg`` worlds: ``e6_world`` debt 100 000 (price 500 000, 400 000 paid), ``e7`` an advance of 344 000 (790 000 paid, left on 25.10)."""
+from datetime import datetime
 from uuid import uuid4
 
 from src.models.auth import GroupAudit, StudentPayment, StudentRefund, StudentWriteoff
@@ -714,3 +715,32 @@ def test_r3_k5_two_refunds_of_two_students_of_one_centre_never_get_one_number(wo
     _join(t1, t2)
     assert "value" in o1 and "value" in o2, (o1, o2)
     assert sorted([o1["value"].refund.receipt_no, o2["value"].refund.receipt_no]) == [1, 2]
+
+
+def _refunded_world(w, fixed_today):
+    """R-В Д3 (stage walk): September 231 000 (before the period); October 90 000 (05.10) and 50 000 (20.10); a refund of 140 000 on 25.10 takes the NEWEST money first."""
+    from datetime import date
+    fixed_today(D(2026, 10, 28))
+    m = e1_world(w)
+    seed_payment(w, m, 90_000, date(2026, 10, 5), receipt_no=18)
+    fifty = seed_payment(w, m, 50_000, date(2026, 10, 20), receipt_no=19)
+    w.db.add(StudentRefund(org_id=w.org.id, membership_id=m.id, student_id=m.student_id, group_id=m.group_id, amount=140_000, effective_on=date(2026, 10, 25),
+                           method="cash", reason="ученик ушёл", created_by=w.owner.id, created_at=datetime(2026, 10, 25, 9)))
+    w.db.commit()
+    return m, fifty
+
+
+def test_r3_d3_cancelling_a_payment_does_not_move_the_refunded_of_the_period(world, fixed_today):
+    m, fifty = _refunded_world(world, fixed_today)
+    income = lambda: owner(world).get(f"{API}/org/payments/income", params={"from": "2026-10-01", "to": "2026-10-31"}).json()
+    before = income()
+    assert (before["current"]["received"], before["current"]["refunded"]) == (140_000, 140_000) and before["ok"] is True
+    assert [c for c in before["checks"] if c["code"] == "refunded_eq_rows"][0]["left"] == 140_000
+    assert owner(world).post(f"{API}/org/payments/{fifty.id}/void", json={"reason": "ошиблись суммой"}).status_code == 200
+    after = income()
+    cur = after["current"]
+    assert (cur["received"], cur["refunded"], cur["net_received"]) == (90_000, 140_000, -50_000)     # the refund did not change; the money of the period lost the cancelled 50 000
+    assert after["ok"] is True and all(c["diff"] == 0 for c in after["checks"]), after["checks"]
+    assert sum(p["amount"] for p in after["strip"]) == cur["received"]                              # the strip still adds up to «поступило»
+    check = [c for c in after["checks"] if c["code"] == "refunded_eq_rows"][0]
+    assert (check["left"], check["right"]) == (140_000, 140_000)

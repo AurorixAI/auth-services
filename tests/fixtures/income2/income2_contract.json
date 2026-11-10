@@ -282,6 +282,7 @@
           "code": {
             "enum": [
               "received_eq_strip",
+              "refunded_eq_rows",
               "received_eq_methods",
               "received_eq_series",
               "received_eq_journal",

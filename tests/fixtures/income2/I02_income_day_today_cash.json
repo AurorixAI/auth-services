@@ -131,6 +131,12 @@
       "diff": 0
     },
     {
+      "code": "refunded_eq_rows",
+      "left": 100000,
+      "right": 100000,
+      "diff": 0
+    },
+    {
       "code": "received_eq_methods",
       "left": 250000,
       "right": 250000,
