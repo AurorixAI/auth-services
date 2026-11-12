@@ -978,7 +978,7 @@ class PricingService:
                 "text": mw.summary_text(len(items), debt_delta, advance_delta, days_lost, lessons_lost, next_count, next_delta),
                 "items": items[:IMPACT_ITEMS], "override_students": overrides[:IMPACT_ITEMS], "override_total": len(overrides), "override_truncated": len(overrides) > IMPACT_ITEMS}, blocked
 
-    def _running_periods_without_price(self, org_id: str, ids: Sequence[UUID], today: date) -> Tuple[Optional[date], int]:
+    def _running_periods_without_price(self, org_id: str, ids: Sequence[UUID], today: date, valid_from: Optional[date] = None) -> Tuple[Optional[date], int]:
         """``(the earliest first billable day of the period that is running and has no price, how many students have such a period)`` - the day the FIRST price of a group must reach back to.
 
         Calendar modes: the first billable day of the running period (a period or a cell of the shared month that has begun and has not ended; its price is looked up on that day).  A package: the
@@ -996,7 +996,8 @@ class PricingService:
             if mid not in loader.members or not loader.members[mid][0].is_active:
                 continue
             ledger = bl.run_ledger(loader.build_input(mid))
-            running = [s for s in ledger.segments if s.kind == "period" and s.unpriced and s.begun and not s.ended]
+            running = [s for s in ledger.segments if s.kind == "period" and s.unpriced and s.begun and not s.ended
+                       and (valid_from is None or valid_from <= today or s.period_end < valid_from)]       # Г-2: a price that begins inside the period prices it (the ledger)
             if running:
                 starts.append(min((s.days[0] if s.days else s.period_start) for s in running))
             elif ledger.lessons is not None and ledger.lessons.package_size and ledger.mode == bl.LESSONS and ledger.counted:
@@ -1061,7 +1062,7 @@ class PricingService:
             requested_from = valid_from
             unpriced_now = 0
             if first_price:
-                running_from, unpriced_now = self._running_periods_without_price(org_id, money_ids, today)
+                running_from, unpriced_now = self._running_periods_without_price(org_id, money_ids, today, valid_from)
                 if running_from is not None and valid_from <= today:
                     valid_from = check_valid_from(min(valid_from, running_from), today)
             in_force = None if first_price else self.db.query(GroupPrice).filter(GroupPrice.group_id == group.id, GroupPrice.valid_from <= valid_from).order_by(GroupPrice.valid_from.desc()).first()

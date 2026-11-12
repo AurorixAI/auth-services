@@ -88,11 +88,12 @@ def test_b2_a_price_that_is_not_the_first_acts_from_its_date_as_before(world, fi
 
 
 def test_b2_a_first_price_in_the_future_is_kept_and_the_window_says_the_running_period_stays_free(world, fixed_today):
+    # Г-2: a price that begins INSIDE the running period (05.11-04.12) prices it; only a price after the period leaves it free
     w = world
     fixed_today(D(2026, 11, 15))
     settings_block(w, accounting_start_date="2026-09-01")
     everybody_from(w, D(2026, 11, 5))
-    dry = put_price(w, 300_000, valid_from=D(2026, 12, 1), dry_run=True)
+    dry = put_price(w, 300_000, valid_from=D(2026, 12, 5), dry_run=True)
     first = dry["impact"]["first_price"]
     assert first["moved"] is False and first["students_without_price"] == 3 and "останется без цены" in first["text"]
 

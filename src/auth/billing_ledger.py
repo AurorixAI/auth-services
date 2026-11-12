@@ -563,6 +563,10 @@ class _Gen:
         # the student joined / came back / the accounting began) - a price that starts mid-period still prices the part.
         first = days[0] if days else start
         price = self.inp.price_at(first)
+        if price.amount is None:
+            # Money-1 Г-2: the FIRST price of a group acts from the start of the period it begins in (the rule «B2» lives here, in the calculation, not at the
+            # moment the price is typed): no price on the first day and one at the end of the period = it began inside this period, which it then prices whole.
+            price = self.inp.price_at(end)
         begun = first <= self.today
         seg_id = f"seg:{chain}:{start.isoformat()}"
         n = len(days)
