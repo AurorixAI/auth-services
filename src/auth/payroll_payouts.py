@@ -19,7 +19,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from src.models.auth import PayrollPayout, PayrollSheet, User
@@ -196,8 +196,8 @@ class PayrollPayoutService:
         for teacher in ids:
             carry = 0
             for first in sorted(months.get(teacher, {})):
-                if periods.closed_for([teacher], first) is None:
-                    continue                                       # R3 #20: an OPEN month is not frozen: it neither takes nor hands on an advance (its sheet is only a stage of it)
+                if not periods.in_advance_chain(teacher, first):
+                    continue                                       # R3 #20: a month saved inside itself is only a stage: it neither takes nor hands on an advance (Г-5: a reopened one is in the chain)
                 total, got = months[teacher][first]
                 carry = max(0, carry + got - total)
             out[teacher] = carry
@@ -224,7 +224,7 @@ class PayrollPayoutService:
             while at < len(events) and events[at] < month:
                 first = events[at]
                 at += 1
-                if periods.closed_for([teacher_id], first) is None:
+                if not periods.in_advance_chain(teacher_id, first):
                     continue
                 carry = max(0, carry + paid.get(first, 0) - sheets.get(first, 0))
             out[month] = carry
@@ -253,6 +253,11 @@ class PayrollPayoutService:
 
     # ---- writing
 
+    def _lock_advance_chain(self, org_id: str, teacher_id: UUID) -> None:
+        """Money-1 Г-5: ONE lock per teacher for every write of his payouts.  The advance that a month hands on is read from the other months, whose sheets are not locked: two tabs
+        (an advance of month M and a payout of M+1) each saw the other's money as not yet there.  Taken before the sheet lock, in create and void alike, so the order never crosses."""
+        self.db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"payroll-advance:{org_id}:{teacher_id}"})
+
     @staticmethod
     def _check(body: PayoutCreate, today: date) -> Tuple[int, date, str]:
         if not isinstance(body.amount, int) or isinstance(body.amount, bool) or body.amount < 1 or body.amount > MAX_FEE:
@@ -277,6 +282,8 @@ class PayrollPayoutService:
             probe = self.db.query(PayrollSheet).filter(PayrollSheet.id == sheet_id, PayrollSheet.org_id == org_id).first()
             if probe is not None:
                 fresh_total_of(probe)
+            if probe is not None:
+                self._lock_advance_chain(org_id, probe.teacher_id)
             sheet = (self.db.query(PayrollSheet).filter(PayrollSheet.id == sheet_id, PayrollSheet.org_id == org_id)
                      .with_for_update().populate_existing().first())
             if sheet is None:
@@ -323,6 +330,7 @@ class PayrollPayoutService:
             probe = self.db.query(PayrollPayout).filter(PayrollPayout.id == payout_id, PayrollPayout.org_id == org_id).first()
             if probe is None:
                 raise PayoutNotFound("Выплата не найдена")
+            self._lock_advance_chain(org_id, probe.teacher_id)
             sheet = (self.db.query(PayrollSheet).filter(PayrollSheet.id == probe.sheet_id).with_for_update().populate_existing().first())
             row = self.db.query(PayrollPayout).filter(PayrollPayout.id == payout_id).populate_existing().with_for_update().first()
             if row.voided_at is not None:

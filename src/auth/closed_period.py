@@ -85,6 +85,7 @@ class ClosedPeriods:
         self.db = db
         self.org_id = org_id
         self._closed: Optional[Dict[date, Dict[UUID, ClosedMonth]]] = None
+        self._reopened: Set[Tuple[UUID, date]] = set()
 
     @classmethod
     def of(cls, db, org_id: Any) -> "ClosedPeriods":
@@ -111,12 +112,22 @@ class ClosedPeriods:
                 if key not in last_reopen or latest > last_reopen[key]:
                     last_reopen[key] = latest
         out: Dict[date, Dict[UUID, ClosedMonth]] = {}
+        self._reopened = set()
         for sheet_id, teacher_id, period_month, updated_at in sheets:
             state, saved_on = state_of_sheet(SimpleNamespace(updated_at=updated_at, period_month=period_month), last_reopen.get((teacher_id, period_month)))
+            if state == "reopened":
+                self._reopened.add((teacher_id, period_month))
             if state == "closed":
                 out.setdefault(period_month, {})[teacher_id] = ClosedMonth(teacher_id, period_month, saved_on, sheet_id)
         self._closed = out
         return out
+
+    def in_advance_chain(self, teacher_id: Any, month: date) -> bool:
+        """Money-1 Г-5: does the month take and hand on an advance of the teacher?  A closed month does, and so does a REOPENED one - with the total of its last save, until it is saved
+        again (else the advance of the month before it would reach the next month as money to pay a second time).  A month saved inside itself (``open``) is only a stage."""
+        self._load()
+        tid = _uuid(teacher_id)
+        return self.closed_for([tid], month) is not None or (tid, month_first(month)) in self._reopened
 
     def invalidate(self) -> None:
         self._closed = None
