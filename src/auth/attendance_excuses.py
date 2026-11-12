@@ -484,27 +484,8 @@ class AttendanceExcuseService:
                 row.reason = plan.update[str(row.student_id)]
                 row.reason_by = actor_id
                 row.reason_at = now
-                if row.status != "pending":
-                    # A confirmed/rejected reason must not be replaced silently:
-                    # the new text goes back to the administrator.
-                    self._audit(
-                        att, actor_id, "excuse_reset",
-                        {
-                            "excuse_id": str(row.id),
-                            "student_id": str(row.student_id),
-                            "decision_before": row.status,
-                            "decision_after": "pending",
-                            "note": row.review_note,
-                            "reason_changed": True,
-                            **_mark_before(row),
-                        },
-                    )
-                    row.status = "pending"
-                    row.reviewed_by = None
-                    row.reviewed_at = None
-                    row.review_note = None
-                    row.decided_after_deadline = None
-                    row.deadline_at_decision = None
+                # The text is only the story of the absence: a decision (confirmed/rejected) moves lesson packs and teacher pay,
+                # so it is withdrawn by reset() alone, which asks for the money right and shows the money effects.
         for sid, reason in plan.create.items():
             self.db.add(
                 AttendanceExcuse(

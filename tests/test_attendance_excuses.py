@@ -108,10 +108,10 @@ def test_resave_without_reason_keeps_existing_excuse_and_reason_can_change(world
     # Same marks, no excuseReasons: nothing changes.
     save(world, day, lesson_id, [(s, "excused"), (world.students[1], "present")])
     assert (excuse_of(world).status, excuse_of(world).reason) == ("confirmed", "Болел, написал в Telegram")
-    # A new reason for an already excused student: same row, back to the administrator.
+    # A new reason for an already excused student: same row, the decision stays (Г-1).
     save(world, day, lesson_id, [(s, "excused")], excuseReasons={s.id: "Уехал на олимпиаду"})
     changed = excuse_of(world)
-    assert (changed.status, changed.reason, changed.id) == ("pending", "Уехал на олимпиаду", first.id)
+    assert (changed.status, changed.reason, changed.id) == ("confirmed", "Уехал на олимпиаду", first.id)
 
 
 def test_excuse_reasons_for_non_excused_students_are_ignored(world):
@@ -243,7 +243,7 @@ def audit_rows(w, action):
     return [a for a in w.db.query(GroupAttendanceAudit).filter_by(org_id=w.org.id, action=action).order_by(GroupAttendanceAudit.created_at)]
 
 
-def test_changing_the_reason_of_a_decided_excuse_returns_it_to_pending(world):
+def test_changing_the_reason_of_a_decided_excuse_keeps_the_decision(world):
     day, lesson_id = excused_lesson(world)
     s = world.students[0]
     excuse = excuse_of(world)
@@ -251,14 +251,9 @@ def test_changing_the_reason_of_a_decided_excuse_returns_it_to_pending(world):
     world.db.commit()
     save(world, day, lesson_id, [(s, "excused")], excuseReasons={s.id: "Уехал на олимпиаду"})
     changed = excuse_of(world)
-    assert (changed.status, changed.reason) == ("pending", "Уехал на олимпиаду")
-    assert (changed.reviewed_by, changed.reviewed_at, changed.review_note) == (None, None, None)
-    (row,) = audit_rows(world, "excuse_reset")
-    assert row.details == {"excuse_id": str(excuse.id), "student_id": str(s.id), "decision_before": "confirmed",
-                           "decision_after": "pending", "note": "Справка", "reason_changed": True}
-    # The same text again changes nothing and writes nothing.
-    save(world, day, lesson_id, [(s, "excused")], excuseReasons={s.id: "Уехал на олимпиаду"})
-    assert len(audit_rows(world, "excuse_reset")) == 1
+    assert (changed.status, changed.reason) == ("confirmed", "Уехал на олимпиаду")      # Г-1: only reset() withdraws a decision
+    assert (changed.reviewed_by, changed.review_note) == (world.owner.id, "Справка")
+    assert audit_rows(world, "excuse_reset") == []
 
 
 def test_pending_reason_change_does_not_reset_or_audit(world):

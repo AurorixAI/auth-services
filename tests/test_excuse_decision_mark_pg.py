@@ -166,7 +166,7 @@ def test_reset_clears_the_mark_and_the_next_decision_sets_it_again(world):
     assert stored(world) == (None, None)
 
 
-def test_a_reason_edited_after_the_decision_returns_the_excuse_to_pending_without_a_mark(world):
+def test_a_reason_edited_after_the_decision_keeps_the_decision_and_its_mark(world):
     lesson_day, lesson_id = excused_lesson(world, offset_days=3)
     pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(-1))
     s0 = world.students[0]
@@ -174,7 +174,8 @@ def test_a_reason_edited_after_the_decision_returns_the_excuse_to_pending_withou
     assert stored(world) == (True, day(-1))
     save(world, lesson_day, lesson_id, [(s0, "excused")], excuseReasons={s0.id: "Другая причина"})
     changed = excuse_of(world)
-    assert changed.status == "pending" and (changed.decided_after_deadline, changed.deadline_at_decision) == (None, None)
+    assert changed.status == "confirmed" and (changed.decided_after_deadline, changed.deadline_at_decision) == (True, day(-1))      # Г-1
+    assert audit_rows(world, "excuse_reset") == []
 
 
 def test_bulk_review_marks_every_excuse_by_its_own_deadline(world):
@@ -335,18 +336,6 @@ def test_the_audit_keeps_the_mark_that_a_decision_or_a_reset_overwrites(world):
     # nothing to lose, nothing recorded: a reset of a pending excuse writes no row at all
     reset(world, item_id)
     assert len(audit_rows(world, "excuse_reset")) == 1
-
-
-def test_the_audit_of_a_reason_edit_keeps_the_cleared_mark(world):
-    lesson_day, lesson_id = excused_lesson(world, offset_days=3)
-    pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(-1))
-    s0 = world.students[0]
-    review(world, item_of(world)["id"])
-    save(world, lesson_day, lesson_id, [(s0, "excused")], excuseReasons={s0.id: "Другая причина"})
-    (row,) = audit_rows(world, "excuse_reset")
-    assert row.details["reason_changed"] is True
-    assert (row.details["decided_after_deadline_before"], row.details["deadline_at_decision_before"]) == (True, day(-1).isoformat())
-    assert stored(world) == (None, None)
 
 
 def test_the_audit_of_a_decision_without_a_mark_has_no_mark_keys(world):
