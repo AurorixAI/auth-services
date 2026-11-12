@@ -1307,6 +1307,9 @@ class PayrollService:
         """
         first, last = parse_month(body.month)
         self._require_teacher(org_id, body.teacher_id)
+        # Money-1 Г-6 (N8): the saved sheet is locked BEFORE the month is collected - a correction of a lesson holds it ``FOR SHARE`` (``closed_period._hold_open``), so what is collected here
+        # is what the sheet is saved with, and the fingerprint checked below is the one of the data after the lock, not of a moment before it
+        self.db.query(PayrollSheet.id).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == body.teacher_id, PayrollSheet.period_month == first).with_for_update().all()
         seed = self._collect(org_id, first, last, teacher_ids={body.teacher_id})
         teacher = seed.teachers.get(body.teacher_id) or TeacherSeed(
             body.teacher_id, fingerprint=fingerprint_of(first, body.teacher_id, [])
@@ -1514,6 +1517,7 @@ class PayrollService:
                 lines = self._render(teacher, percents, changes, seed.divisor)
                 fingerprint, divisor_default = teacher.fingerprint, seed.divisor
             else:
+                seed = self._seed_if_month_over(org_id, sheet)         # Г-6 (N7): a tick or a note re-saves the sheet; after the month it CLOSES it - never with data that moved since
                 given = self._changes_from_body(body.line_overrides, self._line_keys(saved_lines))
                 lines = []
                 for line in saved_lines:
@@ -1556,20 +1560,36 @@ class PayrollService:
         )
         if not body.recalculate:        # wave C MN-37: ONE collection of the month serves the stale flag and the payout state (as ``get_sheet``); a recalculation already made it
             first = sheet.period_month
-            seed = self._collect(org_id, first, date(first.year, first.month, calendar.monthrange(first.year, first.month)[1]), teacher_ids={sheet.teacher_id})
+            seed = seed or self._collect(org_id, first, date(first.year, first.month, calendar.monthrange(first.year, first.month)[1]), teacher_ids={sheet.teacher_id})
             book = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])
         return self._saved_out(sheet, stale=False if body.recalculate else self._is_stale(org_id, sheet, seed, book),
                                payout=self.payout_state(org_id, sheet, seed, book))
 
     # ----------------------------------------------------------------- read
 
+    @staticmethod
+    def _fresh_fingerprint(seed: MonthSeed, sheet: PayrollSheet) -> str:
+        teacher = seed.teachers.get(sheet.teacher_id)
+        return teacher.fingerprint if teacher else fingerprint_of(sheet.period_month, sheet.teacher_id, [])
+
+    def _seed_if_month_over(self, org_id: str, sheet: PayrollSheet) -> Optional[MonthSeed]:
+        """The collection of the month of a sheet that is saved again without a recalculation - only when the month is over (that save closes it); ``DataChanged`` when the data are not the ones
+        the sheet was calculated from.  Inside the month the sheet is only a stage: its ticks are free."""
+        first = sheet.period_month
+        last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
+        if ps.business_today() <= last:
+            return None
+        seed = self._collect(org_id, first, last, teacher_ids={sheet.teacher_id})
+        fresh = self._fresh_fingerprint(seed, sheet)
+        if fresh != sheet.source_fingerprint:
+            raise DataChanged("Данные изменились после расчёта — пересчитайте и проверьте суммы", source_fingerprint=fresh)
+        return seed
+
     def _is_stale(self, org_id: str, sheet: PayrollSheet, seed: Optional[MonthSeed] = None, book=None) -> bool:
         first = sheet.period_month
         last = date(first.year, first.month, calendar.monthrange(first.year, first.month)[1])
         seed = seed or self._collect(org_id, first, last, teacher_ids={sheet.teacher_id})
-        teacher = seed.teachers.get(sheet.teacher_id)
-        fresh = teacher.fingerprint if teacher else fingerprint_of(first, sheet.teacher_id, [])
-        if fresh != sheet.source_fingerprint or self._has_manual_fee(sheet.lines):
+        if self._fresh_fingerprint(seed, sheet) != sheet.source_fingerprint or self._has_manual_fee(sheet.lines):
             return True
         book = book or payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])
         return self._stale_by_rates(dict(sheet.percent_inputs or {}), book, sheet.teacher_id, first)

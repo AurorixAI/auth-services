@@ -785,10 +785,11 @@ def test_a_saved_sheet_never_changes_by_itself_and_the_diff_says_what_would(worl
     assert diff["delta_amount"] == 0 and diff["fresh_total"] == diff["saved_total"]
     # the sheet is a snapshot: recalculating is an explicit new revision that keeps the owner's ticks
     line = line_of(saved, s2)
-    keep = patch(world, saved, line_overrides=[{"membership_id": line["membership_id"], "include_unpaid": True}])
-    assert keep["stale"] is True and keep["source_fingerprint"] == fp                          # a tick reads no data
-    fresh = patch(world, keep, recalculate=True, note="Пересчёт")
-    assert fresh["revision"] == 3 and fresh["stale"] is False and fresh["source_fingerprint"] != fp
+    tick = [{"membership_id": line["membership_id"], "include_unpaid": True}]
+    refused = patch(world, saved, expect=409, line_overrides=tick)                             # Г-6: a tick on a month that is over would close it with the old figures
+    assert refused["detail"]["code"] == "SHEET_DATA_CHANGED"
+    fresh = patch(world, saved, recalculate=True, line_overrides=tick, note="Пересчёт")
+    assert fresh["revision"] == 2 and fresh["stale"] is False and fresh["source_fingerprint"] != fp
     assert line_of(fresh, s0)["counted"] == 7 and line_of(fresh, s1)["counted"] == 5
     assert line_of(fresh, s2)["include_unpaid"] is True                                          # the tick survived
     assert owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}/diff").json()["lines"] == []
@@ -1467,10 +1468,10 @@ def test_save_what_the_owner_saw(world):
     assert owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}").json()["revision"] == 2
     ok = owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 2, "recalculate": True, "expected_fingerprint": newest})
     assert ok.status_code == 200 and ok.json()["revision"] == 3 and ok.json()["source_fingerprint"] == newest
-    # without recalculation nothing is read again, so there is nothing to compare
+    # Г-6: without recalculation the saved figures are kept - so a month that is over with moved data is refused, not closed with the old ones
     lesson(world, m.d(22), {s0: "present"})
-    plain = owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 3, "note": "x", "expected_fingerprint": "0" * 64})
-    assert plain.status_code == 200 and plain.json()["revision"] == 4
+    plain = owner(world).patch(f"{API}/org/payroll/sheets/{saved['id']}", json={"revision": 3, "note": "x"})
+    assert plain.status_code == 409 and plain.json()["detail"]["code"] == "SHEET_DATA_CHANGED"
 
 
 def test_the_export_shows_the_save_time_in_tashkent(world):

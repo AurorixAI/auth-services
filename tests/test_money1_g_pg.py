@@ -149,3 +149,67 @@ def test_g5_a_payout_waits_for_the_advance_that_is_being_written_in_another_tab(
     tab_a.close()
 
 
+# ---- Г-6 (N7, N8): a re-save of a month that is over never closes it with stale data -------------------------------------------------------------------------
+
+from src.models.auth import PayrollSheet  # noqa: E402
+from tests.test_logicA_payroll_pg import API as PAYROLL_API, owner as payroll_owner  # noqa: E402
+from tests.test_money1_changed_months_pg import pay_late, two_teachers_in_a_closed_september  # noqa: E402
+
+
+def tick(w, saved, revision=1):
+    mid = saved["lines"][0]["membership_id"]
+    return payroll_owner(w).patch(f"{PAYROLL_API}/org/payroll/sheets/{saved['id']}", json={"revision": revision, "line_overrides": [{"membership_id": mid, "include_unpaid": True}]})
+
+
+def test_g6_a_tick_on_a_reopened_month_whose_data_moved_is_refused_and_a_tick_on_unchanged_data_is_not(world, fixed_today):
+    m, s1, s2, first, second = two_teachers_in_a_closed_september(world, fixed_today)       # September 475 000, saved 20.10
+    reopen_now(world.db, world.org.id, world.teacher.id, "2026-09", world.owner.id, "Поправить урок")
+    fixed_today(date(2026, 11, 20))
+    unchanged = tick(world, first)
+    assert unchanged.status_code == 200, unchanged.text                                    # nothing moved: the tick is a plain re-save
+    pay_late(world, s2)                                                                    # +125 000 for the teacher: the saved sheet is stale
+    refused = tick(world, unchanged.json(), revision=unchanged.json()["revision"])
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "SHEET_DATA_CHANGED", refused.text      # e7c44aa: 200 and the month closed again with the old 475 000
+    assert world.db.query(PayrollSheet).filter_by(id=first["id"]).one().revision == unchanged.json()["revision"]
+
+
+def test_g6_a_save_waits_for_a_correction_that_holds_the_sheet_and_then_sees_its_data(world, fixed_today):
+    """Tab A corrects the month (it holds the saved sheet ``FOR SHARE``, like every correction of a lesson) and commits a payment; tab B saves the sheet with the fingerprint it saw before.
+    B must wait for A and then answer 409 - not save (and close) the month with the figures of a moment before the lock (e7c44aa: it checked the fingerprint BEFORE the lock)."""
+    from src.auth.payroll_schemas import SheetCreate
+    from src.auth.payroll_service import DataChanged, PayrollService
+    from src.models.auth import StudentPayment
+
+    from tests.test_logicA_payroll_pg import student_group
+
+    m, s1, s2, first, second = two_teachers_in_a_closed_september(world, fixed_today)
+    fixed_today(date(2026, 11, 20))
+    seen = payroll_owner(world).get(f"{PAYROLL_API}/org/payroll/sheets/{first['id']}/diff").json()["source_fingerprint"]
+    mem2 = student_group(world, s2)
+    org, teacher, owner_id = str(world.org.id), world.teacher.id, str(world.owner.id)
+    make = sessionmaker(world.db.get_bind(), autoflush=False)
+    tab_a = make()
+    tab_a.query(PayrollSheet.id).filter(PayrollSheet.id == first["id"]).with_for_update(read=True).all()
+    outcome = {}
+
+    def tab_b():
+        session = make()
+        try:
+            outcome["saved"] = PayrollService(session).save_sheet(org, owner_id, SheetCreate(month="2026-09", teacher_id=teacher, revision=1, expected_fingerprint=seen, confirm_open_lessons=True))
+        except BaseException as exc:  # noqa: BLE001 - the test inspects it
+            outcome["error"] = exc
+        finally:
+            session.close()
+
+    thread = threading.Thread(target=tab_b)
+    thread.start()
+    thread.join(timeout=3)
+    assert thread.is_alive(), "the save did not wait for the sheet"
+    tab_a.add(StudentPayment(org_id=world.org.id, membership_id=mem2.id, student_id=mem2.student_id, group_id=mem2.group_id, amount=300_000, paid_on=date(2026, 11, 20), created_by=world.owner.id, method="cash"))
+    tab_a.commit()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+    assert isinstance(outcome.get("error"), DataChanged), outcome
+    tab_a.close()
+
+
