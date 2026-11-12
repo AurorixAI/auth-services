@@ -213,3 +213,19 @@ def test_g6_a_save_waits_for_a_correction_that_holds_the_sheet_and_then_sees_its
     tab_a.close()
 
 
+# ---- Г-3 (N4): «кто провёл» of a PAST lesson without a journal row is for the money right too --------------------------------------------------------------
+
+def test_g3_who_taught_yesterdays_lesson_without_a_journal_row_is_for_the_money_right(world, now_4_nov):
+    P = "/api/v1/auth/org"
+    yesterday = date(2026, 11, 3)                                         # Tuesday; the clock is 04.11 12:00, the lesson is at 10:00 and nobody opened it
+    body = {"lessonDate": yesterday.isoformat(), "lessonId": f"s{yesterday.isoweekday()}", "teacherId": str(world.teacher2.id), "reason": "Заменил коллега"}
+    admin = make_client(world, user=world.admin)
+    refused = admin.put(f"{P}/groups/{world.group.id}/lesson-teacher", json=body)
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "MONEY_RIGHT_REQUIRED"       # e7c44aa: 200, and teacher B then formalises the lesson and is paid
+    grant_money_right(world)
+    assert admin.put(f"{P}/groups/{world.group.id}/lesson-teacher", json=body).status_code == 200
+    coming = date(2026, 11, 9)
+    grant_money_right(world, False)
+    assert admin.put(f"{P}/groups/{world.group.id}/lesson-teacher", json={**body, "lessonDate": coming.isoformat(), "lessonId": f"s{coming.isoweekday()}"}).status_code == 200
+
+

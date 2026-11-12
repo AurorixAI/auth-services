@@ -71,6 +71,12 @@ COMPLETED = "completed"
 IN_PROGRESS = "in_progress"
 
 
+def _has_ended(day: date, end_minutes: Optional[int]) -> bool:
+    """The lesson of ``day`` is over (a lesson without a known end counts as over only on a past day)."""
+    today, now = bc.business_today(), bc.business_now_naive()
+    return day < today or (day == today and end_minutes is not None and end_minutes <= now.hour * 60 + now.minute)
+
+
 def _s(value: Any) -> Optional[str]:
     return str(value) if value is not None else None
 
@@ -819,7 +825,9 @@ class LessonTeachers:
         if asg_state_ok and row_state_ok:
             return self._out(group, req.lessonId, lesson_date, current if row is None else row.teacher_id, default, row, version_changed=False,
                              sheets=[])
-        if row is not None and row.status == COMPLETED and want != row_teacher and not money_right:
+        # Money-1 Г-3: who taught a lesson that is PAST - held, or not opened yet (its teacher then formalises it and is paid) - decides whose pay it is
+        pays_teacher = (row is not None and row.status == COMPLETED) or (row is None and _has_ended(day, end_minutes))
+        if pays_teacher and want != (row_teacher if row is not None else current) and not money_right:
             raise forbidden("MONEY_RIGHT_REQUIRED", "Провести урок за другого преподавателя в журнале может владелец или администратор с доступом к деньгам: от этого зависит, чья это зарплата")
         ClosedPeriods.of(self.db, org_id).assert_open([old_teacher_for_period, want], day)     # Money-1 A1: the month of the old AND of the new teacher must be open (``closed_period.py``)
         if not clearing:

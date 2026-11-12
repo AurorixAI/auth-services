@@ -336,6 +336,9 @@ def test_r3_10_archive_with_missed_lessons_releases_their_substitutes_and_the_re
     close_period(membership, datetime(2026, 10, 21, 9, 0))
     membership.is_active = False
     w.db.commit()
+    from tests.ops_helpers import grant_money_right
+
+    grant_money_right(w)                                                                         # Г-3: who teaches a PAST lesson is for the money right
     put_teacher(w, group, "lesson-e", "2026-10-21", w.D)                                         # today's lesson (12:00) has passed and nobody took it: D is named as its substitute
     busy = new_group(w.db, w.org, w.ids, "Eb", "Занятая", w.D, [new_slot("lesson-b", 3, "12:30", "13:30", "2026-10-12")])
     w.db.commit()
