@@ -499,3 +499,54 @@ def test_r3_the_cancellation_of_a_payment_of_the_old_group_names_the_sheet_of_th
     assert months == [lesson_day.strftime("%Y-%m")], dry.json()["money_effects"]          # before: [] - only the sheets of the teacher of A were looked at
     replace = owner(two).post(f"{PAY_URL}/{p['id']}/replace", params={"dry_run": "true"}, json={"amount": 100_000, "paid_on": p["paid_on"], "method": "cash", "reason": "Опечатка"})
     assert [line["month"] for line in replace.json()["money_effects"]["payroll"]] == months      # the correction is the same rule
+
+
+# ---- Р-4 (R3 В3): the consequence of a cancellation is one sentence on EVERY road, asked before the cancellation (GET, nothing is written) -----------------------
+
+def _consequence(w, who, group, lesson="lesson-wed", day="2026-10-28", expect=200):
+    from tests.payf_helpers import API as PAYF_API, client as payf_client
+
+    r = payf_client(w, who).get(f"{PAYF_API}/org/groups/{group.id}/lessons/cancel-consequence", params={"lessonDate": day, "lessonId": lesson})
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def test_r4_the_own_month_with_the_setting_on_says_what_each_student_gets_and_the_money_right_changes_nothing(pg_session, clock):
+    from tests.money1_helpers import changed_tables, db_fingerprint
+
+    w, g, students, ms, url = cancel_world(pg_session, clock)               # 46 000 deducted from each of the five for the lesson of 26.10 already
+    sentence = f"Ученикам зачтётся по 46{NBSP}000{NBSP}сум"
+    before = db_fingerprint(w.db)
+    assert _consequence(w, "owner", g) == {"consequence": sentence}
+    assert changed_tables(before, db_fingerprint(w.db)) == []                 # nothing is written
+    assert cancel_post(w, "owner", url, WED, dry=True).json()["consequence"] == sentence       # «Урока не было» says the same sentence (ONE function)
+    grant_money_right(w, False)
+    assert _consequence(w, "admin", g) == {"consequence": sentence}           # without the right: the sentence only, the sums of the group are not in the answer
+
+
+def test_r4_the_setting_off_says_the_payment_is_not_touched(pg_session, clock):
+    from tests.test_p154_money_pg import build_org
+    from tests.test_payf_recalc_pg import month_world
+
+    w = build_org(pg_session)
+    g, s, m = month_world(w, clock, switch_on=None)                          # own month, the setting «вычитать уроки, отменённые центром» was never switched on
+    clock.set("2026-10-30 12:00")
+    assert _consequence(w, "owner", g) == {"consequence": "На оплату не влияет"}
+
+
+def test_r4_a_package_group_says_the_payment_is_not_touched(pg_session, clock):
+    from tests.test_p154_money_pg import build_org, package_world
+
+    w = build_org(pg_session)
+    g, s, m = package_world(w, clock)
+    clock.set("2026-10-30 12:00")
+    assert _consequence(w, "owner", g) == {"consequence": "На оплату не влияет"}               # a package spends nothing on a cancelled lesson
+
+
+def test_r4_an_unknown_group_is_not_found(pg_session, clock):
+    import uuid
+
+    w, g, students, ms, url = cancel_world(pg_session, clock)
+    assert _consequence(w, "owner", type("G", (), {"id": uuid.uuid4()}), expect=404)["detail"]["code"] == "GROUP_NOT_FOUND"
+
+

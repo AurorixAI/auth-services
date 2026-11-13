@@ -550,6 +550,17 @@ def cancel_consequence_text(added: List[Dict[str, Any]]) -> str:
     return f"Ученикам зачтётся от {num(amounts[0])} до {num(amounts[-1])}{NBSP}сум"
 
 
+def lesson_cancel_consequence(db, org_id: Any, group_id: Any, cancel: Callable[[], Any]) -> str:
+    """Money-1 Р-4 (R3 В3): ``cancel_consequence_text`` of a cancellation «по вине центра» that has NOT happened - ``cancel()`` (THE cancellation of the lesson) runs to its last line inside a
+    transaction that is rolled back: its refusals are the refusals of the real one, nothing is written, and what the students would be credited is read from the same ledger."""
+    gid = UUID(str(group_id))
+    with writes_rolled_back(db):
+        was = centre_deductions(db, org_id, gid)
+        cancel()
+        added = recalc_added(db, org_id, gid, was)
+    return cancel_consequence_text(added)
+
+
 def deduction_text(gone: List[Dict[str, Any]], *, done: bool, past: bool = True) -> str:
     """What the return of a lesson that the centre cancelled does to the students (the word is «перерасчёт», never «вычет») and to the teacher; ``past``: the lesson had begun, so it goes back to the
     list «Уроки без отметки» (a future one just comes back into the schedule)."""

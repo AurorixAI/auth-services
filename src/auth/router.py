@@ -1828,6 +1828,36 @@ def cancel_missed_group_attendance(
         raise HTTPException(503, str(e))
 
 
+@router.get("/org/groups/{group_id}/lessons/cancel-consequence")
+def lesson_cancel_consequence(
+    group_id: str,
+    lesson_date: date = Query(..., alias="lessonDate"),
+    lesson_id: str = Query(..., alias="lessonId"),
+    user: dict = Depends(require_org_member),
+    db: Session = Depends(get_db),
+):
+    """Money-1 Р-4 (R3 В3): what the cancellation of a lesson means for the students, in words («Ученикам зачтётся по N сум» / «На оплату не влияет») - the same sentence as the dialog of
+    «Урока не было», for the lesson sheet and for the substitution desk.  The rights on the lesson are the ones of its cancellation; a refusal of the cancellation is the answer."""
+    from . import money_effects as me
+    from .lesson_substitutions import Substitutions
+    from .ops_rules import not_found
+
+    try:
+        group = db.query(Group).filter(Group.id == UUID(str(group_id)), Group.org_id == user["org_id"]).first()
+    except ValueError:
+        group = None
+    if group is None:
+        raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
+    manager = is_org_manager(user)
+    subs = Substitutions(_svc(db))
+    subs.lesson_rights_precheck(group, lesson_id, lesson_date, actor_id=user["user_id"], is_org_admin=manager)
+
+    def cancel():
+        return subs.cancel_lesson(user["org_id"], user["user_id"], group.id, lesson_id, lesson_date, reason="Предпросмотр последствий", by_manager=manager, allow_started=True)
+
+    return {"consequence": me.lesson_cancel_consequence(db, user["org_id"], group.id, cancel)}
+
+
 def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owner: bool, money_right: bool, dry_run: bool):
     """``(the answer of the cancellation, the money block, the recalculations or None, the consequence for the students in words)``: the cancellation runs once inside a transaction that is rolled back (the numbers; its refusals are the refusals
     of the real call, an exam-service call that writes - the release - is not made), then - unless ``dry_run`` - for real; the block of the first pass is what the answer says."""
