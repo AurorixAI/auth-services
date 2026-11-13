@@ -313,6 +313,8 @@ def excused_today_in(w, group, student):
 
 
 def deadline_in_group(w, student):
+    from tests.ops_helpers import grant_money_right
+    grant_money_right(w)                # G-10: the deadline of an excuse is shown only with the money right
     r = make_client(w).get(f"{API}/org/attendance/excuses", params={
         "status": "all", "date_from": (business_today() - timedelta(days=5)).isoformat(),
         "date_to": business_today().isoformat()})

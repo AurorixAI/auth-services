@@ -240,6 +240,9 @@ def test_a_calendar_payment_beats_a_lessons_package_for_the_same_day():
 
 
 def listing(w, **params):
+    if not getattr(w, "money_right_granted", False):
+        grant_money_right(w)     # G-10: the deadline of an excuse is the account of the student - the list carries it only with the money right (null without it)
+        w.money_right_granted = True
     params = {"status": "all", "date_from": (business_today() - timedelta(days=60)).isoformat(),
               "date_to": business_today().isoformat(), **params}
     r = make_client(w).get(f"{API}/org/attendance/excuses", params=params)
@@ -471,6 +474,7 @@ def test_decided_excuses_have_no_deadline_and_a_reset_one_gets_it_back(world):
 
 @needs_pg
 def test_deadline_exposes_no_money(world):
+    grant_money_right(world)
     excused_lesson(world, offset_days=3)
     pay(world, paid_on=day(-30), valid_from=day(-30), valid_to=day(20), amount=987654, note="секретная сумма")
     body = json.dumps(make_client(world).get(
@@ -485,6 +489,8 @@ def test_deadline_exposes_no_money(world):
 def test_deadlines_are_batch_loaded(world):
     from sqlalchemy import event
 
+    grant_money_right(world)           # outside the counted calls
+    world.money_right_granted = True
     s0, s1, _ = world.students
     pay(world, s0, paid_on=day(-30), valid_from=day(-30), valid_to=day(20))
     set_settings(world, period_mode="lessons")

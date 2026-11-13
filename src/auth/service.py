@@ -5624,6 +5624,7 @@ class AuthService:
                 if self._own_one_off_started(group_id, target_lesson_id, lesson_date, marked_by, att):          # #154 (Ц14): his own one-off that has begun is not deleted - 409, not the general «ask the administrator»
                     raise ops_rules.conflict("LESSON_ALREADY_STARTED", "Урок уже начат или прошёл: удалить его нельзя")
                 raise ops_rules.forbidden("TEACHER_CANNOT_CANCEL", "Отменить урок может администратор. Нажмите «Не смогу провести»")
+            ops_rules.assert_cancellation_kind_allowed(cancellation_kind, False)       # Г-16: the two exceptions above are «по вине центра» only - a teacher never chooses the kind
 
         matching_slot = next(
             (

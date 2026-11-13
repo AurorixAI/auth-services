@@ -398,7 +398,7 @@ def test_status_and_summary_use_a_bounded_number_of_queries(world, mode):
     populate(25)
     large = [count_queries(p) for p in paths]
     assert large == small, (small, large)   # no query per row
-    assert max(large) <= 16   # LOGIC-A: +2 (pauses, opening balances); the spec budget is 20
+    assert max(large) <= 17   # LOGIC-A: +2 (pauses, opening balances); G-8: +1 (all memberships of the students: the days they left another group, one query for every row of the page); the spec budget is 20
 
 
 # ---- fee, settings, tenancy -------------------------------------------------------

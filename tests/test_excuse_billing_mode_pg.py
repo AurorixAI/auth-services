@@ -162,7 +162,7 @@ def test_it_is_loaded_in_a_batch_the_same_queries_for_30_excuses_as_for_6(world)
     def read_journal(actor, is_admin):
         return lambda: world.svc.get_group_attendance(
             *params, date_from=(today - timedelta(days=30)).isoformat(), date_to=today.isoformat(),
-            actor_id=str(actor.id), is_org_admin=is_admin, is_org_manager=is_admin)
+            actor_id=str(actor.id), is_org_admin=is_admin, is_org_manager=is_admin, money_right=is_admin)      # G-10b: the payments are read for the money right only
 
     admin_journal, admin_sql = statements(read_journal(world.admin, True))
     assert sum(len(v) for v in admin_journal.excuses.values()) == 30
