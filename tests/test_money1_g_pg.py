@@ -479,3 +479,23 @@ def test_r2_the_new_debt_is_the_growth_and_names_the_whole_debt_when_the_group_o
     assert f"В группе «Вторая» долг вырос на {money(growth)} — до {money(now)}" in real.json()["money_effects"]["text"]
     (row,) = [r for r in owner(two).get(f"{PAY_URL}/decisions", params={"from": day(-1).isoformat(), "to": day(1).isoformat()}).json()["rows"] if r["kind"] == "payment_void"]
     assert row["consequence"] == f"В группе «Вторая» долг вырос на {money(growth)} — до {money(now)}"
+
+
+# ---- Р-3 (R3 В2): the confirmation of a cancellation names the saved sheet of the teacher of the OTHER group the money went to ----------------------------------
+
+def test_r3_the_cancellation_of_a_payment_of_the_old_group_names_the_sheet_of_the_teacher_of_the_new_group(two, monkeypatch):
+    from tests.money1_helpers import sheet as saved_sheet, tashkent
+    from tests.test_payroll_pg import lesson as held, set_rate
+
+    p, carried = _transferred_world(two, monkeypatch)                                   # 3 000 000 in A, moved to B three days ago: the money went with him
+    set_rate(two, two.teacher2, "group", "50")
+    lesson_day = day(-1)
+    set_schedule(two, [slot(f"s{lesson_day.isoweekday()}", lesson_day.isoweekday(), "2026-01-01")], two.second)
+    held(two, lesson_day, {two.student: "present"}, group=two.second, teacher=two.teacher2)     # a lesson of B, paid out of the money that came from A
+    saved_sheet(two, two.teacher2, lesson_day.replace(day=1), tashkent(lesson_day.year, lesson_day.month, lesson_day.day), total=100_000)
+    dry = owner(two).post(f"{PAY_URL}/{p['id']}/void", params={"dry_run": "true"}, json={"reason": "ошибка"})
+    assert dry.status_code == 200, dry.text
+    months = [line["month"] for line in dry.json()["money_effects"]["payroll"]]
+    assert months == [lesson_day.strftime("%Y-%m")], dry.json()["money_effects"]          # before: [] - only the sheets of the teacher of A were looked at
+    replace = owner(two).post(f"{PAY_URL}/{p['id']}/replace", params={"dry_run": "true"}, json={"amount": 100_000, "paid_on": p["paid_on"], "method": "cash", "reason": "Опечатка"})
+    assert [line["month"] for line in replace.json()["money_effects"]["payroll"]] == months      # the correction is the same rule

@@ -62,12 +62,14 @@ from . import money_effects  # noqa: E402
 from . import payments_texts as tx  # noqa: E402
 
 
-def _membership_of_payment(db, org_id, payment_id) -> list:
-    """The membership of a payment (for the effects of its cancellation / correction); an unknown payment: no ids - the action itself answers 404."""
-    from src.models.auth import StudentPayment
+def _memberships_of_payment_student(db, org_id, payment_id) -> list:
+    """Every membership of the student of a payment (for the effects of its cancellation / correction): the money may have gone with him to another group on a transfer, and the saved sheets of
+    the teachers of THOSE groups move too (Р-3, the same set as ``PaymentService._moved_by_correction`` looks at).  An unknown payment: no ids - the action itself answers 404."""
+    from src.models.auth import StudentGroup, StudentPayment
 
-    row = db.query(StudentPayment.membership_id).filter(StudentPayment.id == payment_id, StudentPayment.org_id == org_id).first()
-    return [row[0]] if row else []
+    student = (db.query(StudentGroup.student_id).join(StudentPayment, StudentPayment.membership_id == StudentGroup.id)
+               .filter(StudentPayment.id == payment_id, StudentPayment.org_id == org_id).scalar_subquery())
+    return [r[0] for r in db.query(StudentGroup.id).filter(StudentGroup.student_id == student).all()]
 
 logger = logging.getLogger(__name__)
 
@@ -406,7 +408,7 @@ def replace_payment(
     """Исправить оплату: старая отменяется, новая создаётся — одной транзакцией."""
     try:
         out, effects = money_effects.run_with_effects(
-            db, user["org_id"], _membership_of_payment(db, user["org_id"], payment_id), user.get("org_role") == "owner",
+            db, user["org_id"], _memberships_of_payment_student(db, user["org_id"], payment_id), user.get("org_role") == "owner",
             lambda: PaymentService(db).replace_payment(user["org_id"], payment_id, user["user_id"], request, request.reason, idempotency_key, actor_role=user["org_role"]), dry_run=dry_run)
         out.money_effects, out.dry_run = money_effects.with_sentence(effects, tx.new_debts_text(out.new_debts, done=not dry_run)), dry_run
         return out
@@ -425,7 +427,7 @@ def void_payment(
     """Отменить оплату (удаления нет); причина 3..500 символов."""
     try:
         out, effects = money_effects.run_with_effects(
-            db, user["org_id"], _membership_of_payment(db, user["org_id"], payment_id), user.get("org_role") == "owner",
+            db, user["org_id"], _memberships_of_payment_student(db, user["org_id"], payment_id), user.get("org_role") == "owner",
             lambda: PaymentService(db).void_payment(user["org_id"], payment_id, user["user_id"], request.reason, actor_role=user["org_role"]), dry_run=dry_run)
         out.money_effects, out.dry_run = money_effects.with_sentence(effects, tx.new_debts_text(out.new_debts, done=not dry_run)), dry_run
         return out
