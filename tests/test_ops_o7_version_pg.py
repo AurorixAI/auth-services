@@ -150,7 +150,7 @@ def test_r6_midnight_does_not_matter(w, clock):
 
 
 def test_r7_a_save_of_an_existing_lesson_without_expected_version_is_409_and_writes_nothing(w):
-    """[O7.R7 / G-11, Д13] Был: 200 и чужие отметки затёрты. Стало: правка существующего урока без expectedVersion = 409 с текстом и текущей версией."""
+    """[O7.R7] G-11 (Д13). Был: 200 и чужие отметки затёрты. Стало: правка существующего урока без expectedVersion = 409 с текстом и текущей версией."""
     start(w)
     assert save(w, "A", {"s1": "present", "s2": "absent"}, expectedVersion=1).json()["version"] == 2
     r = save(w, "A", {"s1": "absent"})                                    # nobody told this screen the version
