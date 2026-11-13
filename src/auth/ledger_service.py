@@ -283,6 +283,7 @@ class LedgerLoader:
         self._guard_hits = 0
         self._indexed: Set[Tuple[UUID, str]] = set()
         self._schedule: Optional[Any] = None
+        self.other_groups: Dict[UUID, Group] = {}          # the groups of the other memberships of the students (Р-10: where they left a day), not loaded as facts
         self._moved_one_offs: Dict[Any, Set[Tuple[str, str]]] = {}   # group id -> keys (loaded per group, the loader's groups grow)
         self._lesson_days_cache: Dict[Tuple[Any, ...], List[date]] = {}
         self._loaded: Set[UUID] = set()
@@ -564,7 +565,7 @@ class LedgerLoader:
         if self._schedule is None:
             low = self.settings.accounting_start - timedelta(days=62)
             high = self.today + timedelta(days=SCHEDULE_HORIZON_DAYS)
-            gids = list({g.id for _, _, g, _ in self.members.values()})
+            gids = list({g.id for _, _, g, _ in self.members.values()} | set(self.other_groups))
             self._schedule = AuthService(self.db)._preload_schedule_data(gids, date_from=low, date_to=high)
         if pattern:
             from . import schedule_rules
@@ -598,7 +599,7 @@ class LedgerLoader:
         if group.id not in self._moved_one_offs:
             from .payroll_hooks import moved_one_off_lesson_keys
 
-            todo = [gid for gid in {g.id for _, _, g, _ in self.members.values()} | {group.id} if gid not in self._moved_one_offs]
+            todo = [gid for gid in {g.id for _, _, g, _ in self.members.values()} | set(self.other_groups) | {group.id} if gid not in self._moved_one_offs]
             found = moved_one_off_lesson_keys(self.db, todo)
             for gid in todo:
                 self._moved_one_offs[gid] = {k for k in found if k[0] == str(gid)}
@@ -644,11 +645,11 @@ class LedgerLoader:
     def _load_left_days(self, found: List[UUID], periods: Dict[UUID, list]) -> None:
         """Money-1 G-8: the days a student left a group of the centre, for EVERY group of his (the other memberships are not loaded as facts, one query for their periods)."""
         students = {self.members[mid][1].id for mid in found}
-        siblings = self.db.query(StudentGroup).filter(StudentGroup.student_id.in_(students)).all()
-        periods = {**periods, **membership_periods.periods_by_membership(self.db, [m.id for m in siblings if m.id not in periods])}
-        for membership in siblings:
+        rows = self.db.query(StudentGroup, Group).join(Group, Group.id == StudentGroup.group_id).filter(StudentGroup.student_id.in_(students), Group.org_id == self.org_id).all()      # Р-10: the groups come with the memberships, and only the groups of THIS centre
+        self.other_groups.update({g.id: g for _, g in rows})          # their lessons are loaded together with the lessons of the loaded groups (``_occurrences``, ``_moved_copies``)
+        periods = {**periods, **membership_periods.periods_by_membership(self.db, [m.id for m, _ in rows if m.id not in periods])}
+        for membership, group in rows:
             runs = bl.merge_stays(stays_of_membership(membership, periods.get(membership.id, [])))
-            group = self.db.get(Group, membership.group_id) if any(last is not None for _, last in runs) else None
             for run in runs:
                 # G-8b / Р-6: the day he left belongs to that group only when it really charges the day (a stay of one day without a lesson charges nothing, G-7)
                 if run[1] is not None and not bl.lessonless_day(lambda a, b, _g=group: self._lesson_days(_g, a, b), run) and self._holds_day(group, run[1]):
