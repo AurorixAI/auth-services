@@ -80,9 +80,16 @@ def period_text(start: date, end: date) -> str:
 
 
 def new_debts_text(debts: Sequence[Dict[str, Any]], *, done: bool) -> str:
-    """Money-1 Г-4: «В группе «B» появится долг 900 000 сум» - the debt that the cancellation of a payment of the OLD group leaves in the group the student was moved to (the money went with him)."""
-    verb = "появился" if done else "появится"
-    return "; ".join(f"В группе «{d['group_name']}» {verb} долг {money(int(d['amount']))}" for d in debts)
+    """Money-1 Г-4 / Р-2: the debt that the correction of a payment of the OLD group leaves in the group the student was moved to (the money went with him).  ``amount`` is the growth,
+    ``total`` the debt after it: «В группе «B» появится долг 900 000 сум» when the group did not owe, «долг вырастет на 900 000 сум — до 1 100 000 сум» when it did."""
+    return "; ".join(_new_debt_text(d, done) for d in debts)
+
+
+def _new_debt_text(debt: Dict[str, Any], done: bool) -> str:
+    amount, total = int(debt["amount"]), int(debt["total"])
+    if amount == total:
+        return f"В группе «{debt['group_name']}» {'появился' if done else 'появится'} долг {money(amount)}"
+    return f"В группе «{debt['group_name']}» долг {'вырос' if done else 'вырастет'} на {money(amount)} — до {money(total)}"
 
 
 def cash_parts_text(received: int, refunded: int, cancelled: int) -> str:

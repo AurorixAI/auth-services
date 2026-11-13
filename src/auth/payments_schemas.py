@@ -678,7 +678,7 @@ class PaymentCreated(BaseModel):
     row: MembershipPaymentRow
     money_effects: Optional[Dict[str, Any]] = None  # Money-1 A3: the saved payroll sheets whose pay the operation moves (``money_effects.run_with_effects``)
     dry_run: bool = False                            # Money-1 R3 #15: the answer of ``?dry_run=true`` - nothing was written, the ids are provisional
-    new_debts: List[Dict[str, Any]] = Field(default_factory=list)  # Money-1 Г-4б: a correction to a SMALLER sum leaves a debt in the other groups of the student - [{membership_id, group_id, group_name, amount}], as in ``PaymentVoided``
+    new_debts: List[Dict[str, Any]] = Field(default_factory=list)  # Money-1 Г-4б: a correction to a SMALLER sum leaves a debt in the other groups of the student - [{membership_id, group_id, group_name, amount (the growth), total (the debt after)}], as in ``PaymentVoided``
 
 
 class PaymentVoided(BaseModel):
@@ -686,7 +686,7 @@ class PaymentVoided(BaseModel):
     row: MembershipPaymentRow
     money_effects: Optional[Dict[str, Any]] = None  # Money-1 A3: the saved payroll sheets whose pay the operation moves (``money_effects.run_with_effects``)
     dry_run: bool = False                            # Money-1 R3 #15: the answer of ``?dry_run=true`` - nothing was written, the ids are provisional
-    new_debts: List[Dict[str, Any]] = Field(default_factory=list)  # Money-1 Г-4: [{membership_id, group_id, group_name, amount}] - the debt that appears in the OTHER groups of the student (the money had gone there on a transfer)
+    new_debts: List[Dict[str, Any]] = Field(default_factory=list)  # Money-1 Г-4: [{membership_id, group_id, group_name, amount (the growth), total (the debt after)}] - the debt that appears in the OTHER groups of the student (the money had gone there on a transfer)
 
 
 class QuotePartOut(BaseModel):

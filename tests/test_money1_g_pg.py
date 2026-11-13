@@ -322,7 +322,7 @@ def test_g4_the_confirmation_and_the_answer_name_the_debt_that_appears_in_the_ne
     assert real.status_code == 200, real.text
     after_b, after_a = statement(two, two.second), statement(two, two.group)
     assert after_b["transferred_in"] == 0 and after_b["debt"] > 0
-    expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": after_b["debt"]}]
+    expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": after_b["debt"], "total": after_b["debt"]}]
     assert dry.json()["new_debts"] == expected == real.json()["new_debts"]                  # the numbers of the preview are the numbers after (I-5)
     sentence = f"В группе «Вторая» появится долг {after_b['debt']:,}".replace(",", NBSP) + f"{NBSP}сум"
     assert sentence in dry.json()["money_effects"]["text"], dry.json()["money_effects"]["text"]
@@ -353,7 +353,7 @@ def test_g4b_a_correction_to_a_smaller_sum_names_the_debt_that_appears_in_the_ne
     assert real.status_code == 201, real.text
     after_b, after_a = statement(two, two.second), statement(two, two.group)
     assert after_b["transferred_in"] < carried and after_b["debt"] > 0
-    expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": after_b["debt"]}]
+    expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": after_b["debt"], "total": after_b["debt"]}]
     assert dry.json()["new_debts"] == expected == real.json()["new_debts"]
     sentence = f"В группе «Вторая» появится долг {after_b['debt']:,}".replace(",", NBSP) + f"{NBSP}сум"
     assert sentence in dry.json()["money_effects"]["text"], dry.json()["money_effects"]["text"]
@@ -449,3 +449,33 @@ def test_r5_a_tick_on_a_reopened_month_whose_rate_changed_is_refused_and_the_mon
     refused = tick(world, first)
     assert refused.status_code == 409 and refused.json()["detail"]["code"] == "SHEET_DATA_CHANGED", refused.text      # before: 200, the month closed again with 475 000 at the old rate
     assert world.db.query(PayrollSheet).filter_by(id=first["id"]).one().revision == first["revision"]
+
+
+# ---- Р-2 (R3 В1): «появится долг» is the GROWTH of the debt of the new group, not all of its debt ---------------------------------------------------------
+
+def _transferred_into_a_group_that_already_owes(two, monkeypatch):
+    billing(two, price_b=2_000_000)                                   # the money that went with the student (3 000 000 less the use in A) does not cover the dearer group B
+    p = pay(two, paid_on=day(-10), amount=3_000_000)["payment"]
+    with at_day(monkeypatch, day(-3), 12):
+        transfer(two, two.second)
+    return p
+
+
+def test_r2_the_new_debt_is_the_growth_and_names_the_whole_debt_when_the_group_owed_before(two, monkeypatch):
+    p = _transferred_into_a_group_that_already_owes(two, monkeypatch)
+    was = statement(two, two.second)["debt"]
+    assert was > 0 and statement(two, two.second)["transferred_in"] > 0                 # B owes before the cancellation (the numbers of the scenario: 200 000 there)
+    dry = owner(two).post(f"{PAY_URL}/{p['id']}/void", params={"dry_run": "true"}, json={"reason": "ошибка"})
+    assert dry.status_code == 200, dry.text
+    real = owner(two).post(f"{PAY_URL}/{p['id']}/void", json={"reason": "ошибка"})
+    assert real.status_code == 200, real.text
+    now = statement(two, two.second)["debt"]
+    growth = now - was
+    assert growth > 0 and now == 2_000_000
+    expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": growth, "total": now}]
+    assert dry.json()["new_debts"] == expected == real.json()["new_debts"]            # before: amount = the whole debt (2 000 000)
+    money = lambda n: f"{n:,}".replace(",", NBSP) + f"{NBSP}сум"      # noqa: E731
+    assert f"В группе «Вторая» долг вырастет на {money(growth)} — до {money(now)}" in dry.json()["money_effects"]["text"]
+    assert f"В группе «Вторая» долг вырос на {money(growth)} — до {money(now)}" in real.json()["money_effects"]["text"]
+    (row,) = [r for r in owner(two).get(f"{PAY_URL}/decisions", params={"from": day(-1).isoformat(), "to": day(1).isoformat()}).json()["rows"] if r["kind"] == "payment_void"]
+    assert row["consequence"] == f"В группе «Вторая» долг вырос на {money(growth)} — до {money(now)}"

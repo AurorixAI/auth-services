@@ -1616,9 +1616,10 @@ class PaymentService:
         touched = [m for m in was if m == own or (was[m].ledger.debt, was[m].ledger.advance) != (now[m].ledger.debt, now[m].ledger.advance)]
         new_debts = []
         for m in touched:
-            if m != own and now[m].ledger.debt > 0:
+            grown = int(now[m].ledger.debt - was[m].ledger.debt)           # Р-2: what the correction ADDS to the debt of the other group; ``total`` is the debt after it
+            if m != own and grown > 0:
                 group = self.db.get(Group, now[m].membership.group_id)
-                new_debts.append({"membership_id": str(m), "group_id": str(group.id), "group_name": group.name, "amount": int(now[m].ledger.debt)})
+                new_debts.append({"membership_id": str(m), "group_id": str(group.id), "group_name": group.name, "amount": grown, "total": int(now[m].ledger.debt)})
         return _Moved(
             new_debts=new_debts, debt_before=sum(was[m].ledger.debt for m in touched), debt_after=sum(now[m].ledger.debt for m in touched),
             advance_before=sum(was[m].ledger.advance for m in touched), advance_after=sum(now[m].ledger.advance for m in touched))
