@@ -297,6 +297,13 @@ def client(w, who: str = "admin", *, org: str = "own"):
     return make_client(w, user=user, org=org, org_role=role, role=role)
 
 
+def seen_version(w, group, day: str, lesson_id: str) -> Dict[str, int]:
+    """What the journal screen sends back (G-11): ``{"expectedVersion": <version of the lesson record>}``; ``{}`` while the lesson has no record (nothing to send)."""
+    w.db.expire_all()
+    row = w.db.query(GroupAttendance).filter_by(group_id=group.id, lesson_date=day, lesson_id=lesson_id).first()
+    return {"expectedVersion": int(row.version or 1)} if row else {}
+
+
 def ids_of(items: List[dict], key: str = "id") -> List[Any]:
     return [i[key] for i in items]
 

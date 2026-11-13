@@ -27,7 +27,7 @@ def w(pg_session, clock):
 def complete(w, who="A", **extra):
     marks = {str(s.id): "present" for s in (w.s1, w.s2, w.s3)}
     return client(w, who).post(f"/api/v1/auth/org/groups/{w.G1.id}/attendance",
-                               json={"lessonDate": "2026-10-21", "lessonId": "lesson-l2", "status": "completed", "records": marks, **extra})
+                               json={"lessonDate": "2026-10-21", "lessonId": "lesson-l2", "status": "completed", "records": marks, "expectedVersion": 1, **extra})
 
 
 def live_exam(w, status="active", remaining=900, waiting=0):

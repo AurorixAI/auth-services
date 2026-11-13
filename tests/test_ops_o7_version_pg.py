@@ -149,13 +149,24 @@ def test_r6_midnight_does_not_matter(w, clock):
     assert r.status_code == 200 and r.json()["version"] == 2
 
 
-def test_r7_a_save_without_expected_version_is_accepted_and_logged(w, caplog):
-    """[O7.R7]"""
+def test_r7_a_save_of_an_existing_lesson_without_expected_version_is_409_and_writes_nothing(w):
+    """[O7.R7 / G-11, Д13] Был: 200 и чужие отметки затёрты. Стало: правка существующего урока без expectedVersion = 409 с текстом и текущей версией."""
     start(w)
-    with caplog.at_level(logging.INFO):
-        r = save(w, "A", {"s1": "present"})
+    assert save(w, "A", {"s1": "present", "s2": "absent"}, expectedVersion=1).json()["version"] == 2
+    r = save(w, "A", {"s1": "absent"})                                    # nobody told this screen the version
+    assert r.status_code == 409
+    err = r.json()
+    assert "Отметки изменились — обновите страницу" in str(err)
+    assert err["detail"]["code"] == "ATTENDANCE_CONFLICT" and err["detail"]["currentVersion"] == 2
+    assert row(w).version == 2 and row(w).records[str(w.s1.id)] == "present" and row(w).records[str(w.s2.id)] == "absent"
+
+
+def test_r7b_an_identical_repeat_without_expected_version_is_still_a_200(w):
+    """[G-11] A repeat that changes nothing writes nothing - it stays a 200 (no one is overwritten)."""
+    start(w)
+    save(w, "A", {"s1": "present"}, expectedVersion=1)
+    r = save(w, "A", {"s1": "present"})
     assert r.status_code == 200 and r.json()["version"] == 2
-    assert "attendance_save_without_version" in caplog.text
 
 
 def test_r8_every_role_that_can_save_is_judged_alike(w):
@@ -172,6 +183,6 @@ def test_inv_o7_2_the_version_grows_by_one_per_write(w):
     start(w)
     seen = [row(w).version]
     for marks in ({"s1": "present"}, {"s1": "present"}, {"s1": "present", "s2": "absent"}, {"s1": "absent", "s2": "absent"}):
-        save(w, "A", marks)
+        save(w, "A", marks, expectedVersion=row(w).version)          # G-11: the version is part of every save
         seen.append(row(w).version)
     assert seen == [1, 2, 2, 3, 4]

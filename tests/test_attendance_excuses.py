@@ -6,7 +6,7 @@ import pytest
 from src.models.auth import AttendanceExcuse, AttendanceExcuseFile, GroupAttendance, GroupAttendanceAudit
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    LIVE_SLOT, business_today, excused_lesson, make_client, needs_pg, pg_session, reconcile, save, world,
+    LIVE_SLOT, business_today, excused_lesson, make_client, needs_pg, pg_session, reconcile, save, shown_version, world,
 )
 
 
@@ -224,7 +224,7 @@ def test_journal_http_roundtrip_with_excuse_reasons(world):
     client = make_client(world)
     base = f"/api/v1/auth/org/groups/{world.group.id}/attendance"
     body = {"lessonDate": day.isoformat(), "lessonId": lesson_id, "status": "in_progress",
-            "records": {str(s.id): "excused"}}
+            "records": {str(s.id): "excused"}, "expectedVersion": shown_version(world, day, lesson_id)}
     assert client.post(base, json=body).status_code == 400
     r = client.post(base, json={**body, "excuseReasons": {str(s.id): "Болел"}})
     assert r.status_code == 200, r.text
@@ -298,7 +298,8 @@ def test_global_admin_role_without_org_admin_membership_cannot_correct(world):
     day, lesson_id = reconcile(world)
     save(world, day, lesson_id, [(s, "present") for s in world.students], status="completed")
     body = {"lessonDate": day.isoformat(), "lessonId": lesson_id, "status": "completed",
-            "records": {str(s.id): "absent" for s in world.students}, "correctionReason": "Хочу поменять"}
+            "records": {str(s.id): "absent" for s in world.students}, "correctionReason": "Хочу поменять",
+            "expectedVersion": shown_version(world, day, lesson_id)}
     url = f"/api/v1/auth/org/groups/{world.group.id}/attendance"
     # org_role teacher, global role admin: passes the group-access check, not the correction check.
     loose = make_client(world, user=world.teacher2, role="admin", org_role="teacher")          # not the teacher of this lesson (Money-1 A5: the teacher OF the lesson may correct it)

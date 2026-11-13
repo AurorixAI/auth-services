@@ -10,6 +10,8 @@ from tests.ops_helpers import (  # noqa: F401  (fixtures)
     build_d0, clock, client, code_of, exams, history_row, needs_pg, new_group, new_slot, new_student, pg_session, run_parallel,
 )
 
+from tests.ops_helpers import seen_version  # noqa: E402
+
 pytestmark = needs_pg
 
 
@@ -54,12 +56,12 @@ def test_r3_legacy_open_lesson_with_empty_roster_cannot_be_completed_but_can_be_
     clock.set("2026-10-21 17:20")                                  # inside the last 15 minutes: the lesson may be completed
     c = client(w, "C")
     done = c.post(f"/api/v1/auth/org/groups/{group.id}/attendance",
-                  json={"lessonDate": "2026-10-21", "lessonId": "lesson-e", "status": "completed", "records": {}})
+                  json={"lessonDate": "2026-10-21", "lessonId": "lesson-e", "status": "completed", "records": {}, **seen_version(w, group, "2026-10-21", "lesson-e")})
     assert done.status_code == 409 and done.json()["detail"]["code"] == "NO_STUDENTS" and done.json()["detail"]["alias"] == "NO_STUDENTS_COMPLETE"
     assert "Отметьте «Урока не было»" in done.json()["detail"]["message"]
     cancel = c.post(f"/api/v1/auth/org/groups/{group.id}/attendance",
                     json={"lessonDate": "2026-10-21", "lessonId": "lesson-e", "status": "cancelled", "records": {},
-                          "cancellationReason": "Урока не было"})
+                          "cancellationReason": "Урока не было", **seen_version(w, group, "2026-10-21", "lesson-e")})
     assert cancel.status_code == 200, cancel.text
     w.db.refresh(row)
     assert row.status == "cancelled"

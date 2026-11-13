@@ -11,7 +11,7 @@ from src.models.auth import GroupAttendance, GroupAttendanceAudit, PayrollPayout
 
 from tests.money1_helpers import hold_lesson, lesson, now_4_nov, sheet, tashkent  # noqa: F401  (fixtures)
 from tests.ops_helpers import grant_money_right
-from tests.pg_world import make_client, needs_pg, pg_session, save, world  # noqa: F401  (fixtures)
+from tests.pg_world import make_client, needs_pg, pg_session, save, shown_version, world  # noqa: F401  (fixtures)
 
 pytestmark = needs_pg
 API = "/api/v1/auth/org/groups"
@@ -24,7 +24,8 @@ def marks(w, *values):
 
 def post_save(w, who, day, lid, values, **extra):
     return make_client(w, user=who).post(f"{API}/{w.group.id}/attendance", json={
-        "lessonDate": day.isoformat(), "lessonId": lid, "status": "completed", "records": {str(s.id): v for s, v in zip(w.students, values)}, **extra})
+        "lessonDate": day.isoformat(), "lessonId": lid, "status": "completed", "records": {str(s.id): v for s, v in zip(w.students, values)},
+        "expectedVersion": shown_version(w, day, lid), **extra})
 
 
 def test_an_administrator_without_the_money_right_cannot_correct_a_held_lesson_the_one_with_it_can_and_hears_the_consequences(world, now_4_nov):
@@ -57,7 +58,8 @@ def test_the_teacher_corrects_his_own_held_lesson_within_seven_days_in_an_open_m
     day, lid = hold_lesson(world, date(2026, 10, 30))
     teacher = make_client(world, user=world.teacher)
     url = f"{API}/{world.group.id}/attendance"
-    body = {"lessonDate": day.isoformat(), "lessonId": lid, "status": "completed", "records": {str(s.id): v for s, v in zip(world.students, ["absent", "present", "present"])}}
+    body = {"lessonDate": day.isoformat(), "lessonId": lid, "status": "completed", "records": {str(s.id): v for s, v in zip(world.students, ["absent", "present", "present"])},
+            "expectedVersion": shown_version(world, day, lid)}
     no_reason = teacher.post(url, json=body)
     assert no_reason.status_code == 400 and "причину" in no_reason.json()["detail"]
     ok = teacher.post(url, json={**body, "correctionReason": "Ошибся в отметке"})
@@ -74,7 +76,7 @@ def test_the_teachers_own_correction_has_its_limits_age_month_and_whose_lesson(w
     old_day, old_lid = hold_lesson(world, date(2026, 10, 27))                       # 8 days ago: too old for a teacher
     url = f"{API}/{world.group.id}/attendance"
     teacher = make_client(world, user=world.teacher)
-    mk = lambda d, l: {"lessonDate": d.isoformat(), "lessonId": l, "status": "completed", "correctionReason": "Ошибся", "records": {str(s.id): v for s, v in zip(world.students, ["absent", "present", "present"])}}
+    mk = lambda d, l: {"lessonDate": d.isoformat(), "lessonId": l, "status": "completed", "correctionReason": "Ошибся", "expectedVersion": shown_version(world, d, l), "records": {str(s.id): v for s, v in zip(world.students, ["absent", "present", "present"])}}
     too_old = teacher.post(url, json=mk(old_day, old_lid))
     assert too_old.status_code == 403 and too_old.json()["detail"]["code"] == "LESSON_TOO_OLD"
     day, lid = hold_lesson(world, date(2026, 10, 30))
@@ -92,7 +94,7 @@ def test_completing_a_lesson_where_nobody_came_asks_for_a_yes_only_a_screen_that
     for offset, extra, status in ((30, {}, 200), (29, {"confirmNobodyCame": False}, 409), (28, {"confirmNobodyCame": True}, 200)):
         day, lid = lesson(date(2026, 10, offset))
         world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid), reconciled_by=str(world.admin.id), is_org_admin=True)
-        body = {"lessonDate": day.isoformat(), "lessonId": lid, "status": "completed", "records": {str(s.id): "absent" for s in world.students}, **extra}
+        body = {"lessonDate": day.isoformat(), "lessonId": lid, "status": "completed", "records": {str(s.id): "absent" for s in world.students}, "expectedVersion": 1, **extra}
         r = owner.post(url, json=body)
         assert r.status_code == status, (extra, r.text)
         if status == 409:

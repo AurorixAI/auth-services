@@ -7,7 +7,6 @@ from datetime import date
 import pytest
 
 from src.auth.ops_rules import OpsError
-from src.auth.schemas import SaveAttendanceRequest
 from src.models.auth import (
     GroupAttendance,
     GroupAttendanceAudit,
@@ -18,7 +17,8 @@ from src.models.auth import (
     OrgDayOff,
 )
 from tests.b2_helpers import API, build_d2, clock, decide, events_of, exams, needs_pg, pg_session, req, requests_of, row_of, run_parallel  # noqa: F401  (fixtures)
-from tests.ops_helpers import client
+from src.auth.ops_schemas import SaveAttendanceRequestB
+from tests.ops_helpers import client, seen_version
 from tests.test_ops_b2_decide_pg import L, Sync, one  # noqa: F401
 
 pytestmark = needs_pg
@@ -39,7 +39,7 @@ def sync(monkeypatch):
 def sheet(w, who, group, lesson, day, reason="Преподаватель болен", expect=200, **extra):
     """The lesson sheet / the teacher's button: POST attendance, status cancelled."""
     r = client(w, who).post(f"{API}/org/groups/{group.id}/attendance",
-                            json={"lessonDate": day, "lessonId": lesson, "status": "cancelled", "records": {}, "cancellationReason": reason, **extra})
+                            json={"lessonDate": day, "lessonId": lesson, "status": "cancelled", "records": {}, "cancellationReason": reason, **seen_version(w, group, day, lesson), **extra})
     assert r.status_code == expect, r.text
     return r
 
@@ -219,9 +219,11 @@ def test_s6_a_decision_after_the_lesson_was_cancelled_by_the_sheet_is_a_409_with
 
 
 def _cancel_call(w, reason):
+    version = seen_version(w, w.G1, "2026-10-26", "lesson-l1").get("expectedVersion")          # both windows were opened on the same record
+
     def call(svc):
-        out = svc.save_group_attendance(str(w.org.id), str(w.G1.id), SaveAttendanceRequest(lessonDate=date(2026, 10, 26), lessonId="lesson-l1", status="cancelled",
-                                                                                           cancellationReason=reason), marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True)
+        out = svc.save_group_attendance(str(w.org.id), str(w.G1.id), SaveAttendanceRequestB(lessonDate=date(2026, 10, 26), lessonId="lesson-l1", status="cancelled",
+                                                                                            cancellationReason=reason, expectedVersion=version), marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True)
         return out["version"]
     return call
 
@@ -230,7 +232,7 @@ def test_s6_two_cancellations_at_once_are_one_cancellation_and_a_409_never_a_500
     w.db.commit()
     (a, ea), (b, eb) = run_parallel(w, _cancel_call(w, "Первая причина"), _cancel_call(w, "Вторая причина"))
     errors = [e for e in (ea, eb) if e is not None]
-    assert len(errors) == 1 and isinstance(errors[0], OpsError) and errors[0].code == "ALREADY_CANCELLED", (ea, eb)
+    assert len(errors) == 1 and isinstance(errors[0], OpsError) and errors[0].code in ("ALREADY_CANCELLED", "ATTENDANCE_CONFLICT"), (ea, eb)   # G-11: both windows saw one version - the loser is told the marks changed
     w.db.expire_all()
     rows = w.db.query(GroupAttendance).filter_by(group_id=w.G1.id, lesson_date="2026-10-26").all()
     assert len(rows) == 1 and rows[0].version == 1 and rows[0].cancellation_reason in ("Первая причина", "Вторая причина")
@@ -259,7 +261,7 @@ def start_and_mark(w, marks=True):
     assert r.status_code == 200, r.text
     if marks:
         saved = client(w, "A").post(f"{API}/org/groups/{w.G1.id}/attendance", json={
-            "lessonDate": "2026-10-26", "lessonId": "lesson-l1", "status": "in_progress", "records": {str(w.s1.id): "present"}})
+            "lessonDate": "2026-10-26", "lessonId": "lesson-l1", "status": "in_progress", "records": {str(w.s1.id): "present"}, "expectedVersion": 1})
         assert saved.status_code == 200, saved.text
 
 

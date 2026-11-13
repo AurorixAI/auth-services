@@ -10,7 +10,7 @@ import pytest
 from src.models.auth import GroupAttendance, GroupAudit, GroupScheduleOverride, LessonSubstitutionEvent, LessonSubstitutionRequest as Req, LessonTeacherAssignment, OrganizationMember, StudentGroup
 from src.auth.ops_rules import short_name
 from tests.b2_helpers import API, build_d2, clock, decide, events_of, needs_pg, pg_session, req, requests_of, row_of  # noqa: F401  (fixtures)
-from tests.ops_helpers import client, closed_sheet, history_row, new_group, new_slot, new_student
+from tests.ops_helpers import client, closed_sheet, history_row, new_group, new_slot, new_student, seen_version
 from tests.pg_world import give_group_price
 from tests.test_ops_b2_decide_pg import Sync, one  # noqa: F401
 
@@ -59,7 +59,7 @@ def test_d1_a_teacher_cancelling_his_started_empty_lesson_leaves_the_same_record
     w.db.commit()
     clock.set("2026-10-21 17:20")
     r = client(w, "C").post(f"{API}/org/groups/{group.id}/attendance", json={"lessonDate": "2026-10-21", "lessonId": "lesson-e", "status": "cancelled", "records": {},
-                                                                              "cancellationReason": "Урока не было"})
+                                                                              "cancellationReason": "Урока не было", "expectedVersion": row.version})
     assert r.status_code == 200, r.text
     w.db.refresh(row)
     assert (row.status, row.cancellation_kind) == ("cancelled", "centre")
@@ -466,7 +466,8 @@ def test_s27_nothing_else_is_his_to_cancel_a_move_copy_the_one_off_of_an_adminis
     marked = one_off(w, "A", w.G1, "2026-10-22", "10:00", "11:00")
     clock.set("2026-10-22 10:05")
     assert client(w, "A").post(f"{API}/org/groups/{w.G1.id}/attendance/start", json={"lessonDate": "2026-10-22", "lessonId": marked}).status_code == 200
-    assert client(w, "A").post(f"{API}/org/groups/{w.G1.id}/attendance", json={"lessonDate": "2026-10-22", "lessonId": marked, "status": "in_progress", "records": {str(w.s1.id): "present"}}).status_code == 200
+    assert client(w, "A").post(f"{API}/org/groups/{w.G1.id}/attendance", json={"lessonDate": "2026-10-22", "lessonId": marked, "status": "in_progress", "records": {str(w.s1.id): "present"},
+                                                                                          **seen_version(w, w.G1, "2026-10-22", marked)}).status_code == 200
     assert sheet(w, "A", w.G1, marked, "2026-10-22", expect=409).json()["detail"]["code"] == "LESSON_ALREADY_STARTED"
     assert row_of(w, w.G1, marked, "2026-10-22").status == "in_progress"
 

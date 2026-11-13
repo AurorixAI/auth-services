@@ -35,6 +35,7 @@ COMPLETED = "completed"
 IN_PROGRESS = "in_progress"
 CANCELLED = "cancelled"
 EXAM_UNAVAILABLE = "EXAM_SERVICE_UNAVAILABLE"
+VERSION_REQUIRED = "Отметки изменились — обновите страницу"          # Money-1 G-11: a save of an existing lesson names the version it saw
 
 
 class AttendanceRules:
@@ -87,7 +88,7 @@ class AttendanceRules:
         when = audit.created_at if audit else row.updated_at
         return (str(actor_id) if actor_id else None, when.isoformat() if when else None)
 
-    def conflict_error(self, row: GroupAttendance):
+    def conflict_error(self, row: GroupAttendance, message: Optional[str] = None):
         actor_id, when = self._last_writer(row)
         user = self.db.query(User).filter(User.id == actor_id).first() if actor_id else None
         name = short_name(user)
@@ -98,7 +99,7 @@ class AttendanceRules:
             hhmm = bc.utc_to_business_wall(datetime.fromisoformat(when)).strftime("%H:%M")
         return conflict(
             "ATTENDANCE_CONFLICT",
-            f"Отметки уже изменил(а) {name or 'другой сотрудник'}" + (f" в {hhmm}" if hhmm else ""),
+            message or f"Отметки уже изменил(а) {name or 'другой сотрудник'}" + (f" в {hhmm}" if hhmm else ""),
             currentVersion=int(row.version or 1),
             updatedBy={"id": actor_id, "name": name},
             updatedAt=when,
@@ -107,7 +108,8 @@ class AttendanceRules:
 
     def version_gate(self, row: Optional[GroupAttendance], req) -> bool:
         """``True`` when the request changes nothing (an identical repeat: answered 200 without a write, also with a stale
-        ``expectedVersion``); raises ``ATTENDANCE_CONFLICT`` when the version is stale and the request would change something."""
+        ``expectedVersion``); raises ``ATTENDANCE_CONFLICT`` when the version is stale - or missing (Money-1 G-11, I-7) - and the request would
+        change something."""
         if row is None:
             return False
         records = {str(k): v.value for k, v in req.records.items()}
@@ -127,8 +129,8 @@ class AttendanceRules:
                 return True
         expected = getattr(req, "expectedVersion", None)
         if expected is None:
-            logger.info("attendance_save_without_version row=%s", row.id)
-        elif int(expected) != int(row.version or 1):
+            raise self.conflict_error(row, VERSION_REQUIRED)
+        if int(expected) != int(row.version or 1):
             raise self.conflict_error(row)
         return False
 

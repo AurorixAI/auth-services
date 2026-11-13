@@ -12,8 +12,9 @@ from src.models.auth import GroupAttendance, Organization, Student, StudentGroup
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
     ENROLLED_SINCE, LIVE_SLOT, business_today, give_group_price, give_price, make_client, make_group, make_student, needs_pg,
-    pg_session, reconcile, world,
+    pg_session, reconcile, shown_version, world,
 )
+from src.auth.ops_schemas import SaveAttendanceRequestB  # noqa: E402
 from tests.test_payments_service_pg import (  # noqa: F401
     API, day, lesson_marks, mid, owner, pay, row_of, set_settings, status_page, summary,
 )
@@ -304,8 +305,8 @@ def excused_today_in(w, group, student):
     )
     w.svc.save_group_attendance(
         str(w.org.id), str(group.id),
-        SaveAttendanceRequest(
-            lessonDate=business_today(), lessonId=LIVE_SLOT, status="in_progress",
+        SaveAttendanceRequestB(
+            lessonDate=business_today(), lessonId=LIVE_SLOT, status="in_progress", expectedVersion=shown_version(w, business_today(), LIVE_SLOT, group),
             records={str(student.id): "excused"}, excuseReasons={str(student.id): "Болел"},
         ),
         marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True,

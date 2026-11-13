@@ -132,7 +132,7 @@ def test_r4c_a_substitution_during_a_start_is_refused_and_the_teacher_keeps_the_
     refused = put(w, "admin", w.G1, "D")
     assert refused.status_code == 409 and refused.json()["detail"]["code"] == "LESSON_IN_PROGRESS"
     ok = cl.post(base, json={"lessonDate": "2026-10-26", "lessonId": "lesson-l1", "status": "in_progress",
-                             "records": {str(w.s1.id): "present", str(w.s2.id): "absent"}})
+                             "records": {str(w.s1.id): "present", str(w.s2.id): "absent"}, "expectedVersion": 2})
     assert ok.status_code == 200
     row = w.db.query(GroupAttendance).filter_by(group_id=w.G1.id, lesson_id="lesson-l1", lesson_date="2026-10-26").one()
     assert row.teacher_id == w.C.id and row.records == {str(w.s1.id): "present", str(w.s2.id): "absent"}
@@ -273,7 +273,7 @@ def test_handover_semantics_in_progress_lesson_stays_with_the_old_teacher(w, clo
     assert row.teacher_id == w.A.id
     marks = {str(s.id): "present" for s in (w.s1, w.s2, w.s3)}
     assert client(w, "C").post(base, json={"lessonDate": "2026-10-21", "lessonId": "lesson-l2", "status": "in_progress", "records": marks}).status_code == 403
-    assert client(w, "A").post(base, json={"lessonDate": "2026-10-21", "lessonId": "lesson-l2", "status": "in_progress", "records": marks}).status_code == 200
+    assert client(w, "A").post(base, json={"lessonDate": "2026-10-21", "lessonId": "lesson-l2", "status": "in_progress", "records": marks, "expectedVersion": 1}).status_code == 200
 
 
 def test_group_teacher_change_checks_the_overlaps_of_the_new_teacher(w):

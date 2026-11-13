@@ -18,7 +18,7 @@ from src.models.auth import (
     StudentGroup,
 )
 from tests.b2_helpers import API, build_d2, clock, decide, events_of, needs_pg, pg_session, req, requests_of, row_of  # noqa: F401  (fixtures)
-from tests.ops_helpers import client, closed_sheet, history_row, new_group, new_slot
+from tests.ops_helpers import client, closed_sheet, history_row, new_group, new_slot, seen_version
 from tests.pg_world import give_group_price, make_client
 from tests.test_ops_b2_decide_pg import Sync, one  # noqa: F401
 from tests.test_w1_series_pg import Exams  # noqa: F401
@@ -289,12 +289,13 @@ def test_r3_8_an_exact_repeat_of_the_teachers_cancellation_of_his_empty_started_
     history_row(w.db, w.org, group, "lesson-e", "2026-10-21", w.C, [], status="in_progress", start="16:00")
     w.db.commit()
     clock.set("2026-10-21 17:20")
-    body = {"lessonDate": "2026-10-21", "lessonId": "lesson-e", "status": "cancelled", "records": {}, "cancellationReason": "Урока не было"}
+    body = {"lessonDate": "2026-10-21", "lessonId": "lesson-e", "status": "cancelled", "records": {}, "cancellationReason": "Урока не было",
+            **seen_version(w, group, "2026-10-21", "lesson-e")}
     first = client(w, "C").post(f"{API}/org/groups/{group.id}/attendance", json=body)
     again = client(w, "C").post(f"{API}/org/groups/{group.id}/attendance", json=body)
     assert first.status_code == 200 and again.status_code == 200 and again.json()["version"] == first.json()["version"]
     assert len([x for x in requests_of(w) if x.group_id == group.id]) == 1
-    other = client(w, "C").post(f"{API}/org/groups/{group.id}/attendance", json={**body, "cancellationReason": "Другая"})
+    other = client(w, "C").post(f"{API}/org/groups/{group.id}/attendance", json={**body, "cancellationReason": "Другая", **seen_version(w, group, "2026-10-21", "lesson-e")})
     assert other.status_code == 409 and other.json()["detail"]["code"] == "ALREADY_CANCELLED"
 
 

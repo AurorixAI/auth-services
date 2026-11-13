@@ -143,7 +143,7 @@ def test_every_refusing_route_has_a_scenario_and_every_scenario_a_refusing_route
 
 # ---------------------------------------------------------------------------------------------------- the scenarios (PostgreSQL)
 from tests.money1_helpers import changed_tables, db_fingerprint, reopen_now  # noqa: E402
-from tests.ops_helpers import clock, closed_sheet, needs_pg, pg_session  # noqa: E402,F401  (fixtures)
+from tests.ops_helpers import clock, closed_sheet, needs_pg, pg_session, seen_version  # noqa: E402,F401  (fixtures)
 from tests.payf_helpers import API, client, pause  # noqa: E402
 from tests.test_p154_money_pg import build_org, decide, extra_world, hold, make  # noqa: E402
 
@@ -219,7 +219,8 @@ def _(c):
 def _(c):
     marks = {str(s.id): ("absent" if i == 0 else "present") for i, s in enumerate(c.students)}
     return _rest(c.w, "owner", "POST", f"/org/groups/{c.g.id}/attendance",
-                 json={"lessonDate": "2026-10-21", "lessonId": "lesson-wed", "status": "completed", "records": marks, "correctionReason": "Ошибся в отметке"})
+                 json={"lessonDate": "2026-10-21", "lessonId": "lesson-wed", "status": "completed", "records": marks, "correctionReason": "Ошибся в отметке",
+                       **seen_version(c.w, c.g, "2026-10-21", "lesson-wed")})
 
 
 @scenario("attendance-return", R("POST", "/org/groups/{group_id}/attendance/return"))

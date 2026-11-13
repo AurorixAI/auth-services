@@ -21,12 +21,13 @@ os.environ.setdefault("DATABASE_URL", "postgresql://algo:algo@localhost:5432/alg
 
 from src.auth.schemas import (  # noqa: E402
     ReconcileMissedLessonRequest,
-    SaveAttendanceRequest,
     StartAttendanceRequest,
 )
+from src.auth.ops_schemas import SaveAttendanceRequestB  # noqa: E402
 from src.auth.service import BUSINESS_TIMEZONE, AuthService  # noqa: E402
 from src.models.auth import (  # noqa: E402
     Group,
+    GroupAttendance,
     Organization,
     OrganizationMember,
     Student,
@@ -212,13 +213,21 @@ def reconcile(w, offset_days=1, group=None):
     return day, lesson_id
 
 
+def shown_version(w, day, lesson_id, group=None):
+    """The version of the lesson record the journal screen would show (None: no record yet - nothing to send)."""
+    w.db.expire_all()
+    row = w.db.query(GroupAttendance).filter_by(group_id=(group or w.group).id, lesson_date=str(day), lesson_id=lesson_id).first()
+    return int(row.version or 1) if row else None
+
+
 def save(w, day, lesson_id, records, *, status="in_progress", actor=None, is_admin=True, **extra):
     actor = actor or w.admin
     return w.svc.save_group_attendance(
         str(w.org.id), str(w.group.id),
-        SaveAttendanceRequest(
+        SaveAttendanceRequestB(
             lessonDate=day, lessonId=lesson_id, status=status,
-            records={s.id: st for s, st in records}, **extra,
+            records={s.id: st for s, st in records},
+            **{"expectedVersion": shown_version(w, day, lesson_id), **extra},           # G-11: the screen sends the version it saw
         ),
         marked_by=str(actor.id), is_org_admin=is_admin, is_org_manager=is_admin,
     )

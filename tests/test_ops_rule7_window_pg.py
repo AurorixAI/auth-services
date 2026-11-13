@@ -29,7 +29,7 @@ def rec(w, who, lesson, day, group=None):
     return client(w, who).post(f"{API}/groups/{(group or w.G7).id}/attendance/reconcile", json={"lessonDate": day, "lessonId": lesson})
 
 
-from tests.ops_helpers import grant_money_right  # noqa: E402
+from tests.ops_helpers import grant_money_right, seen_version  # noqa: E402
 
 def test_r1_monday_and_the_border_day_pass_the_day_before_is_too_old(w):
     """[D7.R1] Wed 21.10: Mon 19.10 yes, Wed 14.10 yes (7 days), Tue 13.10 -> 403 LESSON_TOO_OLD."""
@@ -48,7 +48,7 @@ def test_r2_the_idempotent_reconcile_obeys_the_window_and_an_old_open_lesson_is_
     clock.set("2026-10-22 09:00")
     assert rec(w, "D", "lesson-wed", "2026-10-14").status_code == 403
     marks = {str(w.ids("g7")): "present"}
-    body = {"lessonDate": "2026-10-14", "lessonId": "lesson-wed", "status": "completed", "records": marks}
+    body = {"lessonDate": "2026-10-14", "lessonId": "lesson-wed", "status": "completed", "records": marks, **seen_version(w, w.G7, "2026-10-14", "lesson-wed")}
     teacher = client(w, "D").post(f"{API}/groups/{w.G7.id}/attendance", json=body)
     assert teacher.status_code == 403 and teacher.json()["detail"]["code"] == "LESSON_TOO_OLD"
     assert client(w, "admin").post(f"{API}/groups/{w.G7.id}/attendance", json=body).status_code == 200

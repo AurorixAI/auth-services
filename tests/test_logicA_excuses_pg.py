@@ -7,7 +7,7 @@ import pytest
 from src.auth.attendance_excuses import PAUSE_NOT_REQUIRED, ExcusePauseRefused
 from src.models.auth import AttendanceExcuse, GroupAttendanceAudit, MembershipPause
 
-from tests.pg_world import excused_lesson, make_client, needs_pg, pg_session, save, world  # noqa: F401  (fixtures)
+from tests.pg_world import excused_lesson, make_client, needs_pg, pg_session, save, shown_version, world  # noqa: F401  (fixtures)
 from tests.test_pay2_api_pg import API, membership, owner
 
 pytestmark = needs_pg
@@ -68,5 +68,6 @@ def test_logicA_excuses_an_excuse_for_a_pause_day_is_refused_with_the_pause_text
         save(world, day, lesson_id, [(s1, "present"), (s2, "excused"), (s3, "present")], status="completed", excuseReasons={s2.id: "Болел, справка есть"})
     r = owner(world).post(f"{API}/org/groups/{world.group.id}/attendance", json={
         "lessonDate": day.isoformat(), "lessonId": lesson_id, "status": "completed",
-        "records": {str(s1.id): "present", str(s2.id): "excused", str(s3.id): "present"}, "excuseReasons": {str(s2.id): "Болел, справка есть"}})
+        "records": {str(s1.id): "present", str(s2.id): "excused", str(s3.id): "present"}, "excuseReasons": {str(s2.id): "Болел, справка есть"},
+        "expectedVersion": shown_version(world, day, lesson_id)})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "EXCUSE_ON_PAUSE" and r.json()["detail"]["message"] == PAUSE_NOT_REQUIRED

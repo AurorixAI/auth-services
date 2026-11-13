@@ -5,14 +5,14 @@ from types import SimpleNamespace
 import pytest
 
 from src.auth.business_clock import utc_now
-from src.auth.schemas import SaveAttendanceRequest
 from src.models.auth import (
     DiagnosticInvite, Group, MembershipPriceOverride, Student, StudentDiagnosticResult, StudentGroup,
 )
 
 from tests.pg_world import (  # noqa: F401  (fixtures)
-    ENROLLED_SINCE, business_today, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save, world,
+    ENROLLED_SINCE, business_today, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save, shown_version, world,
 )
+from src.auth.ops_schemas import SaveAttendanceRequestB  # noqa: E402
 
 pytestmark = needs_pg
 
@@ -256,7 +256,7 @@ def completed_lesson(w, group, offset=1):
     records = {s.id: "present" for s in w.students}
     w.svc.save_group_attendance(
         str(w.org.id), str(group.id),
-        SaveAttendanceRequest(lessonDate=day, lessonId=lesson_id, status="completed", records=records),
+        SaveAttendanceRequestB(lessonDate=day, lessonId=lesson_id, status="completed", records=records, expectedVersion=shown_version(w, day, lesson_id, group)),
         marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True,
     )
     return day, lesson_id
