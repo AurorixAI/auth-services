@@ -10,10 +10,12 @@ from tests.test_pay2_loader_pg import D, join_on, loader, membership_of, set_pay
 pytestmark = needs_pg
 
 
-def _two_groups(world):
+def _two_groups(world, a_has_lessons=False):
     db = world.db
     group_a, group_b = world.group, make_group(db, world.org, world.teacher, "Группа B")
-    group_a.schedule = group_b.schedule = []      # no lessons: an incomplete period is charged by days
+    group_b.schedule = []                         # no lessons: an incomplete period is charged by days
+    if not a_has_lessons:
+        group_a.schedule = []
     db.commit()
     set_payments_settings(db, world.org, accounting_start_date="2026-09-01", period_mode="calendar", billing_anchor="fixed_day", billing_day=1)
     give_group_price(db, group_a, 500_000)
@@ -62,3 +64,23 @@ def test_removed_from_a_added_to_b_and_removed_from_b_the_same_day_owes_nothing_
     b = _join_b(world, b_group, D(2026, 10, 11), left=D(2026, 10, 11))
     la, lb = _ledgers(world, a, b)
     assert la.charged == 177_000 and lb.charged == 0 and lb.debt == 0
+
+
+# ---- Г-8b: the day belongs to the old group only when it really charges it ---------------------------------------------------------------------------------
+
+def test_a_one_day_stay_in_a_without_a_lesson_charges_nothing_so_b_charges_from_that_day(world):
+    a_group, b_group = _two_groups(world)
+    a = membership_of(world.db, world.students[0], a_group)
+    join_on(world.db, a, D(2026, 10, 11), left=D(2026, 10, 11))          # added and removed on 11.10, A has no lesson that day
+    b = _join_b(world, b_group, D(2026, 10, 11))
+    la, lb = _ledgers(world, a, b)
+    assert la.charged == 0 and lb.charged == 271_000 and lb.first_billable == D(2026, 10, 11)      # 21 of 31 days of 400 000: the 11th is nobody's otherwise
+
+
+def test_a_one_day_stay_in_a_with_a_lesson_charges_that_day_so_b_starts_the_next(world):
+    a_group, b_group = _two_groups(world, a_has_lessons=True)           # a lesson every day
+    a = membership_of(world.db, world.students[0], a_group)
+    join_on(world.db, a, D(2026, 10, 11), left=D(2026, 10, 11))
+    b = _join_b(world, b_group, D(2026, 10, 11))
+    la, lb = _ledgers(world, a, b)
+    assert la.charged > 0 and lb.charged == 258_000 and lb.first_billable == D(2026, 10, 12)

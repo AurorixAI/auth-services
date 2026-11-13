@@ -647,9 +647,12 @@ class LedgerLoader:
         siblings = self.db.query(StudentGroup).filter(StudentGroup.student_id.in_(students)).all()
         periods = {**periods, **membership_periods.periods_by_membership(self.db, [m.id for m in siblings if m.id not in periods])}
         for membership in siblings:
-            for stay in stays_of_membership(membership, periods.get(membership.id, [])):
-                if stay.last is not None:
-                    self.left_days.setdefault(membership.student_id, {}).setdefault(membership.id, set()).add(stay.last)
+            runs = bl.merge_stays(stays_of_membership(membership, periods.get(membership.id, [])))
+            group = self.db.get(Group, membership.group_id) if any(last is not None for _, last in runs) else None
+            for run in runs:
+                # G-8b: the day he left belongs to that group only when it really charges the day (a stay of one day without a lesson charges nothing, G-7)
+                if run[1] is not None and not bl.lessonless_day(lambda a, b, _g=group: self._lesson_days(_g, a, b), run):
+                    self.left_days.setdefault(membership.student_id, {}).setdefault(membership.id, set()).add(run[1])
 
     @staticmethod
     def _begin_after(stays: List[bl.Stay], days: Set[date]) -> List[bl.Stay]:

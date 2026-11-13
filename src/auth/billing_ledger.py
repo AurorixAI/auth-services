@@ -970,10 +970,11 @@ def _inside_charged_period(first: date, last: date, back: date, floor: date, pau
     return False
 
 
-def _lessonless_day(inp: LedgerInput, run: Tuple[date, Optional[date]]) -> bool:
-    """Money-1 G-7 (ДЫРА-07): a run that began and ended on ONE day on which the group had no lesson is a stay of no day - added and removed the same day, nothing to charge."""
+def lessonless_day(lesson_days: Callable[[date, date], Sequence[date]], run: Tuple[date, Optional[date]]) -> bool:
+    """Money-1 G-7 (ДЫРА-07): a run that began and ended on ONE day on which the group had no lesson is a stay of no day - added and removed the same day, nothing to charge.
+    ``lesson_days`` is the lessons of the group (``LedgerInput.lesson_days``)."""
     first, last = run
-    return last == first and not inp.lesson_days(first, first)
+    return last == first and not lesson_days(first, first)
 
 
 def _pieces_of(inp: LedgerInput):
@@ -985,7 +986,7 @@ def _pieces_of(inp: LedgerInput):
         opening = None
     floor = max(inp.accounting_start, inp.first_billable_floor or date.min,
                 (opening.paid_until + timedelta(days=1)) if opening is not None and opening.paid_until else date.min)
-    runs = [run for run in merge_stays(inp.stays) if not _lessonless_day(inp, run)]
+    runs = [run for run in merge_stays(inp.stays) if not lessonless_day(inp.lesson_days, run)]
     pause_days = _merge_pauses(inp.pauses)
     runs, pause_days, gaps = _bridge_returns(runs, pause_days, floor, inp.regimes)
     spans: List[Tuple[date, Optional[date]]] = []
