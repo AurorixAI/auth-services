@@ -77,8 +77,9 @@ class IncomeCash(PayModel):
     date: date_type
     label: str  # «Наличные в кассе за сегодня» | «Наличные в кассе за 21 октября»
     cash_received: int = 0
-    cash_refunded: int = 0  # refunds paid out in cash that day
-    expected: int = 0  # cash_received - cash_refunded
+    cash_refunded: int = 0  # refunds paid out in cash that day (money handed out)
+    cash_cancelled: int = 0  # Money-1 Г-17b: cash payments of an earlier day cancelled that day (a correction of a record, not money handed out)
+    expected: int = 0  # cash_received - cash_refunded - cash_cancelled
     payments_count: int = 0
     text: str
     scope: str = "centre"  # the till of the whole centre, always: group / teacher / method filters never narrow it

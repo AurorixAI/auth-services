@@ -192,7 +192,7 @@ def test_day_today_with_the_cash_hint(world, seeded):
     assert o["summary_text"] == "Сегодня пришло 250 000 сум." and o["delta_direction"] is None and o["delta_text"] is None
     assert o["collection"] is None and [d["bucket"] for d in o["series"]] == ["2026-10-21"]
     assert o["cash"] == {
-        "date": "2026-10-21", "label": "Наличные в кассе за сегодня", "cash_received": 250_000, "cash_refunded": 100_000,
+        "date": "2026-10-21", "label": "Наличные в кассе за сегодня", "cash_received": 250_000, "cash_refunded": 100_000, "cash_cancelled": 0,
         "expected": 150_000, "payments_count": 2,
         "text": "Наличные в кассе за сегодня: 150 000 сум (принято 250 000 сум, возвращено 100 000 сум)",
         "scope": "centre", "filtered_view": False, "scope_text": None}

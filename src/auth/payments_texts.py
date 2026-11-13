@@ -85,6 +85,15 @@ def new_debts_text(debts: Sequence[Dict[str, Any]], *, done: bool) -> str:
     return "; ".join(f"В группе «{d['group_name']}» {verb} долг {money(int(d['amount']))}" for d in debts)
 
 
+def cash_parts_text(received: int, refunded: int, cancelled: int) -> str:
+    """Money-1 Г-17b: `` (принято X, возвращено Y, отменено Z)`` under the till of a day - the zero parts are not shown, and nothing at all when money only came in.  Returned = money handed
+    out; cancelled = a payment entered earlier and cancelled that day (a correction of a record)."""
+    if not (refunded or cancelled):
+        return ""
+    parts = [(received, "принято"), (refunded, "возвращено"), (cancelled, "отменено")]
+    return " (" + ", ".join(f"{word} {money(amount)}" for amount, word in parts if amount) + ")"
+
+
 def plural(count: int, one: str, few: str, many: str) -> str:
     last, last2 = count % 10, count % 100
     if last == 1 and last2 != 11:

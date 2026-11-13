@@ -207,6 +207,11 @@
       "IncomeCash": {
         "description": "«Наличные в кассе за сегодня» - only when the period is one day.",
         "properties": {
+          "cash_cancelled": {
+            "default": 0,
+            "title": "Cash Cancelled",
+            "type": "integer"
+          },
           "cash_received": {
             "default": 0,
             "title": "Cash Received",
@@ -267,6 +272,7 @@
           "label",
           "cash_received",
           "cash_refunded",
+          "cash_cancelled",
           "expected",
           "payments_count",
           "text",

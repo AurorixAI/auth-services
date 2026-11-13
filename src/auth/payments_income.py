@@ -523,14 +523,13 @@ class IncomeReports:
         filtered = bool(group_id or teacher_id)
         paid, paid_cancelled, count = self._cash_moves(StudentPayment, org_id, day, StudentPayment.kind == "payment")
         refunded, refunds_cancelled, _ = self._cash_moves(StudentRefund, org_id, day)
-        received, returned = paid + refunds_cancelled, refunded + paid_cancelled          # a cancelled refund brings the money back to the till, a cancelled payment takes it out
+        received = paid + refunds_cancelled          # a cancelled refund brings the money back to the till
+        cancelled = paid_cancelled                   # Г-17b: a cancelled payment takes it out - a correction of a record, NOT money handed out (that is ``refunded``)
         label = "Наличные в кассе за " + ("сегодня" if day == today else tx.day_genitive(day))
-        expected = received - returned
-        text = f"{label}: {tx.money(expected)}"
-        if returned:
-            text += f" (принято {tx.money(received)}, возвращено {tx.money(returned)})"
+        expected = received - refunded - cancelled
+        text = f"{label}: {tx.money(expected)}" + tx.cash_parts_text(received, refunded, cancelled)
         scope_text = ("в кассе центра за " + ("сегодня" if day == today else tx.day_genitive(day)) + " (все группы)") if filtered else None
-        return IncomeCash(date=day, label=label, cash_received=received, cash_refunded=returned, expected=expected,
+        return IncomeCash(date=day, label=label, cash_received=received, cash_refunded=refunded, cash_cancelled=cancelled, expected=expected,
                           payments_count=count, text=text, scope="centre", filtered_view=filtered, scope_text=scope_text)
 
     # ------------------------------------------------------------------ month collection

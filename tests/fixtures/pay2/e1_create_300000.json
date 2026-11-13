@@ -200,5 +200,6 @@
     "waiting_reason": null
   },
   "money_effects": null,
-  "dry_run": false
+  "dry_run": false,
+  "new_debts": []
 }

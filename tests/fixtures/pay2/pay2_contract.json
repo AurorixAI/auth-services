@@ -1245,6 +1245,14 @@
             ],
             "title": "Money Effects"
           },
+          "new_debts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "New Debts",
+            "type": "array"
+          },
           "payment": {
             "$ref": "#/components/schemas/PaymentOut"
           },

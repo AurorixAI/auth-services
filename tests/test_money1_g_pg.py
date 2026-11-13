@@ -382,6 +382,10 @@ def _till(w, day):
     return c["cash_received"], c["cash_refunded"], c["expected"]
 
 
+def _cancelled(w, day):
+    return income(w, day, day)["cash"]["cash_cancelled"]
+
+
 def test_g17_cash_follows_the_day_of_entry_and_a_closed_day_does_not_move(world, seeded):
     base21, base22 = _till(world, "2026-10-03"), _till(world, "2026-10-04")
     ids = add_payments(
@@ -404,4 +408,5 @@ def test_g17_the_cancellation_on_another_day_leaves_the_closed_day_alone_and_lea
     p.voided_at, p.voided_by, p.void_reason = datetime(2026, 10, 5, 6, 0), world.owner.id, "ошибка"          # cancelled on 05.10 11:00
     world.db.commit()
     assert _till(world, "2026-10-03") == (base["2026-10-03"][0] + 300_000, base["2026-10-03"][1], base["2026-10-03"][2] + 300_000)      # e7c44aa: the cancelled payment vanished from 03.10
-    assert _till(world, "2026-10-05") == (base["2026-10-05"][0], base["2026-10-05"][1] + 300_000, base["2026-10-05"][2] - 300_000)       # and the till of 05.10 says it
+    assert _till(world, "2026-10-05") == (base["2026-10-05"][0], base["2026-10-05"][1], base["2026-10-05"][2] - 300_000)       # and the till of 05.10 says it ...
+    assert _cancelled(world, "2026-10-05") == 300_000 and income(world, "2026-10-05", "2026-10-05")["cash"]["text"].endswith("(отменено 300\u00a0000\u00a0сум)")   # ... as «отменено», not «возвращено» (Г-17b)
