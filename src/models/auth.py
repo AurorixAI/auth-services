@@ -26,6 +26,7 @@ from sqlalchemy import (
     SmallInteger,
     Date,
     event,
+    select,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -1073,11 +1074,15 @@ class GroupAttendanceAudit(Base):
     __tablename__ = "group_attendance_audit"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    # Money-1 G-12: the record outlives the row of a lesson that goes back to the schedule («Вернуть на отметку», «Отменить выходной»):
+    # the row's id is let go (SET NULL), the lesson stays readable by its key (group, day, slot) - filled on insert, see below.
     attendance_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("group_attendance.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("group_attendance.id", ondelete="SET NULL"),
+        nullable=True,
     )
+    lesson_date = Column(String(10), nullable=True)   # "YYYY-MM-DD" of the lesson (copied from its row)
+    lesson_id = Column(String(100), nullable=True)    # the slot (copied from its row)
     org_id = Column(
         UUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="CASCADE"),
@@ -1110,6 +1115,19 @@ class GroupAttendanceAudit(Base):
         Index("idx_group_attendance_audit_attendance", "attendance_id"),
         Index("idx_group_attendance_audit_group", "group_id"),
     )
+
+
+@event.listens_for(GroupAttendanceAudit, "before_insert")
+def _copy_lesson_key(mapper, connection, audit) -> None:
+    """Money-1 G-12: the one place where a record of the journal learns the key of its lesson (every writer of the journal gets it, none repeats it)."""
+    if audit.attendance_id is None or (audit.lesson_date is not None and audit.lesson_id is not None):
+        return
+    key = connection.execute(
+        select(GroupAttendance.lesson_date, GroupAttendance.lesson_id).where(GroupAttendance.id == audit.attendance_id)
+    ).first()
+    if key is not None:
+        audit.lesson_date = audit.lesson_date or key[0]
+        audit.lesson_id = audit.lesson_id or key[1]
 
 
 class AttendanceExcuse(Base):
