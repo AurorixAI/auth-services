@@ -575,15 +575,10 @@ class _Gen:
         return self._lesson_days_cache[key]
 
     def _earliest_price(self, first: date, end: date) -> PriceInfo:
-        """Money-1 Р-12 (R3 М9): the price that begins EARLIEST in ``(first, end]`` when there is none on ``first`` (the prices are one timeline: once there is one there always is one, so the day it
-        begins is found by bisection); no price in the whole period: the answer at ``end`` (no price)."""
-        if self.inp.price_at(end).amount is None:
-            return self.inp.price_at(end)
-        low, high = first, end                        # no price on ``low``, one on ``high``
-        while (high - low).days > 1:
-            middle = low + (high - low) // 2
-            low, high = (low, middle) if self.inp.price_at(middle).amount is not None else (middle, high)
-        return self.inp.price_at(high)
+        """Money-1 Р-12 (R3 М9, Д-8): the price that begins EARLIEST in ``(first, end]`` when there is none on ``first`` - the first day with a price is read from the rows of the price books
+        (``first_priced_day``), so a gap between prices (an individual price, then «цена группы» that does not exist yet) does not hide it; no price in the whole period: no price."""
+        day = self.inp.first_priced_day(first)
+        return self.inp.price_at(day) if day is not None and day <= end else self.inp.price_at(first)
 
     def segment(
         self, chain: int, start: date, end: date, days: List[date], nominal: int, *, by_lessons: bool, cell: Optional[tuple]

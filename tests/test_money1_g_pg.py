@@ -138,6 +138,26 @@ def test_d2_a_group_with_no_price_at_all_still_charges_nothing_for_a_package(wor
     assert led.charged == 0 and bl.F_PRICE_MISSING in led.flags and led.unpriced_from == D(2026, 11, 6)
 
 
+# ---- Д-8 (R3B м3): the earliest price of a period is found among the rows of the price books, also when the prices have a GAP -------------------------------------------
+
+def test_d8_a_gap_between_the_prices_does_not_hide_the_earliest_one(world, fixed_today):
+    from datetime import datetime
+
+    from src.models.auth import MembershipPriceOverride
+
+    w = world
+    fixed_today(D(2026, 11, 25))
+    settings_block(w, accounting_start_date="2026-09-01")
+    everybody_from(w, D(2026, 11, 1))
+    m = membership(w)
+    w.db.add(MembershipPriceOverride(membership_id=m.id, amount=300_000, valid_from=D(2026, 11, 5), reason="скидка", created_at=datetime(2026, 11, 1)))      # an individual price from 05.11 ...
+    w.db.add(MembershipPriceOverride(membership_id=m.id, amount=None, valid_from=D(2026, 11, 8), created_at=datetime(2026, 11, 2)))                       # ... «снова цена группы» from 08.11, and the group has no price yet ...
+    w.db.commit()
+    give_group_price(w.db, w.group, 500_000, valid_from=D(2026, 11, 20))                                                                           # ... it is set only from 20.11
+    led = account(w, m.id)
+    assert charge_of(led, D(2026, 11, 1)) == 300_000       # the price that began FIRST in the period (05.11); the bisection over the timeline met the gap and took 20.11: 500 000
+
+
 # ---- Г-5 (N6, ЗП-15): a reopened month keeps its advance in the chain; a payout locks the advance chain of the teacher ---------------------------------------
 
 import threading  # noqa: E402

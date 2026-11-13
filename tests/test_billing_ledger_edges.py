@@ -57,7 +57,8 @@ def test_missing_price_charges_nothing_and_the_money_waits_as_advance():
 
 def test_a_price_that_starts_later_skips_the_unpriced_periods_and_charges_from_the_first_priced_one():
     # no price before 20.10: the period of 15.09-14.10 ENDS before the price - unpriced (skipped); the one of 15.10 holds the day the price begins (Г-2: it prices it) and is charged
-    l = led(today=D(2026, 10, 21), stays=[bl.Stay(D(2026, 9, 15))], price_at=flat(500_000, since=D(2026, 10, 20)))
+    inp = make(today=D(2026, 10, 21), stays=[bl.Stay(D(2026, 9, 15))], price_at=flat(500_000, since=D(2026, 10, 20)))
+    l = bl.run_ledger(replace(inp, first_priced_day=lambda day: max(day, D(2026, 10, 20))))        # Д-8: the first day with a price comes from the price books (the loader), not from a search over ``price_at``
     assert l.unpriced_from == D(2026, 9, 15) and l.debt == 500_000 and bl.F_PRICE_MISSING in l.flags
     assert [s.state for s in l.segments if s.begun] == ["unpriced", "open"]
 
