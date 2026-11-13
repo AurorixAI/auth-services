@@ -515,15 +515,25 @@ class IncomeReports:
         return int(entered), int(cancelled), int(count)
 
     def _cash_corrections(self, org_id: str, day: date) -> Tuple[int, int]:
-        """Money-1 Р-11: ``(was, now)`` - the cash of the payments of an EARLIER day that were replaced (corrected) on ``day``: what they held (``was``, counted in ``cancelled`` by ``_cash_moves``) and
-        what their replacements hold now (``now``, counted in ``entered``).  A replacement of a payment of the same day is just a payment (the old one never reached the till)."""
+        """Money-1 Р-11 / Д-7: ``(was, now)`` - the cash of the payments of an EARLIER day that were corrected on ``day``: what they held (``was``, counted in ``cancelled`` by ``_cash_moves``) and what
+        the LIVE end of their chain of corrections holds now (``now``, counted in ``entered``).  The chain is followed through the replacements made and cancelled the same day (300 -> 250 -> 200 is
+        one correction of 100); a chain that ends in a cancelled replacement is no correction: the old payment is cancelled.  A replacement of a payment of the same day is just a payment."""
         lo, hi = self.utc_bounds(day, day)
-        old, new = aliased(StudentPayment), aliased(StudentPayment)
-        rows = (self.db.query(old.amount, old.method, new.amount, new.method, new.voided_at)
-                .join(new, new.replaces_payment_id == old.id)
-                .filter(old.org_id == org_id, old.kind == "payment", old.created_at < lo, old.voided_at >= lo, old.voided_at < hi).all())
-        was = sum(int(o_amount) for o_amount, o_method, _, _, _ in rows if o_method == "cash")
-        now = sum(int(n_amount) for _, _, n_amount, n_method, n_voided in rows if n_method == "cash" and (n_voided is None or n_voided >= hi))
+        old = (self.db.query(StudentPayment.id, StudentPayment.amount, StudentPayment.method)
+               .filter(StudentPayment.org_id == org_id, StudentPayment.kind == "payment", StudentPayment.created_at < lo, StudentPayment.voided_at >= lo, StudentPayment.voided_at < hi).all())
+        tip_of = {payment_id: payment_id for payment_id, _, _ in old}              # the payment at the end of the chain walked so far -> the old payment it started from
+        live: Dict[Any, Tuple[int, Optional[str]]] = {}
+        while tip_of:
+            tips: Dict[Any, Any] = {}
+            for new in self.db.query(StudentPayment).filter(StudentPayment.org_id == org_id, StudentPayment.replaces_payment_id.in_(list(tip_of))).all():
+                root = tip_of[new.replaces_payment_id]
+                if new.voided_at is not None and new.voided_at < hi:               # cancelled the same day: the chain goes on from it (or ends dead)
+                    tips[new.id] = root
+                else:
+                    live[root] = (int(new.amount), new.method)
+            tip_of = tips
+        was = sum(int(amount) for payment_id, amount, method in old if payment_id in live and method == "cash")
+        now = sum(amount for amount, method in live.values() if method == "cash")
         return was, now
 
     def _cash(self, org_id: str, p: Period, today: date, group_id: Optional[UUID], teacher_id: Optional[UUID]) -> Optional[IncomeCash]:

@@ -473,7 +473,7 @@ def test_r13_only_the_method_of_a_payment_of_the_old_group_can_be_corrected_afte
 
 # ---- Г-17 (N9): the cash of a day is counted by the day the record was ENTERED (the till of the centre), not by the date of the payment ---------------------------
 
-from datetime import datetime  # noqa: E402
+from datetime import datetime, timedelta  # noqa: E402
 
 from tests.test_income2_pg import add_payments, income, journal, seeded  # noqa: E402,F401  (fixtures)
 from tests.test_pay2_api_pg import D, fixed_today  # noqa: E402,F401  (fixtures)
@@ -526,6 +526,38 @@ def test_r11_a_cash_correction_on_another_day_is_one_part_with_the_difference_an
     cash = income(world, "2026-10-05", "2026-10-05")["cash"]
     assert (cash["cash_received"], cash["cash_cancelled"], cash["cash_corrected"]) == (base[0], 0, -50_000)       # before: received +250 000, cancelled 300 000
     assert cash["expected"] == base[2] - 50_000 and "исправлено −50 000 сум)" in cash["text"] and "отменено" not in cash["text"]      # the till moved by the difference only
+
+
+def _chain(world, seeded, *steps):
+    """Payments of one chain of corrections ``steps = (key, amount, created, voided)`` (the first one is of 03.10, each next replaces the one before it); returns the base of the till of 05.10."""
+    from src.models.auth import StudentPayment
+
+    ids = add_payments(world, seeded, *[(key, D(2026, 10, 3), created, amount, None) for key, amount, created, _ in steps])
+    rows = [world.db.query(StudentPayment).get(ids[key]) for key, *_ in steps]
+    for i, (row, (_, _, _, voided)) in enumerate(zip(rows, steps)):
+        if voided is not None:
+            row.voided_at, row.voided_by, row.void_reason = voided, world.owner.id, "Опечатка"
+        if i:
+            row.replaces_payment_id = rows[i - 1].id
+    world.db.commit()
+
+
+def test_d7_a_chain_of_corrections_of_one_day_is_one_difference(world, seeded):
+    base = _till(world, "2026-10-05")
+    five = datetime(2026, 10, 5, 6, 0)
+    _chain(world, seeded, ("p0", 300_000, datetime(2026, 10, 3, 5, 0), five), ("p1", 250_000, five, five + timedelta(minutes=30)), ("p2", 200_000, five + timedelta(minutes=30), None))
+    cash = income(world, "2026-10-05", "2026-10-05")["cash"]                           # 300 000 -> 250 000 -> 200 000 on 05.10
+    assert (cash["cash_received"], cash["cash_cancelled"], cash["cash_corrected"]) == (base[0], 0, -100_000)       # before: received +200 000, corrected -300 000
+    assert cash["expected"] == base[2] - 100_000 and "исправлено −100\u00a0000\u00a0сум)" in cash["text"]
+
+
+def test_d7_a_correction_cancelled_the_same_day_is_a_cancellation_of_the_old_payment(world, seeded):
+    base = _till(world, "2026-10-05")
+    five = datetime(2026, 10, 5, 6, 0)
+    _chain(world, seeded, ("p0", 300_000, datetime(2026, 10, 3, 5, 0), five), ("p1", 250_000, five, five + timedelta(minutes=30)))
+    cash = income(world, "2026-10-05", "2026-10-05")["cash"]                           # 300 000 corrected to 250 000 and the new one cancelled
+    assert (cash["cash_received"], cash["cash_cancelled"], cash["cash_corrected"]) == (base[0], 300_000, 0)       # before: corrected -300 000
+    assert cash["expected"] == base[2] - 300_000 and "отменено 300\u00a0000\u00a0сум)" in cash["text"] and "исправлено" not in cash["text"]
 
 
 # ---- Р-1 (R3 Б1, М3): the substitution desk is the second way to Г-3 -------------------------------------------------------------------------------------------
