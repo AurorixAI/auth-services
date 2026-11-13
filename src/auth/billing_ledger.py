@@ -561,6 +561,17 @@ class _Gen:
             self._lesson_days_cache[key] = tuple(fn(start, end))
         return self._lesson_days_cache[key]
 
+    def _earliest_price(self, first: date, end: date) -> PriceInfo:
+        """Money-1 Р-12 (R3 М9): the price that begins EARLIEST in ``(first, end]`` when there is none on ``first`` (the prices are one timeline: once there is one there always is one, so the day it
+        begins is found by bisection); no price in the whole period: the answer at ``end`` (no price)."""
+        if self.inp.price_at(end).amount is None:
+            return self.inp.price_at(end)
+        low, high = first, end                        # no price on ``low``, one on ``high``
+        while (high - low).days > 1:
+            middle = low + (high - low) // 2
+            low, high = (low, middle) if self.inp.price_at(middle).amount is not None else (middle, high)
+        return self.inp.price_at(high)
+
     def segment(
         self, chain: int, start: date, end: date, days: List[date], nominal: int, *, by_lessons: bool, cell: Optional[tuple]
     ) -> Segment:
@@ -572,7 +583,7 @@ class _Gen:
         if price.amount is None:
             # Money-1 Г-2: the FIRST price of a group acts from the start of the period it begins in (the rule «B2» lives here, in the calculation, not at the
             # moment the price is typed): no price on the first day and one at the end of the period = it began inside this period, which it then prices whole.
-            price = self.inp.price_at(end)
+            price = self._earliest_price(first, end)
         begun = first <= self.today
         seg_id = f"seg:{chain}:{start.isoformat()}"
         n = len(days)

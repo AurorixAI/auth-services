@@ -53,6 +53,17 @@ def test_g2_the_first_price_from_the_10th_prices_the_period_of_the_student_added
     assert (led.charged, led.debt) == (500_000, 500_000) and charge_of(led, D(2026, 11, 5)) == 500_000      # e7c44aa: 0 and 0 - the first month for free
 
 
+def test_r12_two_prices_begin_inside_the_period_and_the_earliest_one_prices_it(world, fixed_today):
+    w = world
+    fixed_today(D(2026, 11, 25))
+    settings_block(w, accounting_start_date="2026-09-01")
+    give_group_price(w.db, w.group, 500_000, valid_from=D(2026, 11, 10))      # the first price of the group «с 10.11», raised «с 20.11»; the student was added on 05.11
+    give_group_price(w.db, w.group, 600_000, valid_from=D(2026, 11, 20))
+    everybody_from(w, D(2026, 11, 5))
+    led = account(w, membership(w).id)
+    assert (led.charged, led.debt) == (500_000, 500_000) and charge_of(led, D(2026, 11, 5)) == 500_000      # before: 600 000 - the LAST price that began in the period
+
+
 def test_g2_a_period_that_ended_before_the_first_price_is_still_free_and_the_next_one_is_charged(world, fixed_today):
     w = world
     fixed_today(D(2026, 12, 12))
