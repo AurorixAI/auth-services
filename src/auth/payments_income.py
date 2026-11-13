@@ -312,6 +312,9 @@ def _iso(moment: Optional[datetime]) -> Optional[str]:
     return moment.isoformat() if moment else None
 
 
+NOT_IN_CENTRE = "нет в центре"      # a filter that names somebody who is not of this centre says so, never who he is (G-9)
+
+
 def _staff(user) -> Optional[str]:
     return staff_name(user.first_name, user.last_name) if user else None
 
@@ -932,11 +935,11 @@ class IncomeReports:
         if group_id:
             group = self.db.query(Group.name).filter(Group.id == group_id, Group.org_id == org_id).first()
             words.append(f"Группа: {group[0]}" if group else "")
-        people = self.service._users([x for x in (teacher_id, created_by) if x])
+        people = self.service._staff_of(org_id, (teacher_id, created_by))
         if teacher_id:
-            words.append(f"Преподаватель: {_staff(people.get(teacher_id)) or ''}")
+            words.append(f"Преподаватель: {_staff(people.get(teacher_id)) or NOT_IN_CENTRE}")
         if created_by:
-            words.append(f"Кто внёс: {_staff(people.get(created_by)) or ''}")
+            words.append(f"Кто внёс: {_staff(people.get(created_by)) or NOT_IN_CENTRE}")
         if q and q.strip():
             words.append(f"Поиск: «{q.strip()}»")
         if status in jx.STATUS_WORDS:

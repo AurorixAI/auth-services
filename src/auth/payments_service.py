@@ -56,6 +56,7 @@ from src.models.auth import (
     StudentPaymentFile,
     StudentRefund,
     StudentWriteoff,
+    OrganizationMember,
     User,
 )
 
@@ -813,6 +814,16 @@ class PaymentService:
         if not wanted:
             return {}
         return {u.id: u for u in self.db.query(User).filter(User.id.in_(wanted)).all()}
+
+    def _staff_of(self, org_id: str, ids: Iterable[Optional[UUID]]) -> Dict[UUID, User]:
+        """Money-1 G-9: the users of ONE centre by id - for ids that come from the caller (a filter), which may name a user of another centre.  A name of the rows of a
+        centre is never in doubt (``_users``); a name that a stranger can ask for is cut at the centre."""
+        wanted = {i for i in ids if i}
+        if not wanted:
+            return {}
+        rows = (self.db.query(User).join(OrganizationMember, OrganizationMember.user_id == User.id)
+                .filter(User.id.in_(wanted), OrganizationMember.org_id == org_id).all())
+        return {u.id: u for u in rows}
 
     def _links(self, payments: Iterable[StudentPayment]) -> _Links:
         """Where the carry-overs among ``payments`` come from and where the stamped ones went (LEGACY rows only)."""
