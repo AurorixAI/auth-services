@@ -501,6 +501,17 @@ def recalc_text(added: List[Dict[str, Any]], *, done: bool) -> str:
     return f"Ученикам — перерасчёт: долг {'уменьшился' if done else 'уменьшится'} сразу на {num(sum(a['amount'] for a in added))}{NBSP}сум ({count} {plural(count, 'ученик', 'ученика', 'учеников')})"
 
 
+def cancel_consequence_text(added: List[Dict[str, Any]]) -> str:
+    """Money-1 Г-16: what a cancellation «по вине центра» means for the students, in words, for WHOEVER cancels (the sums of the whole group stay with the money right): the centre credits each
+    student, or - setting off, a package, a holiday - the payment is not touched."""
+    if not added:
+        return "На оплату не влияет"
+    amounts = sorted({a["amount"] for a in added})
+    if len(amounts) == 1:
+        return f"Ученикам зачтётся по {num(amounts[0])}{NBSP}сум"
+    return f"Ученикам зачтётся от {num(amounts[0])} до {num(amounts[-1])}{NBSP}сум"
+
+
 def deduction_text(gone: List[Dict[str, Any]], *, done: bool, past: bool = True) -> str:
     """What the return of a lesson that the centre cancelled does to the students (the word is «перерасчёт», never «вычет») and to the teacher; ``past``: the lesson had begun, so it goes back to the
     list «Уроки без отметки» (a future one just comes back into the schedule)."""

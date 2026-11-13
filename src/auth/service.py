@@ -5288,15 +5288,15 @@ class AuthService:
         cancelled_by: Optional[str],
         is_org_admin: bool,
         is_org_manager: bool = False,
+        money_right: bool = True,
     ) -> Dict[str, Any]:
         """«Урока не было»: an explicit, reasoned cancellation of a past lesson that was never started - THE cancellation (``Substitutions.cancel_lesson``, W1 S2).
 
         A teacher may do it for a lesson of his own (always «по вине центра», ``teacher_cancel`` in the journal «Замены»); a lesson that has not passed yet is not «missed» - the
         teacher asks «Не смогу провести», the administrator cancels it from the lesson sheet.  Returns ``{"version", "warnings"}``."""
         manager = is_org_manager or is_org_admin
-        cancellation_kind = req.cancellationKind or DEFAULT_CANCELLATION_KIND      # PAY-F: owner / admin choose, a teacher cancels «по вине центра»
-        if cancellation_kind != DEFAULT_CANCELLATION_KIND and not is_org_manager:
-            raise PermissionError("Выбирать «Праздник, выходной» может только владелец или администратор: преподаватель отменяет урок «по вине центра»")
+        cancellation_kind = req.cancellationKind or DEFAULT_CANCELLATION_KIND      # PAY-F: the kind is chosen only with the money right (Г-16); a teacher cancels «по вине центра»
+        ops_rules.assert_cancellation_kind_allowed(cancellation_kind, money_right and is_org_manager)
         if not cancelled_by:
             raise ValueError("Не удалось определить автора отмены урока")
         group = self._require_group_read_access(
@@ -5591,6 +5591,8 @@ class AuthService:
         is_cancellation = requested_status == LessonAttendanceStatus.CANCELLED.value
         cancellation_kind = (req.cancellationKind or DEFAULT_CANCELLATION_KIND) if is_cancellation else None  # PAY-F
         manager = is_org_manager or is_org_admin
+        if is_cancellation:
+            ops_rules.assert_cancellation_kind_allowed(cancellation_kind, money_right and is_org_manager)         # Г-16: before anything is asked of exam-service or locked
         if is_cancellation and req.cancellationReason:
             from .lesson_substitutions import Substitutions
             # Wave B P4 (SV-15): exam-service is asked (fail-closed) BEFORE the group is locked; the release is asked after the commit
@@ -5621,8 +5623,6 @@ class AuthService:
                 if self._own_one_off_started(group_id, target_lesson_id, lesson_date, marked_by, att):          # #154 (Ц14): his own one-off that has begun is not deleted - 409, not the general «ask the administrator»
                     raise ops_rules.conflict("LESSON_ALREADY_STARTED", "Урок уже начат или прошёл: удалить его нельзя")
                 raise ops_rules.forbidden("TEACHER_CANNOT_CANCEL", "Отменить урок может администратор. Нажмите «Не смогу провести»")
-            if cancellation_kind != DEFAULT_CANCELLATION_KIND:
-                raise PermissionError("Выбирать «Праздник, выходной» может только владелец или администратор: преподаватель отменяет урок «по вине центра»")
 
         matching_slot = next(
             (

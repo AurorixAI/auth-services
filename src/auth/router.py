@@ -1807,14 +1807,14 @@ def cancel_missed_group_attendance(
 
     def cancel():
         return svc.cancel_missed_group_attendance(
-            user["org_id"], group_id, request, cancelled_by=user["user_id"], is_org_admin=manager, is_org_manager=manager)
+            user["org_id"], group_id, request, cancelled_by=user["user_id"], is_org_admin=manager, is_org_manager=manager, money_right=money_right)
 
     try:
         if not dry_run and not manager:
             result = cancel()                           # a teacher cancels his own lesson as before: nothing about money is said to him
             return {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"]}
-        result, effects, added = _cancel_with_effects(db, user, group_id, cancel, owner=user.get("org_role") == "owner", money_right=money_right, dry_run=dry_run)
-        out = {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"], "dryRun": dry_run, "moneyEffects": effects}
+        result, effects, added, consequence = _cancel_with_effects(db, user, group_id, cancel, owner=user.get("org_role") == "owner", money_right=money_right, dry_run=dry_run)
+        out = {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"], "dryRun": dry_run, "moneyEffects": effects, "consequence": consequence}
         if added is not None:
             out["deductions"] = added                   # the money right only (a teacher / an administrator without it never read the sums of the students)
         return out
@@ -1827,7 +1827,7 @@ def cancel_missed_group_attendance(
 
 
 def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owner: bool, money_right: bool, dry_run: bool):
-    """``(the answer of the cancellation, the money block, the recalculations or None)``: the cancellation runs once inside a transaction that is rolled back (the numbers; its refusals are the refusals
+    """``(the answer of the cancellation, the money block, the recalculations or None, the consequence for the students in words)``: the cancellation runs once inside a transaction that is rolled back (the numbers; its refusals are the refusals
     of the real call, an exam-service call that writes - the release - is not made), then - unless ``dry_run`` - for real; the block of the first pass is what the answer says."""
     from . import money_effects as me
     from .models import StudentGroup
@@ -1836,24 +1836,24 @@ def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owne
     try:
         gid = UUID(str(group_id))
     except ValueError:
-        return cancel(), me.unavailable(not dry_run), None                  # the road itself answers «Группа не найдена»
+        return cancel(), me.unavailable(not dry_run), None, None            # the road itself answers «Группа не найдена»
     memberships = [mid for (mid,) in db.query(StudentGroup.id).filter(StudentGroup.group_id == gid).all()]
     seen: dict = {}
 
     def action():
         if not me.is_preview(db):
             return cancel()
-        was = me.centre_deductions(db, org_id, gid) if money_right else {}
+        was = me.centre_deductions(db, org_id, gid)
         out = cancel()
-        if money_right:
-            seen["added"] = me.recalc_added(db, org_id, gid, was)
+        seen["added"] = me.recalc_added(db, org_id, gid, was)          # read for everybody: the words «зачтётся по N сум» are said to whoever cancels, the sums of the group only to the money right
         return out
 
     result, effects = me.run_with_effects(db, org_id, memberships, owner, action, dry_run=dry_run)
-    added = seen.get("added") if money_right else None
+    added = seen.get("added")
+    consequence = me.cancel_consequence_text(added) if added is not None else None
     if money_right and added is not None:
         effects = {**effects, "deductions": added, "text": "; ".join(x for x in (me.recalc_text(added, done=not dry_run), effects.get("text")) if x)}
-    return result, effects, added
+    return result, effects, (added if money_right else None), consequence
 
 
 # LOGIC-B: the new operations routes (lesson teacher, group archive, staff handover / restore).

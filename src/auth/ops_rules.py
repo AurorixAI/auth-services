@@ -28,6 +28,13 @@ def forbidden(code: str, message: str, **extra: Any) -> OpsError:
     return OpsError(403, code, message, **extra)
 
 
+def assert_cancellation_kind_allowed(kind: Optional[str], money_right: bool) -> None:
+    """Money-1 Г-16: the kind of a cancellation is money (``holiday`` = no recalculation for the students, ``centre`` = they are credited by the centre's setting).  Whoever has no right to the
+    money does not choose it: the lesson is cancelled «по вине центра» and the money follow the setting of the centre.  One rule for every road of a cancellation."""
+    if kind not in (None, "centre") and not money_right:
+        raise forbidden("MONEY_RIGHT_REQUIRED", "Вид отмены «Праздник, выходной» меняет перерасчёт ученикам: его выбирает владелец или администратор с доступом к деньгам. Без него урок отменяется «по вине центра»")
+
+
 def not_found(code: str, message: str, **extra: Any) -> OpsError:
     return OpsError(404, code, message, **extra)
 

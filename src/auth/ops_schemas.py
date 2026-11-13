@@ -238,6 +238,7 @@ class ReconcileCancelOut(BaseModel):
     dryRun: bool = False
     deductions: Optional[List[Dict[str, Any]]] = Field(None, exclude_if=lambda v: v is None)
     moneyEffects: Optional[Dict[str, Any]] = Field(None, exclude_if=lambda v: v is None)
+    consequence: Optional[str] = Field(None, exclude_if=lambda v: v is None)       # Г-16: «Ученикам зачтётся по 46 000 сум» / «На оплату не влияет» - for everybody, in the preview and after the call
 
 
 class SaveAttendanceOut(BaseModel):

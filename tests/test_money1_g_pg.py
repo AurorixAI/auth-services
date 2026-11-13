@@ -229,3 +229,66 @@ def test_g3_who_taught_yesterdays_lesson_without_a_journal_row_is_for_the_money_
     assert admin.put(f"{P}/groups/{world.group.id}/lesson-teacher", json={**body, "lessonDate": coming.isoformat(), "lessonId": f"s{coming.isoweekday()}"}).status_code == 200
 
 
+# ---- Г-16 (N3, П2): the kind of a cancellation is money: without the right it is always «по вине центра» --------------------------------------------------------
+
+from tests.ops_helpers import client as staff_client, clock  # noqa: E402,F401  (fixtures)
+from tests.test_money1_cancel_preview_pg import WED, post as cancel_post, world as cancel_world  # noqa: E402
+
+NBSP = " "
+
+
+@pytest.mark.parametrize("who", ["admin", "A"], ids=["admin-without-right", "teacher"])
+def test_g16_holiday_is_refused_without_the_money_right_on_the_road_of_a_missed_lesson(pg_session, clock, who):
+    w, g, students, ms, url = cancel_world(pg_session, clock)
+    grant_money_right(w, False)
+    refused = cancel_post(w, who, url, {**WED, "cancellationKind": "holiday"})
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "MONEY_RIGHT_REQUIRED", refused.text      # e7c44aa: 200 and no deduction (46 000 x 5 = 0 instead)
+    assert cancel_post(w, "owner", url, {**WED, "cancellationKind": "holiday"}, dry=True).status_code == 200
+
+
+def test_g16_without_the_right_the_cancellation_is_by_the_centre_and_the_preview_says_what_the_students_get(pg_session, clock):
+    w, g, students, ms, url = cancel_world(pg_session, clock)
+    grant_money_right(w, False)
+    dry = cancel_post(w, "admin", url, WED, dry=True)
+    assert dry.status_code == 200, dry.text
+    assert dry.json()["consequence"] == f"Ученикам зачтётся по 46{NBSP}000{NBSP}сум"
+    assert "deductions" not in dry.json() and "46" not in str(dry.json()["moneyEffects"])      # the students' sums of the whole group stay with the money right
+    assert cancel_post(w, "admin", url, WED).status_code == 200
+
+
+def test_g16_the_preview_of_a_holiday_says_it_does_not_touch_the_payment(pg_session, clock):
+    w, g, students, ms, url = cancel_world(pg_session, clock)
+    dry = cancel_post(w, "owner", url, {**WED, "cancellationKind": "holiday"}, dry=True)
+    assert dry.json()["consequence"] == "На оплату не влияет"
+
+
+
+def _subs_world(pg_session, clock):
+    from tests.b2_helpers import build_d2
+    from tests.test_ops_b2_decide_pg import one
+
+    clock.set("2026-10-22 11:00")
+    w = build_d2(pg_session)
+    grant_money_right(w, False)
+    return w, one(w, "A", "L2", "2026-10-28")["id"]
+
+
+def test_g16_a_decision_to_cancel_with_the_kind_holiday_is_refused_without_the_right_one_and_many(pg_session, clock):
+    from tests.payf_helpers import API, client as payf_client
+
+    w, rid = _subs_world(pg_session, clock)
+    body = {"decision": "cancel", "reason": "Урока не было", "cancellationKind": "holiday"}
+    one = payf_client(w, "admin").post(f"{API}/org/substitutions/{rid}/decide", json=body)
+    assert one.status_code == 403 and one.json()["detail"]["code"] == "MONEY_RIGHT_REQUIRED", one.text
+    many = payf_client(w, "admin").post(f"{API}/org/substitutions/decide-bulk", json={**body, "ids": [rid]})
+    assert many.status_code == 403 and many.json()["detail"]["code"] == "MONEY_RIGHT_REQUIRED", many.text
+    ok = payf_client(w, "admin").post(f"{API}/org/substitutions/{rid}/decide", json={"decision": "cancel", "reason": "Урока не было"})      # no kind = by the centre
+    assert ok.status_code == 200, ok.text
+
+
+def test_g16_the_save_of_attendance_as_a_cancellation_holiday_is_refused_without_the_right(pg_session, clock):
+    w, g, students, ms, url = cancel_world(pg_session, clock)
+    grant_money_right(w, False)
+    body = {"lessonDate": "2026-10-28", "lessonId": "lesson-wed", "status": "cancelled", "records": {}, "cancellationReason": "Праздник", "cancellationKind": "holiday"}
+    refused = cancel_post(w, "admin", url.replace("/reconcile/cancel", ""), body)
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "MONEY_RIGHT_REQUIRED", refused.text

@@ -55,7 +55,7 @@ from .models import (
 )
 from .one_off_purpose import MOVED, OneOffPurpose, apply_marks, copy_fields, one_off_of
 from .sql_text import contains
-from .ops_rules import OpsError, conflict, forbidden, hhmm_to_minutes, normalize_room, not_found, short_name, unprocessable
+from .ops_rules import OpsError, assert_cancellation_kind_allowed, conflict, forbidden, hhmm_to_minutes, normalize_room, not_found, short_name, unprocessable
 from .membership_periods import periods_by_membership
 from .student_archive import student_not_archived
 from .schemas import DEFAULT_CANCELLATION_KIND
@@ -1019,6 +1019,8 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
     def decide(self, org_id: Any, actor_id: Any, actor_role: str, request_id: Any, body) -> Dict[str, Any]:
         actor, via = _uuid(actor_id), self._via(actor_role)
         viewer = viewer_for(actor, teacher=via == TEACHER_MOVE)          # a teacher who moves his own lesson is answered as a teacher (#157 A1)
+        if body.decision == "cancel":          # Money-1 Г-16: rights first, then exam-service (LESSONS 16)
+            assert_cancellation_kind_allowed(getattr(body, "cancellationKind", None), OneOffPurpose(self.svc).money_right(org_id, actor_role))
         if body.decision in ("cancel", "reschedule"):
             self._preflight_request(org_id, request_id, body)           # Wave B P4 (SV-15): exam-service is asked before the group is locked
         group, r = self._lock_request(org_id, request_id)
@@ -1656,6 +1658,8 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
 
     # ------------------------------------------------------------------------------------------------- bulk
     def decide_bulk(self, org_id: Any, actor_id: Any, actor_role: str, body) -> Dict[str, Any]:
+        if body.decision == "cancel":          # Г-16: a refusal of the whole call, not N «skipped» rows
+            assert_cancellation_kind_allowed(getattr(body, "cancellationKind", None), OneOffPurpose(self.svc).money_right(org_id, actor_role))
         rows = self.db.query(Req).filter(Req.org_id == org_id, Req.id.in_([u for u in (_uuid(i) for i in body.ids) if u])).order_by(Req.starts_at, Req.id).all()
         order = [str(r.id) for r in rows] + [i for i in body.ids if i not in {str(r.id) for r in rows}]
         updated, items, skipped, results = 0, [], [], []

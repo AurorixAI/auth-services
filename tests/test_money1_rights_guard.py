@@ -14,6 +14,7 @@ from fastapi.routing import APIRoute
 from src.api import main_v2
 from src.auth import dependencies
 from src.auth.one_off_purpose import OneOffPurpose
+from src.auth.ops_rules import assert_cancellation_kind_allowed
 
 P = "/api/v1/auth"
 
@@ -61,6 +62,9 @@ INLINE = {
 # the money right is checked INSIDE the service (the route itself is open to a manager: he sees the queue), like ``INLINE`` - and the test below reads the service source for the refusal;
 # the SUMS of the pay of the teacher are the owner's (an administrator reads the number of students, not the amount)
 SERVICE_CHECKED = {
+    # Money-1 Г-16: a decision «cancel» with the kind «Праздник» (no recalculation for the students) is money: ``assert_cancellation_kind_allowed`` answers 403 MONEY_RIGHT_REQUIRED to whoever has no right
+    ("POST", f"{P}/org/substitutions/{{request_id}}/decide"): ("the decision of a request: the kind of a cancellation is money, chosen only with the right (Г-16)", assert_cancellation_kind_allowed),
+    ("POST", f"{P}/org/substitutions/decide-bulk"): ("the same for many: one refusal of the whole call (Г-16)", assert_cancellation_kind_allowed),
     ("POST", f"{P}/org/one-off-lessons/{{lesson_id}}/money-decision"): ("«Оплатить / Не оплачивать» an additional lesson: ``OneOffPurpose.decide`` answers 403 MONEY_RIGHT_REQUIRED to an administrator without the right (#159)", OneOffPurpose.decide),
 }
 
@@ -94,8 +98,8 @@ NOT_MONEY = {
     ("POST", f"{P}/org/students"): "a student card without money (the enrolment and its fee go through the roster routes, CONDITIONAL)",
     ("PUT", f"{P}/org/students/{{student_id}}"): "the card; the archive goes through its own route",
     ("POST", f"{P}/org/students/{{student_id}}/restore"): "the card comes back and the student is re-enrolled; the accruals begin from the first lesson of the group by the normal rule («Оплата с», Money-1 B1), no money is entered",
-    ("POST", f"{P}/org/substitutions"): "a request for a substitute for a FUTURE lesson", ("POST", f"{P}/org/substitutions/decide-bulk"): "the same, the decision",
-    ("POST", f"{P}/org/substitutions/withdraw"): "the same", ("POST", f"{P}/org/substitutions/{{request_id}}/decide"): "the same",
+    ("POST", f"{P}/org/substitutions"): "a request for a substitute for a FUTURE lesson",
+    ("POST", f"{P}/org/substitutions/withdraw"): "the same",
     ("POST", f"{P}/org/substitutions/{{request_id}}/withdraw"): "the same",
     ("PUT", f"{P}/org"): "the name and the contacts of the centre", ("PUT", f"{P}/me"): "the profile of the person",
 }
