@@ -1109,7 +1109,7 @@ class GroupAttendanceAudit(Base):
         CheckConstraint(
             "action IN ('started', 'reconciliation_started', 'created', 'updated', 'corrected', 'cancelled', 'reconciliation_cancelled', "
             "'excuse_reviewed', 'excuse_reset', 'excuse_removed', 'excuse_file_added', 'excuse_file_removed', "
-            "'excuse_closed_pause', 'teacher_changed', 'completed_reverted')",
+            "'excuse_closed_pause', 'excuse_reason_changed', 'teacher_changed', 'completed_reverted')",
             name="ck_group_attendance_audit_action",
         ),
         Index("idx_group_attendance_audit_attendance", "attendance_id"),

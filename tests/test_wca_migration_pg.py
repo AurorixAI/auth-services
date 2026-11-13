@@ -51,7 +51,7 @@ def test_the_revision_follows_wave_b_and_is_the_head():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == ["mg12a1b2c3d4"] and script.get_revision(REVISION).down_revision == BEFORE        # Money-1 sits on top of this revision
+    assert script.get_heads() == ["mg13a1b2c3d4"] and script.get_revision(REVISION).down_revision == BEFORE        # Money-1 sits on top of this revision
 
 
 def test_up_down_up_on_a_filled_database(engine):

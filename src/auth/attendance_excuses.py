@@ -484,6 +484,9 @@ class AttendanceExcuseService:
                 .all()
             )
             for row in rows:
+                if row.status in ("confirmed", "rejected"):          # Р-7: the text a decision rested on is not lost - the journal keeps the old and the new one
+                    self._audit(att, actor_id, "excuse_reason_changed", {
+                        "excuse_id": str(row.id), "student_id": str(row.student_id), "status": row.status, "reason_before": row.reason, "reason_after": plan.update[str(row.student_id)]})
                 row.reason = plan.update[str(row.student_id)]
                 row.reason_by = actor_id
                 row.reason_at = now

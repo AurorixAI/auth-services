@@ -33,6 +33,26 @@ def test_g1_the_text_of_a_decided_excuse_keeps_the_decision_for_everybody(world,
         assert (row.status, row.reviewed_by, row.review_note) == (decision, world.owner.id, "Решено") and row.reason == f"Другой текст {who.id}"
 
 
+# ---- Р-7 (R3 М1): the text a decision rested on stays in the journal ---------------------------------------------------------------------------------
+
+def test_r7_a_change_of_the_text_of_a_decided_excuse_leaves_a_record_with_the_old_and_the_new_text(world, now_4_nov):
+    from src.models.auth import GroupAttendanceAudit
+
+    day, lid = hold_lesson(world, date(2026, 10, 30))
+    s1 = world.students[0]
+    grant_money_right(world)
+    assert post_save(world, world.owner, day, lid, ["excused", "present", "present"], correctionReason="Болел", excuseReasons={str(s1.id): "Болел, написал"}).status_code == 200
+    excuse = world.db.query(AttendanceExcuse).filter_by(student_id=s1.id).one()
+    excuse.status, excuse.reviewed_by, excuse.review_note = "confirmed", world.owner.id, "Решено"
+    world.db.commit()
+    grant_money_right(world, False)
+    assert post_save(world, world.admin, day, lid, ["excused", "present", "present"], excuseReasons={str(s1.id): "Другой текст"}).status_code == 200
+    (row,) = world.db.query(GroupAttendanceAudit).filter_by(org_id=world.org.id, action="excuse_reason_changed").all()         # before: nothing - the story the owner decided on was gone
+    assert row.details["reason_before"] == "Болел, написал" and row.details["reason_after"] == "Другой текст" and row.details["status"] == "confirmed" and row.actor_id == world.admin.id
+    assert post_save(world, world.admin, day, lid, ["excused", "present", "present"], excuseReasons={str(s1.id): "Другой текст"}).status_code == 200
+    assert world.db.query(GroupAttendanceAudit).filter_by(org_id=world.org.id, action="excuse_reason_changed").count() == 1      # the same text again: no new record
+
+
 # ---- Г-2 (N2): the first price of a group begins inside the first period of a student who was added before it --------------------------------------------
 
 from tests.money1b_helpers import account, charge_of, set_schedule, slot  # noqa: E402

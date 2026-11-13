@@ -33,7 +33,7 @@ def test_the_revision_is_the_head_and_follows_pack_a():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == ["mg12a1b2c3d4"] and script.get_revision("mv1a1b2c3d4").down_revision == REVISION and script.get_revision(REVISION).down_revision == BEFORE
+    assert script.get_heads() == ["mg13a1b2c3d4"] and script.get_revision("mv1a1b2c3d4").down_revision == REVISION and script.get_revision(REVISION).down_revision == BEFORE
 
 
 def period_columns(engine):
@@ -65,4 +65,4 @@ def test_up_down_up_the_column_and_the_journal_and_the_data_of_a_period_survive_
     with engine.connect() as c:
         assert c.execute(text("SELECT count(*) FROM student_group_periods")).scalar() == 1                             # the period itself stays: only its extra day is gone
     command.upgrade(cfg, "head")
-    assert version(engine) == "mg12a1b2c3d4" and "billing_from" in period_columns(engine)
+    assert version(engine) == "mg13a1b2c3d4" and "billing_from" in period_columns(engine)

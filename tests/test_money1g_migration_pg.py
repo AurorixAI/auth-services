@@ -36,7 +36,7 @@ def test_the_revision_is_the_head_and_follows_the_receipt_prints():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == [REVISION] and script.get_revision(REVISION).down_revision == BEFORE
+    assert script.get_heads() == ["mg13a1b2c3d4"] and script.get_revision(REVISION).down_revision == BEFORE
 
 
 def audit_state(engine):
@@ -80,6 +80,6 @@ def test_up_down_up_the_journal_of_a_deleted_lesson_stays_on_every_step(engine):
     with engine.connect() as c:
         assert c.execute(text("SELECT lesson_date FROM group_attendance_audit WHERE action = 'corrected'")).scalar() == "2026-10-26"      # nor does it forget the key
     command.upgrade(cfg, "head")
-    assert version(engine) == REVISION
+    assert version(engine) == "mg13a1b2c3d4"
     rows, rule, nullable = audit_state(engine)
     assert (rule, nullable, len(rows)) == ("n", "YES", 2)
