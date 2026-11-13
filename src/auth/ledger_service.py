@@ -650,9 +650,22 @@ class LedgerLoader:
             runs = bl.merge_stays(stays_of_membership(membership, periods.get(membership.id, [])))
             group = self.db.get(Group, membership.group_id) if any(last is not None for _, last in runs) else None
             for run in runs:
-                # G-8b: the day he left belongs to that group only when it really charges the day (a stay of one day without a lesson charges nothing, G-7)
-                if run[1] is not None and not bl.lessonless_day(lambda a, b, _g=group: self._lesson_days(_g, a, b), run):
+                # G-8b / Р-6: the day he left belongs to that group only when it really charges the day (a stay of one day without a lesson charges nothing, G-7)
+                if run[1] is not None and not bl.lessonless_day(lambda a, b, _g=group: self._lesson_days(_g, a, b), run) and self._holds_day(group, run[1]):
                     self.left_days.setdefault(membership.student_id, {}).setdefault(membership.id, set()).add(run[1])
+
+    def _holds_day(self, group: Group, day: date) -> bool:
+        """Money-1 Р-6 (R3 В5): does ``group`` itself charge ``day``?  By a per-day share (the calendar mode without a schedule to count by) always; by lessons (a package, a fixed billing day
+        with a schedule) only when the group has a lesson that day.  The ONE rule of «the day he left belongs to the old group» for a transfer and for a manual removal + add: a day the old
+        group does not charge is charged by the new one, so it is neither paid twice nor lost."""
+        regime = bl.regime_at(self.settings.regimes, day)
+        if regime.mode == ps.CALENDAR:
+            if regime.anchor == ps.PAYMENT_DATE:
+                return True
+            cell = (ps.billing_period_start(day, regime.billing_day), ps.billing_period_end(day, regime.billing_day))
+            if not self._lesson_days(group, *cell, pattern=True):
+                return True
+        return bool(self._lesson_days(group, day, day))
 
     @staticmethod
     def _begin_after(stays: List[bl.Stay], days: Set[date]) -> List[bl.Stay]:
@@ -670,7 +683,10 @@ class LedgerLoader:
         (Money-1 B6) or on the day of a manual «removed from A, added to B» (G-8) starts the day AFTER it - one day is never charged twice."""
         stays = list(self.stays.get(mid, []))
         for t in self.t_in.get(mid, []):
-            stays = self._begin_after(stays, {ps.business_date(t.at)})
+            day = ps.business_date(t.at)
+            old = self.members.get(t.from_membership_id)           # not loaded (beyond the hops of the loader): nothing is known against the day, it stays the old group's
+            if old is None or self._holds_day(old[2], day):
+                stays = self._begin_after(stays, {day})
         elsewhere = {d for other, days in self.left_days.get(self.members[mid][1].id, {}).items() if other != mid for d in days}
         return self._begin_after(stays, elsewhere)
 
