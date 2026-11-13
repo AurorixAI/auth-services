@@ -310,6 +310,37 @@ def with_makeup(block: Dict[str, Any], makeup: Optional[Dict[str, Any]]) -> Dict
     return block
 
 
+def merge_blocks(blocks: List[Dict[str, Any]], *, done: bool = False) -> Dict[str, Any]:
+    """Money-1 G-14: the blocks of SEVERAL lessons (one ``lesson_block`` per decision, all worked out from the same saved state) as one block: the lessons of the packs that go back (``lessonsBack``) or
+    are spent (``lessonsSpent``), the change of every sheet.  Sums are added, never recalculated: ``freshAfter`` / ``driftAfter`` / ``balanceAfter`` of an owner's line move by the total ``changedBy``.
+    A line without ``changedBy`` (no money right) is only a month that changes."""
+    students: Dict[str, Dict[str, Any]] = {}
+    lines: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for block in blocks:
+        for item in block.get("students", []):
+            students.setdefault(item["studentId"], {**item, "delta": 0})["delta"] += item["delta"]
+        for line in block.get("payroll", []):
+            key = (line.get("teacherId", ""), line["month"])
+            if key not in lines:
+                lines[key] = {**line}
+            elif "changedBy" in line:
+                for field in ("changedBy", "freshAfter", "freshTotal", "driftAfter", "balanceAfter"):
+                    if field in lines[key]:
+                        lines[key][field] += line["changedBy"]
+    package = sorted(students.values(), key=lambda s: str(s.get("name") or ""))
+    back, spent = sum(max(s["delta"], 0) for s in package), sum(max(-s["delta"], 0) for s in package)
+    payroll = [lines[k] for k in sorted(lines, key=lambda k: (k[1], k[0]))]
+    parts: List[str] = []
+    if spent:
+        parts.append(f"из пакетов {'списано' if done else 'спишется'} {spent} {plural(spent, 'урок', 'урока', 'уроков')}")
+    if back:
+        parts.append(f"в пакеты {'возвращено' if done else 'вернётся'} {back} {plural(back, 'урок', 'урока', 'уроков')}")
+    pay_text = text_of([], payroll, done=done, closed_blocks=True)
+    text = "; ".join(parts + ([pay_text[0].lower() + pay_text[1:]] if pay_text else []))
+    return {"students": package, "lessonsBack": back, "lessonsSpent": spent, "payroll": payroll,
+            "text": (text[0].upper() + text[1:]) if text else "", "dryRun": not done}
+
+
 # ============================================================================================ the probes of the actions
 @safe(lambda *a, **k: k.get("done", True))
 def lesson_block(db, org_id: Any, *, students: List[Dict[str, Any]], probe: Optional[SheetProbe], owner: bool, done: bool, group_id: Any = None) -> Dict[str, Any]:

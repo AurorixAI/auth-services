@@ -318,8 +318,11 @@ class BulkSkipped(BaseModel):
 
 
 class BulkReviewResponse(BaseModel):
-    updated: int
+    updated: int                                   # with ``dry_run``: how many WOULD be decided
     skipped: List[BulkSkipped]
+    dry_run: bool = False
+    # Money-1 G-14: only with ``dry_run`` - the lessons of the packs that go back / are spent and the change of the pay of the teachers (the sums: the money right only), summed over the items that would be decided
+    money_effects: Optional[Dict[str, Any]] = None
 
 
 # ============================================================================
@@ -1204,6 +1207,13 @@ class AttendanceExcuseService:
             block = me.with_makeup(block, me.makeup_right(self.db, att.org_id, att.group_id, sid, gained=status_after == "confirmed"))
         return block
 
+    def _decide(self, excuse: AttendanceExcuse, att: GroupAttendance, actor_id: str, decision: str, note: Optional[str], *, owner: bool, done: bool) -> Dict[str, Any]:
+        """THE decision on one excuse with its consequences for the money (the single decision and every item of a bulk preview): applies it (the caller commits or rolls back) and returns the effects."""
+        before = excuse.status
+        probe = self._probe(att, owner)
+        self._apply_review(excuse, att, actor_id, decision, note)
+        return self._effects(att, excuse, before, excuse.status, probe, owner=owner, done=done)
+
     def review(
         self, org_id: str, excuse_id: UUID, actor_id: str, decision: str, note: Optional[str],
         expected_status: Optional[str] = None, *, dry_run: bool = False, owner: bool = False,
@@ -1214,10 +1224,7 @@ class AttendanceExcuseService:
         self._check_expected(org_id, excuse, expected_status)
         att = self._lesson(excuse)
         self._assert_period_open(att)
-        before = excuse.status
-        probe = self._probe(att, owner)
-        self._apply_review(excuse, att, actor_id, decision, note)
-        effects = self._effects(att, excuse, before, excuse.status, probe, owner=owner, done=not dry_run)
+        effects = self._decide(excuse, att, actor_id, decision, note, owner=owner, done=not dry_run)
         if dry_run:                                   # the confirmation before «Подтвердить»: the same effects, nothing written
             self.db.rollback()
             item = self._item(org_id, excuse_id)
@@ -1231,12 +1238,13 @@ class AttendanceExcuseService:
 
     def review_bulk(
         self, org_id: str, ids: List[UUID], actor_id: str, decision: str, note: Optional[str],
-        expected_status: Optional[str] = None,
+        expected_status: Optional[str] = None, *, dry_run: bool = False, owner: bool = False,
     ) -> BulkReviewResponse:
         if decision not in DECISIONS:
             raise ExcuseInvalid("Решение: confirmed или rejected")
         updated = 0
         skipped: List[BulkSkipped] = []
+        blocks: List[Dict[str, Any]] = []
         for excuse_id in dict.fromkeys(ids):
             try:
                 excuse = self._lock_excuse(org_id, excuse_id)
@@ -1250,8 +1258,12 @@ class AttendanceExcuseService:
                     raise ExcuseConflict("Решение по заявке уже принято")
                 att = self._lesson(excuse)
                 self._assert_period_open(att)
-                self._apply_review(excuse, att, actor_id, decision, note)
-                self.db.commit()
+                if dry_run:                           # G-14: the same decision as the single one, worked out and taken back item by item (each from the saved state)
+                    blocks.append(self._decide(excuse, att, actor_id, decision, note, owner=owner, done=False))
+                    self.db.rollback()
+                else:
+                    self._apply_review(excuse, att, actor_id, decision, note)
+                    self.db.commit()
                 updated += 1
             except ExcuseError as exc:
                 self.db.rollback()
@@ -1259,8 +1271,10 @@ class AttendanceExcuseService:
             except OpsError as exc:          # Money-1 A1: the month of the lesson is closed - reported per item like every other refusal of a bulk decision
                 self.db.rollback()
                 skipped.append(BulkSkipped(id=str(excuse_id), reason=exc.message, code=exc.code))
-        logger.info("Attendance excuses bulk %s by %s: updated=%d skipped=%d", decision, actor_id, updated, len(skipped))
-        return BulkReviewResponse(updated=updated, skipped=skipped)
+        logger.info("Attendance excuses bulk %s by %s: updated=%d skipped=%d dry_run=%s", decision, actor_id, updated, len(skipped), dry_run)
+        from . import money_effects as me
+
+        return BulkReviewResponse(updated=updated, skipped=skipped, dry_run=dry_run, money_effects=me.merge_blocks(blocks) if dry_run else None)
 
     def reset(
         self, org_id: str, excuse_id: UUID, actor_id: str, expected_status: Optional[str] = None, *, dry_run: bool = False, owner: bool = False,

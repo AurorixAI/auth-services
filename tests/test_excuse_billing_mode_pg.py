@@ -88,7 +88,7 @@ def test_decided_excuses_the_review_and_reset_responses_carry_it_too(world):
     # the bulk answer only counts
     ids = [items[str(s)]["id"] for s in (str(s0.id), str(s1.id))]
     r = client.post(f"{API}/org/attendance/excuses/review-bulk", json={"ids": ids, "decision": "confirmed"})
-    assert r.status_code == 200 and set(r.json()) == {"updated", "skipped"}
+    assert r.status_code == 200 and set(r.json()) == {"updated", "skipped", "dry_run", "money_effects"} and r.json()["money_effects"] is None          # G-14: two fields added; no sums outside a preview
 
 
 @needs_pg

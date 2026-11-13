@@ -88,13 +88,15 @@ def excuses_summary(user: dict = Depends(_admin), db: Session = Depends(get_db))
 @router.post("/org/attendance/excuses/review-bulk", response_model=BulkReviewResponse)
 def review_excuses_bulk(
     request: BulkReviewRequest,
+    dry_run: bool = Query(False, description="только последствия для денег по всему пакету, ничего не записывать"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
     """Подтвердить/отклонить несколько заявок; недоступные попадают в skipped.  Решение по справке меняет деньги (пакет ученика, зарплата): право на оплаты (Money-1 A4)."""
     try:
         return AttendanceExcuseService(db).review_bulk(
-            user["org_id"], request.ids, user["user_id"], request.decision, request.note, request.expected_status
+            user["org_id"], request.ids, user["user_id"], request.decision, request.note, request.expected_status,
+            dry_run=dry_run, owner=user.get("org_role") == "owner",
         )
     except ExcuseError as exc:
         raise _http(exc)
