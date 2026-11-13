@@ -849,8 +849,7 @@ class LessonTeachers:
         now = bc.utc_now()
         actor = _uuid(actor_id)
         if row is not None and row_teacher != want:
-            row.teacher_id = want
-            row.version = (row.version or 1) + 1
+            row.teacher_id = want          # Р-15: the version is the version of the MARKS - a new teacher does not move them, so an open journal screen is not made stale by it
             self.db.add(
                 GroupAttendanceAudit(
                     attendance_id=row.id, org_id=org_id, group_id=group.id, actor_id=actor, action="teacher_changed",

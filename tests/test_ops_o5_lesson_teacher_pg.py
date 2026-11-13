@@ -143,7 +143,7 @@ def test_r5_who_taught_a_finished_lesson_can_be_corrected_while_the_month_is_ope
     a missed lesson is reconciled by the teacher OF THAT DATE, not by the new teacher."""
     grant_money_right(w)                    # Money-1 A4: the administrator of this test has the money right of the owner
     r = put(w, "admin", w.G1, "D", lesson="lesson-l1", day="2026-10-19", reason="Исправление")
-    assert r.status_code == 200 and r.json()["attendanceUpdated"] is True and r.json()["version"] == 2
+    assert r.status_code == 200 and r.json()["attendanceUpdated"] is True and r.json()["version"] == 1      # Р-15: a new teacher does not move the marks, so not their version
     row = w.db.query(GroupAttendance).filter_by(group_id=w.G1.id, lesson_id="lesson-l1", lesson_date="2026-10-19").one()
     assert row.teacher_id == w.D.id and row.marked_by == w.A.id                                # marked_by is not "who taught"
     kinds = [a.action for a in w.db.execute(text("SELECT action FROM group_attendance_audit WHERE attendance_id=:i"), {"i": row.id}).fetchall()] if False else \

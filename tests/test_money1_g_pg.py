@@ -645,3 +645,23 @@ def test_r8_a_save_and_a_recalculation_of_a_sheet_wait_for_the_advance_chain_of_
         tab_a.close()
 
 
+# ---- Р-15 (R3 §3): the version the screen READ stays good after an action of a neighbouring road that does not touch the marks ------------------------------------
+
+def test_r15_a_decision_on_an_excuse_and_a_new_teacher_of_the_lesson_do_not_make_the_open_journal_stale(world, now_4_nov):
+    from tests.pg_world import shown_version
+
+    P = "/api/v1/auth/org"
+    day, lid = hold_lesson(world, date(2026, 10, 30))
+    s1 = world.students[0]
+    grant_money_right(world)
+    assert post_save(world, world.owner, day, lid, ["excused", "present", "present"], correctionReason="Болел", excuseReasons={str(s1.id): "Болел, написал"}).status_code == 200
+    screen = shown_version(world, day, lid)                                   # the journal screen read this version ...
+    excuse = world.db.query(AttendanceExcuse).filter_by(student_id=s1.id).one()
+    decided = make_client(world, user=world.owner).post(f"{P}/attendance/excuses/{excuse.id}/review", json={"decision": "confirmed"})
+    assert decided.status_code == 200, decided.text                           # ... a neighbour decides the excuse of the lesson ...
+    put = make_client(world, user=world.owner).put(f"{P}/groups/{world.group.id}/lesson-teacher", json={
+        "lessonDate": day.isoformat(), "lessonId": lid, "teacherId": str(world.teacher2.id), "reason": "Заменил коллега"})
+    assert put.status_code == 200, put.text                                   # ... and appoints who taught it
+    assert shown_version(world, day, lid) == screen                           # the marks did not move: neither did their version
+    kept = post_save(world, world.owner, day, lid, ["excused", "absent", "present"], correctionReason="Опечатка", expectedVersion=screen)
+    assert kept.status_code == 200, kept.text                                 # ... so the save of the screen goes through (no false «Отметки изменились»)
