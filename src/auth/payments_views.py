@@ -6,7 +6,7 @@ sentences (``payments_texts``).  Nothing here decides an amount.
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import List, Optional, Tuple
 
 from . import billing_ledger as bl
@@ -198,8 +198,18 @@ def due_block(before: bl.Ledger) -> PreviewDue:
     )
 
 
-def suggested_amount(before: bl.Ledger, price_today: Optional[int]) -> int:
-    """«Всего к оплате»: the debt; with no debt the next unpaid period (calendar) / a package without the partial credit."""
+def next_period_start(before: bl.Ledger) -> Optional[date]:
+    """Money-1 G-15: the first day of the period that comes after the last one the ledger has built - when the account owes nothing and every built period is paid (calendar); otherwise ``None``."""
+    if before.debt > 0 or before.mode == bl.LESSONS or not before.segments:
+        return None
+    if any(seg.unpaid > 0 and not seg.unpriced for seg in before.segments):
+        return None
+    return before.segments[-1].period_end + timedelta(days=1)
+
+
+def suggested_amount(before: bl.Ledger, price_today: Optional[int], price_next: Optional[int] = None) -> int:
+    """«Всего к оплате»: the debt; with no debt the next unpaid period (calendar; ``price_next`` - its price when the current one is paid exactly and the next is not built yet) / a package without the
+    partial credit."""
     if before.debt > 0:
         return before.debt
     if before.mode == bl.LESSONS:
@@ -207,7 +217,7 @@ def suggested_amount(before: bl.Ledger, price_today: Optional[int]) -> int:
     for seg in before.segments:
         if seg.unpaid > 0 and not seg.unpriced:
             return seg.unpaid
-    return price_today or 0
+    return price_next if price_next is not None else (price_today or 0)
 
 
 def price_ahead(after: bl.Ledger, credit_id: str, current: Optional[int]) -> List[PriceAhead]:

@@ -2054,7 +2054,7 @@ class PaymentService:
         price = loader.books.price(membership_id, membership.group_id, today)
         preview = PaymentPreview(
             as_of=today, mode=before.mode, price=PriceOut(**pricing.price_dict(price)), due=pv.due_block(before),
-            suggested_amount=before.debt if archived else pv.suggested_amount(before, price.amount), amount=amount, result=None,
+            suggested_amount=before.debt if archived else self._suggested(loader, membership, before, price.amount), amount=amount, result=None,
             warnings=[], recalc=self._recalc_news(membership_id, before, exclude_payment=exclude),
         )
         warnings: List[PaymentWarningOut] = []
@@ -2075,6 +2075,13 @@ class PaymentService:
         preview.warnings = warnings
         return preview
 
+    @staticmethod
+    def _suggested(loader, membership: StudentGroup, before: bl.Ledger, price_today: Optional[int]) -> int:
+        """«Всего к оплате» (Money-1 G-15): the one number of the preview and of the old quote; a paid-exactly period suggests the price of the NEXT period, not today's."""
+        start = pv.next_period_start(before)
+        price_next = loader.books.price(membership.id, membership.group_id, start).amount if start is not None else None
+        return pv.suggested_amount(before, price_today, price_next)
+
     def quote(self, org_id: str, membership_id: UUID, **_: Any) -> PaymentQuote:
         """SHIM for the old front (one release): the suggested sum is the debt; the dates are those of the first unpaid period."""
         today = ps.business_today()
@@ -2083,7 +2090,7 @@ class PaymentService:
         seg = next((s for s in l.segments if s.unpaid > 0 and not s.unpriced), None)
         regime = l.mode
         current = self._loader(org_id, today).settings.current
-        suggested = pv.suggested_amount(l, entry.price.amount)
+        suggested = self._suggested(entry.loader, entry.membership, l, entry.price.amount)
         start = seg.period_start if seg else today
         end = seg.period_end if seg and regime == ps.CALENDAR else None
         text = (f"К оплате {_sum(suggested)}" if suggested else "Оплата не требуется")
