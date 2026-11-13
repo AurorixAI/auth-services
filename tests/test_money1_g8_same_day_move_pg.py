@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from src.models.auth import StudentGroup
 
-from tests.pg_world import give_group_price, make_group, needs_pg, world  # noqa: F401  (fixtures)
+from tests.pg_world import give_group_price, make_group, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_pay2_loader_pg import D, join_on, loader, membership_of, set_payments_settings
 
 pytestmark = needs_pg
