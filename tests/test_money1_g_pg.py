@@ -440,6 +440,20 @@ def test_g17_the_cancellation_on_another_day_leaves_the_closed_day_alone_and_lea
     assert _cancelled(world, "2026-10-05") == 300_000 and income(world, "2026-10-05", "2026-10-05")["cash"]["text"].endswith("отменено 300\u00a0000\u00a0сум)")   # ... as «отменено», not «возвращено» (Г-17b)
 
 
+def test_r11_a_cash_correction_on_another_day_is_one_part_with_the_difference_and_a_real_cancellation_stays_a_cancellation(world, seeded):
+    from src.models.auth import StudentPayment
+
+    base = _till(world, "2026-10-05")
+    ids = add_payments(world, seeded, ("old", D(2026, 10, 3), datetime(2026, 10, 3, 5, 0), 300_000, None), ("new", D(2026, 10, 3), datetime(2026, 10, 5, 6, 0), 250_000, None))
+    old, new = world.db.query(StudentPayment).get(ids["old"]), world.db.query(StudentPayment).get(ids["new"])
+    old.voided_at, old.voided_by, old.void_reason = datetime(2026, 10, 5, 6, 0), world.owner.id, "Опечатка"       # 300 000 corrected to 250 000 on 05.10 11:00 Tashkent
+    new.replaces_payment_id = old.id
+    world.db.commit()
+    cash = income(world, "2026-10-05", "2026-10-05")["cash"]
+    assert (cash["cash_received"], cash["cash_cancelled"], cash["cash_corrected"]) == (base[0], 0, -50_000)       # before: received +250 000, cancelled 300 000
+    assert cash["expected"] == base[2] - 50_000 and "исправлено −50 000 сум)" in cash["text"] and "отменено" not in cash["text"]      # the till moved by the difference only
+
+
 # ---- Р-1 (R3 Б1, М3): the substitution desk is the second way to Г-3 -------------------------------------------------------------------------------------------
 
 def test_r1_a_substitute_of_a_past_lesson_without_a_journal_row_is_for_the_money_right_on_the_substitution_desk(pg_session, clock):

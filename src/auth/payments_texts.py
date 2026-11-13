@@ -92,13 +92,15 @@ def _new_debt_text(debt: Dict[str, Any], done: bool) -> str:
     return f"В группе «{debt['group_name']}» долг {'вырос' if done else 'вырастет'} на {money(amount)} — до {money(total)}"
 
 
-def cash_parts_text(received: int, refunded: int, cancelled: int) -> str:
-    """Money-1 Г-17b: `` (принято X, возвращено Y, отменено Z)`` under the till of a day - the zero parts are not shown, and nothing at all when money only came in.  Returned = money handed
-    out; cancelled = a payment entered earlier and cancelled that day (a correction of a record)."""
-    if not (refunded or cancelled):
+def cash_parts_text(received: int, refunded: int, cancelled: int, corrected: int = 0) -> str:
+    """Money-1 Г-17b / Р-11: `` (принято X, возвращено Y, отменено Z, исправлено ±W)`` under the till of a day - the zero parts are not shown, and nothing at all when money only came in.  Returned = money
+    handed out; cancelled = a payment entered earlier and cancelled that day; corrected = a payment of an earlier day replaced that day: ONE part, the difference with its sign."""
+    if not (refunded or cancelled or corrected):
         return ""
-    parts = [(received, "принято"), (refunded, "возвращено"), (cancelled, "отменено")]
-    return " (" + ", ".join(f"{word} {money(amount)}" for amount, word in parts if amount) + ")"
+    parts = [f"{word} {money(amount)}" for amount, word in ((received, "принято"), (refunded, "возвращено"), (cancelled, "отменено")) if amount]
+    if corrected:
+        parts.append(f"исправлено {'+' if corrected > 0 else chr(0x2212)}{money(abs(corrected))}")
+    return " (" + ", ".join(parts) + ")"
 
 
 def plural(count: int, one: str, few: str, many: str) -> str:

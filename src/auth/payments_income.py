@@ -514,6 +514,18 @@ class IncomeReports:
         cancelled, _ = base.filter(model.created_at < lo, model.voided_at >= lo, model.voided_at < hi).one()
         return int(entered), int(cancelled), int(count)
 
+    def _cash_corrections(self, org_id: str, day: date) -> Tuple[int, int]:
+        """Money-1 Р-11: ``(was, now)`` - the cash of the payments of an EARLIER day that were replaced (corrected) on ``day``: what they held (``was``, counted in ``cancelled`` by ``_cash_moves``) and
+        what their replacements hold now (``now``, counted in ``entered``).  A replacement of a payment of the same day is just a payment (the old one never reached the till)."""
+        lo, hi = self.utc_bounds(day, day)
+        old, new = aliased(StudentPayment), aliased(StudentPayment)
+        rows = (self.db.query(old.amount, old.method, new.amount, new.method, new.voided_at)
+                .join(new, new.replaces_payment_id == old.id)
+                .filter(old.org_id == org_id, old.kind == "payment", old.created_at < lo, old.voided_at >= lo, old.voided_at < hi).all())
+        was = sum(int(o_amount) for o_amount, o_method, _, _, _ in rows if o_method == "cash")
+        now = sum(int(n_amount) for _, _, n_amount, n_method, n_voided in rows if n_method == "cash" and (n_voided is None or n_voided >= hi))
+        return was, now
+
     def _cash(self, org_id: str, p: Period, today: date, group_id: Optional[UUID], teacher_id: Optional[UUID]) -> Optional[IncomeCash]:
         """The cash hint is the physical till of the CENTRE: always the whole centre, whatever the group / teacher / method filters of the page say
         (``scope = "centre"``; ``filtered_view`` tells the front that the page is filtered, so it words «в кассе центра за сегодня (все группы)»).  The day of a record is the day it was ENTERED (Г-17)."""
@@ -523,13 +535,15 @@ class IncomeReports:
         filtered = bool(group_id or teacher_id)
         paid, paid_cancelled, count = self._cash_moves(StudentPayment, org_id, day, StudentPayment.kind == "payment")
         refunded, refunds_cancelled, _ = self._cash_moves(StudentRefund, org_id, day)
-        received = paid + refunds_cancelled          # a cancelled refund brings the money back to the till
-        cancelled = paid_cancelled                   # Г-17b: a cancelled payment takes it out - a correction of a record, NOT money handed out (that is ``refunded``)
+        was, now = self._cash_corrections(org_id, day)         # Р-11: a payment of an earlier day REPLACED that day moves the till by the difference, it is neither «принято» nor «отменено»
+        received = paid + refunds_cancelled - now    # a cancelled refund brings the money back to the till
+        cancelled = paid_cancelled - was             # Г-17b: a cancelled payment takes it out - a correction of a record, NOT money handed out (that is ``refunded``)
+        corrected = now - was
         label = "Наличные в кассе за " + ("сегодня" if day == today else tx.day_genitive(day))
-        expected = received - refunded - cancelled
-        text = f"{label}: {tx.money(expected)}" + tx.cash_parts_text(received, refunded, cancelled)
+        expected = received - refunded - cancelled + corrected
+        text = f"{label}: {tx.money(expected)}" + tx.cash_parts_text(received, refunded, cancelled, corrected)
         scope_text = ("в кассе центра за " + ("сегодня" if day == today else tx.day_genitive(day)) + " (все группы)") if filtered else None
-        return IncomeCash(date=day, label=label, cash_received=received, cash_refunded=refunded, cash_cancelled=cancelled, expected=expected,
+        return IncomeCash(date=day, label=label, cash_received=received, cash_refunded=refunded, cash_cancelled=cancelled, cash_corrected=corrected, expected=expected,
                           payments_count=count, text=text, scope="centre", filtered_view=filtered, scope_text=scope_text)
 
     # ------------------------------------------------------------------ month collection

@@ -79,7 +79,8 @@ class IncomeCash(PayModel):
     cash_received: int = 0
     cash_refunded: int = 0  # refunds paid out in cash that day (money handed out)
     cash_cancelled: int = 0  # Money-1 Г-17b: cash payments of an earlier day cancelled that day (a correction of a record, not money handed out)
-    expected: int = 0  # cash_received - cash_refunded - cash_cancelled
+    cash_corrected: int = 0  # Money-1 Р-11: signed difference of the cash payments of an earlier day corrected that day (new - old), not a cancellation
+    expected: int = 0  # cash_received - cash_refunded - cash_cancelled + cash_corrected
     payments_count: int = 0
     text: str
     scope: str = "centre"  # the till of the whole centre, always: group / teacher / method filters never narrow it
