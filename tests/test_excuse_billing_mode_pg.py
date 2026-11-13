@@ -123,6 +123,9 @@ def test_the_journal_carries_it_for_administrators_and_never_for_a_teacher(world
 @needs_pg
 def test_it_is_loaded_in_a_batch_the_same_queries_for_30_excuses_as_for_6(world):
     s0, s1, s2 = world.students
+    from tests.ops_helpers import grant_money_right
+    grant_money_right(world)                 # G-10: the list reads the payments for the money right only; granted outside the counted calls
+    world.money_right_granted = True
     set_settings(world, period_mode="lessons", lessons_per_payment=40)
     pay(world, s0, paid_on=day(-30), lessons_count=40)
     pay(world, s1, paid_on=day(-30), lessons_count=40)
