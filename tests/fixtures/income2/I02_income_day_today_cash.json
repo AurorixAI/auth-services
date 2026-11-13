@@ -106,6 +106,7 @@
     "cash_received": 250000,
     "cash_refunded": 100000,
     "cash_cancelled": 0,
+    "cash_corrected": 0,
     "expected": 150000,
     "payments_count": 2,
     "text": "Наличные в кассе за сегодня: 150 000 сум (принято 250 000 сум, возвращено 100 000 сум)",

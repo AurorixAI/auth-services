@@ -212,6 +212,11 @@
             "title": "Cash Cancelled",
             "type": "integer"
           },
+          "cash_corrected": {
+            "default": 0,
+            "title": "Cash Corrected",
+            "type": "integer"
+          },
           "cash_received": {
             "default": 0,
             "title": "Cash Received",
@@ -273,6 +278,7 @@
           "cash_received",
           "cash_refunded",
           "cash_cancelled",
+          "cash_corrected",
           "expected",
           "payments_count",
           "text",
