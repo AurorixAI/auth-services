@@ -16,23 +16,24 @@ BASE_URL = os.environ.get("A5_AUTH_MIGRATION_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not BASE_URL, reason="Requires isolated a5_auth_migrations PostgreSQL")
 
 REVISION, BEFORE = "k2a1b2c3d4e5", "k3a1b2c3d4e5"
-DB_NAME = "a5_auth_k2_migrations"
 
 
 @pytest.fixture
-def engine(monkeypatch):
+def engine(monkeypatch, request):
+    """One database per test FILE (named after the module that uses the fixture): files on two workers never drop one database under each other."""
+    db_name = "a5_auth_" + request.module.__name__.rsplit(".", 1)[-1].removeprefix("test_")[:50]
     base = make_url(BASE_URL)
     admin = create_engine(base.set(database="postgres"), isolation_level="AUTOCOMMIT", connect_args=utc_connect_args(BASE_URL))
     with admin.connect() as c:
-        c.execute(text(f"DROP DATABASE IF EXISTS {DB_NAME} WITH (FORCE)"))
-        c.execute(text(f"CREATE DATABASE {DB_NAME}"))
-    url = base.set(database=DB_NAME).render_as_string(hide_password=False)
+        c.execute(text(f"DROP DATABASE IF EXISTS {db_name} WITH (FORCE)"))
+        c.execute(text(f"CREATE DATABASE {db_name}"))
+    url = base.set(database=db_name).render_as_string(hide_password=False)
     monkeypatch.setenv("DATABASE_URL", url)
     eng = create_engine(url, connect_args=utc_connect_args(url))
     yield eng
     eng.dispose()
     with admin.connect() as c:
-        c.execute(text(f"DROP DATABASE IF EXISTS {DB_NAME} WITH (FORCE)"))
+        c.execute(text(f"DROP DATABASE IF EXISTS {db_name} WITH (FORCE)"))
     admin.dispose()
 
 
