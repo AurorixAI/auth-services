@@ -9,6 +9,8 @@ from tests.ops_helpers import clock, needs_pg, pg_session  # noqa: F401  (fixtur
 from tests.payf_helpers import build_org, cancel, client, statement
 from tests.test_payf_recalc_pg import LINE, kind_of, month_world
 
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 pytestmark = needs_pg
 
 
@@ -42,6 +44,7 @@ def test_a_cancellation_on_a_date_of_a_live_day_off_is_a_holiday_and_deducts_not
 def test_the_decision_cancel_takes_the_kind_the_administrator_chose(pg_session, clock):
     """D18: the same request, two kinds: «по вине центра» (the default) deducts, «праздник» does not."""
     w = build_org(pg_session)
+    grant_money_right(w)                    # Г-16: choosing «Праздник» is money, the administrator of this test has the right
     g, s, m = month_world(w, clock)
     mine = [req(w, "A", [(g, lesson, day)]).json()["created"][0]["id"] for lesson, day in (("lesson-mon", "2026-10-26"), ("lesson-wed", "2026-10-28"))]
     assert decide(w, "admin", mine[0], decision="cancel", reason="Преподаватель болен").json()["result"]["cancellationKind"] == "centre"

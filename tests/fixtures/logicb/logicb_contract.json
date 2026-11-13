@@ -3352,6 +3352,17 @@
             "title": "Cancelled",
             "type": "boolean"
           },
+          "consequence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consequence"
+          },
           "deductions": {
             "anyOf": [
               {

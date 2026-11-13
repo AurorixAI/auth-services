@@ -41,7 +41,7 @@ def test_1_a_teacher_cannot_choose_a_holiday_and_gets_a_clear_403(pg_session, cl
     assert w.db.query(GroupAttendance).filter_by(group_id=g.id, lesson_date="2026-10-26").count() == 0          # nothing was written, nothing replaced silently
     missed = client(w, "A").post(f"{API}/org/groups/{g.id}/attendance/reconcile/cancel", json={
         "lessonDate": "2026-10-19", "lessonId": "lesson-mon", "cancellationReason": "Преподаватель заболел", "cancellationKind": "holiday"})
-    assert missed.status_code == 403 and "только владелец или администратор" in missed.json()["detail"]
+    assert missed.status_code == 403 and missed.json()["detail"]["code"] == "MONEY_RIGHT_REQUIRED"      # Г-16: one refusal for every road
 
 
 def test_1_a_cancellation_without_a_kind_is_by_the_fault_of_the_centre_and_the_audit_keeps_the_kind(pg_session, clock):

@@ -14,6 +14,8 @@ from tests.b2_helpers import API, build_d2, clock, decide, needs_pg, pg_session,
 from tests.ops_helpers import client
 from tests.test_ops_b2_decide_pg import Sync, one  # noqa: F401
 
+from tests.ops_helpers import grant_money_right  # noqa: E402
+
 pytestmark = needs_pg
 REV = f"{API}/org/schedule/lessons/lesson-l1/recurrence"
 END = f"{REV}/end"
@@ -225,6 +227,7 @@ def test_s8_a_change_of_the_time_keeps_the_substitute_and_the_request_follows_th
 
 # ======================================================================================================= S9: the stop
 def test_s9_the_stop_closes_what_hangs_on_the_lessons_that_stop_and_removes_the_cancellations_set_in_advance(w):
+    grant_money_right(w)                    # Г-16: choosing «Праздник» is money, the administrator of this test has the right
     assert client(w, "admin").put(f"{API}/org/groups/{w.G1.id}/lesson-teacher", json={"lessonDate": "2026-11-23", "lessonId": "lesson-l1", "teacherId": str(w.D.id), "reason": "Болезнь"}).status_code == 200
     item = one(w, "A", "L1", "2026-11-30")
     cancel = lambda day, **kw: client(w, "admin").post(f"{API}/org/groups/{w.G1.id}/attendance", json={

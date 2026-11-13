@@ -141,6 +141,7 @@ def test_s2_a_copy_of_a_move_cancelled_from_the_sheet_leaves_its_own_note(w):
 
 
 def test_s2_bulk_and_single_decisions_are_the_same_cancellation_with_the_chosen_kind(w):
+    grant_money_right(w)                    # Г-16: choosing «Праздник» is money, the administrator of this test has the right
     a, b = one(w, "A", "L1", "2026-11-02"), one(w, "A", "L1", "2026-11-09")
     r = client(w, "admin").post(f"{SUB}/decide-bulk", json={"ids": [a["id"], b["id"]], "decision": "cancel", "reason": "Курсы", "cancellationKind": "holiday"})
     assert r.status_code == 200 and r.json()["updated"] == 2, r.text
@@ -302,6 +303,7 @@ def test_s7_the_teacher_of_a_lesson_that_is_going_on_is_not_changed_but_a_finish
 
 # ============================================================================================ S11: the kind in the decision
 def test_s11_the_decision_cancel_takes_the_kind_the_default_is_the_centres_fault(w):
+    grant_money_right(w)                    # Г-16: choosing «Праздник» is money, the administrator of this test has the right
     a, b = one(w, "A", "L1", "2026-11-02"), one(w, "A", "L1", "2026-11-09")
     ra = decide(w, "admin", a["id"], decision="cancel", reason="Преподаватель болен")
     rb = decide(w, "admin", b["id"], decision="cancel", reason="Праздник у учеников", cancellationKind="holiday")

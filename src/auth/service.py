@@ -5591,7 +5591,7 @@ class AuthService:
         is_cancellation = requested_status == LessonAttendanceStatus.CANCELLED.value
         cancellation_kind = (req.cancellationKind or DEFAULT_CANCELLATION_KIND) if is_cancellation else None  # PAY-F
         manager = is_org_manager or is_org_admin
-        if is_cancellation:
+        if is_cancellation and manager:           # a teacher is refused below, by the older and more exact TEACHER_CANNOT_CANCEL
             ops_rules.assert_cancellation_kind_allowed(cancellation_kind, money_right and is_org_manager)         # Г-16: before anything is asked of exam-service or locked
         if is_cancellation and req.cancellationReason:
             from .lesson_substitutions import Substitutions
