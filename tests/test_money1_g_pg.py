@@ -347,10 +347,10 @@ def test_g4b_a_correction_to_a_smaller_sum_names_the_debt_that_appears_in_the_ne
     assert carried > 0 and in_b["debt"] == 0 and in_a["debt"] == 0
     body = {"amount": 100_000, "paid_on": p["paid_on"], "method": "cash", "reason": "Опечатка в сумме"}
     dry = owner(two).post(f"{PAY_URL}/{p['id']}/replace", params={"dry_run": "true"}, json=body)
-    assert dry.status_code == 200, dry.text
+    assert dry.status_code == 201, dry.text
     assert statement(two, two.second) == in_b                                              # the preview writes nothing
     real = owner(two).post(f"{PAY_URL}/{p['id']}/replace", json=body)
-    assert real.status_code == 200, real.text
+    assert real.status_code == 201, real.text
     after_b, after_a = statement(two, two.second), statement(two, two.group)
     assert after_b["transferred_in"] < carried and after_b["debt"] > 0
     expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": after_b["debt"]}]
@@ -363,10 +363,18 @@ def test_g4b_a_correction_to_a_smaller_sum_names_the_debt_that_appears_in_the_ne
     assert row["consequence"] == sentence.replace("появится", "появился")
 
 
-def test_g4b_a_correction_to_the_same_or_a_bigger_sum_names_no_other_group(two, monkeypatch):
-    p, _ = _transferred_world(two, monkeypatch)
+def test_g4b_a_correction_to_the_same_or_a_bigger_sum_names_no_other_group(two):
+    billing(two)
+    p = pay(two, paid_on=day(-10), amount=3_000_000)["payment"]                             # no transfer: the student is still in A, nothing appears elsewhere
     r = owner(two).post(f"{PAY_URL}/{p['id']}/replace", params={"dry_run": "true"}, json={"amount": 3_000_000, "paid_on": p["paid_on"], "method": "cash", "reason": "Способ"})
-    assert r.status_code == 200 and r.json()["new_debts"] == [] and "появится" not in (r.json()["money_effects"] or {}).get("text", "")
+    assert r.status_code == 201, r.text                                                     # POST /replace answers 201 also with dry_run
+    assert r.json()["new_debts"] == [] and "появится" not in (r.json()["money_effects"] or {}).get("text", "")
+
+
+def test_g4b_a_student_who_left_takes_no_more_than_his_debt_even_in_a_correction(two, monkeypatch):
+    p, _ = _transferred_world(two, monkeypatch)                                             # S-5 (older rule): the same sum after a transfer is refused, G-4b adds nothing to it
+    r = owner(two).post(f"{PAY_URL}/{p['id']}/replace", params={"dry_run": "true"}, json={"amount": 3_000_000, "paid_on": p["paid_on"], "method": "cash", "reason": "Способ"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "PAYMENT_EXCEEDS_DEBT"
 
 
 # ---- Г-17 (N9): the cash of a day is counted by the day the record was ENTERED (the till of the centre), not by the date of the payment ---------------------------
@@ -409,4 +417,4 @@ def test_g17_the_cancellation_on_another_day_leaves_the_closed_day_alone_and_lea
     world.db.commit()
     assert _till(world, "2026-10-03") == (base["2026-10-03"][0] + 300_000, base["2026-10-03"][1], base["2026-10-03"][2] + 300_000)      # e7c44aa: the cancelled payment vanished from 03.10
     assert _till(world, "2026-10-05") == (base["2026-10-05"][0], base["2026-10-05"][1], base["2026-10-05"][2] - 300_000)       # and the till of 05.10 says it ...
-    assert _cancelled(world, "2026-10-05") == 300_000 and income(world, "2026-10-05", "2026-10-05")["cash"]["text"].endswith("(отменено 300\u00a0000\u00a0сум)")   # ... as «отменено», not «возвращено» (Г-17b)
+    assert _cancelled(world, "2026-10-05") == 300_000 and income(world, "2026-10-05", "2026-10-05")["cash"]["text"].endswith("отменено 300\u00a0000\u00a0сум)")   # ... as «отменено», not «возвращено» (Г-17b)
