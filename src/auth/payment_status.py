@@ -305,6 +305,15 @@ def round_1000(numerator: int, denominator: int = 1) -> int:
     return ((2 * numerator + 1000 * denominator) // (2000 * denominator)) * 1000
 
 
+def prorated(price: int, numerator: int, denominator: int) -> int:
+    """ONE rounding of the money a student owes for a part of a period (Money-1 G-7): ``price x numerator / denominator`` in whole thousands, a half goes
+    up, never more than the price itself (a price that is not a whole number of thousands must not make a part dearer than the whole); the whole price for
+    a whole period and 0 for no part.  Every partial charge of the ledger - days, lessons of a month, lessons of a package - goes through it."""
+    if numerator >= denominator:
+        return price
+    return min(price, round_1000(price * numerator, denominator)) if numerator > 0 else 0
+
+
 def _years_ago(day: date, years: int) -> date:
     if day.year - years < date.min.year:
         return date.min

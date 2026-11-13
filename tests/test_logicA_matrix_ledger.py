@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from src.auth import billing_ledger as bl
 from src.auth import payment_status as ps
 
-from tests.pay2_ledger_helpers import credit, flat
+from tests.pay2_ledger_helpers import credit, flat, weekly
 
 D = date
 FIXED1 = bl.Regime(anchor=ps.FIXED_DAY, billing_day=1)
@@ -37,9 +37,10 @@ def test_logicA_f1_m_an_incomplete_first_period_prices_its_lessons_at_the_full_p
 
 
 def test_logicA_f9_m_leaving_on_the_first_day_of_a_period_charges_that_one_day():
-    full = run(stays=(bl.Stay(D(2026, 10, 1)),))
-    cut = bl.run_ledger(bl.sliced_input(inp(stays=(bl.Stay(D(2026, 10, 1)),), today=D(2026, 10, 21)), D(2026, 10, 1)))
-    assert cut.charged == 20_000 and full.charged == 620_000                      # 1 of 31 days
+    # 01.10.2026 is a Thursday WITH a lesson (Money-1 G-7: a stay of one day without a lesson is nothing); 5 Thursdays in the month -> 1 of 5 lessons
+    full = run(stays=(bl.Stay(D(2026, 10, 1)),), lesson_days=weekly({3}))
+    cut = bl.run_ledger(bl.sliced_input(inp(stays=(bl.Stay(D(2026, 10, 1)),), today=D(2026, 10, 21), lesson_days=weekly({3})), D(2026, 10, 1)))
+    assert cut.charged == 124_000 and full.charged == 620_000
 
 
 # ---- F12: the deferred change of the billing mode -------------------------------------------------------------------------------------------------

@@ -172,8 +172,10 @@ def test_touching_and_overlapping_stays_are_one_run():
 
 
 def test_one_day_stay_is_one_billable_day():
-    l = led(today=D(2026, 10, 21), stays=[bl.Stay(D(2026, 10, 5), D(2026, 10, 5))], price_at=flat(310_000), regimes=[FIXED1])
-    assert len(l.segments[0].days) == 1 and l.segments[0].amount == 10_000
+    # 05.10.2026 is a Monday with a lesson (G-7: a one-day stay of a day WITHOUT a lesson is nothing, see test_money1_g7_rounding);
+    # the month has 4 Mondays, so the one lesson is 1/4 of 310 000 = 77 500 -> 78 000
+    l = led(today=D(2026, 10, 21), stays=[bl.Stay(D(2026, 10, 5), D(2026, 10, 5))], price_at=flat(310_000), regimes=[FIXED1], lesson_days=weekly({0}))
+    assert len(l.segments[0].days) == 1 and l.segments[0].amount == 78_000
 
 
 # ---- horizon and big numbers ---------------------------------------------------------------------------------

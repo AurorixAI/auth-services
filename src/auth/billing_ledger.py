@@ -427,6 +427,11 @@ def round_1000(numerator: int, denominator: int = 1) -> int:
     return ps.round_1000(numerator, denominator)
 
 
+def _lesson_cost(price: int, place: int, size: int) -> int:
+    """The cost of the ``place``-th lesson of a package: the difference of the rounded shares, so a package that has held ``k`` lessons costs ``prorated(price, k, size)`` and a whole one the price."""
+    return ps.prorated(price, place, size) - ps.prorated(price, place - 1, size)
+
+
 def _last_day(year: int, month: int) -> int:
     return _calendar.monthrange(year, month)[1]
 
@@ -586,9 +591,9 @@ class _Gen:
             if whole:
                 inside = set(days)
                 in_part = sum(1 for d in held if d in inside)
-                return Segment(amount=round_1000(amount * in_part, len(whole)), basis="lessons",
+                return Segment(amount=ps.prorated(amount, in_part, len(whole)), basis="lessons",
                                lessons_in_part=in_part, lessons_in_period=len(whole), **common)
-        return Segment(amount=round_1000(amount * n, nominal), basis="days", lessons_in_part=None,
+        return Segment(amount=ps.prorated(amount, n, nominal), basis="days", lessons_in_part=None,
                        lessons_in_period=None, **common)
 
     # ---------------------------------------------------------------- calendar: payment date
@@ -730,7 +735,7 @@ class _Gen:
                           lessons_in_period=size, begun=True, ended=complete,
                           package_no=k, complete_package=complete)
             p = pkg_price.amount
-            part = [p * i // size - p * (i - 1) // size for i in range(1, len(chunk) + 1)]
+            part = [_lesson_cost(p, i, size) for i in range(1, len(chunk) + 1)]
             costs.extend(part)
             segs.append(Segment(amount=sum(part), basis="lessons" if p else "zero", **common))
         if last_window:
@@ -742,7 +747,7 @@ class _Gen:
             budget = self.total_credit - so_far - sum(costs)
             spent, i = 0, pos + 1
             while price and len(costs) - held < MAX_VIRTUAL_LESSONS and spent <= budget:   # a free group has no virtual lessons
-                cost = price * i // size - price * (i - 1) // size
+                cost = _lesson_cost(price, i, size)
                 costs.append(cost)
                 spent += cost
                 i += 1
@@ -965,6 +970,12 @@ def _inside_charged_period(first: date, last: date, back: date, floor: date, pau
     return False
 
 
+def _lessonless_day(inp: LedgerInput, run: Tuple[date, Optional[date]]) -> bool:
+    """Money-1 G-7 (ДЫРА-07): a run that began and ended on ONE day on which the group had no lesson is a stay of no day - added and removed the same day, nothing to charge."""
+    first, last = run
+    return last == first and not inp.lesson_days(first, first)
+
+
 def _pieces_of(inp: LedgerInput):
     """``(opening, floor, runs, pause_days, spans, gaps)``: the stay from the floor on (``spans``, the pauses are still inside: a payment-date
     chain is extended by them); the days that are charged are ``_subtract_pauses`` of a span.  ``pause_days`` also holds the gaps of a bridged return
@@ -974,7 +985,7 @@ def _pieces_of(inp: LedgerInput):
         opening = None
     floor = max(inp.accounting_start, inp.first_billable_floor or date.min,
                 (opening.paid_until + timedelta(days=1)) if opening is not None and opening.paid_until else date.min)
-    runs = merge_stays(inp.stays)
+    runs = [run for run in merge_stays(inp.stays) if not _lessonless_day(inp, run)]
     pause_days = _merge_pauses(inp.pauses)
     runs, pause_days, gaps = _bridge_returns(runs, pause_days, floor, inp.regimes)
     spans: List[Tuple[date, Optional[date]]] = []
