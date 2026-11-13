@@ -708,7 +708,10 @@ class AttendanceExcuseService:
         search: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
+        with_money: bool = True,
     ) -> ExcuseListResponse:
+        """``with_money`` (Money-1 G-10): the deadline and the billing mode come from the account of the student - only the money right reads them; without it the
+        list is the reason, the lesson and the status, in the order of the lesson date."""
         # No dates = no window for the queue: every pending excuse of every period (the badge counts them all too).
         # Any other list (decided statuses, "all", explicit dates) keeps the window (default: the current month).
         no_dates = not date_from and not date_to
@@ -740,7 +743,7 @@ class AttendanceExcuseService:
             windowed = windowed.filter(AttendanceExcuse.status == status)
         total = windowed.count()
         if queue:
-            rows = self._queue_page(windowed, limit, offset)
+            rows = self._queue_page(windowed, limit, offset, with_money)
         else:
             rows = (
                 windowed.order_by(
@@ -753,7 +756,7 @@ class AttendanceExcuseService:
                 .all()
             )
         return ExcuseListResponse(
-            items=self._items(rows), total=total, pending_total=pending_total
+            items=self._items(rows, with_money), total=total, pending_total=pending_total
         )
 
     @staticmethod
@@ -771,18 +774,18 @@ class AttendanceExcuseService:
             return (1, 0)
         return (2, data["lessons_left"])
 
-    def _queue_page(self, query, limit: int, offset: int) -> list:
+    def _queue_page(self, query, limit: int, offset: int, with_money: bool = True) -> list:
         """The pending queue of all periods: deadline (sooner first), then lesson date ascending, then id.  The deadline is worked
         out in Python (payments), so the whole pending set is loaded and ordered here, then paged."""
         rows = query.order_by(GroupAttendance.lesson_date, AttendanceExcuse.id).all()
         if not rows:
             return []
         pairs = {(e.student_id, a.group_id) for e, a, _, _ in rows}
-        deadlines = self._deadlines(rows, self._payment_context(rows[0][0].org_id, pairs))
+        deadlines = self._deadlines(rows, self._payment_context(rows[0][0].org_id, pairs) if with_money else None)
         rows.sort(key=lambda r: self._deadline_rank(deadlines.get(r[0].id)))  # stable: ties keep (lesson date, id)
         return rows[offset: offset + limit]
 
-    def _items(self, rows) -> List[ExcuseItem]:
+    def _items(self, rows, with_money: bool = True) -> List[ExcuseItem]:
         if not rows:
             return []
         excuse_ids = [r[0].id for r in rows]
@@ -809,7 +812,7 @@ class AttendanceExcuseService:
         users = self._users(user_ids)
         org_id = rows[0][0].org_id
         pairs = {(e.student_id, a.group_id) for e, a, _, _ in rows}
-        context = self._payment_context(org_id, pairs)
+        context = self._payment_context(org_id, pairs) if with_money else None      # no context: no deadline, no mode
         deadlines = self._deadlines(rows, context)
         modes = self._modes_of(context, pairs)
 
@@ -846,7 +849,7 @@ class AttendanceExcuseService:
                     deadline=deadlines.get(excuse.id),
                     billing_mode=modes.get((excuse.student_id, att.group_id)),
                     decided_after_deadline=excuse.decided_after_deadline,
-                    deadline_at_decision=_iso_day(excuse.deadline_at_decision),
+                    deadline_at_decision=_iso_day(excuse.deadline_at_decision) if with_money else None,
                 )
             )
         return items

@@ -74,6 +74,11 @@ MONEY_READS = {
     ("GET", f"{P}/org/payroll/changed-months"),                                 # the closed months whose saved pay has moved: ``{"items": [{"month", "teachers"}]}``
 }
 
+# a READ that every administrator may make but whose MONEY fields come only with the right (Money-1 G-10): the route takes ``money_rights_flag`` and passes it on as ``with_money``
+PARTIAL_MONEY_READS = {
+    ("GET", f"{P}/org/attendance/excuses"): "the list of certificates: ``deadline`` / ``deadline_at_decision`` / ``billing_mode`` are the account of the student",
+}
+
 # NOT money: the reason is the proof that somebody thought about it (R3 #10).  A route here whose handler calls a money service fails the test below.
 NOT_MONEY = {
     ("POST", f"{P}/org/attendance/excuses/{{excuse_id}}/files"): "a file of a certificate: nobody decides anything",
@@ -164,6 +169,14 @@ def test_a_money_read_is_for_the_money_right_and_never_for_a_teacher():
         assert dependencies.require_org_admin in deps and dependencies.money_rights_flag in deps, key
         assert "MONEY_RIGHT_REQUIRED" in inspect.getsource(route.endpoint), key
         assert dependencies.require_payroll_owner not in deps, f"{key}: an owner-only read is not a money read of the administrator"
+
+
+def test_a_partial_money_read_asks_the_flag_and_passes_it_on():
+    assert PARTIAL_MONEY_READS and all(r in ROUTES for r in PARTIAL_MONEY_READS), "the walk did not find the read routes it is about"
+    for key in sorted(PARTIAL_MONEY_READS):
+        deps, route = ROUTES[key]
+        assert dependencies.require_org_admin in deps and dependencies.money_rights_flag in deps, key
+        assert "with_money=with_money" in inspect.getsource(route.endpoint), key
 
 
 def test_every_conditional_money_route_asks_the_flag():

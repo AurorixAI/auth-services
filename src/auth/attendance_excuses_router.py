@@ -29,7 +29,7 @@ from .attendance_excuses import (
     ResetRequest,
     ReviewRequest,
 )
-from .dependencies import require_org_admin, require_payments_access
+from .dependencies import money_rights_flag, require_org_admin, require_payments_access
 
 router = APIRouter(prefix="/auth", tags=["Attendance excuses"])
 
@@ -55,9 +55,11 @@ def list_excuses(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     user: dict = Depends(_admin),
+    with_money: bool = Depends(money_rights_flag),
     db: Session = Depends(get_db),
 ):
-    """Заявки на уважительный пропуск за период (по умолчанию — текущий месяц)."""
+    """Заявки на уважительный пропуск за период (по умолчанию — текущий месяц).  Срок (`deadline`, `deadline_at_decision`) и `billing_mode` — деньги ученика:
+    только с правом на деньги (Г-10)."""
     try:
         return AttendanceExcuseService(db).list_excuses(
             user["org_id"],
@@ -69,6 +71,7 @@ def list_excuses(
             search=search,
             limit=limit,
             offset=offset,
+            with_money=with_money,
         )
     except ExcuseError as exc:
         raise _http(exc)
