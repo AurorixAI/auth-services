@@ -34,3 +34,30 @@ def test_without_the_money_right_the_list_has_no_deadline_and_no_mode_but_everyt
             full = with_right[i["id"]]
             assert {k: v for k, v in i.items() if k not in ("deadline", "billing_mode", "deadline_at_decision")} == \
                    {k: v for k, v in full.items() if k not in ("deadline", "billing_mode", "deadline_at_decision")}
+
+
+# ---- Г-10b: the same for the journal of attendance ---------------------------------------------------------------------------------------------------
+
+def test_the_journal_carries_the_account_of_an_excuse_only_with_the_right_and_a_teacher_never(world):
+    from datetime import timedelta
+
+    from tests.test_excuse_deadline import business_today
+
+    grant_money_right(world)
+    _seed(world)
+
+    path = f"{API}/org/groups/{world.group.id}/attendance"
+    window = {"date_from": (business_today() - timedelta(days=5)).isoformat(), "date_to": business_today().isoformat()}
+
+    def excuses(user):
+        got = make_client(world, user=user).get(path, params=window)
+        assert got.status_code == 200, got.text
+        (by_student,) = got.json()["excuses"].values()
+        return by_student
+
+    sid = str(world.students[0].id)
+    assert excuses(world.admin)[sid]["billing_mode"] == "package"
+    grant_money_right(world, False)
+    for entry in excuses(world.admin).values():
+        assert entry["billing_mode"] is None and entry["deadline_at_decision"] is None and "reason" in entry and "status" in entry
+    assert all("billing_mode" not in e for e in excuses(world.teacher).values())

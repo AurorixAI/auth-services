@@ -109,7 +109,7 @@ def test_the_journal_carries_it_for_administrators_and_never_for_a_teacher(world
                                            "decided_after_deadline", "deadline_at_decision"}      # the decision mark (#39)
     teacher_view = journal(world, world.teacher, is_admin=False).excuses[key]
     assert all("billing_mode" not in e for e in teacher_view.values()) and len(teacher_view) == 3
-    # over HTTP, an administrator of the centre without the right to money sees it (it is not money), a teacher does not
+    # over HTTP, an administrator WITH the right to money sees it (without it: test_money1_g10b), a teacher does not
     path = f"{API}/org/groups/{world.group.id}/attendance"
     window = {"date_from": lesson_day.isoformat(), "date_to": lesson_day.isoformat()}
     got = make_client(world, user=world.admin).get(path, params=window).json()["excuses"][key]

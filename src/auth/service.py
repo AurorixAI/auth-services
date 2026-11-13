@@ -4802,8 +4802,9 @@ class AuthService:
         actor_id: Optional[str] = None,
         is_org_admin: bool = False,
         is_org_manager: bool = False,
+        money_right: bool = False,
     ) -> GroupAttendanceResponse:
-        """Получить экземпляры уроков и отметки за строго заданный период."""
+        """Получить экземпляры уроков и отметки за строго заданный период.  ``money_right``: `billing_mode` и `deadline_at_decision` справок — деньги ученика, только с правом (Г-10б)."""
         group = self._require_group_read_access(
             org_id, group_id, actor_id=actor_id, is_org_admin=is_org_admin
         )
@@ -5140,7 +5141,7 @@ class AuthService:
             historical_students.sort(key=lambda item: (item.get("left_at") or "", item["full_name"]))
 
         excuses_map, corrections_map = AttendanceExcuseService(self.db).journal_payload(
-            org_id, attendance_keys, include_review_note=is_org_manager, include_billing_mode=is_org_manager
+            org_id, attendance_keys, include_review_note=is_org_manager, include_billing_mode=is_org_manager and money_right
         )
 
         versions, teachers_of_lessons = attendance_rules.AttendanceRules(self).journal_extras(

@@ -1675,6 +1675,7 @@ def get_group_attendance(
     date_from: Optional[str] = Query(None, description="Начало периода YYYY-MM-DD"),
     date_to: Optional[str] = Query(None, description="Конец периода YYYY-MM-DD"),
     user: dict = Depends(require_org_member),
+    money_right: bool = Depends(money_rights_flag),
     db: Session = Depends(get_db),
 ):
     """Журнал посещаемости группы за месяц или указанный период."""
@@ -1689,6 +1690,7 @@ def get_group_attendance(
             actor_id=user["user_id"],
             is_org_admin=is_org_manager(user),
             is_org_manager=is_org_manager(user),
+            money_right=money_right,
         )
         if not is_org_manager(user):
             # LOGIC-B2: a substitute / a former teacher gets only the lessons that are his (see ``attendance_rules.restrict_journal``)

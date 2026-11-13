@@ -586,9 +586,11 @@ class AttendanceExcuseService:
             if include_review_note:
                 entry["review_note"] = row.review_note
                 entry["decided_after_deadline"] = row.decided_after_deadline
-                entry["deadline_at_decision"] = _iso_day(row.deadline_at_decision)
+                entry["deadline_at_decision"] = _iso_day(row.deadline_at_decision) if include_billing_mode else None      # Г-10б: the date of a deadline is the account of the student
             if include_billing_mode:
                 entry["billing_mode"] = modes.get((row.student_id, group_of.get(row.attendance_id)))
+            elif include_review_note:
+                entry["billing_mode"] = None                  # a manager without the money right: the key is there, the value is not
             excuses.setdefault(key, {})[str(row.student_id)] = entry
 
         for att_id, audit in latest_audit.items():

@@ -38,7 +38,7 @@ def journal(w, actor, is_admin=True):
     today = business_today()
     return w.svc.get_group_attendance(
         str(w.org.id), str(w.group.id), date_from=(today - timedelta(days=30)).isoformat(),
-        date_to=today.isoformat(), actor_id=str(actor.id), is_org_admin=is_admin, is_org_manager=is_admin,
+        date_to=today.isoformat(), actor_id=str(actor.id), is_org_admin=is_admin, is_org_manager=is_admin, money_right=is_admin,      # G-10b: the journal carries the account of an excuse only with the right
     )
 
 
