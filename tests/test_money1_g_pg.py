@@ -383,9 +383,18 @@ def test_g4b_a_correction_to_the_same_or_a_bigger_sum_names_no_other_group(two):
 
 
 def test_g4b_a_student_who_left_takes_no_more_than_his_debt_even_in_a_correction(two, monkeypatch):
-    p, _ = _transferred_world(two, monkeypatch)                                             # S-5 (older rule): the same sum after a transfer is refused, G-4b adds nothing to it
-    r = owner(two).post(f"{PAY_URL}/{p['id']}/replace", params={"dry_run": "true"}, json={"amount": 3_000_000, "paid_on": p["paid_on"], "method": "cash", "reason": "Способ"})
+    p, _ = _transferred_world(two, monkeypatch)                                             # S-5 (older rule): a BIGGER sum after a transfer is refused, G-4b adds nothing to it
+    r = owner(two).post(f"{PAY_URL}/{p['id']}/replace", params={"dry_run": "true"}, json={"amount": 3_000_001, "paid_on": p["paid_on"], "method": "cash", "reason": "Способ"})
     assert r.status_code == 422 and r.json()["detail"]["code"] == "PAYMENT_EXCEEDS_DEBT"
+
+
+def test_r13_only_the_method_of_a_payment_of_the_old_group_can_be_corrected_after_a_transfer(two, monkeypatch):
+    p, _ = _transferred_world(two, monkeypatch)                                             # the sum and the date stay: the debt is not looked at (R3 M11)
+    before = statement(two, two.second)
+    body = {"amount": p["amount"], "paid_on": p["paid_on"], "method": "card", "reason": "Оплатили картой"}
+    r = owner(two).post(f"{PAY_URL}/{p['id']}/replace", json=body)
+    assert r.status_code == 201, r.text                                                     # before: 422 PAYMENT_EXCEEDS_DEBT
+    assert r.json()["payment"]["method"] == "card" and r.json()["new_debts"] == [] and statement(two, two.second) == before
 
 
 # ---- Г-17 (N9): the cash of a day is counted by the day the record was ENTERED (the till of the centre), not by the date of the payment ---------------------------

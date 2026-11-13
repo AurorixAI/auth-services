@@ -1536,7 +1536,7 @@ class PaymentService:
             loader.load_facts([membership.id])
             before_inp = loader.build_input(membership.id, exclude_payment=old.id)
             before = bl.run_ledger(before_inp)
-            if self._is_left(membership):
+            if self._is_left(membership) and (data.amount, data.paid_on) != (old.amount, old.paid_on):          # Р-13: only the method of the same sum and date is not an acceptance of money - no debt to look at
                 self._check_left_ceiling(data.amount, before.debt)
             old.voided_at = _utcnow()
             old.voided_by = UUID(str(actor_id))
