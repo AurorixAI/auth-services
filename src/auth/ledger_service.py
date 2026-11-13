@@ -121,6 +121,16 @@ def stay_of_period(period) -> Optional[bl.Stay]:
     return bl.Stay(first, last, period.joined_at)
 
 
+def stays_of_membership(membership: StudentGroup, periods: Sequence) -> List[bl.Stay]:
+    """The ledger stays of a membership from its periods; a legacy row without periods is one stay by its own dates (NOT a membership whose only stay charges
+    nothing: R3 №2)."""
+    spans = [stay for stay in (stay_of_period(p) for p in periods) if stay is not None]
+    if not periods and membership.joined_at:
+        return [bl.Stay(ps.business_date(membership.joined_at),
+                        None if membership.is_active or not membership.left_at else ps.business_date(membership.left_at), membership.joined_at)]
+    return spans
+
+
 def regime_from_block(block: Dict[str, Any], effective_from: date) -> bl.Regime:
     """One regime from a settings dict (``period_mode`` / ``billing_anchor`` / ``billing_day`` / ``lessons_per_payment``)."""
     mode = block.get("period_mode") or ps.CALENDAR
@@ -257,6 +267,7 @@ class LedgerLoader:
         self.makeups: Dict[Tuple[UUID, date, str], MakeupFacts] = {}       # #154: (group, day, lesson) of a cancelled lesson that has a make-up -> its facts
         self.members: Dict[UUID, Tuple[StudentGroup, Student, Group, Optional[User]]] = {}
         self.stays: Dict[UUID, List[bl.Stay]] = {}
+        self.left_days: Dict[UUID, Dict[UUID, Set[date]]] = {}   # student id -> membership id -> the days he LEFT that membership (Money-1 G-8)
         self.payments: Dict[UUID, List[StudentPayment]] = {}
         self.writeoffs: Dict[UUID, List[StudentWriteoff]] = {}
         self.refunds: Dict[UUID, List[StudentRefund]] = {}
@@ -388,12 +399,8 @@ class LedgerLoader:
             return
         periods = membership_periods.periods_by_membership(self.db, found)
         for mid in found:
-            membership = self.members[mid][0]
-            spans = [stay for stay in (stay_of_period(p) for p in periods.get(mid, [])) if stay is not None]
-            if not periods.get(mid) and membership.joined_at:  # a legacy row without periods (NOT a membership whose only stay charges nothing: R3 №2)
-                spans = [bl.Stay(ps.business_date(membership.joined_at),
-                                 None if membership.is_active or not membership.left_at else ps.business_date(membership.left_at), membership.joined_at)]
-            self.stays[mid] = spans
+            self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []))
+        self._load_left_days(found, periods)
         for payment in self.db.query(StudentPayment).filter(
             StudentPayment.org_id == self.org_id, StudentPayment.membership_id.in_(found),
             StudentPayment.voided_at.is_(None), StudentPayment.kind == "payment",
@@ -634,22 +641,35 @@ class LedgerLoader:
 
     # ---------------------------------------------------------------- inputs
 
+    def _load_left_days(self, found: List[UUID], periods: Dict[UUID, list]) -> None:
+        """Money-1 G-8: the days a student left a group of the centre, for EVERY group of his (the other memberships are not loaded as facts, one query for their periods)."""
+        students = {self.members[mid][1].id for mid in found}
+        siblings = self.db.query(StudentGroup).filter(StudentGroup.student_id.in_(students)).all()
+        periods = {**periods, **membership_periods.periods_by_membership(self.db, [m.id for m in siblings if m.id not in periods])}
+        for membership in siblings:
+            for stay in stays_of_membership(membership, periods.get(membership.id, [])):
+                if stay.last is not None:
+                    self.left_days.setdefault(membership.student_id, {}).setdefault(membership.id, set()).add(stay.last)
+
+    @staticmethod
+    def _begin_after(stays: List[bl.Stay], days: Set[date]) -> List[bl.Stay]:
+        """A stay that begins on one of ``days`` begins the day AFTER it; a stay that was only that day is nothing."""
+        moved: List[bl.Stay] = []
+        for s in stays:
+            if s.first not in days:
+                moved.append(s)
+            elif s.last is None or s.last > s.first:
+                moved.append(bl.Stay(s.first + timedelta(days=1), s.last))
+        return moved
+
     def _stays_for(self, mid: UUID) -> List[bl.Stay]:
-        """The stays of a membership; a stay that began with a transfer in starts the day AFTER it (that day belongs to the
-        group the student came from - one day is never charged twice)."""
+        """The stays of a membership.  The day a student left another group of the centre belongs to THAT group: a stay that began with a transfer in
+        (Money-1 B6) or on the day of a manual «removed from A, added to B» (G-8) starts the day AFTER it - one day is never charged twice."""
         stays = list(self.stays.get(mid, []))
         for t in self.t_in.get(mid, []):
-            day = ps.business_date(t.at)
-            moved: List[bl.Stay] = []
-            for s in stays:
-                if s.first == day:
-                    if s.last is not None and s.last <= day:
-                        continue  # the whole stay was the transfer day
-                    moved.append(bl.Stay(day + timedelta(days=1), s.last))
-                else:
-                    moved.append(s)
-            stays = moved
-        return stays
+            stays = self._begin_after(stays, {ps.business_date(t.at)})
+        elsewhere = {d for other, days in self.left_days.get(self.members[mid][1].id, {}).items() if other != mid for d in days}
+        return self._begin_after(stays, elsewhere)
 
     def link_key(self, link: MembershipTransfer) -> Tuple[Any, int]:
         """The place of a link of a student in time: ``(at, place among the links of the same instant)``.  Links are ordered by ``at``; when several of one student have the SAME ``at`` (a frozen clock:
