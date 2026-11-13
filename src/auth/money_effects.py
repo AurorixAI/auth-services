@@ -553,12 +553,18 @@ def cancel_consequence_text(added: List[Dict[str, Any]]) -> str:
 def lesson_cancel_consequence(db, org_id: Any, group_id: Any, cancel: Callable[[], Any]) -> str:
     """Money-1 Р-4 (R3 В3): ``cancel_consequence_text`` of a cancellation «по вине центра» that has NOT happened - ``cancel()`` (THE cancellation of the lesson) runs to its last line inside a
     transaction that is rolled back: its refusals are the refusals of the real one, nothing is written, and what the students would be credited is read from the same ledger."""
-    gid = UUID(str(group_id))
     with writes_rolled_back(db):
-        was = centre_deductions(db, org_id, gid)
-        cancel()
-        added = recalc_added(db, org_id, gid, was)
+        _, added = measure_cancellation(db, org_id, group_id, cancel)
     return cancel_consequence_text(added)
+
+
+def measure_cancellation(db, org_id: Any, group_id: Any, cancel: Callable[[], Any]) -> Tuple[Any, List[Dict[str, Any]]]:
+    """Money-1 Д-3: «было -> отмена -> стало» of a cancellation, the ONE place of the measurement: ``(the answer of cancel(), what it added to the deduction of each student)``.  The caller says
+    whether it is rolled back (the sentence before the cancellation, the dry run) or real."""
+    gid = UUID(str(group_id))
+    was = centre_deductions(db, org_id, gid)
+    out = cancel()
+    return out, recalc_added(db, org_id, gid, was)
 
 
 def deduction_text(gone: List[Dict[str, Any]], *, done: bool, past: bool = True) -> str:

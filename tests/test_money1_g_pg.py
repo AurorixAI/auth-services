@@ -638,6 +638,32 @@ def test_r4_an_unknown_group_is_not_found(pg_session, clock):
     assert _consequence(w, "owner", type("G", (), {"id": uuid.uuid4()}), expect=404)["detail"]["code"] == "GROUP_NOT_FOUND"
 
 
+# ---- Д-3 (R3B В-3): the consequence of a cancellation is asked of exam-service BEFORE the group is locked, and only by whoever may cancel that lesson -------------
+
+def test_d3_the_reading_of_the_consequence_asks_exam_service_with_no_lock_on_the_group(pg_session, clock, monkeypatch):
+    from src.auth.service import AuthService
+    from tests.test_group_price_pg import blocked_probe
+
+    w, g, students, ms, url = cancel_world(pg_session, clock)
+    seen = {}
+
+    def exam(self, **kwargs):
+        seen["locked"] = blocked_probe(w.db.get_bind(), "SELECT id FROM groups WHERE id = :g FOR UPDATE NOWAIT", g=g.id)
+
+    monkeypatch.setattr(AuthService, "_sync_exam_lesson_cancellation", exam)
+    assert _consequence(w, "owner", g)["consequence"]
+    assert seen == {"locked": False}                                          # before: True - the call to exam-service waited under the lock of the group (SV-15), once for the preview
+
+
+def test_d3_a_teacher_who_cannot_cancel_the_lesson_does_not_get_its_sentence(pg_session, clock):
+    w, g, students, ms, url = cancel_world(pg_session, clock)                 # today 30.10: 28.10 is past and never started, 04.11 is ahead
+    teacher = next(key for key in "ABCD" if getattr(w, key).id == g.teacher_id)
+    assert _consequence(w, teacher, g, day="2026-10-28")["consequence"]       # «Урока не было» is his road: the sentence
+    refused = _consequence(w, teacher, g, day="2026-11-04", expect=403)       # before: 200 - the sentence of a cancellation he is refused («Не смогу провести» is his road)
+    assert refused["detail"]["code"] == "TEACHER_CANNOT_CANCEL"
+    assert _consequence(w, "admin", g, day="2026-11-04")["consequence"]       # the administrator cancels any lesson
+
+
 # ---- Р-8 (R3 М4): the save and the recalculation of a sheet take the SAME lock of the teacher as a payout -----------------------------------------------------
 
 def test_r8_a_save_and_a_recalculation_of_a_sheet_wait_for_the_advance_chain_of_the_teacher(world, fixed_today):

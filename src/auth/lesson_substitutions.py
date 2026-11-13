@@ -1151,6 +1151,19 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         AttendanceRules(self.svc).assert_lesson_rights(group, att, occ, day, lesson_id, actor_id=actor_id, is_org_admin=is_org_admin)
         return att
 
+    def assert_may_cancel(self, group: Group, lesson_id: str, day: date, att: Optional[GroupAttendance], *, actor_id: Any, manager: bool) -> None:
+        """Money-1 Д-3: whoever cannot cancel the lesson does not read what its cancellation would do - the administrator may always; a teacher only on his own roads: «Урока не было» (a past lesson
+        that has no journal row), a started lesson with an empty roster, his own future one-off lesson (``save_group_attendance``); the rest is «Не смогу провести» - 403 ``TEACHER_CANNOT_CANCEL``."""
+        if manager or self.svc._empty_started_lesson(att) or self.svc._own_future_one_off(str(group.id), lesson_id, day, str(actor_id), att):
+            return
+        if att is None:
+            try:
+                self.svc._resolve_reconcilable_missed_occurrence(group, lesson_date=day, lesson_id=lesson_id)
+                return
+            except ValueError:
+                pass
+        raise forbidden("TEACHER_CANNOT_CANCEL", "Отменить урок может администратор. Нажмите «Не смогу провести»")
+
     def exam_preflight(self, org_id: Any, group_id: Any, lesson_id: str, lesson_date: Any, reason: str) -> None:
         """Wave B P4 (SV-15): the check of exam-service for a cancellation / a move, asked BEFORE the first lock of the road (a slow exam-service no longer holds the group).
         Still fail-closed (503 ``EXAM_SERVICE_UNAVAILABLE`` / 409 ``LESSON_HAS_LIVE_EXAM``).  Remembered per request (``svc``): ``_exam_check`` inside the locks then does not ask again."""

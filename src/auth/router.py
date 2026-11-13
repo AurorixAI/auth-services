@@ -1850,7 +1850,9 @@ def lesson_cancel_consequence(
         raise not_found("GROUP_NOT_FOUND", "Группа не найдена")
     manager = is_org_manager(user)
     subs = Substitutions(_svc(db))
-    subs.lesson_rights_precheck(group, lesson_id, lesson_date, actor_id=user["user_id"], is_org_admin=manager)
+    att = subs.lesson_rights_precheck(group, lesson_id, lesson_date, actor_id=user["user_id"], is_org_admin=manager)
+    subs.assert_may_cancel(group, lesson_id, lesson_date, att, actor_id=user["user_id"], manager=manager)
+    subs.exam_preflight(user["org_id"], group.id, lesson_id, lesson_date.isoformat(), "Предпросмотр последствий")          # SV-15: exam-service is asked BEFORE the group is locked, like on every road of the cancellation
 
     def cancel():
         return subs.cancel_lesson(user["org_id"], user["user_id"], group.id, lesson_id, lesson_date, reason="Предпросмотр последствий", by_manager=manager, allow_started=True)
@@ -1875,9 +1877,7 @@ def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owne
     def action():
         if not me.is_preview(db):
             return cancel()
-        was = me.centre_deductions(db, org_id, gid)
-        out = cancel()
-        seen["added"] = me.recalc_added(db, org_id, gid, was)          # read for everybody: the words «зачтётся по N сум» are said to whoever cancels, the sums of the group only to the money right
+        out, seen["added"] = me.measure_cancellation(db, org_id, gid, cancel)          # read for everybody: the words «зачтётся по N сум» are said to whoever cancels, the sums of the group only to the money right
         return out
 
     result, effects = me.run_with_effects(db, org_id, memberships, owner, action, dry_run=dry_run)
