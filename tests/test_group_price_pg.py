@@ -1036,16 +1036,16 @@ def test_adding_a_student_with_an_individual_price_is_audited_too(world):
     put_price(world, 500_000, group=other, valid_from=day(-30))
     student = world.students[0]
     world.svc.add_student_to_group(str(world.org.id), str(other.id), str(student.id), mode="transfer",
-                                   price_override=SimpleNamespace(amount=450_000, reason="скидка"), actor_id=str(world.admin.id))
+                                   price_override=SimpleNamespace(amount=450_000, reason="скидка"), actor_id=str(world.admin.id), money_right=True)
     (row,) = audit_rows(world, group=other, action=pricing.ACTION_MEMBERSHIP_PRICE)
     assert (row.actor_id, row.actor_role, row.snapshot["old_amount"], row.snapshot["old_source"], row.snapshot["new_amount"],
             row.snapshot["student_id"]) == (world.admin.id, "admin", 500_000, "group", 450_000, str(student.id))
     # the student is already there (his only group): the same exception again is nothing, another sum corrects that day
     world.svc.add_student_to_group(str(world.org.id), str(other.id), str(student.id), mode="transfer",
-                                   price_override=SimpleNamespace(amount=450_000, reason="скидка"), actor_id=str(world.admin.id))
+                                   price_override=SimpleNamespace(amount=450_000, reason="скидка"), actor_id=str(world.admin.id), money_right=True)
     assert len(audit_rows(world, group=other, action=pricing.ACTION_MEMBERSHIP_PRICE)) == 1
     world.svc.add_student_to_group(str(world.org.id), str(other.id), str(student.id), mode="transfer",
-                                   price_override=SimpleNamespace(amount=400_000, reason="больше скидка"), actor_id=str(world.admin.id))
+                                   price_override=SimpleNamespace(amount=400_000, reason="больше скидка"), actor_id=str(world.admin.id), money_right=True)
     assert [r.snapshot["new_amount"] for r in audit_rows(world, group=other, action=pricing.ACTION_MEMBERSHIP_PRICE)] == [
         450_000, 400_000]
     # a membership write nobody can attribute is refused: the trail has no row without an actor
@@ -1231,7 +1231,7 @@ def test_remove_student_and_a_price_write_on_the_same_membership_never_deadlock(
         return AuthService(session).remove_student_from_group(str(world.org.id), str(world.group.id), str(student.id))
 
     def back(n):                                                                    # the student returns to the group for the next round
-        world.svc.add_student_to_group(str(world.org.id), str(world.group.id), str(student.id), mode="transfer")
+        world.svc.add_student_to_group(str(world.org.id), str(world.group.id), str(student.id), mode="transfer", money_right=True)
 
     race_price_write_with(world, engine, monkeypatch, caplog, 25, remove, back)
 
@@ -1258,7 +1258,7 @@ def test_enrolment_with_an_individual_price_and_a_price_write_on_the_same_member
     def enrol(session):                                                             # the student is in the group: the "nothing moves" path writes the exception
         return AuthService(session).add_student_to_group(
             str(world.org.id), str(world.group.id), str(student.id), mode="transfer",
-            price_override=SimpleNamespace(amount=222_000, reason="при зачислении"), actor_id=str(world.admin.id))
+            price_override=SimpleNamespace(amount=222_000, reason="при зачислении"), actor_id=str(world.admin.id), money_right=True)
 
     race_price_write_with(world, engine, monkeypatch, caplog, 10, enrol)
 

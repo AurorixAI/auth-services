@@ -19,7 +19,7 @@ def second_group(w, *students):
     group = make_group(w.db, w.org, w.teacher2, "Вторая")
     w.db.commit()
     for student in students:
-        w.svc.add_student_to_group(str(w.org.id), str(group.id), str(student.id), mode="add")
+        w.svc.add_student_to_group(str(w.org.id), str(group.id), str(student.id), mode="add", money_right=True)
     return group
 
 
@@ -105,7 +105,7 @@ def test_the_summary_costs_the_same_number_of_queries_however_many_students_ther
     for n in range(5, 11):
         extra = make_student(world.db, world.org, world.group, f"Имя{n}", f"Фамилия{n}", f"N13-0{n:02d}")
         world.db.commit()
-        world.svc.add_student_to_group(str(world.org.id), str(b.id), str(extra.id), mode="add")
+        world.svc.add_student_to_group(str(world.org.id), str(b.id), str(extra.id), mode="add", money_right=True)
         pay(world, extra, paid_on=day(-30), valid_from=day(-30), valid_to=day(-1))
         pay(world, extra, group=b, paid_on=day(-30), valid_from=day(-30), valid_to=day(-1))
     big, big_count = measured()

@@ -269,7 +269,7 @@ def test_only_active_memberships_of_live_groups_and_students_are_tracked(world):
 def test_student_in_two_groups_is_two_rows_with_their_own_statuses(world):
     second = make_group(world.db, world.org, world.teacher2, "Вторая")
     world.db.commit()
-    world.svc.add_student_to_group(str(world.org.id), str(second.id), str(world.students[0].id), mode="add")
+    world.svc.add_student_to_group(str(world.org.id), str(second.id), str(world.students[0].id), mode="add", money_right=True)
     pay(world, paid_on=day(-30), valid_to=day(-1))
     pay(world, group=second, paid_on=day(-1), valid_to=day(30))
     page = status_page(world, bucket="all", search="Каримова")
@@ -286,8 +286,8 @@ def test_memberships_endpoint_hides_closed_memberships_without_payments(world):
     third = make_group(world.db, world.org, world.teacher2, "Третья")
     world.db.commit()
     s = world.students[0]
-    world.svc.add_student_to_group(str(world.org.id), str(second.id), str(s.id), mode="add")
-    world.svc.add_student_to_group(str(world.org.id), str(third.id), str(s.id), mode="add")
+    world.svc.add_student_to_group(str(world.org.id), str(second.id), str(s.id), mode="add", money_right=True)
+    world.svc.add_student_to_group(str(world.org.id), str(third.id), str(s.id), mode="add", money_right=True)
     pay(world, paid_on=day(-1))
     pay(world, group=second, paid_on=day(-1))
     for g in (world.group, second, third):                    # leave all, one by one: primary keeps moving
@@ -572,8 +572,8 @@ def test_closed_membership_keeps_its_money_when_the_student_returns(world):
     second = make_group(world.db, world.org, world.teacher2, "Вторая")
     world.db.commit()
     s = world.students[0]
-    world.svc.add_student_to_group(str(world.org.id), str(second.id), str(s.id))  # transfer
-    world.svc.add_student_to_group(str(world.org.id), str(world.group.id), str(s.id), mode="add")
+    world.svc.add_student_to_group(str(world.org.id), str(second.id), str(s.id), money_right=True)  # transfer
+    world.svc.add_student_to_group(str(world.org.id), str(world.group.id), str(s.id), mode="add", money_right=True)
     row = row_of(world)
     assert row["is_active"] and row["last_payment"] is not None
 

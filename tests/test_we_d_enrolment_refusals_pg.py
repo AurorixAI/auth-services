@@ -57,14 +57,14 @@ def test_the_real_refusals_are_typed_and_keep_their_words(world):
     w.db.commit()
     loose = new_loose_student(w)
     with pytest.raises(R.GroupFull) as full:
-        w.svc.add_student_to_group(org, str(group.id), str(loose.id), mode="add")
+        w.svc.add_student_to_group(org, str(group.id), str(loose.id), mode="add", money_right=True)
     assert str(full.value) == "В группе достигнут лимит учеников" and (full.value.limit, full.value.taken) == (3, 3)
     assert isinstance(full.value, ValueError) and skip_code(full.value) == "group_full"
     with pytest.raises(R.GroupNotFoundForEnrolment) as missing:
-        w.svc.add_student_to_group(org, str(uuid.uuid4()), str(loose.id), mode="add")
+        w.svc.add_student_to_group(org, str(uuid.uuid4()), str(loose.id), mode="add", money_right=True)
     assert str(missing.value) == "Группа не найдена" and skip_code(missing.value) == "not_found"
     loose.status = "archived"
     w.db.commit()
     with pytest.raises(R.StudentArchivedForEnrolment) as archived:
-        w.svc.add_student_to_group(org, str(group.id), str(loose.id), mode="add")
+        w.svc.add_student_to_group(org, str(group.id), str(loose.id), mode="add", money_right=True)
     assert str(archived.value) == "Архивного ученика нельзя перевести в группу"

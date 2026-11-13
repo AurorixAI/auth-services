@@ -2564,7 +2564,7 @@ class AuthService:
         price_override: Optional[Any] = None,
         actor_id: Optional[str] = None,
         payments_detail: bool = False,
-        money_right: bool = True,
+        money_right: bool,
         dry_run: bool = False,
         pay_from: Optional[date] = None,
     ) -> dict:
@@ -2627,7 +2627,7 @@ class AuthService:
         payments_detail: bool = False,
         opening_balance: Optional[Any] = None,
         opening_source: str = "add",
-        money_right: bool = True,
+        money_right: bool,
         dry_run: bool = False,
         pay_from: Optional[date] = None,
         immediate: bool = True,

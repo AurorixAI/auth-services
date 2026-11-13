@@ -456,7 +456,7 @@ def commit(org_id: Any, creator_id: Any, data: bytes, db: Session, *, money: boo
 
 def _enrol(db: Session, svc, org_id: Any, creator_id: Any, item: Dict[str, Any], group_id: UUID) -> Tuple[str, ...]:
     """One student row in one transaction: ``("enrolled",)`` or ``("skipped", code, message, group_name)``."""
-    from .ops_rules import GroupArchivedForEnrolment, GroupFull, StudentArchivedForEnrolment
+    from .ops_rules import GroupArchivedForEnrolment, GroupFull, OpsError, StudentArchivedForEnrolment
 
     group = db.query(Group).filter(Group.id == group_id).first()
     name = group.name if group else item["group_name"]
@@ -491,7 +491,7 @@ def _enrol(db: Session, svc, org_id: Any, creator_id: Any, item: Dict[str, Any],
             paid_until, debt_amount, debt_on = item["opening"]
             opening = OpeningIn(paid_until=paid_until, debt_amount=debt_amount, debt_on=debt_on)
         svc.add_student_to_group(str(org_id), str(group_id), str(student.id), mode="transfer", actor_id=str(creator_id),
-                                 opening_balance=opening, opening_source="import")
+                                 opening_balance=opening, opening_source="import", money_right=False)       # an import never transfers: a transfer carries paid days (rule 123)
         db.commit()
         return ("enrolled",)
     except GroupArchivedForEnrolment:
@@ -504,6 +504,12 @@ def _enrol(db: Session, svc, org_id: Any, creator_id: Any, item: Dict[str, Any],
     except StudentArchivedForEnrolment:
         db.rollback()
         return ("skipped", "STUDENT_ARCHIVED", SKIP_TEXT["STUDENT_ARCHIVED"], name)
+    except OpsError as exc:      # the student joined another group between the check above and the enrolment: his transfer is money, an import does not make it
+        db.rollback()
+        if exc.code != "MONEY_RIGHT_REQUIRED":
+            raise
+        other = next(iter(_live_groups_of(db, org_id, [student.id]).get(student.id, [])), None)
+        return ("skipped", "IN_OTHER_GROUP", SKIP_TEXT["IN_OTHER_GROUP"].format(other=other.name if other else "другой"), name)
     except ValueError as exc:
         db.rollback()
         text_ = str(exc)

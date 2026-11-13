@@ -536,7 +536,7 @@ class StudentArchiveService:
             try:
                 # "add", not "transfer": the groups are independent; the first one becomes primary.
                 result = service.add_student_to_group(
-                    org_id, group_id, str(student.id), mode="add", actor_id=actor_id
+                    org_id, group_id, str(student.id), mode="add", actor_id=actor_id, money_right=False       # a restore only adds: it moves no money (rule 123)
                 )
             except ValueError as exc:  # full / archived / not found / a lesson is open: the rest goes on
                 self.db.rollback()

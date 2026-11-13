@@ -67,7 +67,7 @@ def newcomer(w, name="Возвращенец", group=None):
 
 def add(w, group, student, mode="add"):
     result = w.svc.add_student_to_group(
-        str(w.org.id), str(group.id), str(student.id), mode=mode, actor_id=str(w.owner.id)
+        str(w.org.id), str(group.id), str(student.id), mode=mode, actor_id=str(w.owner.id), money_right=True
     )
     w.db.expire_all()
     return result
@@ -347,7 +347,7 @@ def test_the_bulk_add_and_the_import_open_periods(world, clock):
     people = [newcomer(world, f"Массовый{i}") for i in range(3)]
     clock.at(9, 1)
     result = world.svc.bulk_add_students(
-        str(world.org.id), str(world.group.id), [str(p.id) for p in people], mode="add", actor_id=str(world.owner.id)
+        str(world.org.id), str(world.group.id), [str(p.id) for p in people], mode="add", actor_id=str(world.owner.id), money_right=True
     )
     assert result["added"] == 3
     for p in people:

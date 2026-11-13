@@ -71,7 +71,7 @@ def audit(w, student=None, action=None):
 
 def add_to(w, group, student, mode="add"):
     result = w.svc.add_student_to_group(
-        str(w.org.id), str(group.id), str(student.id), mode=mode, actor_id=str(w.owner.id)
+        str(w.org.id), str(group.id), str(student.id), mode=mode, actor_id=str(w.owner.id), money_right=True
     )
     w.db.expire_all()
     return result
@@ -801,7 +801,7 @@ def test_a_transfer_waits_for_an_archiving_and_is_then_refused(two, engine):
     holder = Session(engine)
     holder_student = holder.query(Student).filter_by(id=s.id).with_for_update(key_share=True).one()   # the archive's lock
     thread, outcome = run_in_thread(engine, lambda session: AuthService(session).add_student_to_group(
-        str(two.org.id), str(third.id), str(s.id), actor_id=str(two.owner.id)))
+        str(two.org.id), str(third.id), str(s.id), actor_id=str(two.owner.id), money_right=True))
     wait_until_blocked(engine)
     for m in holder.query(StudentGroup).filter_by(student_id=s.id):
         m.is_active, m.left_at = False, datetime.utcnow()

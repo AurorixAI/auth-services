@@ -186,7 +186,7 @@ def test_a_payment_and_a_transfer_of_the_same_student_do_not_deadlock(world, eng
 
     t1, o1 = run_in_thread(engine, lambda s: PaymentService(s).create_payment(org, m.id, actor, body(5_000_000)))
     t2, o2 = run_in_thread(engine, lambda s: AuthService(s).add_student_to_group(
-        org, str(second.id), str(world.students[0].id), actor_id=actor, payments_detail=True))
+        org, str(second.id), str(world.students[0].id), actor_id=actor, payments_detail=True, money_right=True))
     for t in (t1, t2):
         t.join(timeout=60)
     for o in (o1, o2):

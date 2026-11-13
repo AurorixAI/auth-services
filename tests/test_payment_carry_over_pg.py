@@ -570,7 +570,7 @@ def test_internal_call_without_an_actor_still_records_the_link(two):
 
     billing(two)
     pay(two, paid_on=day(-10), amount=3_000_000)
-    result = two.svc.add_student_to_group(str(two.org.id), str(two.second.id), str(two.student.id))
+    result = two.svc.add_student_to_group(str(two.org.id), str(two.second.id), str(two.student.id), money_right=True)
     assert result["status"] == "added"
     (link,) = two.db.query(MembershipTransfer).filter_by(org_id=two.org.id).all()
     assert link.created_by is None

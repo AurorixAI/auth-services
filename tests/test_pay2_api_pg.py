@@ -475,7 +475,7 @@ def test_transfer_through_add_student_to_group_makes_a_link(world, fixed_today):
     now = datetime.utcnow()
     result = world.svc.add_student_to_group(
         str(world.org.id), str(group_b.id), str(world.students[0].id), mode="transfer", actor_id=str(world.owner.id),
-        payments_detail=True)
+        payments_detail=True, money_right=True)
     links = db.query(MembershipTransfer).filter_by(student_id=world.students[0].id).all()
     assert len(links) == 1 and links[0].from_membership_id == a.id
     codes = [w.get("code") for w in result["warnings"]]

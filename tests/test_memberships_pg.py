@@ -37,7 +37,7 @@ def override_rows(w, group, student=None):
 
 
 def add(w, group, student=None, **kw):
-    return w.svc.add_student_to_group(str(w.org.id), str(group.id), str(student.id if student else w.student.id), **kw)
+    return w.svc.add_student_to_group(str(w.org.id), str(group.id), str(student.id if student else w.student.id), **kw, money_right=True)
 
 
 def active_groups(w, student=None):
@@ -142,12 +142,12 @@ def test_add_to_an_archived_group_and_capacity_still_refused(two):
 
 def test_bulk_add_passes_mode_and_reports_conflicts(two):
     body = two.svc.bulk_add_students(
-        str(two.org.id), str(two.second.id), [str(s.id) for s in two.students], mode="add"
+        str(two.org.id), str(two.second.id), [str(s.id) for s in two.students], mode="add", money_right=True
     )
     assert body["added"] == 3 and body["skipped"] == 0 and body["warnings"] == []
     assert all(primary(two, s) == two.group.id for s in two.students)
     body = two.svc.bulk_add_students(
-        str(two.org.id), str(two.second.id), [str(two.students[0].id)], mode="add"
+        str(two.org.id), str(two.second.id), [str(two.students[0].id)], mode="add", money_right=True
     )
     assert body["added"] == 0 and body["skipped_details"][0]["reason"] == "Ученик уже состоит в этой группе"
 

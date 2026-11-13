@@ -257,7 +257,7 @@ def test_16_after_a_transfer_each_group_recalculates_its_own_lessons(pg_session,
     give_group_price(w.db, other, 600_000, valid_from=D(2026, 1, 1))
     w.db.commit()
     clock.set("2026-10-20 12:00")
-    w.svc.add_student_to_group(str(w.org.id), str(other.id), str(s.id), mode="transfer", actor_id=str(w.owner.id))
+    w.svc.add_student_to_group(str(w.org.id), str(other.id), str(s.id), mode="transfer", actor_id=str(w.owner.id), money_right=True)
     w.db.commit()
     clock.set("2026-10-25 12:00")
     cancel(w, g, "lesson-fri", "2026-10-16")           # group A, while he was there
