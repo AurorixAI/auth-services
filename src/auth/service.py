@@ -189,6 +189,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TTL_MINUTES", "60"))
 # K2-1 (D): the lifetime of a REMEMBERED session (14 days, sliding at every refresh); without the tick a session lives 12 h from the sign-in (user_sessions.SHORT_SESSION_HOURS)
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TTL_DAYS", "14"))
 DIAGNOSTIC_CODE_LENGTH = 8
+DIAGNOSTIC_INVITE_TTL = timedelta(days=7)  # the screens promise "valid 7 days" (LESSONS_LEARNED 125)
 INVITE_CODE_LENGTH = 20  # K2-1 (A1): the code in the e-mailed link is the proof of the mailbox, so it is a secret (36**20 values), not a shared 8-character word
 BASE_DIAGNOSTIC_URL = diagnostic_base_url()  # SV-27: logs an error in production/staging when DIAGNOSTIC_BASE_URL is missing
 # "cancelled" is deliberately absent: a cancelled invite never turns into "expired" when its time passes.
@@ -1469,7 +1470,7 @@ class AuthService:
             class_level=request.class_level,
             diagnostic_type=request.diagnostic_type,
             status="pending",
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+            expires_at=datetime.now(timezone.utc) + DIAGNOSTIC_INVITE_TTL,
         )
         self.db.add(invite)
         self.db.commit()
@@ -1951,6 +1952,7 @@ class AuthService:
                     "class_level": inv.class_level,
                     "diagnostic_type": inv.diagnostic_type,
                     "status": inv.status,
+                    "expires_at": inv.expires_at.isoformat() if inv.expires_at else None,
                     "session_id": str(r.session_id or inv.cat_session_id)
                     if r and (r.session_id or inv.cat_session_id)
                     else str(inv.cat_session_id) if inv.cat_session_id else None,
