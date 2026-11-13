@@ -604,3 +604,44 @@ def test_r4_an_unknown_group_is_not_found(pg_session, clock):
     assert _consequence(w, "owner", type("G", (), {"id": uuid.uuid4()}), expect=404)["detail"]["code"] == "GROUP_NOT_FOUND"
 
 
+# ---- Р-8 (R3 М4): the save and the recalculation of a sheet take the SAME lock of the teacher as a payout -----------------------------------------------------
+
+def test_r8_a_save_and_a_recalculation_of_a_sheet_wait_for_the_advance_chain_of_the_teacher(world, fixed_today):
+    from uuid import UUID
+
+    from src.auth.payroll_schemas import SheetCreate, SheetPatch
+    from src.auth.payroll_service import PayrollService
+
+    m, s1, s2, first, second = two_teachers_in_a_closed_september(world, fixed_today)       # September saved on 20.10
+    fixed_today(date(2026, 11, 20))
+    seen = payroll_owner(world).get(f"{PAYROLL_API}/org/payroll/sheets/{first['id']}/diff").json()["source_fingerprint"]
+    org, teacher, owner_id, sheet_id = str(world.org.id), world.teacher.id, str(world.owner.id), UUID(first["id"])
+    make = sessionmaker(world.db.get_bind(), autoflush=False)
+    calls = {
+        "patch": lambda s: PayrollService(s).patch_sheet(org, owner_id, sheet_id, SheetPatch(revision=1, recalculate=True, expected_fingerprint=seen, confirm_open_lessons=True)),
+        "save": lambda s: PayrollService(s).save_sheet(org, owner_id, SheetCreate(month="2026-09", teacher_id=teacher, revision=2, expected_fingerprint=seen, confirm_open_lessons=True)),
+    }
+    for name, call in calls.items():
+        tab_a = make()
+        tab_a.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"payroll-advance:{org}:{teacher}"})       # a payout of the teacher is in the middle of its write
+        outcome = {}
+
+        def tab_b():
+            session = make()
+            try:
+                outcome["done"] = call(session)
+            except BaseException as exc:  # noqa: BLE001 - the test inspects it
+                outcome["error"] = exc
+            finally:
+                session.close()
+
+        thread = threading.Thread(target=tab_b)
+        thread.start()
+        thread.join(timeout=3)
+        assert thread.is_alive(), f"the {name} of the sheet did not wait for the advance chain of the teacher"       # before: it went through at once
+        tab_a.rollback()
+        thread.join(timeout=30)
+        assert not thread.is_alive() and "done" in outcome, outcome
+        tab_a.close()
+
+

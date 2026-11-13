@@ -68,6 +68,7 @@ from . import payroll_rates
 from . import pricing
 from .payments_files import person_name, staff_name
 from .payments_service import PaymentService
+from .payroll_payouts import PayrollPayoutService, lock_advance_chain
 from .payroll_schemas import (
     DivisorRow,
     PayoutState,
@@ -1016,8 +1017,6 @@ class PayrollService:
         return engine.sheet_total(self._render(teacher, percents, {}, seed.divisor))
 
     def payout_state(self, org_id: str, sheet: PayrollSheet, seed: Optional[MonthSeed] = None, book=None) -> PayoutState:
-        from .payroll_payouts import PayrollPayoutService
-
         return PayrollPayoutService(self.db).state_for(org_id, sheet, self._fresh_total(org_id, sheet, seed, book))
 
     # ---------------------------------------------------------------- month
@@ -1039,8 +1038,6 @@ class PayrollService:
                 PayrollSheet.lines.contains([{"fee_overridden": True}]).label("manual_fee"),
             ).filter(PayrollSheet.org_id == org_id, PayrollSheet.period_month == first)
         }
-        from .payroll_payouts import PayrollPayoutService
-
         payout_service = PayrollPayoutService(self.db)
         payouts = payout_service.payouts_of(org_id, month=first)
         teacher_ids = set(seed.teachers) | set(sheets)
@@ -1309,6 +1306,7 @@ class PayrollService:
         self._require_teacher(org_id, body.teacher_id)
         # Money-1 Г-6 (N8): the saved sheet is locked BEFORE the month is collected - a correction of a lesson holds it ``FOR SHARE`` (``closed_period._hold_open``), so what is collected here
         # is what the sheet is saved with, and the fingerprint checked below is the one of the data after the lock, not of a moment before it
+        lock_advance_chain(self.db, org_id, body.teacher_id)           # Р-8: the lock of the teacher's money first (a payout takes it too), then the sheet
         self.db.query(PayrollSheet.id).filter(PayrollSheet.org_id == org_id, PayrollSheet.teacher_id == body.teacher_id, PayrollSheet.period_month == first).with_for_update().all()
         seed = self._collect(org_id, first, last, teacher_ids={body.teacher_id})
         teacher = seed.teachers.get(body.teacher_id) or TeacherSeed(
@@ -1480,6 +1478,8 @@ class PayrollService:
         # I-4: the same rule as the save (``_open_lessons_answer``); it is applied BEFORE the lock of the sheet (the list of the month is a heavy read)
         probe = self.db.query(PayrollSheet.period_month, PayrollSheet.teacher_id, PayrollSheet.confirmed_open_lessons).filter(PayrollSheet.id == sheet_id, PayrollSheet.org_id == org_id).first()
         confirmed: Any = self._open_lessons_answer(org_id, probe[0], probe[1], body.confirm_open_lessons, probe[2]) if probe is not None else _KEEP
+        if probe is not None:
+            lock_advance_chain(self.db, org_id, probe[1])              # Р-8: before the lock of the sheet, like a payout
         sheet = self._lock_sheet(org_id, sheet_id, lock=True)
         try:
             if body.revision != sheet.revision:

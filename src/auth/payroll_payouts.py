@@ -140,6 +140,13 @@ def _once_per_revision(fresh_total_of):
     return get
 
 
+def lock_advance_chain(db, org_id: str, teacher_id: UUID) -> None:
+    """Money-1 Г-5 / Р-8: ONE lock per teacher for every write that moves his money from month to month - a payout (create, void) and a save or a recalculation of a sheet.  The advance that a month
+    hands on is read from the other months, whose sheets are not locked: two tabs (an advance of month M and a payout of M+1, or a re-save of M-1) each saw the other's money as not yet there.
+    Taken BEFORE the lock of the sheet, by every writer, so the order never crosses."""
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"payroll-advance:{org_id}:{teacher_id}"})
+
+
 class PayrollPayoutService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -254,9 +261,7 @@ class PayrollPayoutService:
     # ---- writing
 
     def _lock_advance_chain(self, org_id: str, teacher_id: UUID) -> None:
-        """Money-1 Г-5: ONE lock per teacher for every write of his payouts.  The advance that a month hands on is read from the other months, whose sheets are not locked: two tabs
-        (an advance of month M and a payout of M+1) each saw the other's money as not yet there.  Taken before the sheet lock, in create and void alike, so the order never crosses."""
-        self.db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"payroll-advance:{org_id}:{teacher_id}"})
+        lock_advance_chain(self.db, org_id, teacher_id)
 
     @staticmethod
     def _check(body: PayoutCreate, today: date) -> Tuple[int, date, str]:
