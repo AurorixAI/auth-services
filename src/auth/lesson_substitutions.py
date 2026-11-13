@@ -1026,6 +1026,12 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         group, r = self._lock_request(org_id, request_id)
         group_id = group.id
         money_right = OneOffPurpose(self.svc).money_right(org_id, actor_role)          # read UNDER the lock of the group, once: the substitute and the kept substitute of a move use it
+        if body.decision == "cancel":          # Money-1 Д-6: the check above only keeps the order of LESSONS 16 (rights before exam-service); the kind is judged by the right read here, under the lock
+            try:
+                assert_cancellation_kind_allowed(getattr(body, "cancellationKind", None), money_right)
+            except OpsError:
+                self.db.rollback()
+                raise
         if r.status == PENDING:
             reason, occ = self.closure_reason(r, group)
             if reason and reason != "LESSON_OUTSIDE_WINDOW":

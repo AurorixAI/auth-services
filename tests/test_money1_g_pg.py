@@ -664,6 +664,30 @@ def test_d3_a_teacher_who_cannot_cancel_the_lesson_does_not_get_its_sentence(pg_
     assert _consequence(w, "admin", g, day="2026-11-04")["consequence"]       # the administrator cancels any lesson
 
 
+# ---- Д-6 (R3B м2): the kind of a cancellation is judged by the right read UNDER the lock of the group ------------------------------------------------------------
+
+def test_d6_the_right_taken_away_while_the_decision_waits_for_exam_service_refuses_the_kind_holiday(pg_session, clock, monkeypatch):
+    from src.auth.lesson_substitutions import Substitutions
+    from src.models.auth import LessonSubstitutionRequest as SubstitutionRequest
+    from tests.payf_helpers import API, client as payf_client
+
+    w, rid = _subs_world(pg_session, clock)
+    grant_money_right(w, True)                                                  # the admin has the right when he presses the button ...
+    real = Substitutions._preflight_request
+
+    def revoked_meanwhile(self, *args, **kwargs):                               # ... the owner takes it away while exam-service is asked (before the lock of the group)
+        out = real(self, *args, **kwargs)
+        grant_money_right(w, False)
+        return out
+
+    monkeypatch.setattr(Substitutions, "_preflight_request", revoked_meanwhile)
+    body = {"decision": "cancel", "reason": "Урока не было", "cancellationKind": "holiday"}
+    refused = payf_client(w, "admin").post(f"{API}/org/substitutions/{rid}/decide", json=body)
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "MONEY_RIGHT_REQUIRED", refused.text       # before: 200, the lesson was cancelled as a holiday with the right already gone
+    w.db.expire_all()
+    assert w.db.query(SubstitutionRequest).filter_by(id=rid).one().status == "pending"
+
+
 # ---- Р-8 (R3 М4): the save and the recalculation of a sheet take the SAME lock of the teacher as a payout -----------------------------------------------------
 
 def test_r8_a_save_and_a_recalculation_of_a_sheet_wait_for_the_advance_chain_of_the_teacher(world, fixed_today):
