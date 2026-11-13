@@ -314,6 +314,14 @@ def prorated(price: int, numerator: int, denominator: int) -> int:
     return min(price, round_1000(price * numerator, denominator)) if numerator > 0 else 0
 
 
+def package_share(price: int, lessons: int, size: int) -> int:
+    """Money-1 G-7b: what ``lessons`` held lessons of a package of ``size`` lessons cost - EXACT where the price of one lesson is a whole number (``price`` divides by ``size``: every lesson costs
+    the same, the pay of the teacher for each is the same), otherwise ``prorated`` (whole thousands).  The whole package is the price; the one place of this rule."""
+    if size > 0 and 0 < lessons < size and price % size == 0:
+        return price // size * lessons
+    return prorated(price, lessons, size)
+
+
 def _years_ago(day: date, years: int) -> date:
     if day.year - years < date.min.year:
         return date.min

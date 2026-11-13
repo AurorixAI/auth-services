@@ -53,3 +53,36 @@ def test_dyra07_added_and_removed_the_same_day_without_a_lesson_owes_nothing():
 def test_dyra07_the_same_day_with_a_lesson_is_still_a_day_of_the_student():
     came = led(today=D(2026, 10, 20), stays=[bl.Stay(D(2026, 10, 10), D(2026, 10, 10))], price_at=flat(300_000), lesson_days=weekly({5}))
     assert came.debt == 10_000
+
+
+# ---- G-7b: an even price of a lesson is exact (owner, 13.11) ------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("price,size,held,expected", [
+    (625_000, 10, 9, 562_500), (625_000, 10, 1, 62_500), (625_000, 10, 10, 625_000),
+    (500_000, 12, 5, 208_000), (500_000, 12, 6, 250_000), (500_000, 12, 12, 500_000),         # 500 000 / 12 is not whole: whole thousands, as in G-7
+    (600_000, 12, 5, 250_000), (600_000, 12, 11, 550_000), (600_000, 12, 0, 0),               # 50 000 a lesson - exact
+])
+def test_g7b_a_package_share_is_exact_for_an_even_price_of_a_lesson_and_in_whole_thousands_otherwise(price, size, held, expected):
+    assert ps.package_share(price, held, size) == expected
+
+
+def test_g7b_every_lesson_of_an_even_package_costs_the_same_and_the_unused_one_is_its_price():
+    """625 000 / 10: nine lessons 562 500, every lesson 62 500, the left one 62 500 (the pay of the teacher for each lesson of the package is the same)."""
+    costs = [bl._lesson_cost(625_000, place, 10) for place in range(1, 11)]
+    assert costs == [62_500] * 10 and sum(costs) == 625_000 and ps.package_share(625_000, 9, 10) == 562_500
+    assert 625_000 - ps.package_share(625_000, 9, 10) == 62_500
+
+
+@pytest.mark.parametrize("price", [625_000, 600_000, 500_000, 450_500, 1_000])
+@pytest.mark.parametrize("size", [1, 4, 8, 10, 12])
+def test_g7b_a_share_is_never_more_than_the_whole_and_never_less_than_a_smaller_one(price, size):
+    shares = [ps.package_share(price, k, size) for k in range(0, size + 1)]
+    assert shares[0] == 0 and shares[-1] == price and all(a <= b <= price for a, b in zip(shares, shares[1:]))
+    if price % size == 0:
+        assert all(shares[k] == price // size * k for k in range(size + 1))
+
+
+def test_g7b_the_ledger_of_a_package_charges_the_exact_share_of_an_even_price():
+    counted = [bl.CountedLesson(D(2026, 10, 1) + timedelta(days=i), f"l{i}") for i in range(5)]
+    five = led(today=D(2026, 10, 20), stays=[bl.Stay(D(2026, 9, 1))], price_at=flat(600_000), regimes=[bl.Regime(mode=bl.LESSONS, package_size=12)], counted=counted)
+    assert five.segments[0].amount == 250_000 and five.debt == 250_000

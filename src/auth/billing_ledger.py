@@ -428,8 +428,9 @@ def round_1000(numerator: int, denominator: int = 1) -> int:
 
 
 def _lesson_cost(price: int, place: int, size: int) -> int:
-    """The cost of the ``place``-th lesson of a package: the difference of the rounded shares, so a package that has held ``k`` lessons costs ``prorated(price, k, size)`` and a whole one the price."""
-    return ps.prorated(price, place, size) - ps.prorated(price, place - 1, size)
+    """The cost of the ``place``-th lesson of a package: the difference of the shares, so a package that has held ``k`` lessons costs ``package_share(price, k, size)`` (exact for an even price of a lesson,
+    whole thousands otherwise) and a whole one the price."""
+    return ps.package_share(price, place, size) - ps.package_share(price, place - 1, size)
 
 
 def _last_day(year: int, month: int) -> int:

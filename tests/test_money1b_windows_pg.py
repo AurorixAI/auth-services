@@ -345,8 +345,7 @@ def test_walk_z2_a_package_gives_whole_lessons_only_the_package_in_progress_keep
     assert run(1_500_000, 19, D(2026, 11, 30)) == (30, 19, 11, 550_000, 0)
     assert run(1_500_000, 19, D(2026, 12, 2)) == (28, 19, 9, 550_000, 0)                          # 11 -> 9, exact: 50 000 + 8 x 62 500 = 550 000
     assert run(1_530_000, 19, D(2026, 12, 2))[:3] == (28, 19, 9)                                  # 30 000 more do not pay a lesson: still 9 left (an advance, not a lesson)
-    assert run(1_562_500, 19, D(2026, 12, 2))[:3] == (28, 19, 9)                                  # G-7: a package share is a whole number of thousands - the 9th lesson of 625 000 / 10 costs 563 000 - 500 000 = 63 000, 62 500 is not enough
-    assert run(1_563_000, 19, D(2026, 12, 2))[:3] == (29, 19, 10)                                 # 63 000 more pay exactly one
+    assert run(1_562_500, 19, D(2026, 12, 2))[:3] == (29, 19, 10)                                 # 62 500 more pay exactly one (G-7b: 625 000 / 10 is an even price of a lesson - exact, no rounding)
     nothing = make(today=D(2026, 12, 2), stays=[bl.Stay(D(2026, 9, 1))], price_at=flat(500_000, D(2026, 1, 1), {D(2026, 12, 1): 700_000}), credits=[credit("p", D(2026, 9, 1), 600_000)],
                    regimes=[bl.Regime(mode=bl.LESSONS, package_size=12)])
     assert bl.run_ledger(nothing).lessons.covered == 10                                           # nothing held: the whole package is at the new price, 600 000 / 58 333 = 10,29 -> 10 (down)
