@@ -24,7 +24,7 @@ WORKERS=${WORKERS:-4}
 CONTAINER=""
 cleanup() {
   if [ -n "$CONTAINER" ]; then
-    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
   elif [ "${KEEP_DBS:-0}" != 1 ] && [ -n "${A2_AUTH_TEST_DATABASE_URL:-}" ]; then
     "$PYTHON" scripts/drop_worker_databases.py "$A2_AUTH_TEST_DATABASE_URL" "$A5_AUTH_MIGRATION_TEST_DATABASE_URL" || true
   fi

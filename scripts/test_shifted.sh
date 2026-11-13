@@ -54,7 +54,7 @@ SUMMARY="${LOG%.log}.summary.txt"
 
 cleanup() {
   trap - EXIT INT TERM HUP
-  docker rm -f "$RUNNER" "$PG" >/dev/null 2>&1 || true
+  docker rm -fv "$RUNNER" "$PG" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
   rmdir "$LOCK" >/dev/null 2>&1 || true
 }
