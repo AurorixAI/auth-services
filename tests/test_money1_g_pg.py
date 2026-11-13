@@ -418,3 +418,20 @@ def test_g17_the_cancellation_on_another_day_leaves_the_closed_day_alone_and_lea
     assert _till(world, "2026-10-03") == (base["2026-10-03"][0] + 300_000, base["2026-10-03"][1], base["2026-10-03"][2] + 300_000)      # e7c44aa: the cancelled payment vanished from 03.10
     assert _till(world, "2026-10-05") == (base["2026-10-05"][0], base["2026-10-05"][1], base["2026-10-05"][2] - 300_000)       # and the till of 05.10 says it ...
     assert _cancelled(world, "2026-10-05") == 300_000 and income(world, "2026-10-05", "2026-10-05")["cash"]["text"].endswith("отменено 300\u00a0000\u00a0сум)")   # ... as «отменено», not «возвращено» (Г-17b)
+
+
+# ---- Р-1 (R3 Б1, М3): the substitution desk is the second way to Г-3 -------------------------------------------------------------------------------------------
+
+def test_r1_a_substitute_of_a_past_lesson_without_a_journal_row_is_for_the_money_right_on_the_substitution_desk(pg_session, clock):
+    from tests.payf_helpers import API, client as payf_client
+
+    w, rid = _subs_world(pg_session, clock)                              # request of A for L2 28.10 (Wed), made on 22.10
+    clock.set("2026-10-29 12:00")                                        # the lesson (28.10) is over, nobody opened it: no journal row, the request is still open
+    body = {"decision": "substitute", "teacherId": str(w.B.id)}
+    admin = payf_client(w, "admin")
+    one = admin.post(f"{API}/org/substitutions/{rid}/decide", json=body)
+    assert one.status_code == 403 and one.json()["detail"]["code"] == "MONEY_RIGHT_REQUIRED", one.text      # e7c44aa..4f76113: 200, B formalises the lesson and is paid
+    many = admin.post(f"{API}/org/substitutions/decide-bulk", json={**body, "ids": [rid]})
+    assert many.status_code == 200 and many.json()["updated"] == 0 and many.json()["skipped"][0]["code"] == "MONEY_RIGHT_REQUIRED", many.text      # the bulk answers per request
+    grant_money_right(w)
+    assert admin.post(f"{API}/org/substitutions/{rid}/decide", json=body).status_code == 200

@@ -12,7 +12,7 @@ from tests.b2_helpers import (  # noqa: F401  (fixtures)
     row_of, run_parallel,
 )
 from tests.test_ops_b2_decide_pg import Sync, L, one, sync, sub_body, assignments  # noqa: F401
-from tests.ops_helpers import closed_sheet  # noqa: E402
+from tests.ops_helpers import closed_sheet, grant_money_right  # noqa: E402
 
 pytestmark = needs_pg
 SUB = f"{API}/org/substitutions"
@@ -96,7 +96,7 @@ def test_s8_r4_taking_off_races_with_the_start(w, clock):
     org = str(w.org.id)
     out = run_parallel(
         w,
-        lambda svc: LessonTeachers(svc).put(org, str(w.G1.id), LessonTeacherPut(lessonDate=date(2026, 10, 26), lessonId="lesson-l1", teacherId=None, reason="Передумали"), actor_id=str(w.admin.id)),
+        lambda svc: LessonTeachers(svc).put(org, str(w.G1.id), LessonTeacherPut(lessonDate=date(2026, 10, 26), lessonId="lesson-l1", teacherId=None, reason="Передумали"), actor_id=str(w.admin.id), money_right=True),
         lambda svc: svc.start_group_attendance(org, str(w.G1.id), StartAttendanceRequest(lessonDate=date(2026, 10, 26), lessonId="lesson-l1"), started_by=str(w.D.id), is_org_admin=False),
     )
     assert all(code_of(e) in (None, "NOT_LESSON_TEACHER", "LESSON_ALREADY_STARTED", "NOT_LESSON_TEACHER") or e is None or isinstance(e, (PermissionError, ValueError)) for _r, e in out), out
@@ -303,6 +303,7 @@ def test_chain5_decision_after_the_lesson_time_golden(w, clock):
     assert not g(w, again.json(), "b2c5_create_already_requested.json")
     rid = created.json()["created"][0]["id"]
     clock.set("2026-10-21 17:40")
+    grant_money_right(w)                    # Money-1 Р-1: «назначить проведшего» of a past lesson is pay - the money right
     out = decide(w, "admin", rid, decision="substitute", teacherId=str(w.C.id))
     assert out.status_code == 200 and out.json()["item"]["status"] == "substituted"
     assert client(w, "C").post(f"{API}/org/groups/{w.G1.id}/attendance/reconcile", json={"lessonDate": "2026-10-21", "lessonId": "lesson-l2"}).status_code == 200

@@ -99,10 +99,10 @@ def test_r5_reconcile_refuses_an_empty_roster_cancel_missed_does_not(w):
     day = date(2026, 10, 14)
     req = StartAttendanceRequest(lessonDate=day, lessonId="lesson-e")
     with pytest.raises(ValueError, match="не было учеников"):
-        w.svc.reconcile_missed_group_attendance(str(w.org.id), str(group.id), req, reconciled_by=str(w.admin.id), is_org_admin=True)
+        w.svc.reconcile_missed_group_attendance(str(w.org.id), str(group.id), req, reconciled_by=str(w.admin.id), is_org_admin=True, money_right=True)
     assert w.svc.cancel_missed_group_attendance(
         str(w.org.id), str(group.id), ReconcileMissedLessonRequest(lessonDate=day, lessonId="lesson-e", cancellationReason="Урока не было"),
-        cancelled_by=str(w.admin.id), is_org_admin=True)["version"] == 1
+        cancelled_by=str(w.admin.id), is_org_admin=True, money_right=True)["version"] == 1
 
 
 def test_r6_roster_boundaries_live_start_by_the_active_members_reconcile_by_the_periods(w, clock):

@@ -257,7 +257,7 @@ def completed_lesson(w, group, offset=1):
     w.svc.save_group_attendance(
         str(w.org.id), str(group.id),
         SaveAttendanceRequestB(lessonDate=day, lessonId=lesson_id, status="completed", records=records, expectedVersion=shown_version(w, day, lesson_id, group)),
-        marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True,
+        marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True, money_right=True,
     )
     return day, lesson_id
 

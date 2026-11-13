@@ -21,7 +21,7 @@ def cancel_by_centre(w, day):
 
     day, lid = lesson(day)
     w.svc.cancel_missed_group_attendance(str(w.org.id), str(w.group.id), ReconcileMissedLessonRequest(lessonDate=day, lessonId=lid, cancellationReason="Нет света", cancellationKind="centre"),
-                                         cancelled_by=str(w.admin.id), is_org_admin=True, is_org_manager=True)
+                                         cancelled_by=str(w.admin.id), is_org_admin=True, is_org_manager=True, money_right=True)
     return day, lid
 
 

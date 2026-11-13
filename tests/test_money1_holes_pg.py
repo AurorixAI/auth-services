@@ -125,7 +125,7 @@ def test_d15_the_refusals_of_a_held_and_of_a_cancelled_lesson_say_who_can_do_wha
         save_marks(world, day, lid, [(s, "present") for s in world.students], status="in_progress", correctionReason="Хочу вернуть")
     cday, clid = lesson(date(2026, 10, 29))
     world.svc.cancel_missed_group_attendance(str(world.org.id), str(world.group.id), ReconcileMissedLessonRequest(lessonDate=cday, lessonId=clid, cancellationReason="Нажали по ошибке"),
-                                             cancelled_by=str(world.admin.id), is_org_admin=True, is_org_manager=True)
+                                             cancelled_by=str(world.admin.id), is_org_admin=True, is_org_manager=True, money_right=True)
     with pytest.raises(ValueError, match="Вернуть на отметку"):
         save_marks(world, cday, clid, [(s, "present") for s in world.students], status="in_progress")
 

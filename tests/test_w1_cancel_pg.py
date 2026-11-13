@@ -223,7 +223,7 @@ def _cancel_call(w, reason):
 
     def call(svc):
         out = svc.save_group_attendance(str(w.org.id), str(w.G1.id), SaveAttendanceRequestB(lessonDate=date(2026, 10, 26), lessonId="lesson-l1", status="cancelled",
-                                                                                            cancellationReason=reason, expectedVersion=version), marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True)
+                                                                                            cancellationReason=reason, expectedVersion=version), marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True, money_right=True)
         return out["version"]
     return call
 

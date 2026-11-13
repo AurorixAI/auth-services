@@ -85,7 +85,7 @@ def test_a_closed_month_with_a_lesson_still_going_on_is_found_and_an_open_month_
     from src.auth.schemas import StartAttendanceRequest
 
     day, lid = lesson(date(2026, 10, 28))
-    world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid), reconciled_by=str(world.admin.id), is_org_admin=True)
+    world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid), reconciled_by=str(world.admin.id), is_org_admin=True, money_right=True)
     row = sheet(world, world.teacher, date(2026, 10, 1), tashkent(2026, 10, 30))                    # mid-month: open
     assert [f for f in mr.reconcile_org(world.db, world.org.id) if f.invariant == "I-4"] == []
     row.updated_at = tashkent(2026, 11, 2)                                                           # saved after the month: closed, the lesson is still «идёт»

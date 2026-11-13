@@ -1025,6 +1025,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
             self._preflight_request(org_id, request_id, body)           # Wave B P4 (SV-15): exam-service is asked before the group is locked
         group, r = self._lock_request(org_id, request_id)
         group_id = group.id
+        money_right = OneOffPurpose(self.svc).money_right(org_id, actor_role)          # read UNDER the lock of the group, once: the substitute and the kept substitute of a move use it
         if r.status == PENDING:
             reason, occ = self.closure_reason(r, group)
             if reason and reason != "LESSON_OUTSIDE_WINDOW":
@@ -1043,13 +1044,13 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
             raise item_error
         try:
             if body.decision == "substitute":
-                result = self._substitute(org_id, group, r, actor, actor_role, body)
+                result = self._substitute(org_id, group, r, actor, actor_role, body, money_right)
             elif body.decision == "reject":
                 result = self._reject(r, actor, body)
             elif body.decision == "cancel":
                 result = self._cancel(group, r, actor, body)
             else:
-                result = self._reschedule(group, r, actor, body, via)
+                result = self._reschedule(group, r, actor, body, via, money_right)
             self.db.commit()
         except BaseException:
             self.db.rollback()
@@ -1115,7 +1116,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         return {"kind": "reject"}
 
     # -------------------------------------------------------------------------------------------- substitute
-    def _substitute(self, org_id: Any, group: Group, r: Req, actor: UUID, actor_role: str, body) -> Dict[str, Any]:
+    def _substitute(self, org_id: Any, group: Group, r: Req, actor: UUID, actor_role: str, body, money_right: bool) -> Dict[str, Any]:
         from .ops_schemas import LessonTeacherPut
 
         teacher = _uuid(body.teacherId)
@@ -1126,7 +1127,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         note = (body.note or "").strip() or None
         reason = (note or REASON_LABELS[r.reason_code])[:300]       # the admin's note; the teacher's own comment stays in the request only
         put = LessonTeacherPut(lessonDate=date.fromisoformat(r.lesson_date), lessonId=r.lesson_id, teacherId=str(teacher), reason=reason)
-        out = self.teachers._put_locked(org_id, group, put, actor_id=actor, actor_role=actor_role, commit=False, skip_request_id=r.id)
+        out = self.teachers._put_locked(org_id, group, put, actor_id=actor, actor_role=actor_role, commit=False, skip_request_id=r.id, money_right=money_right)
         self._substituted(r, teacher, self.teachers.last_assignment, actor, note, "request")
         return {"kind": "substitute", "teacherId": out["teacherId"], "teacherName": out["teacherName"], "isSubstitution": out["isSubstitution"],
                 "attendanceUpdated": out["attendanceUpdated"], "payrollSheetsAffected": out["payrollSheetsAffected"]}
@@ -1289,7 +1290,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         return {"ok": not t_conf and not g_conf, "teacherId": _s(teacher_id), "teacherName": short_name(user), "teacherConflicts": t_conf[:20],
                 "groupConflicts": g_conf[:20], "warnings": warnings}
 
-    def _reschedule(self, group: Group, r: Req, actor: UUID, body, via: str) -> Dict[str, Any]:
+    def _reschedule(self, group: Group, r: Req, actor: UUID, body, via: str, money_right: bool) -> Dict[str, Any]:
         reason = self._reason(body, 3, 500)
         now = self.now()
         if r.starts_at <= now:
@@ -1343,7 +1344,7 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
         warnings = ScheduleRules(self.svc).warnings_for(group, new_id, [new_date], payload)
         warnings += DaysOffService(self.svc).warnings_for_date(group.org_id, new_date)
         warnings += self._student_busy(group, new_date, start_m, end_m, detail=via != TEACHER_MOVE)
-        kept = self._keep_substitute(group, sub_id, new_id, new_date, actor)
+        kept = self._keep_substitute(group, sub_id, new_id, new_date, actor, money_right)
         r.moved_to_lesson_id, r.moved_to_date, r.moved_to_start, r.moved_to_end = new_id, new_date.isoformat(), start, end
         self._finish(r, "rescheduled", actor, reason, via)
         self.event(r, "rescheduled", actor, {"reason": reason, "via": via, "movedTo": {"lessonId": new_id, "date": new_date.isoformat(), "startTime": start, "endTime": end},
@@ -1352,14 +1353,14 @@ class Substitutions(LessonCancelMixin, SubstitutionsBase):
                 "newLesson": {"id": new_id, "groupId": str(group.id), "date": new_date.isoformat(), "startTime": start, "endTime": end, "room": room, "format": fmt}}
 
     # ------------------------------------------------------------------------- #124: a move without a request
-    def _keep_substitute(self, group: Group, sub_id: Optional[UUID], new_id: str, new_date: date, actor: UUID) -> Dict[str, Any]:
+    def _keep_substitute(self, group: Group, sub_id: Optional[UUID], new_id: str, new_date: date, actor: UUID, money_right: bool) -> Dict[str, Any]:
         """W1 S12 (D19): the substitute of the moved lesson leads the new one (the same assignment path as the lesson sheet's «Назначить»).  Returns the fields of the answer."""
         if sub_id is None:
             return {}
         from .ops_schemas import LessonTeacherPut
 
         put = LessonTeacherPut(lessonDate=new_date, lessonId=new_id, teacherId=str(sub_id), reason="Перенос урока: замена сохранена")
-        out = self.teachers._put_locked(group.org_id, group, put, actor_id=actor, commit=False)
+        out = self.teachers._put_locked(group.org_id, group, put, actor_id=actor, commit=False, money_right=money_right)
         return {"teacherId": out["teacherId"], "teacherName": out["teacherName"], "isSubstitution": out["isSubstitution"]}
 
     def _student_busy(self, group: Group, new_date: date, start_m: int, end_m: int, *, detail: bool = True) -> List[Dict[str, Any]]:

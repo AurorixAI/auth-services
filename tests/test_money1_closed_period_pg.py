@@ -22,7 +22,7 @@ MARKS_ABSENT_FIRST = lambda w: [(w.students[0], "absent"), (w.students[1], "pres
 
 def reconcile(w, day, lid):
     return w.svc.reconcile_missed_group_attendance(str(w.org.id), str(w.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid),
-                                                   reconciled_by=str(w.admin.id), is_org_admin=True)
+                                                   reconciled_by=str(w.admin.id), is_org_admin=True, money_right=True)
 
 
 def code(exc_info):
@@ -80,7 +80,7 @@ def test_cancel_missed_is_refused_in_a_closed_month(world, now_4_nov):
     with pytest.raises(OpsError) as e:
         world.svc.cancel_missed_group_attendance(str(world.org.id), str(world.group.id),
                                                  ReconcileMissedLessonRequest(lessonDate=day, lessonId=lid, cancellationReason="Не было"),
-                                                 cancelled_by=str(world.admin.id), is_org_admin=True, is_org_manager=True)
+                                                 cancelled_by=str(world.admin.id), is_org_admin=True, is_org_manager=True, money_right=True)
     assert code(e) == "PERIOD_CLOSED"
 
 
@@ -99,7 +99,7 @@ def test_a_decision_on_an_excuse_is_refused_in_a_closed_month(world, now_4_nov):
     from src.auth.schemas import StartAttendanceRequest as S
 
     day, lid = _l(date(2026, 10, 28))
-    world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), S(lessonDate=day, lessonId=lid), reconciled_by=str(world.admin.id), is_org_admin=True)
+    world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), S(lessonDate=day, lessonId=lid), reconciled_by=str(world.admin.id), is_org_admin=True, money_right=True)
     s1, s2, s3 = world.students
     save(world, day, lid, [(s1, "excused"), (s2, "present"), (s3, "present")], status="completed", excuseReasons={s1.id: "Болел, написал в Telegram"})
     excuse = world.db.query(AttendanceExcuse).filter_by(org_id=world.org.id).one()
@@ -158,7 +158,7 @@ def test_change_of_the_lesson_teacher_asks_the_new_teacher_too(world, now_4_nov)
     sheet(world, world.teacher2, OCT, tashkent(2026, 11, 2))         # only the NEW teacher's month is closed
     with pytest.raises(OpsError) as e:
         LessonTeachers(world.svc).put(world.org.id, world.group.id, LessonTeacherPut(lessonDate=day, lessonId=lid, teacherId=str(world.teacher2.id), reason="Заменил коллега"),
-                                      actor_id=world.admin.id, actor_role="admin")
+                                      actor_id=world.admin.id, actor_role="admin", money_right=True)
     assert code(e) == "PERIOD_CLOSED"
 
 
@@ -167,7 +167,7 @@ def test_cancellation_kind_of_a_closed_month_does_not_change(world, now_4_nov):
 
     day, lid = lesson(date(2026, 10, 27))
     world.svc.cancel_missed_group_attendance(str(world.org.id), str(world.group.id), ReconcileMissedLessonRequest(lessonDate=day, lessonId=lid, cancellationReason="Нет света"),
-                                             cancelled_by=str(world.admin.id), is_org_admin=True, is_org_manager=True)
+                                             cancelled_by=str(world.admin.id), is_org_admin=True, is_org_manager=True, money_right=True)
     sheet(world, world.teacher, OCT, tashkent(2026, 11, 2))
     with pytest.raises(OpsError) as e:
         change_cancellation_kind(world.db, str(world.org.id), str(world.group.id),

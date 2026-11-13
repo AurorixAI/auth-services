@@ -68,7 +68,7 @@ def test_a_cancelled_lesson_before_the_start_of_the_list_cannot_be_returned_to_i
     payments_block(world.db, world.org, accounting_start_date="2026-08-01")
     for day in (date(2026, 7, 10), date(2026, 8, 12)):
         world.svc.cancel_missed_group_attendance(str(world.org.id), str(world.group.id), ReconcileMissedLessonRequest(lessonDate=day, lessonId=f"s{day.isoweekday()}", cancellationReason="Нажали по ошибке"),
-                                                 cancelled_by=str(world.admin.id), is_org_admin=True, is_org_manager=True)
+                                                 cancelled_by=str(world.admin.id), is_org_admin=True, is_org_manager=True, money_right=True)
     owner = make_client(world, user=world.owner)
     url = f"{API}/org/groups/{world.group.id}/lessons/restore"
     early = owner.post(url, json={"lessonDate": "2026-07-10", "lessonId": "s5", "reason": "Урок был"})

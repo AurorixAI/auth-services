@@ -39,7 +39,7 @@ def test_cancel_missed_path_snapshots_teacher(world):
     world.svc.cancel_missed_group_attendance(
         str(world.org.id), str(world.group.id),
         ReconcileMissedLessonRequest(lessonDate=day, lessonId=f"s{day.isoweekday()}", cancellationReason="Праздник"),
-        cancelled_by=str(world.admin.id), is_org_admin=True,
+        cancelled_by=str(world.admin.id), is_org_admin=True, money_right=True,
     )
     assert _row(world, day, f"s{day.isoweekday()}").teacher_id == world.teacher.id
 
@@ -60,7 +60,7 @@ def test_save_create_path_snapshots_teacher(world):
     world.svc.save_group_attendance(
         str(world.org.id), str(world.group.id),
         SaveAttendanceRequest(lessonDate=day, lessonId=lesson_id, status="cancelled", cancellationReason="Каникулы"),
-        marked_by=str(world.admin.id), is_org_admin=True,
+        marked_by=str(world.admin.id), is_org_admin=True, money_right=True,
     )
     assert _row(world, day, lesson_id).teacher_id == world.teacher.id
 

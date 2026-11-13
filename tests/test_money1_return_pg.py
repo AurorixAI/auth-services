@@ -104,7 +104,7 @@ def test_a_mistaken_lesson_not_held_goes_back_to_review_for_the_money_right_only
 
     day, lid = lesson(date(2026, 10, 28))
     world.svc.cancel_missed_group_attendance(str(world.org.id), str(world.group.id), ReconcileMissedLessonRequest(lessonDate=day, lessonId=lid, cancellationReason="Нажали по ошибке"),
-                                             cancelled_by=str(world.teacher.id), is_org_admin=False, is_org_manager=False)
+                                             cancelled_by=str(world.teacher.id), is_org_admin=False, is_org_manager=False, money_right=True)
     assert row_of(world, day, lid).status == "cancelled"
     url = f"{API}/{world.group.id}/lessons/restore"
     body = {"lessonDate": day.isoformat(), "lessonId": lid, "reason": "Урок был, нажали по ошибке"}
@@ -115,7 +115,7 @@ def test_a_mistaken_lesson_not_held_goes_back_to_review_for_the_money_right_only
     assert ok.json()["returnedToReview"] is True and "moneyEffects" in ok.json()
     assert row_of(world, day, lid) is None                                          # the lesson is «Требует разбора» again: the teacher can reconcile it
     assert world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), __import__("src.auth.schemas", fromlist=["x"]).StartAttendanceRequest(lessonDate=day, lessonId=lid),
-                                                       reconciled_by=str(world.teacher.id), is_org_admin=False) == 1
+                                                       reconciled_by=str(world.teacher.id), is_org_admin=False, money_right=True) == 1
 
 
 def test_a_centre_that_pays_by_the_calendar_has_no_pack_to_give_back(world, now_4_nov):

@@ -309,7 +309,7 @@ def test_in_progress_lesson_stays_reported_after_the_roster_became_empty(world):
     day, lesson_id = past_lesson_for_test()
     world.svc.reconcile_missed_group_attendance(
         str(world.org.id), str(group.id), StartAttendanceRequest(lessonDate=day, lessonId=lesson_id),
-        reconciled_by=str(world.admin.id), is_org_admin=True,
+        reconciled_by=str(world.admin.id), is_org_admin=True, money_right=True,
     )
     # the only student leaves afterwards: someone started the lesson, so it stays an open task
     world.db.query(StudentGroup).filter_by(group_id=group.id).update({"left_at": datetime.utcnow()})

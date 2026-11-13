@@ -5174,7 +5174,7 @@ class AuthService:
         *,
         reconciled_by: Optional[str],
         is_org_admin: bool,
-        money_right: bool = True,
+        money_right: bool,
     ) -> int:
         """Open a historical journal without claiming that it was started now.
 
@@ -5289,7 +5289,7 @@ class AuthService:
         cancelled_by: Optional[str],
         is_org_admin: bool,
         is_org_manager: bool = False,
-        money_right: bool = True,
+        money_right: bool,
     ) -> Dict[str, Any]:
         """«Урока не было»: an explicit, reasoned cancellation of a past lesson that was never started - THE cancellation (``Substitutions.cancel_lesson``, W1 S2).
 
@@ -5562,7 +5562,7 @@ class AuthService:
         marked_by: Optional[str],
         is_org_admin: bool,
         is_org_manager: bool = False,
-        money_right: bool = True,
+        money_right: bool,
         owner: bool = False,
     ) -> Dict[str, Any]:
         """Сохранить полный проверенный снимок отметок одного экземпляра урока.

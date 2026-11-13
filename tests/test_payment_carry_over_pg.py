@@ -91,7 +91,7 @@ def hold(w, group, day_, slot_id):
     """A completed lesson of ``group`` on ``day_``; everybody on its frozen roster is present."""
     w.svc.reconcile_missed_group_attendance(
         str(w.org.id), str(group.id), StartAttendanceRequest(lessonDate=day_, lessonId=slot_id),
-        reconciled_by=str(w.admin.id), is_org_admin=True,
+        reconciled_by=str(w.admin.id), is_org_admin=True, money_right=True,
     )
     w.db.expire_all()
     att = w.db.query(GroupAttendance).filter_by(group_id=group.id, lesson_date=day_.isoformat(), lesson_id=slot_id).one()
@@ -99,7 +99,7 @@ def hold(w, group, day_, slot_id):
     w.svc.save_group_attendance(
         str(w.org.id), str(group.id),
         SaveAttendanceRequest(lessonDate=day_, lessonId=slot_id, status="completed", records={sid: "present" for sid in roster}),
-        marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True,
+        marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True, money_right=True,
     )
     return roster
 
@@ -111,7 +111,7 @@ def complete_in(w, group, offset_days):
         str(w.org.id), str(group.id),
         SaveAttendanceRequest(lessonDate=day_, lessonId=lesson_id, status="completed",
                               records={str(w.student.id): "present"}),
-        marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True,
+        marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True, money_right=True,
     )
 
 
@@ -309,7 +309,7 @@ def excused_today_in(w, group, student):
             lessonDate=business_today(), lessonId=LIVE_SLOT, status="in_progress", expectedVersion=shown_version(w, business_today(), LIVE_SLOT, group),
             records={str(student.id): "excused"}, excuseReasons={str(student.id): "Болел"},
         ),
-        marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True,
+        marked_by=str(w.admin.id), is_org_admin=True, is_org_manager=True, money_right=True,
     )
 
 

@@ -111,7 +111,7 @@ def test_r4b_parallel_assignments_leave_exactly_one_active_row(w):
     def call(teacher):
         def go(svc):
             req = LessonTeacherPut(lessonDate=date(2026, 10, 26), lessonId="lesson-l1", teacherId=str(getattr(w, teacher).id), reason="Болезнь")
-            return LessonTeachers(svc).put(str(w.org.id), w.G1.id, req, actor_id=str(w.admin.id))
+            return LessonTeachers(svc).put(str(w.org.id), w.G1.id, req, actor_id=str(w.admin.id), money_right=True)
         return go
 
     results = run_parallel(w, call("D"), call("C"))

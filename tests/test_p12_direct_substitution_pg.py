@@ -123,7 +123,7 @@ def test_s3_two_assignments_at_the_same_moment_leave_one_in_force(w):
     def call(teacher):
         def go(svc):
             body = LessonTeacherPut(lessonDate=date(2026, 10, 26), lessonId="lesson-l1", teacherId=str(getattr(w, teacher).id), reason=REASON)
-            return LessonTeachers(svc).put(str(w.org.id), w.G1.id, body, actor_id=str(w.admin.id))
+            return LessonTeachers(svc).put(str(w.org.id), w.G1.id, body, actor_id=str(w.admin.id), money_right=True)
         return go
 
     results = run_parallel(w, call("D"), call("C"))
@@ -196,7 +196,7 @@ def test_s5_two_identical_assignments_at_the_same_moment_make_one_record(w):
     """[5] Two clicks in parallel: the group lock lets the second one find the assignment of the first."""
     def go(svc):
         body = LessonTeacherPut(lessonDate=date(2026, 10, 26), lessonId="lesson-l1", teacherId=str(w.D.id), reason=REASON)
-        return LessonTeachers(svc).put(str(w.org.id), w.G1.id, body, actor_id=str(w.admin.id))
+        return LessonTeachers(svc).put(str(w.org.id), w.G1.id, body, actor_id=str(w.admin.id), money_right=True)
 
     results = run_parallel(w, go, go)
     assert all(err is None for _r, err in results), results
@@ -283,7 +283,7 @@ def test_r3_two_crossed_assignments_do_not_wait_for_each_other(w):
     def call(group, teacher, lesson, day):
         def go(svc):
             body = LessonTeacherPut(lessonDate=date.fromisoformat(day), lessonId=lesson, teacherId=str(getattr(w, teacher).id), reason=REASON)
-            return LessonTeachers(svc).put(str(w.org.id), group.id, body, actor_id=str(w.admin.id))
+            return LessonTeachers(svc).put(str(w.org.id), group.id, body, actor_id=str(w.admin.id), money_right=True)
         return go
 
     for monday, thursday in (("2026-10-26", "2026-10-22"), ("2026-11-02", "2026-10-29"), ("2026-11-09", "2026-11-05"), ("2026-11-16", "2026-11-12")):
@@ -311,7 +311,7 @@ def test_r3_the_removal_of_a_member_still_serialises_with_an_assignment_to_him(w
 
     def assign(svc):
         body = LessonTeacherPut(lessonDate=date(2026, 10, 26), lessonId="lesson-l1", teacherId=str(w.D.id), reason=REASON)
-        return LessonTeachers(svc).put(str(w.org.id), w.G1.id, body, actor_id=str(w.admin.id))
+        return LessonTeachers(svc).put(str(w.org.id), w.G1.id, body, actor_id=str(w.admin.id), money_right=True)
 
     results = run_parallel(w, assign, lambda svc: svc.remove_member(str(w.org.id), str(member_id), str(w.owner.id)))
     assert results[1][1] is None, results

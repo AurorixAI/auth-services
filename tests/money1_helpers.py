@@ -41,7 +41,7 @@ def hold_lesson(w, day: date, marks=("present", "present", "present")):
     from src.auth.schemas import StartAttendanceRequest
 
     day, lid = lesson(day)
-    w.svc.reconcile_missed_group_attendance(str(w.org.id), str(w.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid), reconciled_by=str(w.admin.id), is_org_admin=True)
+    w.svc.reconcile_missed_group_attendance(str(w.org.id), str(w.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid), reconciled_by=str(w.admin.id), is_org_admin=True, money_right=True)
     save(w, day, lid, list(zip(w.students, marks)), status="completed")
     return day, lid
 

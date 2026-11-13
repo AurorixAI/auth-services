@@ -763,7 +763,7 @@ class LessonTeachers:
             (o for o in self.svc._resolved_occurrences_for_group(group, date_from=day, date_to=day) if o["id"] == lesson_id), None
         )
 
-    def put(self, org_id: Any, group_id: Any, req, *, actor_id: Any, actor_role: str = "admin", money_right: bool = True) -> Dict[str, Any]:
+    def put(self, org_id: Any, group_id: Any, req, *, actor_id: Any, actor_role: str = "admin", money_right: bool) -> Dict[str, Any]:
         """``PUT /org/groups/{id}/lesson-teacher`` (SPEC 4.3).  Manager only (checked by the caller).  ``money_right`` (Money-1 A4, ЗП-02): who taught a HELD lesson decides whose pay it is -
         the owner / an administrator with the payments right only (the router passes the real flag)."""
         # locks: group -> attendance row -> request row -> assignments
@@ -775,7 +775,7 @@ class LessonTeachers:
         return self._put_locked(org_id, group, req, actor_id=actor_id, actor_role=actor_role, commit=True, money_right=money_right)
 
     def _put_locked(self, org_id: Any, group: Group, req, *, actor_id: Any, actor_role: str = "admin", commit: bool = True,
-                    skip_request_id: Any = None, money_right: bool = True) -> Dict[str, Any]:
+                    skip_request_id: Any = None, money_right: bool) -> Dict[str, Any]:
         """The body of ``put`` for a caller that already holds the group lock (LOGIC-B2: a decision of a substitution request runs it in its own transaction,
         ``commit=False``; ``skip_request_id`` is the request being decided, so the hook does not close it a second time)."""
         self.last_assignment = None

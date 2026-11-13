@@ -93,7 +93,7 @@ def test_completing_a_lesson_where_nobody_came_asks_for_a_yes_only_a_screen_that
     url = f"{API}/{world.group.id}/attendance"
     for offset, extra, status in ((30, {}, 200), (29, {"confirmNobodyCame": False}, 409), (28, {"confirmNobodyCame": True}, 200)):
         day, lid = lesson(date(2026, 10, offset))
-        world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid), reconciled_by=str(world.admin.id), is_org_admin=True)
+        world.svc.reconcile_missed_group_attendance(str(world.org.id), str(world.group.id), StartAttendanceRequest(lessonDate=day, lessonId=lid), reconciled_by=str(world.admin.id), is_org_admin=True, money_right=True)
         body = {"lessonDate": day.isoformat(), "lessonId": lid, "status": "completed", "records": {str(s.id): "absent" for s in world.students}, "expectedVersion": 1, **extra}
         r = owner.post(url, json=body)
         assert r.status_code == status, (extra, r.text)

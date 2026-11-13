@@ -248,7 +248,7 @@ def test_r3_16_an_honest_life_of_the_accounts_gives_no_finding_after_any_event(w
     quiet("a price that starts later")
     day, lid = date(2026, 10, 26), "s1"
     world.svc.cancel_missed_group_attendance(str(world.org.id), str(world.group.id), ReconcileMissedLessonRequest(lessonDate=day, lessonId=lid, cancellationReason="Нет света", cancellationKind="centre"),
-                                             cancelled_by=str(world.admin.id), is_org_admin=True, is_org_manager=True)
+                                             cancelled_by=str(world.admin.id), is_org_admin=True, is_org_manager=True, money_right=True)
     quiet("a lesson cancelled by the centre (the deduction)")
     hold_lesson(world, date(2026, 10, 28))
     quiet("a held lesson")

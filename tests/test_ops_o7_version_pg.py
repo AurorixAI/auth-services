@@ -106,7 +106,7 @@ def test_r4b_two_writers_with_one_expected_version_exactly_one_wins(w):
         def call(svc):
             req = SaveAttendanceRequest(lessonDate=date(2026, 10, 21), lessonId="lesson-l2", status="in_progress",
                                         records={getattr(w, student).id: state}, expectedVersion=1)
-            return svc.save_group_attendance(org, gid, req, marked_by=str(w.A.id), is_org_admin=False, is_org_manager=False)
+            return svc.save_group_attendance(org, gid, req, marked_by=str(w.A.id), is_org_admin=False, is_org_manager=False, money_right=True)
         return call
 
     outcomes = run_parallel(w, do("s1", "present"), do("s2", "absent"))

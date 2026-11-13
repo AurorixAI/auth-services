@@ -208,7 +208,7 @@ def reconcile(w, offset_days=1, group=None):
     w.svc.reconcile_missed_group_attendance(
         str(w.org.id), str((group or w.group).id),
         StartAttendanceRequest(lessonDate=day, lessonId=lesson_id),
-        reconciled_by=str(w.admin.id), is_org_admin=True,
+        reconciled_by=str(w.admin.id), is_org_admin=True, money_right=True,
     )
     return day, lesson_id
 
@@ -229,7 +229,7 @@ def save(w, day, lesson_id, records, *, status="in_progress", actor=None, is_adm
             records={s.id: st for s, st in records},
             **{"expectedVersion": shown_version(w, day, lesson_id), **extra},           # G-11: the screen sends the version it saw
         ),
-        marked_by=str(actor.id), is_org_admin=is_admin, is_org_manager=is_admin,
+        marked_by=str(actor.id), is_org_admin=is_admin, is_org_manager=is_admin, money_right=True,
     )
 
 

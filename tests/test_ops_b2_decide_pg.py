@@ -192,6 +192,7 @@ def test_s4_r6_the_lesson_decides_not_the_day_of_the_decision(w, clock):
     w.db.commit()
     created = req(w, "C", [(sat, "lesson-s6", "2026-10-31")])
     assert created.status_code == 201
+    grant_money_right(w)                    # Money-1 Р-1: who taught a PAST lesson without a journal row is pay - the money right
     clock.set("2026-11-01 00:10")
     # at that time the lesson of 31.10 10:00 passed: the decision is the "late" mode, the date of the assignment is 31.10
     r = decide(w, "admin", created.json()["created"][0]["id"], **sub_body(w, "D"))

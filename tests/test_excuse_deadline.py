@@ -303,7 +303,7 @@ def test_two_lessons_on_one_day_count_both_through_the_api(world):
     world.svc.reconcile_missed_group_attendance(      # the second lesson of the same day, unfinished
         str(world.org.id), str(world.group.id),
         StartAttendanceRequest(lessonDate=d, lessonId=LIVE_SLOT),
-        reconciled_by=str(world.admin.id), is_org_admin=True,
+        reconciled_by=str(world.admin.id), is_org_admin=True, money_right=True,
     )
     save(world, d, LIVE_SLOT, [(s0, "excused"), (s1, "present"), (s2, "present")],
          status="in_progress", excuseReasons={s0.id: "Болел"})
@@ -327,7 +327,7 @@ def same_day_lessons(w, offset, excused_in="first", reason="Болел"):
         if lesson_id != slot:
             w.svc.reconcile_missed_group_attendance(
                 str(w.org.id), str(w.group.id), StartAttendanceRequest(lessonDate=d, lessonId=lesson_id),
-                reconciled_by=str(w.admin.id), is_org_admin=True,
+                reconciled_by=str(w.admin.id), is_org_admin=True, money_right=True,
             )
         extra = {"excuseReasons": {s0.id: reason}} if excuse else {}
         save(w, d, lesson_id, [(s0, "excused" if excuse else "present"), (s1, "present"), (s2, "present")],
