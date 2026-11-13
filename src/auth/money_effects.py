@@ -221,6 +221,13 @@ def _of_students(count: int) -> str:
     return f"у {count} {plural(count, 'ученика', 'учеников', 'учеников')}"
 
 
+def with_sentence(effects: Dict[str, Any], sentence: str) -> Dict[str, Any]:
+    """The block of effects with one more sentence in its ``text`` (the debt that appears in the new group, Г-4); the block as it was when there is nothing to add."""
+    if not sentence:
+        return effects
+    return {**effects, "text": "; ".join(x for x in (effects.get("text"), sentence) if x)}
+
+
 def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, done: bool, closed_blocks: bool = False) -> str:
     """The sentence under the confirmation (``done=False``) or in the toast after (``done=True``); empty when the action moves no money.  ``closed_blocks``: a lesson action is refused
     in a closed month (the sentence says to reopen it first); a payment is not (ДП-07)."""

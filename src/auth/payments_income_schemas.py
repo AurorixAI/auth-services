@@ -272,6 +272,7 @@ class DecisionRow(PayModel):
     actor_name: Optional[str] = None
     debt_before: Optional[int] = None
     debt_after: Optional[int] = None
+    consequence: Optional[str] = None  # Money-1 Г-4: «В группе «B» появился долг 900 000 сум» (a payment cancelled after a transfer)
 
 
 class DecisionsPage(PayModel):

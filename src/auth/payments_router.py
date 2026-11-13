@@ -59,6 +59,7 @@ from .payments_schemas import (
 from .payments_service import PaymentError, PaymentService
 
 from . import money_effects  # noqa: E402
+from . import payments_texts as tx  # noqa: E402
 
 
 def _membership_of_payment(db, org_id, payment_id) -> list:
@@ -426,7 +427,7 @@ def void_payment(
         out, effects = money_effects.run_with_effects(
             db, user["org_id"], _membership_of_payment(db, user["org_id"], payment_id), user.get("org_role") == "owner",
             lambda: PaymentService(db).void_payment(user["org_id"], payment_id, user["user_id"], request.reason, actor_role=user["org_role"]), dry_run=dry_run)
-        out.money_effects, out.dry_run = effects, dry_run
+        out.money_effects, out.dry_run = money_effects.with_sentence(effects, tx.new_debts_text(out.new_debts, done=not dry_run)), dry_run
         return out
     except PaymentError as exc:
         raise _http(exc)

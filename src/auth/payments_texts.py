@@ -8,7 +8,7 @@ printed statement and the receipt can never disagree.  The golden fixtures (``te
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from typing import Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 PAST_DEBT = "past_debt"
 CURRENT = "current"
@@ -77,6 +77,12 @@ def ddmm(day: date) -> str:
 def period_text(start: date, end: date) -> str:
     """``15.09–14.10`` (an en dash); a period of one day is just ``30.09`` («за 30.09», m6)."""
     return ddmm(start) if start == end else f"{ddmm(start)}–{ddmm(end)}"
+
+
+def new_debts_text(debts: Sequence[Dict[str, Any]], *, done: bool) -> str:
+    """Money-1 Г-4: «В группе «B» появится долг 900 000 сум» - the debt that the cancellation of a payment of the OLD group leaves in the group the student was moved to (the money went with him)."""
+    verb = "появился" if done else "появится"
+    return "; ".join(f"В группе «{d['group_name']}» {verb} долг {money(int(d['amount']))}" for d in debts)
 
 
 def plural(count: int, one: str, few: str, many: str) -> str:

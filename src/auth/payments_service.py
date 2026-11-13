@@ -1555,17 +1555,20 @@ class PaymentService:
             family = self._lock_family(org_id, probe.student_id)
             membership = self._membership(org_id, probe.membership_id)
             payment = self._lock_payment(org_id, payment_id)
-            account_was = self._entry_of(org_id, payment.membership_id, ps.business_today()).ledger
+            was = self._accounts(org_id, family)
             payment.voided_at = _utcnow()
             payment.voided_by = UUID(str(actor_id))
             payment.void_reason = reason
             self.db.flush()
-            account_now = self._entry_of(org_id, payment.membership_id, ps.business_today()).ledger
+            now = self._accounts(org_id, family)
+            touched = self._touched_by_void(was, now, payment.membership_id)
+            new_debts = self._new_debts_elsewhere(touched, now, payment.membership_id)
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAYMENT_VOID, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "payment_id": str(payment.id), "receipt_no": payment.receipt_no, "amount": int(payment.amount), "paid_on": payment.paid_on.isoformat(),
-                "method": payment.method, "reason": reason, "debt_before": account_was.debt, "debt_after": account_now.debt,
-                "advance_before": account_was.advance, "advance_after": account_now.advance})
+                "method": payment.method, "reason": reason,
+                "debt_before": sum(was[m].ledger.debt for m in touched), "debt_after": sum(now[m].ledger.debt for m in touched),        # Money-1 Г-4: ALL the groups the payment touches
+                "advance_before": sum(was[m].ledger.advance for m in touched), "advance_after": sum(now[m].ledger.advance for m in touched), "new_debts": new_debts})
             self._family_check(org_id, family)
             self.db.commit()
         except PaymentError:
@@ -1577,8 +1580,26 @@ class PaymentService:
         entry = self._loader(org_id).run([payment.membership_id])[0]
         return PaymentVoided(
             payment=self._payment_out(payment, users, self._links([payment]), load_files(self.db, [payment.id]), entry.ledger),
-            row=self._rows([entry])[0],
+            row=self._rows([entry])[0], new_debts=new_debts,
         )
+
+    def _accounts(self, org_id: str, family: Sequence[UUID]) -> Dict[UUID, Any]:
+        """``{membership id: the entry with its ledger}`` of every group of the student (THE read of the accounts of a family)."""
+        return {e.membership.id: e for e in self._loader(org_id, ps.business_today()).run(list(family))}
+
+    @staticmethod
+    def _touched_by_void(was: Dict[UUID, Any], now: Dict[UUID, Any], own: UUID) -> List[UUID]:
+        """The groups whose account the cancellation of a payment of ``own`` moves: its own and any group where the money went on a transfer."""
+        return [m for m in was if m == own or (was[m].ledger.debt, was[m].ledger.advance) != (now[m].ledger.debt, now[m].ledger.advance)]
+
+    def _new_debts_elsewhere(self, touched: List[UUID], now: Dict[UUID, Any], own: UUID) -> List[Dict[str, Any]]:
+        """Money-1 Г-4: the debt that the cancellation leaves in the OTHER groups of the student (their ``transferred_in`` falls with it)."""
+        out = []
+        for m in touched:
+            if m != own and now[m].ledger.debt > 0:
+                group = self.db.get(Group, now[m].membership.group_id)
+                out.append({"membership_id": str(m), "group_id": str(group.id), "group_name": group.name, "amount": int(now[m].ledger.debt)})
+        return out
 
     # ------------------------------------------------ write-off and refund
 

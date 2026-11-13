@@ -292,3 +292,48 @@ def test_g16_the_save_of_attendance_as_a_cancellation_holiday_is_refused_without
     body = {"lessonDate": "2026-10-28", "lessonId": "lesson-wed", "status": "cancelled", "records": {}, "cancellationReason": "Праздник", "cancellationKind": "holiday"}
     refused = cancel_post(w, "admin", url.replace("/reconcile/cancel", ""), body)
     assert refused.status_code == 403 and refused.json()["detail"]["code"] == "MONEY_RIGHT_REQUIRED", refused.text
+
+
+# ---- Г-4 (N5, ДП-04): the cancellation of a payment of the old group after a transfer says what appears in the new one -----------------------------------------
+
+from tests.test_payment_carry_over_pg import billing, clock as at_day, day, mid, owner, pay, statement, transfer, two  # noqa: E402,F401  (fixtures)
+
+from tests.test_payments_service_pg import API  # noqa: E402
+
+PAY_URL = f"{API}/org/payments"
+
+
+def _transferred_world(two, monkeypatch):
+    billing(two)
+    p = pay(two, paid_on=day(-10), amount=3_000_000)["payment"]       # 3 000 000 in the group A, the student is moved to B three days ago: the money went with him
+    with at_day(monkeypatch, day(-3), 12):
+        transfer(two, two.second)
+    return p, statement(two, two.second)["transferred_in"]
+
+
+def test_g4_the_confirmation_and_the_answer_name_the_debt_that_appears_in_the_new_group(two, monkeypatch):
+    p, carried = _transferred_world(two, monkeypatch)
+    in_b, in_a = statement(two, two.second), statement(two, two.group)
+    assert carried > 0 and in_b["debt"] == 0 and in_a["debt"] == 0
+    dry = owner(two).post(f"{PAY_URL}/{p['id']}/void", params={"dry_run": "true"}, json={"reason": "ошибка"})
+    assert dry.status_code == 200, dry.text
+    assert statement(two, two.second) == in_b                                              # the preview writes nothing
+    real = owner(two).post(f"{PAY_URL}/{p['id']}/void", json={"reason": "ошибка"})
+    assert real.status_code == 200, real.text
+    after_b, after_a = statement(two, two.second), statement(two, two.group)
+    assert after_b["transferred_in"] == 0 and after_b["debt"] > 0
+    expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": after_b["debt"]}]
+    assert dry.json()["new_debts"] == expected == real.json()["new_debts"]                  # the numbers of the preview are the numbers after (I-5)
+    sentence = f"В группе «Вторая» появится долг {after_b['debt']:,}".replace(",", NBSP) + f"{NBSP}сум"
+    assert sentence in dry.json()["money_effects"]["text"], dry.json()["money_effects"]["text"]
+    assert sentence.replace("появится", "появился") in real.json()["money_effects"]["text"]
+    (row,) = [r for r in owner(two).get(f"{PAY_URL}/decisions", params={"from": day(-1).isoformat(), "to": day(1).isoformat()}).json()["rows"] if r["kind"] == "payment_void"]
+    assert row["debt_before"] == in_a["debt"] + in_b["debt"] and row["debt_after"] == after_a["debt"] + after_b["debt"]       # the debt of ALL the groups the payment touches
+    assert row["consequence"] == sentence.replace("появится", "появился")
+
+
+def test_g4_a_payment_nobody_took_over_names_no_other_group(two, monkeypatch):
+    billing(two)
+    p = pay(two, paid_on=day(-10), amount=3_000_000)["payment"]                             # no transfer: nothing appears elsewhere
+    dry = owner(two).post(f"{PAY_URL}/{p['id']}/void", params={"dry_run": "true"}, json={"reason": "ошибка"})
+    assert dry.status_code == 200 and dry.json()["new_debts"] == [] and "появится" not in (dry.json()["money_effects"] or {}).get("text", "")
