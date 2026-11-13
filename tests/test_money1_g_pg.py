@@ -708,6 +708,26 @@ def test_d6_the_right_taken_away_while_the_decision_waits_for_exam_service_refus
     assert w.db.query(SubstitutionRequest).filter_by(id=rid).one().status == "pending"
 
 
+# ---- Д-9 (R3B м6): the kept substitute of a move writes a PAST lesson only with the right to the money (the road itself never moves to the past; the guard is the rule of the assignment) --------
+
+def test_d9_keep_substitute_on_a_past_lesson_without_the_right_is_refused_and_on_a_future_one_it_is_not(pg_session, clock):
+    import pytest
+
+    from src.auth.lesson_substitutions import Substitutions
+    from src.auth.ops_rules import OpsError
+    from src.auth.service import AuthService
+
+    w, rid = _subs_world(pg_session, clock)                                    # today 22.10 11:00, the admin has no right to the money
+    subs = Substitutions(AuthService(w.db))
+    with pytest.raises(OpsError) as refused:
+        subs._keep_substitute(w.G1, w.B.id, "lesson-l2", date(2026, 10, 21), w.admin.id, False)        # Wednesday 21.10 16:00 is past: the pay of the teacher of a held lesson is money
+    assert (refused.value.status_code, refused.value.code) == (403, "MONEY_RIGHT_REQUIRED")
+    w.db.rollback()
+    kept = subs._keep_substitute(w.G1, w.B.id, "lesson-l2", date(2026, 10, 28), w.admin.id, False)    # a lesson ahead pays nobody yet
+    assert kept["teacherId"] == str(w.B.id) and kept["isSubstitution"] is True
+    w.db.rollback()
+
+
 # ---- Р-8 (R3 М4): the save and the recalculation of a sheet take the SAME lock of the teacher as a payout -----------------------------------------------------
 
 def test_r8_a_save_and_a_recalculation_of_a_sheet_wait_for_the_advance_chain_of_the_teacher(world, fixed_today):

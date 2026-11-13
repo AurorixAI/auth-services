@@ -823,7 +823,7 @@ class LessonTeachers:
         row_state_ok = row is None or row_teacher == want
         old_teacher_for_period = row_teacher if row is not None and row_teacher is not None else current
         if asg_state_ok and row_state_ok:
-            return self._out(group, req.lessonId, lesson_date, current if row is None else row.teacher_id, default, row, version_changed=False,
+            return self._out(group, req.lessonId, lesson_date, current if row is None else row.teacher_id, default, row, teacher_changed=False,
                              sheets=[])
         # Money-1 Г-3: who taught a lesson that is PAST - held, or not opened yet (its teacher then formalises it and is paid) - decides whose pay it is
         pays_teacher = (row is not None and row.status == COMPLETED) or (row is None and _has_ended(day, end_minutes))
@@ -884,7 +884,7 @@ class LessonTeachers:
             )
         )
         self.db.flush()
-        out = self._out(group, req.lessonId, lesson_date, want, default, row, version_changed=row is not None and row_teacher != want,
+        out = self._out(group, req.lessonId, lesson_date, want, default, row, teacher_changed=row is not None and row_teacher != want,
                         sheets=sheets, force_teacher=want)
         self.last_assignment = new_asg
         from . import lesson_substitutions  # lazy: it imports this module
@@ -898,9 +898,9 @@ class LessonTeachers:
         return out
 
     def _out(self, group: Group, lesson_id: str, lesson_date: str, teacher: Optional[UUID], default: Optional[UUID],
-             row: Optional[GroupAttendance], *, version_changed: bool, sheets: List[Dict[str, Any]],
+             row: Optional[GroupAttendance], *, teacher_changed: bool, sheets: List[Dict[str, Any]],
              force_teacher: Optional[UUID] = None) -> Dict[str, Any]:
-        shown = force_teacher if force_teacher is not None or version_changed else teacher
+        shown = force_teacher if force_teacher is not None or teacher_changed else teacher
         if shown is None and teacher is not None:
             shown = teacher
         names = self.users_by_id([shown, default])
@@ -913,8 +913,8 @@ class LessonTeachers:
             "isSubstitution": bool(shown is not None and default is not None and shown != default),          # a group without a main teacher has nobody to replace
             "defaultTeacherId": _s(default),
             "defaultTeacherName": short_name(names.get(_s(default))) if default else None,
-            "attendanceUpdated": bool(version_changed),
-            "version": (row.version if row is not None and version_changed else None),
+            "attendanceUpdated": bool(teacher_changed),          # the name of the field is the contract: it says «the journal row of the lesson got another teacher» (the version of the row no longer moves with it, R-15)
+            "version": (row.version if row is not None and teacher_changed else None),
             "payrollSheetsAffected": sheets,
         }
 

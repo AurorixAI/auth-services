@@ -260,9 +260,6 @@ class PayrollPayoutService:
 
     # ---- writing
 
-    def _lock_advance_chain(self, org_id: str, teacher_id: UUID) -> None:
-        lock_advance_chain(self.db, org_id, teacher_id)
-
     @staticmethod
     def _check(body: PayoutCreate, today: date) -> Tuple[int, date, str]:
         if not isinstance(body.amount, int) or isinstance(body.amount, bool) or body.amount < 1 or body.amount > MAX_FEE:
@@ -288,7 +285,7 @@ class PayrollPayoutService:
             if probe is not None:
                 fresh_total_of(probe)
             if probe is not None:
-                self._lock_advance_chain(org_id, probe.teacher_id)
+                lock_advance_chain(self.db, org_id, probe.teacher_id)
             sheet = (self.db.query(PayrollSheet).filter(PayrollSheet.id == sheet_id, PayrollSheet.org_id == org_id)
                      .with_for_update().populate_existing().first())
             if sheet is None:
@@ -335,7 +332,7 @@ class PayrollPayoutService:
             probe = self.db.query(PayrollPayout).filter(PayrollPayout.id == payout_id, PayrollPayout.org_id == org_id).first()
             if probe is None:
                 raise PayoutNotFound("Выплата не найдена")
-            self._lock_advance_chain(org_id, probe.teacher_id)
+            lock_advance_chain(self.db, org_id, probe.teacher_id)
             sheet = (self.db.query(PayrollSheet).filter(PayrollSheet.id == probe.sheet_id).with_for_update().populate_existing().first())
             row = self.db.query(PayrollPayout).filter(PayrollPayout.id == payout_id).populate_existing().with_for_update().first()
             if row.voided_at is not None:
