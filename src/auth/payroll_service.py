@@ -1581,7 +1581,8 @@ class PayrollService:
             return None
         seed = self._collect(org_id, first, last, teacher_ids={sheet.teacher_id})
         fresh = self._fresh_fingerprint(seed, sheet)
-        if fresh != sheet.source_fingerprint:
+        book = payroll_rates.load_book(self.db, org_id, [sheet.teacher_id])
+        if fresh != sheet.source_fingerprint or self._stale_by_rates(dict(sheet.percent_inputs or {}), book, sheet.teacher_id, first):      # Р-5: the rate moved since the calculation - the same refusal as the data
             raise DataChanged("Данные изменились после расчёта — пересчитайте и проверьте суммы", source_fingerprint=fresh)
         return seed
 

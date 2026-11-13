@@ -435,3 +435,17 @@ def test_r1_a_substitute_of_a_past_lesson_without_a_journal_row_is_for_the_money
     assert many.status_code == 200 and many.json()["updated"] == 0 and many.json()["skipped"][0]["code"] == "MONEY_RIGHT_REQUIRED", many.text      # the bulk answers per request
     grant_money_right(w)
     assert admin.post(f"{API}/org/substitutions/{rid}/decide", json=body).status_code == 200
+
+
+# ---- Р-5 (R3 В4): a tick on a reopened month also refuses when only the RATE moved --------------------------------------------------------------------------
+
+def test_r5_a_tick_on_a_reopened_month_whose_rate_changed_is_refused_and_the_month_stays_open(world, fixed_today):
+    from tests.test_payroll_pg import set_rate
+
+    m, s1, s2, first, second = two_teachers_in_a_closed_september(world, fixed_today)       # September of the first teacher: 475 000 at 50 %
+    reopen_now(world.db, world.org.id, world.teacher.id, "2026-09", world.owner.id, "Поправить ставку")
+    fixed_today(date(2026, 11, 20))
+    set_rate(world, world.teacher, "group", "60", valid_from=date(2026, 9, 1))             # the owner raises the rate from 01.09: the data of the month are the same, the rate is not
+    refused = tick(world, first)
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "SHEET_DATA_CHANGED", refused.text      # before: 200, the month closed again with 475 000 at the old rate
+    assert world.db.query(PayrollSheet).filter_by(id=first["id"]).one().revision == first["revision"]
