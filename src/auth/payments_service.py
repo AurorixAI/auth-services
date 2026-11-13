@@ -428,6 +428,20 @@ class LessonCover:
 # ============================================================================
 
 
+@dataclass(frozen=True)
+class _Moved:
+    """What a correction of a payment did to the accounts of the student (``PaymentService._moved_by_correction``)."""
+
+    new_debts: List[Dict[str, Any]]
+    debt_before: int
+    debt_after: int
+    advance_before: int
+    advance_after: int
+
+    def audit_fields(self) -> Dict[str, Any]:
+        return {"debt_before": self.debt_before, "debt_after": self.debt_after, "advance_before": self.advance_before, "advance_after": self.advance_after, "new_debts": self.new_debts}
+
+
 class PaymentService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -1425,7 +1439,7 @@ class PaymentService:
         self.db.add(PaymentReceiptSnapshot(payment_id=payment.id, org_id=UUID(str(org_id)),
                                            snapshot=snap.model_dump(mode="json")))
 
-    def _created(self, org_id: str, payment: StudentPayment, before: bl.Ledger, today: date) -> PaymentCreated:
+    def _created(self, org_id: str, payment: StudentPayment, before: bl.Ledger, today: date, new_debts: Optional[List[Dict[str, Any]]] = None) -> PaymentCreated:
         found = self._loader(org_id, today).run([payment.membership_id])
         entry = found[0]
         users = self._users([payment.created_by])
@@ -1435,7 +1449,7 @@ class PaymentService:
             allocation=pv.allocation_summary(before, entry.ledger, str(payment.id)),
             warnings=self._warnings(entry.ledger, str(payment.id), payment.paid_on, today, entry.price.amount)
             + [w for w in (self._repeated_payment_warning(org_id, payment.membership_id, int(payment.amount), exclude=payment.id),) if w],
-            row=self._rows([entry])[0],
+            row=self._rows([entry])[0], new_debts=new_debts or [],
         )
 
     @deadlock_guard
@@ -1517,7 +1531,7 @@ class PaymentService:
             family = self._lock_family(org_id, probe.student_id)
             membership = self._membership(org_id, probe.membership_id)
             old = self._lock_payment(org_id, payment_id)
-            account_was = self._entry_of(org_id, membership.id, today).ledger          # Money-1 V2: the account WITH the old payment (the line of the journal of decisions)
+            was = self._accounts(org_id, family)          # Money-1 V2: the accounts WITH the old payment (the line of the journal of decisions); G-4b: of EVERY group of the student
             loader = self._loader(org_id, today)
             loader.load_facts([membership.id])
             before_inp = loader.build_input(membership.id, exclude_payment=old.id)
@@ -1534,16 +1548,17 @@ class PaymentService:
                 ["id", "org_id", "payment_id", "filename", "content_type", "size_bytes", "data", "uploaded_by", "uploaded_at"],
                 select(func.gen_random_uuid(), StudentPaymentFile.org_id, literal(payment.id), StudentPaymentFile.filename, StudentPaymentFile.content_type,
                        StudentPaymentFile.size_bytes, StudentPaymentFile.data, StudentPaymentFile.uploaded_by, StudentPaymentFile.uploaded_at).where(StudentPaymentFile.payment_id == old.id)))
-            moved = int(copied.rowcount or 0)
-            after_entry = self._loader(org_id, today).run([membership.id])[0]
+            files_moved = int(copied.rowcount or 0)
+            now = self._accounts(org_id, family)
+            after_entry = now[membership.id]
+            moved = self._moved_by_correction(was, now, membership.id)
             self._save_snapshot(org_id, payment, before, after_entry.ledger, after_entry.price, today, method)
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAYMENT_REPLACE, {
-                "files_moved": moved,
+                "files_moved": files_moved,
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "payment_id": str(old.id), "new_payment_id": str(payment.id), "receipt_no": old.receipt_no, "new_receipt_no": payment.receipt_no,
                 "amount": int(old.amount), "new_amount": int(payment.amount), "paid_on": old.paid_on.isoformat(), "new_paid_on": payment.paid_on.isoformat(),
-                "method": old.method, "new_method": payment.method, "reason": old.void_reason,
-                "debt_before": account_was.debt, "debt_after": after_entry.ledger.debt, "advance_before": account_was.advance, "advance_after": after_entry.ledger.advance})
+                "method": old.method, "new_method": payment.method, "reason": old.void_reason, **moved.audit_fields()})
             self._family_check(org_id, family)
             self.db.commit()
         except PaymentError:
@@ -1553,7 +1568,7 @@ class PaymentService:
         logger.info(
             "payment replaced old=%s new=%s membership=%s actor=%s", payment_id, payment.id, membership.id, actor_id,
         )
-        return self._created(org_id, payment, before, today)
+        return self._created(org_id, payment, before, today, new_debts=moved.new_debts)
 
     @deadlock_guard
     def void_payment(self, org_id: str, payment_id: UUID, actor_id: str, reason: str, actor_role: str = "admin") -> PaymentVoided:
@@ -1572,14 +1587,11 @@ class PaymentService:
             payment.void_reason = reason
             self.db.flush()
             now = self._accounts(org_id, family)
-            touched = self._touched_by_void(was, now, payment.membership_id)
-            new_debts = self._new_debts_elsewhere(touched, now, payment.membership_id)
+            moved = self._moved_by_correction(was, now, payment.membership_id)
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAYMENT_VOID, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "payment_id": str(payment.id), "receipt_no": payment.receipt_no, "amount": int(payment.amount), "paid_on": payment.paid_on.isoformat(),
-                "method": payment.method, "reason": reason,
-                "debt_before": sum(was[m].ledger.debt for m in touched), "debt_after": sum(now[m].ledger.debt for m in touched),        # Money-1 Г-4: ALL the groups the payment touches
-                "advance_before": sum(was[m].ledger.advance for m in touched), "advance_after": sum(now[m].ledger.advance for m in touched), "new_debts": new_debts})
+                "method": payment.method, "reason": reason, **moved.audit_fields()})
             self._family_check(org_id, family)
             self.db.commit()
         except PaymentError:
@@ -1591,26 +1603,25 @@ class PaymentService:
         entry = self._loader(org_id).run([payment.membership_id])[0]
         return PaymentVoided(
             payment=self._payment_out(payment, users, self._links([payment]), load_files(self.db, [payment.id]), entry.ledger),
-            row=self._rows([entry])[0], new_debts=new_debts,
+            row=self._rows([entry])[0], new_debts=moved.new_debts,
         )
 
     def _accounts(self, org_id: str, family: Sequence[UUID]) -> Dict[UUID, Any]:
         """``{membership id: the entry with its ledger}`` of every group of the student (THE read of the accounts of a family)."""
         return {e.membership.id: e for e in self._loader(org_id, ps.business_today()).run(list(family))}
 
-    @staticmethod
-    def _touched_by_void(was: Dict[UUID, Any], now: Dict[UUID, Any], own: UUID) -> List[UUID]:
-        """The groups whose account the cancellation of a payment of ``own`` moves: its own and any group where the money went on a transfer."""
-        return [m for m in was if m == own or (was[m].ledger.debt, was[m].ledger.advance) != (now[m].ledger.debt, now[m].ledger.advance)]
-
-    def _new_debts_elsewhere(self, touched: List[UUID], now: Dict[UUID, Any], own: UUID) -> List[Dict[str, Any]]:
-        """Money-1 Г-4: the debt that the cancellation leaves in the OTHER groups of the student (their ``transferred_in`` falls with it)."""
-        out = []
+    def _moved_by_correction(self, was: Dict[UUID, Any], now: Dict[UUID, Any], own: UUID) -> "_Moved":
+        """Money-1 G-4 / G-4b - ONE rule for every correction of a payment (a cancellation, a replacement): the groups whose account it moves - its own and any group where the money
+        went on a transfer - and the debt it leaves in the OTHER groups (their ``transferred_in`` falls with it)."""
+        touched = [m for m in was if m == own or (was[m].ledger.debt, was[m].ledger.advance) != (now[m].ledger.debt, now[m].ledger.advance)]
+        new_debts = []
         for m in touched:
             if m != own and now[m].ledger.debt > 0:
                 group = self.db.get(Group, now[m].membership.group_id)
-                out.append({"membership_id": str(m), "group_id": str(group.id), "group_name": group.name, "amount": int(now[m].ledger.debt)})
-        return out
+                new_debts.append({"membership_id": str(m), "group_id": str(group.id), "group_name": group.name, "amount": int(now[m].ledger.debt)})
+        return _Moved(
+            new_debts=new_debts, debt_before=sum(was[m].ledger.debt for m in touched), debt_after=sum(now[m].ledger.debt for m in touched),
+            advance_before=sum(was[m].ledger.advance for m in touched), advance_after=sum(now[m].ledger.advance for m in touched))
 
     # ------------------------------------------------ write-off and refund
 

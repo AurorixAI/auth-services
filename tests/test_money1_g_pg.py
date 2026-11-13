@@ -339,6 +339,36 @@ def test_g4_a_payment_nobody_took_over_names_no_other_group(two, monkeypatch):
     assert dry.status_code == 200 and dry.json()["new_debts"] == [] and "появится" not in (dry.json()["money_effects"] or {}).get("text", "")
 
 
+# ---- Г-4б: a correction of a payment to a SMALLER sum is the same rule as the cancellation (``_moved_by_correction``) ---------------------------------------
+
+def test_g4b_a_correction_to_a_smaller_sum_names_the_debt_that_appears_in_the_new_group(two, monkeypatch):
+    p, carried = _transferred_world(two, monkeypatch)
+    in_b, in_a = statement(two, two.second), statement(two, two.group)
+    assert carried > 0 and in_b["debt"] == 0 and in_a["debt"] == 0
+    body = {"amount": 100_000, "paid_on": p["paid_on"], "method": "cash", "reason": "Опечатка в сумме"}
+    dry = owner(two).post(f"{PAY_URL}/{p['id']}/replace", params={"dry_run": "true"}, json=body)
+    assert dry.status_code == 200, dry.text
+    assert statement(two, two.second) == in_b                                              # the preview writes nothing
+    real = owner(two).post(f"{PAY_URL}/{p['id']}/replace", json=body)
+    assert real.status_code == 200, real.text
+    after_b, after_a = statement(two, two.second), statement(two, two.group)
+    assert after_b["transferred_in"] < carried and after_b["debt"] > 0
+    expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": after_b["debt"]}]
+    assert dry.json()["new_debts"] == expected == real.json()["new_debts"]
+    sentence = f"В группе «Вторая» появится долг {after_b['debt']:,}".replace(",", NBSP) + f"{NBSP}сум"
+    assert sentence in dry.json()["money_effects"]["text"], dry.json()["money_effects"]["text"]
+    assert sentence.replace("появится", "появился") in real.json()["money_effects"]["text"]
+    (row,) = [r for r in owner(two).get(f"{PAY_URL}/decisions", params={"from": day(-1).isoformat(), "to": day(1).isoformat()}).json()["rows"] if r["kind"] == "payment_replace"]
+    assert row["debt_before"] == in_a["debt"] + in_b["debt"] and row["debt_after"] == after_a["debt"] + after_b["debt"]
+    assert row["consequence"] == sentence.replace("появится", "появился")
+
+
+def test_g4b_a_correction_to_the_same_or_a_bigger_sum_names_no_other_group(two, monkeypatch):
+    p, _ = _transferred_world(two, monkeypatch)
+    r = owner(two).post(f"{PAY_URL}/{p['id']}/replace", params={"dry_run": "true"}, json={"amount": 3_000_000, "paid_on": p["paid_on"], "method": "cash", "reason": "Способ"})
+    assert r.status_code == 200 and r.json()["new_debts"] == [] and "появится" not in (r.json()["money_effects"] or {}).get("text", "")
+
+
 # ---- Г-17 (N9): the cash of a day is counted by the day the record was ENTERED (the till of the centre), not by the date of the payment ---------------------------
 
 from datetime import datetime  # noqa: E402
