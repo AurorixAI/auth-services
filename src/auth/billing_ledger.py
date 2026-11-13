@@ -1493,6 +1493,25 @@ def refundable_at(inp: LedgerInput, as_of: date) -> int:
     return run_ledger(sliced_input(inp, as_of)).refundable
 
 
+@dataclass(frozen=True)
+class RefundLimit:
+    """The most that can leave the account on a day, and the later outflow that narrows it (``None``: nothing later does)."""
+    amount: int
+    blocked_by: Optional[Outflow] = None
+
+
+def refund_limit(inp: LedgerInput, effective_on: date) -> RefundLimit:
+    """Money-1 G-13 (N13): what a refund DATED ``effective_on`` may take - the one number of «можно вернуть» for a date.  A refund is judged on its own day, on today, and on the day of every outflow
+    dated after it (the later refund was made when the account held more: this one comes before it)."""
+    limit = min(run_ledger(inp).refundable, refundable_at(inp, effective_on))
+    blocked_by: Optional[Outflow] = None
+    for outflow in sorted((o for o in inp.outflows if o.on > effective_on), key=lambda o: (o.on, o.created_at)):
+        at_that_day = refundable_at(inp, outflow.on)
+        if at_that_day < limit:
+            limit, blocked_by = at_that_day, outflow
+    return RefundLimit(limit, blocked_by)
+
+
 def coverage_records(ledger: Ledger, *, created_at: datetime = datetime.min) -> List[ps.PaymentRecord]:
     """Synthetic ``PaymentRecord``s for the excuse deadline: one per continuous paid range (calendar) or one package
     with ``lessons_count = covered`` (lessons)."""

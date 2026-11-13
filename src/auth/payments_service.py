@@ -1848,11 +1848,9 @@ class PaymentService:
                 raise DuplicateRefund("Этот возврат уже внесён", refund_id=str(twin))
             before = bl.run_ledger(inp)
             self._check_seen("refundable", expected_refundable, before.refundable, refundable=before.refundable, advance=before.advance)
-            allowed = min(before.refundable, bl.refundable_at(inp, effective_on))
-            if amount > allowed:
-                raise RefundExceedsAdvance(
-                    f"Вернуть можно не больше {_sum(allowed)}" if allowed else "Возвращать нечего: аванса нет",
-                    refundable=allowed)
+            limit = bl.refund_limit(inp, effective_on)
+            if amount > limit.amount:
+                raise RefundExceedsAdvance(self._refund_refusal(limit), refundable=limit.amount)
             row = self._add_refund(
                 org_id, lambda number: StudentRefund(
                     org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,
@@ -1874,6 +1872,17 @@ class PaymentService:
         entry = self._entry_of(org_id, membership_id, today)
         return RefundCreated(refund=self._refund_out(row), advance_before=before.advance, advance_after=after.advance,
                              row=self._rows([entry])[0])
+
+    @staticmethod
+    def _refund_refusal(limit: "bl.RefundLimit") -> str:
+        """Money-1 G-13: a refund that does not fit says WHY: because of the money of its own day / today, or because a later outflow was made when the account held more."""
+        later = limit.blocked_by
+        if later is None:
+            return f"Вернуть можно не больше {_sum(limit.amount)}" if limit.amount else "Возвращать нечего: аванса нет"
+        fact = f"уже есть {'возврат' if later.kind == bl.REFUND else 'перевод в другую группу'} от {later.on.strftime('%d.%m')} — выберите дату не раньше"
+        if limit.amount:
+            return f"Вернуть на эту дату можно не больше {_sum(limit.amount)}: после неё {fact}"
+        return f"После этой даты {fact}"
 
     @deadlock_guard
     def void_refund(
