@@ -282,7 +282,8 @@ class LedgerLoader:
         self._x_active: Set[UUID] = set()
         self._guard_hits = 0
         self._indexed: Set[Tuple[UUID, str]] = set()
-        self._schedule: Optional[Any] = None
+        self._schedule: Optional[Any] = None          # the one-off lessons and overrides of the groups in ``_scheduled`` (it grows with every portion, see ``_occurrences``)
+        self._scheduled: Set[UUID] = set()
         self.other_groups: Dict[UUID, Group] = {}          # the groups of the other memberships of the students (Р-10: where they left a day), not loaded as facts
         self._moved_one_offs: Dict[Any, Set[Tuple[str, str]]] = {}   # group id -> keys (loaded per group, the loader's groups grow)
         self._lesson_days_cache: Dict[Tuple[Any, ...], List[date]] = {}
@@ -563,11 +564,17 @@ class LedgerLoader:
         """The resolved lessons of ``group`` in ``start .. end`` (cancelled ones included; ``pattern=True``: the FULL schedule pattern, the ``validFrom`` of the slots ignored)."""
         from .service import AuthService  # lazy: service is heavy
 
-        if self._schedule is None:
+        todo = [gid for gid in {g.id for _, _, g, _ in self.members.values()} | set(self.other_groups) | {group.id} if gid not in self._scheduled]
+        if todo:            # Д-4: the loader is run in portions (the night reconciliation: 150 memberships at a time) - the groups of a later portion are read too, with their one-offs and overrides
             low = self.settings.accounting_start - timedelta(days=62)
             high = self.today + timedelta(days=SCHEDULE_HORIZON_DAYS)
-            gids = list({g.id for _, _, g, _ in self.members.values()} | set(self.other_groups))
-            self._schedule = AuthService(self.db)._preload_schedule_data(gids, date_from=low, date_to=high)
+            found = AuthService(self.db)._preload_schedule_data(todo, date_from=low, date_to=high)
+            if self._schedule is None:
+                self._schedule = found
+            else:
+                self._schedule.one_offs.update(found.one_offs)
+                self._schedule.overrides.update(found.overrides)
+            self._scheduled.update(todo)
         if pattern:
             from . import schedule_rules
 
