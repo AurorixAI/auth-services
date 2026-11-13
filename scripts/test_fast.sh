@@ -37,7 +37,13 @@ if [ -z "${A2_AUTH_TEST_DATABASE_URL:-}" ]; then
   docker run -d --name "$CONTAINER" -e POSTGRES_USER=algo -e POSTGRES_PASSWORD=ci-tests-only -e POSTGRES_DB=a2_auth \
     -p 127.0.0.1::5432 postgres:15-alpine -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=200 >/dev/null
   PORT=$(docker port "$CONTAINER" 5432/tcp | head -1 | sed 's/.*://')
-  for _ in $(seq 1 40); do docker exec "$CONTAINER" pg_isready -U algo -d a2_auth >/dev/null 2>&1 && break; sleep 0.5; done
+  # pg_isready also answers on the temporary init server (which then restarts), so ask with a real query, over TCP, with a time limit
+  READY=0
+  for _ in $(seq 1 120); do
+    if docker exec "$CONTAINER" psql -h 127.0.0.1 -U algo -d a2_auth -tAc "SELECT 1" >/dev/null 2>&1; then READY=1; break; fi
+    sleep 0.5
+  done
+  [ "$READY" = 1 ] || { echo "postgres did not become ready in 60 s" >&2; exit 2; }
   docker exec "$CONTAINER" psql -U algo -d postgres -qc "CREATE DATABASE a5_auth_migrations" >/dev/null
   BASE="postgresql+psycopg2://algo:ci-tests-only@127.0.0.1:$PORT"
   export A2_AUTH_TEST_DATABASE_URL="$BASE/a2_auth" A5_AUTH_MIGRATION_TEST_DATABASE_URL="$BASE/a5_auth_migrations" DATABASE_URL="$BASE/a2_auth"
