@@ -1758,9 +1758,9 @@ def test_covered_lessons_equal_what_the_status_page_covers_on_random_data(world,
 
 
 
-def test_lessons_before_the_first_price_do_not_stop_the_packages_of_the_account(world):
-    """Lessons mode, a price only from the 15th: the lessons of the 10th and 12th are skipped (no price, nothing owed and
-    nothing paid), the package starts with the lesson of the 15th and the paid money counts it and the next one."""
+def test_lessons_before_the_first_price_are_charged_at_the_first_price_in_the_packages_of_the_account(world):
+    """Lessons mode, a price only from the 15th: Money-1 Д-2 - the lessons of the 10th and 12th are charged at the FIRST price (400 000, package 1 of 2 lessons), the paid money covers that
+    package, the lessons of the 15th and 17th (package 2) are unpaid.  Before Д-2 the first two were skipped (no price, nothing owed and nothing paid) and the paid money covered the 15th and 17th."""
     from tests.pg_world import ensure_billing, payments_block
 
     m = previous_month()
@@ -1772,8 +1772,8 @@ def test_lessons_before_the_first_price_do_not_stop_the_packages_of_the_account(
     payments_block(world.db, world.org, period_mode="lessons", lessons_per_payment=2, accounting_start_date=m.first.isoformat())
     pay_money(world, s0, 400_000, m.d(15))
     line = line_of(preview(world, m), s0)
-    assert [x["state"] for x in line["marks"]] == ["unpaid", "unpaid", "counted", "counted"]
-    assert [x["price"] for x in line["marks"]] == [None, None, 400_000, 400_000] and line["no_price_lessons"] == 2
+    assert [x["state"] for x in line["marks"]] == ["counted", "counted", "unpaid", "unpaid"]
+    assert [x["price"] for x in line["marks"]] == [400_000] * 4 and line["no_price_lessons"] == 0
     assert line["amount"] == 2 * 400_000 * 50 // 200
     page = {r["student_id"]: r for r in owner(world).get(f"{API}/org/payments/status", params={"limit": 50}).json()["items"]}
-    assert page[str(s0.id)]["lessons_used"] == 2 and page[str(s0.id)]["price_missing"] is True
+    assert page[str(s0.id)]["lessons_used"] == 4 and page[str(s0.id)]["price_missing"] is False

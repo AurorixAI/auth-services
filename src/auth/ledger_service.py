@@ -801,6 +801,7 @@ class LedgerLoader:
             stays=tuple(self._stays_for(mid)),
             regimes=self.settings.regimes,
             price_at=price_at,
+            first_priced_day=lambda day, _m=mid, _g=membership.group_id: books.first_priced_day(_m, _g, day),
             credits=tuple(credits),
             outflows=tuple(outflows),
             lesson_days=lambda a, b, _g=group: self._lesson_days(_g, a, b),

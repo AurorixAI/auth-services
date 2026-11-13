@@ -57,7 +57,7 @@ def test_r7_a_change_of_the_text_of_a_decided_excuse_leaves_a_record_with_the_ol
 
 from tests.money1b_helpers import account, charge_of, set_schedule, slot  # noqa: E402
 from tests.pg_world import give_group_price  # noqa: E402
-from tests.test_pay2_api_pg import fixed_today, membership, settings_block, stay  # noqa: E402,F401  (fixtures)
+from tests.test_pay2_api_pg import fixed_today, membership, seed_payment, settings_block, stay  # noqa: E402,F401  (fixtures)
 from tests.test_money1b_price_pg import everybody_from  # noqa: E402
 
 D = date
@@ -102,6 +102,40 @@ def test_g2_the_shared_month_cell_of_the_student_added_before_the_first_price_is
     give_group_price(w.db, w.group, 300_000, valid_from=D(2026, 11, 10))
     everybody_from(w, D(2026, 11, 5))
     assert charge_of(account(w, membership(w).id), D(2026, 11, 1)) == 254_000       # the same 11 of 13 lessons x 300 000 as when the price is typed «с сегодня»
+
+
+# ---- Д-2 (R3B В-2): the lessons a PACKAGE student had before the first price of the group are charged at that first price --------------------------------------------
+
+from src.auth import billing_ledger as bl  # noqa: E402
+from tests.money1b_helpers import hold_lessons  # noqa: E402
+
+PACKAGE_8 = dict(period_mode="lessons", lessons_per_payment=8, accounting_start_date="2026-09-01", billing_history=[{"from": "min", "period_mode": "lessons", "lessons_per_payment": 8}])
+
+
+def test_d2_package_lessons_held_before_the_first_price_are_charged_at_the_first_price(world, fixed_today):
+    w = world
+    fixed_today(D(2026, 11, 12))
+    settings_block(w, **PACKAGE_8)
+    give_group_price(w.db, w.group, 400_000, valid_from=D(2026, 11, 10))      # set on 01.11 «с 10.11»; the student was added on 05.11, the lessons of 06.11 and 08.11 were held
+    everybody_from(w, D(2026, 11, 5))
+    hold_lessons(w, w.students[0], [D(2026, 11, 6), D(2026, 11, 8)])
+    led = account(w, membership(w).id)
+    assert led.lessons.used == 2 and led.charged == 100_000 and led.debt == 100_000      # e7c44aa..4f79e66: 0, 0 and «price missing» - two lessons for free (-100 000)
+    assert bl.F_PRICE_MISSING not in led.flags and led.unpriced_from is None
+    assert led.lessons.unpaid == 2 and not led.lesson_paid(D(2026, 11, 6), "s5")
+    seed_payment(w, membership(w), 100_000, D(2026, 11, 11))                           # 100 000 paid: both lessons are covered (a lesson costs 50 000)
+    paid = account(w, membership(w).id)
+    assert paid.debt == 0 and paid.lessons.covered >= 2 and paid.lessons.unpaid == 0
+
+
+def test_d2_a_group_with_no_price_at_all_still_charges_nothing_for_a_package(world, fixed_today):
+    w = world
+    fixed_today(D(2026, 11, 12))
+    settings_block(w, **PACKAGE_8)
+    everybody_from(w, D(2026, 11, 5))
+    hold_lessons(w, w.students[0], [D(2026, 11, 6), D(2026, 11, 8)])
+    led = account(w, membership(w).id)
+    assert led.charged == 0 and bl.F_PRICE_MISSING in led.flags and led.unpriced_from == D(2026, 11, 6)
 
 
 # ---- Г-5 (N6, ЗП-15): a reopened month keeps its advance in the chain; a payout locks the advance chain of the teacher ---------------------------------------

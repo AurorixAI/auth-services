@@ -274,6 +274,10 @@ class GroupBook:
         i = bisect_right(self._days, day) - 1
         return None if i < 0 else (self._days[i], self._amounts[i])
 
+    def starts_after(self, day: date) -> List[date]:
+        """The days after ``day`` on which a row of the history begins."""
+        return self._days[bisect_right(self._days, day):]
+
     def with_step(self, valid_from: date, amount: int) -> "GroupBook":
         """The history with one more step (the same day is replaced) - for "what if" calculations."""
         steps = {day: value for day, value in zip(self._days, self._amounts)}
@@ -308,6 +312,10 @@ class OverrideBook:
         valid_from, amount, reason = self._rows[i]
         found = self._meta.get(valid_from)
         return ScheduledOverride(found[0] if found else "", amount, valid_from, reason)
+
+    def starts_after(self, day: date) -> List[date]:
+        """The days after ``day`` on which a row of the history begins."""
+        return self._days[bisect_right(self._days, day):]
 
     def at(self, day: date) -> Optional[Tuple[date, Optional[int], Optional[str]]]:
         i = bisect_right(self._days, day) - 1
@@ -347,6 +355,11 @@ class PriceBooks:
         if group_row is not None:
             return Price(group_row[1], SOURCE_GROUP, group_row[0], group_amount, scheduled=scheduled)
         return NO_PRICE if scheduled is None else Price(None, SOURCE_NONE, scheduled=scheduled)
+
+    def first_priced_day(self, membership_id: Any, group_id: Any, after: date) -> Optional[date]:
+        """Money-1 Д-2: the first day on or after ``after`` on which the membership has a price (the rows of the group and of the membership are the only days a price can appear on); ``None``: never."""
+        days = sorted({after, *self.group_book(group_id).starts_after(after), *self.override_book(membership_id).starts_after(after)})
+        return next((day for day in days if self.price(membership_id, group_id, day).amount is not None), None)
 
     def with_override_books(self, books: Dict[UUID, "OverrideBook"]) -> "PriceBooks":
         """The same books with the exception history of some memberships replaced ("what if this exception were written")."""

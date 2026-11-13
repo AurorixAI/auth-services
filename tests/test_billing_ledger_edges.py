@@ -419,17 +419,24 @@ def test_refunds_and_transfers_out_are_cut_separately():
     assert (l.refunded_from["a"], l.transferred_from["a"], l.net_money["a"]) == (50_000, 30_000, 220_000)
 
 
-def test_lessons_held_before_the_price_are_skipped_and_the_packages_go_on_from_the_first_priced_lesson():
-    """Price valid from 10.10: the lessons of 02.10 and 05.10 are neither charged nor paid; package 1 starts on 12.10."""
+def test_lessons_held_before_the_first_price_are_charged_at_the_first_price_and_without_any_price_they_are_skipped():
+    """Money-1 Д-2.  Price valid from 10.10: the lessons of 02.10 and 05.10 are charged at the FIRST price (before Д-2 they were skipped: neither charged nor paid);
+    package 1 = 02.10, 05.10, 12.10.  A group with no price at all (``first_priced_day`` finds nothing) still skips them: price_missing, the packages go on from the first priced lesson."""
     days = [D(2026, 10, 2), D(2026, 10, 5), D(2026, 10, 12), D(2026, 10, 14), D(2026, 10, 16)]
     counted = [bl.CountedLesson(d, f"l{i}") for i, d in enumerate(days)]
-    inp = make(today=D(2026, 10, 20), stays=[bl.Stay(D(2026, 9, 1))], price_at=flat(300_000, since=D(2026, 10, 10)),
-               regimes=[bl.Regime(mode=bl.LESSONS, package_size=3)], counted=counted,
-               credits=[credit("p", D(2026, 10, 12), 200_000)])
+    none = make(today=D(2026, 10, 20), stays=[bl.Stay(D(2026, 9, 1))], price_at=flat(300_000, since=D(2026, 10, 10)),
+                regimes=[bl.Regime(mode=bl.LESSONS, package_size=3)], counted=counted,
+                credits=[credit("p", D(2026, 10, 12), 200_000)])
+    inp = replace(none, first_priced_day=lambda day: max(day, D(2026, 10, 10)))
     l = bl.run_ledger(inp)
+    assert bl.F_PRICE_MISSING not in l.flags and l.unpriced_from is None
+    assert [(s.package_no, s.days) for s in l.segments] == [(1, tuple(days[:3])), (2, tuple(days[3:]))]
+    assert l.charged == 500_000 and l.debt == 300_000 and l.reconciles
+    assert l.lessons.used == 5 and l.lessons.covered == 2 and l.lessons.unpaid == 3
+    assert [l.lesson_paid(c.day, c.lesson_id) for c in counted] == [True, True, False, False, False]
+    # no price at all in the group: the old way (nothing is known of a first price)
+    l = bl.run_ledger(none)
     assert bl.F_PRICE_MISSING in l.flags and l.unpriced_from == D(2026, 10, 2)
     assert [(s.package_no, s.days) for s in l.segments] == [(1, tuple(days[2:]))]
     assert l.charged == 300_000 and l.debt == 100_000 and l.reconciles
-    assert l.lessons.used == 3 and l.lessons.covered == 2 and l.lessons.unpaid == 1
-    # per counted lesson (all five stay in the list): the skipped ones are not paid, then 2 of 3 are
     assert [l.lesson_paid(c.day, c.lesson_id) for c in counted] == [False, False, True, True, False]

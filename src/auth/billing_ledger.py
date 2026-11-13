@@ -171,6 +171,8 @@ class LedgerInput:
     stays: Sequence[Stay]
     regimes: Sequence[Regime]
     price_at: Callable[[date], PriceInfo]
+    # the first day on or after the given one that has a price (``None``: never) - the rule «the first price of a group acts for what came before it» (Money-1 Г-2, Д-2)
+    first_priced_day: Callable[[date], Optional[date]] = lambda day: None
     credits: Sequence[Credit] = ()
     outflows: Sequence[Outflow] = ()
     # a membership made by a transfer starts being charged the day AFTER the transfer (that day belongs to the old group)
@@ -523,6 +525,17 @@ def apply_outflows(credits: Sequence[Credit], outflows: Sequence[Outflow]):
 # ================================================================================================================
 
 
+def lesson_price(inp: LedgerInput, day: date) -> PriceInfo:
+    """Money-1 Д-2 (R3B В-2): the price of a held lesson of a package - the price on its day, and when there is none yet (the lesson was held before the first price of the group began) the FIRST price:
+    «the first price acts from the beginning», in the calculation, not at the moment it is typed (the same rule as for a period, Г-2).  A group with no price at all has none."""
+    price = inp.price_at(day)
+    if price.amount is None:
+        first = inp.first_priced_day(day)
+        if first is not None:
+            return inp.price_at(first)
+    return price
+
+
 class _Gen:
     """Builds the segments; keeps the horizon bookkeeping."""
 
@@ -720,9 +733,9 @@ class _Gen:
         chain = self.chain
         self.chain += 1
         pkg_price = NO_PRICE
-        # a lesson held while no price was in force is skipped: neither charged nor paid (price_missing stays); the packages
-        # go on from the first priced lesson
-        priced = [self.inp.price_at(c.day).amount is not None for c in lessons]
+        # a lesson held before the first price of the group is charged at that first price (Д-2); a group with no price at all charges nothing
+        # (the lessons are skipped: neither charged nor paid, price_missing) and the packages go on from the first priced lesson
+        priced = [lesson_price(self.inp, c.day).amount is not None for c in lessons]
         for c, ok in zip(lessons, priced):
             if not ok:
                 self.unpriced_from = self.unpriced_from or c.day
@@ -739,7 +752,7 @@ class _Gen:
         for k, start in enumerate(range(0, len(lessons), size), 1):
             chunk = lessons[start : start + size]
             first_day = chunk[0].day
-            pkg_price = self.inp.price_at(first_day)
+            pkg_price = lesson_price(self.inp, first_day)
             days = [c.day for c in chunk]
             complete = len(chunk) == size
             common = dict(id=f"seg:{chain}:pkg{k}", kind="package", period_start=first_day, period_end=days[-1],
@@ -1017,7 +1030,7 @@ def regime_switch_days(inp: LedgerInput, new: Regime, at: Optional[datetime] = N
     regimes = list(inp.regimes) + [replace(new, defer=True, effective_from=inp.today, at=at)]
     windows = regime_windows(regimes)
     _, _, _, pause_days, spans, _ = _pieces_of(inp)
-    priced = sorted(c.day for c in inp.counted_lessons if inp.price_at(c.day).amount is not None)
+    priced = sorted(c.day for c in inp.counted_lessons if lesson_price(inp, c.day).amount is not None)
     return [_window_starts(windows, first, priced, pause_days, _fresh_stay_check(inp.stays, first))[-1] for first, last in spans if last is None]
 
 
@@ -1115,7 +1128,7 @@ def _run_ledger(inp: LedgerInput, horizon_extra: int) -> Ledger:
     gen = _Gen(inp, total_credit + horizon_extra, flags)
     windows = regime_windows(inp.regimes)
     deferred = any(w[0].defer for w in windows[1:])
-    priced_days = sorted(c.day for c in inp.counted_lessons if inp.price_at(c.day).amount is not None) if deferred else []
+    priced_days = sorted(c.day for c in inp.counted_lessons if lesson_price(inp, c.day).amount is not None) if deferred else []
     bounds = [_window_bounds(_window_starts(windows, first, priced_days, pause_days, _fresh_stay_check(inp.stays, first)) if deferred else [w[1] for w in windows])
               for first, _ in spans_of_stay]
     # the piece that tells which version is in force today (the one that holds today, else the last before it)
