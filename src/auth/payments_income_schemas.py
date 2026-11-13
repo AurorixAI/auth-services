@@ -189,6 +189,7 @@ class JournalRow(PayModel):
     paid_on: date_type
     paid_time: Optional[str] = None  # "14:35" - the entry time, Tashkent; ONLY when the payment was entered on its own day (paid_on), null for a back-dated one
     entered_at_text: Optional[str] = None  # «внесена 21.10 в 11:40» (Tashkent) when the payment was entered on another day than paid_on, else null
+    dates_text: Optional[str] = None  # Money-1 Г-17: «внесена 22.10 · дата оплаты 21.10» - both dates of a payment entered on another day (the till counts the entry, the debt the date), else null
     created_at: Optional[str] = None  # naive UTC, ISO (the raw moment of entry)
     student_id: str
     student_name: str

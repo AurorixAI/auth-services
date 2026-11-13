@@ -300,6 +300,14 @@ def entry_times(created_at: Optional[datetime], paid_on: date) -> Tuple[Optional
     return None, f"внесена {local.strftime('%d.%m')} в {local.strftime('%H:%M')}"
 
 
+def entry_dates_text(created_at: Optional[datetime], paid_on: date) -> Optional[str]:
+    """Money-1 Г-17: both dates of a payment entered on another day than it is for - «внесена 22.10 · дата оплаты 21.10» (the till counts the first, the debt the second); ``None`` for an ordinary one."""
+    local = _business_moment(created_at)
+    if local is None or local.date() == paid_on:
+        return None
+    return f"внесена {local.strftime('%d.%m')} · дата оплаты {paid_on.strftime('%d.%m')}"
+
+
 def _iso(moment: Optional[datetime]) -> Optional[str]:
     return moment.isoformat() if moment else None
 
@@ -387,7 +395,7 @@ class IncomeReports:
             previous_hint=_previous_hint(cur, prev, today), current=current, previous=previous,
             delta_amount=current.received - previous.received, delta_pct=pct, delta_direction=direction,
             delta_text=tx.delta_text(pct, _previous_dative(cur, prev, today)) if pct is not None else None, summary_text=text, by_method=by_method,
-            strip=strip_parts(self._strip_amounts(current), only_nonzero=False), series=series, series_by=series_by, cash=self._cash(org_id, cur, today, pay_rows, refund_rows, group_id, teacher_id), collection=collection,
+            strip=strip_parts(self._strip_amounts(current), only_nonzero=False), series=series, series_by=series_by, cash=self._cash(org_id, cur, today, group_id, teacher_id), collection=collection,
             position=position, checks=checks, ok=all(c.diff == 0 for c in checks))
 
     def _refund_rows_sum(self, org_id: str, first: date, last: date, method: Optional[str], group_id: Optional[UUID], teacher_id: Optional[UUID]) -> int:
@@ -493,25 +501,34 @@ class IncomeReports:
             months[d.strftime("%Y-%m")][1] += v[1]
         return [IncomeDay(bucket=k, received=v[0], count=v[1]) for k, v in months.items()], "month"
 
-    def _cash(self, org_id: str, p: Period, today: date, pay_rows, refund_rows, group_id: Optional[UUID], teacher_id: Optional[UUID]) -> Optional[IncomeCash]:
+    def _cash_moves(self, model, org_id: str, day: date, *where) -> Tuple[int, int, int]:
+        """Money-1 Г-17: ``(entered, cancelled, count)`` of the CASH records of ``model`` for the till of the business ``day`` - by the moment the record was entered (``created_at``), not by the date
+        it is for: ``entered`` = records made that day and not cancelled the same day; ``cancelled`` = records of an earlier day that were cancelled that day (the money leaves that day's till;
+        a closed day never moves)."""
+        lo, hi = self.utc_bounds(day, day)
+        base = self.db.query(func.coalesce(func.sum(model.amount), 0), func.count()).filter(model.org_id == org_id, model.method == "cash", *where)
+        entered, count = base.filter(model.created_at >= lo, model.created_at < hi, or_(model.voided_at.is_(None), model.voided_at >= hi)).one()
+        cancelled, _ = base.filter(model.created_at < lo, model.voided_at >= lo, model.voided_at < hi).one()
+        return int(entered), int(cancelled), int(count)
+
+    def _cash(self, org_id: str, p: Period, today: date, group_id: Optional[UUID], teacher_id: Optional[UUID]) -> Optional[IncomeCash]:
         """The cash hint is the physical till of the CENTRE: always the whole centre, whatever the group / teacher / method filters of the page say
-        (``scope = "centre"``; ``filtered_view`` tells the front that the page is filtered, so it words «в кассе центра за сегодня (все группы)»)."""
+        (``scope = "centre"``; ``filtered_view`` tells the front that the page is filtered, so it words «в кассе центра за сегодня (все группы)»).  The day of a record is the day it was ENTERED (Г-17)."""
         if p.first != p.last:
             return None
         day = p.first
         filtered = bool(group_id or teacher_id)
-        if filtered:             # the rows of the page are scoped: ask the centre's own cash of the day (two small queries)
-            pay_rows, refund_rows, _ = self._facts(org_id, day, day, None, None, with_writeoffs=False)
-        got = [int(a) for _pid, _mid, d, a, m in pay_rows if d == day and (m or "unknown") == "cash"]
-        out = [int(a) for d, a, m in refund_rows if d == day and m == "cash"]
+        paid, paid_cancelled, count = self._cash_moves(StudentPayment, org_id, day, StudentPayment.kind == "payment")
+        refunded, refunds_cancelled, _ = self._cash_moves(StudentRefund, org_id, day)
+        received, returned = paid + refunds_cancelled, refunded + paid_cancelled          # a cancelled refund brings the money back to the till, a cancelled payment takes it out
         label = "Наличные в кассе за " + ("сегодня" if day == today else tx.day_genitive(day))
-        expected = sum(got) - sum(out)
+        expected = received - returned
         text = f"{label}: {tx.money(expected)}"
-        if out:
-            text += f" (принято {tx.money(sum(got))}, возвращено {tx.money(sum(out))})"
+        if returned:
+            text += f" (принято {tx.money(received)}, возвращено {tx.money(returned)})"
         scope_text = ("в кассе центра за " + ("сегодня" if day == today else tx.day_genitive(day)) + " (все группы)") if filtered else None
-        return IncomeCash(date=day, label=label, cash_received=sum(got), cash_refunded=sum(out), expected=expected,
-                          payments_count=len(got), text=text, scope="centre", filtered_view=filtered, scope_text=scope_text)
+        return IncomeCash(date=day, label=label, cash_received=received, cash_refunded=returned, expected=expected,
+                          payments_count=count, text=text, scope="centre", filtered_view=filtered, scope_text=scope_text)
 
     # ------------------------------------------------------------------ month collection
 
@@ -785,7 +802,7 @@ class IncomeReports:
             old = was.get(p.replaces_payment_id)
             paid_time, entered_at_text = entry_times(p.created_at, p.paid_on)
             out.append(JournalRow(
-                id=str(p.id), view="cancelled_here" if mark_cancelled_here and first is not None and not (first <= p.paid_on <= last) else "paid", receipt_no=p.receipt_no, paid_on=p.paid_on, paid_time=paid_time, entered_at_text=entered_at_text, created_at=_iso(p.created_at), student_id=str(student.id),
+                id=str(p.id), view="cancelled_here" if mark_cancelled_here and first is not None and not (first <= p.paid_on <= last) else "paid", receipt_no=p.receipt_no, paid_on=p.paid_on, paid_time=paid_time, entered_at_text=entered_at_text, dates_text=entry_dates_text(p.created_at, p.paid_on), created_at=_iso(p.created_at), student_id=str(student.id),
                 student_name=person_name(student.last_name, student.first_name) or "", display_id=student.display_id,
                 membership_id=str(p.membership_id), group_id=str(group.id), group_name=group.name,
                 teacher_name=_staff(users.get(group.teacher_id)), amount=int(p.amount), method=p.method or "unknown",

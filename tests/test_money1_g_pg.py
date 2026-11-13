@@ -337,3 +337,41 @@ def test_g4_a_payment_nobody_took_over_names_no_other_group(two, monkeypatch):
     p = pay(two, paid_on=day(-10), amount=3_000_000)["payment"]                             # no transfer: nothing appears elsewhere
     dry = owner(two).post(f"{PAY_URL}/{p['id']}/void", params={"dry_run": "true"}, json={"reason": "ошибка"})
     assert dry.status_code == 200 and dry.json()["new_debts"] == [] and "появится" not in (dry.json()["money_effects"] or {}).get("text", "")
+
+
+# ---- Г-17 (N9): the cash of a day is counted by the day the record was ENTERED (the till of the centre), not by the date of the payment ---------------------------
+
+from datetime import datetime  # noqa: E402
+
+from tests.test_income2_pg import add_payments, income, journal, seeded  # noqa: E402,F401  (fixtures)
+from tests.test_pay2_api_pg import D, fixed_today  # noqa: E402,F401  (fixtures)
+
+
+def _till(w, day):
+    c = income(w, day, day)["cash"]
+    return c["cash_received"], c["cash_refunded"], c["expected"]
+
+
+def test_g17_cash_follows_the_day_of_entry_and_a_closed_day_does_not_move(world, seeded):
+    base21, base22 = _till(world, "2026-10-03"), _till(world, "2026-10-04")
+    ids = add_payments(
+        world, seeded,
+        ("closed-day", D(2026, 10, 3), datetime(2026, 10, 3, 5, 0), 1_000_000, None),            # 03.10 10:00 Tashkent: 1 000 000 in the till, the day is over
+        ("late", D(2026, 10, 3), datetime(2026, 10, 4, 6, 0), 200_000, None))                    # 04.10 11:00: entered a day later FOR 03.10
+    assert _till(world, "2026-10-03") == (base21[0] + 1_000_000, base21[1], base21[2] + 1_000_000)      # e7c44aa: 1 200 000 (by paid_on) - the closed day moved
+    assert _till(world, "2026-10-04") == (base22[0] + 200_000, base22[1], base22[2] + 200_000)           # e7c44aa: nothing - the money is in the box on 04.10
+    late = next(r for r in journal(world, "2026-10-01", "2026-10-31", size=100)["rows"] if r["id"] == ids["late"])
+    assert late["paid_on"] == "2026-10-03" and late["dates_text"] == "внесена 04.10 · дата оплаты 03.10"
+    assert next(r for r in journal(world, "2026-10-01", "2026-10-31", size=100)["rows"] if r["id"] == ids["closed-day"])["dates_text"] is None
+
+
+def test_g17_the_cancellation_on_another_day_leaves_the_closed_day_alone_and_leaves_the_till_of_its_own_day(world, seeded):
+    from src.models.auth import StudentPayment
+
+    base = {d: _till(world, d) for d in ("2026-10-03", "2026-10-05")}
+    ids = add_payments(world, seeded, ("p", D(2026, 10, 3), datetime(2026, 10, 3, 5, 0), 300_000, None))
+    p = world.db.query(StudentPayment).get(ids["p"])
+    p.voided_at, p.voided_by, p.void_reason = datetime(2026, 10, 5, 6, 0), world.owner.id, "ошибка"          # cancelled on 05.10 11:00
+    world.db.commit()
+    assert _till(world, "2026-10-03") == (base["2026-10-03"][0] + 300_000, base["2026-10-03"][1], base["2026-10-03"][2] + 300_000)      # e7c44aa: the cancelled payment vanished from 03.10
+    assert _till(world, "2026-10-05") == (base["2026-10-05"][0], base["2026-10-05"][1] + 300_000, base["2026-10-05"][2] - 300_000)       # and the till of 05.10 says it

@@ -990,6 +990,17 @@
             ],
             "title": "Created By Name"
           },
+          "dates_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dates Text"
+          },
           "display_id": {
             "anyOf": [
               {
@@ -1257,6 +1268,7 @@
           "paid_on",
           "paid_time",
           "entered_at_text",
+          "dates_text",
           "created_at",
           "student_id",
           "student_name",
