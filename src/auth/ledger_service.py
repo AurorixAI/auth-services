@@ -401,7 +401,6 @@ class LedgerLoader:
         periods = membership_periods.periods_by_membership(self.db, found)
         for mid in found:
             self.stays[mid] = stays_of_membership(self.members[mid][0], periods.get(mid, []))
-        self._load_left_days(found, periods)
         for payment in self.db.query(StudentPayment).filter(
             StudentPayment.org_id == self.org_id, StudentPayment.membership_id.in_(found),
             StudentPayment.voided_at.is_(None), StudentPayment.kind == "payment",
@@ -440,7 +439,8 @@ class LedgerLoader:
         for side, mid in touched:
             (self.t_in if side == "in" else self.t_out)[mid].sort(key=self.link_key)
         if self._needs_lessons():
-            self._load_counted(found)
+            self._load_counted([self.members[m][:3] for m in found])
+        self._load_left_days(found, periods)       # after the counted lessons: for a package the day he left belongs to the group that COUNTED a lesson of his that day
 
     def _load_cancels(self, group_ids: Set[UUID]) -> None:
         """PAY-F: the lessons the CENTRE cancelled (``cancellation_kind = 'centre'``; a holiday, a move and an old cancellation have another kind or none) - one query.
@@ -540,14 +540,15 @@ class LedgerLoader:
     def _needs_lessons(self) -> bool:
         return any(r.mode == ps.LESSONS for r in self.settings.regimes)
 
-    def _load_counted(self, ids: List[UUID]) -> None:
+    def _load_counted(self, members: Sequence[Tuple[StudentGroup, Any, Group]]) -> None:
+        """The counted lessons of the given memberships (``self.counted``): the facts of the loaded ones and the days a student left the other memberships (``_load_left_days``)."""
         from .payments_service import PaymentService  # lazy: the service imports this module
 
         floor = min(
             (r.effective_from for r in self.settings.regimes if r.mode == ps.LESSONS), default=self.settings.accounting_start
         )
         since = max(floor, self.settings.accounting_start)
-        members = [(self.members[m][0], self.members[m][1], self.members[m][2]) for m in ids if m in self.members]
+        ids = [m.id for m, _, _ in members]
         detail: Dict[UUID, List[tuple]] = {}
         skip = {
             mid: {d for p in self.pauses.get(mid, []) for d in _days(p.first_day, p.last_day)} for mid in ids if self.pauses.get(mid)
@@ -648,18 +649,23 @@ class LedgerLoader:
         rows = self.db.query(StudentGroup, Group).join(Group, Group.id == StudentGroup.group_id).filter(StudentGroup.student_id.in_(students), Group.org_id == self.org_id).all()      # Р-10: the groups come with the memberships, and only the groups of THIS centre
         self.other_groups.update({g.id: g for _, g in rows})          # their lessons are loaded together with the lessons of the loaded groups (``_occurrences``, ``_moved_copies``)
         periods = {**periods, **membership_periods.periods_by_membership(self.db, [m.id for m, _ in rows if m.id not in periods])}
+        if self._needs_lessons():
+            self._load_counted([(m, None, g) for m, g in rows if m.id not in self.counted])
         for membership, group in rows:
             runs = bl.merge_stays(stays_of_membership(membership, periods.get(membership.id, [])))
             for run in runs:
                 # G-8b / Р-6: the day he left belongs to that group only when it really charges the day (a stay of one day without a lesson charges nothing, G-7)
-                if run[1] is not None and not bl.lessonless_day(lambda a, b, _g=group: self._lesson_days(_g, a, b), run) and self._holds_day(group, run[1]):
+                if run[1] is not None and not bl.lessonless_day(lambda a, b, _g=group: self._lesson_days(_g, a, b), run) and self._holds_day(group, run[1], membership.id):
                     self.left_days.setdefault(membership.student_id, {}).setdefault(membership.id, set()).add(run[1])
 
-    def _holds_day(self, group: Group, day: date) -> bool:
-        """Money-1 Р-6 (R3 В5): does ``group`` itself charge ``day``?  By a per-day share (the calendar mode without a schedule to count by) always; by lessons (a package, a fixed billing day
-        with a schedule) only when the group has a lesson that day.  The ONE rule of «the day he left belongs to the old group» for a transfer and for a manual removal + add: a day the old
-        group does not charge is charged by the new one, so it is neither paid twice nor lost."""
+    def _holds_day(self, group: Group, day: date, mid: UUID) -> bool:
+        """Money-1 Р-6 (R3 В5, Д-1): does the membership ``mid`` in ``group`` itself charge ``day``?  By a per-day share (the calendar mode without a schedule to count by) always; by lessons
+        (a fixed billing day with a schedule) only when the group has a lesson that day; a PACKAGE charges only a lesson it COUNTED for the student (he is in its roster, he is marked present / late /
+        absent without a confirmed excuse), so a later lesson of the day he was moved out of, a lesson the centre cancelled or an excused one holds nothing.  The ONE rule of «the day he left
+        belongs to the old group» for a transfer and for a manual removal + add: a day the old group does not charge is charged by the new one, so it is neither paid twice nor lost."""
         regime = bl.regime_at(self.settings.regimes, day)
+        if regime.mode == ps.LESSONS:
+            return any(c.day == day for c in self.counted.get(mid, ()))
         if regime.mode == ps.CALENDAR:
             if regime.anchor == ps.PAYMENT_DATE:
                 return True
@@ -686,7 +692,7 @@ class LedgerLoader:
         for t in self.t_in.get(mid, []):
             day = ps.business_date(t.at)
             old = self.members.get(t.from_membership_id)           # not loaded (beyond the hops of the loader): nothing is known against the day, it stays the old group's
-            if old is None or self._holds_day(old[2], day):
+            if old is None or self._holds_day(old[2], day, t.from_membership_id):
                 stays = self._begin_after(stays, {day})
         elsewhere = {d for other, days in self.left_days.get(self.members[mid][1].id, {}).items() if other != mid for d in days}
         return self._begin_after(stays, elsewhere)

@@ -157,3 +157,70 @@ def test_r6_transfer_a_charges_a_lesson_on_the_day_so_b_starts_the_next_day(worl
     w.db.expire_all()
     lb = account(w, membership_of(w.db, s, b_group).id, D(2026, 10, 31))
     assert lb.first_billable == T + timedelta(days=1) and lb.charged == 50_000
+
+
+# ---- Д-1 (R3B В-1): for a PACKAGE the old group keeps the day T only when it COUNTED a lesson of the student that day ------------------------------------------------
+# A package charges only a lesson the student was in the roster of and was marked at, so «a lesson of A on the schedule» is not «A charged the day».
+
+from tests.money1b_helpers import hold_lessons  # noqa: E402
+from src.models.auth import AttendanceExcuse, GroupAttendance  # noqa: E402
+
+PACKAGE = dict(accounting_start_date="2026-09-01", period_mode="lessons", lessons_per_payment=8, billing_history=[{"from": "min", "period_mode": "lessons", "lessons_per_payment": 8}])
+
+
+def _package_pair(world, fixed_today):
+    """A package of 8 lessons for 400 000 in A (Tuesday 18:00), 500 000 in B (Tuesday 16:00); the student is moved on Tuesday T, he was at the 16:00 lesson of B."""
+    w = world
+    fixed_today(T)
+    settings_block(w, **PACKAGE)
+    a_group, b_group = w.group, make_group(w.db, w.org, w.teacher, "Группа B")
+    set_schedule(w, [slot("s2", 2, "2026-01-01", "18:00", "19:00")], a_group)
+    set_schedule(w, [slot("s2", 2, "2026-01-01", "16:00", "17:00")], b_group)
+    give_group_price(w.db, a_group, 400_000)
+    give_group_price(w.db, b_group, 500_000)
+    s = w.students[0]
+    stay(w, membership_of(w.db, s, a_group), D(2026, 10, 6))
+    hold_lessons(w, s, [D(2026, 10, 6), D(2026, 10, 13)], a_group)          # two lessons of A were counted before the move
+    from tests.money1b_helpers import transfer
+
+    transfer(w, s, b_group)
+    w.db.expire_all()
+    mb = membership_of(w.db, s, b_group)
+    hold_lessons(w, s, [T], b_group)                                        # he was at the lesson of B on T (16:00)
+    return a_group, b_group, mb
+
+
+def test_d1_package_a_lesson_of_a_after_the_move_is_not_counted_so_b_charges_the_day_t(world, fixed_today):
+    _, _, mb = _package_pair(world, fixed_today)
+    lb = account(world, mb.id, D(2026, 10, 31))
+    assert lb.lessons.used == 1 and lb.charged == 62_500           # 1/8 of 500 000: the lesson of B on T (before: 0, A «held» the day by its schedule)
+
+
+def test_d1_package_a_lesson_of_a_cancelled_by_the_centre_does_not_hold_the_day(world, fixed_today):
+    a_group, _, mb = _package_pair(world, fixed_today)
+    world.db.add(GroupAttendance(org_id=world.org.id, group_id=a_group.id, lesson_date=T.isoformat(), lesson_id="s2", status="cancelled", records={}))
+    world.db.commit()
+    lb = account(world, mb.id, D(2026, 10, 31))
+    assert lb.lessons.used == 1 and lb.charged == 62_500
+
+
+def test_d1_package_a_lesson_with_a_confirmed_excuse_does_not_hold_the_day(world, fixed_today):
+    a_group, _, mb = _package_pair(world, fixed_today)
+    s = world.students[0]
+    # the student was in the roster of A that day, but the absence has a confirmed excuse: the package does not count the lesson
+    row = GroupAttendance(org_id=world.org.id, group_id=a_group.id, lesson_date=T.isoformat(), lesson_id="s2", status="completed",
+                          records={str(s.id): "excused"}, roster_snapshot=[{"student_id": str(s.id)}])
+    world.db.add(row)
+    world.db.flush()
+    world.db.add(AttendanceExcuse(org_id=world.org.id, attendance_id=row.id, student_id=s.id, reason="Болел", reason_by=world.teacher.id,
+                                  reason_at=datetime(2026, 10, 27, 9), status="confirmed", reviewed_by=world.owner.id, reviewed_at=datetime(2026, 10, 27, 10)))
+    world.db.commit()
+    lb = account(world, mb.id, D(2026, 10, 31))
+    assert lb.lessons.used == 1 and lb.charged == 62_500
+
+
+def test_d1_package_a_lesson_of_a_that_the_student_was_counted_at_keeps_the_day_so_b_starts_the_next(world, fixed_today):
+    a_group, _, mb = _package_pair(world, fixed_today)
+    hold_lessons(world, world.students[0], [T], a_group)                     # control: A counted the lesson of T
+    lb = account(world, mb.id, D(2026, 10, 31))
+    assert lb.first_billable > T and lb.lessons.used == 0 and lb.charged == 0
