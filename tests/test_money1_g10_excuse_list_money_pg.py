@@ -61,3 +61,28 @@ def test_the_journal_carries_the_account_of_an_excuse_only_with_the_right_and_a_
     for entry in excuses(world.admin).values():
         assert entry["billing_mode"] is None and entry["deadline_at_decision"] is None and "reason" in entry and "status" in entry
     assert all("billing_mode" not in e for e in excuses(world.teacher).values())
+
+
+# ---- Р-9 (R3 М5): «решено после срока» is the account of the student too ------------------------------------------------------------------------------
+
+def test_r9_the_mark_decided_after_the_deadline_is_for_the_money_right_in_the_list_and_in_the_journal(world):
+    from datetime import timedelta
+
+    from src.models.auth import AttendanceExcuse
+    from tests.test_excuse_deadline import business_today
+
+    grant_money_right(world)
+    _seed(world)
+    world.db.query(AttendanceExcuse).update({"status": "confirmed", "decided_after_deadline": True})
+    world.db.commit()
+    path = f"{API}/org/groups/{world.group.id}/attendance"
+    window = {"date_from": (business_today() - timedelta(days=5)).isoformat(), "date_to": business_today().isoformat()}
+
+    def marks():
+        listed = {i["decided_after_deadline"] for i in listing(world)}
+        journal = {e["decided_after_deadline"] for by_student in make_client(world, user=world.admin).get(path, params=window).json()["excuses"].values() for e in by_student.values()}
+        return listed, journal
+
+    assert marks() == ({True}, {True})
+    grant_money_right(world, False)
+    assert marks() == ({None}, {None})                                    # before: {True}, {True} - the admin without the right read who was late

@@ -591,7 +591,7 @@ class AttendanceExcuseService:
             # The administrator's note and the decision mark (#39) are not for teachers.
             if include_review_note:
                 entry["review_note"] = row.review_note
-                entry["decided_after_deadline"] = row.decided_after_deadline
+                entry["decided_after_deadline"] = row.decided_after_deadline if include_billing_mode else None      # Р-9: «решено после срока» is the account of the student
                 entry["deadline_at_decision"] = _iso_day(row.deadline_at_decision) if include_billing_mode else None      # Г-10б: the date of a deadline is the account of the student
             if include_billing_mode:
                 entry["billing_mode"] = modes.get((row.student_id, group_of.get(row.attendance_id)))
@@ -856,7 +856,7 @@ class AttendanceExcuseService:
                     files=files.get(excuse.id, []),
                     deadline=deadlines.get(excuse.id),
                     billing_mode=modes.get((excuse.student_id, att.group_id)),
-                    decided_after_deadline=excuse.decided_after_deadline,
+                    decided_after_deadline=excuse.decided_after_deadline if with_money else None,
                     deadline_at_decision=_iso_day(excuse.deadline_at_decision) if with_money else None,
                 )
             )
