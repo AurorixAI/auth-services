@@ -40,6 +40,7 @@ from src.models.auth import (
 )
 
 from . import business_clock as bc
+from . import money_effects as me
 from .closed_period import ClosedPeriods, assert_lesson_open, lesson_teacher_ids
 from .ops_rules import OpsError
 from .roster_names import student_full_name
@@ -1190,8 +1191,6 @@ class AttendanceExcuseService:
 
     def _probe(self, att: GroupAttendance, owner: bool):
         """BEFORE the decision is written: the saved sheets of the lesson's teacher, measured now (only a HELD lesson moves a pay)."""
-        from . import money_effects as me
-
         group = self.db.get(Group, att.group_id)
         if group is None or att.status != "completed":
             return None
@@ -1199,8 +1198,6 @@ class AttendanceExcuseService:
 
     def _effects(self, att: GroupAttendance, excuse: AttendanceExcuse, status_before: str, status_after: str, probe, *, owner: bool, done: bool) -> Dict[str, Any]:
         """Money-1 A3: a decision on an excuse - ``confirmed`` gives the lesson back to the pack of the student and takes it off the pay of the teacher; ``rejected`` / ``pending`` is a normal lesson."""
-        from . import money_effects as me
-
         sid = str(excuse.student_id)
         held = att.status == "completed"
         students = me.student_deltas({sid: EXCUSED}, {sid: EXCUSED}, {sid: status_before}, {sid: status_after}, held_before=held, held_after=held)
@@ -1275,8 +1272,6 @@ class AttendanceExcuseService:
                 self.db.rollback()
                 skipped.append(BulkSkipped(id=str(excuse_id), reason=exc.message, code=exc.code))
         logger.info("Attendance excuses bulk %s by %s: updated=%d skipped=%d dry_run=%s", decision, actor_id, updated, len(skipped), dry_run)
-        from . import money_effects as me
-
         return BulkReviewResponse(updated=updated, skipped=skipped, dry_run=dry_run, money_effects=me.merge_blocks(blocks) if dry_run else None)
 
     def reset(
