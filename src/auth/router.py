@@ -1815,7 +1815,7 @@ def cancel_missed_group_attendance(
         if not dry_run and not manager:
             result = cancel()                           # a teacher cancels his own lesson as before: nothing about money is said to him
             return {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"]}
-        result, effects, added, consequence = _cancel_with_effects(db, user, group_id, cancel, owner=user.get("org_role") == "owner", money_right=money_right, dry_run=dry_run, action_month=request.lessonDate.strftime("%Y-%m"))
+        result, effects, added, consequence = _cancel_with_effects(db, user, group_id, cancel, owner=user.get("org_role") == "owner", money_right=money_right, dry_run=dry_run, action_month=request.lessonDate.strftime("%Y-%m"), manager=manager)
         out = {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"], "dryRun": dry_run, "moneyEffects": effects, "consequence": consequence}
         if added is not None:
             out["deductions"] = added                   # the money right only (a teacher / an administrator without it never read the sums of the students)
@@ -1857,10 +1857,10 @@ def lesson_cancel_consequence(
     def cancel():
         return subs.cancel_lesson(user["org_id"], user["user_id"], group.id, lesson_id, lesson_date, reason="Предпросмотр последствий", by_manager=manager, allow_started=True)
 
-    return {"consequence": me.lesson_cancel_consequence(db, user["org_id"], group.id, cancel)}
+    return {"consequence": me.lesson_cancel_consequence(db, user["org_id"], group.id, cancel, manager=manager)}
 
 
-def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owner: bool, money_right: bool, dry_run: bool, action_month: str):
+def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owner: bool, money_right: bool, dry_run: bool, action_month: str, manager: bool):
     """``(the answer of the cancellation, the money block, the recalculations or None, the consequence for the students in words)``: the cancellation runs once inside a transaction that is rolled back (the numbers; its refusals are the refusals
     of the real call, an exam-service call that writes - the release - is not made), then - unless ``dry_run`` - for real; the block of the first pass is what the answer says."""
     from . import money_effects as me
@@ -1882,7 +1882,7 @@ def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owne
 
     result, effects = me.run_with_effects(db, org_id, memberships, owner, action, dry_run=dry_run, action_month=action_month)
     added = seen.get("added")
-    consequence = me.cancel_consequence_text(added) if added is not None else None
+    consequence = me.cancel_consequence_text(added, manager=manager) if added is not None else None
     if money_right and added is not None:
         effects = {**effects, "deductions": added, "text": "; ".join(x for x in (me.recalc_text(added, done=not dry_run), effects.get("text")) if x)}
     return result, effects, (added if money_right else None), consequence

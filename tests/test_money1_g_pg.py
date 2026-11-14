@@ -834,6 +834,37 @@ def test_r4_the_own_month_with_the_setting_on_says_what_each_student_gets_and_th
     assert _consequence(w, "admin", g) == {"consequence": sentence}           # without the right: the sentence only, the sums of the group are not in the answer
 
 
+def test_g3m_c7_a_teacher_gets_the_sentence_without_a_sum_on_every_road_of_his_own_lesson(pg_session, clock):
+    import re
+
+    w, g, students, ms, url = cancel_world(pg_session, clock)
+    word = "Ученикам будет перерасчёт за этот урок"
+    assert _consequence(w, "A", g) == {"consequence": word}                                  # before: «Ученикам зачтётся по 46 000 сум»
+    dry = cancel_post(w, "A", url, WED, dry=True)
+    assert dry.status_code == 200, dry.text
+    assert dry.json()["consequence"] == word and "deductions" not in dry.json()
+    assert not re.search(r"\d{2}", str(dry.json()["moneyEffects"]["text"]) + dry.json()["consequence"]) and "46" not in str(dry.json())      # no sum of a student anywhere in the answer
+    real = cancel_post(w, "A", url, WED)
+    assert real.status_code == 200 and "46" not in str(real.json()) and "зачтётся" not in str(real.json())
+    # the owner and an administrator without the right keep the old sentences
+    w2, g2, _, _, url2 = cancel_world(pg_session, clock)
+    sentence = f"Ученикам зачтётся по 46{NBSP}000{NBSP}сум"
+    assert _consequence(w2, "owner", g2) == {"consequence": sentence} and cancel_post(w2, "owner", url2, WED, dry=True).json()["consequence"] == sentence
+    grant_money_right(w2, False)
+    assert _consequence(w2, "admin", g2) == {"consequence": sentence} and cancel_post(w2, "admin", url2, WED, dry=True).json()["consequence"] == sentence
+
+
+def test_g3m_c7_a_teacher_of_a_group_where_nothing_is_credited_hears_that_payment_is_not_touched(pg_session, clock):
+    from tests.test_p154_money_pg import build_org
+    from tests.test_payf_recalc_pg import month_world
+
+    w = build_org(pg_session)
+    g, s, m = month_world(w, clock, switch_on=None)
+    clock.set("2026-10-30 12:00")
+    assert _consequence(w, "owner", g) == {"consequence": "На оплату не влияет"}
+    assert _consequence(w, "A", g) == {"consequence": "На оплату не влияет"}
+
+
 def test_r4_the_setting_off_says_the_payment_is_not_touched(pg_session, clock):
     from tests.test_p154_money_pg import build_org
     from tests.test_payf_recalc_pg import month_world

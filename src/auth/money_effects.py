@@ -543,23 +543,25 @@ def recalc_text(added: List[Dict[str, Any]], *, done: bool) -> str:
     return f"Ученикам — перерасчёт: долг {'уменьшился' if done else 'уменьшится'} сразу на {num(sum(a['amount'] for a in added))}{NBSP}сум ({count} {plural(count, 'ученик', 'ученика', 'учеников')})"
 
 
-def cancel_consequence_text(added: List[Dict[str, Any]]) -> str:
+def cancel_consequence_text(added: List[Dict[str, Any]], *, manager: bool) -> str:
     """Money-1 Г-16: what a cancellation «по вине центра» means for the students, in words, for WHOEVER cancels (the sums of the whole group stay with the money right): the centre credits each
-    student, or - setting off, a package, a holiday - the payment is not touched."""
+    student, or - setting off, a package, a holiday - the payment is not touched.  G3M С7: ``manager`` (owner / administrator of the centre, said by the road) - a teacher gets the sentence without any sum."""
     if not added:
         return "На оплату не влияет"
+    if not manager:
+        return "Ученикам будет перерасчёт за этот урок"
     amounts = sorted({a["amount"] for a in added})
     if len(amounts) == 1:
         return f"Ученикам зачтётся по {num(amounts[0])}{NBSP}сум"
     return f"Ученикам зачтётся от {num(amounts[0])} до {num(amounts[-1])}{NBSP}сум"
 
 
-def lesson_cancel_consequence(db, org_id: Any, group_id: Any, cancel: Callable[[], Any]) -> str:
+def lesson_cancel_consequence(db, org_id: Any, group_id: Any, cancel: Callable[[], Any], *, manager: bool) -> str:
     """Money-1 Р-4 (R3 В3): ``cancel_consequence_text`` of a cancellation «по вине центра» that has NOT happened - ``cancel()`` (THE cancellation of the lesson) runs to its last line inside a
     transaction that is rolled back: its refusals are the refusals of the real one, nothing is written, and what the students would be credited is read from the same ledger."""
     with writes_rolled_back(db):
         _, added = measure_cancellation(db, org_id, group_id, cancel)
-    return cancel_consequence_text(added)
+    return cancel_consequence_text(added, manager=manager)
 
 
 def measure_cancellation(db, org_id: Any, group_id: Any, cancel: Callable[[], Any]) -> Tuple[Any, List[Dict[str, Any]]]:
