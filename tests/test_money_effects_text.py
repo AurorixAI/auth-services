@@ -56,3 +56,34 @@ def test_a_pack_spends_or_gets_back_one_lesson_per_student_in_the_one_wording():
     added = [{"amount": 46_000}, {"amount": 46_000}]
     assert recalc_text(added, done=False) == "Ученикам — перерасчёт: долг уменьшится сразу на 92 000 сум (2 ученика)"
     assert recalc_text(added, done=True).startswith("Ученикам — перерасчёт: долг уменьшился сразу")
+
+
+# ---- G3M С4: a line of ANOTHER month than the action says why it moves ----------------------------------------------------------------------------
+
+def october(changed_by: int, drift_after: int, state: str = "closed") -> dict:
+    return {**line(changed_by, drift_after, state), "month": "2026-10"}
+
+
+def test_a_line_of_another_month_than_the_lesson_says_why_the_pay_grows():
+    text = text_of([], [october(16_667, 16_667)], done=False, action_month="2026-11").replace("\u00a0", " ")
+    assert text == "Зарплата за октябрь 2026 (Эргашев К.) изменится на +16 667 сум (месяц закрыт) — перерасчёт погасит долг учеников за этот месяц"
+    done = text_of([], [october(16_667, 120_000)], done=True, action_month="2026-11").replace("\u00a0", " ")
+    assert done.endswith("— перерасчёт погасит долг учеников за этот месяц, месяц закрыт, сохраните новую сумму") and "(к сохранённой сумме: +120 000 сум)" in done
+
+
+def test_a_line_of_another_month_than_the_lesson_says_why_the_pay_falls():
+    text = text_of([], [october(-16_667, -16_667)], done=False, action_month="2026-11").replace("\u00a0", " ")
+    assert text.endswith("(месяц закрыт) — долг учеников за этот месяц вернётся") and "−16 667" in text
+
+
+def test_the_month_of_the_lesson_or_an_unknown_month_adds_no_reason():
+    same = {**line(45_000, 45_000, "closed"), "month": "2026-11"}
+    assert text_of([], [same], done=False, action_month="2026-11") == text_of([], [same], done=False)
+    assert "перерасчёт" not in text_of([], [october(16_667, 16_667)], done=False) and "вернётся" not in text_of([], [october(-5, -5)], done=False)
+
+
+def test_the_block_of_a_membership_probe_carries_the_month_of_the_action():
+    from src.auth.money_effects import _block
+
+    block = _block(None, None, [], [october(16_667, 16_667)], done=False, action_month="2026-11")
+    assert block["text"].endswith("— перерасчёт погасит долг учеников за этот месяц")

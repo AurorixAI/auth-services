@@ -1815,7 +1815,7 @@ def cancel_missed_group_attendance(
         if not dry_run and not manager:
             result = cancel()                           # a teacher cancels his own lesson as before: nothing about money is said to him
             return {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"]}
-        result, effects, added, consequence = _cancel_with_effects(db, user, group_id, cancel, owner=user.get("org_role") == "owner", money_right=money_right, dry_run=dry_run)
+        result, effects, added, consequence = _cancel_with_effects(db, user, group_id, cancel, owner=user.get("org_role") == "owner", money_right=money_right, dry_run=dry_run, action_month=request.lessonDate.strftime("%Y-%m"))
         out = {"ok": True, "cancelled": True, "version": result["version"], "warnings": result["warnings"], "dryRun": dry_run, "moneyEffects": effects, "consequence": consequence}
         if added is not None:
             out["deductions"] = added                   # the money right only (a teacher / an administrator without it never read the sums of the students)
@@ -1860,7 +1860,7 @@ def lesson_cancel_consequence(
     return {"consequence": me.lesson_cancel_consequence(db, user["org_id"], group.id, cancel)}
 
 
-def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owner: bool, money_right: bool, dry_run: bool):
+def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owner: bool, money_right: bool, dry_run: bool, action_month: str):
     """``(the answer of the cancellation, the money block, the recalculations or None, the consequence for the students in words)``: the cancellation runs once inside a transaction that is rolled back (the numbers; its refusals are the refusals
     of the real call, an exam-service call that writes - the release - is not made), then - unless ``dry_run`` - for real; the block of the first pass is what the answer says."""
     from . import money_effects as me
@@ -1880,7 +1880,7 @@ def _cancel_with_effects(db: Session, user: dict, group_id: str, cancel, *, owne
         out, seen["added"] = me.measure_cancellation(db, org_id, gid, cancel)          # read for everybody: the words «зачтётся по N сум» are said to whoever cancels, the sums of the group only to the money right
         return out
 
-    result, effects = me.run_with_effects(db, org_id, memberships, owner, action, dry_run=dry_run)
+    result, effects = me.run_with_effects(db, org_id, memberships, owner, action, dry_run=dry_run, action_month=action_month)
     added = seen.get("added")
     consequence = me.cancel_consequence_text(added) if added is not None else None
     if money_right and added is not None:

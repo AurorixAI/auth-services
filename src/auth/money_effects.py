@@ -228,9 +228,10 @@ def with_sentence(effects: Dict[str, Any], sentence: str) -> Dict[str, Any]:
     return {**effects, "text": "; ".join(x for x in (effects.get("text"), sentence) if x)}
 
 
-def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, done: bool, closed_blocks: bool = False) -> str:
+def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, done: bool, closed_blocks: bool = False, action_month: Optional[str] = None) -> str:
     """The sentence under the confirmation (``done=False``) or in the toast after (``done=True``); empty when the action moves no money.  ``closed_blocks``: a lesson action is refused
-    in a closed month (the sentence says to reopen it first); a payment is not (ДП-07)."""
+    in a closed month (the sentence says to reopen it first); a payment is not (ДП-07).  ``action_month`` (``YYYY-MM``, G3M С4): the month of the lesson the action is about - a line of ANOTHER month says why
+    it moves (the recalculation pays off the oldest debt of the students, so the lessons of that month become paid / unpaid); unknown (a payment) - no reason, nothing is guessed."""
     parts: List[str] = []
     gave = sum(1 for s in students if s["delta"] > 0)
     took = sum(1 for s in students if s["delta"] < 0)
@@ -246,19 +247,22 @@ def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, do
             tail = f"{'изменилась' if done else 'изменится'} на {signed_money(line['changedBy'])}"
             if line["driftAfter"] != line["changedBy"]:
                 tail += " (снова как сохранённая)" if line["driftAfter"] == 0 else f" (к сохранённой сумме: {signed_money(line['driftAfter'])})"
+            cause = ""
+            if action_month and line["month"] != action_month and line["changedBy"]:
+                cause = " — перерасчёт погасит долг учеников за этот месяц" if line["changedBy"] > 0 else " — долг учеников за этот месяц вернётся"
             if done and line["driftAfter"] != 0:                      # the next step is on the screen all the time (the line «сохраните новую сумму»); the sentence says it once, with the state of the month
-                parts.append(f"зарплата за {title}{who} {tail} — " + ("месяц закрыт, " if line["state"] == "closed" else "") + "сохраните новую сумму")
+                parts.append(f"зарплата за {title}{who} {tail}{cause}{',' if cause else ' —'} " + ("месяц закрыт, " if line["state"] == "closed" else "") + "сохраните новую сумму")
             else:
-                parts.append(f"зарплата за {title}{who} {tail}" + note)
+                parts.append(f"зарплата за {title}{who} {tail}" + note + cause)
         else:
             parts.append(f"зарплата за {title} {'изменилась' if done else 'изменится'}" + note)
     text = "; ".join(parts)
     return (text[0].upper() + text[1:]) if text else ""
 
 
-def _block(db, org_id: Any, students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, done: bool, group_id: Any = None, closed_blocks: bool = False) -> Dict[str, Any]:
+def _block(db, org_id: Any, students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, done: bool, group_id: Any = None, closed_blocks: bool = False, action_month: Optional[str] = None) -> Dict[str, Any]:
     names = with_names(db, package_only(db, org_id, group_id, students))
-    return {"students": names, "payroll": payroll, "text": text_of(names, payroll, done=done, closed_blocks=closed_blocks), "dryRun": not done}
+    return {"students": names, "payroll": payroll, "text": text_of(names, payroll, done=done, closed_blocks=closed_blocks, action_month=action_month), "dryRun": not done}
 
 
 def calendar_mode_students(db, org_id: Any, group_id: Any, student_ids: List[str]) -> Dict[str, str]:
@@ -450,12 +454,12 @@ class MembershipProbe:
         if self._ready and self.probe.sheets:
             self.probe.measure("before")
 
-    def block(self, done: bool) -> Dict[str, Any]:
-        return _block(self.db, self.org_id, [], self.probe.lines(), done=done)
+    def block(self, done: bool, action_month: Optional[str] = None) -> Dict[str, Any]:
+        return _block(self.db, self.org_id, [], self.probe.lines(), done=done, action_month=action_month)
 
 
 def run_with_effects(db, org_id: Any, membership_ids: Iterable[Any], owner: bool, action: Callable[[], Any], *, dry_run: bool,
-                     after_ids: Callable[[Any], Iterable[Any]] = lambda result: ()) -> Tuple[Any, Dict[str, Any]]:
+                     after_ids: Callable[[Any], Iterable[Any]] = lambda result: (), action_month: Optional[str] = None) -> Tuple[Any, Dict[str, Any]]:
     """Run ``action()`` (a service call of the money of a student that COMMITS) and say what it does to the saved sheets of the teachers.
 
     First the action runs inside a transaction that is rolled back (``writes_rolled_back``): its refusals are the refusals of the real one, the coverage of the lessons after it names the months, the
@@ -485,7 +489,7 @@ def run_with_effects(db, org_id: Any, membership_ids: Iterable[Any], owner: bool
             except Exception:
                 logger.exception("money effects (before) could not be worked out org=%s", org_id)
                 probe = None
-        block = probe.block(done=not dry_run) if probe is not None else unavailable(not dry_run)
+        block = probe.block(done=not dry_run, action_month=action_month) if probe is not None else unavailable(not dry_run)
     except Exception as exc:
         from .payments_service import PaymentError
 
