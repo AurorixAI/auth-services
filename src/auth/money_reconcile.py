@@ -473,9 +473,11 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
     snapshots: Dict[UUID, List[Tuple[Any, Optional[date], Optional[int], Optional[int]]]] = {}
     per_centre: Dict[UUID, int] = {}
     failed: List[str] = []
+    why: Dict[str, str] = {}                                # centre id -> the first line of its error (the letter and the console name it)
     for org_id in orgs:
         if time.monotonic() - began > budget_seconds:
             failed.append(str(org_id))                      # no time left: named as not checked, like any other failure
+            why[str(org_id)] = "TimeBudget: no time left in the run"
             continue
         try:
             _read_only(db)
@@ -484,21 +486,22 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
             findings.extend(mine)
             snapshots[org_id] = snaps
             per_centre[org_id] = len(mine)
-        except Exception:
+        except Exception as exc:
             logger.exception("money reconcile failed for org %s", org_id)
             failed.append(str(org_id))
+            why[str(org_id)] = _first_line(exc)
         finally:
             db.rollback()
     previous = _previous_keys(db, [o for o in orgs if str(o) not in failed]) if apply else set()
     new_count = sum(1 for f in findings if (f.org_id, f.invariant, f.subject_key) not in previous)
-    out: Dict[str, Any] = {"centres": len(orgs), "failed": failed, "findings": len(findings), "new": new_count, "apply": apply, "mail": "off",
+    out: Dict[str, Any] = {"centres": len(orgs), "failed": failed, "failedWhy": why, "findings": len(findings), "new": new_count, "apply": apply, "mail": "off",
                            "byInvariant": {k: sum(1 for f in findings if f.invariant == k) for k in INVARIANT_TEXT},
                            "items": [{"org": str(f.org_id), "invariant": f.invariant, "key": f.subject_key, "month": f.month, "expected": f.expected, "actual": f.actual} for f in findings]}
     if not apply:
         return out
-    run_row = MoneyReconcileRun(started_at=started, finished_at=bc.utc_now(), status="failed" if failed and not findings else ("findings" if findings else "clean"),
+    run_row = MoneyReconcileRun(started_at=started, finished_at=bc.utc_now(), status="failed" if failed else ("findings" if findings else "clean"),
                                 centres_checked=len(orgs) - len(failed), findings_count=len(findings), new_findings_count=new_count,
-                                error=("не удалось проверить центров: %d" % len(failed)) if failed else None)
+                                error=_failed_text(failed, why) if failed else None)
     db.add(run_row)
     db.flush()
     for f in findings:
@@ -508,11 +511,32 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
         db.add(MoneyReconcileCentre(run_id=run_row.id, org_id=org_id, status="failed" if str(org_id) in failed else "ok", findings_count=per_centre.get(org_id, 0)))
     _store_snapshots(db, snapshots, bc.utc_now())
     if mail:
-        run_row.mail_status = _mail(findings, new_count, failed, run_row.id)
+        run_row.mail_status = _mail(findings, new_count, failed, run_row.id, why)
         out["mail"] = run_row.mail_status
     db.commit()
     out["runId"] = str(run_row.id)
     return out
+
+
+def _first_line(exc: BaseException) -> str:
+    """``ErrorType: first line of the message`` (cut short): enough for the team to see WHAT broke; the details stay in the log of the server."""
+    text_ = (str(getattr(exc, "orig", None) or exc).strip().splitlines() or [""])[0]
+    return f"{type(exc).__name__}: {text_}"[:140]
+
+
+def _centre_why(org_id: str, why: Optional[Dict[str, str]]) -> str:
+    return f"{org_id[:8]} ({(why or {}).get(org_id) or 'причина в логе сервера'})"
+
+
+def _failed_text(failed: List[str], why: Dict[str, str]) -> str:
+    """The error of the run (a column of 300): the count, then the id and the first line of the first failures."""
+    head = "не удалось проверить центров: %d" % len(failed)
+    for org_id in failed[:3]:
+        part = f"; {org_id[:8]}: {why.get(org_id, '?')}"
+        if len(head) + len(part) > 300:
+            break
+        head += part
+    return head
 
 
 def _store_snapshots(db, snapshots: Dict[UUID, List[Tuple[Any, Optional[date], Optional[int], Optional[int]]]], taken: datetime) -> None:
@@ -540,7 +564,7 @@ def _previous_keys(db, org_ids: List[UUID]) -> set:
         tuple_(MoneyReconcileFinding.org_id, MoneyReconcileFinding.run_id).in_([(org, rid) for org, rid in last])).all()}
 
 
-def _mail(findings: List[Found], new_count: int, failed: List[str], run_id: Any) -> str:
+def _mail(findings: List[Found], new_count: int, failed: List[str], run_id: Any, why: Optional[Dict[str, str]] = None) -> str:
     """One letter to the team when there is something NEW (a finding that stood last night too is in the console, not in the mailbox again) or a centre could not be checked.  ``skipped``: nothing
     to say.  Counts, ids and sums only."""
     if not (findings and new_count) and not failed:
@@ -552,10 +576,10 @@ def _mail(findings: List[Found], new_count: int, failed: List[str], run_id: Any)
             rows = [(f"{f.invariant} · центр {str(f.org_id)[:8]}", f"{INVARIANT_TEXT[f.invariant]}; {f.subject_key}" + (f"; {f.month}" if f.month else "") +
                      (f"; ожидалось {f.expected}, есть {f.actual}" if f.expected is not None or f.actual is not None else "")) for f in findings[:20]]
             if failed:
-                rows.append(("Не проверено центров", f"{len(failed)}: " + ", ".join(x[:8] for x in failed[:10])))
+                rows.append(("Не проверено центров", f"{len(failed)}: " + "; ".join(_centre_why(x, why) for x in failed[:10])))
             letter = letters.render_money_reconcile(total=len(findings), new=new_count, rows=rows, run_id=str(run_id))
         else:
-            letter = letters.render_money_reconcile_failed(failed=len(failed), centres=[x[:8] for x in failed[:20]], run_id=str(run_id))
+            letter = letters.render_money_reconcile_failed(failed=len(failed), centres=[_centre_why(x, why) for x in failed[:20]], run_id=str(run_id))
         ok = sender.send(_team_address(), letter)
     except Exception:
         logger.exception("money reconcile letter failed")

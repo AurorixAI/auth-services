@@ -185,8 +185,10 @@ def test_r3_3_a_centre_that_could_not_be_checked_is_named_and_does_not_make_old_
     two = night(world, mail=True)                                                                    # the night the centre fails
     assert two["failed"] == [str(world.org.id)] and two["findings"] == 0
     run_two = world.db.get(MoneyReconcileRun, two["runId"])
-    assert run_two.status == "failed" and run_two.error == "не удалось проверить центров: 1" and run_two.mail_status == "sent"      # a run with no findings is no silence: the letter says it
+    assert run_two.status == "failed" and run_two.error == f"не удалось проверить центров: 1; {str(world.org.id)[:8]}: RuntimeError: the centre could not be read" and run_two.mail_status == "sent"      # a run with no findings is no silence: the letter says it
     assert "сбой проверки" in sent[-1]["Subject"] and len(sent) == 2
+    assert two["failedWhy"] == {str(world.org.id): "RuntimeError: the centre could not be read"}
+    assert str(world.org.id)[:8] in str(sent[-1]) and "RuntimeError" in str(sent[-1])                  # the letter names the centre and the first line of the error
     assert [c.status for c in world.db.query(MoneyReconcileCentre).filter_by(run_id=two["runId"])] == ["failed"]
     monkeypatch.setattr(mr, "reconcile_org", real)
     three = night(world, mail=True)                                                                  # the centre is back: the finding of night 1 is the SAME finding, not a new one
@@ -360,3 +362,29 @@ def test_fix5_a_silent_change_is_still_found_on_a_membership_with_a_snapshot_als
     world.db.query(StudentPayment).filter_by(id=silent.id).update({"amount": 777_000})
     world.db.commit()
     assert f"membership:{membership(world, s0).id}" in {i["key"] for i in mine(night(world), world, "I-2")}
+
+
+def test_fix5_a_failed_centre_makes_the_run_failed_even_with_findings_and_the_command_exits_with_1(world, monkeypatch, capsys):
+    import importlib
+
+    row = sheet(world, world.teacher, date(2026, 10, 1), tashkent(2026, 10, 30), total=100_000)
+    row.total_amount = 999_000                                                                       # a finding of another kind stands
+    world.db.commit()
+    real = mr.reconcile_org
+    calls = []
+
+    def broken(db, org_id, *a, **k):
+        calls.append(org_id)
+        raise KeyError(org_id)
+
+    monkeypatch.setattr(mr, "reconcile_org", broken)
+    result = night(world)
+    assert result["failed"] == [str(world.org.id)] and result["failedWhy"][str(world.org.id)].startswith("KeyError: ")
+    run_row = world.db.get(MoneyReconcileRun, result["runId"])
+    assert run_row.status == "failed" and str(world.org.id)[:8] in run_row.error and "KeyError" in run_row.error
+    monkeypatch.setattr(mr, "reconcile_org", real)
+    script = importlib.import_module("scripts.money_reconcile")
+    monkeypatch.setattr(mr, "run", lambda db, **kw: {**result, "failed": [str(world.org.id)]})
+    assert script.main([]) == 1                                                                      # a centre not checked: the scheduler sees it, even when there are findings
+    captured = capsys.readouterr()
+    assert "not checked: org=" in captured.out and "centres could not be checked" in captured.err

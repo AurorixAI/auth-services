@@ -49,6 +49,9 @@ def main(argv=None) -> int:
         print(f"  org={item['org']} {item['invariant']} key={item['key']} month={item['month']} expected={item['expected']} actual={item['actual']}")
     if result["failed"]:
         print("failed centres: " + ", ".join(result["failed"]))
+        for org_id in result["failed"]:
+            print(f"  not checked: org={org_id} {result.get('failedWhy', {}).get(org_id, '')}")
+        print(f"FAILED: {len(result['failed'])} centres could not be checked", file=sys.stderr)       # stderr: the scheduler mails it
         return 1
     return 2 if result["findings"] else 0
 
