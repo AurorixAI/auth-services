@@ -25,6 +25,7 @@ import functools
 import logging
 import os
 import time
+from types import SimpleNamespace
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -2110,8 +2111,11 @@ class PaymentService:
                        else "Ученик ушёл: можно оплатить только долг")
             warnings.append(PaymentWarningOut(code="left_debt_only", message=message))
         if amount is not None:
-            credit = bl.Credit("preview", bl.PAYMENT, paid_on, datetime(9999, 1, 1), amount)
-            after = bl.run_ledger(replace(inp, credits=tuple(inp.credits) + (credit,)))
+            if old_payment is not None:        # К1 (круг 3): a correction is read on books where the NEW sum stands instead of the old one - also in the slices that fix what a transfer carried
+                after = bl.run_ledger(self._replaced_input(org_id, today, membership, old_payment, amount, paid_on))
+            else:
+                credit = bl.Credit("preview", bl.PAYMENT, paid_on, datetime(9999, 1, 1), amount)
+                after = bl.run_ledger(replace(inp, credits=tuple(inp.credits) + (credit,)))
             preview.result = pv.preview_result(before, after, "preview", price.amount)
             more = self._warnings(after, "preview", paid_on, today, price.amount, archived=False)
             seen = {w.code for w in warnings}
@@ -2121,6 +2125,16 @@ class PaymentService:
                 warnings.append(repeated)
         preview.warnings = warnings
         return preview
+
+    def _replaced_input(self, org_id: str, today: date, membership: StudentGroup, old: StudentPayment, amount: int, paid_on: date) -> bl.LedgerInput:
+        """The input of the membership as it will stand after the correction: the old payment is replaced by one of the new sum (credit id ``preview``) in the books themselves, so what a
+        transfer out of this group carried is worked out again from them, the same as after the save.  Nothing is written (the stand-in is not an ORM row)."""
+        loader = self._loader(org_id, today)
+        loader.load_facts([membership.id])
+        stand_in = SimpleNamespace(id="preview", amount=amount, paid_on=paid_on, created_at=_utcnow().replace(tzinfo=None))
+        loader.payments[membership.id] = [p for p in loader.payments.get(membership.id, []) if p.id != old.id] + [stand_in]
+        loader._x_memo.clear()
+        return loader.build_input(membership.id)
 
     @staticmethod
     def _suggested(loader, membership: StudentGroup, before: bl.Ledger, price_today: Optional[int]) -> int:

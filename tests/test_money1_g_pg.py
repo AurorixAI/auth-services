@@ -1181,3 +1181,30 @@ def test_c10_the_journal_of_a_group_of_another_centre_is_a_404_with_the_code_of_
         }
         for name, r in calls.items():
             assert r.status_code == 404 and r.json()["detail"]["code"] == "GROUP_NOT_FOUND", (name, r.status_code, r.text[:200])      # before: 400 "Группа не найдена"
+
+
+# ---- К1 (круг 3): the «Что изменится» of a correction of a student who left = the account after the save ----------------------------------------------
+
+def _k1_both(two, p, amount):
+    """(the preview with ``replace_payment_id`` - the numbers of the window, the dry run of the correction - what the save leaves)."""
+    url = f"{API}/org/memberships/{mid(two, two.student, two.group)}/payments/preview"
+    pre = owner(two).get(url, params={"replace_payment_id": p["id"], "amount": amount}).json()
+    dry = _c1_replace(two, p, amount, dry=True)
+    return pre["result"], dry["row"]
+
+
+@pytest.mark.parametrize("amount", [100_000, 500_000, 20_000])
+def test_k1_the_preview_of_a_correction_of_a_transferred_student_is_the_account_after_the_save(two, monkeypatch, amount):
+    p = _c1_world(two, monkeypatch, price_a=20_000, amount=500_000)
+    result, row = _k1_both(two, p, amount)
+    real = _c1_replace(two, p, amount)["row"]
+    assert (result["debt_after"], result["paid_until_after"]) == (row["debt"], row["paid_until"]) == (real["debt"], real["paid_until"])
+
+
+def test_k1_the_preview_of_a_correction_of_a_student_who_left_without_a_transfer_is_the_account_after_the_save(two):
+    billing(two, price_a=20_000, price_b=400_000)
+    p = pay(two, paid_on=day(-10), amount=300_000)["payment"]
+    two.db.query(_SG).filter(_SG.student_id == two.student.id, _SG.group_id == two.group.id).update({"is_active": False})
+    two.db.commit()
+    result, row = _k1_both(two, p, 200_000)
+    assert (result["debt_after"], result["paid_until_after"]) == (row["debt"], row["paid_until"])
