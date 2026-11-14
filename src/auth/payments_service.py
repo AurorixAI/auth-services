@@ -2106,7 +2106,9 @@ class PaymentService:
         if bl.F_PRICE_MISSING in before.flags:
             warnings.append(PaymentWarningOut(code="price_missing", message="Цена не задана: оплата пока не распределена по периодам"))
         if archived:
-            warnings.append(PaymentWarningOut(code="left_debt_only", message="Ученик ушёл: можно оплатить только долг"))
+            message = (f"Ученик ушёл из группы: сумму можно исправить не больше {_sum(preview.suggested_amount)}" if old_payment is not None   # Р3-3: a correction has its own ceiling (the same function as the write)
+                       else "Ученик ушёл: можно оплатить только долг")
+            warnings.append(PaymentWarningOut(code="left_debt_only", message=message))
         if amount is not None:
             credit = bl.Credit("preview", bl.PAYMENT, paid_on, datetime(9999, 1, 1), amount)
             after = bl.run_ledger(replace(inp, credits=tuple(inp.credits) + (credit,)))

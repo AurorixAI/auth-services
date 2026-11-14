@@ -613,6 +613,17 @@ def test_c8_the_hint_of_the_preview_is_the_same_ceiling(two, monkeypatch):
     assert r.status_code == 200 and r.json()["suggested_amount"] == 600_000
 
 
+def test_r33_the_warning_of_a_correction_names_the_ceiling_a_new_payment_keeps_the_old_text(two, monkeypatch):
+    p = _c1_world(two, monkeypatch)
+    cut = _c1_replace(two, p, 200_000)["payment"]
+    url = f"{API}/org/memberships/{mid(two, two.student, two.group)}/payments/preview"
+    fix = owner(two).get(url, params={"replace_payment_id": cut["id"]}).json()
+    (warn,) = [w for w in fix["warnings"] if w["code"] == "left_debt_only"]
+    assert fix["suggested_amount"] == 600_000 and warn["message"] == "Ученик ушёл из группы: сумму можно исправить не больше 600\u00a0000\u00a0сум"     # before: «можно оплатить только долг»
+    plain = owner(two).get(url).json()
+    assert [w["message"] for w in plain["warnings"] if w["code"] == "left_debt_only"] == ["Ученик ушёл: можно оплатить только долг"]
+
+
 def test_c1_a_student_who_left_without_a_transfer_corrects_an_advance_down_but_not_up(two):
     billing(two, price_a=1)
     _price(two.db, two.group, None)
