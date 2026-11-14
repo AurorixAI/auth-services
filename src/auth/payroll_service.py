@@ -808,7 +808,8 @@ class PayrollService:
                         continue
         return out
 
-    def _require_teacher(self, org_id: str, teacher_id: UUID) -> User:
+    def require_teacher(self, org_id: str, teacher_id: UUID) -> User:
+        """The ONE «teacher of this centre» check of the payroll routes: any other id (another centre's too) is a 404."""
         user = (
             self.db.query(User)
             .join(OrganizationMember, OrganizationMember.user_id == User.id)
@@ -1303,7 +1304,7 @@ class PayrollService:
         the request does not mention; what the request says wins, ``monthly_fee: null`` resets a fee.
         """
         first, last = parse_month(body.month)
-        self._require_teacher(org_id, body.teacher_id)
+        self.require_teacher(org_id, body.teacher_id)
         # Money-1 Г-6 (N8): the saved sheet is locked BEFORE the month is collected - a correction of a lesson holds it ``FOR SHARE`` (``closed_period._hold_open``), so what is collected here
         # is what the sheet is saved with, and the fingerprint checked below is the one of the data after the lock, not of a moment before it
         lock_advance_chain(self.db, org_id, body.teacher_id)           # Р-8: the lock of the teacher's money first (a payout takes it too), then the sheet

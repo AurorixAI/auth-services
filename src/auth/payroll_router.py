@@ -294,6 +294,8 @@ def list_payouts(
     """Выплаты (живые и отменённые) за месяц / преподавателя."""
     try:
         first = parse_month(month)[0] if month else None
+        if teacher_id:
+            PayrollService(db).require_teacher(user["org_id"], teacher_id)
         return PrPayoutService(db).list(user["org_id"], month=first, teacher_id=teacher_id)
     except PayrollError as exc:
         raise _http(exc)

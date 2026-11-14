@@ -1129,3 +1129,44 @@ def test_c9_a_payment_that_moves_no_payroll_keeps_its_old_consequence(two):
     p = pay(two, paid_on=day(-3), amount=500_000)["payment"]
     assert owner(two).post(f"{PAY_URL}/{p['id']}/void", json={"reason": "ошибка"}).status_code == 200
     assert _c9_row(owner(two), "payment_void")["consequence"] is None
+
+
+# ---- С10: an id of ANOTHER centre (or of nothing) is a 404 on every road --------------------------------------------------------------------------------
+
+def test_c10_payouts_of_a_sheet_or_a_teacher_of_another_centre_are_404(world):
+    import uuid
+
+    from tests.pg_world import make_client
+    from tests.test_logicA_payroll_pg import API as PAYROLL_API, g_pay_world, save_sheet
+
+    m, _s1, _s2 = g_pay_world(world)
+    sheet = save_sheet(world, m)
+    stranger = make_client(world, user=world.foreign_admin, org="other", org_role="owner")
+    mine = make_client(world, user=world.owner)
+    body = {"amount": 1, "method": "cash"}
+    for client, sheet_id in ((stranger, sheet["id"]), (mine, str(uuid.uuid4()))):
+        r = client.post(f"{PAYROLL_API}/org/payroll/sheets/{sheet_id}/payouts", json=body)
+        assert r.status_code == 404, r.text                                             # before: 409 SHEET_NOT_SAVED
+    assert stranger.get(f"{PAYROLL_API}/org/payroll/payouts", params={"teacher_id": str(world.teacher.id)}).status_code == 404       # before: 200 []
+    assert mine.get(f"{PAYROLL_API}/org/payroll/payouts", params={"teacher_id": str(uuid.uuid4())}).status_code == 404
+    assert mine.get(f"{PAYROLL_API}/org/payroll/payouts", params={"teacher_id": str(world.teacher.id)}).status_code == 200
+
+
+def test_c10_the_journal_of_a_group_of_another_centre_is_a_404_with_the_code_of_the_other_group_roads(world):
+    import uuid
+
+    from tests.pg_world import make_client
+
+    api = "/api/v1/auth/org/groups"
+    c = make_client(world, user=world.owner)
+    lesson = {"lessonDate": date(2026, 10, 5).isoformat(), "lessonId": "x"}
+    for group_id in (str(world.foreign_group.id), str(uuid.uuid4())):
+        calls = {
+            "get": c.get(f"{api}/{group_id}/attendance", params={"month": "2026-10"}),
+            "save": c.post(f"{api}/{group_id}/attendance", json={**lesson, "status": "in_progress", "records": {}}),
+            "start": c.post(f"{api}/{group_id}/attendance/start", json=lesson),
+            "reconcile": c.post(f"{api}/{group_id}/attendance/reconcile", json=lesson),
+            "cancel": c.post(f"{api}/{group_id}/attendance/reconcile/cancel", json={**lesson, "cancellationReason": "Праздник"}),
+        }
+        for name, r in calls.items():
+            assert r.status_code == 404 and r.json()["detail"]["code"] == "GROUP_NOT_FOUND", (name, r.status_code, r.text[:200])      # before: 400 "Группа не найдена"

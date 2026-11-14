@@ -3205,7 +3205,7 @@ class AuthService:
             .first()
         )
         if not group:
-            raise ValueError("Группа не найдена")
+            raise ops_rules.not_found("GROUP_NOT_FOUND", "Группа не найдена")
         if is_org_admin:
             return group
         if not actor_id or not group.teacher_id or str(group.teacher_id) != str(actor_id):
@@ -5197,7 +5197,7 @@ class AuthService:
             .first()
         )
         if not locked_group:
-            raise ValueError("Группа не найдена")
+            raise ops_rules.not_found("GROUP_NOT_FOUND", "Группа не найдена")
         group = locked_group
         occurrence = self._resolve_reconcilable_missed_occurrence(
             group, lesson_date=req.lessonDate, lesson_id=req.lessonId
@@ -5318,7 +5318,7 @@ class AuthService:
             .first()
         )
         if not locked_group:
-            raise ValueError("Группа не найдена")
+            raise ops_rules.not_found("GROUP_NOT_FOUND", "Группа не найдена")
         group = locked_group
         occurrence = self._resolve_reconcilable_missed_occurrence(
             group, lesson_date=req.lessonDate, lesson_id=req.lessonId
@@ -5384,7 +5384,7 @@ class AuthService:
             .first()
         )
         if not locked_group:
-            raise ValueError("Группа не найдена")
+            raise ops_rules.not_found("GROUP_NOT_FOUND", "Группа не найдена")
         group = locked_group
         if group.status != "active":
             raise ops_rules.group_archived()  # O4: an archived group is read-only (the lock above made the status current)

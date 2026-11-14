@@ -55,10 +55,6 @@ class PayoutNotFound(PayoutError):
     status_code = 404
 
 
-class SheetNotSaved(PayoutError):
-    status_code, code = 409, "SHEET_NOT_SAVED"
-
-
 class DuplicatePayout(PayoutError):
     status_code, code = 409, "DUPLICATE_PAYOUT"
 
@@ -289,7 +285,7 @@ class PayrollPayoutService:
             sheet = (self.db.query(PayrollSheet).filter(PayrollSheet.id == sheet_id, PayrollSheet.org_id == org_id)
                      .with_for_update().populate_existing().first())
             if sheet is None:
-                raise SheetNotSaved("Сначала сохраните зарплату за месяц")
+                raise PayoutNotFound("Ведомость не найдена")             # G3M С10: an id of no sheet of this centre (another centre's too) is a 404 like every other route
             if key is not None:
                 same = self.db.query(PayrollPayout).filter(PayrollPayout.org_id == org_id, PayrollPayout.idempotency_key == key).first()
                 if same is not None:
