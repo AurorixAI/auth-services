@@ -1170,4 +1170,3 @@ def test_c10_the_journal_of_a_group_of_another_centre_is_a_404_with_the_code_of_
         }
         for name, r in calls.items():
             assert r.status_code == 404 and r.json()["detail"]["code"] == "GROUP_NOT_FOUND", (name, r.status_code, r.text[:200])      # before: 400 "Группа не найдена"
-
