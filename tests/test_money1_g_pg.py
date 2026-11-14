@@ -552,12 +552,65 @@ def test_c1_a_bigger_sum_is_refused_with_the_ceiling_in_the_text(two, monkeypatc
 
 def test_c1_the_correction_stays_within_the_ceiling_of_the_sum_it_corrects(two, monkeypatch):
     p = _c1_world(two, monkeypatch)
-    before = (statement(two, two.group), statement(two, two.second))
     new = _c1_replace(two, p, 200_000)["payment"]
-    d = _c1_replace(two, new, 600_000, expect=422)                                      # the ceiling is now 200 000 (the sum being corrected): see the report on the way back
-    assert d["debt"] == 200_000
+    d = _c1_replace(two, new, 700_000, expect=422)                                      # С8: the ceiling is the biggest sum of the chain (600 000), not the sum being corrected
+    assert d["debt"] == 600_000
     assert _c1_replace(two, new, 200_000, paid_on=day(-8).isoformat())["payment"]["amount"] == 200_000
-    assert statement(two, two.group)["paid"] == 200_000 and before[0]["paid"] == 600_000
+    assert statement(two, two.group)["paid"] == 200_000
+
+
+# ---- С8: the ceiling of a correction is the biggest sum among ALL versions of the payment (the corrected one and its predecessors) ----
+
+def _c8_state(two):
+    return statement(two, two.group), statement(two, two.second)
+
+
+def test_c8_a_mistaken_cut_is_put_back_and_every_account_of_the_student_returns(two, monkeypatch):
+    p = _c1_world(two, monkeypatch)
+    start = _c8_state(two)
+    cut = _c1_replace(two, p, 200_000)
+    assert _c8_state(two) != start and cut["new_debts"]
+    back_dry = _c1_replace(two, cut["payment"], 600_000, dry=True)                      # before: 422, a dead end
+    back = _c1_replace(two, cut["payment"], 600_000)
+    assert _c8_state(two) == start and _c1_live_sum(two, two.group) == 600_000
+    assert back_dry["new_debts"] == back["new_debts"] == []
+    rows = [r for r in owner(two).get(f"{PAY_URL}/decisions", params={"from": day(-1).isoformat(), "to": day(1).isoformat()}).json()["rows"] if r["kind"] == "payment_replace"]
+    assert len(rows) == 2
+
+
+def test_c8_a_sum_above_the_biggest_of_the_chain_is_refused(two, monkeypatch):
+    p = _c1_world(two, monkeypatch)
+    cut = _c1_replace(two, p, 200_000)["payment"]
+    d = _c1_replace(two, cut, 700_000, expect=422)
+    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 600_000
+    assert d["message"] == f"Ученик ушёл из группы: при исправлении сумма не может быть больше 600{NBSP}000{NBSP}сум"
+
+
+def test_c8_a_chain_of_three_versions_goes_back_to_the_first_sum(two, monkeypatch):
+    p = _c1_world(two, monkeypatch)
+    start = _c8_state(two)
+    second = _c1_replace(two, p, 200_000)["payment"]
+    third = _c1_replace(two, second, 100_000)["payment"]
+    _c1_replace(two, third, 600_000)
+    assert _c8_state(two) == start
+
+
+def test_c8_a_cancelled_payment_does_not_extend_the_chain(two, monkeypatch):
+    billing(two, price_a=1, price_b=400_000)
+    big = pay(two, paid_on=day(-11), amount=900_000)["payment"]
+    assert owner(two).post(f"{PAY_URL}/{big['id']}/void", json={"reason": "ошибка"}).status_code in (200, 201)
+    p = pay(two, paid_on=day(-10), amount=600_000)["payment"]
+    with at_day(monkeypatch, day(-3), 12):
+        transfer(two, two.second)
+    cut = _c1_replace(two, p, 200_000)["payment"]
+    assert _c1_replace(two, cut, 700_000, expect=422)["debt"] == 600_000               # not 900 000: the cancelled payment is no version of this one
+
+
+def test_c8_the_hint_of_the_preview_is_the_same_ceiling(two, monkeypatch):
+    p = _c1_world(two, monkeypatch)
+    cut = _c1_replace(two, p, 200_000)["payment"]
+    r = owner(two).get(f"{API}/org/memberships/{mid(two, two.student, two.group)}/payments/preview", params={"replace_payment_id": cut["id"]})
+    assert r.status_code == 200 and r.json()["suggested_amount"] == 600_000
 
 
 def test_c1_a_student_who_left_without_a_transfer_corrects_an_advance_down_but_not_up(two):
@@ -571,7 +624,7 @@ def test_c1_a_student_who_left_without_a_transfer_corrects_an_advance_down_but_n
     (p2,) = _c1_live(two, two.group)
     assert int(p2["amount"]) == 450_000
     d = _c1_replace(two, p2, 600_000, expect=422)
-    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 450_000
+    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 500_000                   # С8: the biggest sum of the chain (the first 500 000 can be put back, not more)
 
 
 # ---- С3: the money taken away from another group of the student leaves no debt there yet (its charge begins tomorrow) - the sentence still says the advance falls ----

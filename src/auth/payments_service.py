@@ -399,6 +399,23 @@ def _years_ago(day: date, years: int) -> date:
     return ps._years_ago(day, years)
 
 
+MAX_CHAIN_DEPTH = 8                                       # corrections of a correction of a correction ...: the chain is read this far back
+
+
+def earlier_versions(db: Session, org_id: Any, start_ids: Iterable[Any]) -> Dict[Any, StudentPayment]:
+    """The ONE reader of a correction chain (the journal history, the ceiling of a correction): every earlier version of the payments ``start_ids`` correct - the ones they replace, the ones
+    those replace, ... - by id; one query per STEP of the chain, not per payment."""
+    found_all: Dict[Any, StudentPayment] = {}
+    frontier = [i for i in start_ids if i]
+    for _depth in range(MAX_CHAIN_DEPTH):
+        if not frontier:
+            break
+        found = db.query(StudentPayment).filter(StudentPayment.org_id == org_id, StudentPayment.id.in_(frontier)).all()
+        found_all.update({o.id: o for o in found})
+        frontier = [o.replaces_payment_id for o in found if o.replaces_payment_id and o.replaces_payment_id not in found_all]
+    return found_all
+
+
 @dataclass
 class _Links:
     """Carry links of a batch of payments (LEGACY rows made before PAY-2), for the response."""
@@ -1244,14 +1261,15 @@ class PaymentService:
         if amount > debt:
             raise PaymentExceedsDebt(f"Ученик ушёл: принять можно не больше долга {_sum(debt)}", debt=debt)
 
-    @staticmethod
-    def _correction_ceiling(debt_without: int, old_amount: int) -> int:
-        """Money-1 С1 (the ONE ceiling of the correction of a payment of a student who left, the preview and the write): a correction accepts no new money, so the new sum may be as big as
-        the debt without this payment or the sum being corrected, whichever is bigger (a transferred student has no debt of his own left - the money went to the new group)."""
-        return max(debt_without, old_amount)
+    def _correction_ceiling(self, org_id: Any, debt_without: int, old: StudentPayment) -> int:
+        """Money-1 С1/С8 (the ONE ceiling of the correction of a payment of a student who left, the preview and the write): a correction accepts no new money, so the new sum may be as big as
+        the debt without this payment or the biggest sum any version of this payment held (the one being corrected and all its predecessors in the chain), whichever is bigger (a transferred
+        student has no debt of his own left - the money went to the new group; a mistaken 600 -> 200 can be put back)."""
+        before = earlier_versions(self.db, org_id, [old.replaces_payment_id])
+        return max([debt_without, int(old.amount)] + [int(v.amount) for v in before.values()])
 
-    def _check_left_correction(self, amount: int, debt_without: int, old_amount: int) -> None:
-        ceiling = self._correction_ceiling(debt_without, old_amount)
+    def _check_left_correction(self, org_id: Any, amount: int, debt_without: int, old: StudentPayment) -> None:
+        ceiling = self._correction_ceiling(org_id, debt_without, old)
         if amount > ceiling:
             raise PaymentExceedsDebt(f"Ученик ушёл из группы: при исправлении сумма не может быть больше {_sum(ceiling)}", debt=ceiling)
 
@@ -1549,7 +1567,7 @@ class PaymentService:
             before_inp = loader.build_input(membership.id, exclude_payment=old.id)
             before = bl.run_ledger(before_inp)
             if self._is_left(membership):
-                self._check_left_correction(data.amount, before.debt, int(old.amount))          # С1: the same sum (a new date, a new method) always fits
+                self._check_left_correction(org_id, data.amount, before.debt, old)          # С1: the same sum (a new date, a new method) always fits
             old.voided_at = _utcnow()
             old.voided_by = UUID(str(actor_id))
             old.void_reason = reason
@@ -2061,19 +2079,19 @@ class PaymentService:
         archived = self._is_left(membership)
         loader = self._loader(org_id, today)
         loader.load_facts([membership_id])
-        exclude, old_amount = None, 0
+        exclude, old_payment = None, None
         if replace_payment_id is not None:
             old = self._probe_payment(org_id, replace_payment_id)
             if old.membership_id != membership.id:
                 raise PaymentNotFound("Оплата не найдена")
             exclude = old.id
-            old_amount = int(old.amount)
+            old_payment = old
         inp = loader.build_input(membership_id, exclude_payment=exclude)
         before = bl.run_ledger(inp)
         price = loader.books.price(membership_id, membership.group_id, today)
         preview = PaymentPreview(
             as_of=today, mode=before.mode, price=PriceOut(**pricing.price_dict(price)), due=pv.due_block(before),
-            suggested_amount=self._correction_ceiling(before.debt, old_amount) if archived else self._suggested(loader, membership, before, price.amount), amount=amount, result=None,
+            suggested_amount=self._correction_ceiling(org_id, before.debt, old_payment) if archived else self._suggested(loader, membership, before, price.amount), amount=amount, result=None,
             warnings=[], recalc=self._recalc_news(membership_id, before, exclude_payment=exclude),
         )
         warnings: List[PaymentWarningOut] = []

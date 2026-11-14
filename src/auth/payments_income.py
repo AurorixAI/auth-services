@@ -56,11 +56,10 @@ from .payments_income_schemas import (
 from .export_safety import FORMULA_STARTS, csv_safe_row  # noqa: F401  (one rule for every export; re-exported for the callers of this module)
 from .payments_reports import MAX_DAY_SERIES_DAYS, PaymentsReports, method_clause, validate_range
 from .payments_service import (
-    AUDIT_PAYMENT_REPLACE, AUDIT_PAYMENT_VOID, AUDIT_REFUND, AUDIT_REFUND_VOID, AUDIT_WRITEOFF, AUDIT_WRITEOFF_VOID, DECISION_ACTIONS, InvalidPeriod, PaymentInvalid, PaymentService)
+    AUDIT_PAYMENT_REPLACE, AUDIT_PAYMENT_VOID, AUDIT_REFUND, AUDIT_REFUND_VOID, AUDIT_WRITEOFF, AUDIT_WRITEOFF_VOID, DECISION_ACTIONS, InvalidPeriod, PaymentInvalid, PaymentService, earlier_versions)
 
 MAX_JOURNAL_PAGE = 100
 MAX_EXPORT_ROWS = 20_000
-MAX_CHAIN_DEPTH = 8                                       # corrections of a correction of a correction ...: the history goes this far back
 
 
 DECISION_LABELS = {
@@ -792,14 +791,7 @@ class IncomeReports:
                 loader = ls.LedgerLoader(self.db, str(org_id), ps.business_today())
                 ledgers = {e.membership.id: e.ledger for e in loader.run(live_members)}
         ids = [p.id for p in payments]
-        was: Dict[Any, StudentPayment] = {}
-        frontier = [p.replaces_payment_id for p in payments if p.replaces_payment_id]
-        for _depth in range(MAX_CHAIN_DEPTH):                         # the earlier versions of a corrected payment: one query per STEP of the chain, not per row
-            if not frontier:
-                break
-            found = self.db.query(StudentPayment).filter(StudentPayment.org_id == org_id, StudentPayment.id.in_(frontier)).all()
-            was.update({o.id: o for o in found})
-            frontier = [o.replaces_payment_id for o in found if o.replaces_payment_id and o.replaces_payment_id not in was]
+        was = earlier_versions(self.db, org_id, [p.replaces_payment_id for p in payments])      # the earlier versions of the corrected payments: one query per STEP of the chain
         becomes: Dict[Any, Optional[int]] = {}
         if ids:
             for new in self.db.query(StudentPayment).filter(
