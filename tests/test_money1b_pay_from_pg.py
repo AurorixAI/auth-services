@@ -238,3 +238,77 @@ def test_b1_the_bulk_preview_has_no_sum_without_the_money_right_and_the_real_ans
     assert real["immediate_total"] is None and all("immediate" not in x["billing"] for x in real["students"]) and "начислится" not in str(real)
     empty = _bulk(w, [fresh_student(w, "Позже")], pay_from="2026-11-30")                                    # nothing is charged at once: no total line
     assert empty["immediate_total"] is None
+
+
+# ---- G3M С2: an individual price given with a past «Оплата с» begins on that day (before: today - the period from «Оплата с» was charged by the group price) ----
+
+def _preview_suggested(w, m):
+    r = owner(w).get(f"{API}/org/memberships/{m.id}/payments/preview")
+    assert r.status_code == 200, r.text
+    return r.json()["suggested_amount"]
+
+
+def _discount_world(w, fixed_today):
+    opening_world(w, fixed_today)
+    give_group_price(w.db, w.group, 500_000)            # the card of the group says 500 000, the student's own price is 300 000
+    return fresh_student(w, "Со скидкой")
+
+
+def test_g3m_c2_the_individual_price_of_an_adding_with_a_past_pay_from_prices_the_whole_period(world, fixed_today):
+    from tests.money1b_helpers import add
+
+    w = world
+    s = _discount_world(w, fixed_today)
+    body = {"pay_from": "2026-10-07", "price_override": {"amount": 300_000, "reason": "Скидка по договорённости"}}
+    dry = add(w, s, dry_run=True, **body)
+    assert dry["billing"]["immediate"]["amount"] == 300_000                         # before: 500 000
+    add(w, s, **body)
+    m, _ = stay_of(w, s)
+    assert account(w, m.id, D(2026, 10, 21)).charged == 300_000
+    assert _preview_suggested(w, m) == 300_000
+    from src.models.auth import MembershipPriceOverride
+    assert [(r.valid_from, r.amount) for r in w.db.query(MembershipPriceOverride).filter_by(membership_id=m.id).all()] == [(D(2026, 10, 7), 300_000)]
+
+
+def test_g3m_c2_without_pay_from_the_individual_price_begins_today_as_before(world, fixed_today):
+    from src.models.auth import MembershipPriceOverride
+    from tests.money1b_helpers import add
+
+    w = world
+    s = _discount_world(w, fixed_today)
+    add(w, s, price_override={"amount": 300_000, "reason": "Скидка по договорённости"})
+    m, _ = stay_of(w, s)
+    rows = w.db.query(MembershipPriceOverride).filter_by(membership_id=m.id).all()
+    assert [(r.valid_from, r.amount) for r in rows] == [(D(2026, 10, 21), 300_000)]
+
+
+def test_g3m_c2_the_old_rows_of_a_returning_student_stay_in_force_after_the_return(world, fixed_today):
+    """A student who left and comes back with a past «Оплата с»: the new price does not begin before the last row already written (the end of the earlier stay)."""
+    from src.models.auth import MembershipPriceOverride
+    from tests.money1b_helpers import add
+
+    w = world
+    s = _discount_world(w, fixed_today)
+    add(w, s, pay_from="2026-10-01", price_override={"amount": 300_000, "reason": "Скидка по договорённости"})
+    m, _ = stay_of(w, s)
+    w.db.add(MembershipPriceOverride(membership_id=m.id, amount=None, valid_from=D(2026, 10, 15), reason="Вышел из группы", created_by=w.owner.id))
+    m.is_active = False
+    w.db.commit()
+    add(w, s, pay_from="2026-10-07", price_override={"amount": 250_000, "reason": "Новая скидка при возврате"})
+    w.db.expire_all()
+    rows = sorted((r.valid_from, r.amount) for r in w.db.query(MembershipPriceOverride).filter_by(membership_id=m.id).all())
+    assert rows == [(D(2026, 10, 1), 300_000), (D(2026, 10, 15), 250_000)]          # the new row replaces the marker of the last day instead of lying before it (07.10) and being cancelled by it
+
+
+def test_g3m_c2_a_package_centre_prices_the_package_of_the_student_from_the_first_lesson_of_the_period(world, fixed_today):
+    from src.auth import pricing
+    from tests.money1b_helpers import add
+
+    w = world
+    s = _discount_world(w, fixed_today)
+    settings_block(w, period_mode="lessons", lessons_per_payment=12)
+    add(w, s, pay_from="2026-10-07", price_override={"amount": 300_000, "reason": "Скидка по договорённости"})
+    m, _ = stay_of(w, s)
+    price = pricing.load_books(w.db, [w.group.id], [m.id]).price(m.id, w.group.id, D(2026, 10, 7))
+    assert (price.amount, price.source) == (300_000, "override")                    # before: the group price (500 000) up to the day of adding
+    assert _preview_suggested(w, m) == 300_000

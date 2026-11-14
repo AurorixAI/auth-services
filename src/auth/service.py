@@ -2819,7 +2819,7 @@ class AuthService:
             self.db.flush()  # a new membership gets its id here
             pricing.write_override(
                 self.db, membership.id, actor_id, amount=override_amount,
-                valid_from=ps.business_date(now_dt), reason=override_reason,
+                valid_from=pricing.enrolment_override_start(self.db, membership.id, pay_from, ps.business_date(now_dt)), reason=override_reason,
             )
 
         opening_warning = None
