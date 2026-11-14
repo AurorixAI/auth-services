@@ -65,3 +65,15 @@ def test_a_created_invite_lives_seven_days_and_the_answers_say_so(world, monkeyp
     info = public.get(f"{API}/diagnostic/{code}")
     assert info.json()["status"] == "expired", info.text
     assert world.db.query(DiagnosticInvite).filter_by(code=code).one().status == "expired"
+
+
+def test_g3m_c6_the_expiry_is_told_in_utc_with_the_zone_everywhere(world):
+    student = world.students[0]
+    client = make_client(world, user=world.admin)
+    made = client.post(f"{API}/org/diagnostics", json={"student_id": str(student.id), "class_level": 9, "diagnostic_type": "initial"}).json()
+    listed = client.get(f"{API}/org/diagnostics").json()
+    row = next(i for i in (listed["items"] if isinstance(listed, dict) else listed) if i["id"] == made["id"])
+    public = _public_client(world).get(f"{API}/diagnostic/{made['code']}").json()
+    for value in (made["expires_at"], row["expires_at"], public["expires_at"]):
+        assert value.endswith("+00:00"), value                  # before: the list said '2026-11-21T07:00:00' - a time without a zone
+    assert made["expires_at"] == row["expires_at"] == public["expires_at"]

@@ -1486,7 +1486,7 @@ class AuthService:
             class_level=request.class_level,
             diagnostic_type=request.diagnostic_type,
             status="pending",
-            expires_at=invite.expires_at.isoformat() if invite.expires_at else None,
+            expires_at=business_clock.as_utc(invite.expires_at).isoformat() if invite.expires_at else None,
             created_at=invite.created_at.isoformat() if invite.created_at else None,
         )
 
@@ -1652,7 +1652,7 @@ class AuthService:
             "diagnostic_type": invite.diagnostic_type,
             "status": invite.status,
             "org_id": str(invite.org_id),
-            "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+            "expires_at": business_clock.as_utc(invite.expires_at).isoformat() if invite.expires_at else None,
         }
         if invite.status == "cancelled":
             info["message"] = INVITE_CANCELLED_MESSAGE
@@ -1952,7 +1952,7 @@ class AuthService:
                     "class_level": inv.class_level,
                     "diagnostic_type": inv.diagnostic_type,
                     "status": inv.status,
-                    "expires_at": inv.expires_at.isoformat() if inv.expires_at else None,
+                    "expires_at": business_clock.as_utc(inv.expires_at).isoformat() if inv.expires_at else None,
                     "session_id": str(r.session_id or inv.cat_session_id)
                     if r and (r.session_id or inv.cat_session_id)
                     else str(inv.cat_session_id) if inv.cat_session_id else None,
