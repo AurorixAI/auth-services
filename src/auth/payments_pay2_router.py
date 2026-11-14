@@ -100,10 +100,10 @@ def create_writeoff(
     try:
         out, effects = money_effects.run_with_effects(
             db, user["org_id"], [membership_id], _owner(user),
-            lambda: PaymentService(db).create_writeoff(
+            lambda texts: PaymentService(db).create_writeoff(
                 user["org_id"], membership_id, user["user_id"], amount=request.amount, whole=request.all_debt,
                 reason=request.reason, effective_on=request.effective_on, actor_role=_role(user),
-                expected_debt=request.expected_debt, idempotency_key=idempotency_key), dry_run=dry_run)
+                expected_debt=request.expected_debt, idempotency_key=idempotency_key, consequence=texts), dry_run=dry_run, journal=True)
         effects = {**effects, "forgiveness": money_effects.forgiveness_block(out.closes, effects)}      # V9: the period it closes and «оплачено преподавателю»
         out.money_effects, out.dry_run = effects, dry_run                   # A3 (ЗПД-5): a forgiven debt is paid to the teacher - named with the sum
         return out
@@ -123,8 +123,8 @@ def void_writeoff(
     try:
         out, effects = money_effects.run_with_effects(
             db, user["org_id"], _membership_of(db, user["org_id"], StudentWriteoff, writeoff_id), _owner(user),
-            lambda: PaymentService(db).void_writeoff(user["org_id"], writeoff_id, user["user_id"], request.reason, actor_role=_role(user),
-                                                                                   expected_debt=request.expected_debt), dry_run=dry_run)
+            lambda texts: PaymentService(db).void_writeoff(user["org_id"], writeoff_id, user["user_id"], request.reason, actor_role=_role(user),
+                                                           expected_debt=request.expected_debt, consequence=texts), dry_run=dry_run, journal=True)
         out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:
@@ -146,10 +146,10 @@ def create_refund(
     try:
         out, effects = money_effects.run_with_effects(
             db, user["org_id"], [membership_id], _owner(user),
-            lambda: PaymentService(db).create_refund(
+            lambda texts: PaymentService(db).create_refund(
                 user["org_id"], membership_id, user["user_id"], amount=request.amount, method=request.method,
                 reason=request.reason, note=request.note, effective_on=request.effective_on, actor_role=_role(user),
-                expected_refundable=request.expected_refundable, idempotency_key=idempotency_key), dry_run=dry_run)
+                expected_refundable=request.expected_refundable, idempotency_key=idempotency_key, consequence=texts), dry_run=dry_run, journal=True)
         out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:
@@ -168,8 +168,8 @@ def void_refund(
     try:
         out, effects = money_effects.run_with_effects(
             db, user["org_id"], _membership_of(db, user["org_id"], StudentRefund, refund_id), _owner(user),
-            lambda: PaymentService(db).void_refund(user["org_id"], refund_id, user["user_id"], request.reason, actor_role=_role(user),
-                                                                                 expected_advance=request.expected_advance), dry_run=dry_run)
+            lambda texts: PaymentService(db).void_refund(user["org_id"], refund_id, user["user_id"], request.reason, actor_role=_role(user),
+                                                         expected_advance=request.expected_advance, consequence=texts), dry_run=dry_run, journal=True)
         out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:

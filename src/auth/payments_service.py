@@ -1545,6 +1545,7 @@ class PaymentService:
         reason: Optional[str] = None,
         idempotency_key: Optional[UUID] = None,
         actor_role: str = "admin",
+        consequence: Optional[Dict[str, str]] = None,
     ) -> PaymentCreated:
         """Void the old payment and insert the corrected one - one transaction.  The "before" of the answer is the account
         WITHOUT the replaced payment (the same as the preview with ``replace_payment_id``).
@@ -1590,7 +1591,7 @@ class PaymentService:
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "payment_id": str(old.id), "new_payment_id": str(payment.id), "receipt_no": old.receipt_no, "new_receipt_no": payment.receipt_no,
                 "amount": int(old.amount), "new_amount": int(payment.amount), "paid_on": old.paid_on.isoformat(), "new_paid_on": payment.paid_on.isoformat(),
-                "method": old.method, "new_method": payment.method, "reason": old.void_reason, **moved.audit_fields()})
+                "method": old.method, "new_method": payment.method, "reason": old.void_reason, **moved.audit_fields()}, consequence=consequence)
             self._family_check(org_id, family)
             self.db.commit()
         except PaymentError:
@@ -1603,7 +1604,7 @@ class PaymentService:
         return self._created(org_id, payment, before, today, moved=moved)
 
     @deadlock_guard
-    def void_payment(self, org_id: str, payment_id: UUID, actor_id: str, reason: str, actor_role: str = "admin") -> PaymentVoided:
+    def void_payment(self, org_id: str, payment_id: UUID, actor_id: str, reason: str, actor_role: str = "admin", consequence: Optional[Dict[str, str]] = None) -> PaymentVoided:
         """Cancel a payment (no delete).  Under the lock of the family it is checked that no refund is left without money."""
         try:
             reason = self._check_reason(reason)
@@ -1623,7 +1624,7 @@ class PaymentService:
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAYMENT_VOID, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "payment_id": str(payment.id), "receipt_no": payment.receipt_no, "amount": int(payment.amount), "paid_on": payment.paid_on.isoformat(),
-                "method": payment.method, "reason": reason, **moved.audit_fields()})
+                "method": payment.method, "reason": reason, **moved.audit_fields()}, consequence=consequence)
             self._family_check(org_id, family)
             self.db.commit()
         except PaymentError:
@@ -1637,21 +1638,6 @@ class PaymentService:
             payment=self._payment_out(payment, users, self._links([payment]), load_files(self.db, [payment.id]), entry.ledger),
             row=self._rows([entry])[0], new_debts=moved.new_debts, advance_drops=moved.advance_drops,
         )
-
-    def record_consequence(self, org_id: str, action: str, payment_id: UUID, texts: Dict[str, str]) -> None:
-        """G3M С9: the payroll sentence of the answer goes into the line of the journal of decisions the action just wrote (the numbers are worked out around the action, not inside it).
-        A failure here never undoes the money decision: logged, the line stays without the sentence."""
-        if not texts:
-            return
-        try:
-            audit = (self.db.query(GroupAudit).filter(GroupAudit.org_id == UUID(str(org_id)), GroupAudit.action == action, GroupAudit.snapshot["payment_id"].astext == str(payment_id))
-                     .order_by(GroupAudit.created_at.desc()).first())
-            if audit is not None:
-                audit.snapshot = {**audit.snapshot, **texts}
-                self.db.commit()
-        except Exception:
-            self.db.rollback()
-            logger.exception("consequence of the decision %s of payment %s could not be written", action, payment_id)
 
     def _accounts(self, org_id: str, family: Sequence[UUID]) -> Dict[UUID, Any]:
         """``{membership id: the entry with its ledger}`` of every group of the student (THE read of the accounts of a family)."""
@@ -1679,7 +1665,9 @@ class PaymentService:
     # ------------------------------------------------ write-off and refund
 
     def _audit(self, org_id: str, membership: StudentGroup, actor_id: str, actor_role: str, action: str,
-               snapshot: Dict[str, Any]) -> None:
+               snapshot: Dict[str, Any], consequence: Optional[Dict[str, str]] = None) -> None:
+        """One line of the journal of decisions, in the transaction of the action.  ``consequence`` (G3M Р3-2): the payroll sentence of the answer, worked out before the real run (``money_effects.run_with_effects(journal=True)``)."""
+        snapshot = {**snapshot, **(consequence or {})}
         self.db.add(
             GroupAudit(
                 org_id=UUID(str(org_id)), group_id=membership.group_id, actor_id=UUID(str(actor_id)),
@@ -1787,7 +1775,7 @@ class PaymentService:
     def create_writeoff(
         self, org_id: str, membership_id: UUID, actor_id: str, *, amount: Optional[int], whole: bool, reason: str,
         effective_on: Optional[date] = None, actor_role: str = "admin", expected_debt: Optional[int] = None,
-        idempotency_key: Optional[UUID] = None,
+        idempotency_key: Optional[UUID] = None, consequence: Optional[Dict[str, str]] = None,
     ) -> WriteoffCreated:
         """Write off a debt (≤ the debt now, or ``whole``); the reason 3..500 characters; archived students are allowed."""
         today = ps.business_today()
@@ -1824,7 +1812,7 @@ class PaymentService:
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "writeoff_id": str(row.id), "amount": int(amount), "reason": reason, "effective_on": effective_on.isoformat(),
                 "debt_before": before.debt, "debt_after": after.debt, "advance_before": before.advance,
-                "advance_after": after.advance})
+                "advance_after": after.advance}, consequence=consequence)
             self.db.commit()
         except PaymentError:
             self.db.rollback()
@@ -1837,7 +1825,8 @@ class PaymentService:
 
     @deadlock_guard
     def void_writeoff(
-        self, org_id: str, writeoff_id: UUID, actor_id: str, reason: str, *, actor_role: str = "admin", expected_debt: Optional[int] = None
+        self, org_id: str, writeoff_id: UUID, actor_id: str, reason: str, *, actor_role: str = "admin", expected_debt: Optional[int] = None,
+        consequence: Optional[Dict[str, str]] = None,
     ) -> WriteoffVoided:
         try:
             reason = self._check_reason(reason)
@@ -1865,7 +1854,7 @@ class PaymentService:
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "writeoff_id": str(row.id), "amount": int(row.amount), "reason": reason,
                 "debt_before": before.debt, "debt_after": after.debt, "advance_before": before.advance,
-                "advance_after": after.advance})
+                "advance_after": after.advance}, consequence=consequence)
             self.db.commit()
         except PaymentError:
             self.db.rollback()
@@ -1880,6 +1869,7 @@ class PaymentService:
         self, org_id: str, membership_id: UUID, actor_id: str, *, amount: int, method: Optional[str],
         reason: Optional[str], note: Optional[str], effective_on: Optional[date] = None, actor_role: str = "admin",
         expected_refundable: Optional[int] = None, idempotency_key: Optional[UUID] = None,
+        consequence: Optional[Dict[str, str]] = None,
     ) -> RefundCreated:
         """Return an advance (≤ what can leave the account on that day); the method is mandatory."""
         today = ps.business_today()
@@ -1915,7 +1905,7 @@ class PaymentService:
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "refund_id": str(row.id), "amount": int(amount), "method": method, "reason": reason,
                 "effective_on": effective_on.isoformat(), "debt_before": before.debt, "debt_after": after.debt,
-                "advance_before": before.advance, "advance_after": after.advance})
+                "advance_before": before.advance, "advance_after": after.advance}, consequence=consequence)
             self.db.commit()
         except PaymentError:
             self.db.rollback()
@@ -1939,7 +1929,8 @@ class PaymentService:
 
     @deadlock_guard
     def void_refund(
-        self, org_id: str, refund_id: UUID, actor_id: str, reason: str, *, actor_role: str = "admin", expected_advance: Optional[int] = None
+        self, org_id: str, refund_id: UUID, actor_id: str, reason: str, *, actor_role: str = "admin", expected_advance: Optional[int] = None,
+        consequence: Optional[Dict[str, str]] = None,
     ) -> RefundVoided:
         try:
             reason = self._check_reason(reason)
@@ -1964,7 +1955,7 @@ class PaymentService:
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "refund_id": str(row.id), "amount": int(row.amount), "method": row.method, "reason": reason,
                 "debt_before": before.debt, "debt_after": after.debt, "advance_before": before.advance,
-                "advance_after": after.advance})
+                "advance_after": after.advance}, consequence=consequence)
             self.db.commit()
         except PaymentError:
             self.db.rollback()

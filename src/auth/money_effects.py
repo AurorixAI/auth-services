@@ -472,12 +472,15 @@ class MembershipProbe:
 
 
 def run_with_effects(db, org_id: Any, membership_ids: Iterable[Any], owner: bool, action: Callable[[], Any], *, dry_run: bool,
-                     after_ids: Callable[[Any], Iterable[Any]] = lambda result: (), action_month: Optional[str] = None) -> Tuple[Any, Dict[str, Any]]:
+                     after_ids: Callable[[Any], Iterable[Any]] = lambda result: (), action_month: Optional[str] = None, journal: bool = False) -> Tuple[Any, Dict[str, Any]]:
     """Run ``action()`` (a service call of the money of a student that COMMITS) and say what it does to the saved sheets of the teachers.
 
     First the action runs inside a transaction that is rolled back (``writes_rolled_back``): its refusals are the refusals of the real one, the coverage of the lessons after it names the months, the
     fresh totals after are worked out; after the rollback the totals before.  With ``dry_run`` that is all: ``(the answer the action would give, the block)`` - nothing is written.  Otherwise the action
-    runs again for real and the block of the first pass is what the answer says (the same numbers the confirmation showed).  A failure of the numbers is ``unavailable``, never an error of the action."""
+    runs again for real and the block of the first pass is what the answer says (the same numbers the confirmation showed).  A failure of the numbers is ``unavailable``, never an error of the action.
+
+    ``journal`` (G3M Р3-2, the money decisions that leave a line in the journal of decisions): ``action`` takes ONE argument - the payroll sentence for the line (``decision_texts`` of the block of the first
+    pass; ``None`` in the pre-pass) - and writes it in the line in its own transaction: the journal says what the answer says, and a rolled-back action leaves neither."""
     probe = None
     try:
         with db.begin_nested():
@@ -487,7 +490,7 @@ def run_with_effects(db, org_id: Any, membership_ids: Iterable[Any], owner: bool
     preview = None
     try:
         with writes_rolled_back(db):
-            preview = action()
+            preview = action(None) if journal else action()
             if probe is not None:
                 try:
                     with db.begin_nested():
@@ -511,7 +514,7 @@ def run_with_effects(db, org_id: Any, membership_ids: Iterable[Any], owner: bool
         block = unavailable(True)                   # any other failure of the pre-pass (not of the action itself): the real run decides, it gives its own refusal or its own answer
     if dry_run:
         return preview, block
-    return action(), block
+    return (action(decision_texts(block, owner)) if journal else action()), block
 
 
 # ============================================================================================ the deduction for a lesson the centre cancelled (restore)
