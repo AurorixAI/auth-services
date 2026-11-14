@@ -143,7 +143,7 @@ def test_c7_a_student_who_left_or_was_on_a_pause_keeps_the_deduction(pg_session,
     g, (a, b, c, d, e), ms = five(w, clock)
     pause(w, ms[3], D(2026, 10, 28), D(2026, 10, 30))                                  # d is on a pause on the day of the make-up
     clock.set("2026-10-27 09:00")
-    w.svc.remove_student_from_group(str(w.org.id), str(g.id), str(e.id))               # e leaves the group between the cancellation and the make-up
+    w.svc.remove_student_from_group(str(w.org.id), str(g.id), str(e.id), str(w.owner.id))               # e leaves the group between the cancellation and the make-up
     w.db.expire_all()
     clock.set("2026-10-28 09:00")
     before = [deducted(w, m) for m in ms]

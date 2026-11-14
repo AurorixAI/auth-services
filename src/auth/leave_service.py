@@ -72,28 +72,30 @@ class OpeningNotAllowedAdd(PaymentInvalid):
 # ---- hooks run whenever a stay is closed / reopened ------------------------------------------------------------
 
 
-def on_membership_closed(db: Session, membership: StudentGroup, left_at: datetime, actor_id: Optional[str]) -> None:
+def on_membership_closed(db: Session, membership: StudentGroup, left_at: datetime, actor_id: str) -> None:
     """F13 + pauses.  The caller closed the period (``close_period``) and holds the locks; nothing is committed here.
 
-    The individual price (with a sum) in force on the last day ends the day after - a return is then priced by the group; the pauses after
-    the last day are cancelled and the one that holds it is cut to it.  Without an author (a legacy caller) the marker is not written: the
-    price audit has no row without an actor - the return hook below then closes the same gap."""
+    The individual price (with a sum) in force on the last day ends the day after - a return is then priced by the group; the scheduled
+    individual prices dated after the last day are cancelled (Р3-1б: they belong to the stay that ended, a return finds a clean book); the pauses
+    after the last day are cancelled and the one that holds it is cut to it.  The author is mandatory: the price audit has no row without one."""
     left_day = ps.business_date(left_at)
-    if actor_id:
-        books = pricing.load_books(db, [membership.group_id], [membership.id])
-        price = books.price(membership.id, membership.group_id, left_day)
-        if price.source == pricing.SOURCE_OVERRIDE and price.amount is not None:
-            pricing.write_override(db, membership.id, actor_id, amount=None, valid_from=left_day.fromordinal(left_day.toordinal() + 1),
-                                   reason=LEFT_GROUP_REASON)
+    books = pricing.load_books(db, [membership.group_id], [membership.id])
+    price = books.price(membership.id, membership.group_id, left_day)
+    if price.source == pricing.SOURCE_OVERRIDE and price.amount is not None:
+        pricing.write_override(db, membership.id, actor_id, amount=None, valid_from=left_day.fromordinal(left_day.toordinal() + 1),
+                               reason=LEFT_GROUP_REASON)
+    pricing.cancel_rows_after(db, membership.id, actor_id, left_day, markers=False, why=LEFT_GROUP_REASON)
     PauseService(db).close_at_leave(membership.id, left_day, actor_id)
 
 
 def on_membership_returned(db: Session, membership: StudentGroup, now: datetime, actor_id: Optional[str]) -> bool:
-    """A student comes back to a group he left: an individual price that is STILL in force (older data, or he came back the day he left)
-    ends today - he is priced by the group.  Returns True when a marker was written."""
+    """A student comes back to a group he left: the marker of the earlier leave that lies AFTER today (he came back the day he left) is taken
+    back, and an individual price that is STILL in force then ends today - he is priced by the group (a price given with the return replaces
+    that marker of the same day).  Returns True when a marker was written."""
     if not actor_id:
         return False
     today = ps.business_date(now)
+    pricing.cancel_rows_after(db, membership.id, actor_id, today, markers=True, why=RETURN_REASON)
     books = pricing.load_books(db, [membership.group_id], [membership.id])
     price = books.price(membership.id, membership.group_id, today)
     if price.source == pricing.SOURCE_OVERRIDE and price.amount is not None:

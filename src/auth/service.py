@@ -2753,6 +2753,8 @@ class AuthService:
         # Only a transfer closes the previous memberships.  The roster of
         # every changed group must not rewrite an already started lesson.
         closing = other_active_memberships if mode == "transfer" else []
+        if closing and not actor_id:   # Money-1 Р3-1б: closing a stay writes the price audit - no row without an author (every caller passes one)
+            raise ValueError("Перевод требует автора действия")
         if pay_from is not None:      # Money-1 B1: checked BEFORE anything is written - a refusal leaves nothing behind
             if closing or already_member:
                 raise ops_rules.unprocessable("PAY_FROM_NOT_APPLICABLE", "«Оплата с» задаётся только при добавлении ученика в группу: при переводе оплата идёт со следующего дня")
@@ -2950,7 +2952,7 @@ class AuthService:
         return warnings
 
     def remove_student_from_group(
-        self, org_id: str, group_id: str, student_id: str
+        self, org_id: str, group_id: str, student_id: str, actor_id: str
     ) -> bool:
         # Resolve both primary entities through the caller's organization
         # before touching membership.  IDs are global UUIDs, so a membership
@@ -2985,7 +2987,7 @@ class AuthService:
         self._assert_no_open_attendance_for_groups(org_id, [group.id])
         closed_at = business_clock.utc_now()   # SV-19: ONE reading of the clock for the whole event
         close_period(sg, closed_at)
-        on_membership_closed(self.db, sg, closed_at, None)  # LOGIC-A: pauses (no author: no price marker)
+        on_membership_closed(self.db, sg, closed_at, actor_id)  # LOGIC-A: F13 marker, scheduled prices, pauses
         self.db.flush()
 
         if str(student.group_id or "") == str(group.id):

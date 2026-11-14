@@ -943,7 +943,7 @@ def test_create_replace_and_fee_are_refused_for_an_archived_student_but_void_and
 def test_a_closed_membership_of_a_student_who_is_not_archived_keeps_working_as_before(two):
     s = two.student
     first = pay(two, s, two.second)["payment"]
-    two.svc.remove_student_from_group(str(two.org.id), str(two.second.id), str(s.id))      # left ONE group only
+    two.svc.remove_student_from_group(str(two.org.id), str(two.second.id), str(s.id), str(two.owner.id))      # left ONE group only
     two.db.expire_all()
     assert fresh(two, s).status == "active" and not two.db.query(StudentGroup).filter_by(
         student_id=s.id, group_id=two.second.id).one().is_active

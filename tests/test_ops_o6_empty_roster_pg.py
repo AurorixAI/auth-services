@@ -78,7 +78,7 @@ def test_r4_removing_the_last_student_and_starting_are_serialised(w):
         w,
         lambda svc: svc.start_group_attendance(org, gid, StartAttendanceRequest(lessonDate=date(2026, 10, 21), lessonId="lesson-e"),
                                                started_by=str(w.C.id), is_org_admin=False),
-        lambda svc: svc.remove_student_from_group(org, gid, sid),
+        lambda svc: svc.remove_student_from_group(org, gid, sid, str(w.C.id)),
     )
     started_ok, removed_ok = results[0][1] is None, results[1][1] is None
     w.db.expire_all()

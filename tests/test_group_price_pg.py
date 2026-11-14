@@ -1228,7 +1228,7 @@ def test_remove_student_and_a_price_write_on_the_same_membership_never_deadlock(
     student = world.students[0]
 
     def remove(session):
-        return AuthService(session).remove_student_from_group(str(world.org.id), str(world.group.id), str(student.id))
+        return AuthService(session).remove_student_from_group(str(world.org.id), str(world.group.id), str(student.id), str(world.owner.id))
 
     def back(n):                                                                    # the student returns to the group for the next round
         world.svc.add_student_to_group(str(world.org.id), str(world.group.id), str(student.id), mode="transfer", money_right=True)

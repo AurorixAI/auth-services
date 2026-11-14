@@ -74,7 +74,7 @@ def add(w, group, student, mode="add"):
 
 
 def remove(w, group, student):
-    w.svc.remove_student_from_group(str(w.org.id), str(group.id), str(student.id))
+    w.svc.remove_student_from_group(str(w.org.id), str(group.id), str(student.id), str(w.owner.id))
     w.db.expire_all()
 
 

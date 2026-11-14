@@ -565,15 +565,16 @@ def test_bulk_transfer_records_a_link_per_student(two):
     assert [w["code"] for w in r.json()["warnings"] if w["code"] == "payment_carried_over"]    # only s0 had money
 
 
-def test_internal_call_without_an_actor_still_records_the_link(two):
+def test_a_transfer_without_an_actor_is_refused_nothing_is_written(two):
+    """Р3-1б: closing a stay writes the price audit, which has no row without an author (before: the internal call went through with created_by None)."""
     from src.models.auth import MembershipTransfer
 
     billing(two)
     pay(two, paid_on=day(-10), amount=3_000_000)
-    result = two.svc.add_student_to_group(str(two.org.id), str(two.second.id), str(two.student.id), money_right=True)
-    assert result["status"] == "added"
-    (link,) = two.db.query(MembershipTransfer).filter_by(org_id=two.org.id).all()
-    assert link.created_by is None
+    with pytest.raises(ValueError):
+        two.svc.add_student_to_group(str(two.org.id), str(two.second.id), str(two.student.id), money_right=True)
+    two.db.rollback()
+    assert two.db.query(MembershipTransfer).filter_by(org_id=two.org.id).count() == 0
 
 
 def test_admin_without_the_right_does_not_transfer_the_money_at_all(two):

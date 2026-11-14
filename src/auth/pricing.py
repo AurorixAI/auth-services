@@ -149,7 +149,8 @@ MIN_REASON = 3
 MAX_REASON = 200
 
 PRICE_CONFLICT_MESSAGE = "Цену только что изменили. Обновите страницу и повторите."
-LEFT_MARKERS = ("left_group", "return_group")   # LOGIC-A (F13): rows the system writes when a stay is closed / reopened
+LEFT_GROUP_MARKER = "left_group"
+LEFT_MARKERS = (LEFT_GROUP_MARKER, "return_group")   # LOGIC-A (F13): rows the system writes when a stay is closed / reopened
 PRICE_MARKER_MESSAGE = "Эту запись создала система при уходе из группы: её нельзя отменить"
 BACKDATE_LIST = 20          # students named by the refusal
 IMPACT_ITEMS = 200          # items of the money impact (B3: every student who moves; the rest is counted in ``items_total``)
@@ -612,6 +613,44 @@ def write_override(
         at=now,
     )
     return row
+
+
+def cancel_rows_after(db: Session, membership_id: Any, actor_id: str, day: date, *, markers: bool, why: str) -> int:
+    """Money-1 G3M Р3-1б: a stay that is closed (or re-opened) takes back the rows of the price book that no longer belong to it, inside the
+    caller's transaction: the rows dated AFTER ``day`` that are not system markers (``markers=False``: the scheduled prices of the stay that
+    ends), or only the ``left_group`` marker of the earlier leave (``markers=True``: the stay is re-opened before the day the marker lies on).
+    Each deleted row leaves ONE ``membership_price_cancelled`` audit row (as the cancellation of a scheduled price), with ``why`` in the snapshot.
+    No lessons check: the stay that ends has no lesson after ``day`` for the row to be tied to.  Returns the count."""
+    actor, mid = _uuid(actor_id), _uuid(membership_id)
+    if actor is None:
+        raise ValueError("A price write needs its author: the audit trail has no row without an actor")
+
+    def mine(row: MembershipPriceOverride) -> bool:
+        return row.amount is None and row.reason == LEFT_GROUP_MARKER if markers else (row.reason or "") not in LEFT_MARKERS
+
+    rows = [r for r in db.query(MembershipPriceOverride)
+            .filter(MembershipPriceOverride.membership_id == mid, MembershipPriceOverride.valid_from > day)
+            .order_by(MembershipPriceOverride.valid_from).all() if mine(r)]
+    if not rows:
+        return 0
+    ctx = (
+        db.query(StudentGroup.group_id, StudentGroup.student_id, Group.org_id, Group.teacher_id)
+        .join(Group, Group.id == StudentGroup.group_id).filter(StudentGroup.id == mid).first()
+    )
+    if ctx is None:
+        raise PriceNotFound("Членство не найдено")
+    now = _utcnow()
+    for row in rows:
+        snapshot = {
+            "actor_id": str(actor), "group_id": str(ctx.group_id), "membership_id": str(mid), "student_id": str(ctx.student_id),
+            "row_id": str(row.id), "valid_from": row.valid_from.isoformat(), "amount": None if row.amount is None else int(row.amount),
+            "reason": row.reason, "cancelled_because": why,
+        }
+        db.delete(row)
+        db.flush()
+        _add_audit(db, org_id=ctx.org_id, group_id=ctx.group_id, teacher_id=ctx.teacher_id, actor=actor,
+                   action=ACTION_MEMBERSHIP_PRICE_CANCELLED, snapshot=snapshot, at=now)
+    return len(rows)
 
 
 # ============================================================================

@@ -37,7 +37,7 @@ def override_rows(w, group, student=None):
 
 
 def add(w, group, student=None, **kw):
-    return w.svc.add_student_to_group(str(w.org.id), str(group.id), str(student.id if student else w.student.id), **kw, money_right=True)
+    return w.svc.add_student_to_group(str(w.org.id), str(group.id), str(student.id if student else w.student.id), **{"actor_id": str(w.owner.id), **kw}, money_right=True)
 
 
 def active_groups(w, student=None):
@@ -166,7 +166,7 @@ def test_open_lesson_still_blocks_membership_changes(two):
     with pytest.raises(ValueError):
         add(two, two.group, outsider, mode="add")
     with pytest.raises(ValueError):
-        two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.students[1].id))
+        two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.students[1].id), str(two.owner.id))
     assert two.db.query(GroupAttendance).filter_by(group_id=two.group.id, status="in_progress").count() == 1
 
 
@@ -184,18 +184,18 @@ def test_removing_the_primary_group_moves_primary_to_the_earliest_remaining(two)
     first.joined_at = ENROLLED_SINCE + timedelta(days=40)         # fixed days (LESSONS 76/82): only the ORDER of the two joins matters
     second.joined_at = ENROLLED_SINCE + timedelta(days=70)
     two.db.commit()
-    two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id))
+    two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id), str(two.owner.id))
     assert primary(two) == two.second.id
     assert active_groups(two) == {two.second.id, third.id}
-    two.svc.remove_student_from_group(str(two.org.id), str(two.second.id), str(two.student.id))
+    two.svc.remove_student_from_group(str(two.org.id), str(two.second.id), str(two.student.id), str(two.owner.id))
     assert primary(two) == third.id
-    two.svc.remove_student_from_group(str(two.org.id), str(third.id), str(two.student.id))
+    two.svc.remove_student_from_group(str(two.org.id), str(third.id), str(two.student.id), str(two.owner.id))
     assert primary(two) is None and active_groups(two) == set()
 
 
 def test_removing_a_secondary_group_keeps_the_primary(two):
     add(two, two.second, mode="add")
-    two.svc.remove_student_from_group(str(two.org.id), str(two.second.id), str(two.student.id))
+    two.svc.remove_student_from_group(str(two.org.id), str(two.second.id), str(two.student.id), str(two.owner.id))
     assert primary(two) == two.group.id and active_groups(two) == {two.group.id}
 
 
@@ -209,7 +209,7 @@ def test_successor_prefers_a_live_group(two):
     )
     archived.status = "archived"
     two.db.commit()
-    two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id))
+    two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id), str(two.owner.id))
     assert primary(two) == two.second.id
 
 
@@ -225,7 +225,7 @@ def test_both_teachers_see_the_student_and_the_group_filter_finds_the_second_gro
     assert total == 1 and items[0].id == str(two.student.id)
     items, total = two.svc.list_students_page(str(two.org.id), actor_id=str(two.admin.id), is_org_admin=True, group_id=str(two.group.id), limit=50)
     assert total == 3
-    two.svc.remove_student_from_group(str(two.org.id), str(two.second.id), str(two.student.id))
+    two.svc.remove_student_from_group(str(two.org.id), str(two.second.id), str(two.student.id), str(two.owner.id))
     assert two.svc.list_students_page(str(two.org.id), actor_id=str(two.admin.id), is_org_admin=True, group_id=str(two.second.id), limit=50)[1] == 0
 
 
@@ -276,7 +276,7 @@ def test_add_mode_produces_no_false_transferred_label(two):
 
 
 def test_removal_followed_by_a_later_add_is_not_a_transfer(two):
-    two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id))
+    two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id), str(two.owner.id))
     two.db.query(StudentGroup).filter_by(student_id=two.student.id, group_id=two.group.id).update(
         {"left_at": utc_now() - timedelta(minutes=3)}  # inside the old 5-minute window
     )
@@ -304,7 +304,7 @@ def test_leaving_one_group_while_staying_in_another_is_not_a_transfer(two):
         {"joined_at": utc_now() - timedelta(minutes=1)}  # separate requests, not one transfer
     )
     two.db.commit()
-    two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id))
+    two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id), str(two.owner.id))
     old = journal(two, two.group)
     gone = {h["id"]: h for h in old.historicalStudents}[str(two.student.id)]
     assert gone["transferred_to_group_name"] is None
@@ -431,7 +431,7 @@ def test_removing_the_primary_group_is_not_a_transfer_into_the_old_membership(tw
         {"joined_at": ENROLLED_SINCE + timedelta(days=40)}
     )
     two.db.commit()
-    two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id))
+    two.svc.remove_student_from_group(str(two.org.id), str(two.group.id), str(two.student.id), str(two.owner.id))
     assert primary(two) == two.second.id
     assert journal(two, two.second).membershipEvents == []
 
