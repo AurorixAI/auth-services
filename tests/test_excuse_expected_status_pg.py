@@ -154,7 +154,7 @@ def test_bulk_without_expected_status_skips_a_decided_excuse_as_before(world):
     post(world, f"{item_id}/review", {"decision": "rejected"})
     body = post(world, "review-bulk", {"ids": [item_id], "decision": "confirmed"}).json()
     assert body["updated"] == 0 and len(body["skipped"]) == 1
-    assert body["skipped"][0]["id"] == item_id and body["skipped"][0]["code"] is None and body["skipped"][0]["reason"]
+    assert body["skipped"][0]["id"] == item_id and body["skipped"][0]["code"] == "ALREADY_DECIDED" and body["skipped"][0]["reason"]
     assert excuse_of(world).status == "rejected"
 
 

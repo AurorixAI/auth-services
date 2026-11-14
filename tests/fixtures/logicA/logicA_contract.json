@@ -4064,6 +4064,14 @@
       "PaymentCreated": {
         "description": "PAY-2: ``allocation`` (where the money went) is always filled by the server.",
         "properties": {
+          "advance_drops": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Advance Drops",
+            "type": "array"
+          },
           "allocation": {
             "anyOf": [
               {

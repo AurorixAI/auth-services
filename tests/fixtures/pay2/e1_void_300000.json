@@ -125,5 +125,6 @@
   },
   "money_effects": null,
   "dry_run": false,
-  "new_debts": []
+  "new_debts": [],
+  "advance_drops": []
 }
