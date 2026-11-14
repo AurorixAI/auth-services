@@ -79,10 +79,18 @@ def period_text(start: date, end: date) -> str:
     return ddmm(start) if start == end else f"{ddmm(start)}–{ddmm(end)}"
 
 
-def new_debts_text(debts: Sequence[Dict[str, Any]], *, done: bool) -> str:
+def new_debts_text(debts: Sequence[Dict[str, Any]], *, done: bool, advance_drops: Sequence[Dict[str, Any]] = ()) -> str:
     """Money-1 Г-4 / Р-2: the debt that the correction of a payment of the OLD group leaves in the group the student was moved to (the money went with him).  ``amount`` is the growth,
-    ``total`` the debt after it: «В группе «B» появится долг 900 000 сум» when the group did not owe, «долг вырастет на 900 000 сум — до 1 100 000 сум» when it did."""
-    return "; ".join(_new_debt_text(d, done) for d in debts)
+    ``total`` the debt after it: «В группе «B» появится долг 900 000 сум» when the group did not owe, «долг вырастет на 900 000 сум — до 1 100 000 сум» when it did.
+    G3M С3: ``advance_drops`` - the groups where the money taken away leaves NO debt but a smaller advance (``amount`` the fall, ``total`` the advance after it): the same sentence for the preview, the answer and the journal."""
+    return "; ".join([*(_new_debt_text(d, done) for d in debts), *(_advance_drop_text(d, done) for d in advance_drops)])
+
+
+def _advance_drop_text(drop: Dict[str, Any], done: bool) -> str:
+    amount, total = int(drop["amount"]), int(drop["total"])
+    if total == 0:
+        return f"В группе «{drop['group_name']}» не {'осталось' if done else 'останется'} аванса: {money(amount)}"
+    return f"В группе «{drop['group_name']}» аванс {'уменьшился' if done else 'уменьшится'} на {money(amount)} — до {money(total)}"
 
 
 def _new_debt_text(debt: Dict[str, Any], done: bool) -> str:

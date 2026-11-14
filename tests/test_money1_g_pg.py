@@ -574,6 +574,73 @@ def test_c1_a_student_who_left_without_a_transfer_corrects_an_advance_down_but_n
     assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 450_000
 
 
+# ---- С3: the money taken away from another group of the student leaves no debt there yet (its charge begins tomorrow) - the sentence still says the advance falls ----
+
+def _c3_world(two, own_advance_in_b=0):
+    billing(two)
+    p = pay(two, paid_on=day(-10), amount=3_000_000)["payment"]
+    transfer(two, two.second)                                                               # moved TODAY: B charges from tomorrow, nothing is owed there
+    if own_advance_in_b:
+        pay(two, group=two.second, amount=own_advance_in_b)
+    return p
+
+
+def _c3_sentences(two, p, kind, **body):
+    url = f"{PAY_URL}/{p['id']}/{kind}"
+    payload = {"reason": "ошибка", **body}
+    dry = owner(two).post(url, params={"dry_run": "true"}, json=payload)
+    real = owner(two).post(url, json=payload)
+    assert dry.status_code in (200, 201) and real.status_code in (200, 201), (dry.text, real.text)
+    return dry.json(), real.json()
+
+
+def _c3_journal(two, kind):
+    (row,) = [r for r in owner(two).get(f"{PAY_URL}/decisions", params={"from": day(-1).isoformat(), "to": day(1).isoformat()}).json()["rows"] if r["kind"] == kind]
+    return row["consequence"]
+
+
+def test_c3_a_cancellation_that_takes_the_whole_advance_of_the_new_group_says_so_in_the_three_places(two):
+    p = _c3_world(two)
+    carried = statement(two, two.second)["advance"]
+    assert carried > 0 and statement(two, two.second)["debt"] == 0
+    dry, real = _c3_sentences(two, p, "void")
+    sentence = f"В группе «Вторая» не останется аванса: {carried:,}".replace(",", NBSP) + f"{NBSP}сум"
+    assert dry["new_debts"] == [] == real["new_debts"]
+    assert sentence in dry["money_effects"]["text"], dry["money_effects"]
+    assert sentence.replace("останется", "осталось") in real["money_effects"]["text"]
+    assert _c3_journal(two, "payment_void") == sentence.replace("останется", "осталось")        # before: the three places were empty
+
+
+def test_c3_a_correction_leaves_the_rest_of_the_advance_in_the_sentence(two):
+    p = _c3_world(two, own_advance_in_b=100_000)
+    in_b = statement(two, two.second)
+    assert in_b["debt"] == 0
+    body = {"amount": 2_000_000, "paid_on": p["paid_on"], "method": "cash"}
+    dry, real = _c3_sentences(two, p, "replace", **body)
+    after = statement(two, two.second)
+    fell = in_b["advance"] - after["advance"]
+    assert fell > 0 and after["debt"] == 0 and after["advance"] > 0
+    num = lambda n: f"{n:,}".replace(",", NBSP) + f"{NBSP}сум"  # noqa: E731
+    sentence = f"В группе «Вторая» аванс уменьшится на {num(fell)} — до {num(after['advance'])}"
+    assert sentence in dry["money_effects"]["text"], dry["money_effects"]["text"]
+    assert sentence.replace("уменьшится", "уменьшился") in real["money_effects"]["text"]
+    assert _c3_journal(two, "payment_replace") == sentence.replace("уменьшится", "уменьшился")
+
+
+def test_c3_where_a_debt_appears_the_sentence_is_about_the_debt_only(two, monkeypatch):
+    p, _ = _transferred_world(two, monkeypatch)
+    dry, real = _c3_sentences(two, p, "void")
+    assert dry["new_debts"] and "аванс" not in dry["money_effects"]["text"] and "аванс" not in real["money_effects"]["text"]
+    assert dry["advance_drops"] == [] == real["advance_drops"] and "аванс" not in _c3_journal(two, "payment_void")
+
+
+def test_c3_without_a_transfer_there_is_no_sentence_about_another_group(two):
+    billing(two)
+    p = pay(two, paid_on=day(-10), amount=3_000_000)["payment"]
+    dry, real = _c3_sentences(two, p, "void")
+    assert dry["advance_drops"] == [] and "аванс" not in str(dry["money_effects"]) and "аванс" not in str(real["money_effects"])
+
+
 # ---- Г-17 (N9): the cash of a day is counted by the day the record was ENTERED (the till of the centre), not by the date of the payment ---------------------------
 
 from datetime import datetime, timedelta  # noqa: E402

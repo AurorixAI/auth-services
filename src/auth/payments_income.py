@@ -883,7 +883,7 @@ class IncomeReports:
                 student_name=person_name(student.last_name, student.first_name) or "" if student else "", group_name=groups[a.group_id].name if a.group_id in groups else None,
                 amount=int(snap.get("amount") or 0), new_amount=snap.get("new_amount"), receipt_no=snap.get("receipt_no"), reason=snap.get("reason"),
                 actor_name=_staff(users.get(a.actor_id)), debt_before=snap.get("debt_before"), debt_after=snap.get("debt_after"),
-                consequence=tx.new_debts_text(snap["new_debts"], done=True) if snap.get("new_debts") else None))
+                consequence=tx.new_debts_text(snap.get("new_debts") or [], done=True, advance_drops=snap.get("advance_drops") or []) or None))
         return DecisionsPage(as_of=ps.business_today(), **{"from": first}, to=last, page=page, size=size, total=total, pages=(total + size - 1) // size,
                              since=_business_moment(earliest).date() if earliest else None, rows=rows)
 

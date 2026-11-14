@@ -410,7 +410,7 @@ def replace_payment(
         out, effects = money_effects.run_with_effects(
             db, user["org_id"], _memberships_of_payment_student(db, user["org_id"], payment_id), user.get("org_role") == "owner",
             lambda: PaymentService(db).replace_payment(user["org_id"], payment_id, user["user_id"], request, request.reason, idempotency_key, actor_role=user["org_role"]), dry_run=dry_run)
-        out.money_effects, out.dry_run = money_effects.with_sentence(effects, tx.new_debts_text(out.new_debts, done=not dry_run)), dry_run
+        out.money_effects, out.dry_run = money_effects.with_sentence(effects, tx.new_debts_text(out.new_debts, done=not dry_run, advance_drops=out.advance_drops)), dry_run
         return out
     except PaymentError as exc:
         raise _http(exc)
@@ -429,7 +429,7 @@ def void_payment(
         out, effects = money_effects.run_with_effects(
             db, user["org_id"], _memberships_of_payment_student(db, user["org_id"], payment_id), user.get("org_role") == "owner",
             lambda: PaymentService(db).void_payment(user["org_id"], payment_id, user["user_id"], request.reason, actor_role=user["org_role"]), dry_run=dry_run)
-        out.money_effects, out.dry_run = money_effects.with_sentence(effects, tx.new_debts_text(out.new_debts, done=not dry_run)), dry_run
+        out.money_effects, out.dry_run = money_effects.with_sentence(effects, tx.new_debts_text(out.new_debts, done=not dry_run, advance_drops=out.advance_drops)), dry_run
         return out
     except PaymentError as exc:
         raise _http(exc)
