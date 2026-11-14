@@ -636,3 +636,13 @@ def test_c11_price_missing_scheduled_individual_price_is_not_missing(world):
     m = world.db.query(StudentGroup).filter_by(student_id=world.students[0].id, group_id=world.group.id).one()
     give_price(world.db, m, 350000, valid_from=day(10))
     assert summary(world)["price_missing"] == 2          # the other two have neither a current nor a planned price
+
+
+def test_r34_the_row_and_the_counter_mean_different_things_for_a_student_with_a_planned_price(world):
+    """Р3-4: the row says «the period is not charged now» (``price_missing`` of the row), the counter of the summary says «the price must be set» (none, current or planned) - on ONE student they differ on purpose."""
+    from tests.pg_world import give_group_price as planned
+
+    planned(world.db, world.group, 400000, valid_from=day(45))         # begins after the periods the students have now begun: they have no price yet, a later one has
+    rows = status_page(world, bucket="all")["items"]
+    assert [r["price_missing"] for r in rows] == [True, True, True]
+    assert summary(world)["price_missing"] == 0
