@@ -196,7 +196,11 @@ def test_logicA_f13_r_leave_return_leave_in_one_day_writes_one_marker_per_day(wo
     assert owner(world).post(f"{API}/org/groups/{world.group.id}/students/{world.students[0].id}?mode=add").status_code == 200
     leave(world, world.group, world.students[0])
     rows = markers(world, m)
-    assert rows and len({r.valid_from for r in rows}) == len(rows)       # Р3-1б: the return takes back the marker of tomorrow and writes its own of today; the second leave finds the price ended - one marker, the exception is over
+    # Р3-1б: the return takes back the marker of tomorrow and writes its own of today; the second leave finds the price ended - exactly one marker
+    assert [(r.reason, r.amount, r.valid_from) for r in rows] == [("return_group", None, TODAY)]
+    assert not [r for r in rows if r.reason == "left_group" or r.valid_from > TODAY]
+    price = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]["price"]          # the price of today is the group's, as before the exception
+    assert price["source"] == "group" and price["amount"] == 600_000
 
 
 def test_logicA_f13_m_returning_on_the_day_of_leaving_is_priced_by_the_group_at_once(world, fixed_today):
