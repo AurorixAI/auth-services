@@ -99,7 +99,7 @@ class AttendanceRules:
             hhmm = bc.utc_to_business_wall(datetime.fromisoformat(when)).strftime("%H:%M")
         return conflict(
             "ATTENDANCE_CONFLICT",
-            message or f"Отметки уже изменил(а) {name or 'другой сотрудник'}" + (f" в {hhmm}" if hhmm else ""),
+            message or (f"Отметки изменены: {name}" + (f", {hhmm}" if hhmm else "") if name else "Отметки уже изменены"),
             currentVersion=int(row.version or 1),
             updatedBy={"id": actor_id, "name": name},
             updatedAt=when,

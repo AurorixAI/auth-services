@@ -3,7 +3,7 @@
     "detail": {
       "code": "ATTENDANCE_CONFLICT",
       "currentVersion": 2,
-      "message": "Отметки уже изменил(а) Рахимов Т. в 10:42",
+      "message": "Отметки изменены: Рахимов Т., 10:42",
       "records": {
         "a321d4be-89d1-510e-9a96-9d9e8e6d605c": "present"
       },

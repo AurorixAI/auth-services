@@ -370,7 +370,7 @@ put("c6_members_removed.json", "MemberOut", {
 # ================================================================================================ chain 7
 L1_KEY = f"2026-10-26_{LESSON['L1']}"
 put("c7_save_v2.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 2, "examSync": None, "warnings": []})
-put("c7_conflict.json", "-", error(409, "ATTENDANCE_CONFLICT", "Отметки уже изменил(а) Рахимов Т. в 10:42", currentVersion=2,
+put("c7_conflict.json", "-", error(409, "ATTENDANCE_CONFLICT", "Отметки изменены: Рахимов Т., 10:42", currentVersion=2,
                                     updatedBy={"id": IDS["D"], "name": short("D")}, updatedAt="2026-10-26T05:42:10",
                                     records={IDS["s1"]: "present"}))
 put("c7_save_v3.json", "SaveAttendanceOut", {"ok": True, "saved": True, "version": 3, "examSync": None, "warnings": []})

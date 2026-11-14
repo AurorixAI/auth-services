@@ -621,7 +621,6 @@ def errors(store):
         "PRICE_MARKER": (409, err("PRICE_MARKER", "Эту запись создала система при уходе из группы; её нельзя отменить")),
         "FINGERPRINT_REQUIRED": (422, err("FINGERPRINT_REQUIRED", "Откройте расчёт заново: сохранение без проверки данных невозможно")),
         "DUPLICATE_PAYOUT": (409, err("DUPLICATE_PAYOUT", "Выплата уже внесена", payment_id=None)),
-        "SHEET_NOT_SAVED": (409, err("SHEET_NOT_SAVED", "Сначала сохраните зарплату за месяц")),
         "DIVISOR_RANGE": (422, err("DIVISOR_RANGE", "Делитель: от 1 до 31")),
     }
     # DUPLICATE_PAYOUT carries ``payout_id`` (PayoutError); LogicAError has no such field: use the payroll model for it

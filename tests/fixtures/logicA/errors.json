@@ -206,21 +206,6 @@
       }
     }
   },
-  "SHEET_NOT_SAVED": {
-    "status": 409,
-    "body": {
-      "detail": {
-        "code": "SHEET_NOT_SAVED",
-        "message": "Сначала сохраните зарплату за месяц",
-        "debt": null,
-        "refundable": null,
-        "payment_id": null,
-        "dates": null,
-        "students": null,
-        "fresh": null
-      }
-    }
-  },
   "DIVISOR_RANGE": {
     "status": 422,
     "body": {

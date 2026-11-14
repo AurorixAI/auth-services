@@ -44,7 +44,6 @@ PAYROLL: List[Tuple[int, str, str]] = [
     (422, "DIVISOR_RANGE", "Делитель: от 1 до 31"),
 ]
 PAYOUT: List[Tuple[int, str, str]] = [
-    (409, "SHEET_NOT_SAVED", "Сначала сохраните зарплату за месяц"),
     (409, "DUPLICATE_PAYOUT", "Выплата уже внесена"),
     (409, "ALREADY_VOIDED", "Выплата уже отменена"),
     (422, "AMOUNT_RANGE", "Сумма: от 1 до 10 000 000 000"),
@@ -73,5 +72,5 @@ ERRORS_BY_OPERATION: Dict[Tuple[str, str], List[Tuple[int, str, str]]] = {
     ("post", "/org/payroll/sheets"): PAYROLL[:2],
     ("patch", "/org/payroll/sheets/{sheet_id}"): PAYROLL[:2],
     ("post", "/org/payroll/sheets/{sheet_id}/payouts"): PAYOUT,
-    ("post", "/org/payroll/payouts/{payout_id}/void"): [PAYOUT[2], PAYOUT[6]],
+    ("post", "/org/payroll/payouts/{payout_id}/void"): [PAYOUT[1], PAYOUT[5]],
 }

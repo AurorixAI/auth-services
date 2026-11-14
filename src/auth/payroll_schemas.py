@@ -530,7 +530,7 @@ class PayoutVoided(BaseModel):
 
 
 class PayoutError(BaseModel):
-    """409 ``DUPLICATE_PAYOUT`` carries ``payout_id``; 409 ``OVERPAY_CONFIRM_REQUIRED`` carries ``overpay`` and ``balance``; the other codes: ``SHEET_NOT_SAVED`` / ``ALREADY_VOIDED`` (409),
+    """409 ``DUPLICATE_PAYOUT`` carries ``payout_id``; 409 ``OVERPAY_CONFIRM_REQUIRED`` carries ``overpay`` and ``balance``; the other codes: ``ALREADY_VOIDED`` (409),
     ``AMOUNT_RANGE`` / ``PAID_ON_RANGE`` / ``METHOD_REQUIRED`` / ``REASON_REQUIRED`` / ``FINGERPRINT_REQUIRED`` /
     ``DIVISOR_RANGE`` (422)."""
 

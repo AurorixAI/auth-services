@@ -82,7 +82,7 @@ def test_r4_two_tabs_conflict_and_keep_mine_chain7(w, clock):
     detail = r.json()["detail"]
     assert detail["code"] == "ATTENDANCE_CONFLICT" and detail["currentVersion"] == 2 and detail["records"] == {str(w.s1.id): "present"}
     assert detail["updatedBy"] == {"id": str(w.A.id), "name": "Иванов И."}
-    assert detail["message"].startswith("Отметки уже изменил(а) Иванов И. в ") and exp_conflict["message"].startswith("Отметки уже изменил(а)")
+    assert detail["message"].startswith("Отметки изменены: Иванов И., ") and exp_conflict["message"].startswith("Отметки изменены: ")
     assert row(w).records == {str(w.s1.id): "present"} and row(w).version == 2                   # nothing written
     kept = save(w, "A", {"s1": "present", "s2": "absent"}, expectedVersion=2)
     assert kept.json()["version"] == 3

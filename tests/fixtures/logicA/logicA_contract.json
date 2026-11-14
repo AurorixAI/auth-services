@@ -5245,7 +5245,7 @@
         "type": "object"
       },
       "PayoutError": {
-        "description": "409 ``DUPLICATE_PAYOUT`` carries ``payout_id``; 409 ``OVERPAY_CONFIRM_REQUIRED`` carries ``overpay`` and ``balance``; the other codes: ``SHEET_NOT_SAVED`` / ``ALREADY_VOIDED`` (409),\n``AMOUNT_RANGE`` / ``PAID_ON_RANGE`` / ``METHOD_REQUIRED`` / ``REASON_REQUIRED`` / ``FINGERPRINT_REQUIRED`` /\n``DIVISOR_RANGE`` (422).",
+        "description": "409 ``DUPLICATE_PAYOUT`` carries ``payout_id``; 409 ``OVERPAY_CONFIRM_REQUIRED`` carries ``overpay`` and ``balance``; the other codes: ``ALREADY_VOIDED`` (409),\n``AMOUNT_RANGE`` / ``PAID_ON_RANGE`` / ``METHOD_REQUIRED`` / ``REASON_REQUIRED`` / ``FINGERPRINT_REQUIRED`` /\n``DIVISOR_RANGE`` (422).",
         "properties": {
           "balance": {
             "anyOf": [
@@ -11708,11 +11708,6 @@
           "Payroll"
         ],
         "x-errors": [
-          {
-            "code": "SHEET_NOT_SAVED",
-            "message": "Сначала сохраните зарплату за месяц",
-            "status": 409
-          },
           {
             "code": "DUPLICATE_PAYOUT",
             "message": "Выплата уже внесена",
