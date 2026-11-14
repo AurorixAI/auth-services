@@ -1244,6 +1244,17 @@ class PaymentService:
             raise PaymentExceedsDebt(f"Ученик ушёл: принять можно не больше долга {_sum(debt)}", debt=debt)
 
     @staticmethod
+    def _correction_ceiling(debt_without: int, old_amount: int) -> int:
+        """Money-1 С1 (the ONE ceiling of the correction of a payment of a student who left, the preview and the write): a correction accepts no new money, so the new sum may be as big as
+        the debt without this payment or the sum being corrected, whichever is bigger (a transferred student has no debt of his own left - the money went to the new group)."""
+        return max(debt_without, old_amount)
+
+    def _check_left_correction(self, amount: int, debt_without: int, old_amount: int) -> None:
+        ceiling = self._correction_ceiling(debt_without, old_amount)
+        if amount > ceiling:
+            raise PaymentExceedsDebt(f"Ученик ушёл из группы: при исправлении сумма не может быть больше {_sum(ceiling)}", debt=ceiling)
+
+    @staticmethod
     def _check_amount(amount: int) -> int:
         if not isinstance(amount, int) or isinstance(amount, bool) or amount < 1 or amount > MAX_MONEY:
             raise AmountRange(f"Сумма: от 1 до {_num(MAX_MONEY)}")
@@ -1536,8 +1547,8 @@ class PaymentService:
             loader.load_facts([membership.id])
             before_inp = loader.build_input(membership.id, exclude_payment=old.id)
             before = bl.run_ledger(before_inp)
-            if self._is_left(membership) and (data.amount, data.paid_on) != (old.amount, old.paid_on):          # Р-13: only the method of the same sum and date is not an acceptance of money - no debt to look at
-                self._check_left_ceiling(data.amount, before.debt)
+            if self._is_left(membership):
+                self._check_left_correction(data.amount, before.debt, int(old.amount))          # С1: the same sum (a new date, a new method) always fits
             old.voided_at = _utcnow()
             old.voided_by = UUID(str(actor_id))
             old.void_reason = reason
@@ -2044,18 +2055,19 @@ class PaymentService:
         archived = self._is_left(membership)
         loader = self._loader(org_id, today)
         loader.load_facts([membership_id])
-        exclude = None
+        exclude, old_amount = None, 0
         if replace_payment_id is not None:
             old = self._probe_payment(org_id, replace_payment_id)
             if old.membership_id != membership.id:
                 raise PaymentNotFound("Оплата не найдена")
             exclude = old.id
+            old_amount = int(old.amount)
         inp = loader.build_input(membership_id, exclude_payment=exclude)
         before = bl.run_ledger(inp)
         price = loader.books.price(membership_id, membership.group_id, today)
         preview = PaymentPreview(
             as_of=today, mode=before.mode, price=PriceOut(**pricing.price_dict(price)), due=pv.due_block(before),
-            suggested_amount=before.debt if archived else self._suggested(loader, membership, before, price.amount), amount=amount, result=None,
+            suggested_amount=self._correction_ceiling(before.debt, old_amount) if archived else self._suggested(loader, membership, before, price.amount), amount=amount, result=None,
             warnings=[], recalc=self._recalc_news(membership_id, before, exclude_payment=exclude),
         )
         warnings: List[PaymentWarningOut] = []

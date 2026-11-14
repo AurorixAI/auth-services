@@ -471,6 +471,109 @@ def test_r13_only_the_method_of_a_payment_of_the_old_group_can_be_corrected_afte
     assert r.json()["payment"]["method"] == "card" and r.json()["new_debts"] == [] and statement(two, two.second) == before
 
 
+# ---- С1: the correction of a payment of a student who left is not an acceptance of new money - the ceiling is the bigger of the debt without the payment and the sum being corrected ----
+
+from datetime import timezone  # noqa: E402
+
+from src.models.auth import StudentGroup as _SG  # noqa: E402
+from tests.pg_world import give_group_price as _price  # noqa: E402
+from tests.test_payment_carry_over_pg import history  # noqa: E402
+
+
+def _c1_world(two, monkeypatch, price_a=None, amount=600_000):
+    """A is priced ``price_a`` (None: no price, nothing is charged), B 400 000; ``amount`` paid in A ten days ago, the student moved to B three days ago."""
+    billing(two, price_a=price_a if price_a is not None else 1, price_b=400_000)
+    if price_a is None:
+        _price(two.db, two.group, None)
+        two.db.commit()
+    p = pay(two, paid_on=day(-10), amount=amount)["payment"]
+    with at_day(monkeypatch, day(-3), 12):
+        transfer(two, two.second)
+    return p
+
+
+def _c1_replace(two, p, amount, paid_on=None, dry=False, expect=201):
+    body = {"amount": amount, "paid_on": paid_on or p["paid_on"], "method": "cash", "reason": "Исправление суммы"}
+    r = owner(two).post(f"{PAY_URL}/{p['id']}/replace", params={"dry_run": "true"} if dry else None, json=body)
+    assert r.status_code == expect, r.text
+    return r.json() if expect == 201 else r.json()["detail"]
+
+
+def _c1_live(two, group):
+    return [x for x in history(two, group) if not x.get("voided_at")]
+
+
+def _c1_live_sum(two, group):
+    return sum(int(x["amount"]) for x in _c1_live(two, group))
+
+
+def test_c1_a_correction_of_a_transferred_student_with_no_debt_of_his_own_goes_through_and_names_the_debt_in_the_new_group(two, monkeypatch):
+    p = _c1_world(two, monkeypatch)
+    assert statement(two, two.group)["debt"] == 0 and statement(two, two.second)["transferred_in"] > 0
+    in_b = statement(two, two.second)
+    dry = _c1_replace(two, p, 200_000, dry=True)                         # before: 422 NOTHING_TO_PAY
+    assert statement(two, two.second) == in_b
+    real = _c1_replace(two, p, 200_000)
+    after_b = statement(two, two.second)
+    assert after_b["debt"] > 0 and after_b["transferred_in"] < in_b["transferred_in"]
+    expected = [{"membership_id": str(mid(two, two.student, two.second)), "group_id": str(two.second.id), "group_name": "Вторая", "amount": after_b["debt"], "total": after_b["debt"]}]
+    assert dry["new_debts"] == expected == real["new_debts"]
+    sentence = f"В группе «Вторая» появится долг {after_b['debt']:,}".replace(",", NBSP) + f"{NBSP}сум"
+    assert sentence in dry["money_effects"]["text"] and sentence.replace("появится", "появился") in real["money_effects"]["text"]
+    (row,) = [r for r in owner(two).get(f"{PAY_URL}/decisions", params={"from": day(-1).isoformat(), "to": day(1).isoformat()}).json()["rows"] if r["kind"] == "payment_replace"]
+    assert row["consequence"] == sentence.replace("появится", "появился")
+    assert statement(two, two.group)["paid"] == 200_000 == _c1_live_sum(two, two.group)
+
+
+def test_c1_a_debt_of_his_own_smaller_than_the_new_sum_does_not_stop_the_correction(two, monkeypatch):
+    p = _c1_world(two, monkeypatch, price_a=20_000)
+    own = owner(two).get(f"{API}/org/memberships/{mid(two, two.student, two.group)}/payments/preview", params={"replace_payment_id": p["id"]}).json()
+    debt = own["due"]["debt"]
+    assert 0 < debt < 100_000 and own["suggested_amount"] == 600_000                    # the preview suggests the ceiling, not 0 or the small debt
+    _c1_replace(two, p, 100_000)                                                       # before: 422 PAYMENT_EXCEEDS_DEBT (debt of A without the payment)
+    assert statement(two, two.group)["paid"] == 100_000 == _c1_live_sum(two, two.group)
+
+
+def test_c1_only_the_date_is_corrected_the_sums_stay(two, monkeypatch):
+    p = _c1_world(two, monkeypatch)
+    before = (statement(two, two.group), statement(two, two.second))
+    _c1_replace(two, p, 600_000, paid_on=(day(-9)).isoformat())                         # before: 422 NOTHING_TO_PAY
+    assert (statement(two, two.group), statement(two, two.second)) == before
+    assert _c1_live_sum(two, two.group) == 600_000
+
+
+def test_c1_a_bigger_sum_is_refused_with_the_ceiling_in_the_text(two, monkeypatch):
+    p = _c1_world(two, monkeypatch)
+    d = _c1_replace(two, p, 700_000, dry=True, expect=422)
+    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 600_000
+    assert d["message"] == f"Ученик ушёл из группы: при исправлении сумма не может быть больше 600{NBSP}000{NBSP}сум"
+    assert _c1_live_sum(two, two.group) == 600_000
+
+
+def test_c1_the_correction_stays_within_the_ceiling_of_the_sum_it_corrects(two, monkeypatch):
+    p = _c1_world(two, monkeypatch)
+    before = (statement(two, two.group), statement(two, two.second))
+    new = _c1_replace(two, p, 200_000)["payment"]
+    d = _c1_replace(two, new, 600_000, expect=422)                                      # the ceiling is now 200 000 (the sum being corrected): see the report on the way back
+    assert d["debt"] == 200_000
+    assert _c1_replace(two, new, 200_000, paid_on=day(-8).isoformat())["payment"]["amount"] == 200_000
+    assert statement(two, two.group)["paid"] == 200_000 and before[0]["paid"] == 600_000
+
+
+def test_c1_a_student_who_left_without_a_transfer_corrects_an_advance_down_but_not_up(two):
+    billing(two, price_a=1)
+    _price(two.db, two.group, None)
+    two.db.commit()
+    p = pay(two, paid_on=day(-5), amount=500_000)["payment"]
+    two.db.query(_SG).filter_by(student_id=two.student.id, group_id=two.group.id).update({"is_active": False})
+    two.db.commit()
+    _c1_replace(two, p, 450_000)
+    (p2,) = _c1_live(two, two.group)
+    assert int(p2["amount"]) == 450_000
+    d = _c1_replace(two, p2, 600_000, expect=422)
+    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 450_000
+
+
 # ---- Г-17 (N9): the cash of a day is counted by the day the record was ENTERED (the till of the centre), not by the date of the payment ---------------------------
 
 from datetime import datetime, timedelta  # noqa: E402
