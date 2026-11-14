@@ -283,21 +283,20 @@ def test_g3m_c2_without_pay_from_the_individual_price_begins_today_as_before(wor
 
 
 def test_g3m_c2_the_old_rows_of_a_returning_student_stay_in_force_after_the_return(world, fixed_today):
-    """A student who left and comes back with a past «Оплата с»: the new price does not begin before the last row already written (the end of the earlier stay)."""
+    """A student who left (real leave) and comes back the day after: his own earlier price stays for the earlier stay, the new price begins on the day of the return (Р3-1: «Оплата с» is never inside the earlier stay)."""
     from src.models.auth import MembershipPriceOverride
-    from tests.money1b_helpers import add
+    from tests.test_logicA_money_pg import leave
 
     w = world
     s = _discount_world(w, fixed_today)
     add(w, s, pay_from="2026-10-01", price_override={"amount": 300_000, "reason": "Скидка по договорённости"})
     m, _ = stay_of(w, s)
-    w.db.add(MembershipPriceOverride(membership_id=m.id, amount=None, valid_from=D(2026, 10, 15), reason="Вышел из группы", created_by=w.owner.id))
-    m.is_active = False
-    w.db.commit()
-    add(w, s, pay_from="2026-10-07", price_override={"amount": 250_000, "reason": "Новая скидка при возврате"})
+    leave(w, w.group, s)
+    fixed_today(D(2026, 10, 22))
+    add(w, s, pay_from="2026-10-22", price_override={"amount": 250_000, "reason": "Новая скидка при возврате"})
     w.db.expire_all()
-    rows = sorted((r.valid_from, r.amount) for r in w.db.query(MembershipPriceOverride).filter_by(membership_id=m.id).all())
-    assert rows == [(D(2026, 10, 1), 300_000), (D(2026, 10, 15), 250_000)]          # the new row replaces the marker of the last day instead of lying before it (07.10) and being cancelled by it
+    rows = sorted((r.valid_from, r.amount) for r in w.db.query(MembershipPriceOverride).filter_by(membership_id=m.id).all() if r.amount is not None)
+    assert rows == [(D(2026, 10, 1), 300_000), (D(2026, 10, 22), 250_000)]
 
 
 def test_g3m_c2_a_package_centre_prices_the_package_of_the_student_from_the_first_lesson_of_the_period(world, fixed_today):
@@ -312,3 +311,85 @@ def test_g3m_c2_a_package_centre_prices_the_package_of_the_student_from_the_firs
     price = pricing.load_books(w.db, [w.group.id], [m.id]).price(m.id, w.group.id, D(2026, 10, 7))
     assert (price.amount, price.source) == (300_000, "override")                    # before: the group price (500 000) up to the day of adding
     assert _preview_suggested(w, m) == 300_000
+
+
+# ---- G3M Р3-1: «Оплата с» of a returning student is not before the day after the earlier stay ----
+
+STUDY = [slot("mon", 1, "2026-09-01"), slot("wed", 3, "2026-09-01"), slot("fri", 5, "2026-09-01")]
+
+
+def _left_on_20_10(w, fixed_today, *, mode_package=False):
+    """The group costs 500 000; the student studied 01.09-20.10 by the group price and left; the clock now stands at 14.11."""
+    from tests.test_logicA_money_pg import leave
+
+    opening_world(w, fixed_today, today=D(2026, 10, 20), schedule=STUDY)
+    give_group_price(w.db, w.group, 500_000)
+    if mode_package:
+        settings_block(w, period_mode="lessons", lessons_per_payment=12)
+    s = fresh_student(w, "Вернувшийся")
+    add(w, s, pay_from="2026-09-01")
+    leave(w, w.group, s)
+    fixed_today(D(2026, 11, 14))
+    m, _ = stay_of(w, s)
+    return s, m
+
+
+def _past_stay_numbers(w, m):
+    led = account(w, m.id, D(2026, 11, 14))
+    return led.charged, led.debt, [(x.kind, x.period_start, x.period_end, x.amount) for x in led.segments]
+
+
+def test_g3m_r31_a_return_with_pay_from_inside_the_earlier_stay_is_refused_and_the_old_stay_is_untouched(world, fixed_today):
+    w = world
+    s, m = _left_on_20_10(w, fixed_today)
+    before = _past_stay_numbers(w, m)
+    body = {"pay_from": "2026-10-10", "price_override": {"amount": 300_000, "reason": "Скидка по договорённости"}}
+    for dry in (True, False):
+        r = add(w, s, expect=422, dry_run=dry, **body)
+        assert r["detail"]["code"] == "PAY_FROM_RANGE" and "не раньше 21.10.2026: до этого дня ученик уже учился в группе" in r["detail"]["message"]
+    from src.models.auth import MembershipPriceOverride
+    assert w.db.query(MembershipPriceOverride).filter_by(membership_id=m.id, amount=300_000).count() == 0       # nothing is written for a refusal
+    assert _past_stay_numbers(w, m) == before                                                                     # the statement of the earlier stay: not a sum changed
+
+
+def test_g3m_r31_pay_from_the_day_after_the_leave_is_allowed_the_discount_acts_from_it_the_old_stay_keeps_the_old_price(world, fixed_today):
+    from src.models.auth import MembershipPriceOverride
+
+    w = world
+    s, m = _left_on_20_10(w, fixed_today)
+    add(w, s, pay_from="2026-10-21", price_override={"amount": 300_000, "reason": "Скидка по договорённости"})
+    w.db.expire_all()
+    rows = sorted((r.valid_from, r.amount) for r in w.db.query(MembershipPriceOverride).filter_by(membership_id=m.id).all() if r.amount is not None)
+    assert rows == [(D(2026, 10, 21), 300_000)]
+    after = account(w, m.id, D(2026, 11, 14))
+    cells = {x.period_start: x.amount for x in account(w, m.id, D(2026, 11, 14)).segments if x.kind == "period"}
+    assert cells == {D(2026, 9, 1): 500_000, D(2026, 10, 1): 500_000, D(2026, 11, 1): 300_000}      # the days of the earlier stay: the old price; the discount from 21.10 prices the cell that begins after it
+
+
+def test_g3m_r31_a_return_without_pay_from_gets_the_discount_from_today(world, fixed_today):
+    from src.models.auth import MembershipPriceOverride
+
+    w = world
+    s, m = _left_on_20_10(w, fixed_today)
+    add(w, s, price_override={"amount": 300_000, "reason": "Скидка по договорённости"})
+    w.db.expire_all()
+    assert [(r.valid_from, r.amount) for r in w.db.query(MembershipPriceOverride).filter_by(membership_id=m.id).all() if r.amount is not None] == [(D(2026, 11, 14), 300_000)]
+
+
+def test_g3m_r31_a_new_student_with_a_past_pay_from_is_as_in_c2(world, fixed_today):
+    from src.models.auth import MembershipPriceOverride
+
+    w = world
+    opening_world(w, fixed_today, today=D(2026, 10, 21), schedule=STUDY)
+    give_group_price(w.db, w.group, 500_000)
+    s = fresh_student(w, "Новый")
+    add(w, s, pay_from="2026-10-07", price_override={"amount": 300_000, "reason": "Скидка по договорённости"})
+    m, _ = stay_of(w, s)
+    assert [(r.valid_from, r.amount) for r in w.db.query(MembershipPriceOverride).filter_by(membership_id=m.id).all()] == [(D(2026, 10, 7), 300_000)]
+
+
+def test_g3m_r31_a_package_centre_refuses_the_same_way(world, fixed_today):
+    w = world
+    s, m = _left_on_20_10(w, fixed_today, mode_package=True)
+    r = add(w, s, expect=422, pay_from="2026-10-10", price_override={"amount": 300_000, "reason": "Скидка по договорённости"})
+    assert r["detail"]["code"] == "PAY_FROM_RANGE"

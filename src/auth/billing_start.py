@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any, Dict, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.models.auth import Group, GroupAttendance, StudentGroupPeriod
@@ -95,6 +96,16 @@ def check_pay_from(value: date, today: date, accounting_start: date) -> date:
             "PAY_FROM_RANGE",
             f"«Оплата с» — не раньше начала учёта центра ({accounting_start.strftime('%d.%m.%Y')}) и не позже чем через {PAY_FROM_MAX_AHEAD_DAYS} дня от сегодня",
         )
+    return value
+
+
+def check_pay_from_after_stay(db: Session, membership_id: Any, value: date) -> date:
+    """Money-1 Р3-1: a student who comes BACK to the group is charged from the day after his last stay ended at the earliest - an earlier «Оплата с» (and the individual price that goes with it) would
+    re-price the closed stay behind his back (422 ``PAY_FROM_RANGE``).  One place for both: the check runs before anything is written, in the dry run and in the real adding."""
+    left = db.query(func.max(StudentGroupPeriod.left_at)).filter(StudentGroupPeriod.membership_id == membership_id).scalar()
+    if left is not None and value <= ps.business_date(left):
+        first = ps.business_date(left) + timedelta(days=1)
+        raise ops_rules.unprocessable("PAY_FROM_RANGE", f"«Оплата с» — не раньше {first.strftime('%d.%m.%Y')}: до этого дня ученик уже учился в группе")
     return value
 
 

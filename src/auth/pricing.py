@@ -528,12 +528,10 @@ def _add_audit(
     return row
 
 
-def enrolment_override_start(db: Session, membership_id: Any, pay_from: Optional[date], today: date) -> date:
+def enrolment_override_start(pay_from: Optional[date], today: date) -> date:
     """Money-1 С2: the day an individual price given WITH the enrolment begins - the day he is charged from when that is earlier than today (else the period from «Оплата с» would be charged by the
-    group price), never before the last row already written for the membership up to today (a student who comes back: his older rows - the end of the earlier stay - stay in force after it)."""
-    start = min(pay_from, today) if pay_from is not None else today
-    last = db.query(func.max(MembershipPriceOverride.valid_from)).filter(MembershipPriceOverride.membership_id == _uuid(membership_id), MembershipPriceOverride.valid_from <= today).scalar()
-    return max(start, last) if last is not None else start
+    group price).  Р3-1: a returning student's «Оплата с» is never before the day after his earlier stay (``billing_start.check_pay_from_after_stay``), so his older rows can not lie after it."""
+    return min(pay_from, today) if pay_from is not None else today
 
 
 def write_override(

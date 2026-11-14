@@ -2760,6 +2760,8 @@ class AuthService:
             from .payments_service import PaymentService
 
             billing_start.check_pay_from(pay_from, ps.business_date(now_dt), billing_start.accounting_start_of(self.db, org_id, getattr(self, "_billing_cache", None)))
+            if existing is not None:      # Money-1 Р3-1: a returning student - not before the day after the earlier stay (the closed stay is never re-priced)
+                billing_start.check_pay_from_after_stay(self.db, existing.id, pay_from)
         if closing and not money_right:
             raise ops_rules.forbidden("MONEY_RIGHT_REQUIRED", "Перевод ученика переносит его оплаченные дни и аванс: его делает владелец или администратор с доступом к деньгам")
         affected_group_ids = [group.id, *(membership.group_id for membership in closing)]
@@ -2819,7 +2821,7 @@ class AuthService:
             self.db.flush()  # a new membership gets its id here
             pricing.write_override(
                 self.db, membership.id, actor_id, amount=override_amount,
-                valid_from=pricing.enrolment_override_start(self.db, membership.id, pay_from, ps.business_date(now_dt)), reason=override_reason,
+                valid_from=pricing.enrolment_override_start(pay_from, ps.business_date(now_dt)), reason=override_reason,
             )
 
         opening_warning = None
