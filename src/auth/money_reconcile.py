@@ -287,7 +287,8 @@ def _explaining_events(db, org_id: Any, since_by_membership: Dict[UUID, datetime
                     if source in moments:
                         _latest(via_sources, target, moments[source])
 
-    money_explained = {m for m, moment in money.items() if moment > since_by_membership[m]}
+    # a transfer names BOTH its ends: the receiving membership born after the last night has no snapshot - nothing to explain there (its event still explains the source through the loop above)
+    money_explained = {m for m, moment in money.items() if m in since_by_membership and moment > since_by_membership[m]}
     coverage_explained = set(money_explained) | {m for m, moment in via_sources.items() if moment > since_by_membership[m]}
     for membership_id, since in since_by_membership.items():
         if (by_group.get(groups.get(membership_id)) or since) > since or (centre is not None and centre > since):

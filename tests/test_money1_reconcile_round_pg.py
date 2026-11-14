@@ -270,3 +270,93 @@ def test_r3_16_a_package_account_is_compared_by_lessons_paid_not_by_the_date_tha
     moved = mr.check_paid_until(org, "m", mr.coverage_of(ledger("calendar", date(2026, 11, 10), 0)), mr.coverage_of(ledger("calendar", date(2026, 12, 10), 0)), False)
     assert moved is not None                                                                                      # a calendar account that moved without a record: a finding
     assert mr.check_paid_until(org, "m", (None, 12, 450_000), (None, 12, 900_000), explained=True, paid_explained=False) is not None       # the coverage is explained, the gross money is not
+
+
+# ============================================================================================================ a membership with NO snapshot yet (a transfer after the last night): FIX_SERVER5
+def transfer_world(w):
+    """A centre with two groups; returns ``(first student, other group)``."""
+    from tests.pg_world import give_group_price, make_group
+
+    ensure_billing(w)
+    give_group_price(w.db, w.group, 300_000)
+    other = make_group(w.db, w.org, w.teacher, "Вторая")
+    give_group_price(w.db, other, 400_000)
+    return w.students[0], other
+
+
+def quiet_ledgers(result, world, label):
+    assert result["failed"] == [], label
+    assert [i for i in mine(result, world) if i["invariant"] in ("I-1", "I-2")] == [], label
+
+
+def test_fix5_a_transfer_after_the_last_night_into_a_new_membership_does_not_fail_the_centre(world):
+    from tests.money1b_helpers import transfer
+    from tests.test_pay2_api_pg import membership
+
+    s0, other = transfer_world(world)
+    pay(world, s0, amount=450_000)
+    quiet_ledgers(night(world), world, "night 0")
+    source_id = membership(world, s0).id
+    transfer(world, s0, other)
+    target = membership(world, s0, other)
+    assert world.db.query(MoneyReconcileSnapshot).filter_by(membership_id=target.id).count() == 0        # the receiving membership is born AFTER the last snapshot
+    quiet_ledgers(night(world), world, "night 1")                                                      # (a) it used to be a KeyError: the whole centre was not checked
+    assert world.db.query(MoneyReconcileSnapshot).filter_by(membership_id=target.id).count() == 1
+    assert world.db.query(MoneyReconcileSnapshot).filter_by(membership_id=source_id).count() == 1
+    quiet_ledgers(night(world), world, "night 2")
+
+
+def test_fix5_a_correction_of_the_source_after_the_transfer_is_explained_for_the_new_membership_too(world):
+    from tests.money1b_helpers import transfer
+    from tests.test_pay2_api_pg import membership
+
+    s0, other = transfer_world(world)
+    first = pay(world, s0, amount=450_000)
+    quiet_ledgers(night(world), world, "night 0")
+    transfer(world, s0, other)
+    pid = first["payment"]["id"] if "payment" in first else first["id"]
+    owner_client = owner(world)
+    replaced = owner_client.post(f"{API}/org/payments/{pid}/replace", json={"amount": 500_000, "paid_on": business_today().isoformat(), "method": "cash", "reason": "Неверная сумма"})
+    assert replaced.status_code == 201, replaced.text
+    quiet_ledgers(night(world), world, "(b) the correction before the first snapshot of the target")
+    body = replaced.json()
+    pid2 = body["payment"]["id"] if "payment" in body else body["id"]
+    voided = owner_client.post(f"{API}/org/payments/{pid2}/void", json={"reason": "Внесли дважды"})
+    assert voided.status_code == 200, voided.text
+    quiet_ledgers(night(world), world, "(b) a correction of the source when the target has its snapshot")
+    assert world.db.query(MoneyReconcileSnapshot).filter_by(membership_id=membership(world, s0, other).id).count() == 1
+
+
+def test_fix5_a_new_membership_without_a_transfer_and_with_a_payment_passes(world):
+    from tests.money1b_helpers import add, fresh_student
+
+    transfer_world(world)
+    quiet_ledgers(night(world), world, "night 0")
+    fresh = fresh_student(world)
+    add(world, fresh)
+    pay(world, fresh, amount=300_000)
+    quiet_ledgers(night(world), world, "(c)")
+    assert world.db.query(MoneyReconcileSnapshot).filter_by(org_id=world.org.id).count() == 4
+
+
+def test_fix5_a_silent_change_is_still_found_on_a_membership_with_a_snapshot_also_after_a_transfer_out_of_it(world):
+    from tests.money1b_helpers import transfer
+    from tests.test_pay2_api_pg import membership
+
+    s0, other = transfer_world(world)
+    s1 = world.students[1]
+    pay(world, s0, amount=450_000)
+    pay(world, s1, amount=450_000)
+    quiet_ledgers(night(world), world, "night 0")
+    transfer(world, s0, other)                                                                          # the source of a transfer into a NEW membership
+    paid = world.db.query(StudentPayment).filter_by(org_id=world.org.id, membership_id=membership(world, s1).id).one()
+    world.db.query(StudentPayment).filter_by(id=paid.id).update({"amount": 900_000})                    # (d) a payment of a membership with no record, no transfer
+    world.db.commit()
+    (hit,) = mine(night(world), world, "I-2")
+    assert hit["key"] == f"membership:{membership(world, s1).id}"
+    # the source of the transfer: after the night that took its new snapshot a silent change of ITS payment is found too
+    night(world)
+    silent = world.db.query(StudentPayment).filter_by(org_id=world.org.id, membership_id=membership(world, s0).id).one()
+    world.db.query(StudentPayment).filter_by(id=silent.id).update({"amount": 777_000})
+    world.db.commit()
+    assert f"membership:{membership(world, s0).id}" in {i["key"] for i in mine(night(world), world, "I-2")}
