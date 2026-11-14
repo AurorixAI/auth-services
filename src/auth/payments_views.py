@@ -118,6 +118,14 @@ def waiting_until(e):
     return last
 
 
+def price_missing(e) -> bool:
+    """С11: the student has NO price - neither a current one nor a planned one (a group row or an individual row that begins later).
+    A planned price is a price the owner has set (``Цена с 25.11``): the warning «не задана цена» must not tell him otherwise.  Charges and debts are not touched."""
+    if e.price.amount is not None:
+        return False
+    return e.inp.first_priced_day(e.inp.today) is None
+
+
 def entry_bucket(e) -> Optional[str]:
     """The tab of a membership (owner's rule of 21.10): ``debt`` (Должники) - debt > 0, any reason, a student who left included;
     ``paused`` (На паузе) - today is inside a pause and no debt; ``expiring`` (Скоро платить) - no debt and the next period is due within

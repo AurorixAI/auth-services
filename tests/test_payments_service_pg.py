@@ -606,3 +606,33 @@ def test_settings_defaults_patch_semantics_and_audit_stamp(world):
                 {"billing_anchor": "monthly"}, {"billing_day": 0}, {"billing_day": 29}):
         assert client.put(f"{API}/org/settings/payments", json=bad).status_code == 422, bad
 
+
+
+# ---- С11: «цена не задана» не считает тех, у кого цена уже ЗАПЛАНИРОВАНА -------------------------------------------
+
+
+def _joined_today(w):
+    """A package centre, the students joined today and no lesson held: nothing is charged yet, so no debt hides them from the counter."""
+    set_settings(w, period_mode="lessons", lessons_per_payment=8)
+    w.db.query(StudentGroup).filter_by(group_id=w.group.id).update({"joined_at": datetime.combine(business_today(), datetime.min.time()).replace(hour=12)})
+    w.db.commit()
+
+
+def test_c11_price_missing_group_without_any_price_counts_its_students(world):
+    _joined_today(world)
+    assert summary(world)["price_missing"] == 3
+
+
+def test_c11_price_missing_scheduled_group_price_is_not_missing(world):
+    from tests.pg_world import give_group_price
+
+    _joined_today(world)
+    give_group_price(world.db, world.group, 400000, valid_from=day(10))
+    assert summary(world)["price_missing"] == 0
+
+
+def test_c11_price_missing_scheduled_individual_price_is_not_missing(world):
+    _joined_today(world)
+    m = world.db.query(StudentGroup).filter_by(student_id=world.students[0].id, group_id=world.group.id).one()
+    give_price(world.db, m, 350000, valid_from=day(10))
+    assert summary(world)["price_missing"] == 2          # the other two have neither a current nor a planned price

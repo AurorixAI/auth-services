@@ -357,6 +357,13 @@ class PriceBooks:
             return Price(group_row[1], SOURCE_GROUP, group_row[0], group_amount, scheduled=scheduled)
         return NO_PRICE if scheduled is None else Price(None, SOURCE_NONE, scheduled=scheduled)
 
+    def has_planned_price(self, membership_id: Any, group_id: Any, day: date) -> bool:
+        """G3M С11: a price is PLANNED for the membership - a row of its group or an individual price (with an amount) that begins after ``day``."""
+        if self.group_book(group_id).starts_after(day):
+            return True
+        scheduled = self.override_book(membership_id).next_after(day)
+        return scheduled is not None and scheduled.amount is not None
+
     def first_priced_day(self, membership_id: Any, group_id: Any, after: date) -> Optional[date]:
         """Money-1 Д-2: the first day on or after ``after`` on which the membership has a price (the rows of the group and of the membership are the only days a price can appear on); ``None``: never."""
         days = sorted({after, *self.group_book(group_id).starts_after(after), *self.override_book(membership_id).starts_after(after)})

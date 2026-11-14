@@ -1058,7 +1058,8 @@ class PaymentService:
                     students_debtors.add(e.student.id)
                     debtors_memberships += 1
                     debt_debtors_total += l.debt
-            if e.membership.id in tracked and e.price.amount is None and l.status.status != ps.FREE and bucket != pv.BUCKET_DEBT:
+            if (e.membership.id in tracked and e.price.amount is None and l.status.status != ps.FREE and bucket != pv.BUCKET_DEBT
+                    and not loader.books.has_planned_price(e.membership.id, e.group.id, ps.business_today())):          # G3M С11: a price planned for later is a price
                 price_missing += 1
             if e.membership.id not in tracked:
                 continue
