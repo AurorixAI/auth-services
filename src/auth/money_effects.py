@@ -228,6 +228,19 @@ def with_sentence(effects: Dict[str, Any], sentence: str) -> Dict[str, Any]:
     return {**effects, "text": "; ".join(x for x in (effects.get("text"), sentence) if x)}
 
 
+def decision_texts(effects: Dict[str, Any], owner: bool) -> Dict[str, str]:
+    """G3M С9: the payroll sentence of a money decision for the journal of decisions - the SAME sentence as the answer of the action (``text_of`` of the lines of the block).  The journal is read
+    by the owner AND by an administrator with the right to money, the sums only by the owner: ``payroll_text_public`` has no sums (the lines cut to month and state), ``payroll_text`` (the answer
+    as the owner read it) is kept only when the owner made the decision.  Nothing moved: no key."""
+    lines = effects.get("payroll") or []
+    if not lines:
+        return {}
+    texts = {"payroll_text_public": text_of([], [{"month": l["month"], "state": l["state"]} for l in lines], done=True)}
+    if owner:
+        texts["payroll_text"] = text_of([], lines, done=True)
+    return texts
+
+
 def text_of(students: List[Dict[str, Any]], payroll: List[Dict[str, Any]], *, done: bool, closed_blocks: bool = False, action_month: Optional[str] = None) -> str:
     """The sentence under the confirmation (``done=False``) or in the toast after (``done=True``); empty when the action moves no money.  ``closed_blocks``: a lesson action is refused
     in a closed month (the sentence says to reopen it first); a payment is not (ДП-07).  ``action_month`` (``YYYY-MM``, G3M С4): the month of the lesson the action is about - a line of ANOTHER month says why

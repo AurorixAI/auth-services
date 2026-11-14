@@ -56,7 +56,7 @@ from .payments_schemas import (
     PriceOverrideUpdate,
     ReceiptOut,
 )
-from .payments_service import PaymentError, PaymentService
+from .payments_service import AUDIT_PAYMENT_REPLACE, AUDIT_PAYMENT_VOID, PaymentError, PaymentService
 
 from . import money_effects  # noqa: E402
 from . import payments_texts as tx  # noqa: E402
@@ -411,6 +411,8 @@ def replace_payment(
             db, user["org_id"], _memberships_of_payment_student(db, user["org_id"], payment_id), user.get("org_role") == "owner",
             lambda: PaymentService(db).replace_payment(user["org_id"], payment_id, user["user_id"], request, request.reason, idempotency_key, actor_role=user["org_role"]), dry_run=dry_run)
         out.money_effects, out.dry_run = money_effects.with_sentence(effects, tx.new_debts_text(out.new_debts, done=not dry_run, advance_drops=out.advance_drops)), dry_run
+        if not dry_run:
+            PaymentService(db).record_consequence(user["org_id"], AUDIT_PAYMENT_REPLACE, payment_id, money_effects.decision_texts(effects, user.get("org_role") == "owner"))
         return out
     except PaymentError as exc:
         raise _http(exc)
@@ -430,6 +432,8 @@ def void_payment(
             db, user["org_id"], _memberships_of_payment_student(db, user["org_id"], payment_id), user.get("org_role") == "owner",
             lambda: PaymentService(db).void_payment(user["org_id"], payment_id, user["user_id"], request.reason, actor_role=user["org_role"]), dry_run=dry_run)
         out.money_effects, out.dry_run = money_effects.with_sentence(effects, tx.new_debts_text(out.new_debts, done=not dry_run, advance_drops=out.advance_drops)), dry_run
+        if not dry_run:
+            PaymentService(db).record_consequence(user["org_id"], AUDIT_PAYMENT_VOID, payment_id, money_effects.decision_texts(effects, user.get("org_role") == "owner"))
         return out
     except PaymentError as exc:
         raise _http(exc)

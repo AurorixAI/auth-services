@@ -1075,3 +1075,57 @@ def test_r15_a_decision_on_an_excuse_and_a_new_teacher_of_the_lesson_do_not_make
     assert shown_version(world, day, lid) == screen                           # the marks did not move: neither did their version
     kept = post_save(world, world.owner, day, lid, ["excused", "absent", "present"], correctionReason="Опечатка", expectedVersion=screen)
     assert kept.status_code == 200, kept.text                                 # ... so the save of the screen goes through (no false «Отметки изменились»)
+
+
+# ---- С9: the journal of decisions keeps the payroll sentence of the answer of a cancellation / correction (round 3, defect Д1) ----------------------------
+
+def _c9_payroll_world(two, monkeypatch):
+    from tests.money1_helpers import sheet as saved_sheet, tashkent
+    from tests.test_payroll_pg import lesson as held, set_rate
+
+    p, _carried = _transferred_world(two, monkeypatch)                                  # 3 000 000 in A, moved to B: the money went with him
+    set_rate(two, two.teacher2, "group", "50")
+    lesson_day = day(-1)
+    set_schedule(two, [slot(f"s{lesson_day.isoweekday()}", lesson_day.isoweekday(), "2026-01-01")], two.second)
+    held(two, lesson_day, {two.student: "present"}, group=two.second, teacher=two.teacher2)
+    saved_sheet(two, two.teacher2, lesson_day.replace(day=1), tashkent(lesson_day.year, lesson_day.month, lesson_day.day), total=100_000)
+    return p
+
+
+def _c9_row(client, kind):
+    rows = [r for r in client.get(f"{PAY_URL}/decisions", params={"from": day(-1).isoformat(), "to": day(1).isoformat()}).json()["rows"] if r["kind"] == kind]
+    assert len(rows) == 1
+    return rows[0]
+
+
+@pytest.mark.parametrize("kind", ["payment_void", "payment_replace"])
+def test_c9_the_journal_says_the_same_payroll_sentence_as_the_answer(two, monkeypatch, kind):
+    p = _c9_payroll_world(two, monkeypatch)
+    url, body = (f"{PAY_URL}/{p['id']}/void", {"reason": "ошибка"}) if kind == "payment_void" else (
+        f"{PAY_URL}/{p['id']}/replace", {"amount": 100_000, "paid_on": p["paid_on"], "method": "cash", "reason": "Опечатка"})
+    real = owner(two).post(url, json=body)
+    assert real.status_code in (200, 201), real.text
+    text = real.json()["money_effects"]["text"]
+    assert "арплата за" in text and real.json()["money_effects"]["payroll"]
+    assert _c9_row(owner(two), kind)["consequence"] == text                             # before: the debts sentence only, or empty
+
+
+def test_c9_an_administrator_with_the_right_reads_the_sentence_without_the_sums_the_owner_reads_with_them(two, monkeypatch):
+    from tests.pg_world import make_client
+
+    p = _c9_payroll_world(two, monkeypatch)
+    grant_money_right(two)
+    real = owner(two).post(f"{PAY_URL}/{p['id']}/void", json={"reason": "ошибка"})
+    assert real.status_code == 200, real.text
+    changed = abs(real.json()["money_effects"]["payroll"][0]["changedBy"])
+    shown = f"{changed:,}".replace(",", NBSP)
+    admin_row = _c9_row(make_client(two, user=two.admin), "payment_void")
+    assert "арплата за" in admin_row["consequence"] and shown not in admin_row["consequence"]
+    assert shown in _c9_row(owner(two), "payment_void")["consequence"]
+
+
+def test_c9_a_payment_that_moves_no_payroll_keeps_its_old_consequence(two):
+    billing(two)
+    p = pay(two, paid_on=day(-3), amount=500_000)["payment"]
+    assert owner(two).post(f"{PAY_URL}/{p['id']}/void", json={"reason": "ошибка"}).status_code == 200
+    assert _c9_row(owner(two), "payment_void")["consequence"] is None

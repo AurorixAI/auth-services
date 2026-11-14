@@ -79,6 +79,14 @@ def period_text(start: date, end: date) -> str:
     return ddmm(start) if start == end else f"{ddmm(start)}–{ddmm(end)}"
 
 
+def decision_consequence(snapshot: Dict[str, Any], *, owner: bool) -> Optional[str]:
+    """G3M С9: the line «Последствие» of the journal of decisions - the sentence the answer of the action gave (payroll, then the debts of the other groups, as ``with_sentence`` joins them);
+    the payroll sentence with sums only for the owner (``money_effects.decision_texts``)."""
+    payroll = (snapshot.get("payroll_text") if owner else None) or snapshot.get("payroll_text_public")
+    debts = new_debts_text(snapshot.get("new_debts") or [], done=True, advance_drops=snapshot.get("advance_drops") or [])
+    return "; ".join(x for x in (payroll, debts) if x) or None
+
+
 def new_debts_text(debts: Sequence[Dict[str, Any]], *, done: bool, advance_drops: Sequence[Dict[str, Any]] = ()) -> str:
     """Money-1 Г-4 / Р-2: the debt that the correction of a payment of the OLD group leaves in the group the student was moved to (the money went with him).  ``amount`` is the growth,
     ``total`` the debt after it: «В группе «B» появится долг 900 000 сум» when the group did not owe, «долг вырастет на 900 000 сум — до 1 100 000 сум» when it did.

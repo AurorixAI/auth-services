@@ -93,7 +93,7 @@ def payments_decisions(
 ):
     """«Денежные решения» на «Поступлениях» (Money-1 V2): кто отменил / исправил оплату, простил долг, вернул аванс — и отменил это; автор, причина, «долг до → после»."""
     try:
-        return IncomeReports(db).decisions(user["org_id"], from_, to, kind=kind, actor=actor, page=page, size=size)
+        return IncomeReports(db).decisions(user["org_id"], from_, to, kind=kind, actor=actor, page=page, size=size, owner=user.get("org_role") == "owner")
     except PaymentError as exc:
         raise _http(exc)
 

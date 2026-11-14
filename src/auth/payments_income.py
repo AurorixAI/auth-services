@@ -842,7 +842,8 @@ class IncomeReports:
 
     # ------------------------------------------------------------------ the money decisions (Money-1 V2)
 
-    def decisions(self, org_id: str, first: date, last: date, *, kind: Optional[str] = None, actor: Optional[UUID] = None, page: int = 1, size: int = 25) -> DecisionsPage:
+    def decisions(self, org_id: str, first: date, last: date, *, kind: Optional[str] = None, actor: Optional[UUID] = None, page: int = 1, size: int = 25,
+                  owner: bool = False) -> DecisionsPage:
         """«Денежные решения»: who cancelled / corrected a payment, forgave a debt, returned an advance - and cancelled that - in the period (business days), newest first.
         Read from ``group_audit`` (one line per decision, written in the transaction of the decision): the author, the reason, the debt before -> after."""
         from src.models.auth import GroupAudit
@@ -875,7 +876,7 @@ class IncomeReports:
                 student_name=person_name(student.last_name, student.first_name) or "" if student else "", group_name=groups[a.group_id].name if a.group_id in groups else None,
                 amount=int(snap.get("amount") or 0), new_amount=snap.get("new_amount"), receipt_no=snap.get("receipt_no"), reason=snap.get("reason"),
                 actor_name=_staff(users.get(a.actor_id)), debt_before=snap.get("debt_before"), debt_after=snap.get("debt_after"),
-                consequence=tx.new_debts_text(snap.get("new_debts") or [], done=True, advance_drops=snap.get("advance_drops") or []) or None))
+                consequence=tx.decision_consequence(snap, owner=owner)))
         return DecisionsPage(as_of=ps.business_today(), **{"from": first}, to=last, page=page, size=size, total=total, pages=(total + size - 1) // size,
                              since=_business_moment(earliest).date() if earliest else None, rows=rows)
 

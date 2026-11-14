@@ -1636,6 +1636,21 @@ class PaymentService:
             row=self._rows([entry])[0], new_debts=moved.new_debts, advance_drops=moved.advance_drops,
         )
 
+    def record_consequence(self, org_id: str, action: str, payment_id: UUID, texts: Dict[str, str]) -> None:
+        """G3M С9: the payroll sentence of the answer goes into the line of the journal of decisions the action just wrote (the numbers are worked out around the action, not inside it).
+        A failure here never undoes the money decision: logged, the line stays without the sentence."""
+        if not texts:
+            return
+        try:
+            audit = (self.db.query(GroupAudit).filter(GroupAudit.org_id == UUID(str(org_id)), GroupAudit.action == action, GroupAudit.snapshot["payment_id"].astext == str(payment_id))
+                     .order_by(GroupAudit.created_at.desc()).first())
+            if audit is not None:
+                audit.snapshot = {**audit.snapshot, **texts}
+                self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception("consequence of the decision %s of payment %s could not be written", action, payment_id)
+
     def _accounts(self, org_id: str, family: Sequence[UUID]) -> Dict[UUID, Any]:
         """``{membership id: the entry with its ledger}`` of every group of the student (THE read of the accounts of a family)."""
         return {e.membership.id: e for e in self._loader(org_id, ps.business_today()).run(list(family))}
