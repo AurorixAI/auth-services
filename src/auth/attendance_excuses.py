@@ -152,6 +152,8 @@ class ExcuseNotExcused(ExcuseConflict):
     code = "NOT_EXCUSED"
 
 
+BULK_SKIP_CODES = {ExcuseNotFound: "EXCUSE_NOT_FOUND", ExcuseConflict: "ALREADY_DECIDED"}      # G3M С5: the plain exceptions carry no code (the single decision answers with the message only)
+
 CHANGED_MESSAGE = "Решение по этому пропуску уже изменил другой администратор. Список обновлён — проверьте и повторите."
 
 
@@ -1267,7 +1269,7 @@ class AttendanceExcuseService:
                 updated += 1
             except ExcuseError as exc:
                 self.db.rollback()
-                skipped.append(BulkSkipped(id=str(excuse_id), reason=exc.message))
+                skipped.append(BulkSkipped(id=str(excuse_id), reason=exc.message, code=exc.code or BULK_SKIP_CODES.get(type(exc))))      # G3M С5: the code of the exception as the single decision gives it; the two reasons only a bulk has get their own
             except OpsError as exc:          # Money-1 A1: the month of the lesson is closed - reported per item like every other refusal of a bulk decision
                 self.db.rollback()
                 skipped.append(BulkSkipped(id=str(excuse_id), reason=exc.message, code=exc.code))

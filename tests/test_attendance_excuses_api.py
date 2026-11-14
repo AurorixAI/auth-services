@@ -266,6 +266,20 @@ def test_review_conflicts_when_student_is_no_longer_excused(world, lesson):
     assert excuse_of(world).status == "pending"
 
 
+def test_g3m_c5_every_skipped_item_of_a_bulk_review_carries_a_code(world):
+    for offset in (1, 2):
+        excused_lesson(world, offset_days=offset)
+    world.db.expire_all()
+    ids = [e.id for e in world.db.query(AttendanceExcuse).filter_by(org_id=world.org.id).all()]
+    client = make_client(world)
+    client.post(f"{BASE}/{ids[0]}/review", json={"decision": "rejected"})
+    foreign = uuid4()
+    body = client.post(f"{BASE}/review-bulk", json={"ids": [str(ids[0]), str(foreign)], "decision": "confirmed"}).json()
+    assert {s["id"]: s["code"] for s in body["skipped"]} == {str(ids[0]): "ALREADY_DECIDED", str(foreign): "EXCUSE_NOT_FOUND"}       # before: both null
+    stale = client.post(f"{BASE}/review-bulk", json={"ids": [str(ids[1])], "decision": "confirmed", "expected_status": "confirmed"}).json()
+    assert [s["code"] for s in stale["skipped"]] == ["EXCUSE_CHANGED"]                                                              # the one that already had a code keeps it
+
+
 def test_bulk_review_updates_and_reports_skipped(world):
     ids = []
     for offset in (1, 2, 3):
