@@ -52,6 +52,11 @@ PAYOUT: List[Tuple[int, str, str]] = [
     (422, "REASON_REQUIRED", "Причина: от 3 до 500 символов"),
 ]
 
+def _by_code(table: List[Tuple[int, str, str]], code: str) -> Tuple[int, str, str]:
+    """The row of an error table by its code (not by position: a row removed from the table must not shift the others)."""
+    return next(row for row in table if row[1] == code)
+
+
 ERRORS_BY_OPERATION: Dict[Tuple[str, str], List[Tuple[int, str, str]]] = {
     ("get", "/org/memberships/{membership_id}/payments/preview"): PAY_LEFT[:0],
     ("post", "/org/memberships/{membership_id}/payments"): PAY_LEFT,
@@ -72,5 +77,5 @@ ERRORS_BY_OPERATION: Dict[Tuple[str, str], List[Tuple[int, str, str]]] = {
     ("post", "/org/payroll/sheets"): PAYROLL[:2],
     ("patch", "/org/payroll/sheets/{sheet_id}"): PAYROLL[:2],
     ("post", "/org/payroll/sheets/{sheet_id}/payouts"): PAYOUT,
-    ("post", "/org/payroll/payouts/{payout_id}/void"): [PAYOUT[1], PAYOUT[5]],
+    ("post", "/org/payroll/payouts/{payout_id}/void"): [_by_code(PAYOUT, "ALREADY_VOIDED"), _by_code(PAYOUT, "REASON_REQUIRED")],
 }

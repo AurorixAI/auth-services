@@ -15,7 +15,6 @@ from src.core.database import get_db
 from .attendance_access import is_org_manager
 from .dependencies import require_org_member, require_payments_access
 from .ops_router import _manager
-from .ops_rules import not_found
 
 router = APIRouter(tags=["#154 one-off purpose"])
 
@@ -118,8 +117,6 @@ def makeup_candidates(group_id: str, user: dict = Depends(require_org_member), d
         raise HTTPException(403, "Нет доступа к этой группе")
     try:
         group = _svc(db)._require_group_access(user["org_id"], group_id, actor_id=user["user_id"], is_org_admin=manager)
-    except ValueError as exc:
-        raise not_found("GROUP_NOT_FOUND", str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
     return _purposes(db).candidates(group, manager=manager, actor=user["user_id"])

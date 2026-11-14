@@ -404,3 +404,10 @@ def test_c18_the_money_of_a_lesson_is_not_shown_to_a_teacher_of_another_group_no
     assert [l["money"] for l in journal["lessons"] if l.get("id") == paid] == ["paid"]
     mine = client(w, "A").get(f"{API}/org/groups/{w.G1.id}/attendance", params=params).json()
     assert [l["moneyLabel"] for l in mine["lessons"] if l.get("id") == paid] == ["включён в зарплату"]
+
+
+def test_r35_the_candidates_of_an_unknown_group_are_a_404_with_the_code(w):
+    from uuid import uuid4
+
+    r = client(w, "admin").get(f"{API}/org/groups/{uuid4()}/makeup-candidates")        # the 404 comes from ops_rules.not_found (OpsError) in _require_group_access: no ValueError is raised there
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "GROUP_NOT_FOUND"

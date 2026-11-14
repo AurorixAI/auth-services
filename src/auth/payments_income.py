@@ -843,7 +843,7 @@ class IncomeReports:
     # ------------------------------------------------------------------ the money decisions (Money-1 V2)
 
     def decisions(self, org_id: str, first: date, last: date, *, kind: Optional[str] = None, actor: Optional[UUID] = None, page: int = 1, size: int = 25,
-                  owner: bool = False) -> DecisionsPage:
+                  owner: bool) -> DecisionsPage:
         """«Денежные решения»: who cancelled / corrected a payment, forgave a debt, returned an advance - and cancelled that - in the period (business days), newest first.
         Read from ``group_audit`` (one line per decision, written in the transaction of the decision): the author, the reason, the debt before -> after."""
         from src.models.auth import GroupAudit
