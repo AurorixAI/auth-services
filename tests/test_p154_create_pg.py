@@ -201,7 +201,7 @@ def test_c15_a_lesson_older_than_sixty_days_is_refused_and_a_foreign_group_is_no
     assert makeup(w, "B", w.G1, "2026-10-29", start="12:00", end="13:00", expect=403)
     assert makeup(w, "B", w.G3, "2026-10-29", start="12:00", end="13:00", expect=422).json()["detail"]["reasonCode"] == "NOT_FOUND"          # G3 has no such lesson
     assert client(w, "foreign_admin", org="other").post(f"{API}/org/schedule/occurrences", json={"groupId": str(w.G1.id), "lessonDate": "2026-10-29", "startTime": "12:00", "endTime": "13:00",
-                                                                                                "purpose": "makeup", "madeUpLessonId": ORIGIN, "madeUpDate": ORIGIN_DAY}).status_code == 400
+                                                                                                "purpose": "makeup", "madeUpLessonId": ORIGIN, "madeUpDate": ORIGIN_DAY}).status_code == 404
 
 
 def test_the_slot_of_a_make_up_follows_the_rules_of_a_move(w):

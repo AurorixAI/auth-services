@@ -72,7 +72,7 @@ def test_mn32_the_balance_is_counted_after_the_earlier_payouts_and_a_voided_one_
 
 
 @pytest.mark.usefixtures("fixed_today")
-def test_mn32_a_replayed_key_is_a_duplicate_not_a_question_and_an_unsaved_sheet_stays_409_not_saved(world):
+def test_mn32_a_replayed_key_is_a_duplicate_not_a_question_and_an_unknown_sheet_is_404(world):
     m, s1, s2 = g_pay_world(world)
     sheet = save_sheet(world, m)
     key = str(uuid.uuid4())
@@ -83,7 +83,7 @@ def test_mn32_a_replayed_key_is_a_duplicate_not_a_question_and_an_unsaved_sheet_
     again = c.post(f"{API}/org/payroll/sheets/{sheet['id']}/payouts", json={**base, "confirm_overpay": False}, headers={"Idempotency-Key": key})
     assert again.status_code == 409 and again.json()["detail"]["code"] == "DUPLICATE_PAYOUT"      # the retry of the sent request, not a new question
     missing = c.post(f"{API}/org/payroll/sheets/{uuid.uuid4()}/payouts", json={**base, "confirm_overpay": False})
-    assert missing.status_code == 409 and missing.json()["detail"]["code"] == "SHEET_NOT_SAVED"
+    assert missing.status_code == 404                                    # G3M С10
 
 
 @pytest.mark.usefixtures("fixed_today")
@@ -135,12 +135,12 @@ def test_mn42_mn51_an_amount_that_is_not_an_integer_is_422_on_every_money_endpoi
 
 
 def test_mn42_an_integer_still_reaches_the_service(world):
-    """The control of the test above: a real integer is NOT a type error (the unknown membership is a 404, the unknown sheet a 409)."""
+    """The control of the test above: a real integer is NOT a type error (the unknown membership and the unknown sheet are a 404)."""
     c = owner(world)
     r = c.post(f"{API}/org/memberships/{UUID0}/payments", json={"amount": 100, "paid_on": "2026-10-01", "method": "cash"})
     assert r.status_code in (404, 409) and not _is_type_error(r), r.text[:200]
     r = c.post(f"{API}/org/payroll/sheets/{UUID0}/payouts", json={"amount": 100, "paid_on": "2026-10-01", "method": "cash"})
-    assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_NOT_SAVED"
+    assert r.status_code == 404
 
 
 # ---- R3 2: every other money input is strict too (prices, openings, settlements, the individual price of an enrolment) ----------------------------------------------

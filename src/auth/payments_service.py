@@ -1261,10 +1261,12 @@ class PaymentService:
         if amount > debt:
             raise PaymentExceedsDebt(f"Ученик ушёл: принять можно не больше долга {_sum(debt)}", debt=debt)
 
-    def _correction_ceiling(self, org_id: Any, debt_without: int, old: StudentPayment) -> int:
+    def _correction_ceiling(self, org_id: Any, debt_without: int, old: Optional[StudentPayment]) -> int:
         """Money-1 С1/С8 (the ONE ceiling of the correction of a payment of a student who left, the preview and the write): a correction accepts no new money, so the new sum may be as big as
         the debt without this payment or the biggest sum any version of this payment held (the one being corrected and all its predecessors in the chain), whichever is bigger (a transferred
         student has no debt of his own left - the money went to the new group; a mistaken 600 -> 200 can be put back)."""
+        if old is None:                       # a plain payment of a student who left (no correction): only his debt
+            return debt_without
         before = earlier_versions(self.db, org_id, [old.replaces_payment_id])
         return max([debt_without, int(old.amount)] + [int(v.amount) for v in before.values()])
 

@@ -303,7 +303,7 @@ def test_payout_matrix_errors_idempotency_rights_and_listing(world):
     m, s1, s2 = g_pay_world(world)
     c = owner(world)
     r = c.post(f"{API}/org/payroll/sheets/{__import__('uuid').uuid4()}/payouts", json={"amount": 1, "method": "cash"})
-    assert r.status_code == 409 and r.json()["detail"]["code"] == "SHEET_NOT_SAVED"
+    assert r.status_code == 404                                              # G3M С10: no such sheet in this centre
     sheet = save_sheet(world, m)
     base = {"paid_on": _today().isoformat(), "method": "cash"}
     for body, code in (({**base, "amount": 0}, "AMOUNT_RANGE"), ({**base, "amount": 10**10 + 1}, "AMOUNT_RANGE"),
