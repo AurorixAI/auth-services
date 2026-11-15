@@ -13,6 +13,8 @@ R3 round: the checks verify the CALCULATION, not only its shape, and a check tha
   cancelled / replaced, a transfer, an opening balance, a stay); the COVERAGE - "paid until" of a calendar account, the number of lessons covered of a package account (a package account is not
   compared by date: that date moves with every held lesson) - also with the price of the group, its schedule, a day off, an excuse, a lesson cancelled / returned / held, a pause, a change of
   the settings of the centre.  The first night only takes the snapshot;
+  Money-2: the gross sum of the payments moves ONLY by the payments added minus the payments cancelled since the baseline of the rows (by id) - not by «some event happened that night»;
+* I-5 the immutable money rows (payments, refunds, write-offs, openings, transfers, payouts, rates) are compared row by row with the baseline of the last night (``money_reconcile_rows.py``);
 * I-3 a SAVED payroll sheet: its total is the sum of its lines (every saved sheet); and for a CLOSED month (the sheet saved after the month ended) - no line pays without a counted mark, no mark
   pays a lesson that was not held, and the fresh total of the month, recalculated by the payroll itself, equals the saved one (a drift is a teacher who is paid less or more than the data says);
 * I-4 a CLOSED month of a teacher has no unresolved lesson (going on or never started, from the accounting start of the centre) that the owner did NOT confirm: nobody can resolve it without reopening
@@ -44,6 +46,7 @@ from src.models.auth import (
 )
 
 from . import business_clock as bc
+from . import money_reconcile_rows as mrows
 from . import payroll_engine as engine
 from .closed_period import ClosedPeriods, month_first, open_lesson_key
 
@@ -54,7 +57,17 @@ INVARIANT_TEXT = {
     "I-2": "«Оплачено до» изменилось без записи в журнале",
     "I-3": "сохранённая зарплата за месяц не сходится с уроками",
     "I-4": "в закрытом месяце остался урок без отметки",
+    "I-5": "запись денег изменена, удалена или отменена мимо журнала",
 }
+ROW_CODE_TEXT = {
+    "changed": "запись изменена на месте", "deleted": "запись удалена", "reopened": "недопустимый переход записи (отмена снята или изменена)",
+    "no_journal": "запись отменена без строки в журнале", "foreign": "запись не своего участия", "untraced": "новая оплата без снимка квитанции",
+}
+GAP_PAYROLL_ERROR = "payroll_error"              # a month / a sheet the payroll could not recalculate (an exception)
+GAP_PAYROLL_NO_FRESH = "payroll_no_fresh"        # a sheet the payroll cannot price (a rate is missing): nothing to compare
+GAP_NO_SNAPSHOT = "membership_no_snapshot"       # a membership with no snapshot yet: I-2 has nothing to compare on its first night
+GAP_CENTRE_INACTIVE = "centre_not_active"        # a centre that is not active is not checked at all
+PAYROLL_GAPS = (GAP_PAYROLL_ERROR, GAP_PAYROLL_NO_FRESH)            # a run with one of these is not «clean»
 LOADER_CHUNK = 150
 LOCK_KEY = 7_204_001                       # the advisory lock of the nightly run
 DRIFT_MONTHS = 3                           # I-3: the closed months looked at for a drift (the last ones; an old month changes for lawful reasons nobody can name any more)
@@ -196,6 +209,17 @@ def check_unresolved(org_id: UUID, teacher_id: Any, month: str, unresolved: Sequ
 
 
 # ====================================================================================================== the loader
+def _gap(gaps: Optional[Dict[str, int]], reason: str, count: int = 1) -> None:
+    """Count what the night could NOT check, by reason (a quiet «nothing found» must not hide it, LESSONS 133)."""
+    if gaps is not None:
+        gaps[reason] = gaps.get(reason, 0) + count
+
+
+def _row_findings(org_id: UUID, verdict: "mrows.RowVerdict") -> List[Found]:
+    """I-5 findings of the comparison of the rows as ``Found`` (key = kind + id + code: the same row says the same key every night)."""
+    return [Found(org_id, "I-5", f.key, str(f.row_id), None, f.was, f.now, {"kind": f.kind, "code": f.code, "what": ROW_CODE_TEXT[f.code]}) for f in verdict.findings]
+
+
 def _latest(into: Dict[Any, datetime], key: Any, moment: Optional[datetime]) -> None:
     if moment is not None and (key not in into or moment > into[key]):
         into[key] = moment
@@ -311,18 +335,26 @@ def _row_sums(db, org_id: UUID, ids: List[UUID]) -> Dict[UUID, RowSums]:
     return out
 
 
-def reconcile_org(db, org_id: Any, today: Optional[date] = None, *, snapshots: Optional[List[Tuple[Any, Optional[date], Optional[int], Optional[int]]]] = None) -> List[Found]:
-    """All four checks over one centre.  ``snapshots`` (when given) is filled with the new ``(membership_id, covered_through, lessons_covered, paid)`` for ``run`` to store."""
+def reconcile_org(db, org_id: Any, today: Optional[date] = None, *, snapshots: Optional[List[Tuple[Any, Optional[date], Optional[int], Optional[int]]]] = None,
+                  plan: Optional[List[Tuple[UUID, "mrows.RowVerdict"]]] = None, gaps: Optional[Dict[str, int]] = None) -> List[Found]:
+    """All five checks over one centre.  ``snapshots`` (when given) is filled with the new ``(membership_id, covered_through, lessons_covered, paid)`` for ``run`` to store; ``plan`` with the
+    comparison of the money rows (what ``run`` writes to the baseline); ``gaps`` with what the night could not check, by reason."""
     from .payments_service import PaymentService
 
     today = today or bc.business_today()
     org_uuid = org_id if isinstance(org_id, UUID) else UUID(str(org_id))
     found: List[Found] = []
 
+    # ---- I-5 FIRST: the rows are read before anything else (and before the journal) in the one REPEATABLE READ transaction of the centre
+    verdict = mrows.evaluate(db, org_uuid)
+    found.extend(_row_findings(org_uuid, verdict))
+    if plan is not None:
+        plan.append((org_uuid, verdict))
+
     # ---- I-1 and I-2: the ledgers (the way the screens show them: with the deduction for the lessons the centre cancelled)
     memberships = [m for (m,) in db.query(StudentGroup.id).join(Group, Group.id == StudentGroup.group_id).filter(Group.org_id == org_uuid).all()]
     old = {s.membership_id: s for s in db.query(MoneyReconcileSnapshot).filter(MoneyReconcileSnapshot.org_id == org_uuid).all()}
-    money_explained, coverage_explained = _explaining_events(db, org_uuid, {m: s.taken_at for m, s in old.items()})
+    _, coverage_explained = _explaining_events(db, org_uuid, {m: s.taken_at for m, s in old.items()})
     loader = PaymentService(db)._loader(str(org_uuid), recalc=True)
     for start in range(0, len(memberships), LOADER_CHUNK):
         chunk = memberships[start:start + LOADER_CHUNK]
@@ -334,7 +366,11 @@ def reconcile_org(db, org_id: Any, today: Optional[date] = None, *, snapshots: O
                     found.append(item)
             now = coverage_of(ledger)
             before = (old[mid].covered_through, old[mid].lessons_covered, old[mid].paid) if mid in old else None
-            if (item := check_paid_until(org_uuid, mid, before, now, mid in coverage_explained, mid in money_explained)) is not None:
+            if before is None:
+                _gap(gaps, GAP_NO_SNAPSHOT)
+            # the gross payments move only by the payments added minus the payments cancelled since the baseline of the rows; the first night of the centre has no baseline to say it
+            paid_explained = verdict.first or before is None or now[2] - (before[2] or 0) == verdict.paid_delta.get(mid, 0)
+            if (item := check_paid_until(org_uuid, mid, before, now, mid in coverage_explained, paid_explained)) is not None:
                 found.append(item)
             if snapshots is not None:
                 snapshots.append((mid, now[0], now[1], now[2]))
@@ -365,7 +401,7 @@ def reconcile_org(db, org_id: Any, today: Optional[date] = None, *, snapshots: O
     for sheet in closed_sheets:                    # R3 #3: the check of the lessons is for CLOSED months only (an open month's sheet is a stage and goes stale lawfully)
         if (item := check_paid_lessons(org_uuid, sheet.id, sheet.period_month.strftime("%Y-%m"), per_sheet[sheet.id], status_of)) is not None:
             found.append(item)
-    found.extend(_drift(db, org_uuid, closed_sheets, today))
+    found.extend(_drift(db, org_uuid, closed_sheets, today, gaps))
 
     # ---- I-4: the closed months with an unresolved lesson (going on or never started: the same list the screens show, closed months included)
     from .service import AuthService
@@ -388,7 +424,7 @@ def reconcile_org(db, org_id: Any, today: Optional[date] = None, *, snapshots: O
     return found
 
 
-def _drift(db, org_uuid: UUID, closed_sheets: List[PayrollSheet], today: date) -> List[Found]:
+def _drift(db, org_uuid: UUID, closed_sheets: List[PayrollSheet], today: date, gaps: Optional[Dict[str, int]] = None) -> List[Found]:
     """I-3 (d) over the last ``DRIFT_MONTHS`` closed months: one calculation of each month for all its sheets (the payroll's own ``_collect``)."""
     from .payroll_service import PayrollService
 
@@ -404,13 +440,17 @@ def _drift(db, org_uuid: UUID, closed_sheets: List[PayrollSheet], today: date) -
             seed = service._collect(str(org_uuid), first, last, teacher_ids={s.teacher_id for s in month_sheets})
         except Exception:
             logger.exception("money reconcile: the month %s of org %s could not be calculated", first, org_uuid)
+            _gap(gaps, GAP_PAYROLL_ERROR, len(month_sheets))
             continue
         for sheet in month_sheets:
             try:
                 fresh = service._fresh_total(str(org_uuid), sheet, seed)
             except Exception:                  # a sheet the payroll cannot even read is not a reason to lose the check of the others
                 logger.exception("money reconcile: the sheet %s could not be recalculated", sheet.id)
+                _gap(gaps, GAP_PAYROLL_ERROR)
                 continue
+            if fresh is None:                  # no rate / a manual price: nothing to compare - and the night says so (it is not «checked»)
+                _gap(gaps, GAP_PAYROLL_NO_FRESH)
             if (item := check_drift(org_uuid, sheet.id, first.strftime("%Y-%m"), fresh, int(sheet.total_amount))) is not None:
                 out.append(item)
     return out
@@ -447,9 +487,11 @@ class _RunLock:
 
 
 def _read_only(db) -> None:
-    """The reading of a centre: a read-only transaction with a time limit (one heavy centre must not hold a transaction for hours; nothing of the check can write to a centre)."""
+    """The reading of a centre: ONE read-only ``REPEATABLE READ`` transaction with a time limit - the whole centre is seen as of one moment (a payment, its receipt and its line of the journal are committed
+    together and are never seen apart; a payment made while the centre is read is not in the ledger and not in the rows, so the sums of the two paths stay equal).  One heavy centre must not hold
+    a transaction for hours; nothing of the check can write to a centre."""
     db.rollback()
-    db.execute(text("SET TRANSACTION READ ONLY"))
+    db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
     db.execute(text(f"SET LOCAL statement_timeout = {int(STATEMENT_TIMEOUT_MS)}"))
 
 
@@ -462,6 +504,50 @@ def run(db, *, apply: bool = False, mail: bool = False, today: Optional[date] = 
         return _run_locked(db, apply=apply, mail=mail, today=today, budget_seconds=BUDGET_SECONDS if budget_seconds is None else budget_seconds, only=only)
 
 
+def accept(db, key: str, reason: str) -> Dict[str, Any]:
+    """The team accepts ONE finding of I-5 by its key (``kind:row id:code``) with a reason: the baseline of the row takes the row as it is and the journal of the centre says who / why / the old and the
+    new fingerprint.  ``busy``: another run is going.  Raises ``ValueError`` when the key is not a finding right now."""
+    with _RunLock(db) as lock:
+        if not lock.held:
+            return {"busy": True}
+        db.rollback()
+        try:
+            out = mrows.accept(db, key, reason)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        return out
+
+
+def rebaseline(db, reason: str, *, only: Optional[Iterable[Any]] = None) -> Dict[str, Any]:
+    """Take the baseline of the money rows again for every active centre (or ``only``): after a migration of data or a restore of the database.  One run row (no centres, no findings) keeps the number
+    of rows and the reason; each centre gets a line in its journal.  ``busy``: another run is going."""
+    reason = (reason or "").strip()
+    if not 3 <= len(reason) <= 300:
+        raise ValueError("Причина: от 3 до 300 символов")
+    with _RunLock(db) as lock:
+        if not lock.held:
+            return {"busy": True}
+        db.rollback()
+        query = db.query(Organization.id).filter(Organization.status == "active")
+        if only is not None:
+            query = query.filter(Organization.id.in_([o if isinstance(o, UUID) else UUID(str(o)) for o in only]))
+        orgs = [o for (o,) in query.order_by(Organization.id).all()]
+        started = bc.utc_now()
+        run_row = MoneyReconcileRun(started_at=started, finished_at=started, status="clean", centres_checked=0, findings_count=0, new_findings_count=0)
+        db.add(run_row)
+        db.flush()
+        try:
+            rows = mrows.rebaseline(db, orgs, run_row.id, reason, started)
+            run_row.note = f"пересъёмка эталона: центров {len(orgs)}, записей {rows}; причина: {reason}"[:500]
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        return {"centres": len(orgs), "rows": rows, "runId": str(run_row.id), "note": run_row.note}
+
+
 def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_seconds: int, only: Optional[Iterable[Any]] = None) -> Dict[str, Any]:
     started = bc.utc_now()
     began = time.monotonic()
@@ -469,8 +555,15 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
     if only is not None:
         query = query.filter(Organization.id.in_([o if isinstance(o, UUID) else UUID(str(o)) for o in only]))
     orgs = [o for (o,) in query.order_by(Organization.id).all()]
+    not_checked: Dict[str, int] = {}
+    inactive = db.query(func.count(Organization.id)).filter(Organization.status != "active")
+    if only is not None:
+        inactive = inactive.filter(Organization.id.in_([o if isinstance(o, UUID) else UUID(str(o)) for o in only]))
+    _gap(not_checked, GAP_CENTRE_INACTIVE, int(inactive.scalar() or 0))
+    db.rollback()
     findings: List[Found] = []
     snapshots: Dict[UUID, List[Tuple[Any, Optional[date], Optional[int], Optional[int]]]] = {}
+    plans: Dict[UUID, "mrows.RowVerdict"] = {}
     per_centre: Dict[UUID, int] = {}
     failed: List[str] = []
     why: Dict[str, str] = {}                                # centre id -> the first line of its error (the letter and the console name it)
@@ -482,9 +575,14 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
         try:
             _read_only(db)
             snaps: List[Tuple[Any, Optional[date], Optional[int], Optional[int]]] = []
-            mine = reconcile_org(db, org_id, today, snapshots=snaps)
+            plan: List[Tuple[UUID, "mrows.RowVerdict"]] = []
+            centre_gaps: Dict[str, int] = {}
+            mine = reconcile_org(db, org_id, today, snapshots=snaps, plan=plan, gaps=centre_gaps)
             findings.extend(mine)
             snapshots[org_id] = snaps
+            plans[org_id] = plan[0][1]
+            for reason, count in centre_gaps.items():          # only a centre that WAS checked adds to the counters (a failed one is named as failed)
+                _gap(not_checked, reason, count)
             per_centre[org_id] = len(mine)
         except Exception as exc:
             logger.exception("money reconcile failed for org %s", org_id)
@@ -494,22 +592,30 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
             db.rollback()
     previous = _previous_keys(db, [o for o in orgs if str(o) not in failed]) if apply else set()
     new_count = sum(1 for f in findings if (f.org_id, f.invariant, f.subject_key) not in previous)
+    rows_seen = sum(v.rows for v in plans.values())
     out: Dict[str, Any] = {"centres": len(orgs), "failed": failed, "failedWhy": why, "findings": len(findings), "new": new_count, "apply": apply, "mail": "off",
+                           "rows": rows_seen, "baselined": sum(v.baselined for v in plans.values()), "firstCentres": sum(1 for v in plans.values() if v.first), "notChecked": dict(sorted(not_checked.items())),
                            "byInvariant": {k: sum(1 for f in findings if f.invariant == k) for k in INVARIANT_TEXT},
                            "items": [{"org": str(f.org_id), "invariant": f.invariant, "key": f.subject_key, "month": f.month, "expected": f.expected, "actual": f.actual} for f in findings]}
     if not apply:
         return out
-    run_row = MoneyReconcileRun(started_at=started, finished_at=bc.utc_now(), status="failed" if failed else ("findings" if findings else "clean"),
+    partial = any(not_checked.get(reason) for reason in PAYROLL_GAPS)      # a payroll that was not recalculated is not «checked»: the run is not clean
+    run_row = MoneyReconcileRun(started_at=started, finished_at=bc.utc_now(), status="failed" if failed else ("findings" if findings else ("partial" if partial else "clean")),
                                 centres_checked=len(orgs) - len(failed), findings_count=len(findings), new_findings_count=new_count,
-                                error=_failed_text(failed, why) if failed else None)
+                                error=_failed_text(failed, why) if failed else None, not_checked=dict(sorted(not_checked.items())) or None,
+                                note=(f"эталон записей снят в первый раз: центров {out['firstCentres']}, записей {sum(v.baselined for v in plans.values() if v.first)}" if out["firstCentres"] else None))
     db.add(run_row)
     db.flush()
     for f in findings:
         db.add(MoneyReconcileFinding(run_id=run_row.id, org_id=f.org_id, invariant=f.invariant, subject_key=f.subject_key, subject_id=f.subject_id, month=f.month, expected=f.expected,
                                      actual=f.actual, details=f.details, is_new=(f.org_id, f.invariant, f.subject_key) not in previous))
     for org_id in orgs:
-        db.add(MoneyReconcileCentre(run_id=run_row.id, org_id=org_id, status="failed" if str(org_id) in failed else "ok", findings_count=per_centre.get(org_id, 0)))
-    _store_snapshots(db, snapshots, bc.utc_now())
+        db.add(MoneyReconcileCentre(run_id=run_row.id, org_id=org_id, status="failed" if str(org_id) in failed else "ok", findings_count=per_centre.get(org_id, 0),
+                                    rows_checked=org_id in plans))
+    taken = bc.utc_now()
+    for org_id, verdict in plans.items():
+        mrows.store(db, org_id, run_row.id, verdict, taken)
+    _store_snapshots(db, snapshots, taken)
     if mail:
         run_row.mail_status = _mail(findings, new_count, failed, run_row.id, why)
         out["mail"] = run_row.mail_status
@@ -573,8 +679,20 @@ def _mail(findings: List[Found], new_count: int, failed: List[str], run_id: Any,
 
     try:
         if findings and new_count:
-            rows = [(f"{f.invariant} · центр {str(f.org_id)[:8]}", f"{INVARIANT_TEXT[f.invariant]}; {f.subject_key}" + (f"; {f.month}" if f.month else "") +
-                     (f"; ожидалось {f.expected}, есть {f.actual}" if f.expected is not None or f.actual is not None else "")) for f in findings[:20]]
+            def line(f: Found) -> Tuple[str, str]:
+                return (f"{f.invariant} · центр {str(f.org_id)[:8]}", f"{INVARIANT_TEXT[f.invariant]}; {f.subject_key}" + (f"; {f.month}" if f.month else "") +
+                        (f"; ожидалось {f.expected}, есть {f.actual}" if f.expected is not None or f.actual is not None else ""))
+
+            def row_line(f: Found) -> Tuple[str, str]:          # I-5: the kind of the record, its id, the centre and the sum «было → стало» (the sums of the payroll too - the letter is for the team of the platform)
+                was = f"{f.expected}" if f.expected is not None else "—"
+                now_ = f"{f.actual}" if f.actual is not None else "—"
+                return (f"I-5 · центр {str(f.org_id)[:8]} · {f.details.get('kind')}", f"{f.details.get('what')}; запись {f.subject_id}; сумма было {was} → стало {now_}")
+
+            rows = [line(f) for f in findings if f.invariant != "I-5"][:20]
+            i5 = [row_line(f) for f in findings if f.invariant == "I-5"][:20]
+            if i5:
+                rows.append(("Построчная сверка записей денег (I-5)", f"находок: {sum(1 for f in findings if f.invariant == 'I-5')}; ниже — вид записи, центр, id, сумма до и после"))
+                rows.extend(i5)
             if failed:
                 rows.append(("Не проверено центров", f"{len(failed)}: " + "; ".join(_centre_why(x, why) for x in failed[:10])))
             letter = letters.render_money_reconcile(total=len(findings), new=new_count, rows=rows, run_id=str(run_id))

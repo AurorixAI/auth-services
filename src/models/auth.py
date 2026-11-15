@@ -577,7 +577,7 @@ class GroupAudit(Base):
             "'group_lesson_type_set', 'student_left_group', "
             "'group_archived', 'group_restored', 'lesson_teacher_set', 'lesson_teacher_cleared', 'day_off_voided', 'lesson_restored', 'lesson_cancelled', "
             "'one_off_created', 'one_off_money_decided', 'exam_release_pending', 'exam_release_done', "
-            "'payment_void', 'payment_replace', 'payment_file_removed')",
+            "'payment_void', 'payment_replace', 'payment_file_removed', 'student_transferred')",
             name="ck_group_audit_action",
         ),
         CheckConstraint(
@@ -2073,9 +2073,11 @@ class MoneyReconcileRun(Base):
     new_findings_count = Column(Integer, nullable=False, default=0, server_default="0")
     mail_status = Column(String(12), nullable=True)  # sent | skipped | failed (null: no mail needed)
     error = Column(String(300), nullable=True)
+    not_checked = Column(JSONB, nullable=True)  # Money-2: what the night did NOT check, by reason (a centre not active, a payroll not recalculated, a membership with no snapshot ...)
+    note = Column(String(500), nullable=True)  # Money-2: a re-baseline of the rows - how many and why
 
     __table_args__ = (
-        CheckConstraint("status IN ('running', 'clean', 'findings', 'failed')", name="ck_money_reconcile_runs_status"),
+        CheckConstraint("status IN ('running', 'clean', 'findings', 'failed', 'partial')", name="ck_money_reconcile_runs_status"),
         Index("ix_money_reconcile_runs_started", "started_at"),
     )
 
@@ -2088,7 +2090,7 @@ class MoneyReconcileFinding(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     run_id = Column(UUID(as_uuid=True), ForeignKey("money_reconcile_runs.id", ondelete="CASCADE"), nullable=False)
     org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
-    invariant = Column(String(4), nullable=False)  # I-1 .. I-4
+    invariant = Column(String(4), nullable=False)  # I-1 .. I-5
     subject_key = Column(String(200), nullable=False)
     subject_id = Column(String(64), nullable=True)
     month = Column(String(7), nullable=True)
@@ -2099,7 +2101,7 @@ class MoneyReconcileFinding(Base):
     created_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
 
     __table_args__ = (
-        CheckConstraint("invariant IN ('I-1', 'I-2', 'I-3', 'I-4')", name="ck_money_reconcile_findings_invariant"),
+        CheckConstraint("invariant IN ('I-1', 'I-2', 'I-3', 'I-4', 'I-5')", name="ck_money_reconcile_findings_invariant"),
         Index("ix_money_reconcile_findings_run", "run_id"),
         Index("ix_money_reconcile_findings_org_key", "org_id", "invariant", "subject_key"),
     )
@@ -2129,8 +2131,31 @@ class MoneyReconcileCentre(Base):
     org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True)
     status = Column(String(8), nullable=False)  # ok | failed
     findings_count = Column(Integer, nullable=False, default=0, server_default="0")
+    rows_checked = Column(Boolean, nullable=False, default=False, server_default=text("false"))  # Money-2: this night compared the money rows of the centre with the baseline
 
     __table_args__ = (
         CheckConstraint("status IN ('ok', 'failed')", name="ck_money_reconcile_centres_status"),
         Index("ix_money_reconcile_centres_org", "org_id", "status"),
     )
+
+
+class MoneyRowBaseline(Base):
+    """Money-2 (I-5): the baseline of ONE immutable money row (a payment, a refund, a write-off, an opening balance, a transfer, a payout, a rate): the fingerprint of the fields the product
+    never edits, the sum, whether the row was cancelled and the fingerprint of the cancellation.  Written by the run only; a row with a finding keeps its OLD baseline until the team accepts it."""
+
+    __tablename__ = "money_row_baseline"
+
+    kind = Column(String(16), primary_key=True)
+    row_id = Column(UUID(as_uuid=True), primary_key=True)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    fingerprint = Column(String(32), nullable=False)
+    amount = Column(BigInteger, nullable=True)
+    voided = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    void_fingerprint = Column(String(32), nullable=True)
+    accepted = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))  # state-based finding codes the team accepted for this row
+    first_run_id = Column(UUID(as_uuid=True), ForeignKey("money_reconcile_runs.id", ondelete="SET NULL"), nullable=True)
+    last_run_id = Column(UUID(as_uuid=True), ForeignKey("money_reconcile_runs.id", ondelete="SET NULL"), nullable=True)
+    first_seen_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+    last_confirmed_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
+
+    __table_args__ = (Index("ix_money_row_baseline_org", "org_id"),)
