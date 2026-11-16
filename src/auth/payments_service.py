@@ -1358,10 +1358,11 @@ class PaymentService:
             raise PaidOnRange(f"{what} старше 3 лет")
 
     @staticmethod
-    def _check_backdate(day: date, today: date, actor_role: str) -> None:
-        """Money-2 T17: the ONE rule of back-dating - an administrator (any role but the owner) enters a date no earlier than ``ADMIN_BACKDATE_DAYS`` days before today; older is the owner's (403)."""
+    def _check_backdate(day: date, today: date, actor_role: str, *, changing: bool) -> None:
+        """Money-2 T17 / R3 П4: the ONE rule of the age of a record - an administrator (any role but the owner) ENTERS a record dated no earlier than ``ADMIN_BACKDATE_DAYS`` days before today
+        (``changing=False``) and CHANGES the money of a record not older than that (``changing=True``: the sum, the date, the cancellation); older is the owner's (403)."""
         if actor_role != "owner" and day < today - timedelta(days=ps.ADMIN_BACKDATE_DAYS):
-            raise BackdateOwnerOnly(f"Запись старше {ps.ADMIN_BACKDATE_DAYS} дней вносит владелец")
+            raise BackdateOwnerOnly(f"Запись старше {ps.ADMIN_BACKDATE_DAYS} дней {'меняет' if changing else 'вносит'} владелец")
 
     @staticmethod
     def _method_of(method: Optional[str], *, required: bool = False) -> str:
@@ -1568,7 +1569,7 @@ class PaymentService:
         try:
             self._check_amount(data.amount)
             self._check_date(data.paid_on, today)
-            self._check_backdate(data.paid_on, today, actor_role)
+            self._check_backdate(data.paid_on, today, actor_role, changing=False)
             method = self._method_of(data.method, required=True)      # Money-1 V5: the method is chosen, never «other» by silence
             membership = self._membership(org_id, membership_id, lock=True)
             self._guard_duplicate(org_id, membership, data, idempotency_key)
@@ -1708,8 +1709,10 @@ class PaymentService:
             family = self._lock_family(org_id, probe.student_id)
             membership = self._membership(org_id, probe.membership_id)
             old = self._lock_payment(org_id, payment_id)
-            if data.paid_on != old.paid_on:               # Money-2 T17: a correction that keeps the date (the method, the note, the sum) is not back-dating
-                self._check_backdate(data.paid_on, today, actor_role)
+            if data.paid_on != old.paid_on:               # Money-2 T17: a correction that keeps the date is not back-dating
+                self._check_backdate(data.paid_on, today, actor_role, changing=False)
+            if data.paid_on != old.paid_on or int(data.amount) != int(old.amount):      # R3 П4: an old record changes in its method and note only (an administrator)
+                self._check_backdate(old.paid_on, today, actor_role, changing=True)
             was = self._accounts(org_id, family)          # Money-1 V2: the accounts WITH the old payment (the line of the journal of decisions); G-4b: of EVERY group of the student
             loader = self._loader(org_id, today)
             loader.load_facts([membership.id])
@@ -1746,7 +1749,7 @@ class PaymentService:
         return self._created(org_id, payment, before, today, moved=moved)
 
     @deadlock_guard
-    def void_payment(self, org_id: str, payment_id: UUID, actor_id: str, reason: str, actor_role: str = "admin", consequence: Optional[Dict[str, str]] = None) -> PaymentVoided:
+    def void_payment(self, org_id: str, payment_id: UUID, actor_id: str, reason: str, *, actor_role: str, consequence: Optional[Dict[str, str]] = None) -> PaymentVoided:
         """Cancel a payment (no delete).  Under the lock of the family it is checked that no refund is left without money."""
         try:
             reason = self._check_reason(reason)
@@ -1756,6 +1759,7 @@ class PaymentService:
             family = self._lock_family(org_id, probe.student_id)
             membership = self._membership(org_id, probe.membership_id)
             payment = self._lock_payment(org_id, payment_id)
+            self._check_backdate(payment.paid_on, ps.business_today(), actor_role, changing=True)      # R3 П4: an administrator does not cancel an old record
             was = self._accounts(org_id, family)
             payment.voided_at = _utcnow()
             payment.voided_by = UUID(str(actor_id))
@@ -1935,7 +1939,7 @@ class PaymentService:
             reason = self._check_reason(reason)
             effective_on = effective_on or today
             self._check_date(effective_on, today, "Дата прощения долга")
-            self._check_backdate(effective_on, today, actor_role)
+            self._check_backdate(effective_on, today, actor_role, changing=False)
             membership = self._membership(org_id, membership_id)
             family = self._lock_family(org_id, membership.student_id)
             twin = self._same_key(StudentWriteoff, org_id, idempotency_key)
@@ -1978,7 +1982,7 @@ class PaymentService:
 
     @deadlock_guard
     def void_writeoff(
-        self, org_id: str, writeoff_id: UUID, actor_id: str, reason: str, *, actor_role: str = "admin", expected_debt: Optional[int] = None,
+        self, org_id: str, writeoff_id: UUID, actor_id: str, reason: str, *, actor_role: str, expected_debt: Optional[int] = None,
         consequence: Optional[Dict[str, str]] = None,
     ) -> WriteoffVoided:
         try:
@@ -1998,6 +2002,7 @@ class PaymentService:
                 raise AlreadyVoided("Прощение долга уже отменено", **self._voided_detail(row))
             membership = self._membership(org_id, row.membership_id)
             today = ps.business_today()
+            self._check_backdate(row.effective_on, today, actor_role, changing=True)      # R3 П4
             before = self._entry_of(org_id, row.membership_id, today).ledger
             self._check_seen("debt", expected_debt, before.debt, debt=before.debt, advance=before.advance)
             row.voided_at, row.voided_by, row.void_reason = _utcnow(), UUID(str(actor_id)), reason
@@ -2030,7 +2035,7 @@ class PaymentService:
             method = self._method_of(method, required=True)
             effective_on = effective_on or today
             self._check_date(effective_on, today, "Дата возврата")
-            self._check_backdate(effective_on, today, actor_role)
+            self._check_backdate(effective_on, today, actor_role, changing=False)
             if not isinstance(amount, int) or isinstance(amount, bool) or amount < 1 or amount > MAX_MONEY:
                 raise AmountRange(f"Сумма: от 1 до {_num(MAX_MONEY)}")
             reason = self._check_reason(reason)         # Money-1 V6: money is returned for a stated reason (3..500)
@@ -2092,7 +2097,7 @@ class PaymentService:
 
     @deadlock_guard
     def void_refund(
-        self, org_id: str, refund_id: UUID, actor_id: str, reason: str, *, actor_role: str = "admin", expected_advance: Optional[int] = None,
+        self, org_id: str, refund_id: UUID, actor_id: str, reason: str, *, actor_role: str, expected_advance: Optional[int] = None,
         consequence: Optional[Dict[str, str]] = None,
     ) -> RefundVoided:
         try:
@@ -2109,6 +2114,7 @@ class PaymentService:
                 raise AlreadyVoided("Возврат уже отменён", **self._voided_detail(row))
             membership = self._membership(org_id, row.membership_id)
             today = ps.business_today()
+            self._check_backdate(row.effective_on, today, actor_role, changing=True)      # R3 П4
             before = self._entry_of(org_id, row.membership_id, today).ledger
             self._check_seen("advance", expected_advance, before.advance, advance=before.advance, debt=before.debt)
             row.voided_at, row.voided_by, row.void_reason = _utcnow(), UUID(str(actor_id)), reason
@@ -2264,7 +2270,9 @@ class PaymentService:
             exclude = old.id
             old_payment = old
         if old_payment is None or old_payment.paid_on != paid_on:         # Money-2 T17: the window refuses as the write does
-            self._check_backdate(paid_on, today, actor_role)
+            self._check_backdate(paid_on, today, actor_role, changing=False)
+        if old_payment is not None and amount is not None and (old_payment.paid_on != paid_on or int(amount) != int(old_payment.amount)):      # R3 П4: and an old record is not tried on for a new sum or date
+            self._check_backdate(old_payment.paid_on, today, actor_role, changing=True)
         inp = loader.build_input(membership_id, exclude_payment=exclude)
         before = bl.run_ledger(inp)
         price = loader.books.price(membership_id, membership.group_id, today)

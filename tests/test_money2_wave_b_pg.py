@@ -280,7 +280,7 @@ def test_t17_the_correction_of_the_date_the_refund_and_the_forgiveness_follow_th
     r = admin.post(f"{API}/org/payments/{new['id']}/replace", json={"amount": 300_000, "paid_on": "2026-11-12", "method": "card", "reason": "Дата"})
     assert r.status_code == 403 and r.json()["detail"]["code"] == "BACKDATE_OWNER_ONLY", r.text
     r = admin.post(f"{API}/org/payments/{new['id']}/replace", json={"amount": 300_000, "paid_on": "2026-11-13", "method": "card", "reason": "Дата"})
-    assert r.status_code == 201, r.text
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "BACKDATE_OWNER_ONLY", r.text      # R3 П4: and the record itself is 18 days old: its date is not the administrator's to move (the border: test_money2_fix_r3_pg)
     # the refund and the forgiveness with a date: 8 days back refused for the administrator, 7 allowed; no date = today
     m1 = membership(world, s1, a)
     wo = lambda day: admin.post(f"{API}/org/memberships/{m1.id}/writeoffs", json={"amount": 10_000, "reason": "Договорённость", **({"effective_on": day} if day else {})})      # noqa: E731

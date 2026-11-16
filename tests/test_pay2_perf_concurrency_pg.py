@@ -164,7 +164,7 @@ def test_a_refund_and_a_void_of_its_payment_never_both_win(world, engine):
     assert refundable > 0
     t1, o1 = run_in_thread(engine, service_call(org, lambda s: s.create_refund(
         org, m.id, actor, amount=refundable, method="cash", reason=None, note=None, actor_role="owner")))
-    t2, o2 = run_in_thread(engine, service_call(org, lambda s: s.void_payment(org, pid, actor, "ошибка")))
+    t2, o2 = run_in_thread(engine, service_call(org, lambda s: s.void_payment(org, pid, actor, "ошибка", actor_role="owner")))
     for t in (t1, t2):
         t.join(timeout=60)
     errors = [o["error"] for o in (o1, o2) if "error" in o and not isinstance(o["error"], PaymentError)]
@@ -205,7 +205,7 @@ def test_a_void_and_a_replace_of_the_same_payment_one_wins(world, engine):
     m = prepared(world)
     org, actor = str(world.org.id), str(world.owner.id)
     pid = PaymentService(world.db).create_payment(org, m.id, actor, body(700_000), actor_role="owner").payment.id
-    t1, o1 = run_in_thread(engine, service_call(org, lambda s: s.void_payment(org, pid, actor, "ошибка")))
+    t1, o1 = run_in_thread(engine, service_call(org, lambda s: s.void_payment(org, pid, actor, "ошибка", actor_role="owner")))
     t2, o2 = run_in_thread(engine, service_call(org, lambda s: s.replace_payment(org, pid, actor, body(800_000), "исправление", actor_role="owner")))
     for t in (t1, t2):
         t.join(timeout=60)

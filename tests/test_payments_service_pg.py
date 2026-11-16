@@ -572,7 +572,7 @@ def test_closed_membership_keeps_its_money_when_the_student_returns(world):
     second = make_group(world.db, world.org, world.teacher2, "Вторая")
     world.db.commit()
     s = world.students[0]
-    world.svc.add_student_to_group(str(world.org.id), str(second.id), str(s.id), money_right=True, actor_id=str(world.owner.id))  # transfer
+    world.svc.add_student_to_group(str(world.org.id), str(second.id), str(s.id), money_right=True, actor_id=str(world.owner.id), from_group_id=str(world.group.id))  # transfer
     world.svc.add_student_to_group(str(world.org.id), str(world.group.id), str(s.id), mode="add", money_right=True)
     row = row_of(world)
     assert row["is_active"] and row["last_payment"] is not None

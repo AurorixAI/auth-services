@@ -260,3 +260,77 @@ def test_p3_the_honest_cases_stay(world, fixed_today):
     cut = replace_it(world, r1, 10_000)["payment"]
     replace_it(world, cut, 100_000)
     assert live_sum(world, a, s2) == 210_000
+
+
+# ============================================================================================================ П4: an administrator changes no money of a record older than 7 days
+
+
+def admin_client(world):
+    from tests.test_money2_wave_b_pg import _admin_with_the_right
+
+    return _admin_with_the_right(world)
+
+
+def world_p4(world, fixed_today):
+    """Today 20.11.2026.  Payments of S0: old = 02.11 (18 days) 300 000; edge8 = 12.11 (8 days) 10 000; edge7 = 13.11 (7 days) 10 000, all through the owner."""
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    for s in (s0, s1, s2):
+        stay(world, membership(world, s, a), date(2026, 11, 2))
+    old = pay(world, s0, a, amount=300_000, paid_on=date(2026, 11, 2))["payment"]
+    e8 = pay(world, s0, a, amount=10_000, paid_on=date(2026, 11, 12))["payment"]
+    e7 = pay(world, s0, a, amount=10_000, paid_on=date(2026, 11, 13))["payment"]
+    return a, s0, old, e8, e7
+
+
+def test_p4_an_administrator_cannot_change_the_sum_cancel_or_move_the_date_of_a_payment_older_than_seven_days_only_the_method(world, fixed_today):
+    a, s0, old, e8, e7 = world_p4(world, fixed_today)
+    admin = admin_client(world)
+    for amount in (1_000_000, 100):                                                   # up and down: both refused
+        d = replace_it(world, old, amount, client=admin, expect=403)["detail"]
+        assert d["code"] == "BACKDATE_OWNER_ONLY" and d["message"] == "Запись старше 7 дней меняет владелец"
+    assert replace_it(world, old, 300_000, client=admin, expect=403, paid_on="2026-11-13")["detail"]["code"] == "BACKDATE_OWNER_ONLY"      # a new date of an old record
+    assert void_it(world, old, client=admin, expect=403)["detail"]["code"] == "BACKDATE_OWNER_ONLY"
+    assert admin.post(f"{API}/org/payments/{old['id']}/replace", params={"dry_run": "true"}, json={"amount": 1_000_000, "paid_on": old["paid_on"], "method": "cash", "reason": "Проба"}).status_code == 403
+    url = f"{API}/org/memberships/{membership(world, s0, a).id}/payments/preview"
+    assert admin.get(url, params={"amount": 1_000_000, "paid_on": old["paid_on"], "replace_payment_id": old["id"]}).status_code == 403
+    assert admin.get(url, params={"amount": 300_000, "paid_on": old["paid_on"], "replace_payment_id": old["id"]}).status_code == 200
+    assert live_sum(world, a, s0) == 320_000                                           # nothing changed
+    r = admin.post(f"{API}/org/payments/{old['id']}/replace", json={"amount": 300_000, "paid_on": old["paid_on"], "method": "card", "reason": "Способ"})
+    assert r.status_code == 201, r.text                                                # the method (and the note) of an old record: allowed
+    assert live_sum(world, a, s0) == 320_000
+
+
+def test_p4_the_border_seven_and_eight_days_and_the_owner_is_free(world, fixed_today):
+    a, s0, old, e8, e7 = world_p4(world, fixed_today)
+    admin = admin_client(world)
+    assert replace_it(world, e8, 20_000, client=admin, expect=403)["detail"]["code"] == "BACKDATE_OWNER_ONLY"                 # 8 days
+    assert void_it(world, e8, client=admin, expect=403)["detail"]["code"] == "BACKDATE_OWNER_ONLY"
+    replace_it(world, e7, 20_000, client=admin)                                                                                 # 7 days: as before
+    replace_it(world, old, 250_000)                                                                                             # the owner: any record, any sum
+    assert live_sum(world, a, s0) == 250_000 + 10_000 + 20_000
+
+
+def test_p4_the_cancellation_of_an_old_refund_and_an_old_forgiveness_is_the_owners_and_the_restoration_stays_free(world, fixed_today):
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    for s in (s0, s1, s2):
+        stay(world, membership(world, s, a), date(2026, 11, 2))
+    admin = admin_client(world)
+    m1, m2 = membership(world, s1, a), membership(world, s2, a)
+    pay(world, s2, a, amount=5_000_000, paid_on=date(2026, 11, 2))
+    refunds, writeoffs = [], []
+    for day in ("2026-11-12", "2026-11-13"):                                           # 8 and 7 days back (the owner enters them)
+        r = owner(world).post(f"{API}/org/memberships/{m2.id}/refunds", json={"amount": 1_000, "method": "cash", "reason": "Возврат", "effective_on": day})
+        assert r.status_code == 201, r.text
+        refunds.append(r.json()["refund"]["id"])
+        w = owner(world).post(f"{API}/org/memberships/{m1.id}/writeoffs", json={"amount": 1_000, "reason": "Договорённость", "effective_on": day})
+        assert w.status_code == 201, w.text
+        writeoffs.append(w.json()["writeoff"]["id"])
+    for kind, ids in (("refunds", refunds), ("writeoffs", writeoffs)):
+        item = "refund" if kind == "refunds" else "writeoff"
+        r = admin.post(f"{API}/org/{kind}/{ids[0]}/void", json={"reason": "Ошибка ввода"})
+        assert r.status_code == 403 and r.json()["detail"]["code"] == "BACKDATE_OWNER_ONLY", (kind, r.text)               # 8 days: refused
+        assert admin.post(f"{API}/org/{kind}/{ids[0]}/void", params={"dry_run": "true"}, json={"reason": "Ошибка ввода"}).status_code == 403
+        assert admin.post(f"{API}/org/{kind}/{ids[1]}/void", json={"reason": "Ошибка ввода"}).status_code == 200, item      # 7 days: allowed
+        assert owner(world).post(f"{API}/org/{kind}/{ids[0]}/void", json={"reason": "Ошибка ввода"}).status_code == 200      # the owner
