@@ -100,8 +100,7 @@ def make_transfer(world, voided=False):
 
 
 def make_sheet(world):
-    month = date.today().replace(day=1) - timedelta(days=40)
-    return sheet(world, world.teacher, month.replace(day=1), tashkent(2026, 10, 30), total=475_000)
+    return sheet(world, world.teacher, date(2026, 8, 1), tashkent(2026, 9, 2), total=475_000)
 
 
 def make_payout(world, voided=False):
