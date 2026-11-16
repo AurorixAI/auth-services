@@ -1320,24 +1320,33 @@ class PaymentService:
         student has no debt of his own left - the money went to the new group; a mistaken 600 -> 200 can be put back)."""
         if old is None:                       # a plain payment of a student who left (no correction): only his debt
             return debt_without
-        if self._newer_live_payment(old.membership_id, old.created_at, old.id):      # R3 П3: other money came in after this version appeared - the earlier, bigger sums are not «not new» any more
-            return max(debt_without, int(old.amount))
-        before = earlier_versions(self.db, org_id, [old.replaces_payment_id])
-        return max([debt_without, int(old.amount)] + [int(v.amount) for v in before.values()])
+        before = earlier_versions(self.db, org_id, [old.replaces_payment_id])      # R3b В2: a past version's sum counts only while no live payment OUTSIDE the whole chain came after that version was replaced / cancelled
+        outside = self._live_outside_chain(org_id, old, before)
+        return max([debt_without, int(old.amount)] + [int(v.amount) for v in before.values() if v.voided_at is not None and not any(at > v.voided_at for at in outside)])
 
-    def _newer_live_payment(self, membership_id: Any, since: datetime, exclude: Any) -> bool:
-        """R3 П3: THE one test of the relaxation «the money is not new» for a closed stay (the restoration of a cancelled payment, the return of a corrected sum to the biggest one of its chain): it holds only
-        while no OTHER live payment of this stay appeared after ``since`` (the cancellation / the version being corrected)."""
-        return self.db.query(StudentPayment.id).filter(
-            StudentPayment.membership_id == membership_id, StudentPayment.id != exclude, StudentPayment.voided_at.is_(None), StudentPayment.created_at > since,
-            StudentPayment.kind != "legacy_carry", StudentPayment.carried_from_payment_id.is_(None)).first() is not None
+    def _live_outside_chain(self, org_id: Any, payment: StudentPayment, earlier: Dict[Any, StudentPayment]) -> List[datetime]:
+        """R3b В2: THE one test of the relaxation «the money is not new» for a closed stay (the correction back to a bigger sum of the chain, the restoration of a cancelled payment): the creation times of
+        the live payments of this stay that are NOT in the chain of ``payment`` (every version before it, every version after it, restorations included - they stand in the chain through
+        ``replaces_payment_id``).  Whoever asks compares them with the moment a version was replaced / cancelled: a payment taken after that moment makes the bigger sum new money."""
+        chain = {payment.id, *earlier}
+        frontier = [payment.id]
+        for _depth in range(MAX_CHAIN_DEPTH):                      # the versions AFTER this one (a cancelled payment restored later, a correction of a restoration)
+            found = [i for (i,) in self.db.query(StudentPayment.id).filter(StudentPayment.org_id == org_id, StudentPayment.replaces_payment_id.in_(frontier)).all()] if frontier else []
+            frontier = [i for i in found if i not in chain]
+            chain.update(frontier)
+        return [at for (at,) in self.db.query(StudentPayment.created_at).filter(
+            StudentPayment.membership_id == payment.membership_id, StudentPayment.id.notin_(chain), StudentPayment.voided_at.is_(None),
+            StudentPayment.kind != "legacy_carry", StudentPayment.carried_from_payment_id.is_(None)).all()]
 
     def _restore_superseded(self, payment: StudentPayment) -> bool:
-        """R3 П3: a cancelled payment of a stay that has ended cannot come back after another live payment was taken into this stay since the cancellation."""
+        """R3 П3 / R3b В2: a cancelled payment of a stay that has ended cannot come back after another live payment (outside its own chain) was taken into this stay since the cancellation."""
         if payment.voided_at is None:
             return False
         membership = self.db.get(StudentGroup, payment.membership_id)
-        return membership is not None and self._is_left(membership) and self._newer_live_payment(payment.membership_id, payment.voided_at, payment.id)
+        if membership is None or not self._is_left(membership):
+            return False
+        before = earlier_versions(self.db, payment.org_id, [payment.replaces_payment_id])
+        return any(at > payment.voided_at for at in self._live_outside_chain(payment.org_id, payment, before))
 
     def _check_left_correction(self, org_id: Any, amount: int, debt_without: int, old: StudentPayment) -> None:
         ceiling = self._correction_ceiling(org_id, debt_without, old)
