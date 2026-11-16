@@ -9,7 +9,7 @@ Only ADDS:
   (``org_id ON DELETE CASCADE``, like the rows themselves);
 * ``money_reconcile_runs.not_checked`` (what the night could not check, by reason) and ``.note`` (a re-baseline: the number of rows and the reason);
 * ``money_reconcile_centres.rows_checked`` (this night looked at the rows of the centre - the next night knows the baseline is not new);
-* the CHECKs widen: the finding invariant ``I-5``, the run status ``partial``, the journal action ``student_transferred`` (a transfer leaves a line in the journal of money decisions).
+* the CHECKs widen: the finding invariant ``I-5``, the run status ``partial`` and ``rebaselined``, the journal action ``student_transferred`` (a transfer leaves a line in the journal of money decisions).
 
 Rollback (downgrade): only the baseline table is dropped (it holds nothing but what the next night takes again, and its foreign key to the runs would stop the older revision that drops them); the wider
 CHECKs and the new columns stay - a row with a new value may already be there, an old reader ignores all of it.
@@ -31,6 +31,7 @@ WIDEN = (
     ("group_audit", "ck_group_audit_action", "action", "student_transferred"),
     ("money_reconcile_findings", "ck_money_reconcile_findings_invariant", "invariant", "I-5"),
     ("money_reconcile_runs", "ck_money_reconcile_runs_status", "status", "partial"),
+    ("money_reconcile_runs", "ck_money_reconcile_runs_status", "status", "rebaselined"),
 )
 
 

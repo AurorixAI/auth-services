@@ -357,6 +357,19 @@ def script_main(world, monkeypatch, *argv):
     return importlib.import_module("scripts.money_reconcile").main(list(argv))
 
 
+def staff_actor(world, active=True):
+    """A user of the platform (console staff): the author a manual move of the baseline needs.  Returns its id as text."""
+    from src.models.platform import PlatformRole, PlatformStaff
+
+    role = PlatformRole(name=f"Роль {uuid4().hex[:8]}", permissions=[])
+    world.db.add(role)
+    world.db.flush()
+    user = make_user(world.db, role="teacher", name="Сотрудник")
+    world.db.add(PlatformStaff(user_id=user.id, role_id=role.id, is_active=active))
+    world.db.commit()
+    return str(user.id)
+
+
 def baseline_of(world, kind, row_id):
     world.db.expire_all()
     return world.db.get(MoneyRowBaseline, (kind, row_id))
@@ -467,13 +480,14 @@ def test_rebaseline_takes_the_rows_again_prints_rows_and_reason_and_keeps_them_i
     sql(world, "DELETE FROM student_refunds WHERE id = :id", id=refund)
     assert len(i5(night(world), world)) == 2
     reason = f"Восстановление базы из копии {uuid4()}"
-    assert script_main(world, monkeypatch, "--rebaseline", "--reason", reason, "--org", str(world.org.id)) == 0
+    actor = staff_actor(world)
+    assert script_main(world, monkeypatch, "--rebaseline", "--reason", reason, "--org", str(world.org.id), "--actor", actor, "--with-open-findings") == 0
     assert f"rebaseline centres=1 rows=2 reason='{reason}'" in capsys.readouterr().out
     world.db.expire_all()
-    run = world.db.query(MoneyReconcileRun).filter(MoneyReconcileRun.note.like("%" + reason)).one()          # (the database is shared with other tests: the reason is unique)
-    assert run.note == f"пересъёмка эталона: центров 1, записей 2; причина: {reason}" and run.centres_checked == 0 and run.status == "clean"
+    run = world.db.query(MoneyReconcileRun).filter(MoneyReconcileRun.note.like("%" + reason + "%")).one()          # (the database is shared with other tests: the reason is unique)
+    assert run.note.startswith(f"пересъёмка эталона: центров 1, записей 2; причина: {reason}") and run.centres_checked == 0 and run.status == "rebaselined"
     line = world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_rebaseline").one()
-    assert line.details["rows"] == 2 and line.details["reason"] == reason
+    assert line.details["rows"] == 2 and line.details["reason"] == reason and str(line.actor_id) == actor
     assert world.db.query(MoneyRowBaseline).filter_by(org_id=world.org.id).count() == 2
     assert i5(night(world), world) == [] and rate is not None
     from src.auth.platform_reconcile_router import latest

@@ -399,16 +399,41 @@ def accept(db, key: str, reason: str, *, actor_id: Optional[UUID] = None, at: Op
     return {"org": str(org_id), "key": key, "oldFingerprint": old_fp, "newFingerprint": new_fp}
 
 
-def rebaseline(db, org_ids: Iterable[UUID], run_id: UUID, reason: str, at: datetime) -> int:
-    """Take the baseline of the given centres again from the rows as they are (after a data migration / a restore): the old baseline of the centre is replaced, one line of the journal of each centre
-    says how many rows and why.  Returns the number of rows.  The caller commits."""
-    total = 0
+MAX_NAMED = 200
+
+
+@dataclass
+class CentrePlan:
+    now: Dict[Key, RowState]
+    divergent: List[str]          # ``kind:id`` of the rows whose fingerprint differs from the old baseline or that left the table
+    findings: List[str]           # ``kind:id:code`` of the open findings of I-5
+
+
+def rebaseline_plan(db, org_ids: Iterable[UUID]) -> Dict[UUID, CentrePlan]:
+    """What a re-baseline would throw away, per centre."""
+    plan: Dict[UUID, CentrePlan] = {}
     for org_id in org_ids:
-        now = scan(db, org_id)
+        verdict = evaluate(db, org_id)
+        base = load_baseline(db, org_id)
+        divergent = [f"{k[0]}:{k[1]}" for k, b in sorted(base.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))) if k not in verdict.now or verdict.now[k].fingerprint != b.fingerprint]
+        plan[org_id] = CentrePlan(verdict.now, divergent, [f.key for f in verdict.findings])
+    return plan
+
+
+def rebaseline(db, org_ids: Iterable[UUID], run_id: UUID, reason: str, at: datetime, *, actor_id: UUID, with_open_findings: bool) -> Dict[UUID, CentrePlan]:
+    """Take the baseline of the given centres again from the rows as they are (after a data migration / a restore): the old baseline of the centre is replaced, one line of the journal of each centre
+    says who, how many rows and why.  Refuses (``ValueError``, nothing is written) while a row differs from the old baseline or a finding is open, unless ``with_open_findings``: then the keys of the
+    findings and the rows that differ are named in the journal.  The caller commits."""
+    plan = rebaseline_plan(db, list(org_ids))
+    open_findings = [k for c in plan.values() for k in c.findings]
+    divergent = sum(len(c.divergent) for c in plan.values())
+    if (open_findings or divergent) and not with_open_findings:
+        raise ValueError(f"В эталоне есть расхождения: строк {divergent}, открытых находок {len(open_findings)} ({', '.join(open_findings[:5])}). "
+                         "Разберите их (--accept) или повторите с --with-open-findings: тогда они будут названы в журнале, а пересъёмка их сотрёт")
+    for org_id, centre in plan.items():
         db.query(MoneyRowBaseline).filter(MoneyRowBaseline.org_id == org_id).delete(synchronize_session=False)
-        verdict = RowVerdict(now=now, confirm=dict(now))
-        store(db, org_id, run_id, verdict, at)
-        db.add(OrgMoneyAudit(org_id=org_id, actor_id=None, action=REBASELINED, occurred_at=at, details={
-            "rows": len(now), "reason": reason, "run_id": str(run_id), "text": f"Сверка: эталон записей денег снят заново ({len(now)}). Причина: {reason}"}))
-        total += len(now)
-    return total
+        store(db, org_id, run_id, RowVerdict(now=centre.now, confirm=dict(centre.now)), at)
+        db.add(OrgMoneyAudit(org_id=org_id, actor_id=actor_id, action=REBASELINED, occurred_at=at, details={
+            "rows": len(centre.now), "reason": reason, "run_id": str(run_id), "divergentRows": len(centre.divergent), "divergent": centre.divergent[:MAX_NAMED], "findings": centre.findings[:MAX_NAMED],
+            "text": f"Сверка: эталон записей денег снят заново ({len(centre.now)}); расходящихся строк {len(centre.divergent)}, открытых находок {len(centre.findings)}. Причина: {reason}"}))
+    return plan

@@ -42,8 +42,9 @@ from sqlalchemy.dialects.postgresql import distinct_on, insert as pg_insert
 from src.models.auth import (
     AttendanceExcuse, Group, GroupAttendance, GroupPrice, GroupScheduleOneOffLesson, GroupScheduleOverride, MembershipOpeningBalance, MembershipPause, MembershipPriceOverride,
     MembershipTransfer, MoneyReconcileCentre, MoneyReconcileFinding, MoneyReconcileRun, MoneyReconcileSnapshot, Organization, OrgDayOff, PayrollSheet, StudentGroup, StudentPayment,
-    StudentRefund, StudentWriteoff,
+    StudentRefund, StudentWriteoff, User,
 )
+from src.models.platform import PlatformStaff
 
 from . import business_clock as bc
 from . import money_reconcile_rows as mrows
@@ -520,9 +521,25 @@ def accept(db, key: str, reason: str) -> Dict[str, Any]:
         return out
 
 
-def rebaseline(db, reason: str, *, only: Optional[Iterable[Any]] = None) -> Dict[str, Any]:
-    """Take the baseline of the money rows again for every active centre (or ``only``): after a migration of data or a restore of the database.  One run row (no centres, no findings) keeps the number
-    of rows and the reason; each centre gets a line in its journal.  ``busy``: another run is going."""
+def platform_actor(db, actor: Optional[str]) -> UUID:
+    """The author of a manual move of the baseline: the id (or the e-mail) of an ACTIVE user of the platform (the console staff).  Anyone else is refused."""
+    text_ = (actor or "").strip()
+    if not text_:
+        raise ValueError("Автор обязателен: --actor (id или e-mail сотрудника платформы)")
+    try:
+        user_filter = User.id == UUID(text_)
+    except ValueError:
+        user_filter = func.lower(User.email) == text_.lower()
+    found = db.query(User.id).join(PlatformStaff, PlatformStaff.user_id == User.id).filter(user_filter, PlatformStaff.is_active.is_(True), User.is_active.is_(True)).scalar()
+    if found is None:
+        raise ValueError("Автор — не активный сотрудник платформы")
+    return found
+
+
+def rebaseline(db, reason: str, *, actor: Optional[str], with_open_findings: bool = False, only: Optional[Iterable[Any]] = None) -> Dict[str, Any]:
+    """Take the baseline of the money rows again for every active centre (or ``only``): after a migration of data or a restore of the database.  ``actor``: an active user of the platform (required).
+    While the old baseline holds a row that differs or a finding is open it refuses, unless ``with_open_findings``: then their keys go to the note of the run and to the journal of the centre.  One run row
+    (status ``rebaselined``, no centres, no findings) keeps the number of rows and the reason; each centre gets a line in its journal.  ``busy``: another run is going."""
     reason = (reason or "").strip()
     if not 3 <= len(reason) <= 300:
         raise ValueError("Причина: от 3 до 300 символов")
@@ -530,22 +547,28 @@ def rebaseline(db, reason: str, *, only: Optional[Iterable[Any]] = None) -> Dict
         if not lock.held:
             return {"busy": True}
         db.rollback()
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))          # first statement of the transaction: one view of the centres
+        actor_id = platform_actor(db, actor)
         query = db.query(Organization.id).filter(Organization.status == "active")
         if only is not None:
             query = query.filter(Organization.id.in_([o if isinstance(o, UUID) else UUID(str(o)) for o in only]))
         orgs = [o for (o,) in query.order_by(Organization.id).all()]
         started = bc.utc_now()
-        run_row = MoneyReconcileRun(started_at=started, finished_at=started, status="clean", centres_checked=0, findings_count=0, new_findings_count=0)
-        db.add(run_row)
-        db.flush()
         try:
-            rows = mrows.rebaseline(db, orgs, run_row.id, reason, started)
-            run_row.note = f"пересъёмка эталона: центров {len(orgs)}, записей {rows}; причина: {reason}"[:500]
+            run_row = MoneyReconcileRun(started_at=started, finished_at=started, status="rebaselined", centres_checked=0, findings_count=0, new_findings_count=0)
+            db.add(run_row)
+            db.flush()
+            plan = mrows.rebaseline(db, orgs, run_row.id, reason, started, actor_id=actor_id, with_open_findings=with_open_findings)
+            rows = sum(len(c.now) for c in plan.values())
+            named = [k for c in plan.values() for k in c.findings]
+            divergent = sum(len(c.divergent) for c in plan.values())
+            tail = f"; расходящихся строк {divergent}, открытых находок {len(named)}: " + ", ".join(named) if named or divergent else ""
+            run_row.note = f"пересъёмка эталона: центров {len(orgs)}, записей {rows}; причина: {reason}{tail}"[:500]
             db.commit()
         except Exception:
             db.rollback()
             raise
-        return {"centres": len(orgs), "rows": rows, "runId": str(run_row.id), "note": run_row.note}
+        return {"centres": len(orgs), "rows": rows, "runId": str(run_row.id), "note": run_row.note, "divergent": divergent, "findings": named, "actor": str(actor_id)}
 
 
 def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_seconds: int, only: Optional[Iterable[Any]] = None) -> Dict[str, Any]:

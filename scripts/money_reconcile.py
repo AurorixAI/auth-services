@@ -5,7 +5,7 @@
     python -m scripts.money_reconcile --apply         # stores the run (the console section «Сверка» reads it)
     python -m scripts.money_reconcile --apply --mail  # ... and writes to the team when a finding is NEW (address: MONEY_RECONCILE_EMAIL, else the support mailbox of the mail settings)
     python -m scripts.money_reconcile --accept KIND:ID:CODE --reason "text"   # the team accepts ONE finding of I-5: the baseline of that row is taken again (the journal of the centre gets the reason)
-    python -m scripts.money_reconcile --rebaseline --reason "text" [--org ID]  # after a migration of data / a restore: the baseline of the money rows is taken again (rows and reason are printed)
+    python -m scripts.money_reconcile --rebaseline --reason "text" --actor USER [--with-open-findings] [--org ID]  # after a migration of data / a restore: the baseline of the money rows is taken again (rows and reason are printed)
 
 The FIRST night after the release takes the baseline of the money rows (I-5) without findings and says so in the summary line (``first_centres=N``).  A row with a finding keeps its old baseline and the
 finding repeats every night until it is accepted.
@@ -36,6 +36,8 @@ def main(argv=None) -> int:
     parser.add_argument("--accept", metavar="KEY", default=None, help="accept ONE finding of I-5 (kind:row id:code); needs --reason")
     parser.add_argument("--rebaseline", action="store_true", help="take the baseline of the money rows again (after a migration of data / a restore); needs --reason")
     parser.add_argument("--reason", default=None, help="why (for --accept and --rebaseline)")
+    parser.add_argument("--actor", default=None, help="who (id or e-mail of an ACTIVE user of the platform); required for --rebaseline")
+    parser.add_argument("--with-open-findings", action="store_true", help="--rebaseline: go on although a row differs from the baseline or a finding is open (they are named in the journal)")
     args = parser.parse_args(argv)
 
     from sqlalchemy.orm import Session
@@ -49,7 +51,7 @@ def main(argv=None) -> int:
             return 4
         try:
             with Session(engine) as db:
-                done = money_reconcile.accept(db, args.accept, args.reason) if args.accept else money_reconcile.rebaseline(db, args.reason, only=args.org)
+                done = money_reconcile.accept(db, args.accept, args.reason) if args.accept else money_reconcile.rebaseline(db, args.reason, actor=args.actor, with_open_findings=args.with_open_findings, only=args.org)
         except ValueError as exc:
             print(f"REFUSED: {exc}", file=sys.stderr)
             return 4

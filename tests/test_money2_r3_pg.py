@@ -139,3 +139,80 @@ def test_r4_a_second_edit_of_a_row_that_already_has_a_finding_is_new_and_the_let
     assert found.is_new is True and two["new"] >= 1 and two["mail"] == "sent" and len(sent) == 2
     assert found.details["restated"]["wasAmount"] == 200 and found.details["restated"]["nowAmount"] == 900
     assert "правка повторная: было в прошлой находке 200 → стало 900" in sent[1].get_body(preferencelist=("plain",)).get_content()
+
+
+# ============================================================================================================ Р5: a re-baseline does not wipe open findings without naming them
+from uuid import uuid4  # noqa: E402
+
+from src.models.auth import MoneyReconcileRun, MoneyRowBaseline  # noqa: E402
+from tests.test_money2_rows_pg import staff_actor  # noqa: E402
+
+
+def rebaseline(world, monkeypatch, *extra, reason=None, actor="staff"):
+    reason = reason or f"Восстановление из копии {uuid4()}"
+    args = ["--rebaseline", "--reason", reason, "--org", str(world.org.id)]
+    if actor == "staff":
+        args += ["--actor", staff_actor(world)]
+    elif actor:
+        args += ["--actor", actor]
+    return script_main(world, monkeypatch, *args, *extra), reason
+
+
+def test_r5_a_rebaseline_over_an_open_finding_is_refused_and_leaves_the_baseline_and_no_trace(world, monkeypatch, capsys):
+    ensure_billing(world)
+    row = pid_of(pay(world, world.students[0], amount=450_000))
+    night(world)
+    sql(world, "UPDATE student_payments SET amount = 200 WHERE id = :id", id=row)
+    assert i5(night(world), world) == [f"payment:{row}:changed"]
+    old = world.db.get(MoneyRowBaseline, ("payment", row)).fingerprint
+    code, reason = rebaseline(world, monkeypatch)
+    assert code == 4
+    err = capsys.readouterr().err
+    assert f"payment:{row}:changed" in err and "--with-open-findings" in err
+    world.db.expire_all()
+    assert world.db.get(MoneyRowBaseline, ("payment", row)).fingerprint == old
+    assert world.db.query(MoneyReconcileRun).filter(MoneyReconcileRun.note.like("%" + reason + "%")).count() == 0
+    assert world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_rebaseline").count() == 0
+    assert i5(night(world), world) == [f"payment:{row}:changed"], "the finding is still there"
+
+
+def test_r5_with_the_flag_the_findings_and_the_number_of_rows_that_differ_are_named_in_the_run_and_the_journal(world, monkeypatch):
+    ensure_billing(world)
+    row = pid_of(pay(world, world.students[0], amount=450_000))
+    night(world)
+    sql(world, "UPDATE student_payments SET amount = 200 WHERE id = :id", id=row)
+    i5(night(world), world)
+    code, reason = rebaseline(world, monkeypatch, "--with-open-findings")
+    assert code == 0
+    world.db.expire_all()
+    run = world.db.query(MoneyReconcileRun).filter(MoneyReconcileRun.note.like("%" + reason + "%")).one()
+    assert run.status == "rebaselined" and f"payment:{row}:changed" in run.note and "расходящихся строк 1" in run.note
+    line = world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_rebaseline").one()
+    assert line.details["findings"] == [f"payment:{row}:changed"] and line.details["divergentRows"] == 1 and line.details["divergent"] == [f"payment:{row}"]
+    assert str(line.actor_id) and i5(night(world), world) == []
+
+
+@pytest.mark.parametrize("who", [None, "garbage", "ordinary", "inactive-staff"])
+def test_r5_a_rebaseline_without_an_author_who_is_a_user_of_the_platform_is_refused(world, monkeypatch, capsys, who):
+    ensure_billing(world)
+    pay(world, world.students[0], amount=450_000)
+    night(world)
+    actor = {None: None, "garbage": "nobody@example.test", "ordinary": str(world.owner.id), "inactive-staff": None}[who]
+    if who == "inactive-staff":
+        actor = staff_actor(world, active=False)
+    code, reason = rebaseline(world, monkeypatch, actor=actor)
+    assert code == 4 and "REFUSED" in capsys.readouterr().err
+    world.db.expire_all()
+    assert world.db.query(MoneyReconcileRun).filter(MoneyReconcileRun.note.like("%" + reason + "%")).count() == 0
+    assert world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_rebaseline").count() == 0
+
+
+def test_r5_a_clean_rebaseline_goes_through_with_the_author_in_the_journal_and_its_own_status(world, monkeypatch):
+    ensure_billing(world)
+    pay(world, world.students[0], amount=450_000)
+    night(world)
+    code, reason = rebaseline(world, monkeypatch)
+    assert code == 0
+    world.db.expire_all()
+    assert world.db.query(MoneyReconcileRun).filter(MoneyReconcileRun.note.like("%" + reason + "%")).one().status == "rebaselined"
+    assert world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_rebaseline").one().actor_id is not None
