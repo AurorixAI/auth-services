@@ -91,6 +91,41 @@ def after_settle(snaps: Sequence[Snap], settled: Sequence[Any]) -> List[Snap]:
     return list(snaps)
 
 
+def open_balances(db: Session, org_id: Any, membership_ids: Sequence[UUID]) -> List[Tuple[Any, str, int]]:
+    """Money-2 T12 / T13: the ONE rule of «what is still on the account of these memberships (the left ones too) today»: ``(ledger entry, "debt" | "advance", amount)``, a debt and an advance each as its own line."""
+    from . import ledger_service as ls  # lazy: ledger_service imports the pricing / status modules
+
+    if not membership_ids:
+        return []
+    out: List[Tuple[Any, str, int]] = []
+    for entry in ls.LedgerLoader(db, str(org_id), ps.business_today()).run(list(membership_ids)):
+        for kind, amount in (("debt", entry.ledger.debt), ("advance", entry.ledger.advance)):
+            if amount > 0:
+                out.append((entry, kind, int(amount)))
+    return out
+
+
+def past_balances(db: Session, org_id: Any, student_id: Any, group_id: Any, *, money: bool) -> List[Dict[str, Any]]:
+    """Money-2 T13: the window of adding a student to ``group_id`` shows what is left on his closed stays in the OTHER groups of the centre: group, the day he left, a debt or an advance
+    (sums and figures only with ``money``).  No action here: moving an advance to the new group is not in the package."""
+    ids = [row[0] for row in db.query(StudentGroup.id).join(Group, Group.id == StudentGroup.group_id).filter(
+        StudentGroup.student_id == student_id, StudentGroup.is_active.is_(False), StudentGroup.group_id != group_id, Group.org_id == org_id).all()]
+    out: List[Dict[str, Any]] = []
+    for entry, kind, amount in open_balances(db, org_id, ids):
+        left_on = ps.business_date(entry.membership.left_at) if entry.membership.left_at else None
+        name, when = entry.group.name, (f" (ушёл {_dmy(left_on)})" if left_on else "")
+        word = "долг" if kind == "debt" else "аванс"
+        row: Dict[str, Any] = {"group_id": str(entry.group.id), "group_name": name, "membership_id": str(entry.membership.id), "left_on": left_on.isoformat() if left_on else None, "kind": kind}
+        if money:
+            row["amount"] = amount
+            row["text"] = f"В группе «{name}»{when} остался {word} {tx.money(amount)}: смотрите её выписку"
+        else:
+            row["text"] = f"В группе «{name}»{when} остался {word}: смотрите её выписку"
+        out.append(row)
+    out.sort(key=lambda r: (r["left_on"] or "", r["group_name"], r["kind"]))
+    return out
+
+
 def _ddmm(day: date) -> str:
     return day.strftime("%d.%m")
 

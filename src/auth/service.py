@@ -2915,6 +2915,8 @@ class AuthService:
         warnings.extend(carried)
         if opening_warning:                  # Money-1 R3 Д4: «оплачено до» on top of payments is named (the same function as the batch and the single window)
             warnings.append(opening_warning)
+        from . import leave_effects as _leave_effects  # lazy
+        past_balances = _leave_effects.past_balances(self.db, org_id, student.id, group.id, money=payments_detail) if mode == "add" else []
         result = {
             "student_id": str(student_id),
             "group_id": str(group_id),
@@ -2927,6 +2929,7 @@ class AuthService:
             "carry_after": carry_after,
             "closing_prices": closing_prices,
             "leave_undo": leave_undo_result,      # Money-2 T6: null = an ordinary adding / return; else {undone, restored[], text} - the leaving of the same day is cancelled (or the reason it is not)
+            "past_balances": past_balances,      # Money-2 T13: what is left on his closed stays in OTHER groups (add only; sums with the right to money)
             "effects": effects,                  # Money-2 T3: what moves / stays / ends (sums only for a caller with the right to money)
             "individual_price_ends": bool(closing_prices),
             "billing": billing,                  # Money-1 B1: from which day he is charged (``pay_from``) and why; null for a transfer

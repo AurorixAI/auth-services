@@ -159,3 +159,30 @@ def test_t12_an_administrator_without_the_money_right_gets_the_list_without_sums
         assert "amount" not in row and not any(ch.isdigit() for ch in row["text"]), row
         assert row["kind"] in ("debt", "advance")
         assert row["actions"] == []                                                    # without the right: nothing to offer, the owner decides
+
+
+# ---------------------------------------------------------------------------------------------------- T13 the window of adding sees the balances of the past groups
+
+
+def test_t13_the_preview_of_adding_names_the_debt_and_the_advance_left_in_other_groups_and_the_answer_says_the_same(world, fixed_today):
+    from tests.pg_world import make_client
+
+    # as in T12: in A since 02.11, the stay closed on 20.11 = 19 lessons x 10 000 = 190 000.  s0 paid nothing: debt 190 000; s1 paid 600 000: advance 410 000; s2 paid 190 000: nothing left.
+    a, (s0, s1, s2) = _a_group_with_two_leavers(world, fixed_today)
+    b = world.db.query(type(a)).filter_by(org_id=world.org.id, name="Бета").one()
+    url = f"{API}/org/groups/{b.id}/students"
+    d0 = owner(world).post(f"{url}/{s0.id}", params={"mode": "add", "dry_run": "true"}, json={}).json()
+    (row,) = d0["past_balances"]
+    assert (row["group_name"], row["kind"], row["amount"], row["left_on"]) == (a.name, "debt", 190_000, DAY.isoformat())
+    assert row["membership_id"] == str(membership(world, s0, a).id) and tx.money(190_000) in row["text"] and a.name in row["text"]
+    (row1,) = owner(world).post(f"{url}/{s1.id}", params={"mode": "add", "dry_run": "true"}, json={}).json()["past_balances"]
+    assert (row1["kind"], row1["amount"]) == ("advance", 410_000)
+    assert owner(world).post(f"{url}/{s2.id}", params={"mode": "add", "dry_run": "true"}, json={}).json()["past_balances"] == []        # nothing left in A
+    # the real adding says the same; the new student of the centre with no past has an empty list
+    real = owner(world).post(f"{url}/{s0.id}", params={"mode": "add"}, json={})
+    assert real.status_code == 200, real.text
+    assert real.json()["past_balances"] == [row]
+    # without the right to money: the fact, no sum, no figures
+    admin = make_client(world, user=world.admin, org_role="admin")
+    (plain,) = admin.post(f"{url}/{s1.id}", params={"mode": "add", "dry_run": "true"}, json={}).json()["past_balances"]
+    assert "amount" not in plain and plain["kind"] == "advance" and "сум" not in plain["text"] and "410" not in plain["text"], plain      # (the date of leaving is in the text, a sum is not)

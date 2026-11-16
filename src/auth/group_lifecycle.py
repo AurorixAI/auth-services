@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import func
 
 from . import business_clock as bc
-from . import ledger_service as ls
+from . import leave_effects
 from . import payment_status as ps
 from . import payments_texts as tx
 from . import exam_bridge, lesson_substitutions, schedule_rules
@@ -94,25 +94,20 @@ class GroupLifecycle:
         """Money-2 T12: the memberships of the group (the left ones too) whose account is not zero today: one row per debt and per advance.
         ``money`` False: the facts only (no ``amount``, no figures in ``text``, no actions - the owner / an administrator with the right decides)."""
         ids = [row[0] for row in self.db.query(StudentGroup.id).filter(StudentGroup.group_id == group.id).all()]
-        if not ids:
-            return []
         out: List[Dict[str, Any]] = []
-        for entry in ls.LedgerLoader(self.db, str(group.org_id), ps.business_today()).run(ids):
+        for entry, kind, amount in leave_effects.open_balances(self.db, group.org_id, ids):
             name = _student_name(entry.student)
             left_on = ps.business_date(entry.membership.left_at).isoformat() if entry.membership.left_at else None
-            for kind, amount in (("debt", entry.ledger.debt), ("advance", entry.ledger.advance)):
-                if amount <= 0:
-                    continue
-                row: Dict[str, Any] = {"student_id": str(entry.student.id), "membership_id": str(entry.membership.id), "name": name, "left_on": left_on, "kind": kind,
+            row: Dict[str, Any] = {"student_id": str(entry.student.id), "membership_id": str(entry.membership.id), "name": name, "left_on": left_on, "kind": kind,
                                        "actions": [{"code": code, "label": label} for code, label in BALANCE_ACTIONS[kind]] if money else []}
-                if money:
-                    row["amount"] = int(amount)
-                    row["text"] = (f"{name}: долг {tx.money(amount)} — принять оплату или простить его можно в выписке группы" if kind == "debt"
-                                   else f"{name}: аванс {tx.money(amount)} — вернуть его можно в выписке группы")
-                else:
-                    row["text"] = (f"{name}: есть долг — принять оплату или простить его может владелец или администратор с доступом к деньгам" if kind == "debt"
-                                   else f"{name}: есть аванс — вернуть его может владелец или администратор с доступом к деньгам")
-                out.append(row)
+            if money:
+                row["amount"] = amount
+                row["text"] = (f"{name}: долг {tx.money(amount)} — принять оплату или простить его можно в выписке группы" if kind == "debt"
+                               else f"{name}: аванс {tx.money(amount)} — вернуть его можно в выписке группы")
+            else:
+                row["text"] = (f"{name}: есть долг — принять оплату или простить его может владелец или администратор с доступом к деньгам" if kind == "debt"
+                               else f"{name}: есть аванс — вернуть его может владелец или администратор с доступом к деньгам")
+            out.append(row)
         out.sort(key=lambda r: (r["name"], r["kind"]))
         return out
 
