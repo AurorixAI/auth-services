@@ -18,6 +18,7 @@ from src.models.platform import DEMO_REQUEST_STATUSES, DemoRequest, DemoRequestN
 
 from . import demo_requests as dr
 from . import password_links as links
+from . import payment_status
 from . import platform_audit as audit
 from .platform_common import contains, date_range, iso, not_found, page_params, page_response, query_form, utcnow
 from .platform_errors import PlatformError
@@ -274,6 +275,7 @@ def approve(
     org = Organization(
         name=org_name or row.centre_name, org_type=row.org_type or "center", city=row.city, address=row.address, phone=row.phone,
         email=owner_email, status="active", approved_at=now, approved_by=p.user.id,  # the type and the address of the request (A7)
+        settings=payment_status.new_centre_settings(),      # Money-2 T16: the common month, written
     )
     db.add(org)
     db.flush()

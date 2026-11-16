@@ -22,7 +22,7 @@ from .service import (
 )
 from .schemas import UserResponse, TokenPair, OrgResponse, SessionResponse
 from .cookies import set_auth_cookies
-from . import user_sessions
+from . import payment_status, user_sessions
 
 from src.core.database import get_db
 
@@ -97,6 +97,7 @@ def dev_login(
             phone="+998901234567",
             email="dev@algo.test",
             status="active",
+            settings=payment_status.new_centre_settings(),      # Money-2 T16: the common month, written
         )
         db.add(org)
         db.flush()

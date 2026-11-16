@@ -66,6 +66,12 @@ FIXED_DAY = "fixed_day"
 MIN_BILLING_DAY = 1
 MAX_BILLING_DAY = 28  # no 29..31: the period then never depends on the length of a month
 
+
+def new_centre_settings() -> dict:
+    """Money-2 T16: the ``organizations.settings`` of a NEW centre - the mode «Общий месяц» (a calendar month, the payment day the 1st) WRITTEN, not left to the reading rule
+    (a centre without the entry is read as the payment date, as before).  The one place every way of creating a centre takes it from."""
+    return {"payments": {"period_mode": CALENDAR, "billing_anchor": FIXED_DAY, "billing_day": MIN_BILLING_DAY}}
+
 NONE = "none"
 FREE = "free"
 EXPIRED = "expired"

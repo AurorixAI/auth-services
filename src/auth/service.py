@@ -479,6 +479,7 @@ class AuthService:
             phone=request.phone,
             email=request.email,
             status="active" if auto_approve else "pending",
+            settings=ps.new_centre_settings(),      # Money-2 T16: the common month, written
         )
         if auto_approve:
             org.approved_at = datetime.now(timezone.utc)
