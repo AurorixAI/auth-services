@@ -576,16 +576,20 @@ class PaymentService:
         if self._regime_fields(after) != self._regime_fields(before):
             ready = pre if pre is not None and pre[0] == self._regime_fields(before) and pre[1] == self._regime_fields(after) else None      # worked out before the lock (R3 №12)
             audit.append(("billing_regime_changed", ready[2] if ready is not None else self._safe_regime_audit(org_id, before, after, today)))       # the sums are read BEFORE the new settings are written
-            history = [dict(h) for h in (block.get("billing_history") or []) if isinstance(h, dict)]
-            if not history:
-                history = [{"from": "min", **self._regime_fields(before)}]
-            # LOGIC-A (F12): the new regime acts for every student from the start of HIS next period - a running period is never cut
-            entry = {"from": today.isoformat(), "defer": True, "at": bc.utc_now().isoformat(), **self._regime_fields(after)}
-            if history[-1].get("from") == today.isoformat():
-                history[-1] = entry
+            if self._centre_is_empty(org_id):
+                # R3c Г3: nobody was ever written, paid or opened in this centre: no past exists to keep - the new regime is the ONLY one, from the start (no «defer»)
+                block["billing_history"] = [{"from": "min", **self._regime_fields(after)}]
             else:
-                history.append(entry)
-            block["billing_history"] = history
+                history = [dict(h) for h in (block.get("billing_history") or []) if isinstance(h, dict)]
+                if not history:
+                    history = [{"from": "min", **self._regime_fields(before)}]
+                # LOGIC-A (F12): the new regime acts for every student from the start of HIS next period - a running period is never cut
+                entry = {"from": today.isoformat(), "defer": True, "at": bc.utc_now().isoformat(), **self._regime_fields(after)}
+                if history[-1].get("from") == today.isoformat():
+                    history[-1] = entry
+                else:
+                    history.append(entry)
+                block["billing_history"] = history
         if recalc is not None and recalc != before.centre_cancel_recalc:
             # PAY-F: acts for the lessons dated from today; what was cancelled before is never recalculated
             history = [dict(h) for h in (block.get("recalc_history") or []) if isinstance(h, dict)]
@@ -616,6 +620,15 @@ class PaymentService:
             org_id, actor_id, sorted(list(changes) + (["accounting_start_date"] if new_start is not None else []) + (["centre_cancel_recalc"] if recalc is not None else [])),
         )
         return PaymentSettingsChanged(**self.get_settings(org_id).model_dump())
+
+    def _centre_is_empty(self, org_id: Any) -> bool:
+        """R3c Г3: THE one «the centre is empty for money»: no membership of a student in any group of the centre (live or closed), no payment (of any kind, cancelled too) and no opening balance."""
+        group_ids = self.db.query(Group.id).filter(Group.org_id == org_id)
+        if self.db.query(StudentGroup.id).filter(StudentGroup.group_id.in_(group_ids)).first() is not None:
+            return False
+        if self.db.query(StudentPayment.id).filter(StudentPayment.org_id == org_id).first() is not None:
+            return False
+        return self.db.query(MembershipOpeningBalance.id).filter(MembershipOpeningBalance.org_id == org_id).first() is None
 
     def _regime_headline(self, before: PaymentSettings, after: PaymentSettings) -> str:
         was, now = self._regime_fields(before), self._regime_fields(after)

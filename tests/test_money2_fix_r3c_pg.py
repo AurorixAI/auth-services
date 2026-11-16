@@ -4,6 +4,8 @@
 an opening balance (no check of the age); when it is finished (done / skipped) - the owner only (403 ``OPENING_OWNER_ONLY``).  Every road of the opening balance asks the same function."""
 from datetime import date
 
+from src.auth import payment_status as ps
+
 import pytest
 
 from tests.money1b_helpers import add
@@ -214,3 +216,112 @@ def test_g2_an_administrator_who_became_the_owner_later_did_not_cancel_as_an_own
     set_member_role(world, world.admin, "owner")
     r = admin.post(f"{API}/org/payments/{e7['id']}/restore", json={"reason": "Отменили по ошибке"})
     assert r.status_code == 201, r.text
+
+
+# ============================================================================================================ Г3: the first change of the mode in an empty centre acts from the start
+
+
+def empty_centre(world):
+    """A centre with nobody in any group: no membership (its periods, payments, openings, transfers go with it by the cascade of the database)."""
+    from sqlalchemy import text
+
+    world.db.execute(text("TRUNCATE student_groups CASCADE"))
+    world.db.commit()
+
+
+def history_of(world):
+    world.db.expire_all()
+    return world.org.settings["payments"].get("billing_history")
+
+
+def test_g3_an_empty_centre_gets_the_new_mode_from_the_start_the_history_is_one_entry(world, fixed_today):
+    # a new centre starts with «Общий месяц»; nobody is in a group, nothing is paid: the owner chooses «Личный период» -> the history is ONE entry from the start, no «defer», no entry of the old mode
+    settings_block(world, period_mode="calendar", billing_anchor="fixed_day", billing_day=1)
+    empty_centre(world)
+    c = owner(world)
+    dry = c.put(f"{API}/org/settings/payments", params={"dry_run": True}, json={"billing_anchor": "payment_date"})
+    assert dry.status_code == 200 and dry.json()["regime_impact"]["students_affected"] == 0, dry.text
+    assert history_of(world) is None                                                                  # the trial wrote nothing
+    assert c.put(f"{API}/org/settings/payments", json={"billing_anchor": "payment_date"}).status_code == 200
+    (entry,) = history_of(world)
+    assert entry["from"] == "min" and entry["billing_anchor"] == "payment_date" and entry["period_mode"] == "calendar" and "defer" not in entry
+    # and back (still empty): a replacement again, not a second entry
+    assert c.put(f"{API}/org/settings/payments", json={"billing_anchor": "fixed_day", "billing_day": 1}).status_code == 200
+    (entry,) = history_of(world)
+    assert entry["from"] == "min" and entry["billing_anchor"] == "fixed_day" and "defer" not in entry
+
+
+def test_g3_a_centre_with_a_student_a_payment_or_an_opening_keeps_the_rule_from_today(world, fixed_today):
+    # the same change when ANY of the three exists: from today, the old mode is the first entry («the past is not recounted»)
+    settings_block(world, period_mode="calendar", billing_anchor="fixed_day", billing_day=1)
+    # (a) a student in a group (the world has three)
+    assert owner(world).put(f"{API}/org/settings/payments", json={"billing_anchor": "payment_date"}).status_code == 200
+    first, last = history_of(world)[0], history_of(world)[-1]
+    assert len(history_of(world)) == 2 and first["from"] == "min" and last["from"] == ps.business_today().isoformat() and last["defer"] is True
+
+
+def test_g3_a_left_student_a_payment_and_an_opening_each_make_the_centre_not_empty(world, fixed_today):
+    from src.auth.payments_service import PaymentService
+    from tests.money1b_helpers import opening_until
+    from tests.test_pay2_api_pg import seed_payment
+
+    service = PaymentService(world.db)
+    assert service._centre_is_empty(str(world.org.id)) is False                                        # three students in the group
+    m = membership(world, world.students[0])
+    m_id, student_id = m.id, m.student_id
+    seed_payment(world, m, 100_000, date(2026, 11, 10))
+    opening_until(world, m, date(2026, 11, 30))
+    from src.models.auth import MembershipOpeningBalance, StudentPayment
+
+    world.db.query(StudentPayment).delete()
+    world.db.commit()
+    assert service._centre_is_empty(str(world.org.id)) is False                                        # the opening alone
+    world.db.query(MembershipOpeningBalance).delete()
+    world.db.commit()
+    assert service._centre_is_empty(str(world.org.id)) is False                                        # the memberships alone (also closed ones: is_active is not asked)
+    empty_centre(world)
+    assert service._centre_is_empty(str(world.org.id)) is True
+
+
+def enrol_with_pay_from(world, before, change, populated):
+    """Today Wednesday 21.10.2026 (the clock of the fixture); group on Tuesdays and Thursdays, 300 000 a month; the student S0 is written with «Оплата с» 11.10 (10 days ago).  Returns (debt, entries of the history)."""
+    from datetime import timedelta
+
+    from tests.money1b_helpers import add, set_schedule
+    from tests.pg_world import give_group_price
+    from tests.test_money2_fix_r3_pg import TUE_THU
+
+    settings_block(world, accounting_start_date="2026-10-01", **before)
+    set_schedule(world, TUE_THU, world.group)
+    give_group_price(world.db, world.group, 300_000, valid_from=date(2026, 1, 1))
+    s0, s1 = world.students[0], world.students[1]
+    empty_centre(world)
+    c = owner(world)
+    if populated:
+        add(world, s1, group=world.group, mode="add")                                                  # somebody is already in a group before the switch
+    assert c.put(f"{API}/org/settings/payments", json=change).status_code == 200
+    add(world, s0, group=world.group, mode="add", pay_from=(ps.business_today() - timedelta(days=10)).isoformat())
+    debt = c.get(f"{API}/org/students/{s0.id}/memberships").json()[0]["debt"]
+    return debt, history_of(world)
+
+
+COMMON = {"period_mode": "calendar", "billing_anchor": "fixed_day", "billing_day": 1}
+
+
+def test_g3_numbers_empty_centre_common_month_to_personal_period_charges_the_whole_period_from_the_day(world, fixed_today):
+    # «Личный период»: the period 11.10-10.11 is charged whole = 300 000 (the common month never existed in this centre).  One entry of the history, from the start
+    debt, history = enrol_with_pay_from(world, COMMON, {"billing_anchor": "payment_date"}, populated=False)
+    assert debt == 300_000 and len(history) == 1 and history[0]["from"] == "min" and "defer" not in history[0]
+
+
+def test_g3_numbers_the_same_with_a_student_already_in_a_group_the_old_rule_from_today(world, fixed_today):
+    # the change acts from today (21.10), the student with «Оплата с» 11.10 is before it: the COMMON month is still his: 11.10-31.10 holds 6 lessons (13, 15, 20, 22, 27, 29.10) of the 9 of October
+    # (1, 6, 8, 13, 15, 20, 22, 27, 29) -> 300 000 x 6 / 9 = 200 000; the history has two entries (the old mode from the start, the new one from today)
+    debt, history = enrol_with_pay_from(world, COMMON, {"billing_anchor": "payment_date"}, populated=True)
+    assert debt == 200_000 and [h["from"] for h in history] == ["min", ps.business_today().isoformat()] and history[-1]["defer"] is True
+
+
+def test_g3_numbers_the_other_direction_an_empty_centre_without_an_explicit_mode_to_the_common_month(world, fixed_today):
+    # an old centre without an entry reads as «payment date»; in an empty one the owner chooses «Общий месяц»: it acts from the start -> the share of the month 6 / 9 of 300 000 = 200 000, one entry
+    debt, history = enrol_with_pay_from(world, {}, {"billing_anchor": "fixed_day", "billing_day": 1}, populated=False)
+    assert debt == 200_000 and len(history) == 1 and history[0]["from"] == "min" and history[0]["billing_anchor"] == "fixed_day" and "defer" not in history[0]
