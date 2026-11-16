@@ -449,8 +449,10 @@ def test_a_new_payment_without_the_snapshot_of_a_receipt_is_found_once_per_night
     stray = world.db.query(StudentPayment).filter(StudentPayment.org_id == world.org.id, StudentPayment.id != pid_of(first)).one().id
     one = night(world)
     assert f"payment:{stray}:untraced" in i5(one, world)
+    assert i2(one, world) == [f"membership:{mid(world, world.students[0])}"], "the stray sum is not explained by a row WITHOUT a finding: the sum of the night is a finding too, once"
+    pay(world, world.students[0], amount=50_000)                                                      # an honest payment the next day
     two = night(world)
-    assert i5(two, world) == [f"payment:{stray}:untraced"] and i2(two, world) == [], "the finding stands, the sum is in the snapshot already: no second finding for one row"
+    assert i5(two, world) == [f"payment:{stray}:untraced"] and i2(two, world) == [], "the finding stands; the stray row is in the snapshot already and must not spoil the sum of the honest payment"
 
 
 def test_a_new_row_of_a_kind_that_has_no_receipt_is_not_a_finding_by_itself(world):
