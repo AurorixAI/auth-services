@@ -1363,9 +1363,8 @@ def _openings_open_to(user: dict, db: Session) -> bool:
     return opening_allowed(OpeningService(db).is_launch_closed(user["org_id"]), user["org_role"])
 
 
-def _import_money_flags(user: dict, db: Session) -> dict:
-    """The two flags of the import of students, each question asked once: ``money`` (the columns of the opening balance are read) and ``opening_closed`` (the right is there, the launch is closed for this role)."""
-    has_right = has_payments_access(user, db)
+def _import_money_flags(user: dict, db: Session, has_right: bool) -> dict:
+    """The two flags of the import of students, each question asked once: ``money`` (the columns of the opening balance are read) and ``opening_closed`` (the right is there, the launch is closed for this role); the route asks the right itself (the guard of the routes reads it there)."""
     open_now = has_right and _openings_open_to(user, db)
     return {"money": open_now, "opening_closed": has_right and not open_now}
 
@@ -1379,7 +1378,7 @@ async def import_preview(
     """Разобрать и проверить файл (dry-run) — ничего не записывается."""
     data = await _read_import_upload(file)
     try:
-        return import_ops.preview(user["org_id"], data, db, **_import_money_flags(user, db))
+        return import_ops.preview(user["org_id"], data, db, **_import_money_flags(user, db, has_payments_access(user, db)))
     except import_limits.ImportFileRejected as e:
         raise HTTPException(422, str(e))
 
@@ -1393,7 +1392,7 @@ async def import_commit(
     """Записать данные из файла в базу транзакционно (всё или ничего)."""
     data = await _read_import_upload(file)
     try:
-        return import_ops.commit(user["org_id"], user["user_id"], data, db, **_import_money_flags(user, db))
+        return import_ops.commit(user["org_id"], user["user_id"], data, db, **_import_money_flags(user, db, has_payments_access(user, db)))
     except import_limits.ImportFileRejected as e:
         raise HTTPException(422, str(e))
 
