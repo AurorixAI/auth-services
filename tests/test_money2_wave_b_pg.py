@@ -368,3 +368,18 @@ def test_t19_the_return_into_a_group_that_replaces_an_opening_balance_leaves_a_l
 
     quiet(world, "the return replaced the opening balance")          # the nightly reconciliation finds nothing (no ``opening:<id>:no_journal``)
     assert inspect.signature(apply_add_opening).parameters["actor_id"].default is inspect.Parameter.empty and inspect.signature(apply_add_opening).parameters["actor_id"].annotation in (str, "str")
+
+
+# ---------------------------------------------------------------------------------------------------- T20 the product does not import the module of the check
+
+
+def test_t20_the_payments_service_takes_the_actions_of_the_journal_from_the_neutral_module_not_from_the_reconciliation():
+    import ast
+    import inspect
+
+    from src.auth import payments_service
+
+    imported = {n.module for n in ast.walk(ast.parse(inspect.getsource(payments_service))) if isinstance(n, ast.ImportFrom)} | {a.name for n in ast.walk(ast.parse(inspect.getsource(payments_service))) if isinstance(n, ast.Import) for a in n.names}
+    assert not any("money_reconcile" in (m or "") for m in imported), imported
+    assert not any(isinstance(n, ast.ImportFrom) and any(a.name.startswith("money_reconcile") for a in n.names) for n in ast.walk(ast.parse(inspect.getsource(payments_service))))
+    assert "money_journal_actions" in inspect.getsource(payments_service)

@@ -64,7 +64,7 @@ from src.models.auth import (
 from . import billing_ledger as bl
 from . import business_clock as bc
 from . import ledger_service as ls
-from . import money_reconcile_rows as mrows
+from .money_journal_actions import TRACE_ACTIONS
 from . import payment_status as ps
 from . import payments_texts as tx
 from . import payments_views as pv
@@ -654,7 +654,7 @@ class PaymentService:
 
     def settings_history(self, org_id: str, *, limit: int = 50) -> Dict[str, Any]:
         """The journal of the money settings of the centre, the newest first (Money-1 B9): who, when, what, and the sums."""
-        rows = (self.db.query(OrgMoneyAudit).filter(OrgMoneyAudit.org_id == org_id, OrgMoneyAudit.action.notin_(mrows.TRACE_ACTIONS))      # the lines of the payouts and of the reconciliation are not settings
+        rows = (self.db.query(OrgMoneyAudit).filter(OrgMoneyAudit.org_id == org_id, OrgMoneyAudit.action.notin_(TRACE_ACTIONS))      # the lines of the payouts and of the reconciliation are not settings
                 .order_by(OrgMoneyAudit.occurred_at.desc(), OrgMoneyAudit.id.desc()).limit(max(1, min(limit, 200))).all())
         names = {u.id: person_name(u.last_name, u.first_name) for u in self.db.query(User).filter(User.id.in_({r.actor_id for r in rows if r.actor_id}))} if rows else {}
         return {"items": [{"id": str(r.id), "at": r.occurred_at.isoformat() if r.occurred_at else None, "actor_id": str(r.actor_id) if r.actor_id else None,
