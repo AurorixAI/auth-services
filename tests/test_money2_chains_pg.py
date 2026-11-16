@@ -163,3 +163,87 @@ def test_payouts_in_parts_a_cancelled_payout_and_a_reopened_month_are_quiet_and_
     from src.auth.payments_service import PaymentService
 
     assert [i for i in PaymentService(world.db).settings_history(str(world.org.id))["items"] if i["action"].startswith("payroll_payout")] == []
+
+
+# ---------------------------------------------------------------------------------------------------- Money-2 wave A: the new money actions leave a quiet night and a line with the id of the row
+
+def _lines(world, action, event=None):
+    world.db.expire_all()
+    rows = world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action == action).order_by(GroupAudit.created_at).all()
+    return [g for g in rows if event is None or g.snapshot.get("event") == event]
+
+
+def test_a_transfer_that_carries_the_pauses_and_the_cancel_of_a_pause_in_the_old_group_are_quiet_and_every_pause_is_named_with_its_id(world, fixed_today):
+    from tests.test_money2_transfer_a_pg import add, groups3, joined, pause as make_pause, pauses_of
+    from tests.test_pay2_api_pg import membership
+
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    old_pause = make_pause(world, a, s0, date(2026, 11, 18), date(2026, 11, 20))
+    running = make_pause(world, a, s0, date(2026, 11, 22), date(2026, 11, 26))
+    future = make_pause(world, a, s0, date(2026, 12, 5), date(2026, 12, 10), "Поездка")
+    pay(world, s0, a, amount=600_000)
+    quiet(world, "before the transfer")
+    add(world, s0, group=b, mode="transfer")
+    quiet(world, "the transfer with the pauses")
+    made = {g.snapshot["moved_from_pause_id"]: g.snapshot for g in _lines(world, "membership_pause_set") if g.snapshot.get("via") == "transfer" and g.snapshot.get("moved_from_pause_id")}
+    assert set(made) == {running, future} and all(s["pause_id"] for s in made.values())          # the old pause and the new one: both ids are in the line
+    assert {g.snapshot["pause_id"] for g in _lines(world, "membership_pause_void") if g.snapshot.get("via") == "transfer"} == {future}
+    (transfer,) = _lines(world, "student_transferred")
+    assert transfer.snapshot["transfer_id"] and transfer.snapshot["amount"] > 0
+    r = owner(world).post(f"{API}/org/pauses/{old_pause}/void", json={"reason": "Выздоровел раньше"})        # T9: the pause of the OLD group changes the sum that went to B
+    assert r.status_code == 200, r.text
+    quiet(world, "the pause of the old group cancelled after the transfer")
+    (line,) = [g for g in _lines(world, "membership_pause_void") if g.snapshot.get("pause_id") == old_pause]
+    assert line.snapshot["advance_drops"] and line.group_id == a.id and line.actor_id == world.owner.id
+    moved = [p for p in pauses_of(world, s0, b)]
+    assert moved and membership(world, s0, b) is not None
+
+
+def test_the_cancel_of_a_leaving_and_the_transfer_back_the_same_day_are_quiet_and_name_what_they_restored_by_id(world, fixed_today):
+    from tests.test_money2_transfer_a_pg import add, groups3, rich_stay
+    from tests.test_pay2_api_pg import membership
+
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = rich_stay(world, a)
+    pay(world, s0, a, amount=400_000)
+    quiet(world, "before the leaving")
+    assert owner(world).post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={}).status_code == 200
+    quiet(world, "the leaving")
+    add(world, s0, group=a, mode="add")
+    quiet(world, "the return the same day = the cancel of the leaving")
+    (undone,) = _lines(world, "student_left_group", "leave_undone")
+    pauses = {str(p.id) for p in world.db.query(MembershipPause).filter_by(membership_id=membership(world, s0, a).id)}
+    assert undone.snapshot["restored"] and undone.actor_id == world.owner.id and pauses & set(undone.snapshot["restored"])      # the restored rows (prices, pauses) are named by id
+    add(world, s0, group=b, mode="transfer")
+    quiet(world, "the transfer")
+    add(world, s0, group=a, mode="transfer")
+    quiet(world, "the transfer back the same day")
+    assert len(_lines(world, "student_left_group", "leave_undone")) == 2          # the cancel of the transfer is written the same way: a line with the ids
+
+
+def test_a_cancelled_payment_restored_for_a_student_who_left_and_for_a_transferred_one_is_quiet_and_the_restoration_names_both_payments(world, fixed_today):
+    from tests.test_money2_transfer_a_pg import add, groups3, joined, restore, void
+
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0, s1 = world.students[0], world.students[1]
+    joined(world, s0, a, date(2026, 11, 2))
+    p = pay(world, s0, a, amount=600_000)
+    quiet(world, "a payment")
+    assert owner(world).post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={}).status_code == 200
+    quiet(world, "the leaving with an advance")
+    void(world, p)
+    quiet(world, "the cancellation of the payment of a student who left")
+    new = restore(world, p)["payment"]
+    quiet(world, "the restoration")
+    (line,) = _lines(world, "payment_replace", "payment_restored")
+    assert line.snapshot["payment_id"] == p["payment"]["id"] and line.snapshot["new_payment_id"] == new["id"] and line.snapshot["reason"] and line.actor_id == world.owner.id
+    joined(world, s1, a, date(2026, 11, 2))
+    q = pay(world, s1, a, amount=600_000)
+    add(world, s1, group=b, mode="transfer")
+    void(world, q)
+    quiet(world, "the cancellation of the payment of the old group of a transferred student")
+    restore(world, q)
+    quiet(world, "the restoration brings the money back to the new group")
+    assert len(_lines(world, "payment_replace", "payment_restored")) == 2
