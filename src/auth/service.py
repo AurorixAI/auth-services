@@ -2077,7 +2077,7 @@ class AuthService:
             from . import pricing  # lazy: pulls in the payments modules
 
             try:
-                pricing.PricingService(self.db).set_group_price(org_id, group.id, str(actor_uuid), amount=request.price, valid_from=pricing.EPOCH, commit=False)
+                pricing.PricingService(self.db).set_group_price(org_id, group.id, str(actor_uuid), amount=request.price, valid_from=pricing.EPOCH, commit=False, first_price_of_new_group=True)
             except pricing.PriceError as exc:
                 self.db.rollback()
                 raise ValueError(exc.message) from exc

@@ -1102,6 +1102,7 @@ class PricingService:
         correction: bool = False,
         correction_reason: Optional[str] = None,
         lock: bool = True,
+        first_price_of_new_group: bool = False,
     ) -> Dict[str, Any]:
         """Set the price of a group from a day (default: today).  ``commit=False`` (R3 code №7): the caller owns the transaction (the creation of a group with a price) - it is flushed, not committed, and a failure rolls EVERYTHING back.  A past day is allowed - the impact says what it
         touches.  The same day again corrects the amount of that day; a row of that day written by somebody else
@@ -1113,7 +1114,8 @@ class PricingService:
         today = ps.business_today()
         amount = check_amount(amount)
         valid_from = check_valid_from(valid_from or today, today)
-        self._check_age(org_id, actor_id, valid_from, today)
+        if not first_price_of_new_group:        # R3d Д1: a group that is being created has no past to re-count - its first price is not checked by the age (the creation asks for it explicitly)
+            self._check_age(org_id, actor_id, valid_from, today)
         note = clean_text(note)
         if note is not None and len(note) > MAX_NOTE:
             raise PriceInvalid(f"Примечание — не более {MAX_NOTE} символов")

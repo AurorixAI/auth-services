@@ -99,6 +99,14 @@ async def validation_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content=error_body(err), headers=_cors(request))
 
 
+async def payment_error_handler(request: Request, exc):
+    """R3d Д1: the ONE place that turns a money refusal nobody caught on its road (``BackdateOwnerOnly``, ``OpeningOwnerOnly``, ``RestoreOwnerOnly`` and the rest of ``PaymentError``) into its own status and ``{code, message}``, never a 500."""
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=_cors(request))
+
+
 def register(app) -> None:
+    from .payments_service import PaymentError  # lazy: the money modules are heavy
+
     app.add_exception_handler(PlatformError, platform_error_handler)
+    app.add_exception_handler(PaymentError, payment_error_handler)
     app.add_exception_handler(RequestValidationError, validation_handler)

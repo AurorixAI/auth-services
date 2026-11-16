@@ -277,6 +277,10 @@ def make_client(w, user=None, org="own", org_role=None, role=None):
     from src.auth.platform_errors import PlatformError, platform_error_handler
 
     app.add_exception_handler(PlatformError, platform_error_handler)  # as the real application answers (the 410 link_revoked of an invitation)
+    from src.auth.payments_service import PaymentError
+    from src.auth.platform_errors import payment_error_handler
+
+    app.add_exception_handler(PaymentError, payment_error_handler)  # R3d Д1: a money refusal nobody caught is its own 403 / 4xx, as in the real application
     return TestClient(app)
 
 
