@@ -44,3 +44,29 @@ def test_e1_the_repeat_of_done_over_a_state_closed_by_a_human_adds_no_line(world
     assert owner(world).post(f"{API}/org/opening-balances/state", json={"state": "done"}).status_code == 200
     assert admin.post(f"{API}/org/opening-balances/state", json={"state": "done"}).status_code == 200
     assert len(_state_rows(owner(world))) == 1
+
+
+def test_e2_the_common_handler_of_money_refusals_writes_a_warning_without_bodies(caplog):
+    """A refusal that reached the common handler was not caught by its router: it must be visible in the log (class, code, method, path - no body, no sums)."""
+    import logging
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.auth import payments_service as ps_
+    from src.auth.platform_errors import register
+
+    app = FastAPI()
+    register(app)
+
+    @app.post("/boom")
+    def boom():
+        raise ps_.OpeningOwnerOnly("текст отказа")
+
+    with caplog.at_level(logging.WARNING):
+        r = TestClient(app).post("/boom", json={"amount": 123456789})
+    assert r.status_code == 403
+    rec = [x for x in caplog.records if x.levelno == logging.WARNING and "OpeningOwnerOnly" in x.getMessage()]
+    assert len(rec) == 1, [x.getMessage() for x in caplog.records]
+    msg = rec[0].getMessage()
+    assert ps_.OpeningOwnerOnly.code in msg and "POST" in msg and "/boom" in msg and "123456789" not in msg and "текст отказа" not in msg, msg

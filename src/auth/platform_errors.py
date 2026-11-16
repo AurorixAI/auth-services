@@ -5,11 +5,14 @@ body-validation errors of the new routes (the other routes keep FastAPI's defaul
 """
 from __future__ import annotations
 
+import logging
 from typing import Dict, Optional
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 NEW_PREFIXES = ("/api/v1/platform", "/api/v1/public/demo-requests", "/api/v1/auth/password-links", "/api/v1/auth/password/forgot", "/api/v1/auth/email-change", "/api/v1/auth/support")
 
@@ -101,6 +104,7 @@ async def validation_handler(request: Request, exc: RequestValidationError):
 
 async def payment_error_handler(request: Request, exc):
     """R3d Д1: the ONE place that turns a money refusal nobody caught on its road (``BackdateOwnerOnly``, ``OpeningOwnerOnly``, ``RestoreOwnerOnly`` and the rest of ``PaymentError``) into its own status and ``{code, message}``, never a 500."""
+    logger.warning("money refusal reached the common handler (its router did not catch it): %s code=%s %s %s", type(exc).__name__, getattr(exc, "code", None), request.method, request.url.path)
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=_cors(request))
 
 
