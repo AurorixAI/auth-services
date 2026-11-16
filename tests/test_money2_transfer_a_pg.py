@@ -110,3 +110,68 @@ def test_t1_a_bulk_transfer_has_the_source_of_each_student_and_skips_the_student
     r = owner(world).post(f"{API}/org/groups/{b.id}/students/bulk", params={"mode": "transfer"}, json={"student_ids": [str(s0.id)], "from_group_id": str(c.id)})
     assert r.json()["added"] == 1                                                # a common source named for everybody
     assert membership(world, s0, c).is_active is False and membership(world, s0, a).is_active is True
+
+
+# ---------------------------------------------------------------------------------------------------- T2 the pause goes with the student
+
+
+def pause(w, group, student, first, last, reason="Болезнь"):
+    r = owner(w).post(f"{API}/org/memberships/{membership(w, student, group).id}/pauses", json={"first_day": first.isoformat(), "last_day": last.isoformat(), "reason": reason})
+    assert r.status_code == 201, r.text
+    return r.json()["pause"]["id"]
+
+
+def pauses_of(w, student, group):
+    w.db.expire_all()
+    return sorted((p.first_day, p.last_day, p.reason, p.voided_at is not None) for p in w.db.query(MembershipPause).filter_by(membership_id=membership(w, student, group).id))
+
+
+def nov_charge(w, student, group):
+    """What the November period of the membership charges (the segment of the period that starts on 01.11)."""
+    from tests.money1b_helpers import charge_of
+
+    return charge_of(account(w, membership(w, student, group).id), date(2026, 11, 1))
+
+
+def test_t2_the_current_and_the_future_pause_go_to_the_new_group_and_the_charge_of_the_new_group_skips_their_days(world, fixed_today):
+    # Transfer on Sunday 22.11 A -> B (B: 400 000 a month, a lesson every day, November has 30 days).  A pause 20-26.11 (holds the day) and a future one 05-10.12.
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    cur = pause(world, a, s0, date(2026, 11, 20), date(2026, 11, 26))
+    fut = pause(world, a, s0, date(2026, 12, 5), date(2026, 12, 10), "Поездка")
+    add(world, s0, group=b, mode="transfer")
+    # the source keeps 20-22 (cut to the transfer day), the future one is cancelled there; the new group has 23-26 and 05-10.12 with the same reasons
+    assert pauses_of(world, s0, a) == [(date(2026, 11, 20), date(2026, 11, 22), "Болезнь", False), (date(2026, 12, 5), date(2026, 12, 10), "Поездка", True)]
+    assert pauses_of(world, s0, b) == [(date(2026, 11, 23), date(2026, 11, 26), "Болезнь", False), (date(2026, 12, 5), date(2026, 12, 10), "Поездка", False)]
+    # B is charged from 23.11: 23..30 = 8 days, 4 of them (23-26) under the pause -> 4 days of 30: 400 000 x 4 / 30 = 53 333 -> 53 000 (a share is rounded to a thousand)
+    assert nov_charge(world, s0, b) == 53_000
+    # the journal names the old pause and the new one
+    lines = [g for g in world.db.query(GroupAudit).filter(GroupAudit.org_id == world.org.id, GroupAudit.action.in_(("membership_pause_set", "membership_pause_void"))) if g.snapshot.get("via") == "transfer"]
+    made = {g.snapshot["moved_from_pause_id"]: g for g in lines if g.snapshot.get("moved_from_pause_id")}
+    assert set(made) == {cur, fut} and all(g.group_id == b.id and g.actor_id == world.owner.id for g in made.values())
+    assert {g.snapshot["pause_id"] for g in lines if not g.snapshot.get("moved_from_pause_id")} == {cur, fut}      # the cut and the cancelled in the old group: via = transfer
+    # the moved pause cancelled in B gives the charge back: 8 days of 30 = 106 667 -> 107 000
+    moved = world.db.query(MembershipPause).filter_by(membership_id=membership(world, s0, b).id, first_day=date(2026, 11, 23)).one()
+    r = owner(world).post(f"{API}/org/pauses/{moved.id}/void", json={"reason": "Выздоровел"})
+    assert r.status_code == 200, r.text
+    assert nov_charge(world, s0, b) == 107_000
+
+
+def test_t2_a_leave_keeps_the_old_rule_the_pauses_are_cut_and_nothing_is_created(world, fixed_today):
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    pause(world, a, s0, date(2026, 11, 20), date(2026, 11, 26))
+    r = owner(world).post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={})
+    assert r.status_code == 200, r.text
+    assert pauses_of(world, s0, a) == [(date(2026, 11, 20), date(2026, 11, 22), "Болезнь", False)]
+    assert world.db.query(MembershipPause).filter_by(student_id=s0.id).count() == 1
+
+
+def test_t2_a_package_centre_moves_the_pause_too_the_dates_of_his_absence_travel_whatever_the_charge(world, fixed_today):
+    # in a package centre the pause does not shorten a charge (the package is spent by held lessons) but it dates the absence: the unspent days and the paid-until estimate - so it moves as well
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    settings_block(world, period_mode="lessons", lessons_per_payment=12)
+    s0 = world.students[0]
+    pause(world, a, s0, date(2026, 11, 22), date(2026, 11, 28))
+    add(world, s0, group=b, mode="transfer")
+    assert pauses_of(world, s0, b) == [(date(2026, 11, 23), date(2026, 11, 28), "Болезнь", False)]

@@ -2777,9 +2777,13 @@ class AuthService:
         closing_prices: list[dict] = []
         if closing and payments_detail:       # Money-1 V10 (ОП-13): the individual price does NOT go with the student - the preview says it (the sum is money: only for a caller who may see it)
             closing_prices = self._closing_individual_prices(closing, group, ps.business_date(now_dt))
+        from .logica_service import PauseService  # lazy: pulls in the payments modules
+
+        carry_plan: list = []
         for om in closing:
             close_period(om, now_dt)
-            on_membership_closed(self.db, om, now_dt, actor_id)  # LOGIC-A: F13 marker, pauses
+            carry_plan += PauseService(self.db).plan_carry(om.id, ps.business_date(now_dt))      # Money-2 T2: read BEFORE the hook cuts / cancels the pauses of the old group
+            on_membership_closed(self.db, om, now_dt, actor_id, via="transfer")  # LOGIC-A: F13 marker, pauses
 
         # Target membership is either a historical inactive record that will
         # be reactivated (its payment history stays attached), or a new one.
@@ -2827,6 +2831,10 @@ class AuthService:
                 self.db, membership.id, actor_id, amount=override_amount,
                 valid_from=pricing.enrolment_override_start(pay_from, ps.business_date(now_dt)), reason=override_reason,
             )
+
+        if closing:                      # Money-2 T2: the pauses of the student (the rest of the current one and the future ones) go with him: same days, same reason, a line of the journal each
+            self.db.flush()
+            PauseService(self.db).carry_to(org_id, membership, carry_plan, actor_id)
 
         opening_warning = None
         if opening_balance is not None:  # LOGIC-A (decision 1): the opening balance of the new membership

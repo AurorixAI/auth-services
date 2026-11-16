@@ -651,8 +651,9 @@ class PauseService(_Base):
 
     # ---- used by leave / transfer / archive (inside the caller's transaction)
 
-    def close_at_leave(self, membership_id: UUID, left_day: date, actor_id: Optional[str] = None) -> int:
-        """Pauses after the day of leaving are voided, the one that holds the day is cut to it (spec §2.8).  Returns the number touched."""
+    def close_at_leave(self, membership_id: UUID, left_day: date, actor_id: Optional[str] = None, via: str = "leave") -> int:
+        """Pauses after the day of leaving are voided, the one that holds the day is cut to it (spec §2.8).  Returns the number touched.  ``via``: what ended the stay
+        (``leave`` / ``transfer``), written to the line of the journal."""
         touched = 0
         membership = None
         for p in self._live(membership_id):
@@ -672,7 +673,47 @@ class PauseService(_Base):
             membership = membership or self.db.get(StudentGroup, membership_id)
             self._audit(str(p.org_id), membership, author, self.pay.role_of(str(p.org_id), author), action, {
                 "actor_id": str(author), "membership_id": str(membership_id), "student_id": str(p.student_id), "pause_id": str(p.id), "first_day": p.first_day.isoformat(),
-                "last_day": p.last_day.isoformat(), "was": was, "reason": p.void_reason if action == AUDIT_PAUSE_VOID else "ученик ушёл из группы", "via": "leave"})
+                "last_day": p.last_day.isoformat(), "was": was, "reason": p.void_reason if action == AUDIT_PAUSE_VOID else "ученик ушёл из группы", "via": via})
         if touched:
             self.db.flush()
         return touched
+
+    # ---- Money-2 T2: a transfer takes the pauses of the student with him
+
+    def plan_carry(self, membership_id: UUID, left_day: date) -> List[Tuple[date, date, Optional[str], UUID]]:
+        """The pauses that go with the student when his stay ends by a TRANSFER on ``left_day``: ``[(first_day, last_day, reason, old pause id)]`` - the rest of the pause that holds the
+        day (from the day after it) and every later one whole.  Read BEFORE ``close_at_leave`` cuts / voids them in the old group."""
+        after = left_day + timedelta(days=1)
+        return [(max(p.first_day, after), p.last_day, p.reason, p.id) for p in self._live(membership_id) if p.last_day > left_day]
+
+    def carry_to(self, org_id: str, target: StudentGroup, plan: List[Tuple[date, date, Optional[str], UUID]], actor_id: str) -> List[MembershipPause]:
+        """Create the planned pauses in the new group of the student (same days, same reason; the days the new group has under a pause of its own are not doubled) - one line of the
+        journal each, naming the old pause and the new one.  Inside the caller's transaction; the target is flushed (it has its id)."""
+        taken = [(p.first_day, p.last_day) for p in self._live(target.id)]
+        made: List[MembershipPause] = []
+        for first, last, reason, old_id in plan:
+            for a, b in _uncovered(first, last, taken):
+                row = MembershipPause(org_id=UUID(str(org_id)), membership_id=target.id,
+                                      student_id=target.student_id, group_id=target.group_id, first_day=a, last_day=b, reason=reason,
+                                      created_by=UUID(str(actor_id)), created_at=_utcnow())
+                self.db.add(row)
+                self.db.flush()
+                self._close_excuses(target, a, b, actor_id)
+                taken.append((a, b))
+                made.append(row)
+                self._audit(str(org_id), target, actor_id, self.pay.role_of(str(org_id), actor_id), AUDIT_PAUSE_SET, {
+                    "actor_id": str(actor_id), "membership_id": str(target.id), "student_id": str(target.student_id), "pause_id": str(row.id), "first_day": a.isoformat(),
+                    "last_day": b.isoformat(), "reason": reason, "moved_from_pause_id": str(old_id), "via": "transfer"})
+        return made
+
+
+def _uncovered(first: date, last: date, taken: List[Tuple[date, date]]) -> List[Tuple[date, date]]:
+    """``[first, last]`` without the days of ``taken`` ranges: the pieces that are still free (a pause of the new group is never doubled)."""
+    pieces, cursor = [], first
+    for a, b in sorted(t for t in taken if t[0] <= last and first <= t[1]):
+        if a > cursor:
+            pieces.append((cursor, a - timedelta(days=1)))
+        cursor = max(cursor, b + timedelta(days=1))
+    if cursor <= last:
+        pieces.append((cursor, last))
+    return pieces

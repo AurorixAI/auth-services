@@ -72,12 +72,13 @@ class OpeningNotAllowedAdd(PaymentInvalid):
 # ---- hooks run whenever a stay is closed / reopened ------------------------------------------------------------
 
 
-def on_membership_closed(db: Session, membership: StudentGroup, left_at: datetime, actor_id: str) -> None:
+def on_membership_closed(db: Session, membership: StudentGroup, left_at: datetime, actor_id: str, via: str = "leave") -> None:
     """F13 + pauses.  The caller closed the period (``close_period``) and holds the locks; nothing is committed here.
 
     The individual price (with a sum) in force on the last day ends the day after - a return is then priced by the group; the scheduled
     individual prices dated after the last day are cancelled (Р3-1б: they belong to the stay that ended, a return finds a clean book); the pauses
-    after the last day are cancelled and the one that holds it is cut to it.  The author is mandatory: the price audit has no row without one."""
+    after the last day are cancelled and the one that holds it is cut to it (``via="transfer"``: the transfer then creates their rest in the new group, Money-2 T2).  The author is mandatory:
+    the price audit has no row without one."""
     left_day = ps.business_date(left_at)
     books = pricing.load_books(db, [membership.group_id], [membership.id])
     price = books.price(membership.id, membership.group_id, left_day)
@@ -85,7 +86,7 @@ def on_membership_closed(db: Session, membership: StudentGroup, left_at: datetim
         pricing.write_override(db, membership.id, actor_id, amount=None, valid_from=left_day.fromordinal(left_day.toordinal() + 1),
                                reason=LEFT_GROUP_REASON)
     pricing.cancel_rows_after(db, membership.id, actor_id, left_day, markers=False, why=LEFT_GROUP_REASON)
-    PauseService(db).close_at_leave(membership.id, left_day, actor_id)
+    PauseService(db).close_at_leave(membership.id, left_day, actor_id, via=via)
 
 
 def on_membership_returned(db: Session, membership: StudentGroup, now: datetime, actor_id: Optional[str]) -> bool:
