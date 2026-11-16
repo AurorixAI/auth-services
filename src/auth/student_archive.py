@@ -317,7 +317,7 @@ class StudentArchiveService:
 
     def archive(
         self, org_id: str, student_id: str, *, actor_id: str, actor_role: str, reason: Optional[str] = None,
-        settle: Optional[Sequence[SettleItem]] = None, money: bool = False,
+        settle: Optional[Sequence[SettleItem]] = None, money: bool,
     ) -> ArchiveStudentResponse:
         """LOGIC-A (F9): ``settle`` - what to do with the money of each membership the archiving closes (``keep`` / ``writeoff`` / ``refund``),
         carried out in THIS transaction after the stays are closed; a refused settlement (403 / 422 / 409 ``BALANCE_CHANGED``) archives nobody."""
@@ -342,6 +342,7 @@ class StudentArchiveService:
         group_ids = [m.group_id for m in memberships]
         service = AuthService(self.db)
         try:
+            LeaveService(self.db).require_money_right_for_balance(org_id, [m.id for m in memberships], money)      # Money-2 T11: the same rule and the same text as the leaving of one group
             # The groups last, in id order (as a transfer does): archiving and "start the lesson" exclude
             # each other, and a roster never changes under a lesson that is in progress.
             service._lock_groups_for_membership_change(org_id, group_ids)
@@ -349,6 +350,9 @@ class StudentArchiveService:
         except ValueError as exc:
             self.db.rollback()
             raise ArchiveConflict(str(exc)) from exc
+        except PaymentError:
+            self.db.rollback()
+            raise
         groups = {
             g.id: g for g in self.db.query(Group).filter(Group.id.in_(group_ids)).all()
         } if group_ids else {}

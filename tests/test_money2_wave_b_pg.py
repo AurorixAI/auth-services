@@ -39,3 +39,55 @@ def test_t10_one_refusal_of_a_bulk_adding_does_not_break_off_the_rest_and_every_
     for s in (s0, s1, s3):
         assert membership(world, s, b).is_active is True
     assert membership(world, s2, b).is_active is False
+
+
+# ---------------------------------------------------------------------------------------------------- T11 the archive of a student = the rules of the leaving
+
+
+NEUTRAL = "Убрать ученика с оплатой вперёд или долгом может владелец или администратор с доступом к деньгам"
+
+
+def _admin(world):
+    from tests.pg_world import make_client
+
+    return make_client(world, user=world.admin, org_role="admin")
+
+
+def test_t11_the_archive_and_the_leaving_refuse_an_admin_without_the_money_right_with_one_neutral_text_when_there_is_a_balance(world, fixed_today):
+    # A: 300 000 a month, 30 lessons in November.  In A since 02.11, today 20.11: days 02..20 = 19 lessons = 19 x 10 000 = 190 000.
+    # s0 paid nothing -> debt 190 000; s1 paid 600 000 -> advance 410 000; s2 paid exactly 190 000 -> no debt, no advance.
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    for s in (s0, s1, s2):
+        stay(world, membership(world, s, a), date(2026, 11, 2))
+    pay(world, s1, a, amount=600_000)
+    pay(world, s2, a, amount=190_000)
+    # (the leaving and the archive close the stay TODAY: the numbers that count are of the stay that ends on 20.11, not of the whole month)
+    admin = _admin(world)
+    for s in (s0, s1):
+        left = admin.post(f"{API}/org/groups/{a.id}/students/{s.id}/leave", json={})
+        archived = admin.post(f"{API}/org/students/{s.id}/archive", json={})
+        for r in (left, archived):
+            assert r.status_code == 403, r.text
+            assert r.json()["detail"] == NEUTRAL or r.json()["detail"].get("message") == NEUTRAL
+        assert not any(ch.isdigit() for ch in NEUTRAL)                                        # a fact, not a sum
+        world.db.expire_all()
+        assert membership(world, s, a).is_active is True and world.db.get(Student, s.id).status != "archived"
+    # no balance: an admin without the right archives (and the leaving, for s2 after that, is the ordinary one)
+    assert admin.post(f"{API}/org/students/{s2.id}/archive", json={}).status_code == 200
+
+
+def test_t11_the_owner_archives_a_student_with_an_advance_and_the_refund_and_the_forgiveness_stay_allowed_for_the_archived(world, fixed_today):
+    # s1: advance 410 000 (600 000 paid - 190 000 charged until 20.11); s0: debt 190 000.  The owner archives both (no settlement: both stay as they are); then he refunds 100 000 of the advance
+    # and forgives 190 000 of the debt of the ARCHIVED students: both allowed.
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    for s in (s0, s1):
+        stay(world, membership(world, s, a), date(2026, 11, 2))
+    pay(world, s1, a, amount=600_000)
+    for s in (s0, s1):
+        assert owner(world).post(f"{API}/org/students/{s.id}/archive", json={}).status_code == 200
+    r = owner(world).post(f"{API}/org/memberships/{membership(world, s1, a).id}/refunds", json={"amount": 100_000, "method": "cash", "reason": "Возврат"})
+    assert r.status_code == 201, r.text
+    r = owner(world).post(f"{API}/org/memberships/{membership(world, s0, a).id}/writeoffs", json={"amount": 190_000, "reason": "Договорённость"})
+    assert r.status_code == 201, r.text

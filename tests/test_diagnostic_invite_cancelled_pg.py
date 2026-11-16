@@ -321,7 +321,7 @@ def test_an_invite_that_starts_during_the_archiving_is_left_in_progress(pack):
                 from src.auth.student_archive import StudentArchiveService
 
                 results["body"] = StudentArchiveService(session).archive(
-                    str(pack.org.id), str(pack.student.id), actor_id=str(pack.admin.id), actor_role="admin"
+                    str(pack.org.id), str(pack.student.id), actor_id=str(pack.admin.id), actor_role="admin", money=True
                 )
             finally:
                 session.close()
@@ -662,7 +662,7 @@ def test_the_archiving_instant_is_taken_after_the_locks_and_is_the_same_everywhe
                 from src.auth.student_archive import StudentArchiveService
 
                 results["body"] = StudentArchiveService(session).archive(
-                    str(pack.org.id), str(pack.student.id), actor_id=str(pack.admin.id), actor_role="admin"
+                    str(pack.org.id), str(pack.student.id), actor_id=str(pack.admin.id), actor_role="admin", money=True
                 )
             finally:
                 session.close()

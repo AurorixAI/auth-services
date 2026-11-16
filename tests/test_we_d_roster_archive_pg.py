@@ -35,7 +35,7 @@ def test_a_student_archived_after_the_lesson_stays_in_its_journal(world):
     """The real archiving (it closes the memberships): the snapshot of a lesson held before it keeps the student, the current one and a later one do not."""
     w = world
     s1 = w.students[0]
-    StudentArchiveService(w.db).archive(str(w.org.id), str(s1.id), actor_id=str(w.owner.id), actor_role="owner")
+    StudentArchiveService(w.db).archive(str(w.org.id), str(s1.id), actor_id=str(w.owner.id), actor_role="owner", money=True)
     w.db.expire_all()
     assert str(s1.id) not in _ids(w.svc._active_attendance_roster(w.group.id))
     assert str(s1.id) in _ids(w.svc._attendance_roster_at(w.group.id, s1.archived_at - timedelta(seconds=1)))   # held before the archiving: in the journal

@@ -58,6 +58,7 @@ from .payments_service import (
 logger = logging.getLogger(__name__)
 
 AUDIT_LEFT = "student_left_group"
+BALANCE_NEEDS_MONEY_RIGHT = "Убрать ученика с оплатой вперёд или долгом может владелец или администратор с доступом к деньгам"      # Money-2 T11: ONE text for the leaving and the archive; a fact, no sum
 LEFT_GROUP_REASON = "left_group"
 RETURN_REASON = "return_group"
 
@@ -134,6 +135,15 @@ class LeaveService:
             ledger = bl.run_ledger(closed)
             out[mid] = (ledger, min(ledger.refundable, bl.refundable_at(closed, today)))
         return out, loader
+
+    def require_money_right_for_balance(self, org_id: str, membership_ids: Sequence[UUID], money: bool) -> None:
+        """Money-1 A4 / Money-2 T11: a student who has PAID AHEAD or OWES leaves (or is archived) with his advance / debt and his paid-until date - the owner / an administrator with the right decides that.
+        The one rule of the leaving and of the archive of a student; the text is the same for both and names no sum (403)."""
+        if money:
+            return
+        after, _ = self._after(org_id, list(membership_ids), ps.business_today())
+        if any(ledger.advance > 0 or ledger.debt > 0 for ledger, _refundable in after.values()):
+            raise PaymentForbidden(BALANCE_NEEDS_MONEY_RIGHT)
 
     def _money(self, ledger: bl.Ledger, refundable: int, loader: ls.LedgerLoader, membership: StudentGroup, today: date) -> LeaveMoney:
         price = loader.books.price(membership.id, membership.group_id, today)
@@ -271,7 +281,7 @@ class LeaveService:
     @deadlock_guard          # m3: a PostgreSQL deadlock is a 409 «повторите», never a 500
     def leave(
         self, org_id: str, group_id: str, student_id: str, actor_id: str, actor_role: str, body: Optional[LeaveRequest] = None,
-        *, money: bool = False,
+        *, money: bool,
     ) -> LeaveResult:
         """«Убрать из группы» (the same closing as ``AuthService.remove_student_from_group``) + settlement + hooks + audit, one transaction."""
         from .service import AuthService  # lazy: service is heavy
@@ -287,10 +297,7 @@ class LeaveService:
             if not sg:
                 raise PaymentConflict("Ученик не в этой группе")
             self.pay._lock_family(org_id, student.id)
-            if not money:        # Money-1 A4: a student who has PAID AHEAD leaves with his advance and his paid-until date - the owner / an administrator with the right decides that
-                ahead, _ = self._after(org_id, [sg.id], ps.business_today())
-                if sg.id in ahead and ahead[sg.id][0].advance > 0:
-                    raise PaymentForbidden("Ученик оплатил вперёд: убрать его из группы может владелец или администратор с доступом к деньгам")
+            self.require_money_right_for_balance(org_id, [sg.id], money)
             svc._lock_groups_for_membership_change(org_id, [group.id])
             svc._assert_no_open_attendance_for_groups(org_id, [group.id])
             before_close = leave_effects.snapshot(self.db, org_id, [sg], ps.business_today())      # Money-2 T3: read before the stay is closed

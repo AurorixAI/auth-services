@@ -225,7 +225,7 @@ def test_a_leave_without_settle_keeps_the_debt_visible_after_the_group_is_archiv
     before = own.get(f"{API}/org/payments/summary").json()
     assert before["debt_total"] > 0
     for s in (a, b):
-        assert client(w, "admin").delete(f"{API}/org/groups/{group.id}/students/{s.id}").status_code == 200
+        assert own.delete(f"{API}/org/groups/{group.id}/students/{s.id}").status_code == 200       # Money-2 T11: a student who owes leaves by the owner / an administrator with the money right
     left = own.get(f"{API}/org/payments/summary").json()                                           # the charge stops at the leaving, the rest stays owed
     assert 0 < left["debt_total"] <= before["debt_total"] and left["students_with_debt"] == 2
     assert client(w, "admin").post(f"{API}/org/groups/{group.id}/archive", json={}).status_code == 200

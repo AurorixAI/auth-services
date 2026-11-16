@@ -1243,7 +1243,7 @@ def test_archiving_and_a_price_write_on_the_same_membership_never_deadlock(world
 
     def archive(session):
         return StudentArchiveService(session).archive(str(world.org.id), str(student.id), actor_id=str(world.owner.id),
-                                                      actor_role="owner")
+                                                      actor_role="owner", money=True)
 
     def restore(n):
         StudentArchiveService(world.db).restore(str(world.org.id), str(student.id), actor_id=str(world.owner.id),

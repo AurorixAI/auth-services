@@ -120,7 +120,7 @@ def test_dm006_leaving_locks_the_student_with_the_weak_lock_so_a_row_that_points
 
     from src.auth.leave_service import LeaveService
 
-    LeaveService(world.db).leave(str(world.org.id), str(world.group.id), str(world.students[0].id), str(world.owner.id), "owner")
+    LeaveService(world.db).leave(str(world.org.id), str(world.group.id), str(world.students[0].id), str(world.owner.id), "owner", money=True)
     event.remove(world.db.get_bind(), "before_cursor_execute", grab)
     assert statements, "the student row was locked"
     assert all("FOR NO KEY UPDATE" in s and "FOR UPDATE" not in s.replace("FOR NO KEY UPDATE", "") for s in statements), statements

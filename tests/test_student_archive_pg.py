@@ -35,7 +35,8 @@ def as_teacher(w, teacher=None):
 
 
 def archive(w, student, *, client=None, expect=200, **body):
-    r = (client or as_admin(w)).post(f"{STUDENTS}/{student.id}/archive", json=body or None)
+    # Money-2 T11: a student with a debt or an advance is archived by the owner / an administrator with the money right (the owner here); the refusal of the other is in test_money2_wave_b_pg.py
+    r = (client or make_client(w, user=w.owner)).post(f"{STUDENTS}/{student.id}/archive", json=body or None)
     assert r.status_code == expect, r.text
     return r.json()
 
@@ -727,7 +728,7 @@ def archive_call(w, student):
     from src.auth.student_archive import StudentArchiveService
 
     return lambda session: StudentArchiveService(session).archive(
-        str(w.org.id), str(student.id), actor_id=str(w.admin.id), actor_role="admin", reason="гонка")
+        str(w.org.id), str(student.id), actor_id=str(w.admin.id), actor_role="admin", reason="гонка", money=True)
 
 
 def test_archive_does_not_deadlock_with_a_payment_being_recorded(two, engine):
