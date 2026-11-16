@@ -131,6 +131,12 @@ def impact_of(before: bl.Ledger, after: bl.Ledger) -> ImpactMoney:
     )
 
 
+def _state_word(block: dict) -> str:
+    """``openings_state`` of a ``payments`` settings block (``none`` when it was never set or holds an unknown word)."""
+    value = block.get("openings_state")
+    return value if value in ("none", "pending", "done", "skipped") else "none"
+
+
 def launch_closed(state: str, state_by: Optional[str]) -> bool:
     """R3d Д2: the launch of the accounting is CLOSED when a HUMAN finished it (``done`` / ``skipped``, ``openings_state_by`` is not ``"auto"``); the automatic ``done`` (the list is filled: the last «не заполнено»
     row is gone) closes nothing - the typo of the last row is still the administrator's to correct."""
@@ -151,13 +157,12 @@ class _Base:
     def opening_state(self, org_id: str) -> str:
         """``payments.openings_state`` of the centre (``none`` when it was never set or holds an unknown word)."""
         settings = self.db.query(Organization.settings).filter(Organization.id == org_id).scalar() or {}
-        value = (settings.get("payments") or {}).get("openings_state")
-        return value if value in ("none", "pending", "done", "skipped") else "none"
+        return _state_word(settings.get("payments") or {})
 
     def is_launch_closed(self, org_id: str) -> bool:
         """R3d Д2: has a human finished the launch of the accounting of the centre (``launch_closed`` of its settings block)."""
         block = (self.db.query(Organization.settings).filter(Organization.id == org_id).scalar() or {}).get("payments") or {}
-        return launch_closed(self.opening_state(org_id), block.get("openings_state_by"))
+        return launch_closed(_state_word(block), block.get("openings_state_by"))
 
     def check_opening_allowed(self, org_id: str, actor_role: str, closed: Optional[bool] = None) -> None:
         if not opening_allowed(closed if closed is not None else self.is_launch_closed(org_id), actor_role):

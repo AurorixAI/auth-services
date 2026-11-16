@@ -268,14 +268,18 @@ class OpeningsService(_Base):
         hay = " ".join(x for x in (r.s.last_name, r.s.first_name, r.s.display_id) if x).casefold()
         return all(w in hay for w in words)
 
-    def rows(self, org_id: str, *, group_id: Optional[UUID] = None, missing_only: bool = False, q: Optional[str] = None,
-             include_left: bool = False, limit: int = MAX_TABLE_ROWS,
-             too_many: str = "Слишком много учеников — выберите группу") -> Tuple[ls.LedgerSettings, List[TableRow], OpeningTotals, str, date]:
+    def rows(self, org_id: str, **kw: Any) -> Tuple[ls.LedgerSettings, List[TableRow], OpeningTotals, str, date]:
         """The filtered rows of the table (sorted by group, then by the name of the student) + the centre-wide totals."""
+        return self._rows(org_id, **kw)[:5]
+
+    def _rows(self, org_id: str, *, group_id: Optional[UUID] = None, missing_only: bool = False, q: Optional[str] = None,
+              include_left: bool = False, limit: int = MAX_TABLE_ROWS,
+              too_many: str = "Слишком много учеников — выберите группу") -> Tuple[ls.LedgerSettings, List[TableRow], OpeningTotals, str, date, bool]:
+        """``rows`` + whether the launch is closed by a human (``_table`` knows it: one read of the settings of the centre)."""
         today = ps.business_today()
         if group_id is not None and self.db.query(Group.id).filter(Group.id == group_id, Group.org_id == org_id).first() is None:
             raise PaymentNotFound("Группа не найдена")
-        settings, tracked, left, state, _ = self._table(org_id, today)
+        settings, tracked, left, state, closed = self._table(org_id, today)
         rows = list(tracked) + (list(left) if include_left else [])
         if group_id is not None:
             rows = [r for r in rows if r.g.id == group_id]
@@ -287,11 +291,11 @@ class OpeningsService(_Base):
         if group_id is None and len(rows) > limit:
             raise TooManyRows(too_many)
         rows.sort(key=lambda r: ((r.g.name or "").casefold(), str(r.g.id), r.left, r.student_name.casefold(), str(r.m.id)))
-        return settings, rows, self._totals(tracked, left, len(rows)), state, today
+        return settings, rows, self._totals(tracked, left, len(rows)), state, today, closed
 
     def list(self, org_id: str, *, group_id: Optional[UUID] = None, missing_only: bool = False, q: Optional[str] = None,
              include_left: bool = False) -> OpeningsList:
-        settings, rows, totals, state, today = self.rows(org_id, group_id=group_id, missing_only=missing_only, q=q, include_left=include_left)
+        settings, rows, totals, state, today, closed = self._rows(org_id, group_id=group_id, missing_only=missing_only, q=q, include_left=include_left)
         mode = settings.current.mode
         blocks: Dict[UUID, OpeningGroupBlock] = {}
         for r in rows:
@@ -303,7 +307,7 @@ class OpeningsService(_Base):
             block.with_opening += 1 if r.opening is not None else 0
             block.missing += 1 if r.missing else 0
         return OpeningsList(
-            as_of=today, accounting_start=settings.accounting_start, state=state, launch_closed=self.is_launch_closed(org_id), period_mode=mode,
+            as_of=today, accounting_start=settings.accounting_start, state=state, launch_closed=closed, period_mode=mode,
             paid_until_max=today + timedelta(days=366), totals=totals, groups=list(blocks.values()))
 
     def summary(self, org_id: str) -> OpeningsSummary:
