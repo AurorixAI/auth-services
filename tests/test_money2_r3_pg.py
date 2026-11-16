@@ -44,3 +44,44 @@ def test_r1_an_opening_cancelled_by_the_product_and_one_replaced_by_the_product_
     assert second != first and i5(night(world), world) == []
     assert owner(world).post(f"{API}/org/opening-balances/{second}/void", json={"reason": "Ошибка ввода"}).status_code == 200
     assert i5(night(world), world) == []
+
+
+# ============================================================================================================ Р2: accepting one finding accepts only that one
+from tests.test_money2_rows_pg import make_payment, pid_of, script_main, tamper  # noqa: E402
+from tests.test_payments_service_pg import pay  # noqa: E402
+
+
+def accept(world, monkeypatch, key, reason="Разобрали с центром"):
+    return script_main(world, monkeypatch, "--accept", key, "--reason", reason, *ACTOR_ARGS(world))
+
+
+def ACTOR_ARGS(world):  # noqa: N802  (the author of an acceptance is mandatory since Р5/Р8; filled in there)
+    return ()
+
+
+def test_r2_accepting_changed_leaves_no_journal_of_the_same_row(world, monkeypatch):
+    ensure_billing(world)
+    row = pid_of(pay(world, world.students[0], amount=450_000))
+    night(world)
+    sql(world, "UPDATE student_payments SET amount = 900000, voided_at = now(), voided_by = :o, void_reason = 'Подложено в тест' WHERE id = :id", id=row, o=world.owner.id)
+    assert i5(night(world), world) == sorted([f"payment:{row}:changed", f"payment:{row}:no_journal"])
+    assert accept(world, monkeypatch, f"payment:{row}:changed") == 0
+    assert i5(night(world), world) == [f"payment:{row}:no_journal"], "the cancellation without a line of the journal is NOT accepted by accepting the edit"
+    assert accept(world, monkeypatch, f"payment:{row}:no_journal") == 0
+    assert i5(night(world), world) == []
+
+
+def test_r2_a_new_row_with_two_findings_of_its_arrival_is_accepted_one_by_one(world, monkeypatch):
+    ensure_billing(world)
+    night(world)
+    sql(world, "INSERT INTO student_payments (id, org_id, membership_id, student_id, group_id, amount, paid_on, method, kind, created_by, created_at, currency, partial_period, voided_at, voided_by, void_reason) "
+               "VALUES (gen_random_uuid(), :org, :m, :s, :g, 100000, current_date, 'cash', 'payment', :u, now(), 'UZS', false, now(), :u, 'Подложено в тест')",
+        org=world.org.id, m=mid(world, world.students[0]), s=world.students[0].id, g=world.group.id, u=world.owner.id)
+    from src.models.auth import StudentPayment
+
+    row = world.db.query(StudentPayment).filter(StudentPayment.org_id == world.org.id).one().id
+    assert i5(night(world), world) == sorted([f"payment:{row}:untraced", f"payment:{row}:no_journal"])
+    assert accept(world, monkeypatch, f"payment:{row}:untraced") == 0
+    assert i5(night(world), world) == [f"payment:{row}:no_journal"]
+    assert accept(world, monkeypatch, f"payment:{row}:no_journal") == 0
+    assert i5(night(world), world) == []

@@ -105,6 +105,9 @@ KINDS: Tuple[RowKind, ...] = (
 )
 KIND = {k.name: k for k in KINDS}
 STATE_CODES = ("foreign",)                      # findings of the STATE of a row (not of a move): accepting one is remembered on the row
+ARRIVAL_CODES = ("untraced", "no_journal", "reopened")      # findings of a row that has no baseline yet (it ARRIVED): taking the row into the baseline closes them, so the ones not accepted are carried as «open:<code>»
+OPEN = "open:"
+FIELDS_OF = {"changed": ("fingerprint", "amount"), "reopened": ("voided", "void_fingerprint"), "no_journal": ("voided", "void_fingerprint")}      # what accepting ONE finding of a row that has a baseline takes from the row
 
 Key = Tuple[str, UUID]
 
@@ -272,6 +275,8 @@ def compare(now: Dict[Key, RowState], base: Dict[Key, BaseState], *, journal: Se
                 paid_moves[key] = (current.membership_id, -(before.amount or 0))
         if key in foreign and "foreign" not in before.accepted:
             flag(key, "foreign", before.amount, current.amount)
+        for carried in sorted(a for a in before.accepted if a.startswith(OPEN)):          # a finding of the arrival of the row that the team has NOT accepted yet (another one of the row was)
+            flag(key, carried[len(OPEN):], before.amount, current.amount)
         if key not in verdict.flagged and (current.voided, current.void_fingerprint, current.amount) != (before.voided, before.void_fingerprint, before.amount):
             verdict.confirm[key] = current
     # a row with a finding keeps its old baseline, so it would be «new» / «cancelled» again every night while the snapshot of the paid sum has taken it in already: only a row WITHOUT a finding
@@ -349,19 +354,19 @@ def accept(db, key: str, reason: str, *, actor_id: Optional[UUID] = None, at: Op
     old_fp, new_fp = (before.fingerprint if before else None), (now.fingerprint if now else None)
     if code == "deleted":
         db.query(MoneyRowBaseline).filter(MoneyRowBaseline.kind == kind_name, MoneyRowBaseline.row_id == row_id).delete(synchronize_session=False)
-    elif code in STATE_CODES:
-        if before is None:
-            if any(k.startswith(f"{kind_name}:{row_id}:") and k != key for k in found):
-                raise ValueError("Сначала примите остальные находки этой записи")
-            db.add(MoneyRowBaseline(kind=kind_name, row_id=row_id, org_id=org_id, fingerprint=now.fingerprint, amount=now.amount, voided=now.voided, void_fingerprint=now.void_fingerprint,
-                                    accepted=[code], first_seen_at=at, last_confirmed_at=at))
-        else:
-            before.accepted = sorted({*(before.accepted or []), code})
     elif before is None:
+        # the row ARRIVED with findings: the baseline takes the row, so the findings of the arrival that are not THIS one stay open on it (``open:<code>``); a state finding is remembered by its code
+        others = sorted({f.code for f in verdict.findings if (f.kind, f.row_id) == (kind_name, row_id) and f.code != code and f.code in ARRIVAL_CODES})
         db.add(MoneyRowBaseline(kind=kind_name, row_id=row_id, org_id=org_id, fingerprint=now.fingerprint, amount=now.amount, voided=now.voided, void_fingerprint=now.void_fingerprint,
-                                accepted=[], first_seen_at=at, last_confirmed_at=at))
+                                accepted=([code] if code in STATE_CODES else []) + [OPEN + o for o in others], first_seen_at=at, last_confirmed_at=at))
+    elif code in STATE_CODES:
+        before.accepted = sorted({*(before.accepted or []), code})
+    elif OPEN + code in (before.accepted or []):
+        before.accepted = [a for a in before.accepted if a != OPEN + code]
     else:
-        before.fingerprint, before.amount, before.voided, before.void_fingerprint, before.last_confirmed_at = now.fingerprint, now.amount, now.voided, now.void_fingerprint, at
+        for name in FIELDS_OF[code]:                          # ONE finding: only the fields of ITS code move; the other findings of the row stand
+            setattr(before, name, getattr(now, name))
+        before.last_confirmed_at = at
     db.add(OrgMoneyAudit(org_id=org_id, actor_id=actor_id, action=ACCEPTED, occurred_at=at, details={
         "key": key, "reason": reason, "old_fingerprint": old_fp, "new_fingerprint": new_fp, "text": f"Сверка: принята находка {key}. Причина: {reason}"}))
     db.flush()
