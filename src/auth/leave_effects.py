@@ -1,11 +1,12 @@
 """
 ALGO - Money-2 / T3: what a transfer, a leaving and an archiving END, MOVE and LEAVE BEHIND - the structure and the words, ONE builder for the three of them.
 
-``snapshot`` reads, BEFORE the stay is closed, everything the closing touches (the debt and the advance of the account, the individual price and the prices scheduled after the last day, the pauses); ``build`` turns it into
+``snapshot`` reads, BEFORE the stay is closed, everything the closing touches (the debt and the advance of the account, the individual price and the prices scheduled after the last day, the pauses,
+a «Оплата с» that has not begun); ``build`` turns it into
 
     {"kind": "transfer" | "leave" | "archive", "moves": [...], "stays": [...], "ends": [...], "money_text": str | None, "texts": [str, ...]}
 
-* ``moves``  - what goes on (transfer only): ``money`` (the sum; a package centre: lessons at the price of the new group and the rest), ``pause``, ``paid_until``;
+* ``moves``  - what goes on (transfer only): ``money`` (the sum; a package centre: lessons at the price of the new group and the rest), ``pause``, ``billing_from``;
 * ``stays``  - what stays behind in the closed group: ``debt`` («останется за учеником … принять или простить можно в её выписке»), ``advance`` (leave / archive: it stays until it is returned);
 * ``ends``   - what stops: ``individual_price``, ``scheduled_price``, and (leave / archive) ``pause``.
 
@@ -41,6 +42,7 @@ class Snap:
     price: Optional[Tuple[int, Optional[date], Optional[str]]] = None           # the individual price (amount, since, reason) in force on the last day
     scheduled: List[Tuple[date, Optional[int], Optional[str]]] = field(default_factory=list)    # the prices dated after the last day (not the system markers)
     pauses: List[Tuple[date, date]] = field(default_factory=list)             # the live pauses that last beyond the last day
+    billing_from: Optional[date] = None                                       # a «Оплата с» that is still ahead
 
 
 def snapshot(db: Session, org_id: Any, memberships: Sequence[StudentGroup], day: date, *, after=None, loader=None) -> List[Snap]:
@@ -68,6 +70,9 @@ def snapshot(db: Session, org_id: Any, memberships: Sequence[StudentGroup], day:
             if (row.reason or "") not in pricing.LEFT_MARKERS:
                 snap.scheduled.append((row.valid_from, None if row.amount is None else int(row.amount), row.reason))
         snap.pauses = [(p.first_day, p.last_day) for p in pauses._live(m.id) if p.last_day > day]
+        period = next((p for p in m.periods if p.left_at is None), None)
+        if period is not None and period.billing_from is not None and period.billing_from > day:
+            snap.billing_from = period.billing_from
         out.append(snap)
     return out
 
@@ -161,6 +166,9 @@ def build(
             for first, last in carried_pauses:
                 moves.append({**base, "code": "pause", "first_day": first.isoformat(), "last_day": last.isoformat(),
                               "text": f"Пауза {_range(first, last)} перейдёт в группу «{target_name or ''}»: дни паузы там не начисляются"})
+            if s.billing_from is not None:
+                moves.append({**base, "code": "billing_from", "date": s.billing_from.isoformat(),
+                              "text": f"«Оплата с {_dmy(s.billing_from)}» перейдёт в группу «{target_name or ''}»: начисление там начнётся с этого дня"})
         if s.debt > 0:
             stays.append({**base, "code": "debt", **({"amount": s.debt} if money else {}), "text": debt_text(s, money)})
         if not transfer and s.advance > 0:

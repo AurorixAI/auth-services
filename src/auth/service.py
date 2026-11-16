@@ -2826,6 +2826,10 @@ class AuthService:
             new_period = open_period(membership, now_dt)
             self.db.add(membership)
 
+        carry_billing = next((s.billing_from for s in before_close if s.billing_from is not None), None)
+        if carry_billing is not None and new_period is not None:      # Money-2 T4: a «Оплата с» that has not begun goes with the student - the new group charges from the same day (not from the day after the transfer)
+            new_period.billing_from = carry_billing
+
         if price_override is not None:
             self.db.flush()  # a new membership gets its id here
             pricing.write_override(

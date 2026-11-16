@@ -285,3 +285,36 @@ def test_t3_without_the_right_to_money_the_facts_come_without_sums(world, fixed_
     effects = admin.get(f"{API}/org/groups/{a.id}/students/{s0.id}/leave-preview").json()["memberships"][0]["effects"]
     (debt,) = effects["stays"]
     assert debt["code"] == "debt" and "amount" not in debt and not any(ch.isdigit() for ch in debt["text"])
+
+
+# ---------------------------------------------------------------------------------------------------- T4 an «Оплата с» that has not begun goes with the student
+
+
+def test_t4_a_payment_start_in_the_future_goes_to_the_new_group_and_it_charges_from_the_same_day(world, fixed_today):
+    from tests.money1b_helpers import fresh_student
+    from src.models.auth import StudentGroupPeriod
+
+    # a new student is put into A on 22.11 with «Оплата с 25.11» and moved to B (400 000) the same day.  B charges from 25.11, not from the day after the transfer (23.11):
+    # 25..30.11 = 6 lessons of 30: 400 000 x 6 / 30 = 80 000.  Without the rule B would start on 23.11: 8 lessons = 400 000 x 8 / 30 = 106 667 -> 107 000.
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s = fresh_student(world)
+    add(world, s, group=a, mode="add", pay_from="2026-11-25")
+    out = add(world, s, group=b, mode="transfer")
+    assert nov_charge(world, s, b) == 80_000
+    world.db.expire_all()
+    (period,) = world.db.query(StudentGroupPeriod).filter_by(membership_id=membership(world, s, b).id).all()
+    assert period.billing_from == date(2026, 11, 25)
+    (moved,) = [m for m in out["effects"]["moves"] if m["code"] == "billing_from"]
+    assert moved["date"] == "2026-11-25" and "25.11.2026" in moved["text"] and moved["group_name"] == a.name
+    # the old group charges nothing (its stay ended before its first charged day)
+    assert account(world, membership(world, s, a).id).charged == 0
+
+
+def test_t4_a_payment_start_that_has_begun_does_not_move(world, fixed_today):
+    # «Оплата с» of 02.11 is in the past on 22.11: B charges from the day after the transfer as always: 23..30 = 8 lessons -> 107 000
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    out = add(world, s0, group=b, mode="transfer")
+    assert nov_charge(world, s0, b) == 107_000
+    assert [m for m in out["effects"]["moves"] if m["code"] == "billing_from"] == []
