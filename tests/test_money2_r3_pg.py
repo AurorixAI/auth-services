@@ -114,3 +114,28 @@ def test_r3_a_finding_that_no_night_has_recorded_yet_is_not_accepted(world, monk
     sql(world, "UPDATE student_payments SET amount = 200 WHERE id = :id", id=row)
     assert accept(world, monkeypatch, f"payment:{row}:changed") == 4
     assert "ещё не фиксировала ночная проверка" in capsys.readouterr().err
+
+
+# ============================================================================================================ Р4: a second substitution under the same key is a new finding
+def test_r4_a_second_edit_of_a_row_that_already_has_a_finding_is_new_and_the_letter_says_was_now(world, monkeypatch):
+    sent = []
+    from src.mail import sender
+
+    monkeypatch.setattr(sender, "deliver", lambda msg, cfg=None: sent.append(msg) or True)
+    monkeypatch.setenv("MONEY_RECONCILE_EMAIL", "money-team@example.test")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test"), monkeypatch.setenv("SMTP_USER", "u"), monkeypatch.setenv("SMTP_PASSWORD", "p")
+    ensure_billing(world)
+    row = pid_of(pay(world, world.students[0], amount=450_000))
+    night(world)
+    key = f"payment:{row}:changed"
+    sql(world, "UPDATE student_payments SET amount = 200 WHERE id = :id", id=row)
+    one = night(world, mail=True)
+    assert key in i5(one, world) and one["mail"] == "sent" and len(sent) == 1
+    same = night(world, mail=True)                                                                  # nobody touched the row: the same finding is not new, no letter
+    assert same["new"] == 0 and same["mail"] == "skipped" and len(sent) == 1
+    sql(world, "UPDATE student_payments SET amount = 900 WHERE id = :id", id=row)                   # a second substitution under the SAME key
+    two = night(world, mail=True)
+    found = world.db.query(MoneyReconcileFinding).filter_by(run_id=two["runId"], subject_key=key).one()
+    assert found.is_new is True and two["new"] >= 1 and two["mail"] == "sent" and len(sent) == 2
+    assert found.details["restated"]["wasAmount"] == 200 and found.details["restated"]["nowAmount"] == 900
+    assert "правка повторная: было в прошлой находке 200 → стало 900" in sent[1].get_body(preferencelist=("plain",)).get_content()

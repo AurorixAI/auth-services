@@ -592,8 +592,10 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
             why[str(org_id)] = _first_line(exc)
         finally:
             db.rollback()
-    previous = _previous_keys(db, [o for o in orgs if str(o) not in failed]) if apply else set()
-    new_count = sum(1 for f in findings if (f.org_id, f.invariant, f.subject_key) not in previous)
+    previous = _previous_findings(db, [o for o in orgs if str(o) not in failed]) if apply else {}
+    for f in findings:
+        _mark_restated(f, previous)
+    new_count = sum(1 for f in findings if _is_new(f, previous))
     rows_seen = sum(v.rows for v in plans.values())
     out: Dict[str, Any] = {"centres": len(orgs), "failed": failed, "failedWhy": why, "findings": len(findings), "new": new_count, "apply": apply, "mail": "off",
                            "rows": rows_seen, "baselined": sum(v.baselined for v in plans.values()), "firstCentres": sum(1 for v in plans.values() if v.first), "notChecked": dict(sorted(not_checked.items())),
@@ -610,7 +612,7 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
     db.flush()
     for f in findings:
         db.add(MoneyReconcileFinding(run_id=run_row.id, org_id=f.org_id, invariant=f.invariant, subject_key=f.subject_key, subject_id=f.subject_id, month=f.month, expected=f.expected,
-                                     actual=f.actual, details=f.details, is_new=(f.org_id, f.invariant, f.subject_key) not in previous))
+                                     actual=f.actual, details=f.details, is_new=_is_new(f, previous)))
     for org_id in orgs:
         db.add(MoneyReconcileCentre(run_id=run_row.id, org_id=org_id, status="failed" if str(org_id) in failed else "ok", findings_count=per_centre.get(org_id, 0),
                                     rows_checked=org_id in plans))
@@ -657,18 +659,35 @@ def _store_snapshots(db, snapshots: Dict[UUID, List[Tuple[Any, Optional[date], O
                 "org_id": insert.excluded.org_id}))
 
 
-def _previous_keys(db, org_ids: List[UUID]) -> set:
-    """The findings of the LAST SUCCESSFUL check of each centre (a night the centre could not be checked says nothing about it): ``{(org, invariant, key)}``."""
+def _previous_findings(db, org_ids: List[UUID]) -> Dict[Tuple[UUID, str, str], Tuple[Dict[str, Any], Optional[int]]]:
+    """The findings of the LAST SUCCESSFUL check of each centre (a night the centre could not be checked says nothing about it): ``{(org, invariant, key): (details, actual)}``."""
     if not org_ids:
-        return set()
+        return {}
     last = (db.query(MoneyReconcileCentre.org_id, MoneyReconcileCentre.run_id)
             .join(MoneyReconcileRun, MoneyReconcileRun.id == MoneyReconcileCentre.run_id)
             .filter(MoneyReconcileCentre.status == "ok", MoneyReconcileCentre.org_id.in_(org_ids))
             .ext(distinct_on(MoneyReconcileCentre.org_id)).order_by(MoneyReconcileCentre.org_id, MoneyReconcileRun.started_at.desc()).all())
     if not last:
-        return set()
-    return {(o, i, k) for o, i, k in db.query(MoneyReconcileFinding.org_id, MoneyReconcileFinding.invariant, MoneyReconcileFinding.subject_key).filter(
-        tuple_(MoneyReconcileFinding.org_id, MoneyReconcileFinding.run_id).in_([(org, rid) for org, rid in last])).all()}
+        return {}
+    return {(o, i, k): (d or {}, a) for o, i, k, d, a in db.query(MoneyReconcileFinding.org_id, MoneyReconcileFinding.invariant, MoneyReconcileFinding.subject_key, MoneyReconcileFinding.details,
+                                                                    MoneyReconcileFinding.actual).filter(tuple_(MoneyReconcileFinding.org_id, MoneyReconcileFinding.run_id).in_([(org, rid) for org, rid in last])).all()}
+
+
+def _restated(f: Found, previous: Dict[Tuple[UUID, str, str], Tuple[Dict[str, Any], Optional[int]]]) -> bool:
+    """A row that already had this finding last night but is NOT the same row any more (its fingerprint differs from the one the last finding recorded): the second edit under the same key is a new fact."""
+    before = previous.get((f.org_id, f.invariant, f.subject_key))
+    return before is not None and f.invariant == "I-5" and "state" in before[0] and before[0]["state"] != f.details.get("state")
+
+
+def _is_new(f: Found, previous: Dict[Tuple[UUID, str, str], Tuple[Dict[str, Any], Optional[int]]]) -> bool:
+    return (f.org_id, f.invariant, f.subject_key) not in previous or _restated(f, previous)
+
+
+def _mark_restated(f: Found, previous: Dict[Tuple[UUID, str, str], Tuple[Dict[str, Any], Optional[int]]]) -> None:
+    """Say in the details of the finding what it was in the last one: «было в прошлой находке / стало»."""
+    if _restated(f, previous):
+        before_details, before_actual = previous[(f.org_id, f.invariant, f.subject_key)]
+        f.details["restated"] = {"was": before_details["state"], "wasAmount": before_actual, "now": f.details.get("state"), "nowAmount": f.actual}
 
 
 def _mail(findings: List[Found], new_count: int, failed: List[str], run_id: Any, why: Optional[Dict[str, str]] = None) -> str:
@@ -687,7 +706,9 @@ def _mail(findings: List[Found], new_count: int, failed: List[str], run_id: Any,
             def row_line(f: Found) -> Tuple[str, str]:          # I-5: the kind of the record, its id, the centre and the sum «было → стало» (the sums of the payroll too - the letter is for the team of the platform)
                 was = f"{f.expected}" if f.expected is not None else "—"
                 now_ = f"{f.actual}" if f.actual is not None else "—"
-                return (f"I-5 · центр {str(f.org_id)[:8]} · {f.details.get('kind')}", f"{f.details.get('what')}; запись {f.subject_id}; сумма было {was} → стало {now_}")
+                again = f.details.get("restated")
+                tail = f"; правка повторная: было в прошлой находке {again['wasAmount'] if again['wasAmount'] is not None else '—'} → стало {again['nowAmount'] if again['nowAmount'] is not None else '—'}" if again else ""
+                return (f"I-5 · центр {str(f.org_id)[:8]} · {f.details.get('kind')}", f"{f.details.get('what')}; запись {f.subject_id}; сумма было {was} → стало {now_}{tail}")
 
             rows = [line(f) for f in findings if f.invariant != "I-5"][:20]
             i5 = [row_line(f) for f in findings if f.invariant == "I-5"][:20]
