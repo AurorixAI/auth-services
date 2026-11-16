@@ -83,6 +83,21 @@
       },
       "ArchiveBlocker": {
         "properties": {
+          "balances": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Balances"
+          },
           "cancelConsequence": {
             "anyOf": [
               {
@@ -99,7 +114,8 @@
               "ACTIVE_STUDENTS",
               "OPEN_LESSON",
               "MISSED_LESSONS",
-              "LIVE_EXAMS"
+              "LIVE_EXAMS",
+              "OPEN_BALANCES"
             ],
             "title": "Code",
             "type": "string"
