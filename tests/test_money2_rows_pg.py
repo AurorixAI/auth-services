@@ -194,12 +194,55 @@ def test_c_a_transfer_is_never_cancelled_by_the_product_so_a_cancelled_one_is_fo
     assert f"{kind}:{row_id}:reopened" in i5(night(world), world)
 
 
+def product_payment(world):
+    return pid_of(pay(world, world.students[0], amount=450_000))
+
+
+def product_refund(world):
+    from tests.test_pay2_api_pg import API, owner
+
+    pay(world, world.students[0], amount=1_500_000)
+    r = owner(world).post(f"{API}/org/memberships/{mid(world, world.students[0])}/refunds", json={"amount": 50_000, "method": "cash", "reason": "Выбыл на неделю"})
+    assert r.status_code == 201, r.text
+    return r.json()["refund"]["id"]
+
+
+def product_writeoff(world):
+    from tests.test_pay2_api_pg import API, owner
+
+    r = owner(world).post(f"{API}/org/memberships/{mid(world, world.students[1])}/writeoffs", json={"all": True, "reason": "Договорённость с родителем"})
+    assert r.status_code == 201, r.text
+    return r.json()["writeoff"]["id"]
+
+
+def product_opening(world):
+    from tests.test_pay2_api_pg import API, owner
+
+    r = owner(world).put(f"{API}/org/memberships/{mid(world, world.students[2])}/opening-balance", json={"debt_amount": 250_000, "debt_on": (business_today() - timedelta(days=76)).isoformat()})
+    assert r.status_code == 200, r.text
+    return world.db.query(MembershipOpeningBalance).filter_by(org_id=world.org.id, membership_id=mid(world, world.students[2]), voided_at=None).one().id
+
+
+def product_payout(world):
+    from tests.test_pay2_api_pg import API, owner
+
+    row = make_sheet(world)
+    r = owner(world).post(f"{API}/org/payroll/sheets/{row.id}/payouts", json={"amount": 200_000, "paid_on": business_today().isoformat(), "method": "cash"})
+    assert r.status_code == 201, r.text
+    return r.json()["payout"]["id"]
+
+
+PRODUCT = {"payment": product_payment, "refund": product_refund, "writeoff": product_writeoff, "opening": product_opening, "payout": product_payout}
+
+
 @pytest.mark.parametrize("kind", VOIDABLE)
-def test_d_a_row_cancelled_by_a_bare_update_has_no_line_in_the_journal_and_is_found(world, kind):
+def test_d_a_row_made_by_the_product_and_cancelled_by_a_bare_update_has_no_line_in_the_journal_and_is_found(world, kind):
+    """LESSONS 105/115/116: the row is made the way of the product (a route), so the line of its CREATION is in the journal - a hole that the line of the creation opens is seen only this way."""
     ensure_billing(world)
-    builder, table, _, _ = KINDS[kind]
-    row_id = builder(world)
+    _, table, _, _ = KINDS[kind]
     night(world)
+    row_id = PRODUCT[kind](world)
+    assert i5(night(world), world) == [], "a new row of the product is no finding"
     tamper(world, kind, row_id, CANCEL)
     assert f"{kind}:{row_id}:no_journal" in i5(night(world), world)
 
@@ -314,6 +357,19 @@ def script_main(world, monkeypatch, *argv):
     return importlib.import_module("scripts.money_reconcile").main(list(argv))
 
 
+def staff_actor(world, active=True):
+    """A user of the platform (console staff): the author a manual move of the baseline needs.  Returns its id as text."""
+    from src.models.platform import PlatformRole, PlatformStaff
+
+    role = PlatformRole(name=f"Роль {uuid4().hex[:8]}", permissions=[])
+    world.db.add(role)
+    world.db.flush()
+    user = make_user(world.db, role="teacher", name="Сотрудник")
+    world.db.add(PlatformStaff(user_id=user.id, role_id=role.id, is_active=active))
+    world.db.commit()
+    return str(user.id)
+
+
 def baseline_of(world, kind, row_id):
     world.db.expire_all()
     return world.db.get(MoneyRowBaseline, (kind, row_id))
@@ -362,7 +418,7 @@ def test_accept_takes_one_finding_with_a_reason_writes_the_journal_and_leaves_th
     keys = i5(night(world), world)
     assert keys == sorted([f"payment:{payment}:changed", f"refund:{refund}:changed"])
     old = baseline_of(world, "payment", payment).fingerprint
-    assert script_main(world, monkeypatch, "--accept", f"payment:{payment}:changed", "--reason", "Правка по заявке 17") == 0
+    assert script_main(world, monkeypatch, "--accept", f"payment:{payment}:changed", "--reason", "Правка по заявке 17", "--actor", staff_actor(world)) == 0
     out = capsys.readouterr().out
     assert f"accepted key=payment:{payment}:changed" in out and old in out
     world.db.expire_all()
@@ -387,7 +443,7 @@ def test_accept_and_rebaseline_refuse_without_a_reason_with_a_wrong_key_or_for_a
     ensure_billing(world)
     make_payment(world)
     night(world)
-    assert script_main(world, monkeypatch, *argv) == 4
+    assert script_main(world, monkeypatch, *argv, "--actor", staff_actor(world)) == 4
     assert why in capsys.readouterr().err
 
 
@@ -395,7 +451,7 @@ def test_accept_refuses_a_key_that_is_not_a_finding_right_now(world, monkeypatch
     ensure_billing(world)
     payment = make_payment(world)
     night(world)
-    assert script_main(world, monkeypatch, "--accept", f"payment:{payment}:changed", "--reason", "Принять нечего") == 4
+    assert script_main(world, monkeypatch, "--accept", f"payment:{payment}:changed", "--reason", "Принять нечего", "--actor", staff_actor(world)) == 4
     assert "Сейчас такой находки нет" in capsys.readouterr().err
     assert world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_accept").count() == 0
 
@@ -409,7 +465,7 @@ def test_accept_of_a_deleted_row_forgets_it_and_accept_of_a_foreign_row_is_remem
     keys = i5(night(world), world)
     assert f"payment:{gone}:deleted" in keys and f"refund:{strange}:foreign" in keys and f"refund:{strange}:changed" in keys
     for key in (f"payment:{gone}:deleted", f"refund:{strange}:foreign", f"refund:{strange}:changed"):
-        assert script_main(world, monkeypatch, "--accept", key, "--reason", "Разобрали с центром") == 0
+        assert script_main(world, monkeypatch, "--accept", key, "--reason", "Разобрали с центром", "--actor", staff_actor(world)) == 0
     assert baseline_of(world, "payment", gone) is None and baseline_of(world, "refund", strange).accepted == ["foreign"]
     assert i5(night(world), world) == []
     tamper(world, "refund", strange, "amount = 5")
@@ -424,13 +480,14 @@ def test_rebaseline_takes_the_rows_again_prints_rows_and_reason_and_keeps_them_i
     sql(world, "DELETE FROM student_refunds WHERE id = :id", id=refund)
     assert len(i5(night(world), world)) == 2
     reason = f"Восстановление базы из копии {uuid4()}"
-    assert script_main(world, monkeypatch, "--rebaseline", "--reason", reason, "--org", str(world.org.id)) == 0
+    actor = staff_actor(world)
+    assert script_main(world, monkeypatch, "--rebaseline", "--reason", reason, "--org", str(world.org.id), "--actor", actor, "--with-open-findings") == 0
     assert f"rebaseline centres=1 rows=2 reason='{reason}'" in capsys.readouterr().out
     world.db.expire_all()
-    run = world.db.query(MoneyReconcileRun).filter(MoneyReconcileRun.note.like("%" + reason)).one()          # (the database is shared with other tests: the reason is unique)
-    assert run.note == f"пересъёмка эталона: центров 1, записей 2; причина: {reason}" and run.centres_checked == 0 and run.status == "clean"
+    run = world.db.query(MoneyReconcileRun).filter(MoneyReconcileRun.note.like("%" + reason + "%")).one()          # (the database is shared with other tests: the reason is unique)
+    assert run.note.startswith(f"пересъёмка эталона: центров 1, записей 2; причина: {reason}") and run.centres_checked == 0 and run.status == "rebaselined"
     line = world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_rebaseline").one()
-    assert line.details["rows"] == 2 and line.details["reason"] == reason
+    assert line.details["rows"] == 2 and line.details["reason"] == reason and str(line.actor_id) == actor
     assert world.db.query(MoneyRowBaseline).filter_by(org_id=world.org.id).count() == 2
     assert i5(night(world), world) == [] and rate is not None
     from src.auth.platform_reconcile_router import latest

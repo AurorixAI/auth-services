@@ -42,8 +42,9 @@ from sqlalchemy.dialects.postgresql import distinct_on, insert as pg_insert
 from src.models.auth import (
     AttendanceExcuse, Group, GroupAttendance, GroupPrice, GroupScheduleOneOffLesson, GroupScheduleOverride, MembershipOpeningBalance, MembershipPause, MembershipPriceOverride,
     MembershipTransfer, MoneyReconcileCentre, MoneyReconcileFinding, MoneyReconcileRun, MoneyReconcileSnapshot, Organization, OrgDayOff, PayrollSheet, StudentGroup, StudentPayment,
-    StudentRefund, StudentWriteoff,
+    StudentRefund, StudentWriteoff, User,
 )
+from src.models.platform import PlatformStaff
 
 from . import business_clock as bc
 from . import money_reconcile_rows as mrows
@@ -217,7 +218,7 @@ def _gap(gaps: Optional[Dict[str, int]], reason: str, count: int = 1) -> None:
 
 def _row_findings(org_id: UUID, verdict: "mrows.RowVerdict") -> List[Found]:
     """I-5 findings of the comparison of the rows as ``Found`` (key = kind + id + code: the same row says the same key every night)."""
-    return [Found(org_id, "I-5", f.key, str(f.row_id), None, f.was, f.now, {"kind": f.kind, "code": f.code, "what": ROW_CODE_TEXT[f.code]}) for f in verdict.findings]
+    return [Found(org_id, "I-5", f.key, str(f.row_id), None, f.was, f.now, {"kind": f.kind, "code": f.code, "what": ROW_CODE_TEXT[f.code], "state": f.state}) for f in verdict.findings]
 
 
 def _latest(into: Dict[Any, datetime], key: Any, moment: Optional[datetime]) -> None:
@@ -504,15 +505,16 @@ def run(db, *, apply: bool = False, mail: bool = False, today: Optional[date] = 
         return _run_locked(db, apply=apply, mail=mail, today=today, budget_seconds=BUDGET_SECONDS if budget_seconds is None else budget_seconds, only=only)
 
 
-def accept(db, key: str, reason: str) -> Dict[str, Any]:
+def accept(db, key: str, reason: str, *, actor: Optional[str]) -> Dict[str, Any]:
     """The team accepts ONE finding of I-5 by its key (``kind:row id:code``) with a reason: the baseline of the row takes the row as it is and the journal of the centre says who / why / the old and the
-    new fingerprint.  ``busy``: another run is going.  Raises ``ValueError`` when the key is not a finding right now."""
+    new fingerprint.  ``actor``: an active user of the platform (required).  ``busy``: another run is going.  Raises ``ValueError`` when the key is not a finding right now."""
     with _RunLock(db) as lock:
         if not lock.held:
             return {"busy": True}
         db.rollback()
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))          # first statement of the transaction: the same view of the centre as the night has
         try:
-            out = mrows.accept(db, key, reason)
+            out = mrows.accept(db, key, reason, actor_id=platform_actor(db, actor), at=bc.utc_now())
             db.commit()
         except Exception:
             db.rollback()
@@ -520,9 +522,29 @@ def accept(db, key: str, reason: str) -> Dict[str, Any]:
         return out
 
 
-def rebaseline(db, reason: str, *, only: Optional[Iterable[Any]] = None) -> Dict[str, Any]:
-    """Take the baseline of the money rows again for every active centre (or ``only``): after a migration of data or a restore of the database.  One run row (no centres, no findings) keeps the number
-    of rows and the reason; each centre gets a line in its journal.  ``busy``: another run is going."""
+def _uuids(items: Iterable[Any]) -> List[UUID]:
+    return [o if isinstance(o, UUID) else UUID(str(o)) for o in items]
+
+
+def platform_actor(db, actor: Optional[str]) -> UUID:
+    """The author of a manual move of the baseline: the id (or the e-mail) of an ACTIVE user of the platform (the console staff).  Anyone else is refused."""
+    text_ = (actor or "").strip()
+    if not text_:
+        raise ValueError("Автор обязателен: --actor (id или e-mail сотрудника платформы)")
+    try:
+        user_filter = User.id == UUID(text_)
+    except ValueError:
+        user_filter = func.lower(User.email) == text_.lower()
+    found = db.query(User.id).join(PlatformStaff, PlatformStaff.user_id == User.id).filter(user_filter, PlatformStaff.is_active.is_(True), User.is_active.is_(True)).scalar()
+    if found is None:
+        raise ValueError("Автор — не активный сотрудник платформы")
+    return found
+
+
+def rebaseline(db, reason: str, *, actor: Optional[str], with_open_findings: bool = False, only: Optional[Iterable[Any]] = None) -> Dict[str, Any]:
+    """Take the baseline of the money rows again for every active centre (or ``only``): after a migration of data or a restore of the database.  ``actor``: an active user of the platform (required).
+    While the old baseline holds a row that differs or a finding is open it refuses, unless ``with_open_findings``: then their keys go to the note of the run and to the journal of the centre.  One run row
+    (status ``rebaselined``, no centres, no findings) keeps the number of rows and the reason; each centre gets a line in its journal.  ``busy``: another run is going."""
     reason = (reason or "").strip()
     if not 3 <= len(reason) <= 300:
         raise ValueError("Причина: от 3 до 300 символов")
@@ -530,22 +552,28 @@ def rebaseline(db, reason: str, *, only: Optional[Iterable[Any]] = None) -> Dict
         if not lock.held:
             return {"busy": True}
         db.rollback()
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))          # first statement of the transaction: one view of the centres
+        actor_id = platform_actor(db, actor)
         query = db.query(Organization.id).filter(Organization.status == "active")
         if only is not None:
-            query = query.filter(Organization.id.in_([o if isinstance(o, UUID) else UUID(str(o)) for o in only]))
+            query = query.filter(Organization.id.in_(_uuids(only)))
         orgs = [o for (o,) in query.order_by(Organization.id).all()]
         started = bc.utc_now()
-        run_row = MoneyReconcileRun(started_at=started, finished_at=started, status="clean", centres_checked=0, findings_count=0, new_findings_count=0)
-        db.add(run_row)
-        db.flush()
         try:
-            rows = mrows.rebaseline(db, orgs, run_row.id, reason, started)
-            run_row.note = f"пересъёмка эталона: центров {len(orgs)}, записей {rows}; причина: {reason}"[:500]
+            run_row = MoneyReconcileRun(started_at=started, finished_at=started, status="rebaselined", centres_checked=0, findings_count=0, new_findings_count=0)
+            db.add(run_row)
+            db.flush()
+            plan = mrows.rebaseline(db, orgs, run_row.id, reason, started, actor_id=actor_id, with_open_findings=with_open_findings)
+            rows = sum(len(c.now) for c in plan.values())
+            named = [k for c in plan.values() for k in c.findings]
+            divergent = sum(len(c.divergent) for c in plan.values())
+            tail = f"; расходящихся строк {divergent}, открытых находок {len(named)}: " + ", ".join(named) if named or divergent else ""
+            run_row.note = f"пересъёмка эталона: центров {len(orgs)}, записей {rows}; причина: {reason}{tail}"[:500]
             db.commit()
         except Exception:
             db.rollback()
             raise
-        return {"centres": len(orgs), "rows": rows, "runId": str(run_row.id), "note": run_row.note}
+        return {"centres": len(orgs), "rows": rows, "runId": str(run_row.id), "note": run_row.note, "divergent": divergent, "findings": named, "actor": str(actor_id)}
 
 
 def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_seconds: int, only: Optional[Iterable[Any]] = None) -> Dict[str, Any]:
@@ -553,12 +581,12 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
     began = time.monotonic()
     query = db.query(Organization.id).filter(Organization.status == "active")
     if only is not None:
-        query = query.filter(Organization.id.in_([o if isinstance(o, UUID) else UUID(str(o)) for o in only]))
+        query = query.filter(Organization.id.in_(_uuids(only)))
     orgs = [o for (o,) in query.order_by(Organization.id).all()]
     not_checked: Dict[str, int] = {}
     inactive = db.query(func.count(Organization.id)).filter(Organization.status != "active")
     if only is not None:
-        inactive = inactive.filter(Organization.id.in_([o if isinstance(o, UUID) else UUID(str(o)) for o in only]))
+        inactive = inactive.filter(Organization.id.in_(_uuids(only)))
     _gap(not_checked, GAP_CENTRE_INACTIVE, int(inactive.scalar() or 0))
     db.rollback()
     findings: List[Found] = []
@@ -592,8 +620,10 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
             why[str(org_id)] = _first_line(exc)
         finally:
             db.rollback()
-    previous = _previous_keys(db, [o for o in orgs if str(o) not in failed]) if apply else set()
-    new_count = sum(1 for f in findings if (f.org_id, f.invariant, f.subject_key) not in previous)
+    previous = _previous_findings(db, [o for o in orgs if str(o) not in failed]) if apply else {}
+    for f in findings:
+        _mark_restated(f, previous)
+    new_count = sum(1 for f in findings if _is_new(f, previous))
     rows_seen = sum(v.rows for v in plans.values())
     out: Dict[str, Any] = {"centres": len(orgs), "failed": failed, "failedWhy": why, "findings": len(findings), "new": new_count, "apply": apply, "mail": "off",
                            "rows": rows_seen, "baselined": sum(v.baselined for v in plans.values()), "firstCentres": sum(1 for v in plans.values() if v.first), "notChecked": dict(sorted(not_checked.items())),
@@ -610,7 +640,7 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
     db.flush()
     for f in findings:
         db.add(MoneyReconcileFinding(run_id=run_row.id, org_id=f.org_id, invariant=f.invariant, subject_key=f.subject_key, subject_id=f.subject_id, month=f.month, expected=f.expected,
-                                     actual=f.actual, details=f.details, is_new=(f.org_id, f.invariant, f.subject_key) not in previous))
+                                     actual=f.actual, details=f.details, is_new=_is_new(f, previous)))
     for org_id in orgs:
         db.add(MoneyReconcileCentre(run_id=run_row.id, org_id=org_id, status="failed" if str(org_id) in failed else "ok", findings_count=per_centre.get(org_id, 0),
                                     rows_checked=org_id in plans))
@@ -657,18 +687,35 @@ def _store_snapshots(db, snapshots: Dict[UUID, List[Tuple[Any, Optional[date], O
                 "org_id": insert.excluded.org_id}))
 
 
-def _previous_keys(db, org_ids: List[UUID]) -> set:
-    """The findings of the LAST SUCCESSFUL check of each centre (a night the centre could not be checked says nothing about it): ``{(org, invariant, key)}``."""
+def _previous_findings(db, org_ids: List[UUID]) -> Dict[Tuple[UUID, str, str], Tuple[Dict[str, Any], Optional[int]]]:
+    """The findings of the LAST SUCCESSFUL check of each centre (a night the centre could not be checked says nothing about it): ``{(org, invariant, key): (details, actual)}``."""
     if not org_ids:
-        return set()
+        return {}
     last = (db.query(MoneyReconcileCentre.org_id, MoneyReconcileCentre.run_id)
             .join(MoneyReconcileRun, MoneyReconcileRun.id == MoneyReconcileCentre.run_id)
             .filter(MoneyReconcileCentre.status == "ok", MoneyReconcileCentre.org_id.in_(org_ids))
             .ext(distinct_on(MoneyReconcileCentre.org_id)).order_by(MoneyReconcileCentre.org_id, MoneyReconcileRun.started_at.desc()).all())
     if not last:
-        return set()
-    return {(o, i, k) for o, i, k in db.query(MoneyReconcileFinding.org_id, MoneyReconcileFinding.invariant, MoneyReconcileFinding.subject_key).filter(
-        tuple_(MoneyReconcileFinding.org_id, MoneyReconcileFinding.run_id).in_([(org, rid) for org, rid in last])).all()}
+        return {}
+    return {(o, i, k): (d or {}, a) for o, i, k, d, a in db.query(MoneyReconcileFinding.org_id, MoneyReconcileFinding.invariant, MoneyReconcileFinding.subject_key, MoneyReconcileFinding.details,
+                                                                    MoneyReconcileFinding.actual).filter(tuple_(MoneyReconcileFinding.org_id, MoneyReconcileFinding.run_id).in_([(org, rid) for org, rid in last])).all()}
+
+
+def _restated(f: Found, previous: Dict[Tuple[UUID, str, str], Tuple[Dict[str, Any], Optional[int]]]) -> bool:
+    """A row that already had this finding last night but is NOT the same row any more (its fingerprint differs from the one the last finding recorded): the second edit under the same key is a new fact."""
+    before = previous.get((f.org_id, f.invariant, f.subject_key))
+    return before is not None and f.invariant == "I-5" and "state" in before[0] and before[0]["state"] != f.details.get("state")
+
+
+def _is_new(f: Found, previous: Dict[Tuple[UUID, str, str], Tuple[Dict[str, Any], Optional[int]]]) -> bool:
+    return (f.org_id, f.invariant, f.subject_key) not in previous or _restated(f, previous)
+
+
+def _mark_restated(f: Found, previous: Dict[Tuple[UUID, str, str], Tuple[Dict[str, Any], Optional[int]]]) -> None:
+    """Say in the details of the finding what it was in the last one: «было в прошлой находке / стало»."""
+    if _restated(f, previous):
+        before_details, before_actual = previous[(f.org_id, f.invariant, f.subject_key)]
+        f.details["restated"] = {"was": before_details["state"], "wasAmount": before_actual, "now": f.details.get("state"), "nowAmount": f.actual}
 
 
 def _mail(findings: List[Found], new_count: int, failed: List[str], run_id: Any, why: Optional[Dict[str, str]] = None) -> str:
@@ -687,7 +734,9 @@ def _mail(findings: List[Found], new_count: int, failed: List[str], run_id: Any,
             def row_line(f: Found) -> Tuple[str, str]:          # I-5: the kind of the record, its id, the centre and the sum «было → стало» (the sums of the payroll too - the letter is for the team of the platform)
                 was = f"{f.expected}" if f.expected is not None else "—"
                 now_ = f"{f.actual}" if f.actual is not None else "—"
-                return (f"I-5 · центр {str(f.org_id)[:8]} · {f.details.get('kind')}", f"{f.details.get('what')}; запись {f.subject_id}; сумма было {was} → стало {now_}")
+                again = f.details.get("restated")
+                tail = f"; правка повторная: было в прошлой находке {again['wasAmount'] if again['wasAmount'] is not None else '—'} → стало {again['nowAmount'] if again['nowAmount'] is not None else '—'}" if again else ""
+                return (f"I-5 · центр {str(f.org_id)[:8]} · {f.details.get('kind')}", f"{f.details.get('what')}; запись {f.subject_id}; сумма было {was} → стало {now_}{tail}")
 
             rows = [line(f) for f in findings if f.invariant != "I-5"][:20]
             i5 = [row_line(f) for f in findings if f.invariant == "I-5"][:20]

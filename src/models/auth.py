@@ -2067,7 +2067,7 @@ class MoneyReconcileRun(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     started_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
     finished_at = Column(DateTime, nullable=True)
-    status = Column(String(12), nullable=False, default="running", server_default="running")  # running | clean | findings | failed
+    status = Column(String(12), nullable=False, default="running", server_default="running")  # running | clean | findings | failed | partial | rebaselined
     centres_checked = Column(Integer, nullable=False, default=0, server_default="0")
     findings_count = Column(Integer, nullable=False, default=0, server_default="0")
     new_findings_count = Column(Integer, nullable=False, default=0, server_default="0")
@@ -2077,7 +2077,7 @@ class MoneyReconcileRun(Base):
     note = Column(String(500), nullable=True)  # Money-2: a re-baseline of the rows - how many and why
 
     __table_args__ = (
-        CheckConstraint("status IN ('running', 'clean', 'findings', 'failed', 'partial')", name="ck_money_reconcile_runs_status"),
+        CheckConstraint("status IN ('running', 'clean', 'findings', 'failed', 'partial', 'rebaselined')", name="ck_money_reconcile_runs_status"),
         Index("ix_money_reconcile_runs_started", "started_at"),
     )
 
@@ -2154,8 +2154,6 @@ class MoneyRowBaseline(Base):
     void_fingerprint = Column(String(32), nullable=True)
     accepted = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))  # state-based finding codes the team accepted for this row
     first_run_id = Column(UUID(as_uuid=True), ForeignKey("money_reconcile_runs.id", ondelete="SET NULL"), nullable=True)
-    last_run_id = Column(UUID(as_uuid=True), ForeignKey("money_reconcile_runs.id", ondelete="SET NULL"), nullable=True)
     first_seen_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
-    last_confirmed_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
 
     __table_args__ = (Index("ix_money_row_baseline_org", "org_id"),)

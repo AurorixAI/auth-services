@@ -53,7 +53,7 @@ def test_up_down_up_the_baseline_the_counters_the_wider_checks_and_the_cascade(e
     assert "money_row_baseline" not in inspect(engine).get_table_names() and "'student_transferred'" not in check(engine, "ck_group_audit_action")
     command.upgrade(cfg, REVISION)
     assert version(engine) == REVISION and "money_row_baseline" in inspect(engine).get_table_names()
-    assert {"kind", "row_id", "org_id", "fingerprint", "amount", "voided", "void_fingerprint", "accepted", "first_run_id", "last_run_id", "first_seen_at", "last_confirmed_at"} <= columns(engine, "money_row_baseline")
+    assert {"kind", "row_id", "org_id", "fingerprint", "amount", "voided", "void_fingerprint", "accepted", "first_run_id", "first_seen_at"} <= columns(engine, "money_row_baseline")
     assert {"not_checked", "note"} <= columns(engine, "money_reconcile_runs") and "rows_checked" in columns(engine, "money_reconcile_centres")
     assert "'student_transferred'" in check(engine, "ck_group_audit_action") and "'payment_void'" in check(engine, "ck_group_audit_action")          # widened, nothing lost
     assert "'I-5'" in check(engine, "ck_money_reconcile_findings_invariant") and "'partial'" in check(engine, "ck_money_reconcile_runs_status") and "'findings'" in check(engine, "ck_money_reconcile_runs_status")
@@ -73,3 +73,33 @@ def test_up_down_up_the_baseline_the_counters_the_wider_checks_and_the_cascade(e
     command.upgrade(cfg, REVISION)
     command.upgrade(cfg, REVISION)                                # repeating is harmless
     assert version(engine) == REVISION and "money_row_baseline" in inspect(engine).get_table_names()
+
+
+def test_down_up_makes_the_first_night_the_first_night_again(engine):
+    """After «down» the baseline table is gone; ``rows_checked = true`` left behind would make every row NEW (a finding) on the first night after «up»."""
+    cfg = config()
+    command.upgrade(cfg, REVISION)
+    with engine.begin() as c:
+        c.execute(text(f"INSERT INTO organizations (id, name, org_type, status) VALUES ('{ORG}', 'M2', 'center', 'active')"))
+        c.execute(text(f"INSERT INTO money_reconcile_runs (id, status) VALUES ('{RUN}', 'clean')"))
+        c.execute(text(f"INSERT INTO money_reconcile_centres (run_id, org_id, status, rows_checked) VALUES ('{RUN}', '{ORG}', 'ok', true)"))
+    command.downgrade(cfg, BEFORE)
+    with engine.connect() as c:
+        assert c.execute(text("SELECT rows_checked FROM money_reconcile_centres")).scalar() is False
+    command.upgrade(cfg, REVISION)
+    with engine.connect() as c:
+        assert c.execute(text("SELECT count(*) FROM money_reconcile_centres WHERE rows_checked")).scalar() == 0
+        assert c.execute(text("SELECT count(*) FROM money_row_baseline")).scalar() == 0
+
+
+def test_the_wider_checks_are_validated_and_added_without_a_full_pass_under_the_exclusive_lock(engine):
+    """``_widen`` adds the CHECK ``NOT VALID`` and validates it after: the end state is a validated constraint that accepts the new value."""
+    import re
+    from pathlib import Path
+
+    command.upgrade(config(), REVISION)
+    with engine.connect() as c:
+        rows = c.execute(text("SELECT conname, convalidated FROM pg_constraint WHERE conname IN ('ck_group_audit_action', 'ck_money_reconcile_findings_invariant', 'ck_money_reconcile_runs_status')")).all()
+    assert len(rows) == 3 and all(valid for _, valid in rows)
+    source = Path("alembic/versions/mm21a1b2c3d4_money2_row_baseline.py").read_text(encoding="utf-8")
+    assert re.search(r"ADD CONSTRAINT .* NOT VALID", source) and "VALIDATE CONSTRAINT" in source
