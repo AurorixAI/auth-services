@@ -433,6 +433,19 @@ def test_t6_a_refund_made_after_the_leaving_forbids_the_cancel_and_the_window_sa
     assert real["leave_undo"] == dry["leave_undo"] and pauses_of(world, s0, a)[1][3] is True            # nothing restored
 
 
+def test_t6_a_forgiveness_made_with_the_leaving_forbids_the_cancel_as_well_and_the_window_says_why(world, fixed_today):
+    # in A since 02.11 at 300 000 a month, left on 22.11 owing 21 days x 10 000 = 210 000, the debt is forgiven by the leaving; the same-day return is an ordinary one: the forgiveness stays a forgiveness
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    r = owner(world).post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={"settle": [{"membership_id": str(membership(world, s0, a).id), "action": "writeoff", "expected_debt": 210_000, "reason": "договорённость"}]})
+    assert r.status_code == 200, r.text
+    dry = add(world, s0, group=a, mode="add", dry_run=True)
+    assert dry["leave_undo"]["undone"] is False and "прощён долг" in dry["leave_undo"]["text"].lower()
+    real = add(world, s0, group=a, mode="add")
+    assert real["leave_undo"] == dry["leave_undo"]
+
+
 def test_t6_a_transfer_back_on_the_same_day_gives_every_membership_its_numbers_back(world, fixed_today):
     # A -> B -> A on 22.11.  Paid 600 000 into A: 02..30 under pauses = 22 days at 240 000 = 176 000 charged for November; the transfer takes the advance of the 22nd (600 000 - 160 000 = 440 000) to B
     # and the transfer back brings it home: A is exactly what it was, B charged nothing (its stay began and ended on the same day: rule G-8)
