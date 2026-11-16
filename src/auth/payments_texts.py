@@ -94,6 +94,18 @@ def new_debts_text(debts: Sequence[Dict[str, Any]], *, done: bool, advance_drops
     return "; ".join([*(_new_debt_text(d, done) for d in debts), *(_advance_drop_text(d, done) for d in advance_drops)])
 
 
+def other_gains_text(gains: Sequence[Dict[str, Any]], *, done: bool) -> str:
+    """Money-2 T7: what a restored payment does in the OTHER groups of the student (the money that came back with it): «В группе «B» аванс вырастет на 390 000 сум — до 390 000 сум», «долг уменьшится ... — до ...»."""
+    out = []
+    for g in gains:
+        name = g["group_name"]
+        if g["debt_fell"] > 0:
+            out.append(f"В группе «{name}» долг {'уменьшился' if done else 'уменьшится'} на {money(g['debt_fell'])}" + (f" — до {money(g['debt'])}" if g["debt"] else f": {'долга не осталось' if done else 'долга не останется'}"))
+        if g["advance_grew"] > 0:
+            out.append(f"В группе «{name}» аванс {'вырос' if done else 'вырастет'} на {money(g['advance_grew'])} — до {money(g['advance'])}")
+    return "; ".join(out)
+
+
 def _advance_drop_text(drop: Dict[str, Any], done: bool) -> str:
     amount, total = int(drop["amount"]), int(drop["total"])
     if total == 0:

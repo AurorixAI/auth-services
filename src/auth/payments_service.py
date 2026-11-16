@@ -26,7 +26,7 @@ import logging
 import os
 import time
 from types import SimpleNamespace
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID, uuid4
@@ -246,6 +246,18 @@ class AlreadyVoided(PaymentConflict):
     code = "ALREADY_VOIDED"
 
 
+class NotVoided(PaymentConflict):
+    """Money-2 T7: only a CANCELLED payment is restored."""
+
+    code = "PAYMENT_NOT_VOIDED"
+
+
+class AlreadyRestored(PaymentConflict):
+    """Money-2 T7: a cancelled payment is restored once - a newer payment already stands in its place (restored or corrected)."""
+
+    code = "PAYMENT_ALREADY_RESTORED"
+
+
 class DuplicateWriteoff(PaymentConflict):
     code = "DUPLICATE_WRITEOFF"
 
@@ -425,6 +437,7 @@ class _Links:
 
     sources: Dict[UUID, CarriedFromOut]  # original id -> {payment_id, group_name}
     targets: Dict[UUID, Optional[str]]  # stamped original id -> group its live carry-over lives in
+    restored: Dict[UUID, int] = field(default_factory=dict)  # Money-2 T7: restored payment id -> the receipt number of the cancelled payment it brought back
 
 
 @dataclass(frozen=True)
@@ -458,6 +471,7 @@ class _Moved:
     debt_after: int
     advance_before: int
     advance_after: int
+    gains: List[Dict[str, Any]] = field(default_factory=list)  # Money-2 T7: the OTHER groups whose account GROWS (a restored payment brings a transferred sum back): [{membership_id, group_id, group_name, debt_fell, debt, advance_grew, advance}]
 
     def audit_fields(self) -> Dict[str, Any]:
         return {"debt_before": self.debt_before, "debt_after": self.debt_after, "advance_before": self.advance_before, "advance_after": self.advance_after, "new_debts": self.new_debts, "advance_drops": self.advance_drops}
@@ -861,7 +875,15 @@ class PaymentService:
         return {u.id: u for u in rows}
 
     def _links(self, payments: Iterable[StudentPayment]) -> _Links:
-        """Where the carry-overs among ``payments`` come from and where the stamped ones went (LEGACY rows only)."""
+        """Where the carry-overs among ``payments`` come from and where the stamped ones went (LEGACY rows only); which of them are RESTORATIONS of a cancelled payment (Money-2 T7)."""
+        payments = list(payments)
+        restored: Dict[UUID, int] = {}
+        replacing = [p.id for p in payments if p.replaces_payment_id]
+        if replacing:
+            for snapshot in self.db.query(GroupAudit.snapshot).filter(
+                    GroupAudit.org_id == payments[0].org_id, GroupAudit.action == AUDIT_PAYMENT_REPLACE, GroupAudit.snapshot["event"].astext == "payment_restored",
+                    GroupAudit.snapshot["new_payment_id"].astext.in_([str(i) for i in replacing])).all():
+                restored[UUID(snapshot[0]["new_payment_id"])] = snapshot[0].get("receipt_no")
         payments = [p for p in payments if p.carried_from_payment_id or p.carried_out_at]
         sources: Dict[UUID, CarriedFromOut] = {}
         ids = {p.carried_from_payment_id for p in payments if p.carried_from_payment_id}
@@ -887,7 +909,7 @@ class PaymentService:
                 .all()
             ):
                 targets[source_id] = name
-        return _Links(sources, targets)
+        return _Links(sources, targets, restored)
 
     def _payment_out(
         self,
@@ -919,6 +941,7 @@ class PaymentService:
             allocation=allocation,
             note=payment.note,
             replaces_payment_id=str(payment.replaces_payment_id) if payment.replaces_payment_id else None,
+            restored_from_receipt_no=links.restored.get(payment.id) if links else None,
             receipt_no=payment.receipt_no,
             partial_period=bool(payment.partial_period),
             files=list(files.get(payment.id, ())) if files else [],
@@ -1480,11 +1503,12 @@ class PaymentService:
         users = self._users([payment.created_by])
         files = load_files(self.db, [payment.id])
         return PaymentCreated(
-            payment=self._payment_out(payment, users, None, files, entry.ledger),
+            payment=self._payment_out(payment, users, self._links([payment]), files, entry.ledger),
             allocation=pv.allocation_summary(before, entry.ledger, str(payment.id)),
             warnings=self._warnings(entry.ledger, str(payment.id), payment.paid_on, today, entry.price.amount)
             + [w for w in (self._repeated_payment_warning(org_id, payment.membership_id, int(payment.amount), exclude=payment.id),) if w],
             row=self._rows([entry])[0], new_debts=moved.new_debts if moved else [], advance_drops=moved.advance_drops if moved else [],
+            other_gains=moved.gains if moved else [],
         )
 
     @deadlock_guard
@@ -1538,6 +1562,62 @@ class PaymentService:
             raise AlreadyVoided("Оплата уже отменена", **self._voided_detail(payment))
         return payment
 
+    def _copy_files(self, old: StudentPayment, payment: StudentPayment) -> int:
+        """The photo of the cheque goes with a correction / a restoration (the old payment keeps its own copy as the trace); R3 К9: ONE ``INSERT ... SELECT`` in the database, the bytes never reach Python.  Returns the count."""
+        copied = self.db.execute(insert(StudentPaymentFile).from_select(
+            ["id", "org_id", "payment_id", "filename", "content_type", "size_bytes", "data", "uploaded_by", "uploaded_at"],
+            select(func.gen_random_uuid(), StudentPaymentFile.org_id, literal(payment.id), StudentPaymentFile.filename, StudentPaymentFile.content_type,
+                   StudentPaymentFile.size_bytes, StudentPaymentFile.data, StudentPaymentFile.uploaded_by, StudentPaymentFile.uploaded_at).where(StudentPaymentFile.payment_id == old.id)))
+        return int(copied.rowcount or 0)
+
+    @deadlock_guard
+    def restore_payment(
+        self, org_id: str, payment_id: UUID, actor_id: str, reason: Optional[str], actor_role: str = "admin", consequence: Optional[Dict[str, str]] = None,
+    ) -> PaymentCreated:
+        """Money-2 T7: «Восстановить оплату» - the payment cancelled by mistake comes back as a NEW payment of the same sum, date of payment and method (``replaces_payment_id`` = the cancelled one: a
+        restoration is a correction by the same sum, so the till, the chain of versions and the nightly reconciliation treat it as one).  The reason is mandatory; a cancelled payment is restored ONCE
+        (409 ``PAYMENT_ALREADY_RESTORED``); the ceiling of a student who left does not apply - the money is not new, the cancellation took it away.  A payment that came from another group is not restored:
+        its original is.  Lock order as in ``replace_payment``: student, his memberships, the payment."""
+        today = ps.business_today()
+        try:
+            reason = self._check_reason(reason)
+            probe = self._probe_payment(org_id, payment_id)
+            if probe.kind == "legacy_carry" or probe.carried_from_payment_id is not None:
+                raise PaymentConflict("Деньги, перешедшие из другой группы, не восстанавливаются сами — восстановите исходную оплату в той группе, где её внесли")
+            family = self._lock_family(org_id, probe.student_id)
+            membership = self._membership(org_id, probe.membership_id)
+            old = (self.db.query(StudentPayment).filter(StudentPayment.id == payment_id, StudentPayment.org_id == org_id).populate_existing().with_for_update().first())
+            if old is None:
+                raise PaymentNotFound("Оплата не найдена")
+            if old.voided_at is None:
+                raise NotVoided("Оплата не отменена: восстанавливать нечего")
+            successor = self.db.query(StudentPayment).filter(StudentPayment.replaces_payment_id == old.id).order_by(StudentPayment.created_at).first()
+            if successor is not None:
+                raise AlreadyRestored(f"Эта оплата уже заменена оплатой № {successor.receipt_no}: восстановить её второй раз нельзя", receipt_no=successor.receipt_no, payment_id=str(successor.id))
+            was = self._accounts(org_id, family)
+            before = was[membership.id].ledger
+            data = PaymentCreate(amount=int(old.amount), paid_on=old.paid_on, note=old.note)
+            payment = self._insert(membership, org_id, actor_id, data, old.method or "other", None, replaces=old)
+            files_moved = self._copy_files(old, payment)
+            now = self._accounts(org_id, family)
+            after_entry = now[membership.id]
+            moved = self._moved_by_correction(was, now, membership.id)
+            self._save_snapshot(org_id, payment, before, after_entry.ledger, after_entry.price, today, payment.method)
+            self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAYMENT_REPLACE, {
+                "event": "payment_restored", "files_moved": files_moved,
+                "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
+                "payment_id": str(old.id), "new_payment_id": str(payment.id), "receipt_no": old.receipt_no, "new_receipt_no": payment.receipt_no,
+                "amount": int(old.amount), "new_amount": int(payment.amount), "paid_on": old.paid_on.isoformat(), "new_paid_on": payment.paid_on.isoformat(),
+                "method": old.method, "new_method": payment.method, "cancelled_reason": old.void_reason, "reason": reason, **moved.audit_fields()}, consequence=consequence)
+            self._family_check(org_id, family)
+            self.db.commit()
+        except PaymentError:
+            self.db.rollback()
+            raise
+        invalidate_summary(org_id)
+        logger.info("payment restored old=%s new=%s membership=%s actor=%s", payment_id, payment.id, membership.id, actor_id)
+        return self._created(org_id, payment, before, today, moved=moved)
+
     @deadlock_guard
     def replace_payment(
         self,
@@ -1580,11 +1660,7 @@ class PaymentService:
             self.db.flush()
             payment = self._insert(membership, org_id, actor_id, data, method, idempotency_key, replaces=old)
             # Money-1 V10 (ОП-09): the photo of the cheque goes with the correction (the old payment keeps its own copy as the trace); R3 К9: ONE ``INSERT ... SELECT`` in the database, the bytes never reach Python
-            copied = self.db.execute(insert(StudentPaymentFile).from_select(
-                ["id", "org_id", "payment_id", "filename", "content_type", "size_bytes", "data", "uploaded_by", "uploaded_at"],
-                select(func.gen_random_uuid(), StudentPaymentFile.org_id, literal(payment.id), StudentPaymentFile.filename, StudentPaymentFile.content_type,
-                       StudentPaymentFile.size_bytes, StudentPaymentFile.data, StudentPaymentFile.uploaded_by, StudentPaymentFile.uploaded_at).where(StudentPaymentFile.payment_id == old.id)))
-            files_moved = int(copied.rowcount or 0)
+            files_moved = self._copy_files(old, payment)
             now = self._accounts(org_id, family)
             after_entry = now[membership.id]
             moved = self._moved_by_correction(was, now, membership.id)
@@ -1650,10 +1726,15 @@ class PaymentService:
         """Money-1 G-4 / G-4b - ONE rule for every correction of a payment (a cancellation, a replacement): the groups whose account it moves - its own and any group where the money
         went on a transfer - and the debt it leaves in the OTHER groups (their ``transferred_in`` falls with it)."""
         touched = [m for m in was if m == own or (was[m].ledger.debt, was[m].ledger.advance) != (now[m].ledger.debt, now[m].ledger.advance)]
-        new_debts, advance_drops = [], []
+        new_debts, advance_drops, gains = [], [], []
         for m in touched:
             if m == own:
                 continue
+            fell_debt, grew_advance = int(was[m].ledger.debt - now[m].ledger.debt), int(now[m].ledger.advance - was[m].ledger.advance)
+            if fell_debt > 0 or grew_advance > 0:
+                group = self.db.get(Group, now[m].membership.group_id)
+                gains.append({"membership_id": str(m), "group_id": str(group.id), "group_name": group.name, "debt_fell": max(fell_debt, 0), "debt": int(now[m].ledger.debt),
+                              "advance_grew": max(grew_advance, 0), "advance": int(now[m].ledger.advance)})
             grown, fell = int(now[m].ledger.debt - was[m].ledger.debt), int(was[m].ledger.advance - now[m].ledger.advance)           # Р-2: what the correction ADDS to the debt of the other group; ``total`` is the debt after it
             if grown > 0:
                 group = self.db.get(Group, now[m].membership.group_id)
@@ -1663,7 +1744,7 @@ class PaymentService:
                 advance_drops.append({"membership_id": str(m), "group_id": str(group.id), "group_name": group.name, "amount": fell, "total": int(now[m].ledger.advance)})
         return _Moved(
             new_debts=new_debts, advance_drops=advance_drops, debt_before=sum(was[m].ledger.debt for m in touched), debt_after=sum(now[m].ledger.debt for m in touched),
-            advance_before=sum(was[m].ledger.advance for m in touched), advance_after=sum(now[m].ledger.advance for m in touched))
+            advance_before=sum(was[m].ledger.advance for m in touched), advance_after=sum(now[m].ledger.advance for m in touched), gains=gains)
 
     # ------------------------------------------------ write-off and refund
 

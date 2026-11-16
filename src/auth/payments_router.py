@@ -50,6 +50,7 @@ from .payments_schemas import (
     PaymentSettingsUpdate,
     PaymentsSummary,
     PaymentStatusPage,
+    PaymentRestore,
     PaymentVoid,
     PaymentVoided,
     PriceOverrideChanged,
@@ -411,6 +412,25 @@ def replace_payment(
             db, user["org_id"], _memberships_of_payment_student(db, user["org_id"], payment_id), user.get("org_role") == "owner",
             lambda texts: PaymentService(db).replace_payment(user["org_id"], payment_id, user["user_id"], request, request.reason, idempotency_key, actor_role=user["org_role"], consequence=texts), dry_run=dry_run, journal=True)
         out.money_effects, out.dry_run = money_effects.with_sentence(effects, tx.new_debts_text(out.new_debts, done=not dry_run, advance_drops=out.advance_drops)), dry_run
+        return out
+    except PaymentError as exc:
+        raise _http(exc)
+
+
+@router.post("/org/payments/{payment_id}/restore", response_model=PaymentCreated, status_code=201)
+def restore_payment(
+    payment_id: UUID,
+    request: PaymentRestore,
+    dry_run: bool = Query(False, description="только последствия для денег (ничего не записывается)"),
+    user: dict = Depends(require_payments_access),
+    db: Session = Depends(get_db),
+):
+    """Money-2 T7: восстановить отменённую оплату — новая оплата той же суммы, даты и способа; причина 3..500; один раз."""
+    try:
+        out, effects = money_effects.run_with_effects(
+            db, user["org_id"], _memberships_of_payment_student(db, user["org_id"], payment_id), user.get("org_role") == "owner",
+            lambda texts: PaymentService(db).restore_payment(user["org_id"], payment_id, user["user_id"], request.reason, actor_role=user["org_role"], consequence=texts), dry_run=dry_run, journal=True)
+        out.money_effects, out.dry_run = money_effects.with_sentence(effects, tx.other_gains_text(out.other_gains, done=not dry_run)), dry_run
         return out
     except PaymentError as exc:
         raise _http(exc)

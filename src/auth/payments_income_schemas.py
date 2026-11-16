@@ -276,6 +276,7 @@ class DecisionRow(PayModel):
     debt_before: Optional[int] = None
     debt_after: Optional[int] = None
     consequence: Optional[str] = None  # Money-1 Г-4: «В группе «B» появился долг 900 000 сум» (a payment cancelled after a transfer)
+    text: Optional[str] = None  # Money-2 Э7: the line in words (a transfer: from -> to and the sum; a restored payment; a cancelled leaving; a moved pause), from the server
 
 
 class DecisionsPage(PayModel):

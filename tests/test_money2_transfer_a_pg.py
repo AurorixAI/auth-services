@@ -4,9 +4,10 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from src.models.auth import (
-    GroupAudit, MembershipPause, MembershipPriceOverride, MembershipTransfer, StudentGroup,
+    GroupAudit, MembershipPause, MembershipPriceOverride, MembershipTransfer, OrganizationMember, StudentGroup, StudentPayment,
 )
 
+from src.auth import payments_texts as tx
 from tests.money1b_helpers import account, add, set_schedule, slot
 from tests.pg_world import business_today, ensure_billing, give_group_price, make_group, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_payments_service_pg import mid, pay
@@ -457,3 +458,159 @@ def test_t6_a_transfer_back_the_next_day_is_an_ordinary_one(world, fixed_today):
     out = add(world, s0, group=a, mode="transfer")
     assert out.get("leave_undo") is None or out["leave_undo"]["undone"] is False
     assert world.db.query(MembershipPriceOverride).filter_by(membership_id=membership(world, s0, a).id, valid_from=date(2026, 12, 1)).count() == 0
+
+
+# ---------------------------------------------------------------------------------------------------- T7 «Восстановить оплату»
+
+
+def void(w, payment, reason="Внесли по ошибке", client=None, expect=200, dry_run=False):
+    r = (client or owner(w)).post(f"{API}/org/payments/{payment['payment']['id']}/void", params={"dry_run": "true"} if dry_run else {}, json={"reason": reason})
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def restore(w, payment, reason="Отменили по ошибке", client=None, expect=201, dry_run=False):
+    r = (client or owner(w)).post(f"{API}/org/payments/{payment['payment']['id']}/restore", params={"dry_run": "true"} if dry_run else {}, json={"reason": reason})
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def test_t7_a_student_who_left_with_an_advance_gets_every_number_back(world, fixed_today):
+    # in A since 02.11 at 300 000 a month, left on 22.11: 02..22 = 21 days = 210 000 charged.  Paid 600 000: an advance of 390 000 stays in A.
+    # Cancelled: nothing paid, a debt of 210 000.  The old rule allowed a new payment of 210 000 only (the ceiling of a student who left); the restoration puts the 600 000 back: 390 000 again.
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    p = pay(world, s0, a, amount=600_000)
+    assert owner(world).post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={}).status_code == 200
+    before = snap(world, s0, a)
+    assert account(world, membership(world, s0, a).id).advance == 390_000
+    void(world, p)
+    assert account(world, membership(world, s0, a).id).debt == 210_000
+    again = pay(world, s0, a, amount=600_000, expect=422)                        # a NEW payment is refused: not more than the debt
+    assert again["detail"]["code"] == "PAYMENT_EXCEEDS_DEBT"
+    window = restore(world, p, dry_run=True)
+    assert window["dry_run"] is True and window["payment"]["amount"] == 600_000
+    out = restore(world, p)
+    new = out["payment"]
+    assert new["amount"] == 600_000 and new["paid_on"] == p["payment"]["paid_on"] and new["method"] == p["payment"]["method"]
+    assert new["replaces_payment_id"] == p["payment"]["id"] and new["restored_from_receipt_no"] == p["payment"]["receipt_no"] and new["receipt_no"] != p["payment"]["receipt_no"]
+    assert snap(world, s0, a) == before                                          # the statement: «оплачено», advance 390 000, debt 0, paid-until - all as before the cancellation
+    line = world.db.query(GroupAudit).filter(GroupAudit.group_id == a.id, GroupAudit.action == "payment_replace", GroupAudit.snapshot["event"].astext == "payment_restored").one()
+    assert line.snapshot["payment_id"] == p["payment"]["id"] and line.snapshot["new_payment_id"] == new["id"] and line.snapshot["reason"] == "Отменили по ошибке" and line.actor_id == world.owner.id
+
+
+def test_t7_a_restoration_is_once_only_needs_a_cancelled_payment_and_a_reason(world, fixed_today):
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    p = pay(world, s0, a, amount=100_000)
+    r = restore(world, p, expect=409)                                            # not cancelled
+    assert r["detail"]["code"] == "PAYMENT_NOT_VOIDED"
+    void(world, p)
+    r = restore(world, p, reason="  ", expect=422)
+    restore(world, p)
+    r = restore(world, p, expect=409)                                            # the second time
+    assert r["detail"]["code"] == "PAYMENT_ALREADY_RESTORED" and "уже заменена оплатой" in r["detail"]["message"]
+    q = pay(world, s0, a, amount=50_000)                                         # a payment that was CORRECTED (the old one is cancelled by the correction) is not restored either
+    fixed = owner(world).post(f"{API}/org/payments/{q['payment']['id']}/replace", json={"amount": 60_000, "paid_on": q["payment"]["paid_on"], "method": "cash", "reason": "Опечатка"})
+    assert fixed.status_code == 201, fixed.text
+    assert restore(world, q, expect=409)["detail"]["code"] == "PAYMENT_ALREADY_RESTORED"
+
+
+def test_t7_a_transferred_student_restoring_in_the_old_group_brings_the_transfer_back(world, fixed_today):
+    # paid 600 000 into A; the transfer on 22.11 takes 600 000 - 210 000 = 390 000 to B.  Cancelling the payment of A leaves B without money, the restoration gives B the 390 000 again.
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    p = pay(world, s0, a, amount=600_000)
+    add(world, s0, group=b, mode="transfer")
+    before = (snap(world, s0, a), snap(world, s0, b))
+    voided = void(world, p)
+    assert [d["amount"] for d in voided["advance_drops"]] == [390_000] and snap(world, s0, b) != before[1]        # B loses the whole advance that came from A
+    window = restore(world, p, dry_run=True)
+    # the window (the same numbers as the write) names the OTHER group: B had no money after the cancellation, the restoration gives it the 390 000 back
+    assert [(g["group_name"], g["advance_grew"], g["advance"], g["debt_fell"]) for g in window["other_gains"]] == [("Бета", 390_000, 390_000, 0)]
+    assert f"В группе «Бета» аванс вырастет на {tx.money(390_000)}" in window["money_effects"]["text"]
+    assert snap(world, s0, b) != before[1]                                       # a dry run writes nothing
+    restore(world, p)
+    assert (snap(world, s0, a), snap(world, s0, b)) == before
+    assert account(world, membership(world, s0, b).id).transferred_in == 390_000
+
+
+def test_t7_an_active_student_and_the_rights_and_the_other_centre(world, fixed_today):
+    from tests.pg_world import make_client
+
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    p = pay(world, s0, a, amount=200_000)
+    before = snap(world, s0, a)
+    void(world, p)
+    teacher = make_client(world, user=world.teacher, role="admin", org_role="teacher")
+    assert teacher.post(f"{API}/org/payments/{p['payment']['id']}/restore", json={"reason": "нет права"}).status_code == 403
+    foreign = make_client(world, user=world.foreign_admin, org="other", org_role="owner", role="owner")
+    world.db.query(OrganizationMember).filter_by(user_id=world.foreign_admin.id).update({"org_role": "owner"})
+    world.db.commit()
+    assert foreign.post(f"{API}/org/payments/{p['payment']['id']}/restore", json={"reason": "чужая"}).status_code == 404
+    assert world.db.query(StudentPayment).filter_by(membership_id=membership(world, s0, a).id, voided_at=None).count() == 0       # nothing restored by them
+    restore(world, p)
+    assert snap(world, s0, a) == before
+
+
+def test_t7_the_till_takes_a_restoration_as_a_correction_by_the_same_sum(world, fixed_today):
+    # cash 100 000 on 18.11; cancelled on 19.11, restored on 20.11 (the same rules as a correction, Д-7): 18.11 - the day the payment is of - stays as it was (a closed day never moves);
+    # 19.11: the till gave 100 000 back («отменено»); 20.11: the till takes 100 000 again («принято»).  A second payment (70 000, of 19.11) cancelled AND restored on 20.11 itself moves nothing on 20.11 (a correction by the same sum).
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 18))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+
+    def till(day):
+        r = owner(world).get(f"{API}/org/payments/income", params={"from": day, "to": day})
+        assert r.status_code == 200, r.text
+        cash = r.json()["cash"]
+        return cash["cash_received"], cash["cash_cancelled"], cash["cash_corrected"]
+
+    p = pay(world, s0, a, amount=100_000, method="cash")
+    assert till("2026-11-18") == (100_000, 0, 0)
+    fixed_today(date(2026, 11, 19))
+    q = pay(world, s0, a, amount=70_000, method="cash")
+    void(world, p)
+    assert till("2026-11-19") == (70_000, 100_000, 0) and till("2026-11-18") == (100_000, 0, 0)
+    fixed_today(date(2026, 11, 20))
+    restore(world, p)
+    assert till("2026-11-20") == (100_000, 0, 0) and till("2026-11-19") == (70_000, 100_000, 0)
+    void(world, q)
+    restore(world, q)
+    assert till("2026-11-20") == (100_000, 0, 0)                                  # 70 000 cancelled and restored the same day: nothing moves
+
+
+def test_t7_the_journal_of_decisions_names_the_restoration_apart_from_a_correction_and_a_carried_payment_is_not_restored(world, fixed_today):
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    p = pay(world, s0, a, amount=100_000)
+    q = pay(world, s0, a, amount=50_000)
+    void(world, p)
+    new = restore(world, p)["payment"]
+    fixed = owner(world).post(f"{API}/org/payments/{q['payment']['id']}/replace", json={"amount": 60_000, "paid_on": q["payment"]["paid_on"], "method": "cash", "reason": "Опечатка"})
+    assert fixed.status_code == 201, fixed.text
+
+    def journal(kind=None):
+        r = owner(world).get(f"{API}/org/payments/decisions", params={"from": "2026-11-22", "to": "2026-11-22", **({"kind": kind} if kind else {})})
+        assert r.status_code == 200, r.text
+        return r.json()["rows"]
+
+    restored = journal("payment_restored")
+    assert len(restored) == 1 and restored[0]["kind_label"] == "Оплата восстановлена" and restored[0]["reason"] == "Отменили по ошибке" and restored[0]["amount"] == 100_000
+    assert f"№ {p['payment']['receipt_no']}" in restored[0]["text"] and f"№ {new['receipt_no']}" in restored[0]["text"] and tx.money(100_000) in restored[0]["text"]
+    assert [r["kind"] for r in journal("payment_replace")] == ["payment_replace"]            # the correction of the other payment: not mixed with the restoration
+    assert sorted(r["kind"] for r in journal()) == sorted(["payment_void", "payment_restored", "payment_replace"])      # the cancellation of p, its restoration, the correction of q: each named once
+    # a payment that came from another group (a legacy carry-over row) is not restored: its original is
+    m = membership(world, s0, a)
+    carry = StudentPayment(org_id=world.org.id, membership_id=m.id, student_id=m.student_id, group_id=m.group_id, amount=0, paid_on=date(2026, 11, 22), valid_from=date(2026, 11, 22),
+                           valid_to=date(2026, 11, 22), carried_from_payment_id=p["payment"]["id"], kind="legacy_carry", created_by=world.owner.id, voided_at=datetime(2026, 11, 22, 8), voided_by=world.owner.id, void_reason="x")
+    world.db.add(carry)
+    world.db.commit()
+    r = owner(world).post(f"{API}/org/payments/{carry.id}/restore", json={"reason": "по ошибке"})
+    assert r.status_code == 409 and "перешедшие из другой группы" in str(r.json()).lower()

@@ -266,6 +266,7 @@ class PaymentOut(BaseModel):
     allocation: Optional[PaymentAllocationOut] = None
     note: Optional[str] = None
     replaces_payment_id: Optional[str] = None
+    restored_from_receipt_no: Optional[int] = None   # Money-2 T7: the payment is the RESTORATION of the cancelled payment with this receipt number (``replaces_payment_id`` names it); null = an ordinary payment or correction
     # N13 P2.2: the receipt number (None on a carry-over: it is not money); the payment did not cover
     # whole periods of the centre; the attached cheques (without their bytes).
     receipt_no: Optional[int] = None
@@ -652,6 +653,20 @@ class PaymentReplace(PaymentCreate):
     reason: Optional[str] = Field(None, max_length=500)  # Money-1 V6: mandatory (3..500) - 422 REASON_REQUIRED without it
 
 
+class PaymentRestore(BaseModel):
+    """Money-2 T7: «Восстановить оплату» - the reason is mandatory (3..500)."""
+
+    reason: str = Field(..., max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_length(cls, value: str) -> str:
+        value = (value or "").strip()
+        if len(value) < 3:
+            raise ValueError("Причина восстановления: от 3 до 500 символов")
+        return value
+
+
 class PaymentVoid(BaseModel):
     reason: str = Field(..., max_length=500)
 
@@ -680,6 +695,7 @@ class PaymentCreated(BaseModel):
     dry_run: bool = False                            # Money-1 R3 #15: the answer of ``?dry_run=true`` - nothing was written, the ids are provisional
     new_debts: List[Dict[str, Any]] = Field(default_factory=list)  # Money-1 Г-4б: a correction to a SMALLER sum leaves a debt in the other groups of the student - [{membership_id, group_id, group_name, amount (the growth), total (the debt after)}], as in ``PaymentVoided``
     advance_drops: List[Dict[str, Any]] = Field(default_factory=list)  # G3M С3: [{membership_id, group_id, group_name, amount (the fall of the advance), total (the advance after)}] - the OTHER groups that lose money without a debt; the front shows only ``money_effects.text``
+    other_gains: List[Dict[str, Any]] = Field(default_factory=list)  # Money-2 T7: the OTHER groups whose account grows - [{membership_id, group_id, group_name, debt_fell, debt (after), advance_grew, advance (after)}]: a restored payment brings back the money that went to them on a transfer
 
 
 class PaymentVoided(BaseModel):

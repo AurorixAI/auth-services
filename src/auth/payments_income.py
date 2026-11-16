@@ -20,7 +20,7 @@ from uuid import UUID
 from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session, aliased
 
-from src.models.auth import Group, Organization, Student, StudentPayment, StudentRefund, StudentWriteoff
+from src.models.auth import Group, Organization, Student, StudentGroup, StudentPayment, StudentRefund, StudentWriteoff
 
 from . import billing_ledger as bl
 from . import ledger_service as ls
@@ -65,6 +65,24 @@ MAX_EXPORT_ROWS = 20_000
 DECISION_LABELS = {
     AUDIT_PAYMENT_VOID: "Оплата отменена", AUDIT_PAYMENT_REPLACE: "Оплата исправлена", AUDIT_WRITEOFF: "Долг прощён", AUDIT_WRITEOFF_VOID: "Прощение отменено",
     AUDIT_REFUND: "Аванс возвращён", AUDIT_REFUND_VOID: "Возврат отменён", AUDIT_TRANSFER: "Ученик переведён: деньги перенесены в новую группу"}
+
+# Money-2 Э7: events that share the ``action`` of another line (the list of actions of the journal is a CHECK of the table) and say what they are in ``snapshot``: kind -> (action, the condition on the snapshot, the label)
+EVENT_KINDS = {
+    "payment_restored": (AUDIT_PAYMENT_REPLACE, lambda s: s["event"].astext == "payment_restored", "Оплата восстановлена"),
+    "leave_undone": ("student_left_group", lambda s: s["event"].astext == "leave_undone", "Уход отменён"),
+    "pause_moved": ("membership_pause_set", lambda s: and_(s["via"].astext == "transfer", s["moved_from_pause_id"].astext.isnot(None)), "Пауза перенесена в новую группу"),
+}
+DECISION_LABELS = {**DECISION_LABELS, **{kind: label for kind, (_, _, label) in EVENT_KINDS.items()}}
+
+
+def decision_kind(action: str, snapshot: Dict[str, Any]) -> str:
+    """The kind of a line of the journal of decisions: the event it says it is, else its action."""
+    event = snapshot.get("event") if action in (AUDIT_PAYMENT_REPLACE, "student_left_group") else None
+    if event in EVENT_KINDS:
+        return event
+    if action == "membership_pause_set" and snapshot.get("via") == "transfer" and snapshot.get("moved_from_pause_id"):
+        return "pause_moved"
+    return action
 
 
 class ExportTooLong(PaymentInvalid):
@@ -524,7 +542,8 @@ class IncomeReports:
         live: Dict[Any, Tuple[int, Optional[str]]] = {}
         while tip_of:
             tips: Dict[Any, Any] = {}
-            for new in self.db.query(StudentPayment).filter(StudentPayment.org_id == org_id, StudentPayment.replaces_payment_id.in_(list(tip_of))).all():
+            for new in self.db.query(StudentPayment).filter(StudentPayment.org_id == org_id, StudentPayment.replaces_payment_id.in_(list(tip_of)),
+                                                            StudentPayment.created_at >= lo, StudentPayment.created_at < hi).all():          # Money-2 T7: only a replacement made THAT day is a correction of that day - a payment restored later never moves a closed day
                 root = tip_of[new.replaces_payment_id]
                 if new.voided_at is not None and new.voided_at < hi:               # cancelled the same day: the chain goes on from it (or ends dead)
                     tips[new.id] = root
@@ -851,13 +870,16 @@ class IncomeReports:
         validate_range(first, last)
         size = max(1, min(size, MAX_JOURNAL_PAGE))
         page = max(1, page)
-        actions = list(DECISION_ACTIONS)
-        if kind:
-            if kind not in DECISION_LABELS:
-                raise PaymentInvalid("Неизвестный вид решения")
-            actions = [kind]
+        if kind and kind not in DECISION_LABELS:
+            raise PaymentInvalid("Неизвестный вид решения")
+        event_clauses = {k: and_(GroupAudit.action == action, cond(GroupAudit.snapshot)) for k, (action, cond, _) in EVENT_KINDS.items()}
+        plain = [a for a in DECISION_ACTIONS if a != AUDIT_PAYMENT_REPLACE]
+        wanted = (event_clauses[kind] if kind in event_clauses else GroupAudit.action == kind) if kind else or_(
+            GroupAudit.action.in_(plain), and_(GroupAudit.action == AUDIT_PAYMENT_REPLACE, GroupAudit.snapshot["event"].astext.is_(None)), *event_clauses.values())
+        if kind == AUDIT_PAYMENT_REPLACE:                                   # a correction is not a restoration: the restoration has its own kind
+            wanted = and_(wanted, GroupAudit.snapshot["event"].astext.is_(None))
         lo, hi = self.utc_bounds(first, last)                               # a range on ``created_at``: the index ``(org_id, created_at)`` serves it (R3 К12)
-        query = self.db.query(GroupAudit).filter(GroupAudit.org_id == org_id, GroupAudit.action.in_(actions), GroupAudit.created_at >= lo, GroupAudit.created_at < hi)
+        query = self.db.query(GroupAudit).filter(GroupAudit.org_id == org_id, wanted, GroupAudit.created_at >= lo, GroupAudit.created_at < hi)
         if actor:
             query = query.filter(GroupAudit.actor_id == actor)
         total = query.count()
@@ -868,17 +890,43 @@ class IncomeReports:
         users = self.service._users(a.actor_id for a in found)
         earliest = self.db.query(func.min(GroupAudit.created_at)).filter(GroupAudit.org_id == org_id, GroupAudit.action.in_((AUDIT_PAYMENT_VOID, AUDIT_PAYMENT_REPLACE))).scalar()
         rows = []
+        membership_group = self._membership_groups(org_id, {UUID(v) for a in found for k in ("from_membership_id", "to_membership_id") if (v := (a.snapshot or {}).get(k))})
         for a in found:
             snap = a.snapshot or {}
             student = students.get(UUID(snap["student_id"])) if snap.get("student_id") else None
+            kind_of = decision_kind(a.action, snap)
             rows.append(DecisionRow(
-                id=str(a.id), at=_iso(a.created_at), kind=a.action, kind_label=DECISION_LABELS[a.action], student_id=snap.get("student_id"),
+                text=self._decision_text(kind_of, snap, membership_group, groups.get(a.group_id)),
+                id=str(a.id), at=_iso(a.created_at), kind=kind_of, kind_label=DECISION_LABELS[kind_of], student_id=snap.get("student_id"),
                 student_name=person_name(student.last_name, student.first_name) or "" if student else "", group_name=groups[a.group_id].name if a.group_id in groups else None,
                 amount=int(snap.get("amount") or 0), new_amount=snap.get("new_amount"), receipt_no=snap.get("receipt_no"), reason=snap.get("reason"),
                 actor_name=_staff(users.get(a.actor_id)), debt_before=snap.get("debt_before"), debt_after=snap.get("debt_after"),
                 consequence=tx.decision_consequence(snap, owner=owner)))
         return DecisionsPage(as_of=ps.business_today(), **{"from": first}, to=last, page=page, size=size, total=total, pages=(total + size - 1) // size,
                              since=_business_moment(earliest).date() if earliest else None, rows=rows)
+
+    def _membership_groups(self, org_id: str, ids: set) -> Dict[UUID, str]:
+        """``{membership id: the name of its group}`` for the lines of the journal that name memberships (a transfer: from -> to)."""
+        if not ids:
+            return {}
+        return {mid: name for mid, name in self.db.query(StudentGroup.id, Group.name).join(Group, Group.id == StudentGroup.group_id).filter(Group.org_id == org_id, StudentGroup.id.in_(ids)).all()}
+
+    @staticmethod
+    def _decision_text(kind: str, snap: Dict[str, Any], names: Dict[UUID, str], group: Optional[Group]) -> Optional[str]:
+        """Money-2 Э7: the line of the journal in words (a transfer, a restored payment, a cancelled leaving, a moved pause) - from the facts of the line itself."""
+        def at(day: Optional[str]) -> str:
+            return date.fromisoformat(day).strftime("%d.%m.%Y") if day else ""
+
+        if kind == AUDIT_TRANSFER:
+            was, now = (names.get(UUID(snap[k])) if snap.get(k) else None for k in ("from_membership_id", "to_membership_id"))
+            return f"Перевод из «{was or '—'}» в «{now or '—'}»: перенесено {tx.money(int(snap.get('amount') or 0))}"
+        if kind == "payment_restored":
+            return f"Оплата № {snap.get('receipt_no')} на {tx.money(int(snap.get('amount') or 0))} от {at(snap.get('paid_on'))} восстановлена как № {snap.get('new_receipt_no')}"
+        if kind == "leave_undone":
+            return "Ученик вернулся в день ухода: уход отменён, цены и паузы возвращены" + (f" ({len(snap['restored'])})" if snap.get("restored") else "")
+        if kind == "pause_moved":
+            return f"Пауза {at(snap.get('first_day'))}–{at(snap.get('last_day'))} перенесена в группу «{group.name if group else '—'}» вместе с учеником"
+        return None
 
     # ------------------------------------------------------------------ journal file
 
