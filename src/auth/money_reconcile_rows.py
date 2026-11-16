@@ -52,11 +52,11 @@ CHUNK = 1000
 
 @dataclass(frozen=True)
 class Journal:
-    """Where the cancellation of a row must be named: ``model`` is ``GroupAudit`` (``snapshot``) or ``OrgMoneyAudit`` (``details``); ``keys`` are the fields of the JSON that carry the row id."""
+    """Where the cancellation of a row must be named: ``model`` is ``GroupAudit`` (``snapshot``) or ``OrgMoneyAudit`` (``details``); ``entries`` pairs each action with the fields of the JSON that carry the id of the
+    row the action CANCELLED (``opening_balance_set`` names the NEW row in ``opening_id``: that is the trace of a creation, only ``voided_opening_id`` is the trace of a cancellation)."""
 
     model: Any
-    actions: Tuple[str, ...]
-    keys: Tuple[str, ...]
+    entries: Tuple[Tuple[str, Tuple[str, ...]], ...]       # (action, the fields of the JSON that name the row it CANCELLED): a line of the CREATION of a row never counts as the trace of its cancellation
 
 
 @dataclass(frozen=True)
@@ -82,23 +82,23 @@ KINDS: Tuple[RowKind, ...] = (
             ("org_id", "membership_id", "student_id", "group_id", "amount", "currency", "paid_on", "valid_from", "valid_to", "lessons_count", "note", "method", "kind", "idempotency_key",
              "replaces_payment_id", "carried_from_payment_id", "carried_out_at", "receipt_no", "partial_period", "created_by", "created_at"),
             amount=case((and_(StudentPayment.kind == "payment", StudentPayment.amount > 0), StudentPayment.amount), else_=0),
-            journal=Journal(GroupAudit, ("payment_void", "payment_replace"), ("payment_id",)),
+            journal=Journal(GroupAudit, (("payment_void", ("payment_id",)), ("payment_replace", ("payment_id",)))),
             owner_joins=_STUDENT_MEMBERSHIP[0] + " LEFT JOIN student_payments rp ON rp.id = t.replaces_payment_id LEFT JOIN student_payments cp ON cp.id = t.carried_from_payment_id",
             owner_wrong=_STUDENT_MEMBERSHIP[1] + " OR (rp.id IS NOT NULL AND (rp.membership_id <> t.membership_id OR rp.org_id <> t.org_id))"
                                                  " OR (cp.id IS NOT NULL AND (cp.student_id <> t.student_id OR cp.org_id <> t.org_id))",
             membership_col="membership_id", traced_by_receipt=True),
     RowKind("refund", StudentRefund, ("org_id", "membership_id", "student_id", "group_id", "amount", "method", "reason", "note", "effective_on", "idempotency_key", "receipt_no", "created_by", "created_at"),
-            amount=StudentRefund.amount, journal=Journal(GroupAudit, ("payment_refund_void",), ("refund_id",)), owner_joins=_STUDENT_MEMBERSHIP[0], owner_wrong=_STUDENT_MEMBERSHIP[1]),
+            amount=StudentRefund.amount, journal=Journal(GroupAudit, (("payment_refund_void", ("refund_id",)),)), owner_joins=_STUDENT_MEMBERSHIP[0], owner_wrong=_STUDENT_MEMBERSHIP[1]),
     RowKind("writeoff", StudentWriteoff, ("org_id", "membership_id", "student_id", "group_id", "amount", "reason", "effective_on", "idempotency_key", "created_by", "created_at"),
-            amount=StudentWriteoff.amount, journal=Journal(GroupAudit, ("payment_writeoff_void",), ("writeoff_id",)), owner_joins=_STUDENT_MEMBERSHIP[0], owner_wrong=_STUDENT_MEMBERSHIP[1]),
+            amount=StudentWriteoff.amount, journal=Journal(GroupAudit, (("payment_writeoff_void", ("writeoff_id",)),)), owner_joins=_STUDENT_MEMBERSHIP[0], owner_wrong=_STUDENT_MEMBERSHIP[1]),
     RowKind("opening", MembershipOpeningBalance, ("org_id", "membership_id", "student_id", "group_id", "paid_until", "debt_amount", "debt_on", "note", "source", "created_by", "created_at"),
             amount=MembershipOpeningBalance.debt_amount,
-            journal=Journal(GroupAudit, ("opening_balance_void", "opening_balance_set"), ("opening_id", "voided_opening_id")), owner_joins=_STUDENT_MEMBERSHIP[0], owner_wrong=_STUDENT_MEMBERSHIP[1]),
+            journal=Journal(GroupAudit, (("opening_balance_void", ("opening_id", "voided_opening_id")), ("opening_balance_set", ("voided_opening_id",)))), owner_joins=_STUDENT_MEMBERSHIP[0], owner_wrong=_STUDENT_MEMBERSHIP[1]),
     RowKind("transfer", MembershipTransfer, ("org_id", "student_id", "from_membership_id", "to_membership_id", "at", "created_by", "created_at"), can_void=False,
             owner_joins="JOIN student_groups sf ON sf.id = t.from_membership_id JOIN groups gf ON gf.id = sf.group_id JOIN student_groups st ON st.id = t.to_membership_id JOIN groups gt ON gt.id = st.group_id",
             owner_wrong="t.student_id <> sf.student_id OR t.student_id <> st.student_id OR gf.org_id <> t.org_id OR gt.org_id <> t.org_id"),
     RowKind("payout", PayrollPayout, ("org_id", "sheet_id", "teacher_id", "period_month", "amount", "paid_on", "method", "note", "sheet_revision", "sheet_total", "idempotency_key", "created_by", "created_at"),
-            amount=PayrollPayout.amount, journal=Journal(OrgMoneyAudit, (PAYOUT_VOIDED,), ("payout_id",)),
+            amount=PayrollPayout.amount, journal=Journal(OrgMoneyAudit, ((PAYOUT_VOIDED, ("payout_id",)),)),
             owner_joins="JOIN payroll_sheets ps ON ps.id = t.sheet_id", owner_wrong="ps.org_id <> t.org_id OR ps.teacher_id <> t.teacher_id OR ps.period_month <> t.period_month"),
     RowKind("rate", PayrollRate, ("org_id", "teacher_id", "lesson_type", "percent", "valid_from", "note", "created_by", "created_at"), can_void=False,
             owner_wrong="NOT EXISTS (SELECT 1 FROM organization_members om WHERE om.org_id = t.org_id AND om.user_id = t.teacher_id)"),
@@ -200,9 +200,10 @@ def journal_ids(db, org_id: UUID, wanted: Dict[str, Set[UUID]]) -> Set[Key]:
         column = journal.model.snapshot if journal.model is GroupAudit else journal.model.details
         for chunk in _chunks(sorted(ids, key=str)):
             as_text = [str(i) for i in chunk]
-            for key in journal.keys:
-                found = db.query(column[key].astext).filter(journal.model.org_id == org_id, journal.model.action.in_(journal.actions), column[key].astext.in_(as_text)).all()
-                out |= {(name, UUID(v)) for (v,) in found if v}
+            for action, keys in journal.entries:
+                for key in keys:
+                    found = db.query(column[key].astext).filter(journal.model.org_id == org_id, journal.model.action == action, column[key].astext.in_(as_text)).all()
+                    out |= {(name, UUID(v)) for (v,) in found if v}
     return out
 
 

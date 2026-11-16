@@ -194,12 +194,55 @@ def test_c_a_transfer_is_never_cancelled_by_the_product_so_a_cancelled_one_is_fo
     assert f"{kind}:{row_id}:reopened" in i5(night(world), world)
 
 
+def product_payment(world):
+    return pid_of(pay(world, world.students[0], amount=450_000))
+
+
+def product_refund(world):
+    from tests.test_pay2_api_pg import API, owner
+
+    pay(world, world.students[0], amount=1_500_000)
+    r = owner(world).post(f"{API}/org/memberships/{mid(world, world.students[0])}/refunds", json={"amount": 50_000, "method": "cash", "reason": "Выбыл на неделю"})
+    assert r.status_code == 201, r.text
+    return r.json()["refund"]["id"]
+
+
+def product_writeoff(world):
+    from tests.test_pay2_api_pg import API, owner
+
+    r = owner(world).post(f"{API}/org/memberships/{mid(world, world.students[1])}/writeoffs", json={"all": True, "reason": "Договорённость с родителем"})
+    assert r.status_code == 201, r.text
+    return r.json()["writeoff"]["id"]
+
+
+def product_opening(world):
+    from tests.test_pay2_api_pg import API, owner
+
+    r = owner(world).put(f"{API}/org/memberships/{mid(world, world.students[2])}/opening-balance", json={"debt_amount": 250_000, "debt_on": (business_today() - timedelta(days=76)).isoformat()})
+    assert r.status_code == 200, r.text
+    return world.db.query(MembershipOpeningBalance).filter_by(org_id=world.org.id, membership_id=mid(world, world.students[2]), voided_at=None).one().id
+
+
+def product_payout(world):
+    from tests.test_pay2_api_pg import API, owner
+
+    row = make_sheet(world)
+    r = owner(world).post(f"{API}/org/payroll/sheets/{row.id}/payouts", json={"amount": 200_000, "paid_on": business_today().isoformat(), "method": "cash"})
+    assert r.status_code == 201, r.text
+    return r.json()["payout"]["id"]
+
+
+PRODUCT = {"payment": product_payment, "refund": product_refund, "writeoff": product_writeoff, "opening": product_opening, "payout": product_payout}
+
+
 @pytest.mark.parametrize("kind", VOIDABLE)
-def test_d_a_row_cancelled_by_a_bare_update_has_no_line_in_the_journal_and_is_found(world, kind):
+def test_d_a_row_made_by_the_product_and_cancelled_by_a_bare_update_has_no_line_in_the_journal_and_is_found(world, kind):
+    """LESSONS 105/115/116: the row is made the way of the product (a route), so the line of its CREATION is in the journal - a hole that the line of the creation opens is seen only this way."""
     ensure_billing(world)
-    builder, table, _, _ = KINDS[kind]
-    row_id = builder(world)
+    _, table, _, _ = KINDS[kind]
     night(world)
+    row_id = PRODUCT[kind](world)
+    assert i5(night(world), world) == [], "a new row of the product is no finding"
     tamper(world, kind, row_id, CANCEL)
     assert f"{kind}:{row_id}:no_journal" in i5(night(world), world)
 
