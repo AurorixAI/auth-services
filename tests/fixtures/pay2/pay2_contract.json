@@ -1261,6 +1261,14 @@
             "title": "New Debts",
             "type": "array"
           },
+          "other_gains": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Other Gains",
+            "type": "array"
+          },
           "payment": {
             "$ref": "#/components/schemas/PaymentOut"
           },
@@ -1499,6 +1507,17 @@
             ],
             "title": "Receipt No"
           },
+          "replaced_by_receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced By Receipt No"
+          },
           "replaces_payment_id": {
             "anyOf": [
               {
@@ -1509,6 +1528,22 @@
               }
             ],
             "title": "Replaces Payment Id"
+          },
+          "restorable": {
+            "default": false,
+            "title": "Restorable",
+            "type": "boolean"
+          },
+          "restored_from_receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restored From Receipt No"
           },
           "valid_from": {
             "anyOf": [

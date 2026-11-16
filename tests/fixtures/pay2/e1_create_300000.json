@@ -44,6 +44,9 @@
     },
     "note": "за октябрь",
     "replaces_payment_id": null,
+    "restored_from_receipt_no": null,
+    "restorable": false,
+    "replaced_by_receipt_no": null,
     "receipt_no": 18,
     "partial_period": false,
     "files": [],
@@ -167,6 +170,9 @@
       },
       "note": "за октябрь",
       "replaces_payment_id": null,
+      "restored_from_receipt_no": null,
+      "restorable": false,
+      "replaced_by_receipt_no": null,
       "receipt_no": 18,
       "partial_period": false,
       "files": [],
@@ -202,5 +208,6 @@
   "money_effects": null,
   "dry_run": false,
   "new_debts": [],
-  "advance_drops": []
+  "advance_drops": [],
+  "other_gains": []
 }
