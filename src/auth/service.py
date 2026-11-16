@@ -119,7 +119,7 @@ from .ops_schemas import (  # noqa: E402
     TeacherDashboardSummaryResponseB as TeacherDashboardSummaryResponse,
 )
 from . import attendance_rules, business_clock, exam_bridge, exam_release, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
-from . import lesson_return, password_rules, staff_lifecycle, student_views  # noqa: E402
+from . import lesson_return, password_rules, staff_lifecycle, student_views, transfer_rules  # noqa: E402
 from .roster_names import roster_payload, student_full_name  # noqa: E402
 from .sql_text import contains  # noqa: E402
 
@@ -2569,6 +2569,7 @@ class AuthService:
         money_right: bool,
         dry_run: bool = False,
         pay_from: Optional[date] = None,
+        from_group_id: Optional[Any] = None,
     ) -> dict:
         added = 0
         skipped_details: list[dict[str, str]] = []
@@ -2580,7 +2581,7 @@ class AuthService:
                 result = self.add_student_to_group(
                     org_id, group_id, student_id,
                     mode=mode, price_override=price_override, actor_id=actor_id,
-                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from, immediate=True,
+                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from, immediate=True, from_group_id=from_group_id,
                 )
                 added += 1
                 students.append({"student_id": str(student_id), "billing": result.get("billing"), "individual_price_ends": bool(result.get("individual_price_ends")),
@@ -2592,10 +2593,10 @@ class AuthService:
                 self.db.rollback()
                 skipped_details.append({"student_id": str(student_id), "reason": str(exc)})
             except ops_rules.OpsError as exc:
-                if exc.code != "MONEY_RIGHT_REQUIRED":
+                if exc.code not in ("MONEY_RIGHT_REQUIRED", "TRANSFER_SOURCE_REQUIRED", "TRANSFER_SOURCE_GONE"):
                     raise
-                self.db.rollback()      # Money-1 A4: a transfer moves the money of the student - reported per student like every other refusal of a bulk transfer
-                skipped_details.append({"student_id": str(student_id), "reason": exc.message})
+                self.db.rollback()      # Money-1 A4: a transfer moves the money of the student - reported per student like every other refusal of a bulk transfer (Money-2 T1: so is a student whose source is not clear)
+                skipped_details.append({"student_id": str(student_id), "reason": exc.message, "code": exc.code})
         self._billing_cache = None
         # Money-1 B (lead): the preview of a bulk adding says per student and in total what is charged at once - the same phrase as the single adding (``billing.immediate.text``); only for a caller with the money access
         # (``immediate`` is filled only then, and only in a dry run).
@@ -2633,6 +2634,7 @@ class AuthService:
         dry_run: bool = False,
         pay_from: Optional[date] = None,
         immediate: bool = True,
+        from_group_id: Optional[Any] = None,
     ) -> dict:
         """Enrol a student in a group.
 
@@ -2752,7 +2754,7 @@ class AuthService:
 
         # Only a transfer closes the previous memberships.  The roster of
         # every changed group must not rewrite an already started lesson.
-        closing = other_active_memberships if mode == "transfer" else []
+        closing = transfer_rules.resolve_sources(self.db, org_id, group.id, mode, other_active_memberships, from_group_id)      # Money-2 T1: ONE source; the other groups of the student stay as they are
         if closing and not actor_id:   # Money-1 Р3-1б: closing a stay writes the price audit - no row without an author (every caller passes one)
             raise ValueError("Перевод требует автора действия")
         if pay_from is not None:      # Money-1 B1: checked BEFORE anything is written - a refusal leaves nothing behind
