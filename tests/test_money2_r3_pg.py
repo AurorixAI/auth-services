@@ -312,3 +312,19 @@ def test_r8_the_baseline_is_not_rewritten_every_night_and_has_no_columns_of_the_
     night(world)
     after = world.db.execute(_text("SELECT xmin::text FROM money_row_baseline WHERE org_id = :o"), {"o": world.org.id}).scalar()
     assert before == after, "a row that did not move is not written again"
+
+
+# ============================================================================================================ the new payment of a correction is cancelled by a bare UPDATE
+def test_a_payment_made_by_a_correction_of_the_product_and_cancelled_by_a_bare_update_has_no_line_of_cancellation(world):
+    """A correction (= the old payment cancelled + a new one) writes ``payment_replace`` with ``payment_id`` = the OLD row: it is the trace of the cancellation of the old one, not of the new one."""
+    ensure_billing(world)
+    night(world)
+    old = pid_of(pay(world, world.students[0], amount=450_000))
+    replaced = owner(world).post(f"{API}/org/payments/{old}/replace", json={"amount": 500_000, "paid_on": business_today().isoformat(), "method": "cash", "reason": "Неверная сумма"})
+    assert replaced.status_code == 201, replaced.text
+    new = pid_of(replaced.json())
+    assert new != old and i5(night(world), world) == []
+    sql(world, f"UPDATE student_payments SET {CANCEL} WHERE id = :id", id=new, owner=world.owner.id)
+    keys = i5(night(world), world)
+    assert f"payment:{new}:no_journal" in keys, "the new payment went away without a line of cancellation"
+    assert f"payment:{old}:no_journal" not in keys
