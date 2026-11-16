@@ -62,7 +62,8 @@ def _old_pause(world, a):
     return owner(world).post(f"{API}/org/memberships/{membership(world, world.students[2], a).id}/pauses", json={"first_day": "2026-11-05", "last_day": "2026-11-08", "reason": "Каникулы"}).json()["pause"]["id"]
 
 
-# the inventory: every road that changes a price / a pause / an opening balance / a payment and can be refused by the rules of the age, of the launch of the accounting or of the restore
+# the inventory: every road that changes a price / a pause / an opening balance / a payment / a forgiveness / a refund and can be refused by the rules of the age, of the launch of the accounting or of the restore.
+# NOT here by meaning: the import of students with the opening columns (``/org/import/preview|commit``) - after the closed launch it does not refuse, it warns in the text of the rule and writes no openings (test_d5_...)
 def road_payment_replace(w, ft):
     a, s0, old, e8, e7, admin = _p4(w, ft)
     return BACKDATE, admin.post(f"{API}/org/payments/{old['id']}/replace", json={"amount": 1_000_000, "paid_on": old["paid_on"], "method": "cash", "reason": "Правка"})
@@ -171,9 +172,55 @@ def road_student_added_with_opening(w, ft):
     return OPENING, admin.post(f"{API}/org/groups/{b.id}/students/{s0.id}", params={"mode": "add"}, json={"opening_balance": {"debt_amount": 40_000, "debt_on": "2026-11-19"}})
 
 
+def road_payment_create(w, ft):
+    a, s0, old, e8, e7, admin = _p4(w, ft)
+    return BACKDATE, admin.post(f"{API}/org/memberships/{membership(w, w.students[1], a).id}/payments", json={"amount": 100_000, "paid_on": "2026-11-12", "method": "cash"})
+
+
+def road_writeoff_create(w, ft):
+    a, s0, old, e8, e7, admin = _p4(w, ft)
+    return BACKDATE, admin.post(f"{API}/org/memberships/{membership(w, w.students[1], a).id}/writeoffs", json={"amount": 1_000, "reason": "Договорённость", "effective_on": "2026-11-12"})
+
+
+def road_writeoff_void(w, ft):
+    a, s0, old, e8, e7, admin = _p4(w, ft)
+    r = owner(w).post(f"{API}/org/memberships/{membership(w, w.students[1], a).id}/writeoffs", json={"amount": 1_000, "reason": "Договорённость", "effective_on": "2026-11-12"})
+    assert r.status_code == 201, r.text
+    return BACKDATE, admin.post(f"{API}/org/writeoffs/{r.json()['writeoff']['id']}/void", json={"reason": "Ошибка ввода"})
+
+
+def _advance_of_s2(w, a):
+    from tests.test_payments_service_pg import pay
+
+    pay(w, w.students[2], a, amount=5_000_000, paid_on=date(2026, 11, 2))
+    return membership(w, w.students[2], a)
+
+
+def road_refund_create(w, ft):
+    a, s0, old, e8, e7, admin = _p4(w, ft)
+    return BACKDATE, admin.post(f"{API}/org/memberships/{_advance_of_s2(w, a).id}/refunds", json={"amount": 1_000, "method": "cash", "reason": "Возврат", "effective_on": "2026-11-12"})
+
+
+def road_refund_void(w, ft):
+    a, s0, old, e8, e7, admin = _p4(w, ft)
+    r = owner(w).post(f"{API}/org/memberships/{_advance_of_s2(w, a).id}/refunds", json={"amount": 1_000, "method": "cash", "reason": "Возврат", "effective_on": "2026-11-12"})
+    assert r.status_code == 201, r.text
+    return BACKDATE, admin.post(f"{API}/org/refunds/{r.json()['refund']['id']}/void", json={"reason": "Ошибка ввода"})
+
+
+def road_opening_batch_apply(w, ft):
+    from tests.test_opening_bulk_pg import BASE, it, preview
+
+    a, s0, admin = _launched(w, ft)
+    items = [it(w, membership(w, s0, a), debt_amount=70_000, debt_on="2026-11-02")]
+    body = {"items": items, "reason": None, "idempotency_key": "00000000-0000-4000-8000-0000000000e5", "digest": preview(w, items, None)["digest"]}
+    return OPENING, admin.post(f"{BASE}/batch", json=body)
+
+
 ROADS = [road_payment_replace, road_payment_replace_preview, road_payment_void, road_payment_quote_replace, road_payment_restore, road_payment_restore_preview,
          road_pause_create, road_pause_create_preview, road_pause_change, road_pause_void, road_group_price, road_group_price_preview, road_price_override,
-         road_opening_card_put, road_opening_card_preview, road_opening_void, road_opening_batch_preview, road_opening_import_preview, road_student_added_with_opening]
+         road_opening_card_put, road_opening_card_preview, road_opening_void, road_opening_batch_preview, road_opening_import_preview, road_student_added_with_opening,
+         road_payment_create, road_writeoff_create, road_writeoff_void, road_refund_create, road_refund_void, road_opening_batch_apply]
 
 
 @pytest.mark.parametrize("road", ROADS, ids=lambda f: f.__name__)
