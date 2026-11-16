@@ -2635,6 +2635,7 @@ class AuthService:
         pay_from: Optional[date] = None,
         immediate: bool = True,
         from_group_id: Optional[Any] = None,
+        expected_carried: Optional[int] = None,
     ) -> dict:
         """Enrol a student in a group.
 
@@ -2874,6 +2875,12 @@ class AuthService:
                 org_id, actor_id, closing, membership,
                 detailed=payments_detail, moment=now_dt,
             )
+            if expected_carried is not None and payments_detail:      # Money-2 T5: the number the window showed against the one worked out under the locks - a payment cancelled meanwhile is 409, nothing is written
+                from .leave_service import BalanceChanged
+
+                actual = next((int(n["amount"]) for n in carried if n.get("code") == "payment_carried_over" and "amount" in n), 0)
+                if actual != expected_carried:
+                    raise BalanceChanged("Данные оплат изменились — проверьте числа", fresh=[{"carried": actual}], carried=actual)
             if payments_detail and carried:      # Money-1 D-6: the window says what the NEW account looks like after the transfer, not only what arrived
                 pay = PaymentService(self.db)
                 carry_after = pay.transfer_balance(carry_before, pay.account_after(org_id, membership.id, now_dt, tomorrow=True), group.name)

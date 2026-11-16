@@ -357,6 +357,8 @@ class AddStudentToGroupRequest(BaseModel):
     pay_from: Optional[date] = None
     # Money-2 T1: the group a TRANSFER leaves (``mode=transfer``); the student's other groups are not touched.  Not sent = the only active group of the student (several: 422 ``TRANSFER_SOURCE_REQUIRED``).
     from_group_id: Optional[UUID] = None
+    # Money-2 T5: the sum the window showed as «перейдёт» (``effects.moves[code=money].amount`` of the dry run); the server works it out again under the locks and a difference is 409 ``BALANCE_CHANGED`` (nothing written).
+    expected_carried: Optional[StrictInt] = None
 
     @field_validator("monthly_fee")
     @classmethod

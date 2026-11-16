@@ -318,3 +318,40 @@ def test_t4_a_payment_start_that_has_begun_does_not_move(world, fixed_today):
     out = add(world, s0, group=b, mode="transfer")
     assert nov_charge(world, s0, b) == 107_000
     assert [m for m in out["effects"]["moves"] if m["code"] == "billing_from"] == []
+
+
+# ---------------------------------------------------------------------------------------------------- T5 «числа устарели» at a transfer
+
+
+def pid(created):
+    return created.json()["payment"]["id"] if hasattr(created, "json") else created
+
+
+def test_t5_a_payment_cancelled_between_the_window_and_the_transfer_is_409_and_nothing_is_written(world, fixed_today):
+    # in A since 02.11 (21 days to 22.11 = 210 000 spent of 300 000 a month); paid 400 000 + 200 000.  The window shows 600 000 - 210 000 = 390 000.  The 200 000 payment is cancelled meanwhile: 400 000 - 210 000 = 190 000.
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    pay(world, s0, a, amount=400_000)
+    second = pay(world, s0, a, amount=200_000, paid_on=date(2026, 11, 21))
+    window = add(world, s0, group=b, mode="transfer", dry_run=True)
+    (money,) = [m for m in window["effects"]["moves"] if m["code"] == "money"]
+    assert money["amount"] == 390_000
+    assert owner(world).post(f"{API}/org/payments/{second.json()['payment']['id']}/void", json={"reason": "Внесли дважды"}).status_code == 200
+    r = add(world, s0, group=b, mode="transfer", expected_carried=390_000, expect=409)
+    assert r["detail"]["code"] == "BALANCE_CHANGED" and r["detail"]["carried"] == 190_000 and r["detail"]["fresh"] == [{"carried": 190_000}]
+    assert membership(world, s0, a).is_active and world.db.query(MembershipTransfer).filter_by(student_id=s0.id).count() == 0     # nothing written
+    assert world.db.query(StudentGroup).filter_by(student_id=s0.id, group_id=b.id).count() == 0
+    again = add(world, s0, group=b, mode="transfer", expected_carried=190_000)                 # the fresh number goes through
+    assert again["status"] == "added"
+
+
+def test_t5_a_transfer_without_expected_carried_is_not_checked_and_a_matching_one_passes(world, fixed_today):
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0, s1 = world.students[0], world.students[1]
+    joined(world, s0, a, date(2026, 11, 2))
+    joined(world, s1, a, date(2026, 11, 2))
+    pay(world, s0, a, amount=600_000)
+    pay(world, s1, a, amount=600_000)
+    assert add(world, s0, group=b, mode="transfer")["status"] == "added"
+    assert add(world, s1, group=b, mode="transfer", expected_carried=390_000)["status"] == "added"

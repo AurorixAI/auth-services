@@ -1297,6 +1297,7 @@ def add_student_to_group(
             mode=mode, price_override=price_override, actor_id=user["user_id"],
             payments_detail=has_payments_access(user, db), opening_balance=opening_balance, money_right=money_right, dry_run=dry_run, pay_from=pay_from,
             from_group_id=request.from_group_id if request else None,
+            expected_carried=request.expected_carried if request else None,
         )
     except MembershipConflict as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
