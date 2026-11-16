@@ -355,3 +355,17 @@ def test_t5_a_transfer_without_expected_carried_is_not_checked_and_a_matching_on
     pay(world, s1, a, amount=600_000)
     assert add(world, s0, group=b, mode="transfer")["status"] == "added"
     assert add(world, s1, group=b, mode="transfer", expected_carried=390_000)["status"] == "added"
+
+
+def test_one_closing_for_leave_transfer_and_archive_each_says_how_the_stay_ended_in_the_journal_of_its_pauses(world, fixed_today):
+    # three students, each with a pause 22-26.11 in A (today 20.11 is Friday): a leave, a transfer and an archiving all go through ``close_stay``; the pause starts after the 20th, is cancelled and the line says via
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    for s in (s0, s1, s2):
+        pause(world, a, s, date(2026, 11, 22), date(2026, 11, 26))
+    assert owner(world).post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={}).status_code == 200
+    add(world, s1, group=b, mode="transfer")
+    assert owner(world).post(f"{API}/org/students/{s2.id}/archive", json={}).status_code == 200
+    vias = {g.snapshot["student_id"]: g.snapshot["via"] for g in world.db.query(GroupAudit).filter(
+        GroupAudit.org_id == world.org.id, GroupAudit.group_id == a.id, GroupAudit.action.in_(("membership_pause_set", "membership_pause_void"))) if "via" in g.snapshot}
+    assert vias == {str(s0.id): "leave", str(s1.id): "transfer", str(s2.id): "archive"}

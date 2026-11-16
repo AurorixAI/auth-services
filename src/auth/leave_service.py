@@ -90,6 +90,14 @@ def on_membership_closed(db: Session, membership: StudentGroup, left_at: datetim
     PauseService(db).close_at_leave(membership.id, left_day, actor_id, via=via)
 
 
+def close_stay(db: Session, membership: StudentGroup, at: datetime, actor_id: str, via: str) -> None:
+    """THE one way a stay ends - a leaving, a transfer, an archiving (Money-2: one rule, one function): the open period ends at ``at`` and the hooks of ``on_membership_closed`` run
+    (the individual price ends, the scheduled prices are cancelled, the pauses are cut).  ``via``: ``leave`` / ``transfer`` / ``archive`` (the line of the journal says it)."""
+    close_period(membership, at)
+    db.flush()
+    on_membership_closed(db, membership, at.replace(tzinfo=None), actor_id, via=via)
+
+
 def on_membership_returned(db: Session, membership: StudentGroup, now: datetime, actor_id: Optional[str]) -> bool:
     """A student comes back to a group he left: the marker of the earlier leave that lies AFTER today (he came back the day he left) is taken
     back, and an individual price that is STILL in force then ends today - he is priced by the group (a price given with the return replaces
@@ -287,14 +295,12 @@ class LeaveService:
             svc._assert_no_open_attendance_for_groups(org_id, [group.id])
             before_close = leave_effects.snapshot(self.db, org_id, [sg], ps.business_today())      # Money-2 T3: read before the stay is closed
             now = bc.utc_now().replace(tzinfo=timezone.utc)   # DM-005: the one clock
-            close_period(sg, now)
-            self.db.flush()
+            close_stay(self.db, sg, now, actor_id, "leave")
             if str(student.group_id or "") == str(group.id):
                 successor = (self.db.query(StudentGroup).join(Group, Group.id == StudentGroup.group_id)
                              .filter(StudentGroup.student_id == student.id, StudentGroup.is_active.is_(True), Group.org_id == org_id)
                              .order_by((Group.status != "active"), StudentGroup.joined_at, StudentGroup.id).first())
                 student.group_id = successor.group_id if successor else None
-            on_membership_closed(self.db, sg, now.replace(tzinfo=None), actor_id)
             settled = self.settle(org_id, [sg], body.settle if body else [], actor_id, actor_role, money=money)
             self.db.add(GroupAudit(
                 org_id=UUID(str(org_id)), group_id=group.id, actor_id=UUID(str(actor_id)),

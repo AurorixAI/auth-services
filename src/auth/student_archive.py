@@ -51,7 +51,6 @@ from sqlalchemy.orm import Session
 
 from . import business_clock as bc
 from . import payment_status as ps
-from .membership_periods import close_period
 from .ops_rules import EnrolmentRefused
 from .models import DiagnosticInvite, Group, GroupAudit, Student, StudentDiagnosticResult, StudentGroup
 from .payments_schemas import SettledOut, SettleItem
@@ -323,7 +322,7 @@ class StudentArchiveService:
         """LOGIC-A (F9): ``settle`` - what to do with the money of each membership the archiving closes (``keep`` / ``writeoff`` / ``refund``),
         carried out in THIS transaction after the stays are closed; a refused settlement (403 / 422 / 409 ``BALANCE_CHANGED``) archives nobody."""
         from . import leave_effects
-        from .leave_service import LeaveService, on_membership_closed
+        from .leave_service import LeaveService, close_stay
         from .payments_service import PaymentError
         from .service import AuthService  # lazy: service imports this module
 
@@ -359,8 +358,7 @@ class StudentArchiveService:
         primary_group_id = student.group_id
         before_close = leave_effects.snapshot(self.db, org_id, memberships, ps.business_date(now))      # Money-2 T3: read before the stays are closed
         for membership in memberships:
-            close_period(membership, now)  # the open period ends with the membership; earlier ones stay
-            on_membership_closed(self.db, membership, now, actor_id)  # LOGIC-A: the individual price ends, pauses are cut
+            close_stay(self.db, membership, now, actor_id, "archive")  # the open period ends with the membership (earlier ones stay), the individual price ends, pauses are cut
         settled: List[SettledOut] = []
         if settle:
             try:

@@ -27,7 +27,7 @@ from .student_id_service import assign_display_id
 from .attendance_excuses import AttendanceExcuseService
 from .diagnostic_level import level_fields, normalize_level_payload, result_summary
 from .membership_pauses import not_paused_at, not_paused_now
-from .leave_service import on_membership_closed, on_membership_returned
+from .leave_service import close_stay, on_membership_closed, on_membership_returned
 from .membership_periods import (
     close_period,
     group_period_spans,
@@ -2783,9 +2783,8 @@ class AuthService:
         before_close = leave_effects.snapshot(self.db, org_id, closing, ps.business_date(now_dt)) if closing else []      # Money-2 T3: what the closing ends / moves / leaves behind, read BEFORE it is done
         carry_plan: list = []
         for om in closing:
-            close_period(om, now_dt)
-            carry_plan += PauseService(self.db).plan_carry(om.id, ps.business_date(now_dt))      # Money-2 T2: read BEFORE the hook cuts / cancels the pauses of the old group
-            on_membership_closed(self.db, om, now_dt, actor_id, via="transfer")  # LOGIC-A: F13 marker, pauses
+            carry_plan += PauseService(self.db).plan_carry(om.id, ps.business_date(now_dt))      # Money-2 T2: read BEFORE the stay ends and the hook cuts / cancels the pauses of the old group
+            close_stay(self.db, om, now_dt, actor_id, "transfer")  # the one closing of a stay (leave / transfer / archive)
 
         # Target membership is either a historical inactive record that will
         # be reactivated (its payment history stays attached), or a new one.
