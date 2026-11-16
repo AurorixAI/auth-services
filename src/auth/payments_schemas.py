@@ -1471,6 +1471,7 @@ class LeaveMembership(PayModel):
     money: Optional[LeaveMoney] = None  # null without access to money
     has_open_balance: bool = False
     allowed: List[SettleAction] = Field(default_factory=lambda: ["keep"])
+    effects: Optional[Dict[str, Any]] = None  # Money-2 T3: what the closing ends / leaves behind (``leave_effects.build``); sums only with the right to money
 
 
 class LeavePreview(PayModel):
@@ -1503,6 +1504,7 @@ class SettledOut(PayModel):
 class LeaveResult(PayModel):
     message: str
     settled: List[SettledOut] = Field(default_factory=list)
+    effects: Optional[Dict[str, Any]] = None  # Money-2 T3: the same structure as the preview, after the choices of ``settle`` (a refunded advance no longer «stays»)
 
 
 # ---- price impact (decision 4) ----------------------------------------------------------------------

@@ -23,6 +23,7 @@ from src.models.auth import Group, GroupAudit, Student, StudentGroup, StudentRef
 
 from . import billing_ledger as bl
 from . import business_clock as bc
+from . import leave_effects
 from . import ledger_service as ls
 from . import payment_status as ps
 from . import pricing
@@ -132,9 +133,10 @@ class LeaveService:
             debt=ledger.debt, advance=ledger.advance, refundable=refundable, paid_until=ledger.covered_through,
             charged_after_leave=ledger.charged, individual_price_ends=price.source == pricing.SOURCE_OVERRIDE and price.amount is not None)
 
-    def _preview(self, org_id: str, memberships: Sequence[StudentGroup], groups: Dict[UUID, Group], money: bool) -> LeavePreview:
+    def _preview(self, org_id: str, memberships: Sequence[StudentGroup], groups: Dict[UUID, Group], money: bool, kind: str) -> LeavePreview:
         today = ps.business_today()
         after, loader = self._after(org_id, [m.id for m in memberships], today)
+        snaps = {s.membership_id: s for s in leave_effects.snapshot(self.db, org_id, memberships, today, after=after, loader=loader)}
         items: List[LeaveMembership] = []
         for m in memberships:
             ledger, refundable = after[m.id]
@@ -142,7 +144,8 @@ class LeaveService:
             items.append(LeaveMembership(
                 membership_id=str(m.id), group_id=str(m.group_id), group_name=groups[m.group_id].name,
                 money=self._money(ledger, refundable, loader, m, today) if money else None,
-                has_open_balance=ledger.debt > 0 or ledger.advance > 0, allowed=allowed if money else ["keep"]))
+                has_open_balance=ledger.debt > 0 or ledger.advance > 0, allowed=allowed if money else ["keep"],
+                effects=leave_effects.build([snaps[m.id]], kind=kind, money=money)))
         return LeavePreview(as_of=today, memberships=items)
 
     def preview_group(self, org_id: str, group_id: UUID, student_id: UUID, *, money: bool) -> LeavePreview:
@@ -154,7 +157,7 @@ class LeaveService:
                                                StudentGroup.is_active.is_(True)).first()
         if m is None:
             raise PaymentConflict("Ученик не в этой группе")
-        return self._preview(org_id, [m], {group.id: group}, money)
+        return self._preview(org_id, [m], {group.id: group}, money, "leave")
 
     def preview_student(self, org_id: str, student_id: UUID, *, money: bool) -> LeavePreview:
         student = self.db.query(Student).filter(Student.id == student_id, Student.org_id == org_id).first()
@@ -163,7 +166,7 @@ class LeaveService:
         ms = (self.db.query(StudentGroup).filter(StudentGroup.student_id == student.id, StudentGroup.is_active.is_(True))
               .order_by(StudentGroup.joined_at, StudentGroup.id).all())
         groups = {g.id: g for g in self.db.query(Group).filter(Group.id.in_([m.group_id for m in ms])).all()} if ms else {}
-        return self._preview(org_id, ms, groups, money)
+        return self._preview(org_id, ms, groups, money, "archive")
 
     # ---- settling (inside the caller's transaction; the stays are already closed and flushed)
 
@@ -282,6 +285,7 @@ class LeaveService:
                     raise PaymentForbidden("Ученик оплатил вперёд: убрать его из группы может владелец или администратор с доступом к деньгам")
             svc._lock_groups_for_membership_change(org_id, [group.id])
             svc._assert_no_open_attendance_for_groups(org_id, [group.id])
+            before_close = leave_effects.snapshot(self.db, org_id, [sg], ps.business_today())      # Money-2 T3: read before the stay is closed
             now = bc.utc_now().replace(tzinfo=timezone.utc)   # DM-005: the one clock
             close_period(sg, now)
             self.db.flush()
@@ -306,7 +310,7 @@ class LeaveService:
             self.db.rollback()
             raise
         invalidate_summary(org_id)
-        return LeaveResult(message="Ученик удалён из группы", settled=settled)
+        return LeaveResult(message="Ученик удалён из группы", settled=settled, effects=leave_effects.build(leave_effects.after_settle(before_close, settled), kind="leave", money=money))
 
 
 def apply_add_opening(db: Session, org_id: str, membership: StudentGroup, actor_id: Optional[str], opening, *, transfer: bool, source: str = "add") -> Optional[Dict[str, str]]:

@@ -1983,7 +1983,7 @@ class PaymentService:
         *,
         detailed: bool = False,
         moment: Optional[datetime] = None,
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Any]]:
         """Record a transfer: one LINK per closed membership (``membership_transfers``).  The money that travels is derived
         (``billing_ledger.refundable_at`` of the old membership on the transfer day), never stored - correcting a payment in the
         old group changes what arrived in the new one.
@@ -2029,17 +2029,17 @@ class PaymentService:
                     "to_membership_id": str(link.to_membership_id), "amount": int(carried), "at": link.at.isoformat()})
         logger.info("transfer recorded to=%s from=%s actor=%s", target.id, [str(m.id) for m in sources], actor_id)
         invalidate_summary(org_id)
-        notes: List[Dict[str, str]] = []
+        notes: List[Dict[str, Any]] = []
         if total > 0:
             if not detailed:
                 notes.append({"code": CARRY_CODE, "message": CARRY_GENERIC_MESSAGE})
             else:
                 group = self.db.query(Group.name).filter(Group.id == target.group_id).scalar() or ""
-                notes.append({"code": CARRY_CODE, "message": f"Деньги ученика — {_sum(total)} — перешли в группу «{group}»"})
+                notes.append({"code": CARRY_CODE, "message": f"Деньги ученика — {_sum(total)} — перешли в группу «{group}»", "amount": int(total)})
         # Money-1 B6: the days that were paid for without money (the «оплачено до» of an opening balance) travel too - say so, with the day
         paid_until = max((d for d in (loader.paid_days_of_link(t) for t in made) if d is not None), default=None)
         if paid_until is not None:
-            notes.append({"code": PAID_DAYS_CODE, "message": f"Оплаченные дни — по {paid_until.strftime('%d.%m.%Y')} — перешли вместе с учеником"})
+            notes.append({"code": PAID_DAYS_CODE, "message": f"Оплаченные дни — по {paid_until.strftime('%d.%m.%Y')} — перешли вместе с учеником", "date": paid_until.isoformat()})
         return notes
 
     # ------------------------------------------------ transfer: what the account the money lands on looks like (stage walk D-6)

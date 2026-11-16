@@ -50,6 +50,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from . import business_clock as bc
+from . import payment_status as ps
 from .membership_periods import close_period
 from .ops_rules import EnrolmentRefused
 from .models import DiagnosticInvite, Group, GroupAudit, Student, StudentDiagnosticResult, StudentGroup
@@ -142,6 +143,7 @@ class ArchiveStudentResponse(StudentResponse):
     diagnostic_invites_cancelled: int = 0
     diagnostic_invites_in_progress: int = 0
     settled: List[SettledOut] = []  # LOGIC-A (F9): the refunds / write-offs of ``settle``
+    effects: List[Dict[str, Any]] = []  # Money-2 T3: per closed group what the archiving ends / leaves behind (``leave_effects.build``); sums only with the right to money
 
 
 class RestoreStudentResponse(StudentResponse):
@@ -320,6 +322,7 @@ class StudentArchiveService:
     ) -> ArchiveStudentResponse:
         """LOGIC-A (F9): ``settle`` - what to do with the money of each membership the archiving closes (``keep`` / ``writeoff`` / ``refund``),
         carried out in THIS transaction after the stays are closed; a refused settlement (403 / 422 / 409 ``BALANCE_CHANGED``) archives nobody."""
+        from . import leave_effects
         from .leave_service import LeaveService, on_membership_closed
         from .payments_service import PaymentError
         from .service import AuthService  # lazy: service imports this module
@@ -354,6 +357,7 @@ class StudentArchiveService:
         # The archiving instant: every lock is held now (see the module docstring).
         now = _utcnow_naive()
         primary_group_id = student.group_id
+        before_close = leave_effects.snapshot(self.db, org_id, memberships, ps.business_date(now))      # Money-2 T3: read before the stays are closed
         for membership in memberships:
             close_period(membership, now)  # the open period ends with the membership; earlier ones stay
             on_membership_closed(self.db, membership, now, actor_id)  # LOGIC-A: the individual price ends, pauses are cut
@@ -422,6 +426,7 @@ class StudentArchiveService:
             diagnostic_invites_cancelled=invites_cancelled,
             diagnostic_invites_in_progress=invites_in_progress,
             settled=settled,
+            effects=[leave_effects.build([snap], kind="archive", money=money) for snap in leave_effects.after_settle(before_close, settled)],
         )
 
     def _cancel_open_invites(self, org_id: str, student_id: UUID, now: datetime) -> tuple:

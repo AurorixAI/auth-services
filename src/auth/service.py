@@ -119,7 +119,7 @@ from .ops_schemas import (  # noqa: E402
     TeacherDashboardSummaryResponseB as TeacherDashboardSummaryResponse,
 )
 from . import attendance_rules, business_clock, exam_bridge, exam_release, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
-from . import lesson_return, password_rules, staff_lifecycle, student_views, transfer_rules  # noqa: E402
+from . import lesson_return, leave_effects, password_rules, staff_lifecycle, student_views, transfer_rules  # noqa: E402
 from .roster_names import roster_payload, student_full_name  # noqa: E402
 from .sql_text import contains  # noqa: E402
 
@@ -2779,6 +2779,7 @@ class AuthService:
             closing_prices = self._closing_individual_prices(closing, group, ps.business_date(now_dt))
         from .logica_service import PauseService  # lazy: pulls in the payments modules
 
+        before_close = leave_effects.snapshot(self.db, org_id, closing, ps.business_date(now_dt)) if closing else []      # Money-2 T3: what the closing ends / moves / leaves behind, read BEFORE it is done
         carry_plan: list = []
         for om in closing:
             close_period(om, now_dt)
@@ -2832,9 +2833,10 @@ class AuthService:
                 valid_from=pricing.enrolment_override_start(pay_from, ps.business_date(now_dt)), reason=override_reason,
             )
 
+        moved_pauses: list = []
         if closing:                      # Money-2 T2: the pauses of the student (the rest of the current one and the future ones) go with him: same days, same reason, a line of the journal each
             self.db.flush()
-            PauseService(self.db).carry_to(org_id, membership, carry_plan, actor_id)
+            moved_pauses = PauseService(self.db).carry_to(org_id, membership, carry_plan, actor_id)
 
         opening_warning = None
         if opening_balance is not None:  # LOGIC-A (decision 1): the opening balance of the new membership
@@ -2887,6 +2889,9 @@ class AuthService:
         if not student.display_id:
             assign_display_id(self.db, org_id, student)
 
+        effects = None
+        if closing:                      # Money-2 T3: the same structure and words for the window (dry run) and the answer
+            effects = self._transfer_effects(org_id, group, before_close, carried, carry_after, moved_pauses, ps.business_date(now_dt), payments_detail)
         self.db.flush()
         warnings = self._membership_warnings(student, group)
         warnings.extend(carried)
@@ -2903,6 +2908,7 @@ class AuthService:
             "carried": carried,
             "carry_after": carry_after,
             "closing_prices": closing_prices,
+            "effects": effects,                  # Money-2 T3: what moves / stays / ends (sums only for a caller with the right to money)
             "individual_price_ends": bool(closing_prices),
             "billing": billing,                  # Money-1 B1: from which day he is charged (``pay_from``) and why; null for a transfer
             "dry_run": dry_run,
@@ -2912,6 +2918,24 @@ class AuthService:
         else:
             self.db.commit()
         return result
+
+    def _transfer_effects(self, org_id: str, target: Group, before_close: list, carried: list, carry_after: Optional[dict], moved_pauses: list, day: date, money: bool) -> dict:
+        """Money-2 T3: the structure and the words of what a transfer moves, leaves and ends (``leave_effects.build``), from the facts read before the closing and the answer of the carry-over."""
+        from . import billing_ledger as bl
+        from . import ledger_service as ls
+        from . import pricing
+
+        note = next((n for n in carried if n.get("code") == "payment_carried_over"), None)
+        paid = next((n for n in carried if n.get("code") == "paid_days_carried_over"), None)
+        package = None
+        regime = bl.regime_at(ls.load_settings(self.db, org_id).regimes, day)
+        if money and regime.mode == ps.LESSONS:
+            price = pricing.load_books(self.db, [target.id], []).group_price(target.id, day)
+            package = (regime.package_size, int(price[1]) if price else None)
+        return leave_effects.build(
+            before_close, kind="transfer", money=money, target_name=target.name, carried=int(note["amount"]) if note and "amount" in note else 0, package=package,
+            carried_pauses=[(p.first_day, p.last_day) for p in moved_pauses], carry_text=carry_after["text"] if carry_after else None,
+            paid_until=date.fromisoformat(paid["date"]) if paid and paid.get("date") else None)
 
     def _closing_individual_prices(self, closing: list, target: Group, today: date) -> list[dict]:
         """The individual prices (a sum) in force today in the memberships a transfer closes: ``[{membership_id, group_name, amount, since, reason, new_group_amount, text}]`` (Money-1 V10).

@@ -175,3 +175,113 @@ def test_t2_a_package_centre_moves_the_pause_too_the_dates_of_his_absence_travel
     pause(world, a, s0, date(2026, 11, 22), date(2026, 11, 28))
     add(world, s0, group=b, mode="transfer")
     assert pauses_of(world, s0, b) == [(date(2026, 11, 23), date(2026, 11, 28), "Болезнь", False)]
+
+
+# ---------------------------------------------------------------------------------------------------- T3 what ends, what moves, what stays
+
+
+def joined(w, student, group, day):
+    stay(w, membership(w, student, group), day)
+
+
+def codes(items):
+    return [i["code"] for i in items]
+
+
+def test_t3_a_debt_that_stays_in_the_old_group_is_named_with_its_sum_and_the_false_phrase_is_not_said(world, fixed_today):
+    # A (300 000 a month, 30 lessons of November), the student is in A since 02.11 and has paid nothing; the transfer is on 22.11.  Days 02..22 = 21 days = 21 lessons: 300 000 x 21 / 30 = 210 000 of debt.
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    dry = add(world, s0, group=b, mode="transfer", dry_run=True)["effects"]
+    real = add(world, s0, group=b, mode="transfer")["effects"]
+    assert dry == real                                                           # the window says what the server writes (И4)
+    (debt,) = real["stays"]
+    assert debt["code"] == "debt" and debt["amount"] == 210_000 and debt["group_id"] == str(a.id) and debt["group_name"] == a.name
+    assert debt["text"] == f"Долг 210 000 сум останется за учеником в группе «{a.name}»: принять или простить его можно в её выписке"
+    assert "нет оплат" not in (real["money_text"] or "") and real["money_text"] is None and codes(real["moves"]) == []
+
+
+def test_t3_nothing_to_carry_says_it_only_when_it_is_true(world, fixed_today):
+    # the student joined A on 22.11, the day of the transfer: A holds the day (a lesson), nothing paid, nothing owed beyond the day itself - so use a student with an advance of exactly zero and no debt: paid 210 000 for the 21 days
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    pay(world, s0, a, amount=210_000)                                            # exactly what 02..22.11 costs (300 000 x 21 / 30): no advance, no debt
+    out = add(world, s0, group=b, mode="transfer")["effects"]
+    assert out["stays"] == [] and out["moves"] == [] and out["money_text"] == "Деньги не изменятся: в прошлой группе нет аванса и долга"
+
+
+def test_t3_an_advance_moves_with_the_sum_and_the_individual_price_and_a_scheduled_price_end(world, fixed_today):
+    # paid 600 000 into A, 210 000 spent by 22.11 -> an advance of 390 000 travels; the individual price 250 000 of A and a price scheduled from 01.12 (200 000) end
+    from tests.pg_world import give_price
+
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    m = membership(world, s0, a)
+    give_price(world.db, m, 300_000, reason="договорённость")                  # an individual price equal to the group's: the spent days stay 210 000
+    world.db.add(MembershipPriceOverride(membership_id=m.id, amount=200_000, valid_from=date(2026, 12, 1), reason="акция", created_by=world.owner.id, created_at=datetime(2026, 11, 10)))
+    world.db.commit()
+    pay(world, s0, a, amount=600_000)
+    out = add(world, s0, group=b, mode="transfer")["effects"]
+    (money,) = [i for i in out["moves"] if i["code"] == "money"]
+    assert money["amount"] == 390_000 and "390 000" in money["text"] and money["group_name"] == a.name
+    ends = {i["code"]: i for i in out["ends"]}
+    assert set(ends) == {"individual_price", "scheduled_price"}
+    assert ends["individual_price"]["amount"] == 300_000 and ends["scheduled_price"]["amount"] == 200_000 and ends["scheduled_price"]["valid_from"] == "2026-12-01"
+    assert "01.12.2026" in ends["scheduled_price"]["text"] and "будет отменена" in ends["scheduled_price"]["text"]
+    assert out["texts"] == [i["text"] for i in (*out["moves"], *out["stays"], *out["ends"])]
+
+
+def test_t3_package_centre_says_lessons_at_the_price_of_the_new_group_and_the_rest(world, fixed_today):
+    from src.auth.leave_effects import package_split
+
+    # B costs 400 000 for 12 lessons.  390 000: 11 lessons cost round_1000(400 000 x 11 / 12 = 366 667) = 367 000, the 12th would reach 400 000 -> 11 lessons, the rest 390 000 - 367 000 = 23 000
+    assert package_split(390_000, 400_000, 12) == (11, 23_000)
+    # 600 000 = one whole package (400 000) + 200 000: 6 lessons cost 200 000 exactly (400 000 x 6 / 12), the 7th 233 000 -> 12 + 6 = 18 lessons, the rest 0
+    assert package_split(600_000, 400_000, 12) == (18, 0)
+    assert package_split(1_000, 400_000, 12) == (0, 1_000) and package_split(5, None, 12) is None
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    settings_block(world, period_mode="lessons", lessons_per_payment=12)
+    s0 = world.students[0]
+    pay(world, s0, a, amount=600_000)                                            # no lesson is held: nothing is spent, the whole 600 000 travels
+    out = add(world, s0, group=b, mode="transfer")["effects"]
+    (money,) = [i for i in out["moves"] if i["code"] == "money"]
+    assert money["amount"] == 600_000 and (money["lessons"], money["rest"]) == (18, 0)
+    assert money["text"] == f"Перейдёт 600 000 сум в группу «{b.name}»: 18 уроков по цене новой группы и остаток 0 сум".replace(a.name, b.name)
+
+
+def test_t3_a_leave_and_an_archiving_say_what_ends_and_what_stays_and_the_answer_equals_the_window(world, fixed_today):
+    from tests.pg_world import give_price
+
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    give_price(world.db, membership(world, s0, a), 250_000, reason="договорённость")
+    pause(world, a, s0, date(2026, 11, 25), date(2026, 11, 30))
+    pay(world, s0, a, amount=400_000)                                            # 21 days at 250 000 a month = 175 000 -> an advance of 225 000 that stays unless it is returned
+    client = owner(world)
+    window = client.get(f"{API}/org/groups/{a.id}/students/{s0.id}/leave-preview").json()["memberships"][0]["effects"]
+    assert window["kind"] == "leave" and codes(window["stays"]) == ["advance"] and window["stays"][0]["amount"] == 225_000
+    assert sorted(codes(window["ends"])) == ["individual_price", "pause"]
+    done = client.post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={}).json()["effects"]
+    assert done == window
+    # the same student archived (a second world student): the archive window and the answer
+    s1 = world.students[1]
+    joined(world, s1, a, date(2026, 11, 2))
+    win = client.get(f"{API}/org/students/{s1.id}/archive-preview").json()["memberships"][0]["effects"]
+    ans = client.post(f"{API}/org/students/{s1.id}/archive", json={}).json()["effects"]
+    assert win["kind"] == "archive" and ans == [win] and codes(win["stays"]) == ["debt"] and win["stays"][0]["amount"] == 210_000
+
+
+def test_t3_without_the_right_to_money_the_facts_come_without_sums(world, fixed_today):
+    from tests.pg_world import make_client
+
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))                                      # owes 210 000
+    admin = make_client(world, user=world.admin, org_role="admin")
+    effects = admin.get(f"{API}/org/groups/{a.id}/students/{s0.id}/leave-preview").json()["memberships"][0]["effects"]
+    (debt,) = effects["stays"]
+    assert debt["code"] == "debt" and "amount" not in debt and not any(ch.isdigit() for ch in debt["text"])
