@@ -216,3 +216,42 @@ def test_r5_a_clean_rebaseline_goes_through_with_the_author_in_the_journal_and_i
     world.db.expire_all()
     assert world.db.query(MoneyReconcileRun).filter(MoneyReconcileRun.note.like("%" + reason + "%")).one().status == "rebaselined"
     assert world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_rebaseline").one().actor_id is not None
+
+
+# ============================================================================================================ Р6: «baseline without findings» must be true on the first night
+from tests.test_money2_rows_pg import KINDS, baseline_of, make_payment, tamper  # noqa: E402
+
+
+def test_r6_a_foreign_row_of_the_first_night_is_reported_and_is_in_the_baseline_and_the_second_night_only_repeats_it(world):
+    ensure_billing(world)
+    row = make_payment(world)
+    tamper(world, "payment", row, KINDS["payment"][3])
+    first = night(world)
+    assert i5(first, world) == [f"payment:{row}:foreign"] and first["firstCentres"] == 1, "reported on the first night"
+    assert baseline_of(world, "payment", row) is not None, "and the row is in the baseline all the same"
+    second = night(world, mail=False)
+    assert i5(second, world) == [f"payment:{row}:foreign"], "only the repeat of foreign: no untraced / no_journal"
+    found = world.db.query(MoneyReconcileFinding).filter_by(run_id=second["runId"], subject_key=f"payment:{row}:foreign").one()
+    assert found.is_new is False and i2(second, world) == []
+    third = night(world)
+    assert i5(third, world) == [f"payment:{row}:foreign"] and i2(third, world) == []
+
+
+def test_r6_a_foreign_row_that_arrives_later_is_in_the_baseline_the_same_night_and_does_not_open_other_findings(world):
+    ensure_billing(world)
+    pay(world, world.students[0], amount=450_000)
+    night(world)
+    row = make_payment(world)                                      # arrives on the second night: no snapshot of a receipt (untraced) AND does not belong to its membership
+    tamper(world, "payment", row, KINDS["payment"][3])
+    keys = i5(night(world), world)
+    assert f"payment:{row}:foreign" in keys and f"payment:{row}:untraced" in keys
+    assert baseline_of(world, "payment", row) is None, "a row with a finding of a move (untraced) stays out of the baseline"
+
+
+def test_r6_old_rows_that_exist_before_the_first_night_without_a_receipt_snapshot_or_a_journal_line_give_no_findings(world):
+    ensure_billing(world)
+    make_payment(world)                                            # an old payment: no snapshot of a receipt
+    make_payment(world, voided=True)                               # an old cancellation: no line of the journal
+    first = night(world)
+    assert i5(first, world) == [] and first["baselined"] == 2
+    assert i5(night(world), world) == [] and i5(night(world), world) == []

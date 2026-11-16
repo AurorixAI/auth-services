@@ -13,7 +13,7 @@ Findings (key = ``kind:row id:code`` - the same row says the same key every nigh
   deleted      - the row is in the baseline and not in the table;
   reopened     - a cancelled row is live again / the fields of its cancellation changed / a transfer or a rate got cancelled (they are never cancelled);
   no_journal   - a row cancelled after the baseline has no line in the journal that names its id;
-  foreign      - the row does not belong to the membership / centre it points at;
+  foreign      - the row does not belong to the membership / centre it points at (reported every night until accepted, but the row is in the baseline all the same - the first night included);
   untraced     - a NEW payment with no receipt snapshot (every path that makes a payment writes one).
 (e) «the live payments of a membership add up to ``ledger.paid``» is I-1 (c) already (``check_rows``): not repeated here.  The gross sum of the payments (I-2) moves only by the rows of THIS comparison:
 the new live payments minus the payments cancelled since the baseline, counted by id - and only rows without a finding count (a row with a finding keeps its old baseline, so it would be «new» / «cancelled»
@@ -149,7 +149,7 @@ class RowVerdict:
     findings: List[RowFinding] = field(default_factory=list)
     confirm: Dict[Key, RowState] = field(default_factory=dict)        # rows whose baseline is written / updated (new rows, lawful moves)
     now: Dict[Key, RowState] = field(default_factory=dict)            # the rows as they are
-    flagged: Set[Key] = field(default_factory=set)                    # rows with a finding: their baseline stays as it was
+    flagged: Set[Key] = field(default_factory=set)                    # rows with a finding of a MOVE (not ``foreign``): their baseline stays as it was
     paid_delta: Dict[UUID, int] = field(default_factory=dict)         # per membership: the payments added minus the payments cancelled since the baseline (rows WITHOUT a finding only)
     rows: int = 0
     baselined: int = 0                                                # rows taken into the baseline tonight
@@ -244,7 +244,8 @@ def compare(now: Dict[Key, RowState], base: Dict[Key, BaseState], *, journal: Se
 
     def flag(key: Key, code: str, was: Optional[int] = None, new: Optional[int] = None) -> None:
         verdict.findings.append(RowFinding(key[0], key[1], code, was, new, state_of(now.get(key))))
-        verdict.flagged.add(key)
+        if code != "foreign":                                         # «the row does not belong to what it points at» is the STATE of the row, not a move: the row is taken into the baseline all the same (the finding repeats every night until accepted)
+            verdict.flagged.add(key)
 
     for key in sorted(set(now) | set(base), key=lambda k: (k[0], str(k[1]))):
         kind, current, before = KIND[key[0]], now.get(key), base.get(key)
