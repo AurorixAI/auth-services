@@ -123,7 +123,7 @@ def test_chain5_the_running_exam_after_a_transfer_o17_auth_side(w, clock):
     grant_money_right(w)                    # Money-1 A4: this chain transfers a student - for the money right
     clock.set("2026-10-21 17:20")
     as_of = datetime(2026, 10, 21, 11, 45)
-    assert client(w, "admin").post(f"{API}/org/groups/{w.G2.id}/students/{w.s2.id}").status_code == 200       # transfer: closes the membership of 9-А at 12:20 UTC
+    assert client(w, "admin").post(f"{API}/org/groups/{w.G2.id}/students/{w.s2.id}", json={"from_group_id": str(w.G1.id)}).status_code == 200       # transfer: closes the membership of 9-А at 12:20 UTC
     plain = w.svc.verify_group_student(str(w.G1.id), student_id=w.s2.display_id)
     assert plain["enrolled"] is False
     then = w.svc.verify_group_student(str(w.G1.id), student_id=w.s2.display_id, as_of=as_of)

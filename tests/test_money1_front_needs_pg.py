@@ -102,16 +102,17 @@ def test_r3_15_a_transfer_has_a_dry_run_that_says_what_travels_and_writes_nothin
     grant_money_right(world)
     admin = make_client(world, user=world.admin)
     url = f"/api/v1/auth/org/groups/{other.id}/students/{s0.id}"
-    dry = admin.post(url, params={"mode": "transfer", "dry_run": True})
+    src = {"from_group_id": str(world.group.id)}                                                      # R3 П2: a transfer names its source
+    dry = admin.post(url, params={"mode": "transfer", "dry_run": True}, json=src)
     assert dry.status_code == 200, dry.text
     assert dry.json()["dry_run"] is True and dry.json()["carried"], dry.json()                       # the sentence with the sum that would travel
     world.db.expire_all()
     mine = world.db.query(StudentGroup).filter_by(student_id=s0.id).all()
     assert [(m.group_id == world.group.id, m.is_active) for m in mine] == [(True, True)]               # nothing was written: still in the old group, no membership in the new one
-    done = admin.post(url, params={"mode": "transfer"})
+    done = admin.post(url, params={"mode": "transfer"}, json=src)
     assert done.status_code == 200 and done.json()["dry_run"] is False
     assert done.json()["carried"] == dry.json()["carried"]                                             # what the confirmation said is what travelled
-    bulk = admin.post(f"/api/v1/auth/org/groups/{world.group.id}/students/bulk", params={"mode": "transfer", "dry_run": True}, json={"student_ids": [str(s0.id)]})
+    bulk = admin.post(f"/api/v1/auth/org/groups/{world.group.id}/students/bulk", params={"mode": "transfer", "dry_run": True}, json={"student_ids": [str(s0.id)], "from_group_id": str(other.id)})
     assert bulk.status_code == 200 and bulk.json()["dry_run"] is True and bulk.json()["added"] == 1
     world.db.expire_all()
     assert world.db.query(StudentGroup).filter_by(student_id=s0.id, group_id=world.group.id, is_active=True).count() == 0     # the bulk dry run did not move him back

@@ -36,7 +36,10 @@ def _world(pg_session, clock):
 
 
 def _transfer(w, group, *, dry_run=False, expect=200, who="owner"):
-    r = client(w, who).post(f"{API}/org/groups/{group.id}/students/{w.u5.id}", params={"mode": "transfer", **({"dry_run": "true"} if dry_run else {})})
+    from tests.transfer_source import source_of
+
+    r = client(w, who).post(f"{API}/org/groups/{group.id}/students/{w.u5.id}", params={"mode": "transfer", **({"dry_run": "true"} if dry_run else {})},
+                            json={"from_group_id": source_of(w.db, w.u5.id, group.id)})      # R3 П2: a transfer names its source
     assert r.status_code == expect, r.text
     return r.json()
 
@@ -135,7 +138,7 @@ def test_d6_the_bulk_preview_names_the_new_account_of_every_student(pg_session, 
     w = _world(pg_session, clock)
     clock.set(THU_5_NOV)
     before = db_fingerprint(w.db)
-    r = client(w, "owner").post(f"{API}/org/groups/{w.g1.id}/students/bulk", params={"mode": "transfer", "dry_run": "true"}, json={"student_ids": [str(w.u5.id)]})
+    r = client(w, "owner").post(f"{API}/org/groups/{w.g1.id}/students/bulk", params={"mode": "transfer", "dry_run": "true"}, json={"student_ids": [str(w.u5.id)], "from_group_id": str(w.g2.id)})
     assert r.status_code == 200, r.text
     assert changed_tables(before, db_fingerprint(w.db)) == []
     (line,) = [x for x in r.json()["warnings"] if x["code"] == "transfer_balance_after"]

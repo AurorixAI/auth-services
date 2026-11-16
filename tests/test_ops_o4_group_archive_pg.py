@@ -246,7 +246,7 @@ def test_chain2_archive_a_group_with_a_student_missed_lessons_and_an_exam(w, clo
     expected = ids.remap(fixture("c2_archive_impact.json"))
     assert impact.status_code == 200 and impact.json() == expected, impact.json()
     # 2. s6 cannot move to the full 9-А (3/3); the administrator archives the student ("ушёл из центра")
-    bulk = cl.post(G.format(gid=w.G1.id) + "/students/bulk", json={"student_ids": [str(w.s6.id)]})
+    bulk = cl.post(G.format(gid=w.G1.id) + "/students/bulk", json={"student_ids": [str(w.s6.id)], "from_group_id": str(w.G3.id)})
     assert bulk.json()["added"] == 0 and "лимит" in bulk.json()["skipped_details"][0]["reason"]
     assert cl.post(f"/api/v1/auth/org/students/{w.s6.id}/archive", json={"reason": "ушёл из центра"}).status_code == 200
     again = cl.get(G.format(gid=w.G3.id) + "/archive-impact").json()
