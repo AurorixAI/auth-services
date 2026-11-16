@@ -325,3 +325,21 @@ def test_g3_numbers_the_other_direction_an_empty_centre_without_an_explicit_mode
     # an old centre without an entry reads as «payment date»; in an empty one the owner chooses «Общий месяц»: it acts from the start -> the share of the month 6 / 9 of 300 000 = 200 000, one entry
     debt, history = enrol_with_pay_from(world, {}, {"billing_anchor": "fixed_day", "billing_day": 1}, populated=False)
     assert debt == 200_000 and len(history) == 1 and history[0]["from"] == "min" and history[0]["billing_anchor"] == "fixed_day" and "defer" not in history[0]
+
+
+@pytest.mark.parametrize("state", ["none", "done"])
+def test_g1_the_file_of_students_reads_the_opening_columns_by_the_state_of_the_launch(world, fixed_today, state):
+    from tests.test_logicA_money_pg import centre, import_workbook
+
+    centre(world, 600_000)
+    settings_block(world, openings_state=state)
+    from tests.test_money2_wave_b_pg import _admin_with_the_right
+
+    admin = _admin_with_the_right(world)
+    data = import_workbook([["Шесть", "Ученик", 7, "", "Импорт-группа", "", date(2026, 10, 31), None, None]])
+    pv = admin.post(f"{API}/org/import/preview", files={"file": ("x.xlsx", data)}).json()
+    if state == "done":
+        assert pv["ok"] and pv["counts"]["openings"] == 0 and any("Нет прав вносить остатки" in i["message"] for i in pv["issues"])
+        assert owner(world).post(f"{API}/org/import/preview", files={"file": ("x.xlsx", data)}).json()["counts"]["openings"] == 1
+    else:
+        assert pv["ok"] and pv["counts"]["openings"] == 1

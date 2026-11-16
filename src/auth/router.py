@@ -1356,11 +1356,11 @@ def download_import_template(user: dict = Depends(require_org_admin)):
     )
 
 
-def _may_import_openings(user: dict, db: Session) -> bool:
-    """R3c Г1: the opening-balance columns of the file of students are read only for who may put an opening balance (the right to money AND the state of the launch); otherwise the student is imported without it, with a warning."""
+def _openings_open_to(user: dict, db: Session) -> bool:
+    """R3c Г1: the state-of-the-launch half of «may put an opening balance» (the routes add the right to money); the opening columns of the file of students are read only then, otherwise the student is imported without it, with a warning."""
     from .logica_service import OpeningService, opening_allowed
 
-    return has_payments_access(user, db) and opening_allowed(OpeningService(db).opening_state(user["org_id"]), user["org_role"])
+    return opening_allowed(OpeningService(db).opening_state(user["org_id"]), user["org_role"])
 
 
 @router.post("/org/import/preview", response_model=ImportPreviewResponseB)
@@ -1372,7 +1372,7 @@ async def import_preview(
     """Разобрать и проверить файл (dry-run) — ничего не записывается."""
     data = await _read_import_upload(file)
     try:
-        return import_ops.preview(user["org_id"], data, db, money=_may_import_openings(user, db))
+        return import_ops.preview(user["org_id"], data, db, money=has_payments_access(user, db) and _openings_open_to(user, db))
     except import_limits.ImportFileRejected as e:
         raise HTTPException(422, str(e))
 
@@ -1386,7 +1386,7 @@ async def import_commit(
     """Записать данные из файла в базу транзакционно (всё или ничего)."""
     data = await _read_import_upload(file)
     try:
-        return import_ops.commit(user["org_id"], user["user_id"], data, db, money=_may_import_openings(user, db))
+        return import_ops.commit(user["org_id"], user["user_id"], data, db, money=has_payments_access(user, db) and _openings_open_to(user, db))
     except import_limits.ImportFileRejected as e:
         raise HTTPException(422, str(e))
 
