@@ -36,7 +36,7 @@ def test_the_revision_is_the_head_and_follows_the_audit_key():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == [REVISION] and script.get_revision(REVISION).down_revision == BEFORE
+    assert script.get_heads() == ["mm21a1b2c3d4"] and script.get_revision("mm21a1b2c3d4").down_revision == REVISION and script.get_revision(REVISION).down_revision == BEFORE
 
 
 def actions(engine):

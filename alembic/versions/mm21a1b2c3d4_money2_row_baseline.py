@@ -11,7 +11,8 @@ Only ADDS:
 * ``money_reconcile_centres.rows_checked`` (this night looked at the rows of the centre - the next night knows the baseline is not new);
 * the CHECKs widen: the finding invariant ``I-5``, the run status ``partial``, the journal action ``student_transferred`` (a transfer leaves a line in the journal of money decisions).
 
-Rollback (downgrade): nothing is deleted - the wider CHECKs and the new columns stay (a row with a new value may already be there); only the baseline table is kept as well, an old reader ignores all of it.
+Rollback (downgrade): only the baseline table is dropped (it holds nothing but what the next night takes again, and its foreign key to the runs would stop the older revision that drops them); the wider
+CHECKs and the new columns stay - a row with a new value may already be there, an old reader ignores all of it.
 """
 from __future__ import annotations
 
@@ -78,4 +79,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    pass          # nothing is deleted: a run, a finding or a journal line of the new kind may already be there
+    op.execute("SET LOCAL lock_timeout = '5s'")
+    op.execute("DROP TABLE IF EXISTS money_row_baseline")          # a run, a finding or a journal line of the new kind may already be there: those stay

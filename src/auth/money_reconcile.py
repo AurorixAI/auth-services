@@ -211,7 +211,7 @@ def check_unresolved(org_id: UUID, teacher_id: Any, month: str, unresolved: Sequ
 # ====================================================================================================== the loader
 def _gap(gaps: Optional[Dict[str, int]], reason: str, count: int = 1) -> None:
     """Count what the night could NOT check, by reason (a quiet «nothing found» must not hide it, LESSONS 133)."""
-    if gaps is not None:
+    if gaps is not None and count > 0:
         gaps[reason] = gaps.get(reason, 0) + count
 
 
@@ -564,6 +564,7 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
     findings: List[Found] = []
     snapshots: Dict[UUID, List[Tuple[Any, Optional[date], Optional[int], Optional[int]]]] = {}
     plans: Dict[UUID, "mrows.RowVerdict"] = {}
+    read_at: Dict[UUID, datetime] = {}                       # the moment each centre began to be read: the snapshot is «as of» it, not of the end of the run (a record made while the run goes is NEWER than the snapshot)
     per_centre: Dict[UUID, int] = {}
     failed: List[str] = []
     why: Dict[str, str] = {}                                # centre id -> the first line of its error (the letter and the console name it)
@@ -573,6 +574,7 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
             why[str(org_id)] = "TimeBudget: no time left in the run"
             continue
         try:
+            read_at[org_id] = bc.utc_now()
             _read_only(db)
             snaps: List[Tuple[Any, Optional[date], Optional[int], Optional[int]]] = []
             plan: List[Tuple[UUID, "mrows.RowVerdict"]] = []
@@ -612,10 +614,9 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
     for org_id in orgs:
         db.add(MoneyReconcileCentre(run_id=run_row.id, org_id=org_id, status="failed" if str(org_id) in failed else "ok", findings_count=per_centre.get(org_id, 0),
                                     rows_checked=org_id in plans))
-    taken = bc.utc_now()
     for org_id, verdict in plans.items():
-        mrows.store(db, org_id, run_row.id, verdict, taken)
-    _store_snapshots(db, snapshots, taken)
+        mrows.store(db, org_id, run_row.id, verdict, read_at[org_id])
+    _store_snapshots(db, snapshots, read_at)
     if mail:
         run_row.mail_status = _mail(findings, new_count, failed, run_row.id, why)
         out["mail"] = run_row.mail_status
@@ -645,11 +646,11 @@ def _failed_text(failed: List[str], why: Dict[str, str]) -> str:
     return head
 
 
-def _store_snapshots(db, snapshots: Dict[UUID, List[Tuple[Any, Optional[date], Optional[int], Optional[int]]]], taken: datetime) -> None:
+def _store_snapshots(db, snapshots: Dict[UUID, List[Tuple[Any, Optional[date], Optional[int], Optional[int]]]], taken: Dict[UUID, datetime]) -> None:
     """One upsert per chunk (no ``get`` per membership); a centre that could not be checked has no snapshot of the night, so its next night is compared with its last good one."""
     for org_id, rows in snapshots.items():
         for start in range(0, len(rows), 1000):
-            values = [{"membership_id": m, "org_id": org_id, "covered_through": through, "lessons_covered": lessons, "paid": paid, "taken_at": taken} for m, through, lessons, paid in rows[start:start + 1000]]
+            values = [{"membership_id": m, "org_id": org_id, "covered_through": through, "lessons_covered": lessons, "paid": paid, "taken_at": taken[org_id]} for m, through, lessons, paid in rows[start:start + 1000]]
             insert = pg_insert(MoneyReconcileSnapshot).values(values)
             db.execute(insert.on_conflict_do_update(index_elements=[MoneyReconcileSnapshot.membership_id], set_={
                 "covered_through": insert.excluded.covered_through, "lessons_covered": insert.excluded.lessons_covered, "paid": insert.excluded.paid, "taken_at": insert.excluded.taken_at,

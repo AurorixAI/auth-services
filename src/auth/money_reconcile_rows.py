@@ -15,6 +15,9 @@ Findings (key = ``kind:row id:code`` - the same row says the same key every nigh
   no_journal   - a row cancelled after the baseline has no line in the journal that names its id;
   foreign      - the row does not belong to the membership / centre it points at;
   untraced     - a NEW payment with no receipt snapshot (every path that makes a payment writes one).
+(e) «the live payments of a membership add up to ``ledger.paid``» is I-1 (c) already (``check_rows``): not repeated here.  The gross sum of the payments (I-2) moves only by the rows of THIS comparison:
+the new live payments minus the payments cancelled since the baseline, counted by id - and only rows without a finding count (a row with a finding keeps its old baseline, so it would be «new» / «cancelled»
+again every night while the snapshot of the sum has taken it in already; the finding itself is the signal).
 A new row is not a finding by itself.  A row with a finding keeps its OLD baseline: the finding repeats every night until the team accepts it (``accept``); a mass re-baseline after a data
 migration or a restore is ``rebaseline`` - both write the journal of the centre.  Rows are read BEFORE the journal, in the one ``REPEATABLE READ`` transaction of the centre, so a row and its line of the
 journal (committed together) are always seen together.
@@ -97,7 +100,8 @@ KINDS: Tuple[RowKind, ...] = (
     RowKind("payout", PayrollPayout, ("org_id", "sheet_id", "teacher_id", "period_month", "amount", "paid_on", "method", "note", "sheet_revision", "sheet_total", "idempotency_key", "created_by", "created_at"),
             amount=PayrollPayout.amount, journal=Journal(OrgMoneyAudit, (PAYOUT_VOIDED,), ("payout_id",)),
             owner_joins="JOIN payroll_sheets ps ON ps.id = t.sheet_id", owner_wrong="ps.org_id <> t.org_id OR ps.teacher_id <> t.teacher_id OR ps.period_month <> t.period_month"),
-    RowKind("rate", PayrollRate, ("org_id", "teacher_id", "lesson_type", "percent", "valid_from", "note", "created_by", "created_at"), can_void=False),
+    RowKind("rate", PayrollRate, ("org_id", "teacher_id", "lesson_type", "percent", "valid_from", "note", "created_by", "created_at"), can_void=False,
+            owner_wrong="NOT EXISTS (SELECT 1 FROM organization_members om WHERE om.org_id = t.org_id AND om.user_id = t.teacher_id)"),
 )
 KIND = {k.name: k for k in KINDS}
 STATE_CODES = ("foreign",)                      # findings of the STATE of a row (not of a move): accepting one is remembered on the row
@@ -142,7 +146,7 @@ class RowVerdict:
     confirm: Dict[Key, RowState] = field(default_factory=dict)        # rows whose baseline is written / updated (new rows, lawful moves)
     now: Dict[Key, RowState] = field(default_factory=dict)            # the rows as they are
     flagged: Set[Key] = field(default_factory=set)                    # rows with a finding: their baseline stays as it was
-    paid_delta: Dict[UUID, int] = field(default_factory=dict)         # per membership: the payments added minus the payments cancelled since the baseline
+    paid_delta: Dict[UUID, int] = field(default_factory=dict)         # per membership: the payments added minus the payments cancelled since the baseline (rows WITHOUT a finding only)
     rows: int = 0
     baselined: int = 0                                                # rows taken into the baseline tonight
     first: bool = False                                               # the first night of the centre: the baseline is taken, nothing is compared
@@ -226,6 +230,7 @@ def foreign_rows(db, org_id: UUID) -> Set[Key]:
 def compare(now: Dict[Key, RowState], base: Dict[Key, BaseState], *, journal: Set[Key], receipts: Set[UUID], foreign: Set[Key], first: bool) -> RowVerdict:
     """The ONE comparison for all kinds.  ``journal``: rows a line of the journal names; ``receipts``: payments with a receipt snapshot; ``foreign``: rows that do not belong to what they point at."""
     verdict = RowVerdict(now=now, rows=len(now), first=first)
+    paid_moves: Dict[Key, Tuple[UUID, int]] = {}          # row -> (membership, +sum of a new live payment / -sum of a payment cancelled since the baseline)
 
     def flag(key: Key, code: str, was: Optional[int] = None, new: Optional[int] = None) -> None:
         verdict.findings.append(RowFinding(key[0], key[1], code, was, new))
@@ -247,7 +252,7 @@ def compare(now: Dict[Key, RowState], base: Dict[Key, BaseState], *, journal: Se
             if key in foreign:
                 flag(key, "foreign", None, current.amount)
             if kind.name == "payment" and not current.voided and not first:
-                verdict.paid_delta[current.membership_id] = verdict.paid_delta.get(current.membership_id, 0) + (current.amount or 0)
+                paid_moves[key] = (current.membership_id, current.amount or 0)
             if key not in verdict.flagged:
                 verdict.confirm[key] = current
             continue
@@ -263,11 +268,16 @@ def compare(now: Dict[Key, RowState], base: Dict[Key, BaseState], *, journal: Se
             elif kind.journal is not None and key not in journal:
                 flag(key, "no_journal", before.amount, current.amount)
             if kind.name == "payment":
-                verdict.paid_delta[current.membership_id] = verdict.paid_delta.get(current.membership_id, 0) - (before.amount or 0)
+                paid_moves[key] = (current.membership_id, -(before.amount or 0))
         if key in foreign and "foreign" not in before.accepted:
             flag(key, "foreign", before.amount, current.amount)
         if key not in verdict.flagged and (current.voided, current.void_fingerprint, current.amount) != (before.voided, before.void_fingerprint, before.amount):
             verdict.confirm[key] = current
+    # a row with a finding keeps its old baseline, so it would be «new» / «cancelled» again every night while the snapshot of the paid sum has taken it in already: only a row WITHOUT a finding
+    # explains a move of the sum (the finding itself is the signal for the rest)
+    for key, (membership_id, amount) in paid_moves.items():
+        if key not in verdict.flagged:
+            verdict.paid_delta[membership_id] = verdict.paid_delta.get(membership_id, 0) + amount
     verdict.baselined = sum(1 for k in verdict.confirm if k not in base)
     return verdict
 
@@ -318,6 +328,8 @@ def accept(db, key: str, reason: str, *, actor_id: Optional[UUID] = None, at: Op
     reason = (reason or "").strip()
     if not 3 <= len(reason) <= 500:
         raise ValueError("Причина: от 3 до 500 символов")
+    db.rollback()
+    db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))          # the same view of the centre as the night has
     try:
         kind_name, raw_id, code = key.split(":")
         row_id = UUID(raw_id)

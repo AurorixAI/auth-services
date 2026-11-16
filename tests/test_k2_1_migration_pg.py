@@ -95,7 +95,7 @@ def test_the_revision_follows_k3_and_k2_2_follows_it():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(config())
-    assert script.get_heads() == ["mg13a1b2c3d4"] and script.get_revision("wb4a1b2c3d4e5").down_revision == "k4a1b2c3d4e5" and script.get_revision("k2b1b2c3d4e5").down_revision == REVISION and script.get_revision("k4a1b2c3d4e5").down_revision == "k2b1b2c3d4e5"
+    assert script.get_heads() == ["mm21a1b2c3d4"] and script.get_revision("wb4a1b2c3d4e5").down_revision == "k4a1b2c3d4e5" and script.get_revision("k2b1b2c3d4e5").down_revision == REVISION and script.get_revision("k4a1b2c3d4e5").down_revision == "k2b1b2c3d4e5"
     assert script.get_revision(REVISION).down_revision == BEFORE
 
 
