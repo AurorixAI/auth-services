@@ -217,7 +217,7 @@ def _gap(gaps: Optional[Dict[str, int]], reason: str, count: int = 1) -> None:
 
 def _row_findings(org_id: UUID, verdict: "mrows.RowVerdict") -> List[Found]:
     """I-5 findings of the comparison of the rows as ``Found`` (key = kind + id + code: the same row says the same key every night)."""
-    return [Found(org_id, "I-5", f.key, str(f.row_id), None, f.was, f.now, {"kind": f.kind, "code": f.code, "what": ROW_CODE_TEXT[f.code]}) for f in verdict.findings]
+    return [Found(org_id, "I-5", f.key, str(f.row_id), None, f.was, f.now, {"kind": f.kind, "code": f.code, "what": ROW_CODE_TEXT[f.code], "state": f.state}) for f in verdict.findings]
 
 
 def _latest(into: Dict[Any, datetime], key: Any, moment: Optional[datetime]) -> None:

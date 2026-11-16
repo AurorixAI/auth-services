@@ -33,7 +33,7 @@ from sqlalchemy import BigInteger, Text, and_, case, cast, false, func, literal,
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.models.auth import (
-    GroupAudit, MembershipOpeningBalance, MembershipTransfer, MoneyReconcileCentre, MoneyRowBaseline, OrgMoneyAudit, PayrollPayout, PayrollRate, PaymentReceiptSnapshot, StudentPayment,
+    GroupAudit, MembershipOpeningBalance, MembershipTransfer, MoneyReconcileCentre, MoneyReconcileFinding, MoneyReconcileRun, MoneyRowBaseline, OrgMoneyAudit, PayrollPayout, PayrollRate, PaymentReceiptSnapshot, StudentPayment,
     StudentRefund, StudentWriteoff,
 )
 
@@ -137,6 +137,7 @@ class RowFinding:
     code: str
     was: Optional[int] = None
     now: Optional[int] = None
+    state: Optional[Dict[str, Any]] = None                # the row as the night saw it (None: deleted): stored with the finding, so that an acceptance can tell the row has moved since
 
     @property
     def key(self) -> str:
@@ -153,6 +154,11 @@ class RowVerdict:
     rows: int = 0
     baselined: int = 0                                                # rows taken into the baseline tonight
     first: bool = False                                               # the first night of the centre: the baseline is taken, nothing is compared
+
+
+def state_of(state: Optional["RowState"]) -> Optional[Dict[str, Any]]:
+    """What a finding remembers of the row (JSON): the fingerprint, whether it is cancelled, the fingerprint of the cancellation.  ``None``: the row is not in the table."""
+    return None if state is None else {"fingerprint": state.fingerprint, "voided": state.voided, "void_fingerprint": state.void_fingerprint}
 
 
 # ====================================================================================================== reading (SQL)
@@ -237,7 +243,7 @@ def compare(now: Dict[Key, RowState], base: Dict[Key, BaseState], *, journal: Se
     paid_moves: Dict[Key, Tuple[UUID, int]] = {}          # row -> (membership, +sum of a new live payment / -sum of a payment cancelled since the baseline)
 
     def flag(key: Key, code: str, was: Optional[int] = None, new: Optional[int] = None) -> None:
-        verdict.findings.append(RowFinding(key[0], key[1], code, was, new))
+        verdict.findings.append(RowFinding(key[0], key[1], code, was, new, state_of(now.get(key))))
         verdict.flagged.add(key)
 
     for key in sorted(set(now) | set(base), key=lambda k: (k[0], str(k[1]))):
@@ -328,6 +334,21 @@ def store(db, org_id: UUID, run_id: UUID, verdict: RowVerdict, at: datetime) -> 
             {"last_run_id": run_id, "last_confirmed_at": at}, synchronize_session=False)
 
 
+_MISSING = object()
+
+
+def _recorded_finding(db, org_id: UUID, key: str) -> Any:
+    """The state of the row that the LAST successful night of the centre recorded with this finding (``None``: it was a deleted row); ``_MISSING`` when that night did not record the finding (it appeared since,
+    or the night is an old one without the state)."""
+    last = (db.query(MoneyReconcileCentre.run_id).join(MoneyReconcileRun, MoneyReconcileRun.id == MoneyReconcileCentre.run_id)
+            .filter(MoneyReconcileCentre.org_id == org_id, MoneyReconcileCentre.status == "ok").order_by(MoneyReconcileRun.started_at.desc()).first())
+    if last is None:
+        return _MISSING
+    details = db.query(MoneyReconcileFinding.details).filter(MoneyReconcileFinding.run_id == last[0], MoneyReconcileFinding.org_id == org_id, MoneyReconcileFinding.invariant == "I-5",
+                                                              MoneyReconcileFinding.subject_key == key).scalar()
+    return _MISSING if details is None or "state" not in details else details["state"]
+
+
 def accept(db, key: str, reason: str, *, actor_id: Optional[UUID] = None, at: Optional[datetime] = None) -> Dict[str, Any]:
     """The team accepts ONE finding (``kind:row id:code``) with a reason: the baseline of the row takes the row as it is (a deleted row leaves the baseline; a state finding is remembered on
     the row) and the journal of the centre gets the key, the reason and the old / new fingerprint.  Refuses a key that is not a finding right now.  The caller commits."""
@@ -350,6 +371,11 @@ def accept(db, key: str, reason: str, *, actor_id: Optional[UUID] = None, at: Op
     if key not in found:
         raise ValueError("Сейчас такой находки нет")
     now, at = verdict.now.get((kind_name, row_id)), at or bc.utc_now()
+    seen = _recorded_finding(db, org_id, key)
+    if seen is _MISSING:
+        raise ValueError("Эту находку ещё не фиксировала ночная проверка — дождитесь ночного запуска")
+    if seen != state_of(now):
+        raise ValueError("Запись изменилась после находки — дождитесь ночного запуска и проверьте заново")
     before = db.get(MoneyRowBaseline, (kind_name, row_id))
     old_fp, new_fp = (before.fingerprint if before else None), (now.fingerprint if now else None)
     if code == "deleted":

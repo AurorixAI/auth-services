@@ -6,7 +6,7 @@ from datetime import timedelta
 
 import pytest
 
-from src.models.auth import MembershipOpeningBalance, MoneyReconcileFinding
+from src.models.auth import MembershipOpeningBalance, MoneyReconcileFinding, OrgMoneyAudit
 
 from tests.pg_world import business_today, ensure_billing, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_money2_rows_pg import CANCEL, i2, i5, night, sql
@@ -85,3 +85,32 @@ def test_r2_a_new_row_with_two_findings_of_its_arrival_is_accepted_one_by_one(wo
     assert i5(night(world), world) == [f"payment:{row}:no_journal"]
     assert accept(world, monkeypatch, f"payment:{row}:no_journal") == 0
     assert i5(night(world), world) == []
+
+
+# ============================================================================================================ Р3: the race between a finding and its acceptance
+def test_r3_the_row_moved_after_the_finding_the_acceptance_is_refused_and_the_baseline_is_untouched(world, monkeypatch, capsys):
+    from src.models.auth import MoneyRowBaseline
+
+    ensure_billing(world)
+    row = pid_of(pay(world, world.students[0], amount=450_000))
+    night(world)
+    sql(world, "UPDATE student_payments SET amount = 200 WHERE id = :id", id=row)
+    assert i5(night(world), world) == [f"payment:{row}:changed"]
+    base = world.db.get(MoneyRowBaseline, ("payment", row)).fingerprint
+    sql(world, "UPDATE student_payments SET amount = 900 WHERE id = :id", id=row)                  # between the night and the acceptance
+    assert accept(world, monkeypatch, f"payment:{row}:changed") == 4
+    assert "Запись изменилась после находки" in capsys.readouterr().err
+    world.db.expire_all()
+    assert world.db.get(MoneyRowBaseline, ("payment", row)).fingerprint == base
+    assert world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_accept").count() == 0
+    assert i5(night(world), world) == [f"payment:{row}:changed"]                                   # the night sees the row as it is now ...
+    assert accept(world, monkeypatch, f"payment:{row}:changed") == 0                               # ... and then the acceptance is of what the night saw
+
+
+def test_r3_a_finding_that_no_night_has_recorded_yet_is_not_accepted(world, monkeypatch, capsys):
+    ensure_billing(world)
+    row = pid_of(pay(world, world.students[0], amount=450_000))
+    night(world)
+    sql(world, "UPDATE student_payments SET amount = 200 WHERE id = :id", id=row)
+    assert accept(world, monkeypatch, f"payment:{row}:changed") == 4
+    assert "ещё не фиксировала ночная проверка" in capsys.readouterr().err
