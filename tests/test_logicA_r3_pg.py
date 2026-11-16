@@ -350,6 +350,9 @@ def test_m13_a_return_that_replaces_an_opening_of_a_membership_with_money_needs_
     put_opening(world, m, {"paid_until": "2026-10-10"})
     seed_payment(world, m, 100_000, D(2026, 10, 11))
     assert owner(world).post(f"{API}/org/groups/{world.group.id}/students/{s0.id}/leave", json={}).status_code == 200
+    from src.auth import payment_status as _ps
+
+    fixed_today(_ps.business_today() + timedelta(days=1))          # R3 П1: the same day it would be a cancelled leaving (no new opening at all); the next day it is the ordinary return
     url = f"{API}/org/groups/{world.group.id}/students/{s0.id}"
     body = {"opening_balance": {"debt_amount": 100_000, "debt_on": "2026-09-30"}}
     r = owner(world).post(url, params={"mode": "add"}, json=body)

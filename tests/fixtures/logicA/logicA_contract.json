@@ -8529,6 +8529,18 @@
             ],
             "title": "Receipt No"
           },
+          "recorded_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded On"
+          },
           "refund_id": {
             "anyOf": [
               {
@@ -8628,6 +8640,7 @@
           "writeoff_id",
           "refund_id",
           "reason",
+          "recorded_on",
           "from_group_name",
           "from_membership_id",
           "to_group_name",
