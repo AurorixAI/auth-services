@@ -1998,7 +1998,7 @@ class PaymentService:
             self._check_seen("refundable", expected_refundable, before.refundable, refundable=before.refundable, advance=before.advance)
             limit = bl.refund_limit(inp, effective_on)
             if amount > limit.amount:
-                raise RefundExceedsAdvance(self._refund_refusal(limit), refundable=limit.amount)
+                raise RefundExceedsAdvance(self._refund_refusal(limit, membership.id), refundable=limit.amount)
             row = self._add_refund(
                 org_id, lambda number: StudentRefund(
                     org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id,
@@ -2021,10 +2021,19 @@ class PaymentService:
         return RefundCreated(refund=self._refund_out(row), advance_before=before.advance, advance_after=after.advance,
                              row=self._rows([entry])[0])
 
-    @staticmethod
-    def _refund_refusal(limit: "bl.RefundLimit") -> str:
-        """Money-1 G-13: a refund that does not fit says WHY: because of the money of its own day / today, or because a later outflow was made when the account held more."""
+    def _group_of_transfer_out(self, membership_id: UUID) -> Optional[str]:
+        """Money-2 T8: the name of the group the money of this membership went to on its latest transfer (``None``: it never went anywhere)."""
+        return (self.db.query(Group.name).join(StudentGroup, StudentGroup.group_id == Group.id).join(MembershipTransfer, MembershipTransfer.to_membership_id == StudentGroup.id)
+                .filter(MembershipTransfer.from_membership_id == membership_id, MembershipTransfer.voided_at.is_(None)).order_by(MembershipTransfer.at.desc()).limit(1).scalar())
+
+    def _refund_refusal(self, limit: "bl.RefundLimit", membership_id: UUID) -> str:
+        """Money-1 G-13: a refund that does not fit says WHY: because of the money of its own day / today, or because a later outflow was made when the account held more.
+        Money-2 T8: nothing left to return because the advance went to another group on a transfer - the refusal names that group."""
         later = limit.blocked_by
+        if not limit.amount:
+            moved_to = self._group_of_transfer_out(membership_id)
+            if moved_to:
+                return f"Аванс ученика перешёл в группу «{moved_to}» — возврат оформите там"
         if later is None:
             return f"Вернуть можно не больше {_sum(limit.amount)}" if limit.amount else "Возвращать нечего: аванса нет"
         fact = f"уже есть {'возврат' if later.kind == bl.REFUND else 'перевод в другую группу'} от {later.on.strftime('%d.%m')} — выберите дату не раньше"

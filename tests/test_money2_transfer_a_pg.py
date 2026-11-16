@@ -674,3 +674,26 @@ def test_t7_the_list_of_payments_says_which_cancelled_payment_can_be_restored_an
     void(world, {"payment": new_q})                                              # the restored payment is cancelled again: it can be restored (the first one stays replaced by it)
     got = listed()
     assert got[new_q["id"]] == (True, None) and got[q["payment"]["id"]][0] is False
+
+
+# ---------------------------------------------------------------------------------------------------- T8 a refusal of a refund names the group where the advance went
+
+
+def test_t8_a_refund_in_the_old_group_names_the_group_where_the_advance_went_and_a_plain_empty_account_keeps_its_text(world, fixed_today):
+    # paid 600 000 into A (02.11 at 300 000 a month); the transfer on 22.11 takes 600 000 - 21 x 10 000 = 390 000 to B: A holds no advance any more, B holds 390 000
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    pay(world, s0, a, amount=600_000)
+    add(world, s0, group=b, mode="transfer")
+    body = {"amount": 100_000, "method": "cash", "reason": "Возврат по просьбе"}
+    r = owner(world).post(f"{API}/org/memberships/{membership(world, s0, a).id}/refunds", json=body)
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["code"] == "REFUND_EXCEEDS_ADVANCE" and r.json()["detail"]["message"] == "Аванс ученика перешёл в группу «Бета» — возврат оформите там"
+    # the group that holds the money refunds as usual
+    assert owner(world).post(f"{API}/org/memberships/{membership(world, s0, b).id}/refunds", json=body).status_code == 201
+    # a student who simply has no advance (no transfer): the old text
+    s1 = world.students[1]
+    add(world, s1, group=c, mode="add")
+    r = owner(world).post(f"{API}/org/memberships/{membership(world, s1, c).id}/refunds", json=body)
+    assert r.status_code == 422 and r.json()["detail"]["message"] == "Возвращать нечего: аванса нет"
