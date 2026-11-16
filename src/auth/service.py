@@ -2822,6 +2822,8 @@ class AuthService:
                 new_period = open_period(existing, now_dt)
                 if actor_id:      # Money-2 T6: back on the day of leaving = the leaving is cancelled (prices and pauses come back); else the ordinary return
                     leave_undo_result = leave_undo.try_undo(self.db, org_id, existing, left_before, now_dt, actor_id, coming_from=[m.id for m in closing], money=payments_detail)
+                    if leave_undo_result and leave_undo_result["undone"] and (pay_from is not None or opening_balance is not None):      # R3 П1: the stay goes on as if he had not left - no new start, no new opening
+                        raise ops_rules.unprocessable("LEAVE_UNDO_NO_START", "Ученик возвращается в день ухода — уход отменяется, дата начала оплаты и остаток не меняются")
                 if not (leave_undo_result and leave_undo_result["undone"]):
                     on_membership_returned(self.db, existing, now_dt, actor_id)  # LOGIC-A (F13): the price of the group again
             if closing:
@@ -2862,7 +2864,7 @@ class AuthService:
 
         # Money-1 B1 «Оплата с»: a new stay is charged from the first lesson of the group (or the day the owner chose); a transfer has its own day (the one after it)
         billing = None
-        if new_period is not None and not closing:
+        if new_period is not None and not closing and not (leave_undo_result and leave_undo_result["undone"]):      # R3 П1: a cancelled leaving keeps the old «Оплата с» (the stay is the same stay)
             from . import billing_start  # lazy: pulls in the payments modules
 
             cache = getattr(self, "_billing_cache", None)        # a bulk adding: the schedule and the settings of the centre are read ONCE for all the students (R3 code №13)
