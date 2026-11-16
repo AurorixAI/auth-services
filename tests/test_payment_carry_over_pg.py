@@ -636,7 +636,7 @@ def test_replace_takes_the_family_before_the_payment(two, engine):
     holder.execute(text("SELECT id FROM student_groups WHERE id = :m FOR UPDATE"), {"m": m.id})
     body = PaymentReplace(amount=777_000, paid_on=day(-10), method="cash")
     thread, outcome = run_in_thread(engine, lambda session: PaymentService(session).replace_payment(
-        str(two.org.id), original["id"], str(two.owner.id), body, "исправление"))      # Money-1 V6: the reason of a correction is mandatory
+        str(two.org.id), original["id"], str(two.owner.id), body, "исправление", actor_role="owner"))      # Money-1 V6: the reason of a correction is mandatory
     wait_until_blocked(engine)
     assert row_is_free(engine, "student_payments", original["id"])       # waiting for the membership, payment untouched
     holder.rollback()

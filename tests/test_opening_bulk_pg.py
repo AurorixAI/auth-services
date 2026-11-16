@@ -649,7 +649,7 @@ def test_batches_of_different_rows_and_a_payment_in_parallel_all_land_without_a_
     mk = lambda m: [{"membership_id": str(m.id), "version": "-", "paid_until": "2026-11-30"}]
     digests = [preview(world, mk(m))["digest"] for m in ms[:2]]
     t = [run_in_thread(engine, lambda s, m=m, d=d: _service_apply(s, world, mk(m), d)) for m, d in zip(ms[:2], digests)]
-    t.append(run_in_thread(engine, lambda s: PaymentService(s).create_payment(str(world.org.id), ms[2].id, str(world.owner.id), PaymentCreate(amount=100_000, paid_on=TODAY, method="cash"))))
+    t.append(run_in_thread(engine, lambda s: PaymentService(s).create_payment(str(world.org.id), ms[2].id, str(world.owner.id), PaymentCreate(amount=100_000, paid_on=TODAY, method="cash"), actor_role="owner")))
     for th, _ in t:
         th.join(timeout=60)
     for _, o in t:

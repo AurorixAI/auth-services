@@ -136,7 +136,7 @@ def body(amount, **kw):
 def test_parallel_payments_to_one_membership_add_up_with_distinct_receipt_numbers(world, engine):
     m = prepared(world)
     org, actor = str(world.org.id), str(world.owner.id)
-    threads = [run_in_thread(engine, service_call(org, lambda s, a=a: s.create_payment(org, m.id, actor, body(a))))
+    threads = [run_in_thread(engine, service_call(org, lambda s, a=a: s.create_payment(org, m.id, actor, body(a), actor_role="owner")))
                for a in (100_000, 200_000, 300_000, 400_000)]
     for t, _ in threads:
         t.join(timeout=60)
@@ -157,13 +157,13 @@ def test_a_refund_and_a_void_of_its_payment_never_both_win(world, engine):
     m = prepared(world)
     org, actor = str(world.org.id), str(world.owner.id)
     service = PaymentService(world.db)
-    created = service.create_payment(org, m.id, actor, body(12_000_000))
+    created = service.create_payment(org, m.id, actor, body(12_000_000), actor_role="owner")
     pid = created.payment.id
     stay(world, m, D(2026, 1, 5), D(2026, 10, 31))                         # he left (a literal day, LESSONS 102: with the real day 12 000 000 = 24 months of 500 000 was spent on 04.01.2028): the advance is refundable
     refundable = service._row(org, m.id).refundable
     assert refundable > 0
     t1, o1 = run_in_thread(engine, service_call(org, lambda s: s.create_refund(
-        org, m.id, actor, amount=refundable, method="cash", reason=None, note=None)))
+        org, m.id, actor, amount=refundable, method="cash", reason=None, note=None, actor_role="owner")))
     t2, o2 = run_in_thread(engine, service_call(org, lambda s: s.void_payment(org, pid, actor, "ошибка")))
     for t in (t1, t2):
         t.join(timeout=60)
@@ -184,7 +184,7 @@ def test_a_payment_and_a_transfer_of_the_same_student_do_not_deadlock(world, eng
     org, actor = str(world.org.id), str(world.owner.id)
     from src.auth.service import AuthService
 
-    t1, o1 = run_in_thread(engine, lambda s: PaymentService(s).create_payment(org, m.id, actor, body(5_000_000)))
+    t1, o1 = run_in_thread(engine, lambda s: PaymentService(s).create_payment(org, m.id, actor, body(5_000_000), actor_role="owner"))
     t2, o2 = run_in_thread(engine, lambda s: AuthService(s).add_student_to_group(
         org, str(second.id), str(world.students[0].id), actor_id=actor, payments_detail=True, money_right=True))
     for t in (t1, t2):
@@ -204,9 +204,9 @@ def test_a_payment_and_a_transfer_of_the_same_student_do_not_deadlock(world, eng
 def test_a_void_and_a_replace_of_the_same_payment_one_wins(world, engine):
     m = prepared(world)
     org, actor = str(world.org.id), str(world.owner.id)
-    pid = PaymentService(world.db).create_payment(org, m.id, actor, body(700_000)).payment.id
+    pid = PaymentService(world.db).create_payment(org, m.id, actor, body(700_000), actor_role="owner").payment.id
     t1, o1 = run_in_thread(engine, service_call(org, lambda s: s.void_payment(org, pid, actor, "ошибка")))
-    t2, o2 = run_in_thread(engine, service_call(org, lambda s: s.replace_payment(org, pid, actor, body(800_000), "исправление")))
+    t2, o2 = run_in_thread(engine, service_call(org, lambda s: s.replace_payment(org, pid, actor, body(800_000), "исправление", actor_role="owner")))
     for t in (t1, t2):
         t.join(timeout=60)
     assert [("value" in o) for o in (o1, o2)].count(True) >= 1

@@ -345,6 +345,10 @@ class PaymentForbidden(PaymentError):
     status_code = 403
 
 
+class BackdateOwnerOnly(PaymentForbidden):
+    code = "BACKDATE_OWNER_ONLY"
+
+
 class PaymentFileTooLarge(PaymentError):
     status_code = 413
 
@@ -1323,6 +1327,12 @@ class PaymentService:
             raise PaidOnRange(f"{what} старше 3 лет")
 
     @staticmethod
+    def _check_backdate(day: date, today: date, actor_role: str) -> None:
+        """Money-2 T17: the ONE rule of back-dating - an administrator (any role but the owner) enters a date no earlier than ``ADMIN_BACKDATE_DAYS`` days before today; older is the owner's (403)."""
+        if actor_role != "owner" and day < today - timedelta(days=ps.ADMIN_BACKDATE_DAYS):
+            raise BackdateOwnerOnly(f"Запись старше {ps.ADMIN_BACKDATE_DAYS} дней вносит владелец")
+
+    @staticmethod
     def _method_of(method: Optional[str], *, required: bool = False) -> str:
         if method is None:
             if required:
@@ -1521,12 +1531,13 @@ class PaymentService:
 
     @deadlock_guard
     def create_payment(
-        self, org_id: str, membership_id: UUID, actor_id: str, data: PaymentCreate, idempotency_key: Optional[UUID] = None
+        self, org_id: str, membership_id: UUID, actor_id: str, data: PaymentCreate, idempotency_key: Optional[UUID] = None, *, actor_role: str
     ) -> PaymentCreated:
         today = ps.business_today()
         try:
             self._check_amount(data.amount)
             self._check_date(data.paid_on, today)
+            self._check_backdate(data.paid_on, today, actor_role)
             method = self._method_of(data.method, required=True)      # Money-1 V5: the method is chosen, never «other» by silence
             membership = self._membership(org_id, membership_id, lock=True)
             self._guard_duplicate(org_id, membership, data, idempotency_key)
@@ -1591,7 +1602,7 @@ class PaymentService:
 
     @deadlock_guard
     def restore_payment(
-        self, org_id: str, payment_id: UUID, actor_id: str, reason: Optional[str], actor_role: str = "admin", consequence: Optional[Dict[str, str]] = None,
+        self, org_id: str, payment_id: UUID, actor_id: str, reason: Optional[str], *, actor_role: str, consequence: Optional[Dict[str, str]] = None,
     ) -> PaymentCreated:
         """Money-2 T7: «Восстановить оплату» - the payment cancelled by mistake comes back as a NEW payment of the same sum, date of payment and method (``replaces_payment_id`` = the cancelled one: a
         restoration is a correction by the same sum, so the till, the chain of versions and the nightly reconciliation treat it as one).  The reason is mandatory; a cancelled payment is restored ONCE
@@ -1643,7 +1654,8 @@ class PaymentService:
         data: PaymentCreate,
         reason: Optional[str] = None,
         idempotency_key: Optional[UUID] = None,
-        actor_role: str = "admin",
+        *,
+        actor_role: str,
         consequence: Optional[Dict[str, str]] = None,
     ) -> PaymentCreated:
         """Void the old payment and insert the corrected one - one transaction.  The "before" of the answer is the account
@@ -1663,6 +1675,8 @@ class PaymentService:
             family = self._lock_family(org_id, probe.student_id)
             membership = self._membership(org_id, probe.membership_id)
             old = self._lock_payment(org_id, payment_id)
+            if data.paid_on != old.paid_on:               # Money-2 T17: a correction that keeps the date (the method, the note, the sum) is not back-dating
+                self._check_backdate(data.paid_on, today, actor_role)
             was = self._accounts(org_id, family)          # Money-1 V2: the accounts WITH the old payment (the line of the journal of decisions); G-4b: of EVERY group of the student
             loader = self._loader(org_id, today)
             loader.load_facts([membership.id])
@@ -1879,7 +1893,7 @@ class PaymentService:
     @deadlock_guard
     def create_writeoff(
         self, org_id: str, membership_id: UUID, actor_id: str, *, amount: Optional[int], whole: bool, reason: str,
-        effective_on: Optional[date] = None, actor_role: str = "admin", expected_debt: Optional[int] = None,
+        effective_on: Optional[date] = None, actor_role: str, expected_debt: Optional[int] = None,
         idempotency_key: Optional[UUID] = None, consequence: Optional[Dict[str, str]] = None,
     ) -> WriteoffCreated:
         """Write off a debt (≤ the debt now, or ``whole``); the reason 3..500 characters; archived students are allowed."""
@@ -1888,6 +1902,7 @@ class PaymentService:
             reason = self._check_reason(reason)
             effective_on = effective_on or today
             self._check_date(effective_on, today, "Дата прощения долга")
+            self._check_backdate(effective_on, today, actor_role)
             membership = self._membership(org_id, membership_id)
             family = self._lock_family(org_id, membership.student_id)
             twin = self._same_key(StudentWriteoff, org_id, idempotency_key)
@@ -1972,7 +1987,7 @@ class PaymentService:
     @deadlock_guard
     def create_refund(
         self, org_id: str, membership_id: UUID, actor_id: str, *, amount: int, method: Optional[str],
-        reason: Optional[str], note: Optional[str], effective_on: Optional[date] = None, actor_role: str = "admin",
+        reason: Optional[str], note: Optional[str], effective_on: Optional[date] = None, actor_role: str,
         expected_refundable: Optional[int] = None, idempotency_key: Optional[UUID] = None,
         consequence: Optional[Dict[str, str]] = None,
     ) -> RefundCreated:
@@ -1982,6 +1997,7 @@ class PaymentService:
             method = self._method_of(method, required=True)
             effective_on = effective_on or today
             self._check_date(effective_on, today, "Дата возврата")
+            self._check_backdate(effective_on, today, actor_role)
             if not isinstance(amount, int) or isinstance(amount, bool) or amount < 1 or amount > MAX_MONEY:
                 raise AmountRange(f"Сумма: от 1 до {_num(MAX_MONEY)}")
             reason = self._check_reason(reason)         # Money-1 V6: money is returned for a stated reason (3..500)
@@ -2195,7 +2211,7 @@ class PaymentService:
 
     def preview(
         self, org_id: str, membership_id: UUID, *, amount: Optional[int] = None, paid_on: Optional[date] = None,
-        replace_payment_id: Optional[UUID] = None,
+        replace_payment_id: Optional[UUID] = None, actor_role: str,
     ) -> PaymentPreview:
         """«Что закроет»: the debt and the running period today + where the typed sum would go.  Writes nothing."""
         today = ps.business_today()
@@ -2214,6 +2230,8 @@ class PaymentService:
                 raise PaymentNotFound("Оплата не найдена")
             exclude = old.id
             old_payment = old
+        if old_payment is None or old_payment.paid_on != paid_on:         # Money-2 T17: the window refuses as the write does
+            self._check_backdate(paid_on, today, actor_role)
         inp = loader.build_input(membership_id, exclude_payment=exclude)
         before = bl.run_ledger(inp)
         price = loader.books.price(membership_id, membership.group_id, today)

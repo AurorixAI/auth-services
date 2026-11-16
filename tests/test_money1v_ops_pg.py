@@ -664,7 +664,7 @@ def test_r3_k5_two_requests_with_one_key_write_one_forgiveness(world, fixed_toda
 
     def call(session):
         barrier.wait()
-        return PaymentService(session).create_writeoff(str(world.org.id), m.id, str(world.owner.id), amount=20_000, whole=False, reason="льгота", idempotency_key=key_)
+        return PaymentService(session).create_writeoff(str(world.org.id), m.id, str(world.owner.id), amount=20_000, whole=False, reason="льгота", idempotency_key=key_, actor_role="owner")
 
     (t1, o1), (t2, o2) = run_in_thread(engine, call), run_in_thread(engine, call)
     _join(t1, t2)
@@ -684,7 +684,7 @@ def test_r3_k5_two_different_keys_with_the_sum_they_saw_the_second_gets_balance_
     def call(session):
         barrier.wait()
         return PaymentService(session).create_writeoff(str(world.org.id), m.id, str(world.owner.id), amount=None, whole=True, reason="льгота",
-                                                       expected_debt=100_000, idempotency_key=uuid4())
+                                                       expected_debt=100_000, idempotency_key=uuid4(), actor_role="owner")
 
     (t1, o1), (t2, o2) = run_in_thread(engine, call), run_in_thread(engine, call)
     _join(t1, t2)
@@ -708,7 +708,7 @@ def test_r3_k5_two_refunds_of_two_students_of_one_centre_never_get_one_number(wo
     def call(mid):
         def run(session):
             barrier.wait()
-            return PaymentService(session).create_refund(str(world.org.id), mid, str(world.owner.id), amount=10_000, method="cash", reason="возврат", note=None)
+            return PaymentService(session).create_refund(str(world.org.id), mid, str(world.owner.id), amount=10_000, method="cash", reason="возврат", note=None, actor_role="owner")
         return run
 
     (t1, o1), (t2, o2) = run_in_thread(engine, call(m0.id)), run_in_thread(engine, call(m1.id))

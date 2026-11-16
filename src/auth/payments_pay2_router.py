@@ -79,7 +79,7 @@ def payment_preview(
     """«Что закроет»: долг и текущий период сегодня + куда пойдёт введённая сумма. Ничего не записывает."""
     try:
         return PaymentService(db).preview(
-            user["org_id"], membership_id, amount=amount, paid_on=paid_on, replace_payment_id=replace_payment_id)
+            user["org_id"], membership_id, amount=amount, paid_on=paid_on, replace_payment_id=replace_payment_id, actor_role=_role(user))
     except PaymentError as exc:
         raise _http(exc)
 

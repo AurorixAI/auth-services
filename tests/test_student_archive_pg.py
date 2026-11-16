@@ -971,7 +971,7 @@ def test_a_payment_that_waits_for_an_archiving_is_refused_when_it_gets_the_lock(
     held_student = holder.query(Student).filter_by(id=s.id).with_for_update(key_share=True).one()
     held_memberships = holder.query(StudentGroup).filter_by(student_id=s.id).with_for_update(key_share=True).all()
     thread, outcome = run_in_thread(engine, lambda session: PaymentService(session).create_payment(
-        str(two.org.id), m, str(two.owner.id), PaymentCreate(amount=450000, paid_on=business_today(), method="cash")))
+        str(two.org.id), m, str(two.owner.id), PaymentCreate(amount=450000, paid_on=business_today(), method="cash"), actor_role="owner"))
     wait_until_blocked(engine)
     for membership in held_memberships:
         membership.is_active, membership.left_at = False, datetime.utcnow()
@@ -1003,7 +1003,7 @@ def test_archive_and_a_payment_in_parallel_never_deadlock_and_never_leave_a_paym
     def pay_it(session):
         barrier.wait()
         return PaymentService(session).create_payment(
-            str(two.org.id), m, str(two.owner.id), PaymentCreate(amount=450000, paid_on=business_today(), method="cash"))
+            str(two.org.id), m, str(two.owner.id), PaymentCreate(amount=450000, paid_on=business_today(), method="cash"), actor_role="owner")
 
     t1, archived = run_in_thread(engine, archive_it)
     t2, paid = run_in_thread(engine, pay_it)

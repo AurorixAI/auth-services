@@ -390,7 +390,7 @@ def create_payment(
     try:
         out, effects = money_effects.run_with_effects(
             db, user["org_id"], [membership_id], user.get("org_role") == "owner",
-            lambda: PaymentService(db).create_payment(user["org_id"], membership_id, user["user_id"], request, idempotency_key), dry_run=dry_run)
+            lambda: PaymentService(db).create_payment(user["org_id"], membership_id, user["user_id"], request, idempotency_key, actor_role=user["org_role"]), dry_run=dry_run)
         out.money_effects, out.dry_run = effects, dry_run                   # A3: a late payment moves the saved sheets - ALL the months it touches (R3 #17)
         return out
     except PaymentError as exc:

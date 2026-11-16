@@ -282,7 +282,7 @@ def test_concurrent_payments_of_one_centre_get_distinct_numbers(world, engine, m
             with Session(engine) as session:
                 created = PaymentService(session).create_payment(
                     str(world.org.id), membership_id, str(world.owner.id),
-                    PaymentCreate(amount=1000 + len(results), paid_on=day(-2), valid_to=day(20), method="cash"))
+                    PaymentCreate(amount=1000 + len(results), paid_on=day(-2), valid_to=day(20), method="cash"), actor_role="owner")
                 results.append(created.payment.receipt_no)
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)

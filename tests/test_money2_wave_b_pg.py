@@ -228,3 +228,79 @@ def test_t14_the_forgiveness_and_its_cancellation_name_the_pay_of_the_teacher_th
     forgiveness = undo.json()["money_effects"]["forgiveness"]
     assert forgiveness["teacher_pay"] == -125_000 and forgiveness["text"].startswith("Отмена прощения вернёт долг. Эти уроки перестанут оплачиваться преподавателю")
     assert owner(world).post(f"{API}/org/writeoffs/{wid}/void", json={"reason": "Ошибка"}).json()["money_effects"]["forgiveness"]["teacher_pay"] == -125_000
+
+
+# ---------------------------------------------------------------------------------------------------- T17 back-dating is the owner's after 7 days
+
+
+OWNER_ONLY = "Запись старше 7 дней вносит владелец"
+
+
+def _admin_with_the_right(world):
+    from tests.ops_helpers import grant_money_right
+    from tests.pg_world import make_client
+
+    grant_money_right(world)
+    return make_client(world, user=world.admin, org_role="admin")
+
+
+def test_t17_an_administrator_may_enter_a_payment_dated_seven_days_back_and_not_eight_the_owner_any_day(world, fixed_today):
+    # today 20.11.2026.  7 days back = 13.11 (allowed), 8 days = 12.11 (refused for an administrator).  The preview refuses as the write does.
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    for s in (s0, s1, s2):
+        stay(world, membership(world, s, a), date(2026, 11, 2))
+    admin = _admin_with_the_right(world)
+    url = f"{API}/org/memberships/{membership(world, s0, a).id}/payments"
+    body = lambda day: {"amount": 100_000, "paid_on": day, "method": "cash"}      # noqa: E731
+    assert admin.post(url, json=body("2026-11-13")).status_code == 201
+    r = admin.post(url, json=body("2026-11-12"))
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "BACKDATE_OWNER_ONLY" and r.json()["detail"]["message"] == OWNER_ONLY, r.text
+    assert admin.post(url, params={"dry_run": "true"}, json=body("2026-11-12")).status_code == 403            # the window refuses as the write does
+    assert admin.get(f"{url}/preview", params={"amount": 100_000, "paid_on": "2026-11-12"}).status_code == 403
+    assert admin.get(f"{url}/preview", params={"amount": 100_000, "paid_on": "2026-11-13"}).status_code == 200
+    assert owner(world).post(url, json=body("2026-11-12")).status_code == 201                                  # the owner: as before
+    assert owner(world).post(url, json=body("2026-10-05")).status_code == 201
+
+
+def test_t17_the_correction_of_the_date_the_refund_and_the_forgiveness_follow_the_same_limit_a_correction_that_keeps_the_date_does_not(world, fixed_today):
+    # S0 paid 300 000 on 02.11 (owner).  Debt of S1 (nothing paid) for the writeoff.  Today 20.11: 8 days back = 12.11.
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    for s in (s0, s1, s2):
+        stay(world, membership(world, s, a), date(2026, 11, 2))
+    paid = pay(world, s0, a, amount=300_000, paid_on=date(2026, 11, 2))["payment"]
+    admin = _admin_with_the_right(world)
+    replace = lambda **kw: admin.post(f"{API}/org/payments/{paid['id']}/replace", json={"amount": 300_000, "paid_on": "2026-11-02", "method": "cash", "reason": "Исправление", **kw})      # noqa: E731
+    # only the method of an old payment: the date stays 02.11 (18 days old) - allowed
+    r = replace(method="card")
+    assert r.status_code == 201, r.text
+    new = r.json()["payment"]
+    # a new date older than 7 days: refused (and the preview of the correction with it); 13.11: allowed
+    r = admin.post(f"{API}/org/payments/{new['id']}/replace", json={"amount": 300_000, "paid_on": "2026-11-12", "method": "card", "reason": "Дата"})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "BACKDATE_OWNER_ONLY", r.text
+    r = admin.post(f"{API}/org/payments/{new['id']}/replace", json={"amount": 300_000, "paid_on": "2026-11-13", "method": "card", "reason": "Дата"})
+    assert r.status_code == 201, r.text
+    # the refund and the forgiveness with a date: 8 days back refused for the administrator, 7 allowed; no date = today
+    m1 = membership(world, s1, a)
+    wo = lambda day: admin.post(f"{API}/org/memberships/{m1.id}/writeoffs", json={"amount": 10_000, "reason": "Договорённость", **({"effective_on": day} if day else {})})      # noqa: E731
+    assert wo("2026-11-12").status_code == 403 and wo("2026-11-12").json()["detail"]["code"] == "BACKDATE_OWNER_ONLY"
+    assert wo("2026-11-13").status_code == 201 and wo(None).status_code == 201
+    pay(world, s2, a, amount=5_000_000, paid_on=date(2026, 11, 2))         # a big advance for S2: the refund of 1 000 is within the limit on any day
+    m0 = membership(world, s2, a)
+    rf = lambda day: admin.post(f"{API}/org/memberships/{m0.id}/refunds", json={"amount": 1_000, "method": "cash", "reason": "Возврат", "effective_on": day})      # noqa: E731
+    assert rf("2026-11-12").status_code == 403 and rf("2026-11-12").json()["detail"]["code"] == "BACKDATE_OWNER_ONLY"
+    ro = owner(world).post(f"{API}/org/memberships/{m0.id}/refunds", json={"amount": 1_000, "method": "cash", "reason": "Возврат", "effective_on": "2026-11-12"})
+    assert ro.status_code == 201, ro.text     # the owner: any day
+
+
+def test_t17_the_restoration_of_a_cancelled_payment_is_not_limited_by_the_age_of_the_payment(world, fixed_today):
+    # the owner cancelled a payment of 02.11 (18 days old); the administrator restores it: the money is not new, the date is the old one - allowed (Т7 stays as it is)
+    a, b, c = groups3(world, fixed_today)
+    s0 = world.students[0]
+    stay(world, membership(world, s0, a), date(2026, 11, 2))
+    paid = pay(world, s0, a, amount=300_000, paid_on=date(2026, 11, 2))["payment"]
+    assert owner(world).post(f"{API}/org/payments/{paid['id']}/void", json={"reason": "Ошибка"}).status_code == 200
+    r = _admin_with_the_right(world).post(f"{API}/org/payments/{paid['id']}/restore", json={"reason": "Отменили по ошибке"})
+    assert r.status_code == 201, r.text
+    assert r.json()["payment"]["paid_on"] == "2026-11-02"

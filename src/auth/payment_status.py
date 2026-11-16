@@ -97,6 +97,7 @@ DEFAULT_LESSONS_PER_PAYMENT = 12
 # Soft thresholds (warnings) for entering a payment.
 WARN_PAID_AGO_DAYS = 60
 MAX_PAID_AGO_YEARS = 3
+ADMIN_BACKDATE_DAYS = 7          # Money-2 T17: an administrator enters a payment / a correction of its date / a refund / a forgiveness dated no earlier than this many days before today (the business day of the centre); older is the owner's
 
 
 @dataclass(frozen=True)
