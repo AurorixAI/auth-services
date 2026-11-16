@@ -80,6 +80,6 @@ def test_up_down_up_the_journal_of_a_deleted_lesson_stays_on_every_step(engine):
     with engine.connect() as c:
         assert c.execute(text("SELECT lesson_date FROM group_attendance_audit WHERE action = 'corrected'")).scalar() == "2026-10-26"      # nor does it forget the key
     command.upgrade(cfg, "head")
-    assert version(engine) == "mg13a1b2c3d4"
+    assert version(engine) == "mm21a1b2c3d4"
     rows, rule, nullable = audit_state(engine)
     assert (rule, nullable, len(rows)) == ("n", "YES", 2)

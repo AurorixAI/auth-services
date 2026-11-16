@@ -63,4 +63,4 @@ def test_up_down_up_the_new_action_is_accepted_and_no_record_is_lost(engine):
     command.downgrade(cfg, BEFORE)
     assert version(engine) == BEFORE and actions(engine) == ["corrected", "excuse_reason_changed"]      # the rollback deletes nothing
     command.upgrade(cfg, "head")
-    assert version(engine) == REVISION and actions(engine) == ["corrected", "excuse_reason_changed"]
+    assert version(engine) == "mm21a1b2c3d4" and actions(engine) == ["corrected", "excuse_reason_changed"]

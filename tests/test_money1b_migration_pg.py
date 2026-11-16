@@ -65,4 +65,4 @@ def test_up_down_up_the_column_and_the_journal_and_the_data_of_a_period_survive_
     with engine.connect() as c:
         assert c.execute(text("SELECT count(*) FROM student_group_periods")).scalar() == 1                             # the period itself stays: only its extra day is gone
     command.upgrade(cfg, "head")
-    assert version(engine) == "mg13a1b2c3d4" and "billing_from" in period_columns(engine)
+    assert version(engine) == "mm21a1b2c3d4" and "billing_from" in period_columns(engine)
