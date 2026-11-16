@@ -198,6 +198,9 @@ def build(
                 if split is not None:
                     item.update({"lessons": split[0], "rest": split[1]})
                 moves.append(item)
+            elif money:                  # R3 П5: no money goes (nothing to carry / it stays): a coded entry with the sum that stays, for the screen (the sentence is ``money_text``)
+                stays.append({**base, "code": "money_stays", "amount": int(s.advance),
+                              "text": (f"Деньги остаются в группе «{s.group_name}»: {tx.money(int(s.advance))}" if s.advance > 0 else f"Переносить нечего: в группе «{s.group_name}» нет аванса")})
             for first, last in carried_pauses:
                 moves.append({**base, "code": "pause", "first_day": first.isoformat(), "last_day": last.isoformat(),
                               "text": f"Пауза {_range(first, last)} перейдёт в группу «{target_name or ''}»: дни паузы там не начисляются"})
@@ -226,7 +229,7 @@ def build(
     if money:
         if paid_until is not None:
             moves.append({"code": "paid_until", "date": paid_until.isoformat(), "text": f"Оплаченные дни — по {_dmy(paid_until)} — перейдут вместе с учеником"})
-        if transfer and not moves and not stays and all(s.advance == 0 and s.debt == 0 for s in snaps):
+        if transfer and not moves and all(x["code"] == "money_stays" for x in stays) and all(s.advance == 0 and s.debt == 0 for s in snaps):
             money_text = "Деньги не изменятся: в прошлой группе нет аванса и долга"
         elif transfer and any(m["code"] == "money" for m in moves):
             money_text = carry_text or next(m["text"] for m in moves if m["code"] == "money")

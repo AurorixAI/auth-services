@@ -1050,6 +1050,7 @@ class StatementDetails(PayModel):
     writeoff_id: Optional[str] = None  # writeoff
     refund_id: Optional[str] = None  # refund
     reason: Optional[str] = None  # writeoff, refund
+    recorded_on: Optional[date_type] = None  # refund, writeoff: the business day the record was ENTERED (``date`` is the day it is dated)
     from_group_name: Optional[str] = None  # transfer_in
     from_membership_id: Optional[str] = None
     to_group_name: Optional[str] = None  # transfer_out

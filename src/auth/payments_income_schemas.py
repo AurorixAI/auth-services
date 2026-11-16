@@ -6,7 +6,7 @@ shows them and never adds anything up.  Same convention as PAY-2: a field with a
 from __future__ import annotations
 
 from datetime import date as date_type
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import ConfigDict, Field
 
@@ -277,6 +277,15 @@ class DecisionRow(PayModel):
     debt_after: Optional[int] = None
     consequence: Optional[str] = None  # Money-1 Г-4: «В группе «B» появился долг 900 000 сум» (a payment cancelled after a transfer)
     text: Optional[str] = None  # Money-2 Э7: the line in words (a transfer: from -> to and the sum; a restored payment; a cancelled leaving; a moved pause), from the server
+    # R3 П5: the same facts as fields (a screen never parses ``text``).  ``group_name`` of a transfer line is the TARGET group (the line is written on the new membership).
+    from_group_name: Optional[str] = None      # a transfer / a moved pause: the group the student (the pause) came from
+    to_group_name: Optional[str] = None        # ... and the group it went to
+    first_day: Optional[date_type] = None      # a moved pause
+    last_day: Optional[date_type] = None
+    new_receipt_no: Optional[int] = None       # a restored payment: the number of the NEW record
+    paid_on: Optional[date_type] = None        # the date of the operation itself (of the payment / the refund / the forgiveness), only when it is not the day of the line
+    carried_pay_from: Optional[date_type] = None   # a transfer: the «Оплата с» that went along with the student (it had not begun)
+    restored: Optional[Dict[str, int]] = None  # a cancelled leaving: what came back, by kind -> how many (individual_price, scheduled_price, pause)
 
 
 class DecisionsPage(PayModel):

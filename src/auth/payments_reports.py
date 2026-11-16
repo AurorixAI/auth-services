@@ -154,7 +154,7 @@ class PaymentsReports:
             elif e.kind == bl.WRITEOFF:
                 w = writeoffs[e.ref_id]
                 rows.append(StatementRow(type="writeoff", title=tx.forgiven_title(w.reason), details=StatementDetails(
-                    writeoff_id=str(w.id), reason=w.reason, created_by_name=_person(users.get(w.created_by))), **common))
+                    writeoff_id=str(w.id), reason=w.reason, created_by_name=_person(users.get(w.created_by)), recorded_on=ps.business_date(w.created_at)), **common))
             elif e.kind == bl.RECALC:      # PAY-F: derived from the cancelled lesson, nothing is stored
                 line = recalcs[e.ref_id]
                 rows.append(StatementRow(type="recalc", title=tx.recalc_title(line.day), details=StatementDetails(recalc=pv.recalc_out(line)), **common))
@@ -162,7 +162,7 @@ class PaymentsReports:
                 r = refunds[e.ref_id]
                 rows.append(StatementRow(type="refund", title="Возврат аванса", details=StatementDetails(
                     refund_id=str(r.id), method=r.method, reason=r.reason, note=r.note,
-                    created_by_name=_person(users.get(r.created_by))), **common))
+                    created_by_name=_person(users.get(r.created_by)), recorded_on=ps.business_date(r.created_at)), **common))
             elif e.kind == bl.TRANSFER_IN:
                 t = transfers[e.ref_id]
                 name = group_name(t.from_membership_id)
@@ -241,13 +241,13 @@ class PaymentsReports:
                 seq=0, date=w.effective_on, type="writeoff", title=tx.forgiven_title(w.reason), credit=int(w.amount),
                 voided_at=_iso(w.voided_at), void_reason=w.void_reason, voided_by_name=_person(users.get(w.voided_by)),
                 details=StatementDetails(writeoff_id=str(w.id), reason=w.reason,
-                                         created_by_name=_person(users.get(w.created_by))))))
+                                         created_by_name=_person(users.get(w.created_by)), recorded_on=ps.business_date(w.created_at)))))
         for r in rf:
             out.append((r.effective_on, r.voided_at, StatementRow(
                 seq=0, date=r.effective_on, type="refund", title="Возврат аванса", outflow=int(r.amount),
                 voided_at=_iso(r.voided_at), void_reason=r.void_reason, voided_by_name=_person(users.get(r.voided_by)),
                 details=StatementDetails(refund_id=str(r.id), method=r.method, reason=r.reason, note=r.note,
-                                         created_by_name=_person(users.get(r.created_by))))))
+                                         created_by_name=_person(users.get(r.created_by)), recorded_on=ps.business_date(r.created_at)))))
         out.sort(key=lambda x: (x[0], x[1]))
         rows = []
         for i, (_, _, row) in enumerate(out, 1):

@@ -116,5 +116,5 @@ def try_undo(
     pay = PaymentService(db)
     pay._audit(org_id, membership, actor_id, pay.role_of(org_id, actor_id), AUDIT_LEFT, {
         "undone": True, "event": "leave_undone", "actor_id": str(actor_id), "membership_id": str(mid), "student_id": str(membership.student_id), "left_at": since.isoformat(),
-        "restored": ids, "coming_from": [str(x) for x in coming_from]})
+        "restored": ids, "restored_counts": {code: sum(1 for i in restored if i["code"] == code) for code in dict.fromkeys(i["code"] for i in restored)}, "coming_from": [str(x) for x in coming_from]})
     return {"undone": True, "restored": restored, "text": text}

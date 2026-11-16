@@ -20,7 +20,7 @@ from uuid import UUID
 from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session, aliased
 
-from src.models.auth import Group, Organization, Student, StudentGroup, StudentPayment, StudentRefund, StudentWriteoff
+from src.models.auth import Group, MembershipPause, Organization, Student, StudentGroup, StudentPayment, StudentRefund, StudentWriteoff
 
 from . import billing_ledger as bl
 from . import ledger_service as ls
@@ -891,12 +891,14 @@ class IncomeReports:
         earliest = self.db.query(func.min(GroupAudit.created_at)).filter(GroupAudit.org_id == org_id, GroupAudit.action.in_((AUDIT_PAYMENT_VOID, AUDIT_PAYMENT_REPLACE))).scalar()
         rows = []
         membership_group = self._membership_groups(org_id, {UUID(v) for a in found for k in ("from_membership_id", "to_membership_id") if (v := (a.snapshot or {}).get(k))})
+        pause_group = self._pause_groups(org_id, {UUID(v) for a in found if (v := (a.snapshot or {}).get("moved_from_pause_id"))})
         for a in found:
             snap = a.snapshot or {}
             student = students.get(UUID(snap["student_id"])) if snap.get("student_id") else None
             kind_of = decision_kind(a.action, snap)
             rows.append(DecisionRow(
                 text=self._decision_text(kind_of, snap, membership_group, groups.get(a.group_id)),
+                **self._decision_fields(kind_of, snap, a.created_at, membership_group, pause_group, groups.get(a.group_id)),
                 id=str(a.id), at=_iso(a.created_at), kind=kind_of, kind_label=DECISION_LABELS[kind_of], student_id=snap.get("student_id"),
                 student_name=person_name(student.last_name, student.first_name) or "" if student else "", group_name=groups[a.group_id].name if a.group_id in groups else None,
                 amount=int(snap.get("amount") or 0), new_amount=snap.get("new_amount"), receipt_no=snap.get("receipt_no"), reason=snap.get("reason"),
@@ -911,6 +913,35 @@ class IncomeReports:
             return {}
         return {mid: name for mid, name in self.db.query(StudentGroup.id, Group.name).join(Group, Group.id == StudentGroup.group_id).filter(Group.org_id == org_id, StudentGroup.id.in_(ids)).all()}
 
+    def _pause_groups(self, org_id: str, ids: set) -> Dict[UUID, str]:
+        """``{pause id: the name of the group it lives in}`` - the source of a moved pause."""
+        if not ids:
+            return {}
+        return {pid: name for pid, name in self.db.query(MembershipPause.id, Group.name).join(StudentGroup, StudentGroup.id == MembershipPause.membership_id)
+                .join(Group, Group.id == StudentGroup.group_id).filter(Group.org_id == org_id, MembershipPause.id.in_(ids)).all()}
+
+    @staticmethod
+    def _decision_fields(kind: str, snap: Dict[str, Any], created_at: datetime, names: Dict[UUID, str], pause_names: Dict[UUID, str], group: Optional[Group]) -> Dict[str, Any]:
+        """R3 П5: the facts of a line of the journal as fields (from the same snapshot the text is made of; nothing is read back from the text).  No sums: the roles without the right of money get these as they are."""
+        def day(value: Optional[str]) -> Optional[date]:
+            return date.fromisoformat(value) if value else None
+
+        out: Dict[str, Any] = {}
+        if kind == AUDIT_TRANSFER:
+            out.update(from_group_name=names.get(UUID(snap["from_membership_id"])) if snap.get("from_membership_id") else None,
+                       to_group_name=names.get(UUID(snap["to_membership_id"])) if snap.get("to_membership_id") else None, carried_pay_from=day(snap.get("pay_from")))
+        elif kind == "pause_moved":
+            out.update(from_group_name=pause_names.get(UUID(snap["moved_from_pause_id"])), to_group_name=group.name if group else None,
+                       first_day=day(snap.get("first_day")), last_day=day(snap.get("last_day")))
+        elif kind == "payment_restored":
+            out.update(new_receipt_no=snap.get("new_receipt_no"))
+        elif kind == "leave_undone":
+            out.update(restored=snap.get("restored_counts") or {})
+        operation = day(snap.get("effective_on") or snap.get("new_paid_on") or snap.get("paid_on"))
+        if operation is not None and operation != ps.business_date(created_at):
+            out["paid_on"] = operation
+        return out
+
     @staticmethod
     def _decision_text(kind: str, snap: Dict[str, Any], names: Dict[UUID, str], group: Optional[Group]) -> Optional[str]:
         """Money-2 Э7: the line of the journal in words (a transfer, a restored payment, a cancelled leaving, a moved pause) - from the facts of the line itself."""
@@ -919,11 +950,13 @@ class IncomeReports:
 
         if kind == AUDIT_TRANSFER:
             was, now = (names.get(UUID(snap[k])) if snap.get(k) else None for k in ("from_membership_id", "to_membership_id"))
-            return f"Перевод из «{was or '—'}» в «{now or '—'}»: перенесено {tx.money(int(snap.get('amount') or 0))}"
+            text = f"Перевод из «{was or '—'}» в «{now or '—'}»: перенесено {tx.money(int(snap.get('amount') or 0))}"
+            return text + (f"; «Оплата с {at(snap['pay_from'])}» перенесена вместе с учеником" if snap.get("pay_from") else "")
         if kind == "payment_restored":
             return f"Оплата № {snap.get('receipt_no')} на {tx.money(int(snap.get('amount') or 0))} от {at(snap.get('paid_on'))} восстановлена как № {snap.get('new_receipt_no')}"
         if kind == "leave_undone":
-            return "Ученик вернулся в день ухода: уход отменён, цены и паузы возвращены" + (f" ({len(snap['restored'])})" if snap.get("restored") else "")
+            count = sum((snap.get("restored_counts") or {}).values())
+            return "Ученик вернулся в день ухода: уход отменён, цены и паузы возвращены" + (f": {count} {tx.plural(count, 'запись', 'записи', 'записей')}" if count else "")
         if kind == "pause_moved":
             return f"Пауза {at(snap.get('first_day'))}–{at(snap.get('last_day'))} перенесена в группу «{group.name if group else '—'}» вместе с учеником"
         return None

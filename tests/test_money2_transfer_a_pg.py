@@ -195,7 +195,8 @@ def test_t3_a_debt_that_stays_in_the_old_group_is_named_with_its_sum_and_the_fal
     dry = add(world, s0, group=b, mode="transfer", dry_run=True)["effects"]
     real = add(world, s0, group=b, mode="transfer")["effects"]
     assert dry == real                                                           # the window says what the server writes (И4)
-    (debt,) = real["stays"]
+    (nothing, debt) = real["stays"]                                              # R3 П5: the money does not move - a coded entry says so, then the debt
+    assert nothing["code"] == "money_stays" and nothing["amount"] == 0 and nothing["group_id"] == str(a.id)
     assert debt["code"] == "debt" and debt["amount"] == 210_000 and debt["group_id"] == str(a.id) and debt["group_name"] == a.name
     assert debt["text"] == f"Долг 210 000 сум останется за учеником в группе «{a.name}»: принять или простить его можно в её выписке"
     assert "нет оплат" not in (real["money_text"] or "") and real["money_text"] is None and codes(real["moves"]) == []
@@ -208,7 +209,7 @@ def test_t3_nothing_to_carry_says_it_only_when_it_is_true(world, fixed_today):
     joined(world, s0, a, date(2026, 11, 2))
     pay(world, s0, a, amount=210_000)                                            # exactly what 02..22.11 costs (300 000 x 21 / 30): no advance, no debt
     out = add(world, s0, group=b, mode="transfer")["effects"]
-    assert out["stays"] == [] and out["moves"] == [] and out["money_text"] == "Деньги не изменятся: в прошлой группе нет аванса и долга"
+    assert [x["code"] for x in out["stays"]] == ["money_stays"] and out["moves"] == [] and out["money_text"] == "Деньги не изменятся: в прошлой группе нет аванса и долга"
 
 
 def test_t3_an_advance_moves_with_the_sum_and_the_individual_price_and_a_scheduled_price_end(world, fixed_today):

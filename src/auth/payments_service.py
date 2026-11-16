@@ -2010,7 +2010,7 @@ class PaymentService:
             after = self._entry_of(org_id, row.membership_id, today).ledger
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_WRITEOFF_VOID, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
-                "writeoff_id": str(row.id), "amount": int(row.amount), "reason": reason,
+                "writeoff_id": str(row.id), "amount": int(row.amount), "reason": reason, "effective_on": row.effective_on.isoformat(),
                 "debt_before": before.debt, "debt_after": after.debt, "advance_before": before.advance,
                 "advance_after": after.advance}, consequence=consequence)
             self.db.commit()
@@ -2122,7 +2122,7 @@ class PaymentService:
             after = self._entry_of(org_id, row.membership_id, today).ledger
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_REFUND_VOID, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
-                "refund_id": str(row.id), "amount": int(row.amount), "method": row.method, "reason": reason,
+                "refund_id": str(row.id), "amount": int(row.amount), "method": row.method, "reason": reason, "effective_on": row.effective_on.isoformat(),
                 "debt_before": before.debt, "debt_after": after.debt, "advance_before": before.advance,
                 "advance_after": after.advance}, consequence=consequence)
             self.db.commit()
@@ -2183,11 +2183,13 @@ class PaymentService:
         loader.load_facts([target.id] + [m.id for m in sources])
         carried_sums = [loader.x_of(t) for t in made]
         total = sum(carried_sums)
+        pay_from = next((p.billing_from for p in target.periods if p.left_at is None and p.billing_from is not None), None)      # R3 Т4: the «Оплата с» that went along (it is named in the line)
         if actor_id:                      # the journal needs an author; a transfer made by the system (none today) leaves only the link
             for link, carried in zip(made, carried_sums):
                 self._audit(org_id, target, actor_id, self.role_of(org_id, actor_id), AUDIT_TRANSFER, {
                     "actor_id": str(actor_id), "student_id": str(link.student_id), "transfer_id": str(link.id), "from_membership_id": str(link.from_membership_id),
-                    "to_membership_id": str(link.to_membership_id), "amount": int(carried), "at": link.at.isoformat()})
+                    "to_membership_id": str(link.to_membership_id), "amount": int(carried), "at": link.at.isoformat(),
+                    "pay_from": pay_from.isoformat() if pay_from is not None else None})
         logger.info("transfer recorded to=%s from=%s actor=%s", target.id, [str(m.id) for m in sources], actor_id)
         invalidate_summary(org_id)
         notes: List[Dict[str, Any]] = []
