@@ -192,7 +192,7 @@ def test_group_archive_waits_for_the_students_and_a_settle_flow_closes_their_mon
     own = client(w, "owner")
     blocked = client(w, "admin").post(f"{API}/org/groups/{group.id}/archive", json={})
     assert blocked.status_code == 409 and blocked.json()["detail"]["code"] == "GROUP_ARCHIVE_BLOCKED"
-    assert [x["code"] for x in blocked.json()["detail"]["blockers"]] == ["ACTIVE_STUDENTS"]
+    assert [x["code"] for x in blocked.json()["detail"]["blockers"]] == ["ACTIVE_STUDENTS", "OPEN_BALANCES"]       # Money-2 T12: the debts of the two students are a blocker of their own
     before = own.get(f"{API}/org/payments/summary").json()
     owed = {s.id: member(w, s, group) for s in (a, b)}
     assert before["students_with_debt"] >= 2 and before["debt_total"] > 0
@@ -219,7 +219,7 @@ def test_group_archive_waits_for_the_students_and_a_settle_flow_closes_their_mon
 
 
 def test_a_leave_without_settle_keeps_the_debt_visible_after_the_group_is_archived(w, clock):
-    """The old way out (``DELETE``, no settle) leaves the debt in the books: the debtors' tab keeps the student who left, the group archive does not hide it."""
+    """The old way out (``DELETE``, no settle) leaves the debt in the books: the debtors' tab keeps the student who left, the group archive does not hide it (Money-2 T12: it is refused while the debt is open)."""
     group, (a, b) = debt_group(w, "Остаток")
     own = client(w, "owner")
     before = own.get(f"{API}/org/payments/summary").json()
@@ -228,9 +228,10 @@ def test_a_leave_without_settle_keeps_the_debt_visible_after_the_group_is_archiv
         assert own.delete(f"{API}/org/groups/{group.id}/students/{s.id}").status_code == 200       # Money-2 T11: a student who owes leaves by the owner / an administrator with the money right
     left = own.get(f"{API}/org/payments/summary").json()                                           # the charge stops at the leaving, the rest stays owed
     assert 0 < left["debt_total"] <= before["debt_total"] and left["students_with_debt"] == 2
-    assert client(w, "admin").post(f"{API}/org/groups/{group.id}/archive", json={}).status_code == 200
+    refused = client(w, "admin").post(f"{API}/org/groups/{group.id}/archive", json={})
+    assert refused.status_code == 409 and "OPEN_BALANCES" in [x["code"] for x in refused.json()["detail"]["blockers"]]       # Money-2 T12: the archive does not hide the debt - it waits until it is accepted or forgiven
     after = own.get(f"{API}/org/payments/summary").json()
-    assert after["debt_total"] == left["debt_total"] and after["students_with_debt"] == 2         # the archive hides nothing
+    assert after["debt_total"] == left["debt_total"] and after["students_with_debt"] == 2
     debtors = {i["student_id"] for i in own.get(f"{API}/org/payments/status", params={"bucket": "debt", "limit": 100}).json()["items"]}
     assert {str(a.id), str(b.id)} <= debtors
 
