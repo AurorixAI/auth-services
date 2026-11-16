@@ -697,3 +697,66 @@ def test_t8_a_refund_in_the_old_group_names_the_group_where_the_advance_went_and
     add(world, s1, group=c, mode="add")
     r = owner(world).post(f"{API}/org/memberships/{membership(world, s1, c).id}/refunds", json=body)
     assert r.status_code == 422 and r.json()["detail"]["message"] == "Возвращать нечего: аванса нет"
+
+
+# ---------------------------------------------------------------------------------------------------- T9 a pause of a stay tied by a transfer is checked in every group it touches
+
+
+def transferred_with_a_pause(world, fixed_today):
+    """A (300 000 a month, a lesson every day) since 02.11, a pause 18-20.11 (3 days), 600 000 paid, transferred on 22.11 to B (400 000 a month, from 23.11).
+    A charges 02..22 = 21 days - 3 of the pause = 18 days x 10 000 = 180 000; the transfer takes 600 000 - 180 000 = 420 000 to B; B charges from 23.11 - tomorrow - so today B holds the whole 420 000 as advance.  Returns (A, B, student, the id of the pause)."""
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    pid = pause(world, a, s0, date(2026, 11, 18), date(2026, 11, 20))
+    pay(world, s0, a, amount=600_000)
+    add(world, s0, group=b, mode="transfer")
+    assert account(world, membership(world, s0, b).id).advance == 420_000
+    return a, b, s0, pid
+
+
+def refund_all(world, s0, group):
+    adv = account(world, membership(world, s0, group).id).refundable
+    r = owner(world).post(f"{API}/org/memberships/{membership(world, s0, group).id}/refunds", json={"amount": adv, "method": "cash", "reason": "Возврат аванса"})
+    assert r.status_code == 201, r.text
+
+
+def test_t9_cancelling_a_pause_of_the_old_group_names_the_advance_of_the_new_one_and_is_refused_when_that_advance_is_already_returned(world, fixed_today):
+    a, b, s0, pid = transferred_with_a_pause(world, fixed_today)
+    # without the pause A would charge 21 days = 210 000: the transfer takes 390 000, B holds 390 000: a fall of 30 000 (from 420 000)
+    window = owner(world).post(f"{API}/org/pauses/{pid}/void", params={"dry_run": "true"}, json={"reason": "Выздоровел раньше"})
+    assert window.status_code == 200, window.text
+    body = window.json()
+    assert body["dry_run"] is True and [(d["group_name"], d["amount"], d["total"]) for d in body["advance_drops"]] == [("Бета", 30_000, 390_000)]
+    assert f"В группе «Бета» аванс уменьшится на {tx.money(30_000)} — до {tx.money(390_000)}" in body["other_groups_text"]
+    assert pauses_of(world, s0, a)[0][3] is False and account(world, membership(world, s0, b).id).advance == 420_000      # a window writes nothing
+    refund_all(world, s0, b)                                                    # the whole advance of B is returned
+    r = owner(world).post(f"{API}/org/pauses/{pid}/void", json={"reason": "Выздоровел раньше"})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "PAUSE_BREAKS_REFUND" and "«Бета»" in r.json()["detail"]["message"], r.text
+    assert pauses_of(world, s0, a)[0][3] is False                               # nothing written
+
+
+def test_t9_without_a_refund_the_cancel_and_the_change_pass_and_the_answer_names_what_changed_in_the_other_group(world, fixed_today):
+    a, b, s0, pid = transferred_with_a_pause(world, fixed_today)
+    # the pause 18-20 cut to 19-20: A charges 02..22 = 21 - 2 = 19 days = 190 000, the transfer takes 410 000, B holds 410 000: a fall of 10 000 (from 420 000)
+    r = owner(world).patch(f"{API}/org/pauses/{pid}", params={"dry_run": "true"}, json={"first_day": "2026-11-19", "reason": "Короче"})
+    assert r.status_code == 200, r.text
+    assert [(d["amount"], d["total"]) for d in r.json()["advance_drops"]] == [(10_000, 410_000)] and account(world, membership(world, s0, b).id).advance == 420_000
+    r = owner(world).patch(f"{API}/org/pauses/{pid}", json={"first_day": "2026-11-19", "reason": "Короче"})
+    assert r.status_code == 200, r.text
+    assert "аванс уменьшился" in r.json()["other_groups_text"] and account(world, membership(world, s0, b).id).advance == 410_000
+    r = owner(world).post(f"{API}/org/pauses/{pid}/void", json={"reason": "Выздоровел"})
+    assert r.status_code == 200 and [(d["amount"], d["total"]) for d in r.json()["advance_drops"]] == [(20_000, 390_000)]       # 19-20 gone: A 210 000, B 390 000
+    line = world.db.query(GroupAudit).filter(GroupAudit.action == "membership_pause_void", GroupAudit.group_id == a.id).order_by(GroupAudit.created_at.desc()).first()
+    assert line.snapshot["advance_drops"][0]["group_name"] == "Бета"           # the journal keeps what the other group lost
+
+
+def test_t9_a_change_that_gives_the_other_group_money_says_so_and_a_pause_made_in_the_group_the_student_came_back_to_is_checked_too(world, fixed_today):
+    a, b, s0, pid = transferred_with_a_pause(world, fixed_today)
+    # a pause cut to the transfer day and widened back is not possible, so a NEW pause in A needs A to be open: the student comes back to A the next day (B stays), the transfer link A -> B stays
+    fixed_today(date(2026, 11, 23))
+    add(world, s0, group=a, mode="add")
+    # a second pause 14-15.11 in A: A charges 02..22 = 21 - 3 - 2 = 16 days = 160 000, the transfer takes 600 000 - 160 000 = 440 000: B gains 20 000
+    r = owner(world).post(f"{API}/org/memberships/{membership(world, s0, a).id}/pauses", params={"dry_run": "true"}, json={"first_day": "2026-11-14", "last_day": "2026-11-15", "reason": "Поездка"})
+    assert r.status_code == 201, r.text
+    assert [(g["group_name"], g["advance_grew"]) for g in r.json()["other_gains"]] == [("Бета", 20_000)] and "аванс вырастет на" in r.json()["other_groups_text"]

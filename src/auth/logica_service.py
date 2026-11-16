@@ -63,6 +63,7 @@ from .payments_service import (
     ReasonRequired,
     _iso,
     _person,
+    _Moved,
     _utcnow,
     deadlock_guard,
     invalidate_summary,
@@ -468,10 +469,25 @@ class PauseService(_Base):
 
     # ---- write
 
+    def _others(self, org_id: str, family: List[UUID], was: Dict[UUID, Any], own: UUID, *, done: bool) -> Tuple["_Moved", str]:
+        """Money-2 T9: THE one check of a pause for the OTHER groups of the student (the ones a transfer tied to this stay: the sum that went there depends on the days of this pause).  The accounts
+        of the whole family now against ``was``: a group whose returned money no longer fits (a refund made there) refuses the change (409 ``PAUSE_BREAKS_REFUND``, the group is named); else
+        the groups whose advance falls / a debt appears / that gain are named - the same rule and the same sentences as a cancelled payment."""
+        now = self.pay._accounts(org_id, family)
+        for m, entry in now.items():
+            if m != own and bl.F_OUTFLOW_EXCEEDS in entry.ledger.flags and bl.F_OUTFLOW_EXCEEDS not in was[m].ledger.flags:
+                name = self.db.get(Group, entry.membership.group_id).name
+                raise PauseBreaksRefund(f"Из группы «{name}» уже возвращены деньги, которые перешли туда из этой группы: без этого изменения паузы их стало бы меньше. Сначала отмените возврат в группе «{name}»")
+        moved = self.pay._moved_by_correction(was, now, own)
+        text = "; ".join(t for t in (payments_texts.new_debts_text(moved.new_debts, done=done, advance_drops=moved.advance_drops), payments_texts.other_gains_text(moved.gains, done=done)) if t)
+        return moved, text
+
     def _saved(self, org_id, membership, row, before, after, *, money: bool, owner: bool, dry_run: bool, today: date,
-               first: date, last: date) -> PauseSaved:
+               first: date, last: date, others: Optional[Tuple["_Moved", str]] = None) -> PauseSaved:
         excluded, attended = self._lessons(membership, first, last)
+        moved, text = others if others and money else (None, None)
         return PauseSaved(
+            new_debts=moved.new_debts if moved else [], advance_drops=moved.advance_drops if moved else [], other_gains=moved.gains if moved else [], other_groups_text=text or None,
             pause=self._out(row), impact=impact_of(before, after) if money else None,
             lessons=PauseLessons(excluded=[PauseLessonMark(date=d, marks=m) for d, m in excluded],
                                  attended=[PauseLessonMark(date=d, marks=m) for d, m in attended]),
@@ -493,7 +509,7 @@ class PauseService(_Base):
         try:
             self._check_range(body.first_day, body.last_day, today)
             membership = self._guard_open(org_id, membership_id)
-            self.pay._lock_family(org_id, membership.student_id)
+            family = self.pay._lock_family(org_id, membership.student_id)
             live = self._live(membership_id)
             same = next((p for p in live if (p.first_day, p.last_day) == (body.first_day, body.last_day)), None)
             if same is not None:  # the same range again (a double click, a lost answer): nothing new - BEFORE the gates, which a lesson begun meanwhile would trip (R3 m3)
@@ -511,7 +527,8 @@ class PauseService(_Base):
                 dates = ", ".join(d.strftime("%d.%m") for d, _ in attended)
                 raise PauseOverlapsAttended(f"Ученик был отмечен на уроках {dates} — на эти даты паузу поставить нельзя",
                                             dates=[d.isoformat() for d, _ in attended])
-            before = self.pay._entry_of(org_id, membership_id, today).ledger
+            was = self.pay._accounts(org_id, family)
+            before = was[membership.id].ledger
             row = MembershipPause(
                 org_id=UUID(str(org_id)), membership_id=membership.id, student_id=membership.student_id, group_id=membership.group_id,
                 first_day=body.first_day, last_day=body.last_day, reason=(body.reason or "").strip() or None,
@@ -519,15 +536,16 @@ class PauseService(_Base):
             self.db.add(row)
             self.db.flush()
             self._close_excuses(membership, row.first_day, row.last_day, actor_id)
+            others = self._others(org_id, family, was, membership.id, done=not dry_run)
             after = self.pay._entry_of(org_id, membership_id, today).ledger
             if not dry_run:
                 self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAUSE_SET, {
                     "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                     "pause_id": str(row.id), "first_day": row.first_day.isoformat(), "last_day": row.last_day.isoformat(),
                     "reason": row.reason, "charged_before": before.charged, "charged_after": after.charged,
-                    "advance_before": before.advance, "advance_after": after.advance})
+                    "advance_before": before.advance, "advance_after": after.advance, **self._other_facts(others[0])})
             out = self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
-                              first=row.first_day, last=row.last_day)
+                              first=row.first_day, last=row.last_day, others=others)
             if dry_run:
                 self.db.rollback()
                 return out
@@ -545,7 +563,12 @@ class PauseService(_Base):
         invalidate_summary(org_id)
         logger.info("pause created id=%s membership=%s actor=%s", row.id, membership_id, actor_id)
         return self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=False, today=today,
-                           first=row.first_day, last=row.last_day)
+                           first=row.first_day, last=row.last_day, others=others)
+
+    @staticmethod
+    def _other_facts(moved: "_Moved") -> Dict[str, Any]:
+        """The lines of the journal of a pause keep what the OTHER groups lost or gained (only when something moved there)."""
+        return {k: v for k, v in (("new_debts", moved.new_debts), ("advance_drops", moved.advance_drops), ("other_gains", moved.gains)) if v}
 
     def _close_excuses(self, membership: StudentGroup, first: date, last: date, actor_id: str) -> int:
         from .attendance_excuses import AttendanceExcuseService  # lazy: the excuses module pulls in the service
@@ -593,13 +616,16 @@ class PauseService(_Base):
                 dates = ", ".join(d.strftime("%d.%m") for d, _ in newly)
                 raise PauseOverlapsAttended(f"Ученик был отмечен на уроках {dates} — на эти даты паузу поставить нельзя",
                                             dates=[d.isoformat() for d, _ in newly])
-            before = self.pay._entry_of(org_id, row.membership_id, today).ledger
+            family = self.pay._lock_family(org_id, membership.student_id)
+            was = self.pay._accounts(org_id, family)
+            before = was[membership.id].ledger
             old = (row.first_day, row.last_day, row.reason)
             row.first_day, row.last_day = first, last
             if body.reason is not None:
                 row.reason = body.reason.strip() or None
             self.db.flush()
             self._close_excuses(membership, first, last, actor_id)       # newly covered days only change anything; closed ones stay closed
+            others = self._others(org_id, family, was, membership.id, done=not dry_run)
             after = self.pay._entry_of(org_id, row.membership_id, today).ledger
             self.pay._family_check(org_id, [row.membership_id])
             if after.charged > before.charged and bl.F_OUTFLOW_EXCEEDS in after.flags:
@@ -611,9 +637,9 @@ class PauseService(_Base):
                 self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAUSE_SET, {
                     "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                     "pause_id": str(row.id), "first_day": first.isoformat(), "last_day": last.isoformat(), "reason": change_reason or row.reason,
-                    "was": [old[0].isoformat(), old[1].isoformat()], "charged_before": before.charged, "charged_after": after.charged})
+                    "was": [old[0].isoformat(), old[1].isoformat()], "charged_before": before.charged, "charged_after": after.charged, **self._other_facts(others[0])})
             out = self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=dry_run, today=today,
-                              first=min(first, old[0]), last=max(last, old[1]))
+                              first=min(first, old[0]), last=max(last, old[1]), others=others)
             if dry_run:
                 self.db.rollback()
                 return out
@@ -623,32 +649,40 @@ class PauseService(_Base):
             raise
         invalidate_summary(org_id)
         return self._saved(org_id, membership, row, before, after, money=money, owner=owner, dry_run=False, today=today,
-                           first=min(first, old[0]), last=max(last, old[1]))
+                           first=min(first, old[0]), last=max(last, old[1]), others=others)
 
     @deadlock_guard
-    def void(self, org_id: str, pause_id: UUID, actor_id: str, reason: str, *, money: bool = True, actor_role: str = "admin") -> PauseVoided:
+    def void(self, org_id: str, pause_id: UUID, actor_id: str, reason: str, *, money: bool = True, actor_role: str = "admin", dry_run: bool = False) -> PauseVoided:
         today = ps.business_today()
         try:
             reason = self.pay._check_reason(reason)
             row = self._locked_pause(org_id, pause_id)
             membership = self.pay._membership(org_id, row.membership_id, lock=True)
             self._check_unlocking(org_id, membership, _days(row.first_day, row.last_day), set(), today)
-            before = self.pay._entry_of(org_id, row.membership_id, today).ledger
+            family = self.pay._lock_family(org_id, membership.student_id)
+            was = self.pay._accounts(org_id, family)
+            before = was[membership.id].ledger
             row.voided_at, row.voided_by, row.void_reason = _utcnow(), UUID(str(actor_id)), reason
             self.db.flush()
+            moved, text = self._others(org_id, family, was, membership.id, done=not dry_run)
             after = self.pay._entry_of(org_id, row.membership_id, today).ledger
             self.pay._family_check(org_id, [row.membership_id])
+            if dry_run:
+                out = PauseVoided(pause=self._out(row), impact=impact_of(before, after) if money else None, dry_run=True,
+                                  new_debts=moved.new_debts if money else [], advance_drops=moved.advance_drops if money else [], other_gains=moved.gains if money else [], other_groups_text=(text or None) if money else None)
+                self.db.rollback()
+                return out
             self._audit(org_id, membership, actor_id, actor_role, AUDIT_PAUSE_VOID, {
                 "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id),
                 "pause_id": str(row.id), "first_day": row.first_day.isoformat(), "last_day": row.last_day.isoformat(),
-                "reason": reason, "charged_before": before.charged, "charged_after": after.charged})
+                "reason": reason, "charged_before": before.charged, "charged_after": after.charged, **self._other_facts(moved)})
             self.db.commit()
         except PaymentError:
             self.db.rollback()
             raise
         invalidate_summary(org_id)
-        return PauseVoided(pause=self._out(row), impact=impact_of(before, after) if money else None,
-                           row=self._row(org_id, row.membership_id, today) if money else None)
+        return PauseVoided(pause=self._out(row), impact=impact_of(before, after) if money else None, row=self._row(org_id, row.membership_id, today) if money else None,
+                           new_debts=moved.new_debts if money else [], advance_drops=moved.advance_drops if money else [], other_gains=moved.gains if money else [], other_groups_text=(text or None) if money else None)
 
     # ---- used by leave / transfer / archive (inside the caller's transaction)
 

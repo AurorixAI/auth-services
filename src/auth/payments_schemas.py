@@ -1449,7 +1449,17 @@ class PausePayroll(PayModel):
     saved_sheets_changed: int = 0
 
 
-class PauseSaved(PayModel):
+class PauseOtherGroups(PayModel):
+    """Money-2 T9: what a pause (made, changed, cancelled) does in the OTHER groups of the student - the ones tied to this stay by a transfer (the sum that went there depends on the days of this pause).
+    Same shape as the answer of a cancelled payment: the groups where the advance falls / a debt appears, the groups that gain; ``other_groups_text`` is the sentence for the window (the server's)."""
+
+    new_debts: List[Dict[str, Any]] = Field(default_factory=list)
+    advance_drops: List[Dict[str, Any]] = Field(default_factory=list)
+    other_gains: List[Dict[str, Any]] = Field(default_factory=list)
+    other_groups_text: Optional[str] = None
+
+
+class PauseSaved(PauseOtherGroups):
     pause: PauseOut
     impact: Optional[ImpactMoney] = None  # null without access to money
     lessons: PauseLessons
@@ -1458,10 +1468,11 @@ class PauseSaved(PayModel):
     row: Optional[MembershipPaymentRow] = None  # null on ``dry_run``
 
 
-class PauseVoided(PayModel):
+class PauseVoided(PauseOtherGroups):
     pause: PauseOut
     impact: Optional[ImpactMoney] = None
     row: Optional[MembershipPaymentRow] = None
+    dry_run: bool = False
 
 
 class PauseVoid(RecordVoid):

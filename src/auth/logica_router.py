@@ -136,10 +136,10 @@ def patch_pause(
 
 
 @router.post("/org/pauses/{pause_id}/void", response_model=PauseVoided, responses=_ERRORS)
-def void_pause(pause_id: UUID, request: PauseVoid, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
+def void_pause(pause_id: UUID, request: PauseVoid, dry_run: bool = Query(False), user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
     try:
         return PauseService(db).void(user["org_id"], pause_id, user["user_id"], request.reason, money=has_payments_access(user, db),
-                                     actor_role=_role(user))
+                                     actor_role=_role(user), dry_run=dry_run)
     except PaymentError as exc:
         raise _http(exc)
 
