@@ -57,6 +57,7 @@ from .payments_schemas import (
     PriceOverrideUpdate,
     ReceiptOut,
 )
+from . import payment_status as ps
 from .payments_service import PaymentError, PaymentService
 
 from . import money_effects  # noqa: E402
@@ -83,6 +84,12 @@ router.include_router(openings_router)  # OPENING-BULK: the table of openings, b
 
 def _http(exc: PaymentError | pricing.PriceError) -> HTTPException:
     return HTTPException(exc.status_code, exc.detail)
+
+
+def _check_price_age(user: dict, valid_from: Optional[date]) -> None:
+    """R3b В4: a price that begins more than 7 days ago (a group's or a student's) re-counts the money of the past: the owner's (the same rule and the same function as an old payment)."""
+    today = ps.business_today()
+    PaymentService._check_backdate(valid_from or today, today, user.get("org_role") or "", changing=False)
 
 
 def _blank_to_none(value):
@@ -243,9 +250,9 @@ def set_group_price(
     же транзакции — она видна в ``history[].changes``. Тот же запрос ещё раз (двойной клик: сумма, примечание и
     ``valid_from`` те же) ничего не меняет и вторую строку аудита не пишет."""
     try:
+        _check_price_age(user, request.valid_from)
         service = pricing.PricingService(db)
         ids = service._money_ids(user["org_id"], group_id=group_id)
-
         def write(dry: bool, confirmed: bool, measure: bool = False):
             return service.set_group_price(
                 user["org_id"], group_id, user["user_id"], amount=request.amount, valid_from=request.valid_from,
@@ -256,7 +263,7 @@ def set_group_price(
         out["money_effects"] = effects
         out["teacher_share"] = {"text": "Зарплата преподавателей этой группы тоже изменится: процент считается от фактической цены"}      # Money-1 V9 (ЗПД-7)
         return out
-    except pricing.PriceError as exc:
+    except (PaymentError, pricing.PriceError) as exc:
         raise _http(exc)
 
 
@@ -303,6 +310,8 @@ def set_price_override(
     той же транзакции — она видна в ``history[].changes``. Повтор того же запроса (сумма, причина, ``valid_from``)
     ничего не меняет и аудит не дублирует."""
     try:
+        _check_price_age(user, request.valid_from)
+
         def write(dry: bool, confirmed: bool, measure: bool = False):
             return pricing.PricingService(db).set_override(
                 user["org_id"], membership_id, user["user_id"], amount=request.amount,

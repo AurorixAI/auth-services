@@ -298,6 +298,10 @@ class OpeningService(_Base):
             StudentPayment.org_id == org_id, StudentPayment.membership_id == membership_id, StudentPayment.kind == "payment", StudentPayment.voided_at.is_(None)).scalar()
         return over_payments_warning(int(paid or 0), self.pay._entry_of(org_id, membership_id, today).ledger.status.paid_until)
 
+    def _days_of_live(self, membership_id: UUID) -> List[Optional[date]]:
+        live = self.live(membership_id)
+        return [live.paid_until, live.debt_on] if live is not None else []
+
     @deadlock_guard
     def put(
         self, org_id: str, membership_id: UUID, actor_id: str, body: OpeningPut, *, dry_run: bool = False, actor_role: str = "admin",
@@ -306,6 +310,7 @@ class OpeningService(_Base):
         try:
             membership = self.pay._membership(org_id, membership_id, lock=True, writable=True)
             self.pay._lock_family(org_id, membership.student_id)
+            self.pay._check_backdate_days([body.paid_until, body.debt_on, *self._days_of_live(membership_id)], today, actor_role, changing=True)      # R3b В4: the days of the new opening AND of the one it replaces / cancels
             before = self.pay._entry_of(org_id, membership_id, today).ledger
             cancelled: List[UUID] = []
             row, changed = self.apply(org_id, membership, actor_id, actor_role, body, source="manual", today=today,
@@ -351,6 +356,7 @@ class OpeningService(_Base):
                    .populate_existing().with_for_update().first())
             if row.voided_at is not None:
                 raise AlreadyVoided("Остаток на начало уже отменён")
+            self.pay._check_backdate_days([row.paid_until, row.debt_on], today, actor_role, changing=True)      # R3b В4
             membership = self.pay._membership(org_id, row.membership_id)
             before = self.pay._entry_of(org_id, row.membership_id, today).ledger
             row.voided_at, row.voided_by, row.void_reason = _utcnow(), UUID(str(actor_id)), reason
@@ -508,6 +514,7 @@ class PauseService(_Base):
         today = ps.business_today()
         try:
             self._check_range(body.first_day, body.last_day, today)
+            self.pay._check_backdate_days([body.first_day], today, actor_role, changing=False)      # R3b В4: an administrator sets no pause with a day older than 7 days
             membership = self._guard_open(org_id, membership_id)
             family = self.pay._lock_family(org_id, membership.student_id)
             live = self._live(membership_id)
@@ -604,6 +611,7 @@ class PauseService(_Base):
                 raise PauseRange("Пауза: «по» не раньше «с»")
             if (last - first).days + 1 > PAUSE_MAX_DAYS:
                 raise PauseRange(f"Пауза не длиннее {PAUSE_MAX_DAYS} дней")
+            self.pay._check_backdate_days(_days(first, last) ^ _days(row.first_day, row.last_day), today, actor_role, changing=True)      # R3b В4: the days that CHANGE decide (the reason alone touches no day)
             # M3: EVERY day that enters the pause (new - old) must lie in an open month, as a new pause's days must - not only a moved start
             self._assert_days_open(org_id, membership, _days(first, last) - _days(row.first_day, row.last_day), today)
             self._assert_no_lesson_in_progress(membership, first, last, only_days=_days(first, last) - _days(row.first_day, row.last_day))
@@ -657,6 +665,7 @@ class PauseService(_Base):
         try:
             reason = self.pay._check_reason(reason)
             row = self._locked_pause(org_id, pause_id)
+            self.pay._check_backdate_days([row.first_day], today, actor_role, changing=True)      # R3b В4: cancelling a pause gives back ALL its days: the oldest decides
             membership = self.pay._membership(org_id, row.membership_id, lock=True)
             self._check_unlocking(org_id, membership, _days(row.first_day, row.last_day), set(), today)
             family = self.pay._lock_family(org_id, membership.student_id)

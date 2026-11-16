@@ -1416,6 +1416,13 @@ class PaymentService:
         if actor_role != "owner" and day < today - timedelta(days=ps.ADMIN_BACKDATE_DAYS):
             raise BackdateOwnerOnly(f"Запись старше {ps.ADMIN_BACKDATE_DAYS} дней {'меняет' if changing else 'вносит'} владелец")
 
+    @classmethod
+    def _check_backdate_days(cls, days: Iterable[Optional[date]], today: date, actor_role: str, *, changing: bool) -> None:
+        """R3b В4: the same rule for a road that touches SEVERAL days (a pause, an opening balance): the OLDEST touched day decides; no day = nothing touched."""
+        touched = [d for d in days if d is not None]
+        if touched:
+            cls._check_backdate(min(touched), today, actor_role, changing=changing)
+
     @staticmethod
     def _method_of(method: Optional[str], *, required: bool = False) -> str:
         if method is None:
