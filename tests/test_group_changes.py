@@ -122,4 +122,4 @@ def test_bulk_add_to_archived_group_skips_everyone_with_reason(world):
     body = make_client(world).post(f"/api/v1/auth/org/groups/{world.group.id}/students/bulk",
                                    json={"student_ids": [str(extra.id)]}).json()
     assert (body["added"], body["skipped"]) == (0, 1)
-    assert body["skipped_details"] == [{"student_id": str(extra.id), "reason": "Нельзя зачислить ученика в архивную группу"}]
+    assert body["skipped_details"] == [{"student_id": str(extra.id), "reason": "Нельзя зачислить ученика в архивную группу", "code": "group_archived"}]       # Money-2 T10: every skipped line has a code

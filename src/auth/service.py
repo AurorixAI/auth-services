@@ -2573,6 +2573,7 @@ class AuthService:
     ) -> dict:
         added = 0
         skipped_details: list[dict[str, str]] = []
+        results: list[dict[str, str]] = []       # Money-2 T10: one line per student, in the order of the request: added / skipped (code + text)
         warnings: list[dict[str, str]] = []
         students: list[dict] = []
         self._billing_cache = {}          # R3 code №13: the first lesson of the group and the accounting start are the same for every student of one request
@@ -2584,6 +2585,7 @@ class AuthService:
                     payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from, immediate=True, from_group_id=from_group_id,
                 )
                 added += 1
+                results.append({"student_id": str(student_id), "status": "added"})
                 students.append({"student_id": str(student_id), "billing": result.get("billing"), "individual_price_ends": bool(result.get("individual_price_ends")),
                                  "closing_prices": result.get("closing_prices") or []})
                 for warning in result.get("warnings", []):
@@ -2591,12 +2593,12 @@ class AuthService:
             except ValueError as exc:
                 # Release the row locks taken before the refusal.
                 self.db.rollback()
-                skipped_details.append({"student_id": str(student_id), "reason": str(exc)})
+                skipped_details.append({"student_id": str(student_id), "reason": str(exc), "code": getattr(exc, "code", "refused")})
+                results.append({"student_id": str(student_id), "status": "skipped", **skipped_details[-1]})
             except ops_rules.OpsError as exc:
-                if exc.code not in ("MONEY_RIGHT_REQUIRED", "TRANSFER_SOURCE_REQUIRED", "TRANSFER_SOURCE_GONE"):
-                    raise
-                self.db.rollback()      # Money-1 A4: a transfer moves the money of the student - reported per student like every other refusal of a bulk transfer (Money-2 T1: so is a student whose source is not clear)
+                self.db.rollback()      # Money-1 A4 / Money-2 T1, T10: every coded refusal of ONE student (no right to money, no source, «Оплата с» out of range, ...) is his line, never the end of the request for the others
                 skipped_details.append({"student_id": str(student_id), "reason": exc.message, "code": exc.code})
+                results.append({"student_id": str(student_id), "status": "skipped", **skipped_details[-1]})
         self._billing_cache = None
         # Money-1 B (lead): the preview of a bulk adding says per student and in total what is charged at once - the same phrase as the single adding (``billing.immediate.text``); only for a caller with the money access
         # (``immediate`` is filled only then, and only in a dry run).
@@ -2612,6 +2614,7 @@ class AuthService:
             "added": added,
             "skipped": len(skipped_details),
             "skipped_details": skipped_details,
+            "results": results,
             "warnings": warnings,
             "dry_run": dry_run,
             "students": students,
