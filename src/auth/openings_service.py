@@ -30,6 +30,7 @@ from src.models.auth import (
     MembershipPause,
     MembershipTransfer,
     Organization,
+    OrgMoneyAudit,
     Student,
     StudentGroup,
     StudentPayment,
@@ -44,7 +45,7 @@ from . import membership_periods
 from . import payment_status as ps
 from . import payments_texts as tx
 from . import pricing
-from .logica_service import AUDIT_OPENING_SET, AUDIT_OPENING_VOID, OpeningFacts, OpeningService, _Base, over_payments_warning
+from .logica_service import AUDIT_OPENING_SET, AUDIT_OPENING_VOID, OpeningFacts, OpeningService, _Base, launch_closed, over_payments_warning
 from .openings_schemas import (
     OpeningBatchApplied,
     OpeningBatchImpact,
@@ -70,6 +71,7 @@ from .payments_files import person_name
 from .payments_schemas import PriceOut
 from .payments_service import (
     ConcurrentEdit,
+    OpeningOwnerOnly,
     PaymentConflict,
     PaymentError,
     PaymentInvalid,
@@ -77,6 +79,7 @@ from .payments_service import (
     ReasonRequired,
     VoidBreaksRefund,
     _person,
+    _utcnow,
     deadlock_guard,
     invalidate_summary,
 )
@@ -93,6 +96,7 @@ LESSONS_SEARCH_DAYS = 400
 PAID_UNTIL_FAR_DAYS = 120
 DEBT_LARGE_PRICES = 12
 STATE_KEY = "openings_state"
+STATE_BY_KEY = "openings_state_by"      # the actor who wrote the state: a user id, or "auto" (the list got filled)
 BATCHES_KEY = "openings_batches"
 STATES = ("none", "pending", "done", "skipped")
 
@@ -195,8 +199,8 @@ def _short(day: date) -> str:
 class OpeningsService(_Base):
     # ------------------------------------------------------------------------------------------------ the table
 
-    def _table(self, org_id: str, today: date) -> Tuple[ls.LedgerSettings, List[TableRow], List[TableRow], str]:
-        """``(settings, tracked rows, left rows, state)``: every row of the centre, ~10 queries whatever the number of students."""
+    def _table(self, org_id: str, today: date) -> Tuple[ls.LedgerSettings, List[TableRow], List[TableRow], str, bool]:
+        """``(settings, tracked rows, left rows, state, launch closed by a human)``: every row of the centre, ~10 queries whatever the number of students."""
         settings = ls.load_settings(self.db, org_id)
         start = settings.accounting_start
         base = (
@@ -241,7 +245,7 @@ class OpeningsService(_Base):
             row.missing = (m.is_active and row.editable and row.opening is None and not row.money and first_day < start)
             out.append(row)
         n = len(tracked)
-        return settings, out[:n], out[n:], _state_of(block)
+        return settings, out[:n], out[n:], _state_of(block), launch_closed(_state_of(block), block.get(STATE_BY_KEY))
 
     @staticmethod
     def _totals(tracked: Sequence[TableRow], left: Sequence[TableRow], shown: int) -> OpeningTotals:
@@ -271,7 +275,7 @@ class OpeningsService(_Base):
         today = ps.business_today()
         if group_id is not None and self.db.query(Group.id).filter(Group.id == group_id, Group.org_id == org_id).first() is None:
             raise PaymentNotFound("Группа не найдена")
-        settings, tracked, left, state = self._table(org_id, today)
+        settings, tracked, left, state, _ = self._table(org_id, today)
         rows = list(tracked) + (list(left) if include_left else [])
         if group_id is not None:
             rows = [r for r in rows if r.g.id == group_id]
@@ -299,7 +303,7 @@ class OpeningsService(_Base):
             block.with_opening += 1 if r.opening is not None else 0
             block.missing += 1 if r.missing else 0
         return OpeningsList(
-            as_of=today, accounting_start=settings.accounting_start, state=state, period_mode=mode,
+            as_of=today, accounting_start=settings.accounting_start, state=state, launch_closed=self.is_launch_closed(org_id), period_mode=mode,
             paid_until_max=today + timedelta(days=366), totals=totals, groups=list(blocks.values()))
 
     def summary(self, org_id: str) -> OpeningsSummary:
@@ -309,28 +313,36 @@ class OpeningsService(_Base):
             hit = cache.get(str(org_id))
             if hit and hit[0] > time.monotonic() and hit[1] == today.isoformat():
                 return hit[2]
-        settings, tracked, left, state = self._table(org_id, today)
-        result = OpeningsSummary(accounting_start=settings.accounting_start, state=state, totals=self._totals(tracked, left, 0))
+        settings, tracked, left, state, closed = self._table(org_id, today)
+        result = OpeningsSummary(accounting_start=settings.accounting_start, state=state, launch_closed=closed, totals=self._totals(tracked, left, 0))
         if ttl > 0:
             cache[str(org_id)] = (time.monotonic() + ttl, today.isoformat(), result)
         return result
 
     # ------------------------------------------------------------------------------------------------ the state
 
-    def set_state(self, org_id: str, actor_id: str, state: str) -> OpeningsSummary:
-        """«Готово» / «Не нужно» (the owner, an admin with the right to money - the router checks).  ``pending`` is the release script's."""
-        if state not in ("done", "skipped"):
-            raise PaymentInvalid("Состояние: done или skipped")
+    def set_state(self, org_id: str, actor_id: str, state: str, actor_role: str) -> OpeningsSummary:
+        """«Готово» / «Не нужно» (the owner, an admin with the right to money - the router checks); ``pending`` takes the launch back: the owner only (R3d Д3).
+        Every transition leaves a line in the journal of the money settings (who, when, from what to what)."""
+        if state not in ("done", "skipped", "pending"):
+            raise PaymentInvalid("Состояние: done, skipped или pending")
+        if state == "pending" and actor_role != "owner":
+            raise OpeningOwnerOnly("Вернуть запуск учёта может владелец")
         org = self.db.query(Organization).filter(Organization.id == org_id).with_for_update().first()
         if org is None:
             raise PaymentNotFound("Организация не найдена")
         settings = dict(org.settings or {})
         block = dict(settings.get("payments") or {})
+        before = _state_of(block)
         block[STATE_KEY] = state
-        block["openings_state_by"] = str(actor_id)
+        block[STATE_BY_KEY] = str(actor_id)
         block["openings_state_at"] = ps.business_today().isoformat()
         org.settings = {**settings, "payments": block}
         flag_modified(org, "settings")
+        if before != state:
+            words = {"done": "завершён («Готово»)", "skipped": "пропущен («Не нужно»)", "pending": "возвращён владельцем"}
+            self.db.add(OrgMoneyAudit(org_id=UUID(str(org_id)), actor_id=UUID(str(actor_id)), action="openings_state_changed", occurred_at=_utcnow(),
+                                      details={"before": before, "after": state, "at": ps.business_today().isoformat(), "text": f"Запуск учёта остатков {words[state]}"}))
         self.db.commit()
         logger.info("openings state org=%s actor=%s state=%s", org_id, actor_id, state)
         return self.summary(org_id)
@@ -567,15 +579,16 @@ class OpeningsService(_Base):
                 raise PaymentNotFound("Организация не найдена")
             body_hash = self._body_hash(request)
             block = dict((org.settings or {}).get("payments") or {})
-            state_now = _state_of(block)
-            self.check_opening_allowed(org_id, actor_role, state_now)      # R3c Г1: under the lock of the centre, the same state «Готово» writes
-            for old in block.get(BATCHES_KEY) or []:
+            for old in block.get(BATCHES_KEY) or []:        # R3d Д2: the repeat of a saved batch (the network broke after the answer) is answered BEFORE the rule is asked: «Готово» of the owner between the two must not turn it into a 403
                 if old.get("key") == key:
                     if old.get("body") != body_hash:
                         raise IdempotencyMismatch("Этот ключ уже использован для другого пакета")
                     self.db.rollback()
                     answer = OpeningBatchApplied.model_validate({**old["answer"], "replayed": True})
                     return answer
+            state_now = _state_of(block)
+            closed_now = launch_closed(state_now, block.get(STATE_BY_KEY))
+            self.check_opening_allowed(org_id, actor_role, closed_now)      # R3c Г1: under the lock of the centre, the same state «Готово» writes
             # (2) the plan under the locks of the students and the memberships
             plan = self._plan(org_id, request.items, today, lock=True)
             stale = [p for p in plan.items if p.stale]
@@ -604,7 +617,7 @@ class OpeningsService(_Base):
                                        debt_on=p.target[2] if p.target else None)
                 cancelled: List[UUID] = []
                 row, changed = service.apply(org_id, p.membership, actor_id, actor_role, body, source="manual", today=today, reason=reason,
-                                             facts=facts, flush=False, voided=cancelled, opening_state=state_now)
+                                             facts=facts, flush=False, voided=cancelled, launch_is_closed=closed_now)
                 if not changed:  # cannot happen: the plan said it changes
                     raise ConcurrentEdit("Данные изменились во время записи — повторите")
                 written.append((p, row, cancelled[0] if cancelled else None))
@@ -628,10 +641,10 @@ class OpeningsService(_Base):
             # (5) the answer is remembered under the key (the ring lives in the settings of the centre) - in the same transaction
             state = _state_of(block)
             if state in ("none", "pending"):        # the last «не заполнено» row is gone: the checklist is done (the buttons stay for the rest)
-                _, tracked, _, _ = self._table(org_id, today)
+                _, tracked, _, _, _ = self._table(org_id, today)
                 if not any(r.missing for r in tracked):
                     state = block[STATE_KEY] = "done"
-                    block["openings_state_by"], block["openings_state_at"] = "auto", today.isoformat()
+                    block[STATE_BY_KEY], block["openings_state_at"] = "auto", today.isoformat()
             answer = OpeningBatchApplied(batch_id=str(batch_id), replayed=False, summary=plan.summary, impact=plan.impact, changed=len(written),
                                          state=state)
             ring = list(block.get(BATCHES_KEY) or [])

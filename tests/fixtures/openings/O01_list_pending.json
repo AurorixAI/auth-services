@@ -1,6 +1,7 @@
 {
   "accounting_start": "2026-11-01",
   "as_of": "2026-10-22",
+  "can_reopen_launch": false,
   "can_set_opening": false,
   "groups": [
     {
@@ -356,6 +357,7 @@
       "with_opening": 0
     }
   ],
+  "launch_closed": false,
   "paid_until_max": "2027-10-23",
   "period_mode": "calendar",
   "state": "pending",

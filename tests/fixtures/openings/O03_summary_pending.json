@@ -1,6 +1,8 @@
 {
   "accounting_start": "2026-11-01",
+  "can_reopen_launch": false,
   "can_set_opening": false,
+  "launch_closed": false,
   "state": "pending",
   "totals": {
     "left_available": 1,

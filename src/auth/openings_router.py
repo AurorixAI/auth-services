@@ -49,7 +49,7 @@ def _role(user: dict) -> str:
 
 def _can_set(result, user: dict):
     """R3c Г1: ``can_set_opening`` of the ASKING user (the cached summary is shared by the centre, so the field is set on a copy)."""
-    return result.model_copy(update={"can_set_opening": opening_allowed(result.state, _role(user))})
+    return result.model_copy(update={"can_set_opening": opening_allowed(result.launch_closed, _role(user)), "can_reopen_launch": result.launch_closed and _role(user) == "owner"})
 
 
 @router.get("/org/opening-balances", response_model=OpeningsList, responses=_ERRORS)
@@ -97,9 +97,9 @@ def apply_batch(request: OpeningBatchRequest, user: dict = Depends(require_payme
 
 @router.post("/org/opening-balances/state", response_model=OpeningsSummary, responses=_ERRORS)
 def set_openings_state(request: OpeningsStateIn, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
-    """«Готово» / «Не нужно»: состояние запуска остатков (``pending`` ставит только скрипт релиза)."""
+    """«Готово» / «Не нужно»: состояние запуска остатков; ``pending`` — вернуть запуск (только владелец)."""
     try:
-        return _can_set(OpeningsService(db).set_state(user["org_id"], user["user_id"], request.state), user)
+        return _can_set(OpeningsService(db).set_state(user["org_id"], user["user_id"], request.state, _role(user)), user)
     except PaymentError as exc:
         raise _http(exc)
 

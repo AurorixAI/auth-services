@@ -218,8 +218,8 @@ def test_summary_state_and_the_rights(world, fixed_today):
     s = owner(world).get(f"{BASE}/summary").json()
     assert_same_shape(s, fixture("O03_summary_pending"))
     assert s["state"] == "none" and s["totals"]["memberships"] == 3 and s["totals"]["shown"] == 0
-    # only done / skipped; pending is the release script's
-    for bad in ("pending", "none", "x"):
+    # done / skipped / pending (R3d Д3: pending takes the launch back, the owner's); the rest is 422
+    for bad in ("none", "x"):
         assert owner(world).post(f"{BASE}/state", json={"state": bad}).status_code == 422
     out = owner(world).post(f"{BASE}/state", json={"state": "skipped"}).json()
     assert out["state"] == "skipped" and settings_of(world)["openings_state"] == "skipped"

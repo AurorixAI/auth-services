@@ -131,10 +131,16 @@ def impact_of(before: bl.Ledger, after: bl.Ledger) -> ImpactMoney:
     )
 
 
-def opening_allowed(state: str, actor_role: str) -> bool:
-    """R3c Г1: THE one rule of the opening balance - the owner always; any other role (an administrator with the right to money: the routes check it) only while the launch of the accounting is not
-    finished (``none`` / ``pending``).  Every road of the opening balance and the field ``can_set_opening`` of the screens ask this function."""
-    return actor_role == "owner" or state not in ("done", "skipped")
+def launch_closed(state: str, state_by: Optional[str]) -> bool:
+    """R3d Д2: the launch of the accounting is CLOSED when a HUMAN finished it (``done`` / ``skipped``, ``openings_state_by`` is not ``"auto"``); the automatic ``done`` (the list is filled: the last «не заполнено»
+    row is gone) closes nothing - the typo of the last row is still the administrator's to correct."""
+    return state in ("done", "skipped") and state_by != "auto"
+
+
+def opening_allowed(closed: bool, actor_role: str) -> bool:
+    """R3c Г1 / R3d Д2: THE one rule of the opening balance - the owner always; any other role (an administrator with the right to money: the routes check it) only while the launch of the accounting is not
+    closed by a human (``launch_closed``).  Every road of the opening balance and the field ``can_set_opening`` of the screens ask this function."""
+    return actor_role == "owner" or not closed
 
 
 class _Base:
@@ -148,8 +154,13 @@ class _Base:
         value = (settings.get("payments") or {}).get("openings_state")
         return value if value in ("none", "pending", "done", "skipped") else "none"
 
-    def check_opening_allowed(self, org_id: str, actor_role: str, state: Optional[str] = None) -> None:
-        if not opening_allowed(state if state is not None else self.opening_state(org_id), actor_role):
+    def is_launch_closed(self, org_id: str) -> bool:
+        """R3d Д2: has a human finished the launch of the accounting of the centre (``launch_closed`` of its settings block)."""
+        block = (self.db.query(Organization.settings).filter(Organization.id == org_id).scalar() or {}).get("payments") or {}
+        return launch_closed(self.opening_state(org_id), block.get("openings_state_by"))
+
+    def check_opening_allowed(self, org_id: str, actor_role: str, closed: Optional[bool] = None) -> None:
+        if not opening_allowed(closed if closed is not None else self.is_launch_closed(org_id), actor_role):
             raise OpeningOwnerOnly("Учёт запущен — остаток на начало вносит и меняет владелец")
 
     def _first_stay_day(self, membership: StudentGroup) -> date:
@@ -260,7 +271,7 @@ class OpeningService(_Base):
     def apply(
         self, org_id: str, membership: StudentGroup, actor_id: str, actor_role: str, body, *, source: str, today: date,
         reason: Optional[str] = None, note: Optional[str] = None, require_reason_when_money: bool = True,
-        facts: Optional["OpeningFacts"] = None, flush: bool = True, voided: Optional[List[UUID]] = None, opening_state: Optional[str] = None,
+        facts: Optional["OpeningFacts"] = None, flush: bool = True, voided: Optional[List[UUID]] = None, launch_is_closed: Optional[bool] = None,
     ) -> Tuple[Optional[MembershipOpeningBalance], bool]:
         """The write inside the caller's transaction (no commit).  Returns ``(live row or None, changed)``; the id of the row it cancelled is appended to ``voided`` (the journal of the caller names it:
         the reconciliation looks for a line of the journal with the id of every cancelled row).
@@ -269,7 +280,7 @@ class OpeningService(_Base):
         accounting start ("nothing is owed at the start", a reviewed row) is a REAL opening: the ledger gives the same debt and charges with or without it.
         ``facts`` (the bulk write): what the single call would read itself - read ONCE for all the rows, so the query count of a batch does
         not depend on its size; ``flush=False``: the caller flushes once (the rows get their ids here)."""
-        self.check_opening_allowed(org_id, actor_role, opening_state)      # R3c Г1: ONE rule for every road (the card, the table, the window of adding); the batch passes the state it has already read
+        self.check_opening_allowed(org_id, actor_role, launch_is_closed)      # R3c Г1: ONE rule for every road (the card, the table, the window of adding); the batch passes the state it has already read
         accounting_start = facts.accounting_start if facts else self.pay._loader(org_id, today).settings.accounting_start
         first_day = facts.first_day if facts else self._first_stay_day(membership)
         paid_until, debt_amount, debt_on = body.paid_until, body.debt_amount, body.debt_on

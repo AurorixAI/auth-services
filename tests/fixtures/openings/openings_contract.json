@@ -1411,6 +1411,11 @@
             "title": "As Of",
             "type": "string"
           },
+          "can_reopen_launch": {
+            "default": false,
+            "title": "Can Reopen Launch",
+            "type": "boolean"
+          },
           "can_set_opening": {
             "default": false,
             "title": "Can Set Opening",
@@ -1422,6 +1427,11 @@
             },
             "title": "Groups",
             "type": "array"
+          },
+          "launch_closed": {
+            "default": false,
+            "title": "Launch Closed",
+            "type": "boolean"
           },
           "paid_until_max": {
             "format": "date",
@@ -1456,6 +1466,8 @@
           "as_of",
           "accounting_start",
           "state",
+          "launch_closed",
+          "can_reopen_launch",
           "can_set_opening",
           "period_mode",
           "paid_until_max",
@@ -1466,12 +1478,13 @@
         "type": "object"
       },
       "OpeningsStateIn": {
-        "description": "The owner / an admin with the right to money ends the checklist: ``done`` («Готово») or ``skipped`` («Не нужно»).  ``pending`` is set by the\nrelease script only (``scripts/set_openings_pending.py``).",
+        "description": "The owner / an admin with the right to money ends the checklist: ``done`` («Готово») or ``skipped`` («Не нужно»).  ``pending`` takes the launch back: the owner only\n(403 ``OPENING_OWNER_ONLY``); the administrator with the right to money puts the opening balances again.",
         "properties": {
           "state": {
             "enum": [
               "done",
-              "skipped"
+              "skipped",
+              "pending"
             ],
             "title": "State",
             "type": "string"
@@ -1491,9 +1504,19 @@
             "title": "Accounting Start",
             "type": "string"
           },
+          "can_reopen_launch": {
+            "default": false,
+            "title": "Can Reopen Launch",
+            "type": "boolean"
+          },
           "can_set_opening": {
             "default": false,
             "title": "Can Set Opening",
+            "type": "boolean"
+          },
+          "launch_closed": {
+            "default": false,
+            "title": "Launch Closed",
             "type": "boolean"
           },
           "state": {
@@ -1514,6 +1537,8 @@
         "required": [
           "accounting_start",
           "state",
+          "launch_closed",
+          "can_reopen_launch",
           "can_set_opening",
           "totals"
         ],
@@ -2265,7 +2290,7 @@
     },
     "/org/opening-balances/state": {
       "post": {
-        "description": "«Готово» / «Не нужно»: состояние запуска остатков (``pending`` ставит только скрипт релиза).",
+        "description": "«Готово» / «Не нужно»: состояние запуска остатков; ``pending`` — вернуть запуск (только владелец).",
         "requestBody": {
           "content": {
             "application/json": {

@@ -205,3 +205,150 @@ def test_d1_the_real_application_has_the_handler():
     from src.auth.payments_service import PaymentError
 
     assert PaymentError in main_v2.app.exception_handlers
+
+
+# ============================================================================================================ Д2: «closed» is the human's «Готово», not the automatic one
+
+
+def world_d2(world, fixed_today, state="pending"):
+    """Three students in A since 01.09 with no opening (3 «не заполнено» rows), accounting start 01.11; the launch is ``state``; ``admin`` has the right to money."""
+    from tests.test_opening_bulk_pg import centre, enrolled
+
+    centre(world)
+    rows = [enrolled(world, date(2026, 9, 1), s) for s in world.students]
+    settings_block(world, openings_state=state)
+    return rows, admin_client(world)
+
+
+def summary_of(client):
+    r = client.get(f"{API}/org/opening-balances/summary")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_d2_an_administrator_fills_the_last_row_the_state_is_done_but_the_administrator_still_corrects(world, fixed_today):
+    from tests.test_opening_bulk_pg import apply, it, live_openings, settings_of
+
+    (a, b, c), admin = world_d2(world, fixed_today)
+    apply(world, [it(world, a, paid_until="2026-10-31"), it(world, b, paid_until="2026-11-30")], client=admin)
+    out = apply(world, [it(world, c, paid_until="2026-10-31")], client=admin)
+    assert out["state"] == "done" and settings_of(world)["openings_state_by"] == "auto"
+    s = summary_of(admin)
+    assert s["state"] == "done" and s["can_set_opening"] is True and s["launch_closed"] is False
+    assert owner(world).get(f"{API}/org/opening-balances/summary").json()["launch_closed"] is False
+    # the typo of the last row is corrected by the same administrator: the card and the table
+    url = f"{API}/org/memberships/{c.id}/opening-balance"
+    r = admin.put(url, json={"paid_until": "2026-11-15"})
+    assert r.status_code == 200, r.text
+    assert apply(world, [it(world, c, paid_until="2026-10-31")], client=admin)["changed"] == 1
+    assert len(live_openings(world)) == 3
+
+
+@pytest.mark.parametrize("state", ["done", "skipped"])
+def test_d2_the_owner_pressed_the_button_the_administrator_is_refused(world, fixed_today, state):
+    from tests.test_opening_bulk_pg import apply, it, live_openings
+
+    (a, b, c), admin = world_d2(world, fixed_today)
+    assert owner(world).post(f"{API}/org/opening-balances/state", json={"state": state}).status_code == 200
+    s = summary_of(admin)
+    assert s["state"] == state and s["can_set_opening"] is False and s["launch_closed"] is True
+    assert owner(world).get(f"{API}/org/opening-balances/summary").json()["can_set_opening"] is True
+    r = admin.put(f"{API}/org/memberships/{a.id}/opening-balance", json={"paid_until": "2026-10-31"})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "OPENING_OWNER_ONLY", r.text
+    assert live_openings(world) == []
+    apply(world, [it(world, a, paid_until="2026-10-31")], client=admin, expect=403)
+
+
+def test_d2_an_administrator_who_pressed_the_button_closes_it_too(world, fixed_today):
+    (a, b, c), admin = world_d2(world, fixed_today)
+    assert admin.post(f"{API}/org/opening-balances/state", json={"state": "done"}).status_code == 200
+    s = summary_of(admin)
+    assert s["launch_closed"] is True and s["can_set_opening"] is False
+
+
+def test_d2_the_repeat_of_a_batch_after_the_owner_pressed_done_gets_the_saved_answer_not_403(world, fixed_today):
+    import uuid
+
+    from tests.test_opening_bulk_pg import BASE, it, preview, settings_of
+
+    (a, b, c), admin = world_d2(world, fixed_today)
+    items = [it(world, a, paid_until="2026-10-31"), it(world, b, paid_until="2026-11-30"), it(world, c, paid_until="2026-10-31")]
+    body = {"items": items, "reason": None, "idempotency_key": str(uuid.uuid4()), "digest": preview(world, items, client=admin)["digest"]}
+    first = admin.post(f"{BASE}/batch", json=body)
+    assert first.status_code == 200 and first.json()["replayed"] is False, first.text
+    assert owner(world).post(f"{BASE}/state", json={"state": "done"}).status_code == 200
+    assert settings_of(world)["openings_state_by"] != "auto"
+    again = admin.post(f"{BASE}/batch", json=body)                              # the network broke after the answer: the same body, the same key
+    assert again.status_code == 200 and again.json()["replayed"] is True and again.json()["batch_id"] == first.json()["batch_id"], again.text
+    other = admin.post(f"{BASE}/batch", json={**body, "idempotency_key": str(uuid.uuid4())})      # a NEW key is a new write: refused
+    assert other.status_code == 403 and other.json()["detail"]["code"] == "OPENING_OWNER_ONLY", other.text
+
+
+# ============================================================================================================ Д3: the owner may take the launch back (pending)
+
+
+def journal_of(client):
+    r = client.get(f"{API}/org/settings/payments/history")
+    assert r.status_code == 200, r.text
+    return r.json()["items"]
+
+
+def test_d3_the_owner_returns_the_launch_and_the_administrator_puts_the_openings_again(world, fixed_today):
+    (a, b, c), admin = world_d2(world, fixed_today)
+    assert owner(world).post(f"{API}/org/opening-balances/state", json={"state": "skipped"}).status_code == 200
+    assert admin.put(f"{API}/org/memberships/{a.id}/opening-balance", json={"paid_until": "2026-10-31"}).status_code == 403
+    r = owner(world).post(f"{API}/org/opening-balances/state", json={"state": "pending"})
+    assert r.status_code == 200 and r.json()["state"] == "pending" and r.json()["launch_closed"] is False, r.text
+    assert admin.get(f"{API}/org/opening-balances/summary").json()["can_set_opening"] is True
+    assert admin.put(f"{API}/org/memberships/{a.id}/opening-balance", json={"paid_until": "2026-10-31"}).status_code == 200
+
+
+def test_d3_an_administrator_cannot_return_the_launch(world, fixed_today):
+    (a, b, c), admin = world_d2(world, fixed_today)
+    assert owner(world).post(f"{API}/org/opening-balances/state", json={"state": "done"}).status_code == 200
+    r = admin.post(f"{API}/org/opening-balances/state", json={"state": "pending"})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "OPENING_OWNER_ONLY" and r.json()["detail"]["message"] == "Вернуть запуск учёта может владелец", r.text
+    assert summary_of(admin)["state"] == "done"
+
+
+@pytest.mark.parametrize("bad", ["none", "closed", "", "PENDING"])
+def test_d3_other_words_are_still_422(world, fixed_today, bad):
+    (a, b, c), admin = world_d2(world, fixed_today)
+    assert owner(world).post(f"{API}/org/opening-balances/state", json={"state": bad}).status_code == 422
+
+
+def test_d3_the_journal_of_the_settings_names_all_three_transitions(world, fixed_today):
+    (a, b, c), admin = world_d2(world, fixed_today)
+    assert admin.post(f"{API}/org/opening-balances/state", json={"state": "done"}).status_code == 200
+    assert owner(world).post(f"{API}/org/opening-balances/state", json={"state": "pending"}).status_code == 200
+    assert owner(world).post(f"{API}/org/opening-balances/state", json={"state": "skipped"}).status_code == 200
+    rows = [i for i in journal_of(owner(world)) if i["action"] == "openings_state_changed"]
+    assert [i["details"]["after"] for i in rows] == ["skipped", "pending", "done"]                       # the newest first
+    assert [i["details"]["before"] for i in rows] == ["pending", "done", "pending"]
+    assert all(i["actor_id"] and i["text"].startswith("Запуск учёта") for i in rows)
+    assert rows[1]["details"]["before"] == "done" and "возвращён" in rows[1]["text"]
+
+
+@pytest.mark.parametrize("state,by_owner,role,closed,can_reopen", [
+    ("pending", False, "owner", False, False),
+    ("done", False, "owner", True, True),
+    ("skipped", False, "owner", True, True),
+    ("done", False, "admin", True, False),
+    ("pending", False, "admin", False, False),
+])
+def test_d3_can_reopen_launch_by_role_and_state(world, fixed_today, state, by_owner, role, closed, can_reopen):
+    (a, b, c), admin = world_d2(world, fixed_today)
+    if state != "pending":
+        assert owner(world).post(f"{API}/org/opening-balances/state", json={"state": state}).status_code == 200
+    client = owner(world) if role == "owner" else admin
+    for url in (f"{API}/org/opening-balances/summary", f"{API}/org/opening-balances"):
+        d = client.get(url).json()
+        assert d["launch_closed"] is closed and d["can_reopen_launch"] is can_reopen, (url, d["launch_closed"], d["can_reopen_launch"])
+
+
+def test_d3_the_answer_of_the_state_carries_can_reopen_launch(world, fixed_today):
+    (a, b, c), admin = world_d2(world, fixed_today)
+    d = owner(world).post(f"{API}/org/opening-balances/state", json={"state": "done"}).json()
+    assert d["launch_closed"] is True and d["can_reopen_launch"] is True and d["can_set_opening"] is True
+    d = owner(world).post(f"{API}/org/opening-balances/state", json={"state": "pending"}).json()
+    assert d["launch_closed"] is False and d["can_reopen_launch"] is False
