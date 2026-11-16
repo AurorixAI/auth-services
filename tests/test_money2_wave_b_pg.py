@@ -272,10 +272,10 @@ def test_t17_the_correction_of_the_date_the_refund_and_the_forgiveness_follow_th
     paid = pay(world, s0, a, amount=300_000, paid_on=date(2026, 11, 2))["payment"]
     admin = _admin_with_the_right(world)
     replace = lambda **kw: admin.post(f"{API}/org/payments/{paid['id']}/replace", json={"amount": 300_000, "paid_on": "2026-11-02", "method": "cash", "reason": "Исправление", **kw})      # noqa: E731
-    # only the method of an old payment: the date stays 02.11 (18 days old) - allowed
+    # R3b В3: even the method alone of an old payment (18 days) is the owner's now: it moves the expected sum of the till of today
     r = replace(method="card")
-    assert r.status_code == 201, r.text
-    new = r.json()["payment"]
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "BACKDATE_OWNER_ONLY", r.text
+    new = paid
     # a new date older than 7 days: refused (and the preview of the correction with it); 13.11: allowed
     r = admin.post(f"{API}/org/payments/{new['id']}/replace", json={"amount": 300_000, "paid_on": "2026-11-12", "method": "card", "reason": "Дата"})
     assert r.status_code == 403 and r.json()["detail"]["code"] == "BACKDATE_OWNER_ONLY", r.text
@@ -295,13 +295,14 @@ def test_t17_the_correction_of_the_date_the_refund_and_the_forgiveness_follow_th
 
 
 def test_t17_the_restoration_of_a_cancelled_payment_is_not_limited_by_the_age_of_the_payment(world, fixed_today):
-    # the owner cancelled a payment of 02.11 (18 days old); the administrator restores it: the money is not new, the date is the old one - allowed (Т7 stays as it is)
+    # the owner cancelled a payment of 02.11 (18 days old); R3b В3: only the owner restores what the owner cancelled (the age of the record is no obstacle: the money is not new, the date is the old one)
     a, b, c = groups3(world, fixed_today)
     s0 = world.students[0]
     stay(world, membership(world, s0, a), date(2026, 11, 2))
     paid = pay(world, s0, a, amount=300_000, paid_on=date(2026, 11, 2))["payment"]
     assert owner(world).post(f"{API}/org/payments/{paid['id']}/void", json={"reason": "Ошибка"}).status_code == 200
-    r = _admin_with_the_right(world).post(f"{API}/org/payments/{paid['id']}/restore", json={"reason": "Отменили по ошибке"})
+    assert _admin_with_the_right(world).post(f"{API}/org/payments/{paid['id']}/restore", json={"reason": "Отменили по ошибке"}).status_code == 403
+    r = owner(world).post(f"{API}/org/payments/{paid['id']}/restore", json={"reason": "Отменили по ошибке"})
     assert r.status_code == 201, r.text
     assert r.json()["payment"]["paid_on"] == "2026-11-02"
 

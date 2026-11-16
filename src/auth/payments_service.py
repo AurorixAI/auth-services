@@ -354,6 +354,10 @@ class BackdateOwnerOnly(PaymentForbidden):
     code = "BACKDATE_OWNER_ONLY"
 
 
+class RestoreOwnerOnly(PaymentForbidden):
+    code = "RESTORE_OWNER_ONLY"
+
+
 class PaymentFileTooLarge(PaymentError):
     status_code = 413
 
@@ -447,6 +451,7 @@ class _Links:
     sources: Dict[UUID, CarriedFromOut]  # original id -> {payment_id, group_name}
     targets: Dict[UUID, Optional[str]]  # stamped original id -> group its live carry-over lives in
     restored: Dict[UUID, int] = field(default_factory=dict)  # Money-2 T7: restored payment id -> the receipt number of the cancelled payment it brought back
+    restorable: set = field(default_factory=set)  # R3b В3: ids of the cancelled payments THIS caller may restore (role of the caller, chain, the ceiling of a stay that has ended) - computed per page, not per row
     replaced_by: Dict[UUID, Optional[int]] = field(default_factory=dict)  # Money-2 T7: cancelled payment id -> the receipt number of the payment that stands in its place (a correction or a restoration)
 
 
@@ -884,9 +889,10 @@ class PaymentService:
                 .filter(User.id.in_(wanted), OrganizationMember.org_id == org_id).all())
         return {u.id: u for u in rows}
 
-    def _links(self, payments: Iterable[StudentPayment]) -> _Links:
+    def _links(self, payments: Iterable[StudentPayment], actor_role: Optional[str] = None) -> _Links:
         """Where the carry-overs among ``payments`` come from and where the stamped ones went (LEGACY rows only); which of them are RESTORATIONS of a cancelled payment (Money-2 T7)."""
         payments = list(payments)
+        all_payments = payments
         replaced_by: Dict[UUID, Optional[int]] = {}
         voided = [p.id for p in payments if p.voided_at is not None]
         if voided:
@@ -924,7 +930,7 @@ class PaymentService:
                 .all()
             ):
                 targets[source_id] = name
-        return _Links(sources, targets, restored, replaced_by)
+        return _Links(sources, targets, restored, self._restorable_ids(all_payments, replaced_by, actor_role) if actor_role else set(), replaced_by)
 
     def _payment_out(
         self,
@@ -957,7 +963,7 @@ class PaymentService:
             note=payment.note,
             replaces_payment_id=str(payment.replaces_payment_id) if payment.replaces_payment_id else None,
             restored_from_receipt_no=links.restored.get(payment.id) if links else None,
-            restorable=bool(links) and self._restore_blocker(payment, payment.id in links.replaced_by) is None and not self._restore_superseded(payment),
+            restorable=bool(links) and payment.id in links.restorable,
             replaced_by_receipt_no=links.replaced_by.get(payment.id) if links else None,
             receipt_no=payment.receipt_no,
             partial_period=bool(payment.partial_period),
@@ -1227,7 +1233,7 @@ class PaymentService:
         return self._rows(kept)
 
     def list_payments(
-        self, org_id: str, membership_id: UUID, include_voided: bool = True
+        self, org_id: str, membership_id: UUID, include_voided: bool = True, *, actor_role: str = "owner",
     ) -> List[PaymentOut]:
         self._membership(org_id, membership_id)
         query = self.db.query(StudentPayment).filter(
@@ -1241,7 +1247,7 @@ class PaymentService:
         found = self._loader(org_id).run([membership_id])
         ledger = found[0].ledger if found else None
         users = self._users(x for p in payments for x in (p.created_by, p.voided_by))
-        links = self._links(payments)
+        links = self._links(payments, actor_role)
         files = load_files(self.db, [p.id for p in payments])
         return [self._payment_out(p, users, links, files, ledger) for p in payments]
 
@@ -1321,22 +1327,33 @@ class PaymentService:
         if old is None:                       # a plain payment of a student who left (no correction): only his debt
             return debt_without
         before = earlier_versions(self.db, org_id, [old.replaces_payment_id])      # R3b В2: a past version's sum counts only while no live payment OUTSIDE the whole chain came after that version was replaced / cancelled
-        outside = self._live_outside_chain(org_id, old, before)
+        outside = self._live_outside_chain(old)
         return max([debt_without, int(old.amount)] + [int(v.amount) for v in before.values() if v.voided_at is not None and not any(at > v.voided_at for at in outside)])
 
-    def _live_outside_chain(self, org_id: Any, payment: StudentPayment, earlier: Dict[Any, StudentPayment]) -> List[datetime]:
+    def _stay_rows(self, membership_id: Any) -> List[Tuple[Any, Any, datetime, bool]]:
+        """R3b В2: ONE read of every payment of a stay - ``(id, replaces_payment_id, created_at, is a live payment of money)``; the chains of versions are cut out of it in memory."""
+        return [(i, r, at, v is None and k != "legacy_carry" and c is None) for i, r, at, v, k, c in self.db.query(
+            StudentPayment.id, StudentPayment.replaces_payment_id, StudentPayment.created_at, StudentPayment.voided_at, StudentPayment.kind, StudentPayment.carried_from_payment_id)
+            .filter(StudentPayment.membership_id == membership_id).all()]
+
+    @staticmethod
+    def _live_outside_chain_of(payment_id: Any, rows: Sequence[Tuple[Any, Any, datetime, bool]]) -> List[datetime]:
         """R3b В2: THE one test of the relaxation «the money is not new» for a closed stay (the correction back to a bigger sum of the chain, the restoration of a cancelled payment): the creation times of
-        the live payments of this stay that are NOT in the chain of ``payment`` (every version before it, every version after it, restorations included - they stand in the chain through
+        the live payments of the stay that are NOT in the chain of ``payment_id`` - every version before it, every version after it, restorations included (they stand in the chain through
         ``replaces_payment_id``).  Whoever asks compares them with the moment a version was replaced / cancelled: a payment taken after that moment makes the bigger sum new money."""
-        chain = {payment.id, *earlier}
-        frontier = [payment.id]
-        for _depth in range(MAX_CHAIN_DEPTH):                      # the versions AFTER this one (a cancelled payment restored later, a correction of a restoration)
-            found = [i for (i,) in self.db.query(StudentPayment.id).filter(StudentPayment.org_id == org_id, StudentPayment.replaces_payment_id.in_(frontier)).all()] if frontier else []
-            frontier = [i for i in found if i not in chain]
+        links: Dict[Any, set] = {}
+        for i, r, _at, _live in rows:
+            if r is not None:
+                links.setdefault(i, set()).add(r)
+                links.setdefault(r, set()).add(i)
+        chain, frontier = {payment_id}, [payment_id]
+        while frontier:
+            frontier = [n for x in frontier for n in links.get(x, ()) if n not in chain]
             chain.update(frontier)
-        return [at for (at,) in self.db.query(StudentPayment.created_at).filter(
-            StudentPayment.membership_id == payment.membership_id, StudentPayment.id.notin_(chain), StudentPayment.voided_at.is_(None),
-            StudentPayment.kind != "legacy_carry", StudentPayment.carried_from_payment_id.is_(None)).all()]
+        return [at for i, _r, at, live in rows if live and i not in chain]
+
+    def _live_outside_chain(self, payment: StudentPayment) -> List[datetime]:
+        return self._live_outside_chain_of(payment.id, self._stay_rows(payment.membership_id))
 
     def _restore_superseded(self, payment: StudentPayment) -> bool:
         """R3 П3 / R3b В2: a cancelled payment of a stay that has ended cannot come back after another live payment (outside its own chain) was taken into this stay since the cancellation."""
@@ -1345,8 +1362,34 @@ class PaymentService:
         membership = self.db.get(StudentGroup, payment.membership_id)
         if membership is None or not self._is_left(membership):
             return False
-        before = earlier_versions(self.db, payment.org_id, [payment.replaces_payment_id])
-        return any(at > payment.voided_at for at in self._live_outside_chain(payment.org_id, payment, before))
+        return any(at > payment.voided_at for at in self._live_outside_chain(payment))
+
+    def _voided_by_owner(self, org_id: Any, voided_by: Iterable[Any]) -> set:
+        """R3b В3: which of the authors of a cancellation are owners of the centre (one query)."""
+        wanted = {v for v in voided_by if v}
+        if not wanted:
+            return set()
+        return {u for (u,) in self.db.query(OrganizationMember.user_id).filter(OrganizationMember.org_id == org_id, OrganizationMember.user_id.in_(wanted), OrganizationMember.org_role == "owner").all()}
+
+    def _restorable_ids(self, payments: Sequence[StudentPayment], replaced_by: Dict[UUID, Optional[int]], actor_role: str) -> set:
+        """R3b В3 + the small thing: the ids of the cancelled payments of the page that the caller may restore - the SAME rules as the write (``_restore_blocker``, the owner's cancellation, the ceiling
+        of a stay that has ended), but read ONCE per page: the stay's rows, the status of the stay and the authors' roles are read once, not per payment."""
+        voided = [p for p in payments if p.voided_at is not None]
+        if not voided:
+            return set()
+        owners = self._voided_by_owner(voided[0].org_id, (p.voided_by for p in voided)) if actor_role != "owner" else set()
+        out: set = set()
+        for membership_id in {p.membership_id for p in voided}:
+            membership = self.db.get(StudentGroup, membership_id)
+            left = membership is not None and self._is_left(membership)
+            rows = self._stay_rows(membership_id) if left else []
+            for p in (v for v in voided if v.membership_id == membership_id):
+                if self._restore_blocker(p, p.id in replaced_by) is not None or p.voided_by in owners:
+                    continue
+                if left and any(at > p.voided_at for at in self._live_outside_chain_of(p.id, rows)):
+                    continue
+                out.add(p.id)
+        return out
 
     def _check_left_correction(self, org_id: Any, amount: int, debt_without: int, old: StudentPayment) -> None:
         ceiling = self._correction_ceiling(org_id, debt_without, old)
@@ -1662,6 +1705,8 @@ class PaymentService:
             blocker = self._restore_blocker(old, successor is not None, successor.receipt_no if successor is not None else None, successor.id if successor is not None else None)
             if blocker is not None:
                 raise blocker
+            if actor_role != "owner" and old.voided_by in self._voided_by_owner(org_id, [old.voided_by]):      # R3b В3: the owner's cancellation is taken back by the owner only
+                raise RestoreOwnerOnly("Оплату отменил владелец — восстановить может только он")
             if self._restore_superseded(old):
                 raise RestoreSuperseded("После отмены в эту группу уже внесена другая оплата — восстановить нельзя: исправьте её сумму или внесите разницу")
             was = self._accounts(org_id, family)
@@ -1720,7 +1765,7 @@ class PaymentService:
             old = self._lock_payment(org_id, payment_id)
             if data.paid_on != old.paid_on:               # Money-2 T17: a correction that keeps the date is not back-dating
                 self._check_backdate(data.paid_on, today, actor_role, changing=False)
-            if data.paid_on != old.paid_on or int(data.amount) != int(old.amount):      # R3 П4: an old record changes in its method and note only (an administrator)
+            if data.paid_on != old.paid_on or int(data.amount) != int(old.amount) or method != old.method:      # R3b В3: an old record changes in its NOTE only (an administrator): the method moves the expected sum of the till of today
                 self._check_backdate(old.paid_on, today, actor_role, changing=True)
             was = self._accounts(org_id, family)          # Money-1 V2: the accounts WITH the old payment (the line of the journal of decisions); G-4b: of EVERY group of the student
             loader = self._loader(org_id, today)
@@ -1790,7 +1835,7 @@ class PaymentService:
         users = self._users([payment.created_by, payment.voided_by])
         entry = self._loader(org_id).run([payment.membership_id])[0]
         return PaymentVoided(
-            payment=self._payment_out(payment, users, self._links([payment]), load_files(self.db, [payment.id]), entry.ledger),
+            payment=self._payment_out(payment, users, self._links([payment], actor_role), load_files(self.db, [payment.id]), entry.ledger),
             row=self._rows([entry])[0], new_debts=moved.new_debts, advance_drops=moved.advance_drops,
         )
 

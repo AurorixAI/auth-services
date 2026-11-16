@@ -346,7 +346,7 @@ def list_payments(
 ):
     """История оплат членства, новые сверху."""
     try:
-        return PaymentService(db).list_payments(user["org_id"], membership_id, include_voided)
+        return PaymentService(db).list_payments(user["org_id"], membership_id, include_voided, actor_role=user["org_role"])
     except PaymentError as exc:
         raise _http(exc)
 

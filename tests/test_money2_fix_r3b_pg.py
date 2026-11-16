@@ -8,6 +8,7 @@ from tests.pg_world import ensure_billing, give_group_price, make_group, needs_p
 from tests.ops_helpers import exams  # noqa: F401  (fixture: exam-service stub)
 from tests.test_money2_fix_r3_pg import TUE_THU, account, left_with_debt_100, leave, live_sum, periods_billing_from, replace_it, restore_it, void_it
 from tests.test_money2_transfer_a_pg import groups3, snap
+from tests.test_money2_fix_r3_pg import admin_client, world_p4
 from tests.test_payments_service_pg import pay
 from tests.test_pay2_api_pg import API, fixed_today, membership, owner, settings_block  # noqa: F401  (fixture)
 
@@ -134,3 +135,92 @@ def test_v2_restoring_a_cancelled_version_after_a_payment_outside_its_chain_is_r
     pay(world, s0, a, amount=10_000)
     assert restore_it(world, cut, expect=409)["detail"]["code"] == "PAYMENT_RESTORE_SUPERSEDED"
     assert live_sum(world, a, s0) == 110_000 + 90_000 + 10_000
+
+
+# ============================================================================================================ В3: an administrator changes NOTHING of an old record but the note; the owner's cancellation is the owner's to take back
+
+
+def change_method_as(client, payment, method, note=None, expect=201):
+    body = {"amount": payment["amount"], "paid_on": payment["paid_on"], "method": method, "reason": "Исправление"}
+    if note is not None:
+        body["note"] = note
+    r = client.post(f"{API}/org/payments/{payment['id']}/replace", json=body)
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def test_v3_an_administrator_cannot_change_even_the_method_of_a_record_older_than_seven_days_only_the_note(world, fixed_today):
+    # today 20.11: old = 02.11 (18 days), e8 = 12.11 (8 days), e7 = 13.11 (7 days).  A change of the method cash -> card moves the expected sum of the till of TODAY, so it is money too.
+    a, s0, old, e8, e7 = world_p4(world, fixed_today)
+    admin = admin_client(world)
+    assert old["method"] == "cash"
+    for rec in (old, e8):
+        d = change_method_as(admin, rec, "card", expect=403)["detail"]
+        assert d["code"] == "BACKDATE_OWNER_ONLY" and d["message"] == "Запись старше 7 дней меняет владелец"
+    assert admin.post(f"{API}/org/payments/{old['id']}/replace", params={"dry_run": "true"}, json={"amount": 300_000, "paid_on": old["paid_on"], "method": "card", "reason": "Проба"}).status_code == 403
+    change_method_as(admin, old, "cash", note="Квитанция № 5")                                 # the note alone: allowed
+    change_method_as(admin, e7, "card")                                                         # 7 days: the method as before
+    change_method_as(owner(world), e8, "card")                                                  # the owner: any record
+    assert live_sum(world, a, s0) == 320_000
+
+
+def make_voided_by(world, fixed_today, who):
+    a, s0, old, e8, e7 = world_p4(world, fixed_today)
+    client = owner(world) if who == "owner" else admin_client(world)
+    void_it(world, e7, client=client)
+    return a, s0, e7
+
+
+def payments_of(client, membership_id):
+    r = client.get(f"{API}/org/memberships/{membership_id}/payments")
+    assert r.status_code == 200, r.text
+    return {p["id"]: p for p in r.json()}
+
+
+def test_v3_a_payment_cancelled_by_the_owner_is_restored_only_by_the_owner(world, fixed_today):
+    a, s0, e7 = make_voided_by(world, fixed_today, "owner")
+    admin = admin_client(world)
+    m = membership(world, s0, a).id
+    assert payments_of(admin, m)[e7["id"]]["restorable"] is False and payments_of(owner(world), m)[e7["id"]]["restorable"] is True
+    r = admin.post(f"{API}/org/payments/{e7['id']}/restore", json={"reason": "Отменили по ошибке"})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "RESTORE_OWNER_ONLY" and r.json()["detail"]["message"] == "Оплату отменил владелец — восстановить может только он"
+    assert admin.post(f"{API}/org/payments/{e7['id']}/restore", params={"dry_run": "true"}, json={"reason": "Отменили по ошибке"}).status_code == 403
+    assert live_sum(world, a, s0) == 310_000                                                    # nothing came back
+    restore_it(world, e7)                                                                       # the owner
+    assert live_sum(world, a, s0) == 320_000
+
+
+def test_v3_a_payment_cancelled_by_an_administrator_is_restored_by_either(world, fixed_today):
+    a, s0, e7 = make_voided_by(world, fixed_today, "admin")
+    admin = admin_client(world)
+    assert payments_of(admin, membership(world, s0, a).id)[e7["id"]]["restorable"] is True
+    r = admin.post(f"{API}/org/payments/{e7['id']}/restore", json={"reason": "Отменили по ошибке"})
+    assert r.status_code == 201, r.text
+    assert live_sum(world, a, s0) == 320_000
+
+
+def test_small_the_restorable_flag_costs_the_same_number_of_queries_for_two_and_for_twelve_cancelled_payments(world, fixed_today):
+    from sqlalchemy import event
+
+    from src.auth.payments_service import PaymentService
+
+    a, s0, old, e8, e7 = world_p4(world, fixed_today)
+    m = membership(world, s0, a).id
+
+    def count():
+        n = []
+        engine = world.db.get_bind()
+        listener = lambda *args: n.append(1)       # noqa: E731
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            PaymentService(world.db).list_payments(str(world.org.id), m)
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+        return len(n)
+
+    for p in (e8, e7):
+        void_it(world, p)
+    few = count()
+    for _ in range(10):
+        void_it(world, pay(world, s0, a, amount=1_000, paid_on=date(2026, 11, 19))["payment"])
+    assert count() == few

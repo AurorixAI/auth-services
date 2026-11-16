@@ -298,7 +298,7 @@ def test_p4_an_administrator_cannot_change_the_sum_cancel_or_move_the_date_of_a_
     assert admin.get(url, params={"amount": 300_000, "paid_on": old["paid_on"], "replace_payment_id": old["id"]}).status_code == 200
     assert live_sum(world, a, s0) == 320_000                                           # nothing changed
     r = admin.post(f"{API}/org/payments/{old['id']}/replace", json={"amount": 300_000, "paid_on": old["paid_on"], "method": "card", "reason": "Способ"})
-    assert r.status_code == 201, r.text                                                # the method (and the note) of an old record: allowed
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "BACKDATE_OWNER_ONLY", r.text        # R3b В3: the method of an old record is money of the till too: the owner's (the note alone stays free)
     assert live_sum(world, a, s0) == 320_000
 
 
