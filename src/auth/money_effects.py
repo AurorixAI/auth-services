@@ -614,6 +614,19 @@ def forgiveness_block(closes: Optional[Dict[str, Any]], effects: Dict[str, Any])
     return {"period": closes, "teacher_pay": pay or None, "text": text}
 
 
+def forgiveness_void_block(effects: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Money-2 T14: the cancellation of a forgiveness is the other side of ``forgiveness_block``: the debt comes back, the lessons it covered stop being paid to the teacher (the sum only for the owner:
+    the lines of the saved sheets carry ``changedBy`` only for him).  ``None`` - no saved sheet moves."""
+    lines = (effects or {}).get("payroll", [])
+    if not lines:
+        return None
+    pay = sum(int(line["changedBy"]) for line in lines if int(line.get("changedBy") or 0) < 0)
+    text = "Отмена прощения вернёт долг. Эти уроки перестанут оплачиваться преподавателю"
+    if pay:
+        text += f": {signed_money(pay)}"
+    return {"teacher_pay": pay or None, "text": text}
+
+
 def teacher_share_text(new_amount: Optional[int]) -> str:
     """The window of an individual price: the pay of the teacher is a percent of the REAL price of the student (owner's answer 04.11), so a discount lowers it."""
     if new_amount is None:

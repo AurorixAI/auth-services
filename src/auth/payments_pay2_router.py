@@ -125,6 +125,7 @@ def void_writeoff(
             db, user["org_id"], _membership_of(db, user["org_id"], StudentWriteoff, writeoff_id), _owner(user),
             lambda texts: PaymentService(db).void_writeoff(user["org_id"], writeoff_id, user["user_id"], request.reason, actor_role=_role(user),
                                                            expected_debt=request.expected_debt, consequence=texts), dry_run=dry_run, journal=True)
+        effects = {**effects, "forgiveness": money_effects.forgiveness_void_block(effects)}      # Money-2 T14: the pay of the teacher the cancellation takes back
         out.money_effects, out.dry_run = effects, dry_run
         return out
     except PaymentError as exc:

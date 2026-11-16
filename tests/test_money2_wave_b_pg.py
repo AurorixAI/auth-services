@@ -186,3 +186,45 @@ def test_t13_the_preview_of_adding_names_the_debt_and_the_advance_left_in_other_
     admin = make_client(world, user=world.admin, org_role="admin")
     (plain,) = admin.post(f"{url}/{s1.id}", params={"mode": "add", "dry_run": "true"}, json={}).json()["past_balances"]
     assert "amount" not in plain and plain["kind"] == "advance" and "сум" not in plain["text"] and "410" not in plain["text"], plain      # (the date of leaving is in the text, a sum is not)
+
+
+# ---------------------------------------------------------------------------------------------------- T14 forgiveness and the pay of the teacher
+
+
+def test_t14_the_forgiveness_and_its_cancellation_name_the_pay_of_the_teacher_the_closed_month_turns_stale_and_the_night_check_names_the_drift(world, fixed_today):
+    from src.auth import money_reconcile as mr
+    from tests.ops_helpers import grant_money_right
+    from tests.pg_world import make_client
+    from tests.test_logicA_payroll_pg import g_pay_world, save_sheet
+    from tests.test_payroll_pg import student_group
+
+    # g_pay_world: the previous month, 50 %, price 600 000; S2 paid 300 000 (through the 15th), the sheet of the teacher is saved AFTER the month ended (closed): 475 000.
+    # Forgiving the whole debt of S2 pays the teacher the lessons after the 15th: the fresh total is 600 000 (the same as a late payment of 300 000, test_r3_18): +125 000.
+    m, s1, s2 = g_pay_world(world)
+    saved = save_sheet(world, m)
+    assert saved["total_amount"] == 475_000
+    grant_money_right(world)
+    mem2 = student_group(world, s2)
+    url = f"{API}/org/memberships/{mem2.id}/writeoffs"
+    dry = owner(world).post(url, params={"dry_run": "true"}, json={"all": True, "reason": "Договорённость с родителем"})
+    assert dry.status_code == 201, dry.text
+    block = dry.json()["money_effects"]
+    (line,) = block["payroll"]
+    assert (line["changedBy"], line["state"]) == (125_000, "closed")
+    assert dry.json()["money_effects"]["forgiveness"]["teacher_pay"] == 125_000 and "Эти уроки будут оплачены преподавателю" in block["forgiveness"]["text"]
+    admin = make_client(world, user=world.admin, org_role="admin")
+    plain = admin.post(url, params={"dry_run": "true"}, json={"all": True, "reason": "Договорённость с родителем"}).json()["money_effects"]
+    assert plain["forgiveness"]["teacher_pay"] is None and not any(ch.isdigit() for ch in plain["forgiveness"]["text"].split("период")[1].split(".")[-1])         # the pay is named, the sum is the owner's
+    # the real forgiveness: the closed month of the teacher turns stale, the night check says so
+    done = owner(world).post(url, json={"all": True, "reason": "Договорённость с родителем"})
+    assert done.status_code == 201, done.text
+    assert owner(world).get(f"{API}/org/payroll/sheets/{saved['id']}").json()["stale"] is True
+    (drift,) = [f for f in mr.reconcile_org(world.db, world.org.id) if f.invariant == "I-3"]
+    assert (drift.details["what"], drift.expected, drift.actual, drift.details["changedBy"]) == ("drift", 600_000, 475_000, 125_000)
+    # the cancellation of the forgiveness says the same about the pay, with the opposite sign: the lessons stop being paid to the teacher
+    wid = done.json()["writeoff"]["id"]
+    undo = owner(world).post(f"{API}/org/writeoffs/{wid}/void", params={"dry_run": "true"}, json={"reason": "Ошибка"})
+    assert undo.status_code == 200, undo.text
+    forgiveness = undo.json()["money_effects"]["forgiveness"]
+    assert forgiveness["teacher_pay"] == -125_000 and forgiveness["text"].startswith("Отмена прощения вернёт долг. Эти уроки перестанут оплачиваться преподавателю")
+    assert owner(world).post(f"{API}/org/writeoffs/{wid}/void", json={"reason": "Ошибка"}).json()["money_effects"]["forgiveness"]["teacher_pay"] == -125_000
