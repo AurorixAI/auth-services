@@ -96,10 +96,6 @@ class GroupLifecycle:
         ids = [row[0] for row in self.db.query(StudentGroup.id).filter(StudentGroup.group_id == group.id).all()]
         out: List[Dict[str, Any]] = []
         for entry, kind, amount in leave_effects.open_balances(self.db, group.org_id, ids):
-            if kind == "advance":                # R3 Т12: every listed person has an action - an advance that cannot be returned (nothing refundable) blocks nobody; the sum is what CAN be returned
-                amount = min(amount, int(entry.ledger.refundable))
-                if amount <= 0:
-                    continue
             name = _student_name(entry.student)
             left_on = ps.business_date(entry.membership.left_at).isoformat() if entry.membership.left_at else None
             row: Dict[str, Any] = {"student_id": str(entry.student.id), "membership_id": str(entry.membership.id), "name": name, "left_on": left_on, "kind": kind,

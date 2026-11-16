@@ -224,3 +224,114 @@ def test_small_the_restorable_flag_costs_the_same_number_of_queries_for_two_and_
     for _ in range(10):
         void_it(world, pay(world, s0, a, amount=1_000, paid_on=date(2026, 11, 19))["payment"])
     assert count() == few
+
+
+# ============================================================================================================ В4: the 7 days of age for the pauses, the prices and the opening balance
+
+
+def world_v4(world, fixed_today):
+    """Today Friday 20.11.2026.  Border days: 13.11 = 7 days back (the administrator may), 12.11 = 8 days back (only the owner).  S0, S1, S2 are in A since 02.11."""
+    from tests.test_pay2_api_pg import stay
+
+    a, b, c = groups3(world, fixed_today)
+    for s in world.students:
+        stay(world, membership(world, s, a), date(2026, 11, 2))
+    return a, world.students[0], admin_client(world)
+
+
+def forbid(r):
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "BACKDATE_OWNER_ONLY" and r.json()["detail"]["message"].startswith("Запись старше 7 дней"), r.text
+
+
+def test_v4_pauses_an_administrator_does_not_set_move_or_cancel_a_pause_with_a_day_older_than_seven_days(world, fixed_today):
+    a, s0, admin = world_v4(world, fixed_today)
+    m = membership(world, s0, a).id
+    url = f"{API}/org/memberships/{m}/pauses"
+    # set: the first day 12.11 (8 days) refused, 13.11 (7 days) allowed; the owner may set 12.11 (another student: the pauses of one student do not touch)
+    forbid(admin.post(url, json={"first_day": "2026-11-12", "last_day": "2026-11-14", "reason": "Болезнь"}))
+    forbid(admin.post(url, params={"dry_run": "true"}, json={"first_day": "2026-11-12", "last_day": "2026-11-14", "reason": "Болезнь"}))
+    ok = admin.post(url, json={"first_day": "2026-11-13", "last_day": "2026-11-14", "reason": "Болезнь"})
+    assert ok.status_code == 201, ok.text
+    s1 = world.students[1]
+    assert owner(world).post(f"{API}/org/memberships/{membership(world, s1, a).id}/pauses", json={"first_day": "2026-11-12", "last_day": "2026-11-14", "reason": "Болезнь"}).status_code == 201
+    # move: the days that CHANGE decide.  Pause 13-14.11 -> start 12.11 (the day 12.11 enters: 8 days) refused; end 16.11 (days ahead of 13.11) allowed; the reason alone allowed
+    pid = ok.json()["pause"]["id"]
+    forbid(admin.patch(f"{API}/org/pauses/{pid}", json={"first_day": "2026-11-12"}))
+    r = admin.patch(f"{API}/org/pauses/{pid}", json={"last_day": "2026-11-16", "reason": "Продлили"})
+    assert r.status_code == 200, r.text
+    assert admin.patch(f"{API}/org/pauses/{pid}", json={"reason": "Поездка"}).status_code == 200
+    # cancel: a pause from 05.11 (owner's) is not the administrator's to cancel (and its preview); the owner cancels it
+    old = owner(world).post(f"{API}/org/memberships/{membership(world, world.students[2], a).id}/pauses", json={"first_day": "2026-11-05", "last_day": "2026-11-08", "reason": "Каникулы"}).json()["pause"]["id"]
+    forbid(admin.post(f"{API}/org/pauses/{old}/void", json={"reason": "Ошибка"}))
+    forbid(admin.post(f"{API}/org/pauses/{old}/void", params={"dry_run": "true"}, json={"reason": "Ошибка"}))
+    forbid(admin.patch(f"{API}/org/pauses/{old}", json={"last_day": "2026-11-09"}))
+    assert owner(world).post(f"{API}/org/pauses/{old}/void", json={"reason": "Ошибка"}).status_code == 200
+    assert admin.post(f"{API}/org/pauses/{pid}/void", json={"reason": "Ошибка"}).status_code == 200          # 13-16.11: the oldest day is 7 days back: allowed
+
+
+def test_v4_prices_an_administrator_does_not_set_a_group_or_an_individual_price_that_begins_more_than_seven_days_ago(world, fixed_today):
+    a, s0, admin = world_v4(world, fixed_today)
+    m = membership(world, s0, a).id
+    group_url, own_url = f"{API}/org/groups/{a.id}/price", f"{API}/org/memberships/{m}/price-override"
+    for url, body in ((group_url, {"amount": 310_000}), (own_url, {"amount": 250_000, "reason": "Скидка"})):
+        forbid(admin.put(url, json={**body, "valid_from": "2026-11-12"}))
+        forbid(admin.put(url, params={"dry_run": "true"}, json={**body, "valid_from": "2026-11-12"}))
+        assert admin.put(url, params={"dry_run": "true"}, json={**body, "valid_from": "2026-11-13"}).status_code == 200      # 7 days: the preview goes through
+        assert admin.put(url, json={**body, "valid_from": "2026-11-20"}).status_code == 200                                   # today / ahead: as before
+        r = owner(world).put(url, json={**body, "amount": body["amount"] + 1_000, "valid_from": "2026-11-12"})              # the owner: any day (closed sheets hold him)
+        assert r.status_code in (200, 409), r.text
+        assert r.status_code != 403
+
+
+def test_v4_the_opening_balance_an_administrator_does_not_put_or_cancel_one_with_a_day_older_than_seven_days(world, fixed_today):
+    from tests.test_pay2_api_pg import stay
+
+    a, s0, admin = world_v4(world, fixed_today)
+    stay(world, membership(world, s0, a), date(2026, 11, 15))          # an opening debt is dated NOT LATER than the first day of the stay, so a student who joined on 15.11 can have one on 13.11
+    url = f"{API}/org/memberships/{membership(world, s0, a).id}/opening-balance"
+    forbid(admin.put(url, json={"debt_amount": 50_000, "debt_on": "2026-11-12"}))
+    forbid(admin.put(url, params={"dry_run": "true"}, json={"debt_amount": 50_000, "debt_on": "2026-11-12"}))
+    ok = admin.put(url, json={"debt_amount": 50_000, "debt_on": "2026-11-13"})
+    assert ok.status_code == 200, ok.text
+    # replacing or cancelling a live opening touches ITS days too: the live one is from 13.11 (allowed); the owner puts one from 06.11, and the administrator can neither replace nor void it
+    r = owner(world).put(url, json={"debt_amount": 60_000, "debt_on": "2026-11-06", "reason": "Уточнение"})
+    assert r.status_code == 200, r.text
+    opening_id = r.json()["opening"]["id"]
+    forbid(admin.put(url, json={"debt_amount": 60_000, "debt_on": "2026-11-14", "reason": "Уточнение"}))
+    forbid(admin.put(url, json={"reason": "Снять"}))
+    forbid(admin.post(f"{API}/org/opening-balances/{opening_id}/void", json={"reason": "Ошибка"}))
+    assert owner(world).post(f"{API}/org/opening-balances/{opening_id}/void", json={"reason": "Ошибка"}).status_code == 200
+
+
+# ============================================================================================================ small things
+
+
+def test_small_the_window_of_adding_and_the_archive_of_a_group_show_the_same_advance_and_a_zero_one_is_not_shown(world, fixed_today, monkeypatch):
+    # one left stay: advance 300 000 of which 100 000 can be returned -> both places say 100 000; another with nothing to return is not listed at all
+    from types import SimpleNamespace as NS
+
+    from src.auth import group_lifecycle, leave_effects, ledger_service
+    from src.models.auth import StudentGroup
+
+    a, b, c = groups3(world, fixed_today)
+    s0 = world.students[0]
+    m = membership(world, s0, a)
+    leave(world, a, s0)
+    m = membership(world, s0, a)
+    group = NS(id=a.id, name=a.name)
+    entries = [NS(student=NS(id="s", last_name="S", first_name=""), group=group, membership=NS(id=m.id, left_at=None), ledger=NS(debt=0, advance=300_000, refundable=100_000)),
+               NS(student=NS(id="z", last_name="Z", first_name=""), group=group, membership=NS(id=m.id, left_at=None), ledger=NS(debt=0, advance=120_000, refundable=0))]
+    monkeypatch.setattr(ledger_service, "LedgerLoader", lambda *args, **kw: NS(run=lambda ids: entries))
+    monkeypatch.setattr(group_lifecycle, "_student_name", lambda student: student.last_name)
+    past = leave_effects.past_balances(world.db, str(world.org.id), s0.id, b.id, money=True)
+    archive = group_lifecycle.GroupLifecycle.open_balances(NS(db=world.db), a, money=True)
+    assert [r["amount"] for r in past] == [100_000] and [r["amount"] for r in archive] == [100_000]
+    assert world.db.query(StudentGroup).filter_by(id=m.id).count() == 1
+
+
+def test_small_the_source_that_he_has_left_says_so_in_one_plain_sentence(world, fixed_today):
+    a, b, c = groups3(world, fixed_today)
+    s0 = world.students[0]
+    add(world, s0, group=b, mode="transfer", from_group_id=str(a.id))
+    r = add(world, s0, group=c, mode="transfer", from_group_id=str(a.id), expect=409)
+    assert r["detail"]["code"] == "TRANSFER_SOURCE_GONE" and r["detail"]["message"] == f"Ученик уже не состоит в группе «{a.name}» — обновите страницу"

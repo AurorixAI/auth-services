@@ -98,14 +98,15 @@ def after_settle(snaps: Sequence[Snap], settled: Sequence[Any]) -> List[Snap]:
 
 
 def open_balances(db: Session, org_id: Any, membership_ids: Sequence[UUID]) -> List[Tuple[Any, str, int]]:
-    """Money-2 T12 / T13: the ONE rule of «what is still on the account of these memberships (the left ones too) today»: ``(ledger entry, "debt" | "advance", amount)``, a debt and an advance each as its own line."""
+    """Money-2 T12 / T13: the ONE rule of «what is still on the account of these memberships (the left ones too) today»: ``(ledger entry, "debt" | "advance", amount)``, a debt and an advance each as its own line.
+    R3b: an advance is the sum that CAN be returned (``refundable``); nothing to return = not listed - the archive of a group and the window of adding show the same number."""
     from . import ledger_service as ls  # lazy: ledger_service imports the pricing / status modules
 
     if not membership_ids:
         return []
     out: List[Tuple[Any, str, int]] = []
     for entry in ls.LedgerLoader(db, str(org_id), ps.business_today()).run(list(membership_ids)):
-        for kind, amount in (("debt", entry.ledger.debt), ("advance", entry.ledger.advance)):
+        for kind, amount in (("debt", entry.ledger.debt), ("advance", min(entry.ledger.advance, entry.ledger.refundable))):
             if amount > 0:
                 out.append((entry, kind, int(amount)))
     return out

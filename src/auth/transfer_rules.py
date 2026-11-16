@@ -49,4 +49,4 @@ def resolve_sources(db: Session, org_id: Any, student_id: Any, target_group_id: 
     where = f"в группе «{name}»" if name else "в выбранной группе"
     if db.query(StudentGroup.id).filter(StudentGroup.student_id == student_id, StudentGroup.group_id == source_id).first() is None:
         raise ops_rules.unprocessable("TRANSFER_SOURCE_NOT_MEMBER", f"Ученик не состоит {where}")
-    raise ops_rules.conflict("TRANSFER_SOURCE_GONE", f"Ученик уже не учится {where}: его только что перевели или убрали. Обновите страницу и проверьте группы ученика")
+    raise ops_rules.conflict("TRANSFER_SOURCE_GONE", f"Ученик уже не состоит {where} — обновите страницу")

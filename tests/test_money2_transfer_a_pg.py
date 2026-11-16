@@ -92,7 +92,7 @@ def test_t1_the_second_administrator_who_moves_the_same_student_from_the_same_gr
     s0 = world.students[0]
     add(world, s0, group=b, mode="transfer", from_group_id=str(a.id))
     r = add(world, s0, group=c, mode="transfer", from_group_id=str(a.id), expect=409)
-    assert r["detail"]["code"] == "TRANSFER_SOURCE_GONE" and "Обновите страницу" in r["detail"]["message"]
+    assert r["detail"]["code"] == "TRANSFER_SOURCE_GONE" and "обновите страницу" in r["detail"]["message"]
     assert membership(world, s0, b).is_active is True and world.db.query(StudentGroup).filter_by(student_id=s0.id, group_id=c.id).count() == 0
     assert world.db.query(MembershipTransfer).filter_by(student_id=s0.id).count() == 1
 
