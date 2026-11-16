@@ -48,12 +48,13 @@ def test_a_student_who_paid_ahead_leaves_with_the_money_right_only(world, now_4_
     s1, s2 = world.students[1], world.students[2]
     pay(world, s1, amount=2_000_000)                                  # far more than the debt: an advance
     admin = make_client(world, user=world.admin)
-    plain = admin.delete(f"{P}/groups/{world.group.id}/students/{s2.id}")       # nothing paid ahead: everyday work
-    assert plain.status_code == 200, plain.text
-    refused = admin.delete(f"{P}/groups/{world.group.id}/students/{s1.id}")
-    assert refused.status_code == 403, refused.text
+    # Money-2 T11: ANY balance (an advance or a debt) needs the right - s2 owes (nothing paid) and is refused too, with the same neutral text
+    for s in (s2, s1):
+        refused = admin.delete(f"{P}/groups/{world.group.id}/students/{s.id}")
+        assert refused.status_code == 403, refused.text
     grant_money_right(world)
-    assert admin.delete(f"{P}/groups/{world.group.id}/students/{s1.id}").status_code == 200
+    for s in (s2, s1):
+        assert admin.delete(f"{P}/groups/{world.group.id}/students/{s.id}").status_code == 200
 
 
 def test_r3_1_a_day_off_changes_the_deductions_so_it_is_for_the_money_right_but_the_journal_is_for_any_manager(world, now_4_nov):
