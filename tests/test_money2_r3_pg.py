@@ -55,8 +55,10 @@ def accept(world, monkeypatch, key, reason="Разобрали с центром
     return script_main(world, monkeypatch, "--accept", key, "--reason", reason, *ACTOR_ARGS(world))
 
 
-def ACTOR_ARGS(world):  # noqa: N802  (the author of an acceptance is mandatory since Р5/Р8; filled in there)
-    return ()
+def ACTOR_ARGS(world):  # noqa: N802  (the author of an acceptance is mandatory since Р8)
+    from tests.test_money2_rows_pg import staff_actor
+
+    return ("--actor", staff_actor(world))
 
 
 def test_r2_accepting_changed_leaves_no_journal_of_the_same_row(world, monkeypatch):
@@ -255,3 +257,58 @@ def test_r6_old_rows_that_exist_before_the_first_night_without_a_receipt_snapsho
     first = night(world)
     assert i5(first, world) == [] and first["baselined"] == 2
     assert i5(night(world), world) == [] and i5(night(world), world) == []
+
+
+# ============================================================================================================ Р8: the small things
+@pytest.mark.parametrize("who", [None, "ordinary"])
+def test_r8_an_acceptance_needs_an_author_who_is_a_user_of_the_platform(world, monkeypatch, capsys, who):
+    ensure_billing(world)
+    row = pid_of(pay(world, world.students[0], amount=450_000))
+    night(world)
+    sql(world, "UPDATE student_payments SET amount = 200 WHERE id = :id", id=row)
+    night(world)
+    extra = [] if who is None else ["--actor", str(world.owner.id)]
+    assert script_main(world, monkeypatch, "--accept", f"payment:{row}:changed", "--reason", "Разобрали с центром", *extra) == 4
+    assert "REFUSED" in capsys.readouterr().err and world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_accept").count() == 0
+    assert accept(world, monkeypatch, f"payment:{row}:changed") == 0
+    line = world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_accept").one()
+    assert line.actor_id is not None
+
+
+def test_r8_the_functions_take_the_author_and_the_time_without_defaults_and_do_not_roll_back_for_the_caller(world):
+    import inspect
+
+    from src.auth import money_reconcile_rows as rows
+
+    for fn in (rows.accept, rows.rebaseline):
+        params = inspect.signature(fn).parameters
+        assert params["actor_id"].default is inspect.Parameter.empty
+    assert inspect.signature(rows.accept).parameters["at"].default is inspect.Parameter.empty
+    marker = OrgMoneyAudit(org_id=world.org.id, actor_id=world.owner.id, action="settings_changed", details={})
+    world.db.add(marker)
+    world.db.flush()
+    with pytest.raises(ValueError):
+        rows.accept(world.db, "garbage", "Причина есть", actor_id=world.owner.id, at=business_today())
+    assert marker in world.db and world.db.query(OrgMoneyAudit).filter_by(id=marker.id).count() == 1, "the caller owns the transaction: a refusal does not roll it back"
+
+
+def test_r8_the_product_takes_the_names_of_the_journal_from_a_neutral_module_not_from_the_check():
+    import src.auth.payroll_payouts as payouts
+    from src.auth import money_journal_actions as names
+
+    assert payouts.PAYOUT_CREATED is names.PAYOUT_CREATED and payouts.PAYOUT_VOIDED is names.PAYOUT_VOIDED
+    source = open(payouts.__file__, encoding="utf-8").read()
+    assert "money_reconcile_rows" not in source
+
+
+def test_r8_the_baseline_is_not_rewritten_every_night_and_has_no_columns_of_the_last_night(world):
+    ensure_billing(world)
+    make_payment(world)
+    night(world)
+    assert not {"last_run_id", "last_confirmed_at"} & set(MoneyRowBaseline.__table__.columns.keys())
+    from sqlalchemy import text as _text
+
+    before = world.db.execute(_text("SELECT xmin::text FROM money_row_baseline WHERE org_id = :o"), {"o": world.org.id}).scalar()
+    night(world)
+    after = world.db.execute(_text("SELECT xmin::text FROM money_row_baseline WHERE org_id = :o"), {"o": world.org.id}).scalar()
+    assert before == after, "a row that did not move is not written again"

@@ -418,7 +418,7 @@ def test_accept_takes_one_finding_with_a_reason_writes_the_journal_and_leaves_th
     keys = i5(night(world), world)
     assert keys == sorted([f"payment:{payment}:changed", f"refund:{refund}:changed"])
     old = baseline_of(world, "payment", payment).fingerprint
-    assert script_main(world, monkeypatch, "--accept", f"payment:{payment}:changed", "--reason", "Правка по заявке 17") == 0
+    assert script_main(world, monkeypatch, "--accept", f"payment:{payment}:changed", "--reason", "Правка по заявке 17", "--actor", staff_actor(world)) == 0
     out = capsys.readouterr().out
     assert f"accepted key=payment:{payment}:changed" in out and old in out
     world.db.expire_all()
@@ -443,7 +443,7 @@ def test_accept_and_rebaseline_refuse_without_a_reason_with_a_wrong_key_or_for_a
     ensure_billing(world)
     make_payment(world)
     night(world)
-    assert script_main(world, monkeypatch, *argv) == 4
+    assert script_main(world, monkeypatch, *argv, "--actor", staff_actor(world)) == 4
     assert why in capsys.readouterr().err
 
 
@@ -451,7 +451,7 @@ def test_accept_refuses_a_key_that_is_not_a_finding_right_now(world, monkeypatch
     ensure_billing(world)
     payment = make_payment(world)
     night(world)
-    assert script_main(world, monkeypatch, "--accept", f"payment:{payment}:changed", "--reason", "Принять нечего") == 4
+    assert script_main(world, monkeypatch, "--accept", f"payment:{payment}:changed", "--reason", "Принять нечего", "--actor", staff_actor(world)) == 4
     assert "Сейчас такой находки нет" in capsys.readouterr().err
     assert world.db.query(OrgMoneyAudit).filter_by(org_id=world.org.id, action="money_reconcile_accept").count() == 0
 
@@ -465,7 +465,7 @@ def test_accept_of_a_deleted_row_forgets_it_and_accept_of_a_foreign_row_is_remem
     keys = i5(night(world), world)
     assert f"payment:{gone}:deleted" in keys and f"refund:{strange}:foreign" in keys and f"refund:{strange}:changed" in keys
     for key in (f"payment:{gone}:deleted", f"refund:{strange}:foreign", f"refund:{strange}:changed"):
-        assert script_main(world, monkeypatch, "--accept", key, "--reason", "Разобрали с центром") == 0
+        assert script_main(world, monkeypatch, "--accept", key, "--reason", "Разобрали с центром", "--actor", staff_actor(world)) == 0
     assert baseline_of(world, "payment", gone) is None and baseline_of(world, "refund", strange).accepted == ["foreign"]
     assert i5(night(world), world) == []
     tamper(world, "refund", strange, "amount = 5")

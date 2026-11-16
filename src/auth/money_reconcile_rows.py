@@ -39,12 +39,7 @@ from src.models.auth import (
 
 from . import business_clock as bc
 
-# ---- the lines of the journal this check relies on (written by the services, in the transaction of the action)
-PAYOUT_CREATED = "payroll_payout_created"
-PAYOUT_VOIDED = "payroll_payout_voided"
-ACCEPTED = "money_reconcile_accept"
-REBASELINED = "money_reconcile_rebaseline"
-TRACE_ACTIONS = (PAYOUT_CREATED, PAYOUT_VOIDED, ACCEPTED, REBASELINED)        # lines of ``org_money_audit`` that are not about the settings of the centre (the settings page does not show them)
+from .money_journal_actions import ACCEPTED, PAYOUT_CREATED, PAYOUT_VOIDED, REBASELINED, TRACE_ACTIONS  # noqa: F401  (the lines of the journal this check relies on; written by the services)
 
 _SEP, _NULL = "\x1f", "\x1e~"
 CHUNK = 1000
@@ -114,20 +109,14 @@ Key = Tuple[str, UUID]
 
 @dataclass(frozen=True)
 class RowState:
+    """A money row as the night sees it (``scan``) or as the baseline remembers it (``load_baseline``): the same fields; ``membership_id`` is read only from the table, ``accepted`` only from the baseline."""
+
     fingerprint: str
     amount: Optional[int]
     voided: bool
     void_fingerprint: Optional[str]
-    membership_id: Optional[UUID] = None
-
-
-@dataclass(frozen=True)
-class BaseState:
-    fingerprint: str
-    amount: Optional[int]
-    voided: bool
-    void_fingerprint: Optional[str]
-    accepted: frozenset = frozenset()
+    membership_id: Optional[UUID] = None              # the row as it IS: the membership a payment belongs to
+    accepted: frozenset = frozenset()                 # the row in the BASELINE: the findings the team accepted (``foreign``) / carried (``open:<code>``)
 
 
 @dataclass
@@ -183,10 +172,10 @@ def scan(db, org_id: UUID) -> Dict[Key, RowState]:
     return out
 
 
-def load_baseline(db, org_id: UUID) -> Dict[Key, BaseState]:
+def load_baseline(db, org_id: UUID) -> Dict[Key, RowState]:
     rows = db.query(MoneyRowBaseline.kind, MoneyRowBaseline.row_id, MoneyRowBaseline.fingerprint, MoneyRowBaseline.amount, MoneyRowBaseline.voided, MoneyRowBaseline.void_fingerprint,
                     MoneyRowBaseline.accepted).filter(MoneyRowBaseline.org_id == org_id).all()
-    return {(k, rid): BaseState(fp, amt, bool(v), vfp, frozenset(acc or ())) for k, rid, fp, amt, v, vfp, acc in rows}
+    return {(k, rid): RowState(fp, amt, bool(v), vfp, accepted=frozenset(acc or ())) for k, rid, fp, amt, v, vfp, acc in rows}
 
 
 def was_checked(db, org_id: UUID) -> bool:
@@ -237,7 +226,7 @@ def foreign_rows(db, org_id: UUID) -> Set[Key]:
 
 
 # ====================================================================================================== the comparison (pure)
-def compare(now: Dict[Key, RowState], base: Dict[Key, BaseState], *, journal: Set[Key], receipts: Set[UUID], foreign: Set[Key], first: bool) -> RowVerdict:
+def compare(now: Dict[Key, RowState], base: Dict[Key, RowState], *, journal: Set[Key], receipts: Set[UUID], foreign: Set[Key], first: bool) -> RowVerdict:
     """The ONE comparison for all kinds.  ``journal``: rows a line of the journal names; ``receipts``: payments with a receipt snapshot; ``foreign``: rows that do not belong to what they point at."""
     verdict = RowVerdict(now=now, rows=len(now), first=first)
     paid_moves: Dict[Key, Tuple[UUID, int]] = {}          # row -> (membership, +sum of a new live payment / -sum of a payment cancelled since the baseline)
@@ -295,7 +284,7 @@ def compare(now: Dict[Key, RowState], base: Dict[Key, BaseState], *, journal: Se
     return verdict
 
 
-def wanted_for_journal(now: Dict[Key, RowState], base: Dict[Key, BaseState], first: bool) -> Dict[str, Set[UUID]]:
+def wanted_for_journal(now: Dict[Key, RowState], base: Dict[Key, RowState], first: bool) -> Dict[str, Set[UUID]]:
     """The rows whose cancellation the journal must name: cancelled now and (new, or live in the baseline)."""
     out: Dict[str, Set[UUID]] = {}
     if first:
@@ -320,19 +309,14 @@ def evaluate(db, org_id: UUID) -> RowVerdict:
 
 # ====================================================================================================== writing the baseline (only ``run --apply``)
 def store(db, org_id: UUID, run_id: UUID, verdict: RowVerdict, at: datetime) -> None:
-    """Write what the night confirmed: new rows, lawful moves; a row with a finding is untouched.  Every other confirmed row gets the run that saw it last."""
+    """Write what the night confirmed: new rows, lawful moves; a row with a finding and a row that did not move are untouched (the table is NOT rewritten every night)."""
     items = [(k, s) for k, s in verdict.confirm.items()]
     for chunk in _chunks(items):
         values = [{"kind": k[0], "row_id": k[1], "org_id": org_id, "fingerprint": s.fingerprint, "amount": s.amount, "voided": s.voided, "void_fingerprint": s.void_fingerprint,
-                   "accepted": [], "first_run_id": run_id, "last_run_id": run_id, "first_seen_at": at, "last_confirmed_at": at} for k, s in chunk]
+                   "accepted": [], "first_run_id": run_id, "first_seen_at": at} for k, s in chunk]
         insert = pg_insert(MoneyRowBaseline).values(values)
         db.execute(insert.on_conflict_do_update(index_elements=[MoneyRowBaseline.kind, MoneyRowBaseline.row_id], set_={
-            "fingerprint": insert.excluded.fingerprint, "amount": insert.excluded.amount, "voided": insert.excluded.voided, "void_fingerprint": insert.excluded.void_fingerprint,
-            "last_run_id": insert.excluded.last_run_id, "last_confirmed_at": insert.excluded.last_confirmed_at}))
-    untouched = [k for k in verdict.now if k not in verdict.flagged and k not in verdict.confirm]
-    for chunk in _chunks(untouched):
-        db.query(MoneyRowBaseline).filter(MoneyRowBaseline.org_id == org_id, tuple_(MoneyRowBaseline.kind, MoneyRowBaseline.row_id).in_(list(chunk))).update(
-            {"last_run_id": run_id, "last_confirmed_at": at}, synchronize_session=False)
+            "fingerprint": insert.excluded.fingerprint, "amount": insert.excluded.amount, "voided": insert.excluded.voided, "void_fingerprint": insert.excluded.void_fingerprint}))
 
 
 _MISSING = object()
@@ -350,14 +334,12 @@ def _recorded_finding(db, org_id: UUID, key: str) -> Any:
     return _MISSING if details is None or "state" not in details else details["state"]
 
 
-def accept(db, key: str, reason: str, *, actor_id: Optional[UUID] = None, at: Optional[datetime] = None) -> Dict[str, Any]:
+def accept(db, key: str, reason: str, *, actor_id: UUID, at: datetime) -> Dict[str, Any]:
     """The team accepts ONE finding (``kind:row id:code``) with a reason: the baseline of the row takes the row as it is (a deleted row leaves the baseline; a state finding is remembered on
-    the row) and the journal of the centre gets the key, the reason and the old / new fingerprint.  Refuses a key that is not a finding right now.  The caller commits."""
+    the row) and the journal of the centre gets the key, the reason and the old / new fingerprint.  Refuses a key that is not a finding right now.  The caller opens the transaction (``REPEATABLE READ``, the same view of the centre as the night has), commits and rolls back."""
     reason = (reason or "").strip()
     if not 3 <= len(reason) <= 500:
         raise ValueError("Причина: от 3 до 500 символов")
-    db.rollback()
-    db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))          # the same view of the centre as the night has
     try:
         kind_name, raw_id, code = key.split(":")
         row_id = UUID(raw_id)
@@ -371,7 +353,7 @@ def accept(db, key: str, reason: str, *, actor_id: Optional[UUID] = None, at: Op
     found = {f.key: f for f in verdict.findings}
     if key not in found:
         raise ValueError("Сейчас такой находки нет")
-    now, at = verdict.now.get((kind_name, row_id)), at or bc.utc_now()
+    now = verdict.now.get((kind_name, row_id))
     seen = _recorded_finding(db, org_id, key)
     if seen is _MISSING:
         raise ValueError("Эту находку ещё не фиксировала ночная проверка — дождитесь ночного запуска")
@@ -385,7 +367,7 @@ def accept(db, key: str, reason: str, *, actor_id: Optional[UUID] = None, at: Op
         # the row ARRIVED with findings: the baseline takes the row, so the findings of the arrival that are not THIS one stay open on it (``open:<code>``); a state finding is remembered by its code
         others = sorted({f.code for f in verdict.findings if (f.kind, f.row_id) == (kind_name, row_id) and f.code != code and f.code in ARRIVAL_CODES})
         db.add(MoneyRowBaseline(kind=kind_name, row_id=row_id, org_id=org_id, fingerprint=now.fingerprint, amount=now.amount, voided=now.voided, void_fingerprint=now.void_fingerprint,
-                                accepted=([code] if code in STATE_CODES else []) + [OPEN + o for o in others], first_seen_at=at, last_confirmed_at=at))
+                                accepted=([code] if code in STATE_CODES else []) + [OPEN + o for o in others], first_seen_at=at))
     elif code in STATE_CODES:
         before.accepted = sorted({*(before.accepted or []), code})
     elif OPEN + code in (before.accepted or []):
@@ -393,7 +375,6 @@ def accept(db, key: str, reason: str, *, actor_id: Optional[UUID] = None, at: Op
     else:
         for name in FIELDS_OF[code]:                          # ONE finding: only the fields of ITS code move; the other findings of the row stand
             setattr(before, name, getattr(now, name))
-        before.last_confirmed_at = at
     db.add(OrgMoneyAudit(org_id=org_id, actor_id=actor_id, action=ACCEPTED, occurred_at=at, details={
         "key": key, "reason": reason, "old_fingerprint": old_fp, "new_fingerprint": new_fp, "text": f"Сверка: принята находка {key}. Причина: {reason}"}))
     db.flush()

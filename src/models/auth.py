@@ -2154,8 +2154,6 @@ class MoneyRowBaseline(Base):
     void_fingerprint = Column(String(32), nullable=True)
     accepted = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))  # state-based finding codes the team accepted for this row
     first_run_id = Column(UUID(as_uuid=True), ForeignKey("money_reconcile_runs.id", ondelete="SET NULL"), nullable=True)
-    last_run_id = Column(UUID(as_uuid=True), ForeignKey("money_reconcile_runs.id", ondelete="SET NULL"), nullable=True)
     first_seen_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
-    last_confirmed_at = Column(DateTime, nullable=False, default=func.now(), server_default=func.now())
 
     __table_args__ = (Index("ix_money_row_baseline_org", "org_id"),)

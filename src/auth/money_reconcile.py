@@ -505,20 +505,25 @@ def run(db, *, apply: bool = False, mail: bool = False, today: Optional[date] = 
         return _run_locked(db, apply=apply, mail=mail, today=today, budget_seconds=BUDGET_SECONDS if budget_seconds is None else budget_seconds, only=only)
 
 
-def accept(db, key: str, reason: str) -> Dict[str, Any]:
+def accept(db, key: str, reason: str, *, actor: Optional[str]) -> Dict[str, Any]:
     """The team accepts ONE finding of I-5 by its key (``kind:row id:code``) with a reason: the baseline of the row takes the row as it is and the journal of the centre says who / why / the old and the
-    new fingerprint.  ``busy``: another run is going.  Raises ``ValueError`` when the key is not a finding right now."""
+    new fingerprint.  ``actor``: an active user of the platform (required).  ``busy``: another run is going.  Raises ``ValueError`` when the key is not a finding right now."""
     with _RunLock(db) as lock:
         if not lock.held:
             return {"busy": True}
         db.rollback()
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))          # first statement of the transaction: the same view of the centre as the night has
         try:
-            out = mrows.accept(db, key, reason)
+            out = mrows.accept(db, key, reason, actor_id=platform_actor(db, actor), at=bc.utc_now())
             db.commit()
         except Exception:
             db.rollback()
             raise
         return out
+
+
+def _uuids(items: Iterable[Any]) -> List[UUID]:
+    return [o if isinstance(o, UUID) else UUID(str(o)) for o in items]
 
 
 def platform_actor(db, actor: Optional[str]) -> UUID:
@@ -551,7 +556,7 @@ def rebaseline(db, reason: str, *, actor: Optional[str], with_open_findings: boo
         actor_id = platform_actor(db, actor)
         query = db.query(Organization.id).filter(Organization.status == "active")
         if only is not None:
-            query = query.filter(Organization.id.in_([o if isinstance(o, UUID) else UUID(str(o)) for o in only]))
+            query = query.filter(Organization.id.in_(_uuids(only)))
         orgs = [o for (o,) in query.order_by(Organization.id).all()]
         started = bc.utc_now()
         try:
@@ -576,12 +581,12 @@ def _run_locked(db, *, apply: bool, mail: bool, today: Optional[date], budget_se
     began = time.monotonic()
     query = db.query(Organization.id).filter(Organization.status == "active")
     if only is not None:
-        query = query.filter(Organization.id.in_([o if isinstance(o, UUID) else UUID(str(o)) for o in only]))
+        query = query.filter(Organization.id.in_(_uuids(only)))
     orgs = [o for (o,) in query.order_by(Organization.id).all()]
     not_checked: Dict[str, int] = {}
     inactive = db.query(func.count(Organization.id)).filter(Organization.status != "active")
     if only is not None:
-        inactive = inactive.filter(Organization.id.in_([o if isinstance(o, UUID) else UUID(str(o)) for o in only]))
+        inactive = inactive.filter(Organization.id.in_(_uuids(only)))
     _gap(not_checked, GAP_CENTRE_INACTIVE, int(inactive.scalar() or 0))
     db.rollback()
     findings: List[Found] = []
