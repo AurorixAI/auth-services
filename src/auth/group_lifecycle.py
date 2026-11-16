@@ -3,7 +3,8 @@
 ``GET /org/groups/{id}/archive-impact``, ``POST .../archive``, ``POST .../restore``.  A free ``status`` string in ``PUT /org/groups/{id}`` is gone.
 
 Blockers (409 ``GROUP_ARCHIVE_BLOCKED``): ``ACTIVE_STUDENTS``, ``OPEN_LESSON`` (an in-progress lesson), ``MISSED_LESSONS`` (never-started past
-lessons of the window - unless ``missedLessonsAction="cancel"``), ``LIVE_EXAMS`` (an exam that is active or has attempts).
+lessons of the window - unless ``missedLessonsAction="cancel"``), ``LIVE_EXAMS`` (an exam that is active or has attempts), ``OPEN_BALANCES``
+(Money-2 T12: a membership of the group - the left ones too - still has a debt or an advance; the list says who and what to do, the sums only for the money right).
 Automatic: the untouched lobby / print exams go back to draft (exam-service, all or nothing), the future lessons stop being generated (an inactive
 interval ``{from: now, to: null}`` in ``groups.inactive_intervals``).  An archived group is read-only (``GROUP_ARCHIVED`` 409 in the writers).
 
@@ -20,6 +21,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import func
 
 from . import business_clock as bc
+from . import ledger_service as ls
+from . import payment_status as ps
+from . import payments_texts as tx
 from . import exam_bridge, lesson_substitutions, schedule_rules
 from .lesson_teachers import TEACHING_ROLES, LessonTeachers, _s, _uuid
 from .models import (
@@ -46,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 FUTURE_HORIZON_DAYS = 56
 CANCEL = "cancel"
+BALANCE_ACTIONS = {"debt": (("payment", "Принять оплату"), ("writeoff", "Простить долг")), "advance": (("refund", "Вернуть аванс"),)}      # Money-2 T12
 
 
 def _blocker_reason(exam: Dict[str, Any]) -> str:
@@ -85,6 +90,36 @@ class GroupLifecycle:
         )
         return [{"id": str(s.id), "name": _student_name(s), "displayId": s.display_id} for s in rows]
 
+    def open_balances(self, group: Group, *, money: bool) -> List[Dict[str, Any]]:
+        """Money-2 T12: the memberships of the group (the left ones too) whose account is not zero today: one row per debt and per advance.
+        ``money`` False: the facts only (no ``amount``, no figures in ``text``, no actions - the owner / an administrator with the right decides)."""
+        ids = [row[0] for row in self.db.query(StudentGroup.id).filter(StudentGroup.group_id == group.id).all()]
+        if not ids:
+            return []
+        out: List[Dict[str, Any]] = []
+        for entry in ls.LedgerLoader(self.db, str(group.org_id), ps.business_today()).run(ids):
+            name = _student_name(entry.student)
+            left_on = ps.business_date(entry.membership.left_at).isoformat() if entry.membership.left_at else None
+            for kind, amount in (("debt", entry.ledger.debt), ("advance", entry.ledger.advance)):
+                if amount <= 0:
+                    continue
+                row: Dict[str, Any] = {"student_id": str(entry.student.id), "membership_id": str(entry.membership.id), "name": name, "left_on": left_on, "kind": kind,
+                                       "actions": [{"code": code, "label": label} for code, label in BALANCE_ACTIONS[kind]] if money else []}
+                if money:
+                    row["amount"] = int(amount)
+                    row["text"] = (f"{name}: долг {tx.money(amount)} — принять оплату или простить его можно в выписке группы" if kind == "debt"
+                                   else f"{name}: аванс {tx.money(amount)} — вернуть его можно в выписке группы")
+                else:
+                    row["text"] = (f"{name}: есть долг — принять оплату или простить его может владелец или администратор с доступом к деньгам" if kind == "debt"
+                                   else f"{name}: есть аванс — вернуть его может владелец или администратор с доступом к деньгам")
+                out.append(row)
+        out.sort(key=lambda r: (r["name"], r["kind"]))
+        return out
+
+    def _open_balances_blocker(self, group: Group, money: bool) -> Optional[Dict[str, Any]]:
+        rows = self.open_balances(group, money=money)
+        return {"code": "OPEN_BALANCES", "count": len(rows), "balances": rows} if rows else None
+
     def _open_actions(self, group: Group):
         items = self.svc.get_open_attendance_actions(
             group.org_id, actor_id=None, is_org_admin=True, only_group_id=str(group.id), now=bc.business_now()
@@ -119,7 +154,7 @@ class GroupLifecycle:
     def _names(self, ids) -> Dict[str, User]:
         return self.teachers.users_by_id(ids)
 
-    def impact(self, org_id: Any, group_id: Any) -> Dict[str, Any]:
+    def impact(self, org_id: Any, group_id: Any, *, money: bool) -> Dict[str, Any]:
         group = self._group(org_id, group_id)           # a GET has no side effect: a pending release is retried by the next archive / the sweep, never here (DM-007)
         students = self.active_students(group)
         if group.status != "active":
@@ -159,6 +194,9 @@ class GroupLifecycle:
             blockers.append({"code": "LIVE_EXAMS", "count": len(live), "exams": [
                 {"examId": str(e.get("examId")), "title": e.get("title") or "", "status": e.get("status"),
                  "lessonDate": e.get("lessonDate"), "blockerReason": _blocker_reason(e)} for e in live]})
+        balances = self._open_balances_blocker(group, money)
+        if balances:
+            blockers.append(balances)
         auto: List[Dict[str, Any]] = []
         if releasable:
             auto.append({"code": "RELEASE_EXAMS", "count": len(releasable)})
@@ -181,7 +219,7 @@ class GroupLifecycle:
         }
 
     # ------------------------------------------------------------------------------------------- archive
-    def archive(self, org_id: Any, group_id: Any, req, *, actor_id: Any, actor_role: str) -> Dict[str, Any]:
+    def archive(self, org_id: Any, group_id: Any, req, *, actor_id: Any, actor_role: str, money: bool) -> Dict[str, Any]:
         probe = self._group(org_id, group_id)            # DM-007: exam-service is asked BEFORE the group is locked (no lock is held while the network is called)
         if probe.status != "active":
             raise conflict("ALREADY_ARCHIVED", ERROR_CATALOGUE["ALREADY_ARCHIVED"][1])
@@ -216,6 +254,9 @@ class GroupLifecycle:
             blockers.append({"code": "LIVE_EXAMS", "count": len(live), "exams": [
                 {"examId": str(e.get("examId")), "title": e.get("title") or "", "status": e.get("status"),
                  "lessonDate": e.get("lessonDate"), "blockerReason": _blocker_reason(e)} for e in live]})
+        balances = self._open_balances_blocker(group, money)
+        if balances:
+            blockers.append(balances)
         if blockers:
             self.db.rollback()
             raise conflict("GROUP_ARCHIVE_BLOCKED", ERROR_CATALOGUE["GROUP_ARCHIVE_BLOCKED"][1], blockers=blockers)

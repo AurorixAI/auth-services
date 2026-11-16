@@ -390,11 +390,12 @@ class LessonTeacherCandidatesOut(BaseModel):
 
 
 class ArchiveBlocker(BaseModel):
-    code: Literal["ACTIVE_STUDENTS", "OPEN_LESSON", "MISSED_LESSONS", "LIVE_EXAMS"]
+    code: Literal["ACTIVE_STUDENTS", "OPEN_LESSON", "MISSED_LESSONS", "LIVE_EXAMS", "OPEN_BALANCES"]
     count: int
     students: Optional[List[Dict[str, Any]]] = None
     lessons: Optional[List[Dict[str, Any]]] = None
     exams: Optional[List[Dict[str, Any]]] = None
+    balances: Optional[List[Dict[str, Any]]] = None       # Money-2 T12: OPEN_BALANCES - who still has a debt / an advance in the group and what can be done (sums only with the money right)
     cancelConsequence: Optional[str] = None       # Money-1 A6 (П8): MISSED_LESSONS - what «Отменить их при архивации» does to money (said before the confirmation)
 
 

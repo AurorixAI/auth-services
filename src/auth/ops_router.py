@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from src.core.database import get_db
 
 from .attendance_access import is_org_manager
-from .dependencies import money_rights_flag, require_org_admin, require_org_owner
+from .dependencies import has_payments_access, money_rights_flag, require_org_admin, require_org_owner
 from .ops_schemas import (
     ArchiveGroupOut,
     ArchiveGroupRequest,
@@ -112,7 +112,7 @@ def get_group_archive_impact(
     """Что мешает архивации группы и что произойдёт автоматически."""
     from .group_lifecycle import GroupLifecycle
 
-    return GroupLifecycle(_svc(db)).impact(user["org_id"], group_id)
+    return GroupLifecycle(_svc(db)).impact(user["org_id"], group_id, money=has_payments_access(user, db))
 
 
 @router.post("/org/groups/{group_id}/archive", response_model=ArchiveGroupOut, tags=["LOGIC-B group archive"])
@@ -126,7 +126,7 @@ def archive_group(
     from .group_lifecycle import GroupLifecycle
 
     return GroupLifecycle(_svc(db)).archive(
-        user["org_id"], group_id, request, actor_id=user["user_id"], actor_role=user["org_role"]
+        user["org_id"], group_id, request, actor_id=user["user_id"], actor_role=user["org_role"], money=has_payments_access(user, db)
     )
 
 

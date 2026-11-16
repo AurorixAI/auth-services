@@ -119,7 +119,7 @@ def test_r4_archive_and_start_are_serialised_by_the_group_lock(w, clock):
     # the group has no students: "NO_STUDENTS" would hide the race, so give it one and let the archive blocker ACTIVE_STUDENTS be out of the picture by archiving first
     results = run_parallel(
         w,
-        lambda svc: GroupLifecycle(svc).archive(org, gid, Req(), actor_id=str(w.admin.id), actor_role="admin"),
+        lambda svc: GroupLifecycle(svc).archive(org, gid, Req(), actor_id=str(w.admin.id), actor_role="admin", money=True),
         lambda svc: svc.start_group_attendance(org, gid, StartAttendanceRequest(lessonDate=date(2026, 10, 22), lessonId="lesson-x"),
                                                started_by=str(w.C.id), is_org_admin=False),
     )

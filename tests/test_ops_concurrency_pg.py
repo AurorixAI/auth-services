@@ -26,7 +26,7 @@ def test_enrolment_and_archive_of_the_same_group_leave_a_consistent_state(pg_ses
     for _round in range(3):
         results = run_parallel(
             w,
-            lambda svc: GroupLifecycle(svc).archive(org, gid, ArchiveGroupRequest(), actor_id=str(w.admin.id), actor_role="admin"),
+            lambda svc: GroupLifecycle(svc).archive(org, gid, ArchiveGroupRequest(), actor_id=str(w.admin.id), actor_role="admin", money=True),
             lambda svc: svc.add_student_to_group(org, gid, sid, mode="transfer", actor_id=str(w.admin.id), money_right=True),
         )
         w.db.expire_all()

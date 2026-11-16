@@ -10,6 +10,7 @@ from src.models.auth import (
 from src.auth import payments_texts as tx
 from tests.money1b_helpers import account, add, fresh_student, set_schedule, slot
 from tests.pg_world import business_today, ensure_billing, give_group_price, make_group, needs_pg, pg_session, world  # noqa: F401  (fixtures)
+from tests.ops_helpers import exams  # noqa: F401  (fixture: exam-service stub)
 from tests.test_money2_transfer_a_pg import DAILY, DAY, groups3, snap
 from tests.test_payments_service_pg import mid, pay
 from tests.test_pay2_api_pg import API, fixed_today, membership, owner, settings_block, stay  # noqa: F401  (fixture)
@@ -100,3 +101,61 @@ def test_t15_there_is_one_way_to_remove_a_student_from_a_group_the_leaving():
     from src.auth.service import AuthService
 
     assert not hasattr(AuthService, "remove_student_from_group")                  # was a second, unaudited closing used only by tests
+
+
+# ---------------------------------------------------------------------------------------------------- T12 the archive of a group with balances
+
+
+def _a_group_with_two_leavers(world, fixed_today):
+    # A: 300 000 a month, 30 lessons a month (10 000 a lesson).  In A since 02.11, today 20.11, the stay closes on 20.11: days 02..20 = 19 lessons = 190 000.
+    # s0 paid nothing: debt 190 000.  s1 paid 600 000: advance 600 000 - 190 000 = 410 000.  s2 paid 190 000: no debt, no advance.
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    for s in (s0, s1, s2):
+        stay(world, membership(world, s, a), date(2026, 11, 2))
+    pay(world, s1, a, amount=600_000)
+    pay(world, s2, a, amount=190_000)
+    for s in (s0, s1, s2):
+        assert owner(world).post(f"{API}/org/groups/{a.id}/students/{s.id}/leave", json={}).status_code == 200
+    return a, (s0, s1, s2)
+
+
+def test_t12_the_archive_of_a_group_is_refused_while_a_leaver_has_a_debt_or_an_advance_and_passes_after_the_forgiveness_and_the_refund(world, fixed_today, exams):
+    a, (s0, s1, s2) = _a_group_with_two_leavers(world, fixed_today)
+    r = owner(world).post(f"{API}/org/groups/{a.id}/archive", json={})
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "GROUP_ARCHIVE_BLOCKED"
+    (blocker,) = [b for b in detail["blockers"] if b["code"] == "OPEN_BALANCES"]
+    assert blocker["count"] == 2                                                      # s2 has no balance: not in the list
+    rows = {x["student_id"]: x for x in blocker["balances"]}
+    assert set(rows) == {str(s0.id), str(s1.id)}
+    assert rows[str(s0.id)]["kind"] == "debt" and rows[str(s0.id)]["amount"] == 190_000
+    assert [x["code"] for x in rows[str(s0.id)]["actions"]] == ["payment", "writeoff"]            # accept a payment / forgive
+    assert rows[str(s1.id)]["kind"] == "advance" and rows[str(s1.id)]["amount"] == 410_000
+    assert [x["code"] for x in rows[str(s1.id)]["actions"]] == ["refund"]
+    assert rows[str(s1.id)]["membership_id"] == str(membership(world, s1, a).id)
+    assert tx.money(410_000) in rows[str(s1.id)]["text"]
+    assert owner(world).get(f"{API}/org/groups/{a.id}/archive-impact").json()["blockers"][-1]["code"] == "OPEN_BALANCES"      # the preview says the same
+    world.db.expire_all()
+    assert world.db.get(type(a), a.id).status == "active"
+    # forgive the debt of s0 (190 000), refund the advance of s1 (410 000): the archive passes
+    assert owner(world).post(f"{API}/org/memberships/{membership(world, s0, a).id}/writeoffs", json={"amount": 190_000, "reason": "Договорённость"}).status_code == 201
+    assert owner(world).post(f"{API}/org/memberships/{membership(world, s1, a).id}/refunds", json={"amount": 410_000, "method": "cash", "reason": "Возврат"}).status_code == 201
+    r = owner(world).post(f"{API}/org/groups/{a.id}/archive", json={"missedLessonsAction": "cancel"})      # (the lessons of the month nobody started are the other blocker)
+    assert r.status_code == 200, r.text
+
+
+def test_t12_an_administrator_without_the_money_right_gets_the_list_without_sums(world, fixed_today, exams):
+    from tests.pg_world import make_client
+
+    a, (s0, s1, s2) = _a_group_with_two_leavers(world, fixed_today)
+    admin = make_client(world, user=world.admin, org_role="admin")
+    r = admin.post(f"{API}/org/groups/{a.id}/archive", json={})
+    assert r.status_code == 409, r.text
+    (blocker,) = [b for b in r.json()["detail"]["blockers"] if b["code"] == "OPEN_BALANCES"]
+    assert blocker["count"] == 2
+    for row in blocker["balances"]:
+        assert "amount" not in row and not any(ch.isdigit() for ch in row["text"]), row
+        assert row["kind"] in ("debt", "advance")
+        assert row["actions"] == []                                                    # without the right: nothing to offer, the owner decides
