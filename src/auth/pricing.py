@@ -1078,7 +1078,6 @@ class PricingService:
 
     # ----------------------------------------------------------------- writing
 
-    @_guard
     def _check_age(self, org_id: str, actor_id: str, valid_from: date, today: date) -> None:
         """R3b В4 / R3c Г2: a price that begins more than 7 days ago re-counts the money of the past - the owner's, by the SAME function as an old payment; the role is the one of the live membership of the author."""
         from .payments_service import PaymentService
@@ -1086,6 +1085,7 @@ class PricingService:
         service = PaymentService(self.db)
         service._check_backdate(valid_from, today, service.role_of(org_id, actor_id), changing=False)
 
+    @_guard
     def set_group_price(
         self,
         org_id: str,
