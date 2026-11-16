@@ -504,9 +504,9 @@ def _enrol(db: Session, svc, org_id: Any, creator_id: Any, item: Dict[str, Any],
     except StudentArchivedForEnrolment:
         db.rollback()
         return ("skipped", "STUDENT_ARCHIVED", SKIP_TEXT["STUDENT_ARCHIVED"], name)
-    except OpsError as exc:      # the student joined another group between the check above and the enrolment: his transfer is money, an import does not make it
+    except OpsError as exc:      # the student joined another group between the check above and the enrolment: his transfer is money (and an import names no source), an import does not make it - the row's line, never the file's end
         db.rollback()
-        if exc.code != "MONEY_RIGHT_REQUIRED":
+        if exc.code not in ("MONEY_RIGHT_REQUIRED", "TRANSFER_SOURCE_REQUIRED", "TRANSFER_SOURCE_GONE"):
             raise
         other = next(iter(_live_groups_of(db, org_id, [student.id]).get(student.id, [])), None)
         return ("skipped", "IN_OTHER_GROUP", SKIP_TEXT["IN_OTHER_GROUP"].format(other=other.name if other else "другой"), name)

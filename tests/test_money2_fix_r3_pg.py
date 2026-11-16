@@ -94,3 +94,169 @@ def test_p1_restoring_a_student_archived_today_into_the_same_group_is_the_same_c
     assert r.status_code == 200 and not r.json()["skipped"], r.text
     assert snap(world, s0, a) == before
     assert all(billing_from is None for _, billing_from in periods_billing_from(world, s0, a))
+
+
+# ============================================================================================================ П2: a transfer always names its source
+
+
+def test_p2_the_second_administrator_with_an_old_window_and_no_source_is_refused_and_nothing_is_written(world, fixed_today):
+    # admin 1 moved A -> B; admin 2 (a window opened earlier) sends A -> C without a source: the student has ONE group now (B), but a transfer without a source is never guessed
+    from src.models.auth import MembershipTransfer
+
+    a, b, c = groups3(world, fixed_today)
+    s0 = world.students[0]
+    add(world, s0, group=b, mode="transfer", from_group_id=str(a.id))
+    r = add(world, s0, group=c, mode="transfer", from_group_id=None, expect=422)
+    assert r["detail"]["code"] == "TRANSFER_SOURCE_REQUIRED" and [g["group_id"] for g in r["detail"]["groups"]] == [str(b.id)]
+    assert membership(world, s0, b).is_active is True and world.db.query(StudentGroup).filter_by(student_id=s0.id, group_id=c.id).count() == 0
+    assert world.db.query(MembershipTransfer).filter_by(student_id=s0.id).count() == 1
+
+
+def test_p2_a_student_of_one_group_needs_the_source_too(world, fixed_today):
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students                                                    # all three are in A
+    r = add(world, s0, group=b, mode="transfer", from_group_id=None, expect=422)
+    assert r["detail"]["code"] == "TRANSFER_SOURCE_REQUIRED" and membership(world, s0, a).is_active
+    add(world, s0, group=b, mode="transfer", from_group_id=str(a.id))
+    assert membership(world, s0, a).is_active is False
+
+
+def test_p2_a_source_the_student_never_had_says_so_and_a_source_he_just_lost_says_that(world, fixed_today):
+    a, b, c = groups3(world, fixed_today)
+    s0 = world.students[0]
+    r = add(world, s0, group=b, mode="transfer", from_group_id=str(c.id), expect=422)                       # never in C
+    assert r["detail"]["code"] == "TRANSFER_SOURCE_NOT_MEMBER" and r["detail"]["message"] == "Ученик не состоит в группе «Гамма»"
+    add(world, s0, group=b, mode="transfer", from_group_id=str(a.id))
+    r = add(world, s0, group=c, mode="transfer", from_group_id=str(a.id), expect=409)                       # was in A, moved a moment ago
+    assert r["detail"]["code"] == "TRANSFER_SOURCE_GONE"
+
+
+def test_p2_a_bulk_transfer_takes_the_source_of_each_student_or_a_common_one_and_a_stranger_of_the_common_source_has_his_own_text(world, fixed_today):
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    add(world, s2, group=c, mode="transfer", from_group_id=str(a.id))                # s2 is in C only (was in A); s0, s1 are in A
+    url = f"{API}/org/groups/{b.id}/students/bulk"
+    r = owner(world).post(url, params={"mode": "transfer"}, json={"student_ids": [str(s0.id), str(s1.id)]})        # no source at all: every student has his line
+    assert r.status_code == 200 and r.json()["added"] == 0 and {d["code"] for d in r.json()["skipped_details"]} == {"TRANSFER_SOURCE_REQUIRED"}
+    r = owner(world).post(url, params={"mode": "transfer"}, json={"student_ids": [str(s0.id), str(s1.id), str(s2.id)], "from_group_id": str(a.id), "sources": {str(s2.id): str(c.id)}})
+    out = r.json()
+    assert r.status_code == 200 and out["added"] == 3 and out["skipped"] == 0                                    # s2 has his own source (C), the others the common one (A)
+    assert membership(world, s2, c).is_active is False and membership(world, s0, a).is_active is False
+    r = owner(world).post(f"{API}/org/groups/{c.id}/students/bulk", params={"mode": "transfer"}, json={"student_ids": [str(s0.id)], "from_group_id": str(a.id)})
+    (d,) = r.json()["skipped_details"]                                                                         # s0 left A a moment ago (moved to B)
+    assert d["code"] == "TRANSFER_SOURCE_GONE"
+    r = owner(world).post(f"{API}/org/groups/{a.id}/students/bulk", params={"mode": "transfer"}, json={"student_ids": [str(s0.id)], "from_group_id": str(c.id)})
+    (d,) = r.json()["skipped_details"]
+    assert d["code"] == "TRANSFER_SOURCE_NOT_MEMBER" and d["reason"] == "Ученик не состоит в группе «Гамма»"
+
+
+def test_p2_an_import_row_that_meets_the_missing_source_is_its_own_line_and_does_not_stop_the_file(world, fixed_today, monkeypatch):
+    # the student joined A between the check of the import and the enrolment (the check is blinded): the row says IN_OTHER_GROUP, the file goes on
+    from src.auth import import_ops
+    from src.auth.service import AuthService
+
+    a, b, c = groups3(world, fixed_today)
+    s0 = world.students[0]
+    monkeypatch.setattr(import_ops, "_live_groups_of", lambda *args, **kw: {})
+    item = {"existing": s0, "row": 2, "group_name": b.name, "first": "x", "last": "y", "class_level": None, "phone": None, "comment": None}
+    out = import_ops._enrol(world.db, AuthService(world.db), world.org.id, world.owner.id, item, b.id)
+    assert out[:2] == ("skipped", "IN_OTHER_GROUP")
+    assert membership(world, s0, a).is_active is True
+
+
+# ============================================================================================================ П3: the ceiling of a student who left is not bypassed by a restoration or a correction back
+
+
+def left_with_debt_100(world, fixed_today, index=0):
+    """A student of A since 02.11 (300 000 a month), paid 110 000 on 02.11, leaves on 22.11: the stay 02..22 = 21 days x 300 000 / 30 = 210 000 charged (as in T7).
+    210 000 - 110 000 = a debt of 100 000.  Returns ``(a, student)``."""
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22)) if index == 0 else (world.group, None, None)
+    s0 = world.students[index]
+    joined(world, s0, a, date(2026, 11, 2))
+    pay(world, s0, a, amount=110_000, paid_on=date(2026, 11, 2))
+    leave(world, a, s0)
+    assert account(world, membership(world, s0, a).id).debt == 100_000
+    return a, s0
+
+
+def account(w, m):
+    from tests.money1b_helpers import account as acc
+
+    return acc(w, m)
+
+
+def live_sum(w, group, student):
+    w.db.expire_all()
+    from src.models.auth import StudentPayment
+
+    return sum(int(p.amount) for p in w.db.query(StudentPayment).filter_by(membership_id=membership(w, student, group).id, voided_at=None))
+
+
+def void_it(w, payment, client=None, expect=200):
+    r = (client or owner(w)).post(f"{API}/org/payments/{payment['id']}/void", json={"reason": "Внесли по ошибке"})
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def restore_it(w, payment, expect=201):
+    r = owner(w).post(f"{API}/org/payments/{payment['id']}/restore", json={"reason": "Отменили по ошибке"})
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def replace_it(w, payment, amount, client=None, expect=201, **kw):
+    r = (client or owner(w)).post(f"{API}/org/payments/{payment['id']}/replace", json={"amount": amount, "paid_on": payment["paid_on"], "method": "cash", "reason": "Исправление суммы", **kw})
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def test_p3_restoring_a_payment_after_another_one_was_taken_in_its_place_is_refused(world, fixed_today):
+    # debt 100 000; P1 = 100 000 (debt 0); P1 cancelled (debt 100 000 again); P2 = 100 000 is taken (debt 0).  Restoring P1 would make 110 000 + 100 000 + 100 000 = 310 000 paid for 210 000 charged: an advance 100 000 to return.
+    a, s0 = left_with_debt_100(world, fixed_today)
+    p1 = pay(world, s0, a, amount=100_000)["payment"]
+    void_it(world, p1)
+    pay(world, s0, a, amount=100_000)
+    d = restore_it(world, p1, expect=409)["detail"]
+    assert d["code"] == "PAYMENT_RESTORE_SUPERSEDED" and d["message"] == "После отмены в эту группу уже внесена другая оплата — восстановить нельзя: исправьте её сумму или внесите разницу"
+    assert live_sum(world, a, s0) == 210_000 and account(world, membership(world, s0, a).id).advance == 0
+    assert owner(world).post(f"{API}/org/payments/{p1['id']}/restore", params={"dry_run": "true"}, json={"reason": "Отменили по ошибке"}).status_code == 409      # the window says it too
+
+
+def test_p3_a_correction_back_to_the_biggest_sum_is_refused_when_another_payment_came_in_between(world, fixed_today):
+    # debt 100 000; P1 = 100 000 -> corrected to 10 000 (debt 90 000) -> P2 = 90 000 (debt 0) -> P1 back to 100 000: the old ceiling (the biggest of the chain = 100 000) let 110 000 + 100 000 + 90 000 = 300 000 in.
+    # Now the ceiling = max(debt without this payment = 100 000 - 90 000 = 10 000, its current sum 10 000) = 10 000.
+    a, s0 = left_with_debt_100(world, fixed_today)
+    p1 = pay(world, s0, a, amount=100_000)["payment"]
+    cut = replace_it(world, p1, 10_000)["payment"]
+    pay(world, s0, a, amount=90_000)
+    d = replace_it(world, cut, 100_000, expect=422)["detail"]
+    assert d["code"] == "PAYMENT_EXCEEDS_DEBT" and d["debt"] == 10_000
+    assert live_sum(world, a, s0) == 110_000 + 10_000 + 90_000 and account(world, membership(world, s0, a).id).advance == 0
+    r = owner(world).get(f"{API}/org/memberships/{membership(world, s0, a).id}/payments/preview", params={"amount": 100_000, "replace_payment_id": cut["id"]})
+    assert r.status_code == 200 and r.json()["suggested_amount"] == 10_000          # the hint of the window is the same ceiling
+
+
+def test_p3_the_honest_cases_stay(world, fixed_today):
+    # (1) nothing between: the cancelled P1 = 100 000 comes back: 110 000 + 100 000 = 210 000 = the charge, no advance
+    a, s0 = left_with_debt_100(world, fixed_today)
+    p1 = pay(world, s0, a, amount=100_000)["payment"]
+    void_it(world, p1)
+    restore_it(world, p1)
+    assert live_sum(world, a, s0) == 210_000 and account(world, membership(world, s0, a).id).advance == 0
+    # (2) a payment taken after the cancellation and cancelled itself is not "another live payment": P1 may come back
+    a, s1 = left_with_debt_100(world, fixed_today, index=1)
+    q1 = pay(world, s1, a, amount=100_000)["payment"]
+    void_it(world, q1)
+    q2 = pay(world, s1, a, amount=100_000)["payment"]
+    void_it(world, q2)
+    restore_it(world, q1)
+    assert live_sum(world, a, s1) == 210_000
+    # (3) 100 000 -> 10 000 -> 100 000 with nothing between: put back (the sums of the chain)
+    s2 = world.students[2]
+    joined(world, s2, a, date(2026, 11, 2))
+    pay(world, s2, a, amount=110_000, paid_on=date(2026, 11, 2))
+    leave(world, a, s2)
+    r1 = pay(world, s2, a, amount=100_000)["payment"]
+    cut = replace_it(world, r1, 10_000)["payment"]
+    replace_it(world, cut, 100_000)
+    assert live_sum(world, a, s2) == 210_000

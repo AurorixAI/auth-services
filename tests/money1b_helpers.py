@@ -75,6 +75,10 @@ def add(w, student, *, client=None, expect=200, mode="add", group=None, **params
     from tests.test_pay2_api_pg import API, owner
 
     body = {k: v for k, v in params.items() if k != "dry_run"}
+    if mode == "transfer" and "from_group_id" not in body:      # R3 П2: a transfer names its source (pass ``from_group_id=None`` to test the refusal)
+        from tests.transfer_source import source_of
+
+        body["from_group_id"] = source_of(w.db, student.id, (group or w.group).id)
     r = (client or owner(w)).post(f"{API}/org/groups/{(group or w.group).id}/students/{student.id}",
                                   params={"mode": mode, **({"dry_run": "true"} if params.get("dry_run") else {})}, json=body)
     assert r.status_code == expect, r.text
@@ -92,6 +96,8 @@ def opening_until(w, m, until):
 def transfer(w, student, to, *, dry_run=False):
     from tests.test_pay2_api_pg import API, owner
 
-    r = owner(w).post(f"{API}/org/groups/{to.id}/students/{student.id}", params={"mode": "transfer", **({"dry_run": "true"} if dry_run else {})}, json={})
+    from tests.transfer_source import source_of
+
+    r = owner(w).post(f"{API}/org/groups/{to.id}/students/{student.id}", params={"mode": "transfer", **({"dry_run": "true"} if dry_run else {})}, json={"from_group_id": source_of(w.db, student.id, to.id)})
     assert r.status_code == 200, r.text
     return r.json()

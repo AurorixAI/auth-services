@@ -75,10 +75,10 @@ def test_t1_without_a_source_a_student_of_two_groups_is_asked_which_one_and_noth
     assert world.db.query(StudentGroup).filter_by(student_id=s0.id, group_id=b.id).count() == 0
 
 
-def test_t1_a_student_of_one_group_needs_no_source_and_a_source_with_mode_add_is_refused(world, fixed_today):
+def test_t1_a_source_with_mode_add_or_the_target_itself_is_refused_and_a_transfer_names_its_source(world, fixed_today):
     a, b, c = groups3(world, fixed_today)
     s0, s1 = world.students[0], world.students[1]
-    add(world, s0, group=b, mode="transfer")                                     # the only active group is the source
+    add(world, s0, group=b, mode="transfer", from_group_id=str(a.id))
     assert membership(world, s0, a).is_active is False and membership(world, s0, b).is_active is True
     r = add(world, s1, group=b, mode="add", from_group_id=str(a.id), expect=422)
     assert r["detail"]["code"] == "SOURCE_ONLY_FOR_TRANSFER"
@@ -97,20 +97,18 @@ def test_t1_the_second_administrator_who_moves_the_same_student_from_the_same_gr
     assert world.db.query(MembershipTransfer).filter_by(student_id=s0.id).count() == 1
 
 
-def test_t1_a_bulk_transfer_has_the_source_of_each_student_and_skips_the_student_whose_source_is_not_clear(world, fixed_today):
+def test_t1_a_bulk_transfer_has_the_source_of_each_student_and_skips_the_student_without_one(world, fixed_today):
     a, b, c = groups3(world, fixed_today)
     s0, s1, s2 = world.students
-    add(world, s0, group=c, mode="add")                                          # s0: A and C (no clear source); s1, s2: A only
+    add(world, s0, group=c, mode="add")                                          # s0: A and C; s1, s2: A only
     r = owner(world).post(f"{API}/org/groups/{b.id}/students/bulk", params={"mode": "transfer"}, json={"student_ids": [str(s0.id), str(s1.id), str(s2.id)]})
-    assert r.status_code == 200, r.text
+    out = r.json()                                                               # R3 П2: no source anywhere = nobody is moved (a window of an old state must not guess)
+    assert r.status_code == 200 and out["added"] == 0 and out["skipped"] == 3 and {d["code"] for d in out["skipped_details"]} == {"TRANSFER_SOURCE_REQUIRED"}
+    assert membership(world, s0, a).is_active and membership(world, s0, c).is_active and membership(world, s1, a).is_active
+    r = owner(world).post(f"{API}/org/groups/{b.id}/students/bulk", params={"mode": "transfer"}, json={"student_ids": [str(s0.id), str(s1.id), str(s2.id)], "from_group_id": str(a.id), "sources": {str(s0.id): str(c.id)}})
     out = r.json()
-    assert out["added"] == 2 and out["skipped"] == 1
-    assert out["skipped_details"][0]["student_id"] == str(s0.id) and out["skipped_details"][0]["code"] == "TRANSFER_SOURCE_REQUIRED"
-    assert membership(world, s1, b).is_active and membership(world, s2, b).is_active
-    assert membership(world, s0, a).is_active and membership(world, s0, c).is_active            # the refused one is untouched
-    r = owner(world).post(f"{API}/org/groups/{b.id}/students/bulk", params={"mode": "transfer"}, json={"student_ids": [str(s0.id)], "from_group_id": str(c.id)})
-    assert r.json()["added"] == 1                                                # a common source named for everybody
-    assert membership(world, s0, c).is_active is False and membership(world, s0, a).is_active is True
+    assert out["added"] == 3 and out["skipped"] == 0                              # a common source (A) for s1, s2 and his own (C) for s0
+    assert membership(world, s0, c).is_active is False and membership(world, s0, a).is_active is True       # only the named source of s0 is closed
 
 
 # ---------------------------------------------------------------------------------------------------- T2 the pause goes with the student

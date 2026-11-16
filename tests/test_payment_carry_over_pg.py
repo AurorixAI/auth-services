@@ -39,7 +39,11 @@ def two(world):
 
 
 def transfer(w, group, student=None, client=None, expect=200, body=None, **params):
+    from tests.transfer_source import source_of
+
     s = student or w.student
+    if params.get("mode", "transfer") == "transfer" and "from_group_id" not in (body or {}) and source_of(w.db, s.id, group.id):      # R3 П2: a transfer names its source
+        body = {**(body or {}), "from_group_id": source_of(w.db, s.id, group.id)}
     r = (client or owner(w)).post(f"{GROUPS}/{group.id}/students/{s.id}", params=params or None, json=body)
     assert r.status_code == expect, r.text
     return r.json()
@@ -559,7 +563,7 @@ def test_bulk_transfer_records_a_link_per_student(two):
     billing(two)
     s0, s1, s2 = two.students
     pay(two, s0, paid_on=day(-10), amount=3_000_000)
-    r = owner(two).post(f"{GROUPS}/{two.second.id}/students/bulk", json={"student_ids": [str(s.id) for s in two.students]})
+    r = owner(two).post(f"{GROUPS}/{two.second.id}/students/bulk", json={"student_ids": [str(s.id) for s in two.students], "from_group_id": str(two.group.id)})
     assert r.status_code == 200, r.text
     assert two.db.query(MembershipTransfer).filter_by(org_id=two.org.id).count() == 3
     assert [w["code"] for w in r.json()["warnings"] if w["code"] == "payment_carried_over"]    # only s0 had money
@@ -572,7 +576,7 @@ def test_a_transfer_without_an_actor_is_refused_nothing_is_written(two):
     billing(two)
     pay(two, paid_on=day(-10), amount=3_000_000)
     with pytest.raises(ValueError):
-        two.svc.add_student_to_group(str(two.org.id), str(two.second.id), str(two.student.id), money_right=True)
+        two.svc.add_student_to_group(str(two.org.id), str(two.second.id), str(two.student.id), from_group_id=str(two.group.id), money_right=True)
     two.db.rollback()
     assert two.db.query(MembershipTransfer).filter_by(org_id=two.org.id).count() == 0
 

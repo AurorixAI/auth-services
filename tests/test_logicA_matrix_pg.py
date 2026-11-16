@@ -234,7 +234,7 @@ def test_logicA_f13_a_a_transfer_ends_the_exception_of_the_old_group_and_the_new
     other = make_group(world.db, world.org, world.teacher2, "Вторая")
     world.db.commit()
     give_group_price(world.db, other, 500_000, valid_from=D(2026, 1, 1))
-    r = owner(world).post(f"{API}/org/groups/{other.id}/students/{world.students[0].id}")          # mode = transfer
+    r = owner(world).post(f"{API}/org/groups/{other.id}/students/{world.students[0].id}", json={"from_group_id": str(world.group.id)})          # mode = transfer
     assert r.status_code == 200, r.text
     assert [(x.amount, x.valid_from) for x in markers(world, m)] == [(None, D(2026, 10, 22))]
     rows = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()

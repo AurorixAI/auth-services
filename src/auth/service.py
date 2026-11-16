@@ -2571,6 +2571,7 @@ class AuthService:
         dry_run: bool = False,
         pay_from: Optional[date] = None,
         from_group_id: Optional[Any] = None,
+        sources: Optional[dict] = None,
     ) -> dict:
         added = 0
         skipped_details: list[dict[str, str]] = []
@@ -2583,7 +2584,8 @@ class AuthService:
                 result = self.add_student_to_group(
                     org_id, group_id, student_id,
                     mode=mode, price_override=price_override, actor_id=actor_id,
-                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from, immediate=True, from_group_id=from_group_id,
+                    payments_detail=payments_detail, money_right=money_right, dry_run=dry_run, pay_from=pay_from, immediate=True,
+                    from_group_id=(sources or {}).get(str(student_id), from_group_id),      # R3 П2: the source of THIS student, else the common one
                 )
                 added += 1
                 results.append({"student_id": str(student_id), "status": "added"})
@@ -2759,7 +2761,7 @@ class AuthService:
 
         # Only a transfer closes the previous memberships.  The roster of
         # every changed group must not rewrite an already started lesson.
-        closing = transfer_rules.resolve_sources(self.db, org_id, group.id, mode, other_active_memberships, from_group_id)      # Money-2 T1: ONE source; the other groups of the student stay as they are
+        closing = transfer_rules.resolve_sources(self.db, org_id, student.id, group.id, mode, other_active_memberships, from_group_id)      # Money-2 T1: ONE source; the other groups of the student stay as they are
         if closing and not actor_id:   # Money-1 Р3-1б: closing a stay writes the price audit - no row without an author (every caller passes one)
             raise ValueError("Перевод требует автора действия")
         if pay_from is not None:      # Money-1 B1: checked BEFORE anything is written - a refusal leaves nothing behind

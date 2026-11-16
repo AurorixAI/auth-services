@@ -1035,7 +1035,7 @@ def test_adding_a_student_with_an_individual_price_is_audited_too(world):
     world.db.commit()
     put_price(world, 500_000, group=other, valid_from=day(-30))
     student = world.students[0]
-    world.svc.add_student_to_group(str(world.org.id), str(other.id), str(student.id), mode="transfer",
+    world.svc.add_student_to_group(str(world.org.id), str(other.id), str(student.id), mode="transfer", from_group_id=str(world.group.id),
                                    price_override=SimpleNamespace(amount=450_000, reason="скидка"), actor_id=str(world.admin.id), money_right=True)
     (row,) = audit_rows(world, group=other, action=pricing.ACTION_MEMBERSHIP_PRICE)
     assert (row.actor_id, row.actor_role, row.snapshot["old_amount"], row.snapshot["old_source"], row.snapshot["new_amount"],

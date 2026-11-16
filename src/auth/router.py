@@ -1265,7 +1265,7 @@ def bulk_add_students(
             user["org_id"], group_id, request.student_ids,
             mode=mode, price_override=request.price_override, actor_id=user["user_id"],
             payments_detail=has_payments_access(user, db), money_right=money_right, dry_run=dry_run, pay_from=request.pay_from,
-            from_group_id=request.from_group_id,
+            from_group_id=request.from_group_id, sources={str(k): v for k, v in (request.sources or {}).items()},
         )
     except OperationalError as e:
         raise _concurrent_edit_or_raise(e, db)

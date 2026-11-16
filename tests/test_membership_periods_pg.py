@@ -66,8 +66,11 @@ def newcomer(w, name="Возвращенец", group=None):
 
 
 def add(w, group, student, mode="add"):
+    from tests.transfer_source import source_of
+
     result = w.svc.add_student_to_group(
-        str(w.org.id), str(group.id), str(student.id), mode=mode, actor_id=str(w.owner.id), money_right=True
+        str(w.org.id), str(group.id), str(student.id), mode=mode, actor_id=str(w.owner.id), money_right=True,
+        from_group_id=source_of(w.db, student.id, group.id) if mode == "transfer" else None,      # R3 П2: a transfer names its source
     )
     w.db.expire_all()
     return result

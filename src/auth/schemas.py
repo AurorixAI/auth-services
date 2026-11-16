@@ -355,7 +355,7 @@ class AddStudentToGroupRequest(BaseModel):
     opening_balance: Optional[OpeningIn] = None
     # Money-1 B1 «Оплата с»: the day the student is charged from.  Not sent = the first lesson of the group from today (the default of the server); sent = the money right only.  A transfer has its own day.
     pay_from: Optional[date] = None
-    # Money-2 T1: the group a TRANSFER leaves (``mode=transfer``); the student's other groups are not touched.  Not sent = the only active group of the student (several: 422 ``TRANSFER_SOURCE_REQUIRED``).
+    # Money-2 T1: the group a TRANSFER leaves (``mode=transfer``); the student's other groups are not touched.  R3 П2: always required for a student who has an active group (422 ``TRANSFER_SOURCE_REQUIRED``).
     from_group_id: Optional[UUID] = None
     # Money-2 T5: the sum the window showed as «перейдёт» (``effects.moves[code=money].amount`` of the dry run); the server works it out again under the locks and a difference is 409 ``BALANCE_CHANGED`` (nothing written).
     expected_carried: Optional[StrictInt] = None
@@ -374,7 +374,8 @@ class BulkAddStudentsRequest(BaseModel):
     price_override: Optional[PriceOverrideInput] = None
     monthly_fee: Optional[int] = None  # retired (#105), see AddStudentToGroupRequest
     pay_from: Optional[date] = None    # Money-1 B1: one «Оплата с» for everybody added (see AddStudentToGroupRequest); the money right only
-    from_group_id: Optional[UUID] = None    # Money-2 T1: the common source of a bulk transfer; not sent = each student's only active group (a student of several groups is skipped with ``TRANSFER_SOURCE_REQUIRED``)
+    from_group_id: Optional[UUID] = None    # Money-2 T1: the common source of a bulk transfer
+    sources: Optional[Dict[str, UUID]] = None    # R3 П2: the source of each student (student id -> group id); the one of a student wins over the common ``from_group_id``; a student with neither is skipped with ``TRANSFER_SOURCE_REQUIRED``
 
     @field_validator("monthly_fee")
     @classmethod

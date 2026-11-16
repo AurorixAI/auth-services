@@ -37,7 +37,12 @@ def override_rows(w, group, student=None):
 
 
 def add(w, group, student=None, **kw):
-    return w.svc.add_student_to_group(str(w.org.id), str(group.id), str(student.id if student else w.student.id), **{"actor_id": str(w.owner.id), **kw}, money_right=True)
+    from tests.transfer_source import source_of
+
+    sid = student.id if student else w.student.id
+    if kw.get("mode", "transfer") == "transfer" and "from_group_id" not in kw:      # R3 П2: a transfer names its source
+        kw["from_group_id"] = source_of(w.db, sid, group.id)
+    return w.svc.add_student_to_group(str(w.org.id), str(group.id), str(sid), **{"actor_id": str(w.owner.id), **kw}, money_right=True)
 
 
 def active_groups(w, student=None):

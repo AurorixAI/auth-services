@@ -268,7 +268,7 @@ def test_transfers_are_counted_apart(world, fixed_today):
     a = membership(world)
     stay(world, a, D(2026, 10, 1))
     seed_payment(world, a, 800_000, D(2026, 10, 1), receipt_no=1)
-    world.svc.add_student_to_group(str(world.org.id), str(group_b.id), str(world.students[0].id), mode="transfer",
+    world.svc.add_student_to_group(str(world.org.id), str(group_b.id), str(world.students[0].id), mode="transfer", from_group_id=str(world.group.id),
                                    actor_id=str(world.owner.id), payments_detail=True, money_right=True)
     old = receipts(world, "2026-10-01", "2026-10-31")["totals"]
     o = income(world, "2026-10-01", "2026-10-31")

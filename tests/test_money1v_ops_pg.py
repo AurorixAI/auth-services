@@ -455,14 +455,14 @@ def test_v10c_the_preview_of_a_transfer_says_that_the_individual_price_ends_and_
     give_price(world.db, membership(world, world.students[1]), 300_000)             # the student has an individual price
     target = second_group(world)                                                     # 400 000
     c = owner(world)
-    got = c.post(f"{API}/org/groups/{target.id}/students/{world.students[1].id}", params={"dry_run": "true"}).json()
+    got = c.post(f"{API}/org/groups/{target.id}/students/{world.students[1].id}", params={"dry_run": "true"}, json={"from_group_id": str(world.group.id)}).json()
     assert got["individual_price_ends"] is True and len(got["closing_prices"]) == 1
     item = got["closing_prices"][0]
     assert (item["amount"], item["group_name"]) == (300_000, world.group.name)
     assert item["text"] == f"У ученика индивидуальная цена 300{NB}000{NB}сум в группе «{world.group.name}»: в новой группе она не действует — будет цена группы 400{NB}000{NB}сум"
-    plain = c.post(f"{API}/org/groups/{target.id}/students/{world.students[2].id}", params={"dry_run": "true"}).json()
+    plain = c.post(f"{API}/org/groups/{target.id}/students/{world.students[2].id}", params={"dry_run": "true"}, json={"from_group_id": str(world.group.id)}).json()
     assert plain["individual_price_ends"] is False and plain["closing_prices"] == []
-    bulk = c.post(f"{API}/org/groups/{target.id}/students/bulk", params={"dry_run": "true"}, json={"student_ids": [str(world.students[1].id), str(world.students[2].id)]}).json()
+    bulk = c.post(f"{API}/org/groups/{target.id}/students/bulk", params={"dry_run": "true"}, json={"student_ids": [str(world.students[1].id), str(world.students[2].id)], "from_group_id": str(world.group.id)}).json()
     assert [x["individual_price_ends"] for x in bulk["students"]] == [True, False]
 
 

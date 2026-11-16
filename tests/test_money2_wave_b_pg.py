@@ -359,6 +359,7 @@ def test_t19_the_return_into_a_group_that_replaces_an_opening_balance_leaves_a_l
     from src.models.auth import GroupAudit, MembershipOpeningBalance
 
     (row1,) = world.db.query(MembershipOpeningBalance).filter_by(student_id=s0.id, group_id=b.id).all()
+    fixed_today(date(2026, 11, 21))                       # the next day: the return the same day would cancel the leaving, which keeps the stay and its opening (R3 П1)
     back = owner(world).post(url, params={"mode": "add"}, json={"opening_balance": {"debt_amount": 100_000, "debt_on": "2026-10-31"}})
     assert back.status_code == 200, back.text
     world.db.expire_all()
