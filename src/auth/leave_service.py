@@ -326,7 +326,7 @@ class LeaveService:
         return LeaveResult(message="Ученик удалён из группы", settled=settled, effects=leave_effects.build(leave_effects.after_settle(before_close, settled), kind="leave", money=money))
 
 
-def apply_add_opening(db: Session, org_id: str, membership: StudentGroup, actor_id: Optional[str], opening, *, transfer: bool, source: str = "add") -> Optional[Dict[str, str]]:
+def apply_add_opening(db: Session, org_id: str, membership: StudentGroup, actor_id: str, opening, *, transfer: bool, source: str = "add") -> Optional[Dict[str, str]]:
     """The opening balance given with «Добавить в группу» (needs access to money - the router checks).  A transfer that closes other
     memberships carries money along: no opening balance then (422 ``OPENING_NOT_ALLOWED``)."""
     from .logica_service import OpeningService
@@ -338,9 +338,10 @@ def apply_add_opening(db: Session, org_id: str, membership: StudentGroup, actor_
     service = OpeningService(db)
     today = ps.business_today()
     cancelled: List[UUID] = []
-    row, _ = service.apply(org_id, membership, actor_id, "admin", opening, source=source, today=today, reason=getattr(opening, "reason", None), require_reason_when_money=False, voided=cancelled)
-    if cancelled and actor_id:          # a return into a group that kept an opening balance replaces it: the cancelled row must be named in the journal (the first opening of a stay leaves none)
-        service._audit(org_id, membership, actor_id, "admin", AUDIT_OPENING_SET if row else AUDIT_OPENING_VOID, {
+    actor_role = service.pay.role_of(org_id, actor_id)          # Money-2 T19: the real role of the author in the line of the journal (never a hand-written one)
+    row, _ = service.apply(org_id, membership, actor_id, actor_role, opening, source=source, today=today, reason=getattr(opening, "reason", None), require_reason_when_money=False, voided=cancelled)
+    if cancelled:          # a return into a group that kept an opening balance replaces it: the cancelled row must be named in the journal (the first opening of a stay leaves none); the author is mandatory
+        service._audit(org_id, membership, actor_id, actor_role, AUDIT_OPENING_SET if row else AUDIT_OPENING_VOID, {
             "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(membership.student_id), "opening_id": str(row.id) if row else None,
             "voided_opening_id": str(cancelled[0]), "via": source})
     return service.over_payments(org_id, membership.id, today) if opening.paid_until is not None else None       # Money-1 R3 Д4: «оплачено до» on top of payments is named

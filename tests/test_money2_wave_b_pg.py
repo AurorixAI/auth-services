@@ -337,3 +337,34 @@ def test_t18_the_debts_of_the_debtors_fall_into_age_baskets_with_the_borders_30_
         of_basket = [v for v in page["items"] if v["debt_age_bucket"] == x["bucket"]]
         assert x["students"] == len({v["student_id"] for v in of_basket}) and x["memberships"] == len(of_basket) and x["debt_total"] == sum(v["debt"] for v in of_basket)
     assert sum(x["students"] for x in summary) == owner(world).get(f"{API}/org/payments/summary").json()["debt_split"]["debtors"]
+
+
+# ---------------------------------------------------------------------------------------------------- T19 the line of the journal of a replaced opening balance
+
+
+def test_t19_the_return_into_a_group_that_replaces_an_opening_balance_leaves_a_line_with_the_cancelled_row_and_the_real_role(world, fixed_today):
+    # the owner adds S with a debt of 250 000 (opening row 1), S leaves, the owner brings him back with a debt of 100 000 (row 1 is cancelled, row 2 lives).
+    # The journal: the line ``opening_balance_set`` that names row 1 in ``voided_opening_id`` and has the role OWNER (before: «admin» written by hand), and a caller without an author is not possible.
+    import inspect
+
+    from src.auth.leave_service import apply_add_opening
+
+    a, b, c = groups3(world, fixed_today)
+    s0 = world.students[0]
+    url = f"{API}/org/groups/{b.id}/students/{s0.id}"
+    first = owner(world).post(url, params={"mode": "add"}, json={"opening_balance": {"debt_amount": 250_000, "debt_on": "2026-10-31"}})
+    assert first.status_code == 200, first.text
+    assert owner(world).post(f"{url}/leave", json={}).status_code == 200
+    world.db.expire_all()
+    from src.models.auth import GroupAudit, MembershipOpeningBalance
+
+    (row1,) = world.db.query(MembershipOpeningBalance).filter_by(student_id=s0.id, group_id=b.id).all()
+    back = owner(world).post(url, params={"mode": "add"}, json={"opening_balance": {"debt_amount": 100_000, "debt_on": "2026-10-31"}})
+    assert back.status_code == 200, back.text
+    world.db.expire_all()
+    lines = [g for g in world.db.query(GroupAudit).filter_by(org_id=world.org.id, action="opening_balance_set") if g.snapshot.get("voided_opening_id") == str(row1.id)]
+    assert len(lines) == 1 and lines[0].actor_role == "owner" and lines[0].actor_id == world.owner.id
+    from tests.test_money2_chains_pg import quiet
+
+    quiet(world, "the return replaced the opening balance")          # the nightly reconciliation finds nothing (no ``opening:<id>:no_journal``)
+    assert inspect.signature(apply_add_opening).parameters["actor_id"].default is inspect.Parameter.empty and inspect.signature(apply_add_opening).parameters["actor_id"].annotation in (str, "str")

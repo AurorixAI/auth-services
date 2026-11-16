@@ -2856,6 +2856,8 @@ class AuthService:
             from .leave_service import apply_add_opening  # lazy
 
             self.db.flush()
+            if actor_id is None:             # Money-2 T19: an opening balance always has an author (the line of the journal names him)
+                raise ValueError("opening_balance needs actor_id")
             opening_warning = apply_add_opening(self.db, org_id, membership, actor_id, opening_balance, transfer=bool(closing), source=opening_source)
 
         # Money-1 B1 «Оплата с»: a new stay is charged from the first lesson of the group (or the day the owner chose); a transfer has its own day (the one after it)
