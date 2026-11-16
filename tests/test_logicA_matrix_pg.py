@@ -196,19 +196,20 @@ def test_logicA_f13_r_leave_return_leave_in_one_day_writes_one_marker_per_day(wo
     assert owner(world).post(f"{API}/org/groups/{world.group.id}/students/{world.students[0].id}?mode=add").status_code == 200
     leave(world, world.group, world.students[0])
     rows = markers(world, m)
-    # Р3-1б: the return takes back the marker of tomorrow and writes its own of today; the second leave finds the price ended - exactly one marker
-    assert [(r.reason, r.amount, r.valid_from) for r in rows] == [("return_group", None, TODAY)]
-    assert not [r for r in rows if r.reason == "left_group" or r.valid_from > TODAY]
-    price = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]["price"]          # the price of today is the group's, as before the exception
-    assert price["source"] == "group" and price["amount"] == 600_000
+    # Money-2 T6: the return of the same day CANCELS the first leaving (its marker is gone); the second leaving writes exactly one marker - the end of the price tomorrow
+    assert [(r.reason, r.amount, r.valid_from) for r in rows] == [("left_group", None, TODAY + timedelta(days=1))]
+    price = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]["price"]          # the price of today is still the individual one: the price ends from tomorrow
+    assert price["source"] == "override" and price["amount"] == 400_000
 
 
-def test_logicA_f13_m_returning_on_the_day_of_leaving_is_priced_by_the_group_at_once(world, fixed_today):
+def test_logicA_f13_m_returning_on_the_day_of_leaving_cancels_the_leaving_and_the_individual_price_stays(world, fixed_today):
+    # Money-2 T6 (replaces the rule of Money-1 «priced by the group at once»): a return to the SAME group on the day of leaving is a cancel of the leaving - the price 400 000 goes on, no marker is left
     m = override_world(world)
     leave(world, world.group, world.students[0])
     assert owner(world).post(f"{API}/org/groups/{world.group.id}/students/{world.students[0].id}?mode=add").status_code == 200
     row = owner(world).get(f"{API}/org/students/{m.student_id}/memberships").json()[0]
-    assert row["price"]["source"] == "group" and row["price"]["amount"] == 600_000
+    assert row["price"]["source"] == "override" and row["price"]["amount"] == 400_000
+    assert markers(world, m) == []
 
 
 def test_logicA_f13_x_the_group_price_of_the_day_of_return_is_the_price_after_the_return(world, fixed_today):
