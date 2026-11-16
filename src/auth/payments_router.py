@@ -86,12 +86,6 @@ def _http(exc: PaymentError | pricing.PriceError) -> HTTPException:
     return HTTPException(exc.status_code, exc.detail)
 
 
-def _check_price_age(user: dict, valid_from: Optional[date]) -> None:
-    """R3b В4: a price that begins more than 7 days ago (a group's or a student's) re-counts the money of the past: the owner's (the same rule and the same function as an old payment)."""
-    today = ps.business_today()
-    PaymentService._check_backdate(valid_from or today, today, user.get("org_role") or "", changing=False)
-
-
 def _blank_to_none(value):
     """A form that leaves a field empty sends ``?valid_to=``: that is "not given", not an invalid date."""
     return None if isinstance(value, str) and not value.strip() else value
@@ -250,7 +244,6 @@ def set_group_price(
     же транзакции — она видна в ``history[].changes``. Тот же запрос ещё раз (двойной клик: сумма, примечание и
     ``valid_from`` те же) ничего не меняет и вторую строку аудита не пишет."""
     try:
-        _check_price_age(user, request.valid_from)
         service = pricing.PricingService(db)
         ids = service._money_ids(user["org_id"], group_id=group_id)
         def write(dry: bool, confirmed: bool, measure: bool = False):
@@ -310,8 +303,6 @@ def set_price_override(
     той же транзакции — она видна в ``history[].changes``. Повтор того же запроса (сумма, причина, ``valid_from``)
     ничего не меняет и аудит не дублирует."""
     try:
-        _check_price_age(user, request.valid_from)
-
         def write(dry: bool, confirmed: bool, measure: bool = False):
             return pricing.PricingService(db).set_override(
                 user["org_id"], membership_id, user["user_id"], amount=request.amount,

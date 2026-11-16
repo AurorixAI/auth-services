@@ -1079,6 +1079,13 @@ class PricingService:
     # ----------------------------------------------------------------- writing
 
     @_guard
+    def _check_age(self, org_id: str, actor_id: str, valid_from: date, today: date) -> None:
+        """R3b В4 / R3c Г2: a price that begins more than 7 days ago re-counts the money of the past - the owner's, by the SAME function as an old payment; the role is the one of the live membership of the author."""
+        from .payments_service import PaymentService
+
+        service = PaymentService(self.db)
+        service._check_backdate(valid_from, today, service.role_of(org_id, actor_id), changing=False)
+
     def set_group_price(
         self,
         org_id: str,
@@ -1106,6 +1113,7 @@ class PricingService:
         today = ps.business_today()
         amount = check_amount(amount)
         valid_from = check_valid_from(valid_from or today, today)
+        self._check_age(org_id, actor_id, valid_from, today)
         note = clean_text(note)
         if note is not None and len(note) > MAX_NOTE:
             raise PriceInvalid(f"Примечание — не более {MAX_NOTE} символов")
@@ -1391,6 +1399,7 @@ class PricingService:
         today = ps.business_today()
         amount, reason = check_override_input(amount, reason)
         valid_from = check_valid_from(valid_from or today, today)
+        self._check_age(org_id, actor_id, valid_from, today)
         try:
             student, membership = self._lock_membership(org_id, membership_id, lock=lock and not dry_run)       # R3 К2: no lock for a window
             if student.status == "archived":  # read after the locks: an archiving that held the student is seen

@@ -179,3 +179,38 @@ def test_g1_without_the_right_to_money_the_summary_is_closed(world, fixed_today)
     settings_block(world, openings_state="none")
     plain = make_client(world, user=world.admin, org_role="admin")          # no right to money granted: the whole route answers 403, the field never reaches him
     assert plain.get(f"{BASE}/summary").status_code == 403 and plain.get(BASE).status_code == 403
+
+
+# ============================================================================================================ Г2: the small things
+
+
+def set_member_role(world, user, role):
+    from src.models.auth import OrganizationMember
+
+    world.db.query(OrganizationMember).filter_by(org_id=world.org.id, user_id=user.id).update({"org_role": role})
+    world.db.commit()
+
+
+def test_g2_who_cancelled_a_payment_is_the_role_at_the_moment_of_the_cancellation_not_the_role_today(world, fixed_today):
+    # (a) the owner cancelled, later he is an administrator: the cancellation is still the owner's - an administrator does not restore it (the journal line says «owner»)
+    from tests.test_money2_fix_r3_pg import void_it
+    from tests.test_money2_fix_r3b_pg import admin_client, world_p4
+
+    a, s0, old, e8, e7 = world_p4(world, fixed_today)
+    void_it(world, e7)
+    set_member_role(world, world.owner, "admin")
+    r = admin_client(world).post(f"{API}/org/payments/{e7['id']}/restore", json={"reason": "Отменили по ошибке"})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "RESTORE_OWNER_ONLY", r.text
+
+
+def test_g2_an_administrator_who_became_the_owner_later_did_not_cancel_as_an_owner(world, fixed_today):
+    # (b) an administrator cancelled; he is the owner of the centre today: the cancellation was an administrator's - another administrator may restore it
+    from tests.test_money2_fix_r3_pg import void_it
+    from tests.test_money2_fix_r3b_pg import admin_client, world_p4
+
+    a, s0, old, e8, e7 = world_p4(world, fixed_today)
+    admin = admin_client(world)
+    void_it(world, e7, client=admin)
+    set_member_role(world, world.admin, "owner")
+    r = admin.post(f"{API}/org/payments/{e7['id']}/restore", json={"reason": "Отменили по ошибке"})
+    assert r.status_code == 201, r.text

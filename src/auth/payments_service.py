@@ -1370,12 +1370,21 @@ class PaymentService:
             return False
         return any(at > payment.voided_at for at in self._live_outside_chain(payment))
 
-    def _voided_by_owner(self, org_id: Any, voided_by: Iterable[Any]) -> set:
-        """R3b В3: which of the authors of a cancellation are owners of the centre (one query)."""
-        wanted = {v for v in voided_by if v}
-        if not wanted:
+    def _voided_by_owner(self, org_id: Any, payments: Iterable[StudentPayment]) -> set:
+        """R3b В3 + R3c Г2: the ids of the cancelled payments that an OWNER cancelled - by the role the journal wrote at the moment of the cancellation (``GroupAudit.actor_role`` of the line
+        ``payment_void``, the latest line of the payment wins); a payment without such a line (an old record) falls back to the CURRENT role of its author.  Two queries for a whole page."""
+        voided = {p.id: p.voided_by for p in payments if p.voided_by}
+        if not voided:
             return set()
-        return {u for (u,) in self.db.query(OrganizationMember.user_id).filter(OrganizationMember.org_id == org_id, OrganizationMember.user_id.in_(wanted), OrganizationMember.org_role == "owner").all()}
+        wanted = {str(i) for i in voided}
+        at_that_time: Dict[str, str] = {}
+        for payment_id, role in (self.db.query(GroupAudit.snapshot["payment_id"].astext, GroupAudit.actor_role)
+                                 .filter(GroupAudit.org_id == org_id, GroupAudit.action == AUDIT_PAYMENT_VOID, GroupAudit.snapshot["payment_id"].astext.in_(wanted))
+                                 .order_by(GroupAudit.created_at).all()):
+            at_that_time[payment_id] = role
+        unknown = {u for i, u in voided.items() if str(i) not in at_that_time}
+        owners_now = {u for (u,) in self.db.query(OrganizationMember.user_id).filter(OrganizationMember.org_id == org_id, OrganizationMember.user_id.in_(unknown), OrganizationMember.org_role == "owner").all()} if unknown else set()
+        return {i for i, u in voided.items() if (at_that_time[str(i)] == "owner" if str(i) in at_that_time else u in owners_now)}
 
     def _restorable_ids(self, payments: Sequence[StudentPayment], replaced_by: Dict[UUID, Optional[int]], actor_role: str) -> set:
         """R3b В3 + the small thing: the ids of the cancelled payments of the page that the caller may restore - the SAME rules as the write (``_restore_blocker``, the owner's cancellation, the ceiling
@@ -1383,14 +1392,14 @@ class PaymentService:
         voided = [p for p in payments if p.voided_at is not None]
         if not voided:
             return set()
-        owners = self._voided_by_owner(voided[0].org_id, (p.voided_by for p in voided)) if actor_role != "owner" else set()
+        owners = self._voided_by_owner(voided[0].org_id, voided) if actor_role != "owner" else set()
         out: set = set()
         for membership_id in {p.membership_id for p in voided}:
             membership = self.db.get(StudentGroup, membership_id)
             left = membership is not None and self._is_left(membership)
             rows = self._stay_rows(membership_id) if left else []
             for p in (v for v in voided if v.membership_id == membership_id):
-                if self._restore_blocker(p, p.id in replaced_by) is not None or p.voided_by in owners:
+                if self._restore_blocker(p, p.id in replaced_by) is not None or p.id in owners:
                     continue
                 if left and any(at > p.voided_at for at in self._live_outside_chain_of(p.id, rows)):
                     continue
@@ -1718,7 +1727,7 @@ class PaymentService:
             blocker = self._restore_blocker(old, successor is not None, successor.receipt_no if successor is not None else None, successor.id if successor is not None else None)
             if blocker is not None:
                 raise blocker
-            if actor_role != "owner" and old.voided_by in self._voided_by_owner(org_id, [old.voided_by]):      # R3b В3: the owner's cancellation is taken back by the owner only
+            if actor_role != "owner" and old.id in self._voided_by_owner(org_id, [old]):      # R3b В3: the owner's cancellation is taken back by the owner only
                 raise RestoreOwnerOnly("Оплату отменил владелец — восстановить может только он")
             if self._restore_superseded(old):
                 raise RestoreSuperseded("После отмены в эту группу уже внесена другая оплата — восстановить нельзя: исправьте её сумму или внесите разницу")
