@@ -1,6 +1,7 @@
 """LOGIC-B O6 - a lesson with nobody in its roster is neither started nor completed.  Matrix rows [O6.R1] ... [O6.R9]."""
 from datetime import date, datetime, timedelta
 
+from tests.pg_world import leave_group
 import pytest
 
 from src.auth.schemas import ReconcileMissedLessonRequest, StartAttendanceRequest
@@ -78,7 +79,7 @@ def test_r4_removing_the_last_student_and_starting_are_serialised(w):
         w,
         lambda svc: svc.start_group_attendance(org, gid, StartAttendanceRequest(lessonDate=date(2026, 10, 21), lessonId="lesson-e"),
                                                started_by=str(w.C.id), is_org_admin=False),
-        lambda svc: svc.remove_student_from_group(org, gid, sid, str(w.C.id)),
+        lambda svc: leave_group(svc.db, org, gid, sid, str(w.C.id)),
     )
     started_ok, removed_ok = results[0][1] is None, results[1][1] is None
     w.db.expire_all()

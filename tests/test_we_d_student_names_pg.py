@@ -7,7 +7,7 @@ import pytest
 
 from src.auth.business_clock import utc_now
 from src.models.auth import Student, StudentGroup
-from tests.pg_world import (  # noqa: F401  (fixtures)
+from tests.pg_world import (leave_group,   # noqa: F401  (fixtures)
     business_today, make_group, make_student, needs_pg, pg_session, reconcile, save, world,
 )
 
@@ -40,7 +40,7 @@ def test_a_former_student_of_the_journal_has_the_same_name(world):
     day, lesson_id = reconcile(w)
     save(w, day, lesson_id, [(s, "present") for s in w.students], status="completed")
     _rename(w, s1, "", "")
-    w.svc.remove_student_from_group(str(w.org.id), str(w.group.id), str(s1.id), str(w.owner.id))
+    leave_group(w.svc.db, str(w.org.id), str(w.group.id), str(s1.id), str(w.owner.id))
     w.db.commit()
     today = business_today()
     journal = w.svc.get_group_attendance(str(w.org.id), str(w.group.id), date_from=(today - timedelta(days=30)).isoformat(), date_to=today.isoformat(),

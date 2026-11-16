@@ -283,7 +283,7 @@ class LeaveService:
         self, org_id: str, group_id: str, student_id: str, actor_id: str, actor_role: str, body: Optional[LeaveRequest] = None,
         *, money: bool,
     ) -> LeaveResult:
-        """«Убрать из группы» (the same closing as ``AuthService.remove_student_from_group``) + settlement + hooks + audit, one transaction."""
+        """«Убрать из группы»: closing of the stay + settlement + hooks + audit, one transaction."""
         from .service import AuthService  # lazy: service is heavy
 
         svc = AuthService(self.db)

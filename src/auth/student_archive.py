@@ -12,7 +12,7 @@ Invariants (after ``archive`` and until ``restore``):
 
 Lock order (the one of the payments module: student -> membership -> payment; groups last, in id order):
 the student is locked FOR NO KEY UPDATE (it still excludes the FOR UPDATE of ``add_student_to_group`` and
-``remove_student_from_group`` and another archiving, but not the FOR KEY SHARE that a payment insert takes
+``LeaveService.leave`` and another archiving, but not the FOR KEY SHARE that a payment insert takes
 on the student through its foreign key - a plain FOR UPDATE here could deadlock with a payment being
 recorded), then the memberships FOR NO KEY UPDATE (as the payments module does), then the groups, then the
 diagnostic invites (the UPDATE that cancels them).  The same order holds everywhere that touches a student and

@@ -18,7 +18,7 @@ time: convert it with ``lesson_start_as_naive_utc`` before asking "was he a memb
 
 Write points (one helper each, never a bare ``is_active = ...``):
   * ``AuthService.add_student_to_group``  - a new membership, a return (reactivation), a transfer (closes the sources);
-  * ``AuthService.remove_student_from_group``;
+  * ``LeaveService.leave``;
   * ``StudentArchiveService.archive``  (``restore`` goes through ``add_student_to_group``);
   * ``StudentGroupRepo.remove_student``, the bulk import (a new membership).
 A membership added to the session without a period (a fixture, a script) gets one before the flush - see

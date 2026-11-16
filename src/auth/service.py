@@ -3004,68 +3004,6 @@ class AuthService:
             })
         return warnings
 
-    def remove_student_from_group(
-        self, org_id: str, group_id: str, student_id: str, actor_id: str
-    ) -> bool:
-        # Resolve both primary entities through the caller's organization
-        # before touching membership.  IDs are global UUIDs, so a membership
-        # lookup alone is not a tenant boundary.
-        student = (
-            self.db.query(Student)
-            .filter(Student.id == student_id, Student.org_id == org_id)
-            .with_for_update()
-            .first()
-        )
-        group = (
-            self.db.query(Group)
-            .filter(Group.id == group_id, Group.org_id == org_id)
-            .with_for_update()
-            .first()
-        )
-        if not student or not group:
-            raise ValueError("Ученик или группа не найдены")
-        sg = (
-            self.db.query(StudentGroup)
-            .filter(
-                StudentGroup.student_id == student.id,
-                StudentGroup.group_id == group.id,
-                StudentGroup.is_active.is_(True),
-            )
-            .with_for_update(key_share=True)  # FOR NO KEY UPDATE: an FK insert (FOR KEY SHARE) does not wait
-            .first()
-        )
-        if not sg:
-            raise ValueError("Ученик не в этой группе")
-        self._lock_groups_for_membership_change(org_id, [group.id])
-        self._assert_no_open_attendance_for_groups(org_id, [group.id])
-        closed_at = business_clock.utc_now()   # SV-19: ONE reading of the clock for the whole event
-        close_period(sg, closed_at)
-        on_membership_closed(self.db, sg, closed_at, actor_id)  # LOGIC-A: F13 marker, scheduled prices, pauses
-        self.db.flush()
-
-        if str(student.group_id or "") == str(group.id):
-            # The primary group is gone: the earliest remaining active
-            # membership (in a live group first) takes over, else none.
-            successor = (
-                self.db.query(StudentGroup)
-                .join(Group, Group.id == StudentGroup.group_id)
-                .filter(
-                    StudentGroup.student_id == student.id,
-                    StudentGroup.is_active.is_(True),
-                    Group.org_id == org_id,
-                )
-                .order_by(
-                    (Group.status != "active"),
-                    StudentGroup.joined_at,
-                    StudentGroup.id,
-                )
-                .first()
-            )
-            student.group_id = successor.group_id if successor else None
-
-        self.db.commit()
-        return True
-
     def _group_response_context(self, groups: list[Group]) -> tuple[dict, dict]:
         """``(counts, teacher names)`` of a LIST of groups for ``_build_group_response`` (SV-08: two queries instead of two per group)."""
         group_ids = [g.id for g in groups]

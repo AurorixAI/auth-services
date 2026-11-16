@@ -16,7 +16,7 @@ from src.auth.membership_periods import close_period, membership_period_violatio
 from src.auth.service import lesson_start_as_naive_utc
 from src.models.auth import Student, StudentGroup, StudentGroupPeriod, StudentPayment
 
-from tests.pg_world import (  # noqa: F401  (fixtures)
+from tests.pg_world import (leave_group,   # noqa: F401  (fixtures)
     business_today, make_client, make_group, needs_pg, pg_session, world,
 )
 from tests.test_attendance_open_actions import _missed_for, _noon, _weekday_group
@@ -74,7 +74,7 @@ def add(w, group, student, mode="add"):
 
 
 def remove(w, group, student):
-    w.svc.remove_student_from_group(str(w.org.id), str(group.id), str(student.id), str(w.owner.id))
+    leave_group(w.svc.db, str(w.org.id), str(group.id), str(student.id), str(w.owner.id))
     w.db.expire_all()
 
 

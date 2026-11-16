@@ -410,3 +410,10 @@ def count_queries(target, fn):
     ``capture_queries`` gives the statements themselves for "no query touches table X" assertions."""
     statements, result = capture_queries(target, fn)
     return len(statements), result
+
+
+def leave_group(db, org_id, group_id, student_id, actor_id, *, role="owner"):
+    """Money-2 T15: the one real way a student leaves a group in tests - ``LeaveService.leave`` (the closing, the settlement hooks, the audit; commits)."""
+    from src.auth.leave_service import LeaveService
+
+    return LeaveService(db).leave(str(org_id), str(group_id), str(student_id), str(actor_id), role, None, money=True)

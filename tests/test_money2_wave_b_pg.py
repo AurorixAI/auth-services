@@ -91,3 +91,12 @@ def test_t11_the_owner_archives_a_student_with_an_advance_and_the_refund_and_the
     assert r.status_code == 201, r.text
     r = owner(world).post(f"{API}/org/memberships/{membership(world, s0, a).id}/writeoffs", json={"amount": 190_000, "reason": "Договорённость"})
     assert r.status_code == 201, r.text
+
+
+# ---------------------------------------------------------------------------------------------------- T15 one way to leave a group
+
+
+def test_t15_there_is_one_way_to_remove_a_student_from_a_group_the_leaving():
+    from src.auth.service import AuthService
+
+    assert not hasattr(AuthService, "remove_student_from_group")                  # was a second, unaudited closing used only by tests

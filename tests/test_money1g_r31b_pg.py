@@ -11,7 +11,7 @@ from src.auth import pricing
 from src.models.auth import GroupAudit, MembershipPriceOverride
 
 from tests.money1b_helpers import account, add, fresh_student, opening_world
-from tests.pg_world import give_group_price, needs_pg, pg_session, world  # noqa: F401  (fixtures)
+from tests.pg_world import leave_group, give_group_price, needs_pg, pg_session, world  # noqa: F401  (fixtures)
 from tests.test_money1b_pay_from_pg import STUDY, stay_of
 from tests.test_pay2_api_pg import fixed_today  # noqa: F401  (fixture)
 
@@ -36,7 +36,7 @@ def _left(w, fixed_today, *, own=None, scheduled=None, plain=False):
         w.db.add(MembershipPriceOverride(membership_id=m.id, amount=scheduled[1], valid_from=scheduled[0], reason="План", created_by=w.owner.id))
         w.db.commit()
     if plain:
-        w.svc.remove_student_from_group(str(w.org.id), str(w.group.id), str(s.id), str(w.owner.id))
+        leave_group(w.svc.db, str(w.org.id), str(w.group.id), str(s.id), str(w.owner.id))
         w.db.commit()
     else:
         leave(w, w.group, s)

@@ -12,7 +12,7 @@ from src.models.auth import (
     AttendanceExcuse, Group, GroupAttendance, Organization, Student, StudentGroup, StudentPayment,
 )
 
-from tests.pg_world import (  # noqa: F401  (fixtures)
+from tests.pg_world import (leave_group,   # noqa: F401  (fixtures)
     business_today, give_price, make_client, make_group, make_member, make_student, make_user, needs_pg, pg_session,
     reconcile, save, world,
 )
@@ -291,7 +291,7 @@ def test_memberships_endpoint_hides_closed_memberships_without_payments(world):
     pay(world, paid_on=day(-1))
     pay(world, group=second, paid_on=day(-1))
     for g in (world.group, second, third):                    # leave all, one by one: primary keeps moving
-        world.svc.remove_student_from_group(str(world.org.id), str(g.id), str(s.id), str(world.owner.id))
+        leave_group(world.svc.db, str(world.org.id), str(g.id), str(s.id), str(world.owner.id))
     rows = owner(world).get(f"{API}/org/students/{s.id}/memberships").json()
     assert {r["group_name"] for r in rows} == {"Группа", "Вторая"}  # "Третья" had no payments
     assert all(r["is_active"] is False for r in rows)

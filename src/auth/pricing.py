@@ -39,11 +39,11 @@ Writes
 
 Lock order of an individual price (``set_override``): the STUDENT row, then the GROUP row, then the MEMBERSHIP, every
 one FOR NO KEY UPDATE.  The writers that touch both a group and a membership of a student disagree among themselves:
-``add_student_to_group`` and the archiving take student -> membership -> group (FOR UPDATE), ``remove_student_from_group``
+``add_student_to_group`` and the archiving take student -> membership -> group (FOR UPDATE), ``LeaveService.leave``
 student -> group -> membership.  They never meet, because each of them starts with the student row (FOR UPDATE /
 FOR NO KEY UPDATE) and so excludes every other of them for that student - and the price write, which starts with the
 same student lock, joins that exclusion.  Without it the audit row, whose foreign keys take FOR KEY SHARE on the group,
-closed a cycle with ``remove_student_from_group`` (PostgreSQL broke it as 40P01).  The group comes before the
+closed a cycle with ``LeaveService.leave`` (PostgreSQL broke it as 40P01).  The group comes before the
 membership like in ``set_group_price`` (which holds only the group), so the price write waits for the group before it
 holds anything a payment of that membership could be waiting for.  The student's status is read after the three
 locks: an archiving that won the student lock is seen (409), never overwritten.  A payment (membership only, then

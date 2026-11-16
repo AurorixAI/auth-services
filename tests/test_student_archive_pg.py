@@ -10,7 +10,7 @@ from src.models.auth import (
     StudentPayment,
 )
 
-from tests.pg_world import (  # noqa: F401  (fixtures)
+from tests.pg_world import (leave_group,   # noqa: F401  (fixtures)
     LIVE_SLOT, business_today, give_price, make_client, make_group, make_student, needs_pg, pg_session, reconcile, save,
     world,
 )
@@ -944,7 +944,7 @@ def test_create_replace_and_fee_are_refused_for_an_archived_student_but_void_and
 def test_a_closed_membership_of_a_student_who_is_not_archived_keeps_working_as_before(two):
     s = two.student
     first = pay(two, s, two.second)["payment"]
-    two.svc.remove_student_from_group(str(two.org.id), str(two.second.id), str(s.id), str(two.owner.id))      # left ONE group only
+    leave_group(two.svc.db, str(two.org.id), str(two.second.id), str(s.id), str(two.owner.id))      # left ONE group only
     two.db.expire_all()
     assert fresh(two, s).status == "active" and not two.db.query(StudentGroup).filter_by(
         student_id=s.id, group_id=two.second.id).one().is_active
