@@ -6,6 +6,7 @@ import pytest
 from src.models.auth import GroupAudit, StudentGroup
 from tests.money1b_helpers import add, set_schedule, slot
 from tests.pg_world import ensure_billing, give_group_price, make_group, needs_pg, pg_session, world  # noqa: F401  (fixtures)
+from tests.ops_helpers import exams  # noqa: F401  (fixture: exam-service stub)
 from tests.test_money2_transfer_a_pg import groups3, joined, nov_charge, snap
 from tests.test_payments_service_pg import mid, pay
 from tests.test_pay2_api_pg import API, fixed_today, membership, owner, settings_block, stay  # noqa: F401  (fixture)
@@ -362,3 +363,163 @@ def test_small_one_code_one_text_and_no_default_roles():
     assert inspect.signature(PauseService.close_at_leave).parameters["via"].default is inspect.Parameter.empty
     src = open("src/auth/service.py", encoding="utf-8").read() + open("src/auth/leave_service.py", encoding="utf-8").read()
     assert "проверьте числа" not in src
+
+
+# ============================================================================================================ П5: structured fields for the screens (rule 125: a screen does not parse the text)
+
+
+def decisions(world, day="2026-11-22", **params):
+    r = owner(world).get(f"{API}/org/payments/decisions", params={"from": day, "to": day, **params})
+    assert r.status_code == 200, r.text
+    return r.json()["rows"]
+
+
+def test_p5_a_transfer_names_both_groups_and_the_carried_payment_start_in_its_own_fields(world, fixed_today):
+    # a new student in A on 22.11 with «Оплата с 25.11», moved to B the same day: the line says from A to B and that «Оплата с 25.11.2026» went along (T4).
+    # ``group_name`` of a transfer line is the TARGET (the line is written on the new membership): the screen is right to take it for the target.
+    from tests.money1b_helpers import fresh_student
+
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s = fresh_student(world)
+    add(world, s, group=a, mode="add", pay_from="2026-11-25")
+    add(world, s, group=b, mode="transfer")
+    (row,) = decisions(world, kind="student_transferred")
+    assert (row["from_group_name"], row["to_group_name"], row["group_name"]) == (a.name, b.name, b.name)
+    assert row["carried_pay_from"] == "2026-11-25" and "«Оплата с 25.11.2026»" in row["text"]
+    assert row["first_day"] is None and row["new_receipt_no"] is None
+
+
+def test_p5_a_moved_pause_a_restored_payment_a_backdated_operation_and_a_cancelled_leaving_carry_their_own_fields(world, fixed_today):
+    from tests.test_money2_transfer_a_pg import pause, rich_stay
+
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = rich_stay(world, a)                                                          # pauses 22-24.11 and 25-28.11, prices, joined 02.11
+    p = pay(world, s0, a, amount=100_000)["payment"]
+    void_it(world, p)
+    new = restore_it(world, p)["payment"]
+    rows = decisions(world, kind="payment_restored")
+    assert rows[0]["new_receipt_no"] == new["receipt_no"] and rows[0]["receipt_no"] == p["receipt_no"] and rows[0]["paid_on"] is None      # paid today: the day of the line
+    add(world, s0, group=b, mode="transfer", from_group_id=str(a.id))
+    moved = decisions(world, kind="pause_moved")
+    assert {(r["from_group_name"], r["to_group_name"], r["first_day"], r["last_day"]) for r in moved} == {(a.name, b.name, "2026-11-25", "2026-11-28"), (a.name, b.name, "2026-11-23", "2026-11-24")}
+    assert all(r["from_group_name"] == a.name and r["to_group_name"] == b.name and r["first_day"] and r["last_day"] for r in moved)
+    # an operation dated before the day of the line: a refund of 12.11 entered today
+    s1 = world.students[1]
+    joined(world, s1, a, date(2026, 11, 2))
+    pay(world, s1, a, amount=5_000_000, paid_on=date(2026, 11, 2))
+    r = owner(world).post(f"{API}/org/memberships/{membership(world, s1, a).id}/refunds", json={"amount": 1_000, "method": "cash", "reason": "Возврат", "effective_on": "2026-11-12"})
+    assert r.status_code == 201, r.text
+    (refund,) = decisions(world, kind="payment_refund")
+    assert refund["paid_on"] == "2026-11-12"
+    owner(world).post(f"{API}/org/refunds/{r.json()['refund']['id']}/void", json={"reason": "Ошибка ввода"})
+    (undo,) = decisions(world, kind="payment_refund_void")
+    assert undo["paid_on"] == "2026-11-12"
+
+
+def test_p5_a_cancelled_leaving_says_what_came_back_in_numbers_not_in_a_bare_bracket(world, fixed_today):
+    from tests.test_money2_transfer_a_pg import rich_stay
+
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = rich_stay(world, a)
+    leave(world, a, s0)
+    add(world, s0, group=a, mode="add")
+    (row,) = decisions(world, kind="leave_undone")
+    assert row["restored"] == {"individual_price": 1, "scheduled_price": 1, "pause": 2}
+    assert row["text"] == "Ученик вернулся в день ухода: уход отменён, цены и паузы возвращены: 4 записи"
+
+
+def test_p5_the_statement_rows_of_a_refund_and_a_forgiveness_say_the_day_they_were_entered(world, fixed_today):
+    # entered today 20.11 with the date 12.11 (the owner): the row is of 12.11, «внесено» is 20.11 - live and cancelled rows alike
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    for s in (s1, s2):
+        joined(world, s, a, date(2026, 11, 2))
+    pay(world, s2, a, amount=5_000_000, paid_on=date(2026, 11, 2))
+    rf = owner(world).post(f"{API}/org/memberships/{membership(world, s2, a).id}/refunds", json={"amount": 1_000, "method": "cash", "reason": "Возврат", "effective_on": "2026-11-12"}).json()["refund"]["id"]
+    wo = owner(world).post(f"{API}/org/memberships/{membership(world, s1, a).id}/writeoffs", json={"amount": 1_000, "reason": "Договорённость", "effective_on": "2026-11-12"}).json()["writeoff"]["id"]
+
+    def rows(student, kind, voided=False):
+        r = owner(world).get(f"{API}/org/memberships/{membership(world, student, a).id}/statement", params={"include_voided": "true"} if voided else None)
+        assert r.status_code == 200, r.text
+        return [x for x in r.json()["voided" if voided else "rows"] if x["type"] == kind]
+
+    (refund,) = rows(s2, "refund")
+    (writeoff,) = rows(s1, "writeoff")
+    assert refund["date"] == writeoff["date"] == "2026-11-12" and refund["details"]["recorded_on"] == writeoff["details"]["recorded_on"] == "2026-11-20"
+    owner(world).post(f"{API}/org/refunds/{rf}/void", json={"reason": "Ошибка ввода"})
+    owner(world).post(f"{API}/org/writeoffs/{wo}/void", json={"reason": "Ошибка ввода"})
+    (refund,) = rows(s2, "refund", voided=True)
+    (writeoff,) = rows(s1, "writeoff", voided=True)
+    assert refund["voided_at"] and refund["details"]["recorded_on"] == "2026-11-20" and writeoff["details"]["recorded_on"] == "2026-11-20"
+
+
+def test_p5_a_transfer_that_moves_no_money_says_so_in_a_structured_entry_and_the_role_without_money_gets_no_sum(world, fixed_today):
+    from tests.pg_world import make_client
+
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    out = add(world, s0, group=b, mode="transfer", dry_run=True)                          # nothing paid, nothing charged yet in A: nothing to carry
+    (entry,) = [x for x in out["effects"]["stays"] if x["code"] == "money_stays"]
+    assert entry["amount"] == 0 and entry["group_name"] == a.name and entry["group_id"] == str(a.id)
+    stays = {x["code"] for x in out["effects"]["stays"]}
+    assert "money" not in {x["code"] for x in out["effects"]["moves"]}
+    pay(world, s1, a, amount=900_000, paid_on=date(2026, 11, 2))
+    joined(world, s1, a, date(2026, 11, 2))
+    moving = add(world, s1, group=b, mode="transfer", dry_run=True)["effects"]                # money goes along: no «stays» entry about money
+    assert any(m["code"] == "money" for m in moving["moves"]) and not any(x["code"] == "money_stays" for x in moving["stays"])
+    from tests.ops_helpers import grant_money_right  # noqa: F401
+    admin = make_client(world, user=world.admin, org_role="admin")                           # an administrator without the right of money: the entry (if any) has no sum
+    r = admin.post(f"{API}/org/groups/{b.id}/students/{s2.id}", params={"mode": "transfer", "dry_run": "true"}, json={"from_group_id": str(a.id)})
+    assert r.status_code in (200, 403)
+    if r.status_code == 200:
+        assert all("amount" not in x for x in r.json()["effects"]["stays"] if x["code"] == "money_stays") and stays
+
+
+# ============================================================================================================ Т12: a leaver with nothing to do does not block the archive of the group
+
+
+def test_t12_a_leaver_whose_advance_cannot_be_returned_does_not_block_the_archive_of_a_group_and_the_sum_is_what_can_be_returned(world, fixed_today, monkeypatch):
+    # the list of the blockers has one line per debt and per advance; an advance with nothing refundable has no action (no «вернуть»), so it is not a blocker.  The ledger entries are stood in:
+    # a debt 50 000 (kept), an advance 410 000 with 410 000 refundable (kept), an advance 120 000 with 0 refundable (dropped), an advance 300 000 with 100 000 refundable (kept as 100 000).
+    from types import SimpleNamespace as NS
+
+    from src.auth import group_lifecycle, leave_effects
+
+    a, b, c = groups3(world, fixed_today)
+
+    def entry(name, refundable):
+        return NS(student=NS(id=name, last_name=name, first_name="", ), membership=NS(id=name, left_at=None), ledger=NS(refundable=refundable))
+
+    rows = [(entry("d", 0), "debt", 50_000), (entry("a1", 410_000), "advance", 410_000), (entry("a2", 0), "advance", 120_000), (entry("a3", 100_000), "advance", 300_000)]
+    monkeypatch.setattr(leave_effects, "open_balances", lambda *args, **kw: rows)
+    monkeypatch.setattr(group_lifecycle, "_student_name", lambda student: student.last_name)
+    out = group_lifecycle.GroupLifecycle.open_balances(NS(db=world.db), a, money=True) if hasattr(group_lifecycle, "GroupLifecycle") else None
+    assert [(r["name"], r["kind"], r["amount"]) for r in out] == [("a1", "advance", 410_000), ("a3", "advance", 100_000), ("d", "debt", 50_000)]
+
+
+# ============================================================================================================ Т10: a lock lost in the middle of a bulk adding is the line of ONE student
+
+
+def test_t10_a_deadlock_on_the_second_student_of_a_bulk_adding_is_his_line_and_the_first_stays_written(world, fixed_today, monkeypatch):
+    from types import SimpleNamespace
+
+    from sqlalchemy.exc import OperationalError
+
+    from src.auth.service import AuthService
+
+    a, b, c = groups3(world, fixed_today)
+    s0, s1, s2 = world.students
+    real = AuthService.add_student_to_group
+
+    def flaky(self, org_id, group_id, student_id, **kw):
+        if str(student_id) == str(s1.id):
+            raise OperationalError("UPDATE students ...", {}, SimpleNamespace(pgcode="40P01"))
+        return real(self, org_id, group_id, student_id, **kw)
+
+    monkeypatch.setattr(AuthService, "add_student_to_group", flaky)
+    r = owner(world).post(f"{API}/org/groups/{b.id}/students/bulk", params={"mode": "transfer"}, json={"student_ids": [str(s0.id), str(s1.id), str(s2.id)], "from_group_id": str(a.id)})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["added"] == 2 and out["skipped"] == 1 and out["skipped_details"][0]["student_id"] == str(s1.id) and out["skipped_details"][0]["code"] == "CONCURRENT_EDIT"
+    assert [x["status"] for x in out["results"]] == ["added", "skipped", "added"]
+    assert membership(world, s0, b).is_active and membership(world, s2, b).is_active and membership(world, s1, a).is_active

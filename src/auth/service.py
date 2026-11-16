@@ -18,6 +18,7 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session, joinedload, load_only
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.dialects.postgresql import distinct_on
 
 from . import payment_status as ps
@@ -2600,6 +2601,14 @@ class AuthService:
             except ops_rules.OpsError as exc:
                 self.db.rollback()      # Money-1 A4 / Money-2 T1, T10: every coded refusal of ONE student (no right to money, no source, «Оплата с» out of range, ...) is his line, never the end of the request for the others
                 skipped_details.append({"student_id": str(student_id), "reason": exc.message, "code": exc.code})
+                results.append({"student_id": str(student_id), "status": "skipped", **skipped_details[-1]})
+            except OperationalError as exc:      # R3 Т10: a deadlock / a lock that could not be taken for ONE student is his line (repeat it); the students already written stay written, the request goes on
+                from .payments_service import CONCURRENT_EDIT_MESSAGE, is_deadlock
+
+                if not is_deadlock(exc) and getattr(getattr(exc, "orig", None), "pgcode", None) != "55P03":
+                    raise
+                self.db.rollback()
+                skipped_details.append({"student_id": str(student_id), "reason": CONCURRENT_EDIT_MESSAGE, "code": "CONCURRENT_EDIT"})
                 results.append({"student_id": str(student_id), "status": "skipped", **skipped_details[-1]})
         self._billing_cache = None
         # Money-1 B (lead): the preview of a bulk adding says per student and in total what is charged at once - the same phrase as the single adding (``billing.immediate.text``); only for a caller with the money access
