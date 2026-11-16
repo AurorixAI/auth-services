@@ -337,7 +337,7 @@ def test_t5_a_payment_cancelled_between_the_window_and_the_transfer_is_409_and_n
     window = add(world, s0, group=b, mode="transfer", dry_run=True)
     (money,) = [m for m in window["effects"]["moves"] if m["code"] == "money"]
     assert money["amount"] == 390_000
-    assert owner(world).post(f"{API}/org/payments/{second.json()['payment']['id']}/void", json={"reason": "Внесли дважды"}).status_code == 200
+    assert owner(world).post(f"{API}/org/payments/{second['payment']['id']}/void", json={"reason": "Внесли дважды"}).status_code == 200
     r = add(world, s0, group=b, mode="transfer", expected_carried=390_000, expect=409)
     assert r["detail"]["code"] == "BALANCE_CHANGED" and r["detail"]["carried"] == 190_000 and r["detail"]["fresh"] == [{"carried": 190_000}]
     assert membership(world, s0, a).is_active and world.db.query(MembershipTransfer).filter_by(student_id=s0.id).count() == 0     # nothing written
