@@ -119,7 +119,7 @@ from .ops_schemas import (  # noqa: E402
     TeacherDashboardSummaryResponseB as TeacherDashboardSummaryResponse,
 )
 from . import attendance_rules, business_clock, exam_bridge, exam_release, invites, lesson_substitutions, lesson_teachers, ops_rules, schedule_rules  # noqa: E402
-from . import lesson_return, leave_effects, password_rules, staff_lifecycle, student_views, transfer_rules  # noqa: E402
+from . import lesson_return, leave_effects, leave_undo, password_rules, staff_lifecycle, student_views, transfer_rules  # noqa: E402
 from .roster_names import roster_payload, student_full_name  # noqa: E402
 from .sql_text import contains  # noqa: E402
 
@@ -2808,13 +2808,18 @@ class AuthService:
             carry_before = PaymentService(self.db).account_after(org_id, existing.id, now_dt)      # Money-1 D-6: the account the money lands on, BEFORE the transfer
 
         new_period = None
+        leave_undo_result = None
         if existing:
             if not already_member:
                 # Returning to a historical group starts a new membership
                 # period (the earlier ones stay in ``student_group_periods``);
                 # recorded attendance stays tied to past lessons.
+                left_before = existing.left_at
                 new_period = open_period(existing, now_dt)
-                on_membership_returned(self.db, existing, now_dt, actor_id)  # LOGIC-A (F13): the price of the group again
+                if actor_id:      # Money-2 T6: back on the day of leaving = the leaving is cancelled (prices and pauses come back); else the ordinary return
+                    leave_undo_result = leave_undo.try_undo(self.db, org_id, existing, left_before, now_dt, actor_id, coming_from=[m.id for m in closing], money=payments_detail)
+                if not (leave_undo_result and leave_undo_result["undone"]):
+                    on_membership_returned(self.db, existing, now_dt, actor_id)  # LOGIC-A (F13): the price of the group again
             if closing:
                 # A transfer into a group the student already belongs to keeps
                 # its old joined_at (past rosters need it); this instant lets
@@ -2918,6 +2923,7 @@ class AuthService:
             "carried": carried,
             "carry_after": carry_after,
             "closing_prices": closing_prices,
+            "leave_undo": leave_undo_result,      # Money-2 T6: null = an ordinary adding / return; else {undone, restored[], text} - the leaving of the same day is cancelled (or the reason it is not)
             "effects": effects,                  # Money-2 T3: what moves / stays / ends (sums only for a caller with the right to money)
             "individual_price_ends": bool(closing_prices),
             "billing": billing,                  # Money-1 B1: from which day he is charged (``pay_from``) and why; null for a transfer

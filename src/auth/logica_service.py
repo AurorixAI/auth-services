@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID, uuid4
 
@@ -19,6 +19,7 @@ from sqlalchemy import func
 from src.models.auth import (
     Group,
     GroupAttendance,
+    GroupAudit,
     MembershipOpeningBalance,
     MembershipPause,
     MembershipTransfer,
@@ -705,6 +706,42 @@ class PauseService(_Base):
                     "actor_id": str(actor_id), "membership_id": str(target.id), "student_id": str(target.student_id), "pause_id": str(row.id), "first_day": a.isoformat(),
                     "last_day": b.isoformat(), "reason": reason, "moved_from_pause_id": str(old_id), "via": "transfer"})
         return made
+
+    # ---- Money-2 T6: a return on the day of leaving takes the leaving back
+
+    def restore_after_leave(self, org_id: str, membership: StudentGroup, since: datetime, actor_id: str) -> List[Tuple[MembershipPause, date, date]]:
+        """Give the membership its pauses back as the journal of THE leaving says they were (the lines ``via`` leave / transfer / archive written since ``since``): a pause that was cut gets its last day
+        back, a cancelled one lives again - each with a line of the journal (``via = leave_undone``).  A pause that somebody changed after the leaving (another last day, cancelled for another reason) is left.
+        Returns ``[(pause, first_day, last_day it has now)]``."""
+        lines = (self.db.query(GroupAudit).filter(GroupAudit.org_id == org_id, GroupAudit.group_id == membership.group_id, GroupAudit.created_at >= since,
+                                                  GroupAudit.action.in_((AUDIT_PAUSE_SET, AUDIT_PAUSE_VOID)))
+                 .order_by(GroupAudit.created_at, GroupAudit.id).all())
+        done: List[Tuple[MembershipPause, date, date]] = []
+        seen: Set[str] = set()
+        for line in lines:
+            snap = line.snapshot or {}
+            if snap.get("membership_id") != str(membership.id) or snap.get("via") not in ("leave", "transfer", "archive") or not snap.get("was"):
+                continue
+            pause = self.db.get(MembershipPause, UUID(snap["pause_id"]))
+            if pause is None or str(pause.id) in seen:
+                continue
+            first, last = (date.fromisoformat(d) for d in snap["was"])
+            if line.action == AUDIT_PAUSE_VOID:
+                if pause.voided_at is None or pause.void_reason != "ученик ушёл из группы":
+                    continue
+                pause.voided_at = pause.voided_by = pause.void_reason = None
+            else:
+                if pause.voided_at is not None or pause.last_day.isoformat() != snap["last_day"]:
+                    continue
+                pause.last_day = last
+            seen.add(str(pause.id))
+            self.db.flush()
+            self._close_excuses(membership, first, last, actor_id)
+            self._audit(str(pause.org_id), membership, actor_id, self.pay.role_of(str(pause.org_id), actor_id), AUDIT_PAUSE_SET, {
+                "actor_id": str(actor_id), "membership_id": str(membership.id), "student_id": str(pause.student_id), "pause_id": str(pause.id), "first_day": first.isoformat(),
+                "last_day": last.isoformat(), "was": snap["was"] if line.action == AUDIT_PAUSE_SET else None, "reason": "уход отменён: ученик вернулся в тот же день", "via": "leave_undone"})
+            done.append((pause, first, last))
+        return done
 
 
 def _uncovered(first: date, last: date, taken: List[Tuple[date, date]]) -> List[Tuple[date, date]]:

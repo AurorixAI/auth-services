@@ -33,12 +33,12 @@ def groups3(w, fixed_today, today=DAY):
 
 
 def snap(w, student, group):
-    """Everything about one membership that a transfer of ANOTHER group must not move: the ledger, the stay, the pauses, the prices."""
+    """Everything about one membership that a transfer of ANOTHER group must not move: the ledger, the stay, the pauses, the prices (the money that went away and came back is net zero, both links stay: a transfer is never cancelled)."""
     m = membership(w, student, group)
     led = account(w, m.id)
     pauses = sorted((p.first_day, p.last_day, p.voided_at is None) for p in w.db.query(MembershipPause).filter_by(membership_id=m.id))
     prices = sorted((r.valid_from, r.amount, r.reason) for r in w.db.query(MembershipPriceOverride).filter_by(membership_id=m.id))
-    return (m.is_active, m.left_at, led.charged, led.advance, led.debt, led.covered_through, led.transferred_in, tuple(pauses), tuple(prices))
+    return (m.is_active, m.left_at, led.charged, led.advance, led.debt, led.covered_through, led.transferred_in - led.transferred_out, tuple(pauses), tuple(prices))
 
 
 # ---------------------------------------------------------------------------------------------------- T1 one source
@@ -369,3 +369,91 @@ def test_one_closing_for_leave_transfer_and_archive_each_says_how_the_stay_ended
     vias = {g.snapshot["student_id"]: g.snapshot["via"] for g in world.db.query(GroupAudit).filter(
         GroupAudit.org_id == world.org.id, GroupAudit.group_id == a.id, GroupAudit.action.in_(("membership_pause_set", "membership_pause_void"))) if "via" in g.snapshot}
     assert vias == {str(s0.id): "leave", str(s1.id): "transfer", str(s2.id): "archive"}
+
+
+# ---------------------------------------------------------------------------------------------------- T6 a return on the day of leaving cancels the leaving
+
+
+def rich_stay(world, a):
+    """A student of A since 02.11 with everything a leaving takes away: an individual price 240 000 (the group's is 300 000), a price scheduled from 01.12 (200 000), the pause 22-24.11 that holds the
+    day of leaving (Sunday 22.11) and a future pause 25-28.11.  Returns the student."""
+    from tests.pg_world import give_price
+
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    m = membership(world, s0, a)
+    give_price(world.db, m, 240_000, reason="договорённость")
+    world.db.add(MembershipPriceOverride(membership_id=m.id, amount=200_000, valid_from=date(2026, 12, 1), reason="акция", created_by=world.owner.id, created_at=datetime(2026, 11, 10)))
+    world.db.commit()
+    pause(world, a, s0, date(2026, 11, 22), date(2026, 11, 24))
+    pause(world, a, s0, date(2026, 11, 25), date(2026, 11, 28), "Поездка")
+    return s0
+
+
+def test_t6_a_return_on_the_day_of_leaving_is_a_cancel_of_the_leaving(world, fixed_today):
+    # November of the student in A: 02..30 = 29 days, 7 of them under pauses (22-24 and 25-28) = 22 days; the individual price 240 000: 240 000 x 22 / 30 = 176 000.
+    # Left on the 22nd: the pause 22-24 is cut to 22, the 25-28 one is cancelled, the price ends on the 23rd, the scheduled one is cancelled: 02..21 = 20 days = 240 000 x 20 / 30 = 160 000.
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = rich_stay(world, a)
+    pay(world, s0, a, amount=100_000)
+    before = snap(world, s0, a)
+    assert nov_charge(world, s0, a) == 176_000
+    assert owner(world).post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={}).status_code == 200
+    assert nov_charge(world, s0, a) == 160_000 and snap(world, s0, a) != before
+    out = add(world, s0, group=a, mode="add")                                    # back the same day: as if he had not left
+    assert out["leave_undo"]["undone"] is True and {i["code"] for i in out["leave_undo"]["restored"]} == {"individual_price", "scheduled_price", "pause"}
+    assert snap(world, s0, a) == before                                          # the statement, the prices (the scheduled one too), the pauses, «оплачено до»: the same as before
+    assert nov_charge(world, s0, a) == 176_000
+    (line,) = world.db.query(GroupAudit).filter(GroupAudit.group_id == a.id, GroupAudit.action == "student_left_group", GroupAudit.snapshot["undone"].astext == "true").all()
+    assert line.snapshot["membership_id"] == str(membership(world, s0, a).id) and line.actor_id == world.owner.id and len(line.snapshot["restored"]) == 4      # 2 prices + 2 pauses, each with its id
+
+
+def test_t6_the_next_day_the_return_is_the_ordinary_one_and_nothing_is_restored(world, fixed_today):
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = rich_stay(world, a)
+    assert owner(world).post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={}).status_code == 200
+    fixed_today(date(2026, 11, 23))
+    out = add(world, s0, group=a, mode="add")
+    assert out.get("leave_undo") is None or out["leave_undo"]["undone"] is False
+    assert [(p[0], p[1], p[3]) for p in pauses_of(world, s0, a)] == [(date(2026, 11, 22), date(2026, 11, 22), False), (date(2026, 11, 25), date(2026, 11, 28), True)]      # the cut pause stays cut, the cancelled stays cancelled
+    assert world.db.query(MembershipPriceOverride).filter_by(membership_id=membership(world, s0, a).id, valid_from=date(2026, 12, 1)).count() == 0     # the scheduled price is gone
+
+
+def test_t6_a_refund_made_after_the_leaving_forbids_the_cancel_and_the_window_says_why(world, fixed_today):
+    # paid 400 000, the leaving on 22.11 settles with a refund of the advance; the return the same day is an ordinary one (the returned money stays returned)
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = rich_stay(world, a)
+    pay(world, s0, a, amount=400_000)
+    r = owner(world).post(f"{API}/org/groups/{a.id}/students/{s0.id}/leave", json={"settle": [{"membership_id": str(membership(world, s0, a).id), "action": "refund", "method": "cash"}]})
+    assert r.status_code == 200, r.text
+    dry = add(world, s0, group=a, mode="add", dry_run=True)
+    assert dry["leave_undo"]["undone"] is False and "возврат" in dry["leave_undo"]["text"].lower()
+    real = add(world, s0, group=a, mode="add")
+    assert real["leave_undo"] == dry["leave_undo"] and pauses_of(world, s0, a)[1][3] is True            # nothing restored
+
+
+def test_t6_a_transfer_back_on_the_same_day_gives_every_membership_its_numbers_back(world, fixed_today):
+    # A -> B -> A on 22.11.  Paid 600 000 into A: 02..30 under pauses = 22 days at 240 000 = 176 000 charged for November; the transfer takes the advance of the 22nd (600 000 - 160 000 = 440 000) to B
+    # and the transfer back brings it home: A is exactly what it was, B charged nothing (its stay began and ended on the same day: rule G-8)
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = rich_stay(world, a)
+    pay(world, s0, a, amount=600_000)
+    before = snap(world, s0, a)
+    add(world, s0, group=b, mode="transfer")
+    assert snap(world, s0, a) != before
+    out = add(world, s0, group=a, mode="transfer")
+    assert out["leave_undo"]["undone"] is True
+    assert snap(world, s0, a) == before
+    mb = membership(world, s0, b)
+    assert mb.is_active is False and account(world, mb.id).charged == 0 and account(world, mb.id).advance == 0 and account(world, mb.id).debt == 0
+    assert pauses_of(world, s0, b) == [(date(2026, 11, 23), date(2026, 11, 24), "Болезнь", True), (date(2026, 11, 25), date(2026, 11, 28), "Поездка", True)]      # what went to B is cancelled there
+
+
+def test_t6_a_transfer_back_the_next_day_is_an_ordinary_one(world, fixed_today):
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = rich_stay(world, a)
+    add(world, s0, group=b, mode="transfer")
+    fixed_today(date(2026, 11, 23))
+    out = add(world, s0, group=a, mode="transfer")
+    assert out.get("leave_undo") is None or out["leave_undo"]["undone"] is False
+    assert world.db.query(MembershipPriceOverride).filter_by(membership_id=membership(world, s0, a).id, valid_from=date(2026, 12, 1)).count() == 0
