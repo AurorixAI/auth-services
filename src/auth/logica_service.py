@@ -591,8 +591,8 @@ class PauseService(_Base):
 
     @deadlock_guard
     def patch(
-        self, org_id: str, pause_id: UUID, actor_id: str, body: PausePatch, *, dry_run: bool = False, money: bool = True,
-        owner: bool = False, actor_role: str = "admin",
+        self, org_id: str, pause_id: UUID, actor_id: str, body: PausePatch, *, dry_run: bool = False, money: bool,
+        owner: bool = False, actor_role: str,
     ) -> PauseSaved:
         today = ps.business_today()
         try:
@@ -652,7 +652,7 @@ class PauseService(_Base):
                            first=min(first, old[0]), last=max(last, old[1]), others=others)
 
     @deadlock_guard
-    def void(self, org_id: str, pause_id: UUID, actor_id: str, reason: str, *, money: bool = True, actor_role: str = "admin", dry_run: bool = False) -> PauseVoided:
+    def void(self, org_id: str, pause_id: UUID, actor_id: str, reason: str, *, money: bool, actor_role: str, dry_run: bool = False) -> PauseVoided:
         today = ps.business_today()
         try:
             reason = self.pay._check_reason(reason)
@@ -686,7 +686,7 @@ class PauseService(_Base):
 
     # ---- used by leave / transfer / archive (inside the caller's transaction)
 
-    def close_at_leave(self, membership_id: UUID, left_day: date, actor_id: Optional[str] = None, via: str = "leave") -> int:
+    def close_at_leave(self, membership_id: UUID, left_day: date, actor_id: Optional[str], via: str) -> int:
         """Pauses after the day of leaving are voided, the one that holds the day is cut to it (spec §2.8).  Returns the number touched.  ``via``: what ended the stay
         (``leave`` / ``transfer``), written to the line of the journal."""
         touched = 0

@@ -74,7 +74,7 @@ class OpeningNotAllowedAdd(PaymentInvalid):
 # ---- hooks run whenever a stay is closed / reopened ------------------------------------------------------------
 
 
-def on_membership_closed(db: Session, membership: StudentGroup, left_at: datetime, actor_id: str, via: str = "leave") -> None:
+def on_membership_closed(db: Session, membership: StudentGroup, left_at: datetime, actor_id: str, via: str) -> None:
     """F13 + pauses.  The caller closed the period (``close_period``) and holds the locks; nothing is committed here.
 
     The individual price (with a sum) in force on the last day ends the day after - a return is then priced by the group; the scheduled

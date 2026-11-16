@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Sequence
-from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -56,7 +55,10 @@ def _blocker(db: Session, membership: StudentGroup, since: datetime, coming_from
         return f"Возврат обычный, а не отмена ухода: после ухода ученику {what}. Цена и паузы не восстанавливаются"
     link = db.query(MembershipTransfer).filter(MembershipTransfer.from_membership_id == membership.id, MembershipTransfer.voided_at.is_(None), MembershipTransfer.at >= since).first()
     if link is not None and str(link.to_membership_id) not in {str(x) for x in coming_from}:
-        name = db.query(Group.name).join(StudentGroup, StudentGroup.group_id == Group.id).filter(StudentGroup.id == link.to_membership_id).scalar()
+        target = db.query(Group.name, StudentGroup.is_active).join(StudentGroup, StudentGroup.group_id == Group.id).filter(StudentGroup.id == link.to_membership_id).first()
+        name, still_there = target if target is not None else ("", False)
+        if not still_there:             # a chain A -> B -> C -> A in one day: he is not in B any more, there is nothing to transfer back from
+            return f"Возврат обычный, а не отмена ухода: сегодня ученика перевели в группу «{name}», а затем дальше. Цена и паузы не восстанавливаются"
         return f"Возврат обычный, а не отмена ухода: сегодня ученика перевели в группу «{name}». Отменить перевод можно обратным переводом из неё"
     return None
 

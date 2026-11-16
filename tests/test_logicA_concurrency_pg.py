@@ -72,7 +72,7 @@ def test_a_pause_void_and_a_refund_never_leave_a_refund_without_money(world, eng
     PaymentService(world.db).create_payment(org, m.id, actor, PaymentCreate(amount=5_000_000, paid_on=today, method="cash"), actor_role="owner")
     refundable = PaymentService(world.db)._row(org, m.id).refundable
     t1 = run_in_thread(engine, lambda s: PaymentService(s).create_refund(org, m.id, actor, amount=refundable, method="cash", reason=None, note=None, actor_role="owner"))
-    t2 = run_in_thread(engine, lambda s: PauseService(s).void(org, __import__("uuid").UUID(pause.id), actor, "ошибка"))
+    t2 = run_in_thread(engine, lambda s: PauseService(s).void(org, __import__("uuid").UUID(pause.id), actor, "ошибка", money=True, actor_role="owner"))
     join_all(t1, t2)
     assert ok(t1[1]) and ok(t2[1])
     reconciles(world, org, m.id)

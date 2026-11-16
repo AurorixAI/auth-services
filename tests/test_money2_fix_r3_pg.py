@@ -334,3 +334,31 @@ def test_p4_the_cancellation_of_an_old_refund_and_an_old_forgiveness_is_the_owne
         assert admin.post(f"{API}/org/{kind}/{ids[0]}/void", params={"dry_run": "true"}, json={"reason": "Ошибка ввода"}).status_code == 403
         assert admin.post(f"{API}/org/{kind}/{ids[1]}/void", json={"reason": "Ошибка ввода"}).status_code == 200, item      # 7 days: allowed
         assert owner(world).post(f"{API}/org/{kind}/{ids[0]}/void", json={"reason": "Ошибка ввода"}).status_code == 200      # the owner
+
+
+# ============================================================================================================ small things
+
+
+def test_small_a_chain_a_b_c_a_in_one_day_does_not_advise_a_transfer_back_from_the_group_he_has_left(world, fixed_today):
+    a, b, c = groups3(world, fixed_today)
+    s0 = world.students[0]
+    add(world, s0, group=b, mode="transfer", from_group_id=str(a.id))
+    add(world, s0, group=c, mode="transfer", from_group_id=str(b.id))
+    out = add(world, s0, group=a, mode="transfer", from_group_id=str(c.id))
+    text = out["leave_undo"]["text"]
+    assert out["leave_undo"]["undone"] is False and "обратным переводом" not in text and "«Бета», а затем дальше" in text
+
+
+def test_small_one_code_one_text_and_no_default_roles():
+    import inspect
+
+    from src.auth import leave_service
+    from src.auth.logica_service import PauseService
+
+    for fn in (PauseService.void, PauseService.patch):
+        params = inspect.signature(fn).parameters
+        assert params["money"].default is inspect.Parameter.empty and params["actor_role"].default is inspect.Parameter.empty
+    assert inspect.signature(leave_service.on_membership_closed).parameters["via"].default is inspect.Parameter.empty
+    assert inspect.signature(PauseService.close_at_leave).parameters["via"].default is inspect.Parameter.empty
+    src = open("src/auth/service.py", encoding="utf-8").read() + open("src/auth/leave_service.py", encoding="utf-8").read()
+    assert "проверьте числа" not in src

@@ -27,9 +27,8 @@ from .student_id_service import assign_display_id
 from .attendance_excuses import AttendanceExcuseService
 from .diagnostic_level import level_fields, normalize_level_payload, result_summary
 from .membership_pauses import not_paused_at, not_paused_now
-from .leave_service import close_stay, on_membership_closed, on_membership_returned
+from .leave_service import close_stay, on_membership_returned
 from .membership_periods import (
-    close_period,
     group_period_spans,
     member_at,
     open_period,
@@ -2861,7 +2860,7 @@ class AuthService:
 
             self.db.flush()
             if actor_id is None:             # Money-2 T19: an opening balance always has an author (the line of the journal names him)
-                raise ValueError("opening_balance needs actor_id")
+                raise ValueError("Остаток при зачислении требует автора действия")
             opening_warning = apply_add_opening(self.db, org_id, membership, actor_id, opening_balance, transfer=bool(closing), source=opening_source)
 
         # Money-1 B1 «Оплата с»: a new stay is charged from the first lesson of the group (or the day the owner chose); a transfer has its own day (the one after it)
@@ -2894,7 +2893,7 @@ class AuthService:
 
                 actual = next((int(n["amount"]) for n in carried if n.get("code") == "payment_carried_over" and "amount" in n), 0)
                 if actual != expected_carried:
-                    raise BalanceChanged("Данные оплат изменились — проверьте числа", fresh=[{"carried": actual}], carried=actual)
+                    raise BalanceChanged("Данные оплат изменились — проверьте суммы", fresh=[{"carried": actual}], carried=actual)
             if payments_detail and carried:      # Money-1 D-6: the window says what the NEW account looks like after the transfer, not only what arrived
                 pay = PaymentService(self.db)
                 carry_after = pay.transfer_balance(carry_before, pay.account_after(org_id, membership.id, now_dt, tomorrow=True), group.name)
@@ -2922,8 +2921,7 @@ class AuthService:
         warnings.extend(carried)
         if opening_warning:                  # Money-1 R3 Д4: «оплачено до» on top of payments is named (the same function as the batch and the single window)
             warnings.append(opening_warning)
-        from . import leave_effects as _leave_effects  # lazy
-        past_balances = _leave_effects.past_balances(self.db, org_id, student.id, group.id, money=payments_detail) if mode == "add" else []
+        past_balances = leave_effects.past_balances(self.db, org_id, student.id, group.id, money=payments_detail) if mode == "add" else []
         result = {
             "student_id": str(student_id),
             "group_id": str(group_id),
