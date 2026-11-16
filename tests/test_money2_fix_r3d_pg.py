@@ -1,6 +1,8 @@
 """Money-2, the fourth (closing) round after the independent check (R3d, 17.11): Д1 - a group with a price by an administrator, one place for the 403 of the money rules (PostgreSQL)."""
 from datetime import date
 
+from src.auth import payment_status as ps
+
 import pytest
 
 from tests.pg_world import needs_pg, pg_session, world  # noqa: F401  (fixtures)
@@ -352,3 +354,29 @@ def test_d3_the_answer_of_the_state_carries_can_reopen_launch(world, fixed_today
     assert d["launch_closed"] is True and d["can_reopen_launch"] is True and d["can_set_opening"] is True
     d = owner(world).post(f"{API}/org/opening-balances/state", json={"state": "pending"}).json()
     assert d["launch_closed"] is False and d["can_reopen_launch"] is False
+
+
+# ============================================================================================================ Д4: the journal of the settings of an EMPTY centre tells the truth
+
+EMPTY_TEXT = "В центре ещё нет учеников и оплат — способ оплаты действует с начала учёта"
+
+
+def test_d4_an_empty_centre_the_journal_and_the_trial_say_from_the_start(world, fixed_today):
+    from tests.test_money2_fix_r3c_pg import empty_centre
+
+    settings_block(world, period_mode="calendar", billing_anchor="fixed_day", billing_day=1)
+    empty_centre(world)
+    c = owner(world)
+    dry = c.put(f"{API}/org/settings/payments", params={"dry_run": True}, json={"billing_anchor": "payment_date"})
+    assert dry.status_code == 200 and dry.json()["regime_impact"]["text"] == EMPTY_TEXT, dry.text
+    assert c.put(f"{API}/org/settings/payments", json={"billing_anchor": "payment_date"}).status_code == 200
+    (row,) = [i for i in journal_of(c) if i["action"] == "billing_regime_changed"]
+    assert row["details"]["from"] == "min" and row["text"].endswith(EMPTY_TEXT) and row["text"].count(EMPTY_TEXT) == 1 and "следующего периода" not in row["text"], row
+
+
+def test_d4_a_centre_with_students_keeps_the_old_words_from_today(world, fixed_today):
+    settings_block(world, period_mode="calendar", billing_anchor="fixed_day", billing_day=1)
+    r = owner(world).put(f"{API}/org/settings/payments", json={"billing_anchor": "payment_date"})
+    assert r.status_code == 200
+    (row,) = [i for i in journal_of(owner(world)) if i["action"] == "billing_regime_changed"]
+    assert row["details"]["from"] == ps.business_today().isoformat() and "с начала его следующего периода" in row["text"] and EMPTY_TEXT not in row["text"]

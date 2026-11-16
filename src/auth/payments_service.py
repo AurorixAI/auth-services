@@ -630,6 +630,14 @@ class PaymentService:
             return False
         return self.db.query(MembershipOpeningBalance.id).filter(MembershipOpeningBalance.org_id == org_id).first() is None
 
+    EMPTY_CENTRE_REGIME_TEXT = "В центре ещё нет учеников и оплат — способ оплаты действует с начала учёта"      # R3d Д4: the words of the journal and of the trial of an empty centre (``_centre_is_empty``)
+
+    def _regime_when(self, org_id: str, today: date) -> Tuple[str, str]:
+        """R3d Д4: ``(the day the new mode acts from, the sentence about it)`` for the journal: an empty centre - from the start (as its history says), otherwise from the start of the next period of every student."""
+        if self._centre_is_empty(org_id):
+            return "min", self.EMPTY_CENTRE_REGIME_TEXT
+        return today.isoformat(), "Начнёт действовать для каждого ученика с начала его следующего периода"
+
     def _regime_headline(self, before: PaymentSettings, after: PaymentSettings) -> str:
         was, now = self._regime_fields(before), self._regime_fields(after)
         what = []
@@ -645,15 +653,16 @@ class PaymentService:
         """The record of a change of the way the centre counts the payments (Money-1 B9): from what to what, how many students move and what it does to their accounts (the sums)."""
         impact = self._regime_impact(org_id, after, today)
         was, now = self._regime_fields(before), self._regime_fields(after)
+        from_day, when = self._regime_when(org_id, today)
         return {
-            "before": was, "after": now, "from": today.isoformat(), "students_affected": impact.students_affected, "sums_available": impact.charged_after_total is not None,
+            "before": was, "after": now, "from": from_day, "students_affected": impact.students_affected, "sums_available": impact.charged_after_total is not None,
             "first_switch": impact.first_switch.isoformat() if impact.first_switch else None, "latest_switch": impact.latest_switch.isoformat() if impact.latest_switch else None,
             "charged_before_total": impact.charged_before_total, "charged_after_total": impact.charged_after_total, "horizon_days": impact.horizon_days,
             "pending_package_students": impact.pending_package_students,
             "items": [{"membership_id": i.membership_id, "student_name": i.student_name, "text": i.text, "charged_before": i.charged_before, "charged_after": i.charged_after,
                        "switch_on": i.switch_on.isoformat() if i.switch_on else None} for i in impact.items[:50]],
             "items_total": impact.items_total,
-            "text": f"{self._regime_headline(before, after)}. Начнёт действовать для каждого ученика с начала его следующего периода. {impact.text}",
+            "text": f"{self._regime_headline(before, after)}. {when}" if from_day == "min" else f"{self._regime_headline(before, after)}. {when}. {impact.text}",
         }
 
     def _safe_regime_audit(self, org_id: str, before: PaymentSettings, after: PaymentSettings, today: date) -> Dict[str, Any]:
@@ -663,8 +672,9 @@ class PaymentService:
                 return self._regime_audit(org_id, before, after, today)
         except Exception:
             logger.exception("the sums of the change of the billing mode could not be worked out org=%s", org_id)
-            return {"before": self._regime_fields(before), "after": self._regime_fields(after), "from": today.isoformat(), "sums_available": False,
-                    "text": f"{self._regime_headline(before, after)}. Начнёт действовать для каждого ученика с начала его следующего периода. Суммы по ученикам не посчитаны"}
+            from_day, when = self._regime_when(org_id, today)
+            return {"before": self._regime_fields(before), "after": self._regime_fields(after), "from": from_day, "sums_available": False,
+                    "text": f"{self._regime_headline(before, after)}. {when}. Суммы по ученикам не посчитаны"}
 
     def _precomputed_regime_audit(self, org_id: str, changes: Dict[str, Any], today: date) -> Optional[Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]]:
         """R3 code №12: the sums of the journal are worked out BEFORE the row of the centre is locked (they read every account of the centre; under ``FOR UPDATE`` every insert with a foreign key
@@ -811,7 +821,7 @@ class PaymentService:
         unforecast = any(i["charged_after"] is None for i in counted)
         charged_before, charged_after = (None, None) if unforecast else (sum(i["charged_before"] for i in counted), sum(i["charged_after"] for i in counted))
         if not items:
-            text = "Способ оплаты не изменит деньги ни у одного ученика"
+            text = self.EMPTY_CENTRE_REGIME_TEXT if self._centre_is_empty(org_id) else "Способ оплаты не изменит деньги ни у одного ученика"
         else:
             who = f"Перейдут на новый способ {len(items)} {tx.plural(len(items), 'ученик', 'ученика', 'учеников')}"
             text = (f"{who}. Начисления по пакету начнутся с первого урока" if unforecast else
