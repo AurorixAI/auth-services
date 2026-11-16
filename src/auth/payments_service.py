@@ -675,7 +675,7 @@ class PaymentService:
             logger.exception("the sums of the change of the billing mode could not be worked out org=%s", org_id)
             from_day, when = self._regime_when(org_id, today)
             return {"before": self._regime_fields(before), "after": self._regime_fields(after), "from": from_day, "sums_available": False,
-                    "text": f"{self._regime_headline(before, after)}. {when}. Суммы по ученикам не посчитаны"}
+                    "text": f"{self._regime_headline(before, after)}. {when}" + ("" if from_day == "min" else ". Суммы по ученикам не посчитаны")}
 
     def _precomputed_regime_audit(self, org_id: str, changes: Dict[str, Any], today: date) -> Optional[Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]]:
         """R3 code №12: the sums of the journal are worked out BEFORE the row of the centre is locked (they read every account of the centre; under ``FOR UPDATE`` every insert with a foreign key

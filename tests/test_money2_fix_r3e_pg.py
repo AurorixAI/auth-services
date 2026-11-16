@@ -70,3 +70,35 @@ def test_e2_the_common_handler_of_money_refusals_writes_a_warning_without_bodies
     assert len(rec) == 1, [x.getMessage() for x in caplog.records]
     msg = rec[0].getMessage()
     assert ps_.OpeningOwnerOnly.code in msg and "POST" in msg and "/boom" in msg and "123456789" not in msg and "текст отказа" not in msg, msg
+
+
+def _fail_the_sums(monkeypatch):
+    from src.auth.payments_service import PaymentService
+
+    def boom(self, *a, **kw):
+        raise RuntimeError("sums failed")
+
+    monkeypatch.setattr(PaymentService, "_regime_audit", boom)
+
+
+def test_e4_the_fallback_text_of_an_empty_centre_does_not_mention_the_sums(world, fixed_today, monkeypatch):
+    from tests.test_money2_fix_r3c_pg import empty_centre
+    from tests.test_money2_fix_r3d_pg import EMPTY_TEXT
+    from tests.test_pay2_api_pg import settings_block
+
+    settings_block(world, period_mode="calendar", billing_anchor="fixed_day", billing_day=1)
+    empty_centre(world)
+    _fail_the_sums(monkeypatch)
+    assert owner(world).put(f"{API}/org/settings/payments", json={"billing_anchor": "payment_date"}).status_code == 200
+    (row,) = [i for i in journal_of(owner(world)) if i["action"] == "billing_regime_changed"]
+    assert row["details"]["sums_available"] is False and row["text"].endswith(EMPTY_TEXT) and "Суммы" not in row["text"], row["text"]
+
+
+def test_e4_the_fallback_text_of_a_centre_with_students_still_says_so(world, fixed_today, monkeypatch):
+    from tests.test_pay2_api_pg import settings_block
+
+    settings_block(world, period_mode="calendar", billing_anchor="fixed_day", billing_day=1)
+    _fail_the_sums(monkeypatch)
+    assert owner(world).put(f"{API}/org/settings/payments", json={"billing_anchor": "payment_date"}).status_code == 200
+    (row,) = [i for i in journal_of(owner(world)) if i["action"] == "billing_regime_changed"]
+    assert row["text"].endswith("Суммы по ученикам не посчитаны"), row["text"]
