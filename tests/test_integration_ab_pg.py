@@ -418,7 +418,7 @@ def test_the_linear_chain_composes_the_check_constraints_of_a_and_b(monkeypatch)
             assert not any(f"'{v}'" in d for v in A_VALUES[table] + B_VALUES[table]), (table, d)
         command.upgrade(config, "head")
         with eng.connect() as c:
-            assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "mg13a1b2c3d4"
+            assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "mm21a1b2c3d4"
     finally:
         eng.dispose()
         with admin.connect() as c:
