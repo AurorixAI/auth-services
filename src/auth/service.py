@@ -2823,18 +2823,23 @@ class AuthService:
 
         new_period = None
         leave_undo_result = None
+        leave_undone = False      # R3b В1: ONE name for «the leaving of the same day was cancelled»
+        closed_pay_from = None
         if existing:
             if not already_member:
                 # Returning to a historical group starts a new membership
                 # period (the earlier ones stay in ``student_group_periods``);
                 # recorded attendance stays tied to past lessons.
                 left_before = existing.left_at
+                closed_period = max((p for p in existing.periods if p.left_at is not None), key=lambda p: p.left_at, default=None)
+                closed_pay_from = closed_period.billing_from if closed_period is not None else None
                 new_period = open_period(existing, now_dt)
                 if actor_id:      # Money-2 T6: back on the day of leaving = the leaving is cancelled (prices and pauses come back); else the ordinary return
                     leave_undo_result = leave_undo.try_undo(self.db, org_id, existing, left_before, now_dt, actor_id, coming_from=[m.id for m in closing], money=payments_detail)
-                    if leave_undo_result and leave_undo_result["undone"] and (pay_from is not None or opening_balance is not None):      # R3 П1: the stay goes on as if he had not left - no new start, no new opening
+                    leave_undone = bool(leave_undo_result and leave_undo_result["undone"])
+                    if leave_undone and (pay_from is not None or opening_balance is not None):      # R3 П1: the stay goes on as if he had not left - no new start, no new opening
                         raise ops_rules.unprocessable("LEAVE_UNDO_NO_START", "Ученик возвращается в день ухода — уход отменяется, дата начала оплаты и остаток не меняются")
-                if not (leave_undo_result and leave_undo_result["undone"]):
+                if not leave_undone:
                     on_membership_returned(self.db, existing, now_dt, actor_id)  # LOGIC-A (F13): the price of the group again
             if closing:
                 # A transfer into a group the student already belongs to keeps
@@ -2847,8 +2852,8 @@ class AuthService:
             new_period = open_period(membership, now_dt)
             self.db.add(membership)
 
-        carry_billing = next((s.billing_from for s in before_close if s.billing_from is not None), None)
-        if carry_billing is not None and new_period is not None:      # Money-2 T4: a «Оплата с» that has not begun goes with the student - the new group charges from the same day (not from the day after the transfer)
+        carry_billing = leave_effects.carried_pay_from([s.billing_from for s in before_close] + ([closed_pay_from] if leave_undone else []), ps.business_date(now_dt))
+        if carry_billing is not None and new_period is not None:      # Money-2 T4 + R3b В1: a «Оплата с» that has not begun goes with the student (a transfer: the new group charges from the same day; a cancelled leaving: the same stay goes on)
             new_period.billing_from = carry_billing
 
         if price_override is not None:
@@ -2874,7 +2879,7 @@ class AuthService:
 
         # Money-1 B1 «Оплата с»: a new stay is charged from the first lesson of the group (or the day the owner chose); a transfer has its own day (the one after it)
         billing = None
-        if new_period is not None and not closing and not (leave_undo_result and leave_undo_result["undone"]):      # R3 П1: a cancelled leaving keeps the old «Оплата с» (the stay is the same stay)
+        if new_period is not None and not closing and not leave_undone:      # R3 П1: a cancelled leaving keeps the old «Оплата с» (the stay is the same stay)
             from . import billing_start  # lazy: pulls in the payments modules
 
             cache = getattr(self, "_billing_cache", None)        # a bulk adding: the schedule and the settings of the centre are read ONCE for all the students (R3 code №13)

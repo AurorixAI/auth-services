@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -75,6 +75,12 @@ def snapshot(db: Session, org_id: Any, memberships: Sequence[StudentGroup], day:
             snap.billing_from = period.billing_from
         out.append(snap)
     return out
+
+
+def carried_pay_from(candidates: Iterable[Optional[date]], today: date) -> Optional[date]:
+    """The «Оплата с» that goes on to the NEW period: the first of ``candidates`` (the closed periods' own days) that is still ahead of today.  ONE rule for a transfer (T4) and for a cancelled
+    leaving (R3b В1): a day that has already begun is no longer a start, the new period then follows the ordinary rule."""
+    return next((d for d in candidates if d is not None and d > today), None)
 
 
 def after_settle(snaps: Sequence[Snap], settled: Sequence[Any]) -> List[Snap]:
