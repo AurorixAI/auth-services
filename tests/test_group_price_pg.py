@@ -518,9 +518,9 @@ def test_the_list_of_stale_sheets_is_for_the_owner_only(world):
     m, saved = saved_flat_month(world)
     allow_admin(world)
     admin = make_client(world, user=world.admin)
-    got = put_price(world, 450_000, valid_from=m.d(11), dry=True, client=admin)["impact"]
-    assert got["stale_payroll_sheets"] == 1 and got["stale_sheets"] == []              # the count yes, the sheets (payroll) no
-    assert admin.get(f"{API}/org/payroll/sheets").status_code == 403                    # payroll itself stays the owner's alone
+    r = admin.put(f"{API}/org/groups/{world.group.id}/price", params={"dry_run": "1"}, json={"amount": 450_000, "valid_from": m.d(11).isoformat()})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "BACKDATE_OWNER_ONLY"      # R3b В4: a price of a past month is the owner's: the administrator does not even get the preview
+    assert admin.get(f"{API}/org/payroll/sheets").status_code == 403
     assert put_price(world, 450_000, valid_from=m.d(11), dry=True)["impact"]["stale_sheets"] != []
 
 
