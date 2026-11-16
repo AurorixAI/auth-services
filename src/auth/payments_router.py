@@ -139,6 +139,7 @@ def payments_status(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     sort: Optional[Literal["debt"]] = Query(None, description="debt — по убыванию долга (PAY-2)"),
+    age: Optional[Literal["to_30", "31_60", "61_90", "over_90"]] = Query(None, description="Деньги-2 Т18: корзина возраста долга в днях (до 30 / 31–60 / 61–90 / старше 90)"),
     user: dict = Depends(require_payments_access),
     db: Session = Depends(get_db),
 ):
@@ -148,7 +149,7 @@ def payments_status(
     вкладка, один релиз)."""
     return PaymentService(db).status_page(
         user["org_id"], bucket=bucket, group_id=group_id, teacher_id=teacher_id,
-        search=search, limit=limit, offset=offset, sort=sort,
+        search=search, limit=limit, offset=offset, sort=sort, age=age,
     )
 
 

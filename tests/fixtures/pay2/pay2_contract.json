@@ -453,6 +453,41 @@
         "title": "CarriedOutOut",
         "type": "object"
       },
+      "DebtAgeBasket": {
+        "description": "Money-2 T18: one basket of the age of the debt of the REAL debtors (not the waiting ones): distinct students, memberships and the sum of the debt.",
+        "properties": {
+          "bucket": {
+            "enum": [
+              "to_30",
+              "31_60",
+              "61_90",
+              "over_90"
+            ],
+            "title": "Bucket",
+            "type": "string"
+          },
+          "debt_total": {
+            "default": 0,
+            "title": "Debt Total",
+            "type": "integer"
+          },
+          "memberships": {
+            "default": 0,
+            "title": "Memberships",
+            "type": "integer"
+          },
+          "students": {
+            "default": 0,
+            "title": "Students",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bucket"
+        ],
+        "title": "DebtAgeBasket",
+        "type": "object"
+      },
       "DebtSplit": {
         "description": "Money-1 B7 / R3 №20: the debt of the centre split by ONE definition.  ``debtors`` + ``waiting_students`` (the memberships and the sums too) = the old ``students_with_debt`` /\n``memberships_with_debt`` / ``debt_total``.  ``expired`` / ``due`` / ``students_expired`` / ``students_due`` are the old status counters WITHOUT the students who only wait: the red banner, the\ncard «Просрочено» and the card «К оплате» read these.",
         "properties": {
@@ -599,6 +634,34 @@
             "default": 0,
             "title": "Debt",
             "type": "integer"
+          },
+          "debt_age_bucket": {
+            "anyOf": [
+              {
+                "enum": [
+                  "to_30",
+                  "31_60",
+                  "61_90",
+                  "over_90"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Age Bucket"
+          },
+          "debt_age_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt Age Days"
           },
           "debt_reason": {
             "anyOf": [
@@ -2531,6 +2594,13 @@
           },
           "buckets": {
             "$ref": "#/components/schemas/PaymentsBuckets"
+          },
+          "debt_ages": {
+            "items": {
+              "$ref": "#/components/schemas/DebtAgeBasket"
+            },
+            "title": "Debt Ages",
+            "type": "array"
           },
           "debt_split": {
             "$ref": "#/components/schemas/DebtSplit"
@@ -7670,6 +7740,30 @@
               ],
               "description": "debt — по убыванию долга (PAY-2)",
               "title": "Sort"
+            }
+          },
+          {
+            "description": "Деньги-2 Т18: корзина возраста долга в днях (до 30 / 31–60 / 61–90 / старше 90)",
+            "in": "query",
+            "name": "age",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "to_30",
+                    "31_60",
+                    "61_90",
+                    "over_90"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Деньги-2 Т18: корзина возраста долга в днях (до 30 / 31–60 / 61–90 / старше 90)",
+              "title": "Age"
             }
           }
         ],

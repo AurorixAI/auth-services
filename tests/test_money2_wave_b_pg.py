@@ -304,3 +304,36 @@ def test_t17_the_restoration_of_a_cancelled_payment_is_not_limited_by_the_age_of
     r = _admin_with_the_right(world).post(f"{API}/org/payments/{paid['id']}/restore", json={"reason": "Отменили по ошибке"})
     assert r.status_code == 201, r.text
     assert r.json()["payment"]["paid_on"] == "2026-11-02"
+
+
+# ---------------------------------------------------------------------------------------------------- T18 debts by age
+
+
+def test_t18_the_debts_of_the_debtors_fall_into_age_baskets_with_the_borders_30_31_60_61_90_91_and_the_filter_and_the_summary_agree(world, fixed_today):
+    # today 20.11.2026; nobody paid; the age is the count of «Просрочено на N дней»: the days after the day paid through, the first unpaid day = the day of joining is day ONE.
+    # joined 22.10 -> 30 days (basket «to_30»); 21.10 -> 31 («31_60»); 22.09 -> 60; 21.09 -> 61 («61_90»); 23.08 -> 90; 22.08 -> 91 («over_90»).
+    a, b, c = groups3(world, fixed_today)
+    settings_block(world, accounting_start_date="2026-06-01", billing_anchor="fixed_day", billing_day=1)
+    ages = {30: "to_30", 31: "31_60", 60: "31_60", 61: "61_90", 90: "61_90", 91: "over_90"}
+    students = {}
+    for n in ages:
+        s = fresh_student(world, f"Возраст{n}")
+        add(world, s, group=a, mode="add")
+        stay(world, membership(world, s, a), DAY - timedelta(days=n - 1))
+        students[n] = s
+    page = owner(world).get(f"{API}/org/payments/status", params={"bucket": "debtors", "limit": 100}).json()
+    rows = {i["debt_age_days"]: (i["debt_age_days"], i["debt_age_bucket"], i["debt"]) for i in page["items"]}
+    by_age = {n: rows[n] for n in ages}                       # (the rows of the world's own students are in the page too: they are in the summary below)
+    for n, basket in ages.items():
+        assert by_age[n][1] == basket, (n, by_age[n])
+    # the filter: one basket = exactly its students; the total of the page follows the filter
+    for basket in ("to_30", "31_60", "61_90", "over_90"):
+        r = owner(world).get(f"{API}/org/payments/status", params={"bucket": "debtors", "age": basket, "limit": 100}).json()
+        assert {i["debt_age_days"] for i in r["items"]} >= {n for n, k in ages.items() if k == basket} and {i["debt_age_bucket"] for i in r["items"]} == {basket} and r["total"] == len(r["items"])
+    # the summary: per basket the number of students and the sum equal the sums of the rows of that basket
+    summary = owner(world).get(f"{API}/org/payments/summary").json()["debt_ages"]
+    assert [x["bucket"] for x in summary] == ["to_30", "31_60", "61_90", "over_90"]
+    for x in summary:
+        of_basket = [v for v in page["items"] if v["debt_age_bucket"] == x["bucket"]]
+        assert x["students"] == len({v["student_id"] for v in of_basket}) and x["memberships"] == len(of_basket) and x["debt_total"] == sum(v["debt"] for v in of_basket)
+    assert sum(x["students"] for x in summary) == owner(world).get(f"{API}/org/payments/summary").json()["debt_split"]["debtors"]

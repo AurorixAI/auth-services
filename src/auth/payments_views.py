@@ -177,6 +177,32 @@ def waiting_reason(e) -> Optional[str]:
     return tx.waiting_text(until) if until is not None else None
 
 
+DEBT_AGE_BASKETS = ("to_30", "31_60", "61_90", "over_90")       # Money-2 T18: the baskets of the age of a debt in days: up to 30 | 31-60 | 61-90 | over 90
+
+
+def debt_age_basket(days: int) -> str:
+    """Money-2 T18: the basket of a debt that is ``days`` old (30 -> to_30, 31 -> 31_60, 60 -> 31_60, 61 -> 61_90, 90 -> 61_90, 91 -> over_90)."""
+    return "to_30" if days <= 30 else "31_60" if days <= 60 else "61_90" if days <= 90 else "over_90"
+
+
+def debt_age_days(e) -> Optional[int]:
+    """Money-2 T18: how many days the debt is overdue (``None`` when nothing is owed) - the ONE count of the server, the one of the sentence «Просрочено на N дней» (m1: paused days are not
+    overdue): the days after the day the money is paid through; a student who never paid or has no paid-through day: the days since the first day of the oldest unpaid period; a debt of a
+    running period that is not paid up: the days since its first day (0 on the first day)."""
+    l = e.ledger
+    if l.debt <= 0:
+        return None
+    today = e.inp.today
+    through = l.covered_through
+    unpaid = [s for s in l.segments if s.begun and s.unpaid > 0]
+    first = min(((s.days[0] if s.days else s.period_start) for s in unpaid), default=today)
+    if through is None:
+        return max(1, (today - first).days)
+    if through < today:
+        return bl.overdue_days(through, today, l.pauses)
+    return max(0, (today - first).days)
+
+
 def debt_reason(e) -> Tuple[Optional[str], Optional[str]]:
     """``(code, text)`` of a debtor: never paid / overdue / the running period not paid up (the old reasons; ``waiting_reason`` is the new one of a student who only waits)."""
     l = e.ledger
@@ -188,8 +214,7 @@ def debt_reason(e) -> Tuple[Optional[str], Optional[str]]:
     unpaid = [s for s in l.segments if s.begun and s.unpaid > 0]
     through = l.covered_through
     if through is None or through < today:
-        first = min(((s.days[0] if s.days else s.period_start) for s in unpaid), default=today)
-        days = bl.overdue_days(through, today, l.pauses) if through is not None else max(1, (today - first).days)   # m1: paused days are not overdue
+        days = debt_age_days(e)                      # m1: paused days are not overdue (one count: ``debt_age_days``)
         return "overdue", f"Просрочено на {days} {tx.days_word(days)}"
     seg = unpaid[0] if unpaid else None
     if seg is None:

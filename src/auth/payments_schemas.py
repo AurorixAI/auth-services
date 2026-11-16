@@ -344,6 +344,9 @@ class MembershipPaymentRow(BaseModel):
     tab: Optional[Literal["debtors", "waiting", "expiring", "active", "paused"]] = None
     waiting_until: Optional[date_type] = None
     waiting_reason: Optional[str] = None
+    # Money-2 T18: the age of the debt in days (the count of «Просрочено на N дней»; null without a debt) and its basket: to_30 | 31_60 | 61_90 | over_90.
+    debt_age_days: Optional[int] = None
+    debt_age_bucket: Optional[Literal["to_30", "31_60", "61_90", "over_90"]] = None
 
 
 class DebtSplit(BaseModel):
@@ -363,6 +366,15 @@ class DebtSplit(BaseModel):
     due: int = 0
     students_expired: int = 0
     students_due: int = 0
+
+
+class DebtAgeBasket(BaseModel):
+    """Money-2 T18: one basket of the age of the debt of the REAL debtors (not the waiting ones): distinct students, memberships and the sum of the debt."""
+
+    bucket: Literal["to_30", "31_60", "61_90", "over_90"]
+    students: int = 0
+    memberships: int = 0
+    debt_total: int = 0
 
 
 class PaymentsBuckets(BaseModel):
@@ -411,6 +423,7 @@ class PaymentsSummary(BaseModel):
     students_waiting: int = 0
     debt_waiting_total: int = 0
     debt_split: "DebtSplit" = Field(default_factory=lambda: DebtSplit())
+    debt_ages: List["DebtAgeBasket"] = Field(default_factory=list)       # Money-2 T18: always the four baskets, in order
     students_paused: int = 0  # DISTINCT students with a membership on pause today (== the students of the «На паузе» tab); ``buckets.paused`` counts memberships
 
 

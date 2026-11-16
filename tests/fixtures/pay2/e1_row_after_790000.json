@@ -119,5 +119,7 @@
   "reason": null,
   "tab": null,
   "waiting_until": null,
-  "waiting_reason": null
+  "waiting_reason": null,
+  "debt_age_days": null,
+  "debt_age_bucket": null
 }

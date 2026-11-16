@@ -83,6 +83,7 @@ from .payments_schemas import (
     MAX_MONEY,
     AccountingStartImpact,
     CarriedFromOut,
+    DebtAgeBasket,
     CarriedOutOut,
     DebtSplit,
     MembershipPaymentRow,
@@ -1015,6 +1016,7 @@ class PaymentService:
                     price_ends_on_leave=bool(e.membership.is_active and e.price.source == pricing.SOURCE_OVERRIDE and e.price.amount is not None),
                     bucket=pv.entry_bucket(e), debt_reason=(why := pv.debt_reason(e))[0], reason=why[1],
                     tab=pv.entry_tab(e), waiting_until=pv.waiting_until(e), waiting_reason=pv.waiting_reason(e),
+                    debt_age_days=(age := pv.debt_age_days(e)), debt_age_bucket=pv.debt_age_basket(age) if age is not None else None,
                 )
             )
         return rows
@@ -1071,6 +1073,7 @@ class PaymentService:
         split_due: set = set()
         split_expired_memberships = split_due_memberships = 0
         price_missing = 0
+        ages = {k: {"students": set(), "memberships": 0, "debt_total": 0} for k in pv.DEBT_AGE_BASKETS}      # Money-2 T18: the real debtors by the age of the debt
         for e in entries:
             l = e.ledger
             debt_total += l.debt
@@ -1096,6 +1099,10 @@ class PaymentService:
                     students_debtors.add(e.student.id)
                     debtors_memberships += 1
                     debt_debtors_total += l.debt
+                    basket = ages[pv.debt_age_basket(pv.debt_age_days(e))]
+                    basket["students"].add(e.student.id)
+                    basket["memberships"] += 1
+                    basket["debt_total"] += l.debt
             if e.membership.id in tracked and pv.price_missing(e) and l.status.status != ps.FREE and bucket != pv.BUCKET_DEBT:
                 price_missing += 1
             if e.membership.id not in tracked:
@@ -1135,6 +1142,7 @@ class PaymentService:
             paused=counts[ps.PAUSED],
             buckets=PaymentsBuckets(**buckets), price_missing=price_missing, students_with_advance=len(students_advance),
             debtors=len(students_debt), students_paused=len(students_paused), students_waiting=len(students_waiting), debt_waiting_total=debt_waiting_total,
+            debt_ages=[DebtAgeBasket(bucket=k, students=len(v["students"]), memberships=v["memberships"], debt_total=v["debt_total"]) for k, v in ages.items()],
             debt_split=DebtSplit(
                 debtors=len(students_debtors), debtors_memberships=debtors_memberships, debtors_debt_total=debt_debtors_total,
                 waiting_students=len(students_waiting), waiting_memberships=waiting_memberships, waiting_debt_total=debt_waiting_total,
@@ -1175,6 +1183,7 @@ class PaymentService:
         limit: int = 50,
         offset: int = 0,
         sort: Optional[str] = None,
+        age: Optional[str],
     ) -> PaymentStatusPage:
         loader = self._loader(org_id)
         if bucket == "due":                                  # LEGACY name of the debtors tab
@@ -1187,6 +1196,8 @@ class PaymentService:
             picked = [e for e in entries if pv.entry_bucket(e) == bucket]
         else:
             picked = [e for e in entries if ps.in_bucket(e.ledger.status.status, bucket)]
+        if age is not None:                                  # Money-2 T18: the basket of the age of the debt (a row without a debt is in none)
+            picked = [e for e in picked if (d := pv.debt_age_days(e)) is not None and pv.debt_age_basket(d) == age]
         picked.sort(key=self._sort_key(bucket, sort == "debt"))
         page = picked[offset : offset + limit]
         return PaymentStatusPage(
