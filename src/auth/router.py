@@ -1372,7 +1372,8 @@ async def import_preview(
     """Разобрать и проверить файл (dry-run) — ничего не записывается."""
     data = await _read_import_upload(file)
     try:
-        return import_ops.preview(user["org_id"], data, db, money=has_payments_access(user, db) and _openings_open_to(user, db))
+        return import_ops.preview(user["org_id"], data, db, money=has_payments_access(user, db) and _openings_open_to(user, db),
+                                 opening_closed=has_payments_access(user, db) and not _openings_open_to(user, db))
     except import_limits.ImportFileRejected as e:
         raise HTTPException(422, str(e))
 
@@ -1386,7 +1387,8 @@ async def import_commit(
     """Записать данные из файла в базу транзакционно (всё или ничего)."""
     data = await _read_import_upload(file)
     try:
-        return import_ops.commit(user["org_id"], user["user_id"], data, db, money=has_payments_access(user, db) and _openings_open_to(user, db))
+        return import_ops.commit(user["org_id"], user["user_id"], data, db, money=has_payments_access(user, db) and _openings_open_to(user, db),
+                                 opening_closed=has_payments_access(user, db) and not _openings_open_to(user, db))
     except import_limits.ImportFileRejected as e:
         raise HTTPException(422, str(e))
 

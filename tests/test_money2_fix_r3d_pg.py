@@ -380,3 +380,30 @@ def test_d4_a_centre_with_students_keeps_the_old_words_from_today(world, fixed_t
     assert r.status_code == 200
     (row,) = [i for i in journal_of(owner(world)) if i["action"] == "billing_regime_changed"]
     assert row["details"]["from"] == ps.business_today().isoformat() and "с начала его следующего периода" in row["text"] and EMPTY_TEXT not in row["text"]
+
+
+# ============================================================================================================ Д5: the small things
+
+
+def test_d5_the_import_after_the_closed_launch_warns_with_the_text_of_the_rule(world, fixed_today):
+    from tests.test_logicA_money_pg import centre, import_workbook
+
+    centre(world, 600_000)
+    settings_block(world, openings_state="done")
+    admin = admin_client(world)
+    data = import_workbook([["Шесть", "Ученик", 7, "", "Импорт-группа", "", date(2026, 10, 31), None, None]])
+    pv = admin.post(f"{API}/org/import/preview", files={"file": ("x.xlsx", data)}).json()
+    messages = [i["message"] for i in pv["issues"]]
+    assert pv["ok"] and pv["counts"]["openings"] == 0
+    assert any(m.startswith("Учёт запущен — остаток на начало вносит и меняет владелец") for m in messages) and not any("Нет прав вносить остатки" in m for m in messages), messages
+
+
+def test_d5_the_put_of_an_opening_asks_the_rule_once(world, fixed_today, monkeypatch):
+    from src.auth.logica_service import OpeningService
+
+    (a, b, c), admin = world_d2(world, fixed_today)
+    calls = []
+    real = OpeningService.check_opening_allowed
+    monkeypatch.setattr(OpeningService, "check_opening_allowed", lambda self, *args, **kw: (calls.append(1), real(self, *args, **kw))[1])
+    assert admin.put(f"{API}/org/memberships/{a.id}/opening-balance", json={"paid_until": "2026-10-31"}).status_code == 200
+    assert len(calls) == 1

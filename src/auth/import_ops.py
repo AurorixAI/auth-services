@@ -147,7 +147,7 @@ def _students_by_lower_name(db: Session, org_id: Any, lower_last_names: set) -> 
     return out
 
 
-def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, money: bool = True) -> _Plan:
+def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, money: bool = True, opening_closed: bool = False) -> _Plan:
     """``money``: the caller may enter money (owner / an admin with the switch).  LOGIC-A: without it the opening-balance columns G-I are
     ignored with a warning."""
     from .payments_service import PaymentService
@@ -252,7 +252,7 @@ def build_plan(org_id: Any, parsed: "legacy.ParsedWorkbook", db: Session, *, mon
             plan.err(legacy.SHEET_STUDENTS, r.row, "Группа", f"Группа '{group_name}' не найдена во вкладке «Группы» и не существует.")
             continue
         ok, paid_until, debt_amount, debt_on = legacy.parse_opening(
-            d, r.row, money=money, accounting_start=accounting_start, enrol_day=enrol_day, err=plan.err, warn=plan.warn)
+            d, r.row, money=money, opening_closed=opening_closed, accounting_start=accounting_start, enrol_day=enrol_day, err=plan.err, warn=plan.warn)
         if not ok:
             continue
         rows.append({"row": r.row, "last": last, "first": first, "class_level": class_level, "phone": phone,
@@ -341,11 +341,11 @@ def _fatal(parsed) -> ImportPreviewResponseB:
     )
 
 
-def preview(org_id: Any, data: bytes, db: Session, *, money: bool = True) -> ImportPreviewResponseB:
+def preview(org_id: Any, data: bytes, db: Session, *, money: bool = True, opening_closed: bool = False) -> ImportPreviewResponseB:
     parsed = legacy.parse_workbook(data)
     if parsed.fatal:
         return _fatal(parsed)
-    plan = build_plan(org_id, parsed, db, money=money)
+    plan = build_plan(org_id, parsed, db, money=money, opening_closed=opening_closed)
     return ImportPreviewResponseB(
         ok=not plan.has_errors,
         counts=plan.counts,
@@ -379,7 +379,7 @@ def _org_lock(db: Session, org_id: Any):
         conn.close()
 
 
-def commit(org_id: Any, creator_id: Any, data: bytes, db: Session, *, money: bool = True) -> ImportCommitResponseB:
+def commit(org_id: Any, creator_id: Any, data: bytes, db: Session, *, money: bool = True, opening_closed: bool = False) -> ImportCommitResponseB:
     from .schemas import GroupCreateRequest
     from .service import AuthService
 
@@ -388,7 +388,7 @@ def commit(org_id: Any, creator_id: Any, data: bytes, db: Session, *, money: boo
         return ImportCommitResponseB(ok=False, counts=ImportCountsB(),
                                      issues=[ImportIssueB(sheet="-", row=0, level="error", message=parsed.fatal)])
     with _org_lock(db, org_id):
-        plan = build_plan(org_id, parsed, db, money=money)
+        plan = build_plan(org_id, parsed, db, money=money, opening_closed=opening_closed)
         if plan.has_errors:
             return ImportCommitResponseB(ok=False, counts=plan.counts, issues=plan.issues, skipped=plan.skipped)
         svc = AuthService(db)

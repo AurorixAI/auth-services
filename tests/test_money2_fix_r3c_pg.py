@@ -339,7 +339,7 @@ def test_g1_the_file_of_students_reads_the_opening_columns_by_the_state_of_the_l
     data = import_workbook([["Шесть", "Ученик", 7, "", "Импорт-группа", "", date(2026, 10, 31), None, None]])
     pv = admin.post(f"{API}/org/import/preview", files={"file": ("x.xlsx", data)}).json()
     if state == "done":
-        assert pv["ok"] and pv["counts"]["openings"] == 0 and any("Нет прав вносить остатки" in i["message"] for i in pv["issues"])
+        assert pv["ok"] and pv["counts"]["openings"] == 0 and any("Учёт запущен — остаток" in i["message"] for i in pv["issues"])
         assert owner(world).post(f"{API}/org/import/preview", files={"file": ("x.xlsx", data)}).json()["counts"]["openings"] == 1
     else:
         assert pv["ok"] and pv["counts"]["openings"] == 1

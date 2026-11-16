@@ -161,7 +161,7 @@ class _Base:
 
     def check_opening_allowed(self, org_id: str, actor_role: str, closed: Optional[bool] = None) -> None:
         if not opening_allowed(closed if closed is not None else self.is_launch_closed(org_id), actor_role):
-            raise OpeningOwnerOnly("Учёт запущен — остаток на начало вносит и меняет владелец")
+            raise OpeningOwnerOnly(OpeningOwnerOnly.TEXT)
 
     def _first_stay_day(self, membership: StudentGroup) -> date:
         periods = membership_periods.periods_by_membership(self.db, [membership.id]).get(membership.id, [])
@@ -336,7 +336,6 @@ class OpeningService(_Base):
         try:
             membership = self.pay._membership(org_id, membership_id, lock=True, writable=True)
             self.pay._lock_family(org_id, membership.student_id)
-            self.check_opening_allowed(org_id, actor_role)      # R3c Г1: the state of the launch, not the age of the days
             before = self.pay._entry_of(org_id, membership_id, today).ledger
             cancelled: List[UUID] = []
             row, changed = self.apply(org_id, membership, actor_id, actor_role, body, source="manual", today=today,

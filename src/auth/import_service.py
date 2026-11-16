@@ -280,7 +280,7 @@ def _parse_money(raw: str) -> Optional[int]:
         raise ValueError(raw) from None
 
 
-def parse_opening(d: dict, row: int, *, money: bool, accounting_start: date, enrol_day: date, err, warn):
+def parse_opening(d: dict, row: int, *, money: bool, opening_closed: bool = False, accounting_start: date, enrol_day: date, err, warn):
     """LOGIC-A: the opening-balance columns G-I of a student row -> ``(ok, paid_until, debt_amount, debt_on)``.  ``ok=False`` = a blocking error
     (already reported through ``err``).  Used by LOGIC-B's ``import_ops.build_plan`` (the legacy plan is deleted: Wave D-B DM-002)."""
     paid_until = debt_amount = debt_on = None
@@ -297,7 +297,10 @@ def parse_opening(d: dict, row: int, *, money: bool, accounting_start: date, enr
     if raw_on is not None and raw_debt is None:
         warn(SHEET_STUDENTS, row, "Долг на дату", "Указана дата долга без суммы — дата пропущена.")
     if not money:
-        warn(SHEET_STUDENTS, row, "Остаток", "Нет прав вносить остатки — ученик импортирован без остатка.")
+        from .payments_service import OpeningOwnerOnly
+
+        # R3d Д5: a closed launch is the rule of the opening balance (its own words); no right to money at all - the old words
+        warn(SHEET_STUDENTS, row, "Остаток", f"{OpeningOwnerOnly.TEXT} — ученик импортирован без остатка." if opening_closed else "Нет прав вносить остатки — ученик импортирован без остатка.")
         return True, None, None, None
     floor = max(enrol_day, accounting_start - timedelta(days=1))   # S0: the same L as ``OpeningService.floor_of``
     if raw_paid is not None and raw_paid < floor:
