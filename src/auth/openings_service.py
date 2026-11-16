@@ -334,15 +334,21 @@ class OpeningsService(_Base):
         settings = dict(org.settings or {})
         block = dict(settings.get("payments") or {})
         before = _state_of(block)
+        before_by_human = launch_closed(before, block.get(STATE_BY_KEY))
         block[STATE_KEY] = state
         block[STATE_BY_KEY] = str(actor_id)
         block["openings_state_at"] = ps.business_today().isoformat()
         org.settings = {**settings, "payments": block}
         flag_modified(org, "settings")
-        if before != state:
+        after_by_human = launch_closed(state, str(actor_id))
+        if (before, before_by_human) != (state, after_by_human):       # R3e E1: the pair, not the word alone - a human closing over the automatic ``done`` is a change too
             words = {"done": "завершён («Готово»)", "skipped": "пропущен («Не нужно»)", "pending": "возвращён владельцем"}
+            text = f"Запуск учёта остатков {words[state]}"
+            if before == state and not before_by_human:
+                text += ": до этого список был заполнен автоматически"
             self.db.add(OrgMoneyAudit(org_id=UUID(str(org_id)), actor_id=UUID(str(actor_id)), action="openings_state_changed", occurred_at=_utcnow(),
-                                      details={"before": before, "after": state, "at": ps.business_today().isoformat(), "text": f"Запуск учёта остатков {words[state]}"}))
+                                      details={"before": before, "after": state, "before_by_human": before_by_human, "after_by_human": after_by_human,
+                                               "at": ps.business_today().isoformat(), "text": text}))
         self.db.commit()
         logger.info("openings state org=%s actor=%s state=%s", org_id, actor_id, state)
         return self.summary(org_id)
