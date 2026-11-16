@@ -36,7 +36,7 @@ def test_b6_d7_the_days_paid_without_money_come_with_the_student(world, fixed_to
     w = world
     s, m, other = the_world(w, fixed_today)
     done = transfer(w, s, other)
-    assert {"code": "paid_days_carried_over", "message": "Оплаченные дни — по 20.11.2026 — перешли вместе с учеником"} in done["carried"]
+    assert {"code": "paid_days_carried_over", "message": "Оплаченные дни — по 20.11.2026 — перешли вместе с учеником", "date": "2026-11-20"} in done["carried"]      # Money-2: the day is a field of its own for the window
     mb = new_membership(w, s, other)
     now = account(w, mb.id, D(2026, 10, 26))
     assert now.covered_through == D(2026, 11, 20) and now.charged == 0 and now.debt == 0         # before: a period of 400 000 from 26.10 and a debt at once

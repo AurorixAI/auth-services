@@ -1,4 +1,8 @@
 {
+  "new_debts": [],
+  "advance_drops": [],
+  "other_gains": [],
+  "other_groups_text": null,
   "pause": {
     "id": "00000000-0000-4000-8000-000000000011",
     "membership_id": "00000000-0000-4000-8000-000000000101",

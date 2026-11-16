@@ -17,7 +17,8 @@
       "allowed": [
         "keep",
         "refund"
-      ]
+      ],
+      "effects": null
     }
   ]
 }

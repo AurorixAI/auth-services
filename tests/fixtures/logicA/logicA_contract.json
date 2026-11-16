@@ -49,6 +49,29 @@
       "AddStudentToGroupRequest": {
         "description": "Optional body of \"add a student to a group\".\n\nWithout a body the student follows the price of the group.  ``price_override`` is an explicit individual\nprice (sum + reason) and needs the right to manage payments.",
         "properties": {
+          "expected_carried": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Carried"
+          },
+          "from_group_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Group Id"
+          },
           "monthly_fee": {
             "anyOf": [
               {
@@ -366,6 +389,15 @@
               }
             ],
             "title": "Display Id"
+          },
+          "effects": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Effects",
+            "type": "array"
           },
           "first_name": {
             "title": "First Name",
@@ -1609,6 +1641,18 @@
             "title": "Allowed",
             "type": "array"
           },
+          "effects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effects"
+          },
           "group_id": {
             "title": "Group Id",
             "type": "string"
@@ -1643,7 +1687,8 @@
           "group_name",
           "money",
           "has_open_balance",
-          "allowed"
+          "allowed",
+          "effects"
         ],
         "title": "LeaveMembership",
         "type": "object"
@@ -1749,6 +1794,18 @@
       },
       "LeaveResult": {
         "properties": {
+          "effects": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effects"
+          },
           "message": {
             "title": "Message",
             "type": "string"
@@ -1763,7 +1820,8 @@
         },
         "required": [
           "message",
-          "settled"
+          "settled",
+          "effects"
         ],
         "title": "LeaveResult",
         "type": "object"
@@ -3714,6 +3772,14 @@
       },
       "PauseSaved": {
         "properties": {
+          "advance_drops": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Advance Drops",
+            "type": "array"
+          },
           "dry_run": {
             "default": false,
             "title": "Dry Run",
@@ -3731,6 +3797,33 @@
           },
           "lessons": {
             "$ref": "#/components/schemas/PauseLessons"
+          },
+          "new_debts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "New Debts",
+            "type": "array"
+          },
+          "other_gains": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Other Gains",
+            "type": "array"
+          },
+          "other_groups_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Groups Text"
           },
           "pause": {
             "$ref": "#/components/schemas/PauseOut"
@@ -3757,6 +3850,10 @@
           }
         },
         "required": [
+          "new_debts",
+          "advance_drops",
+          "other_gains",
+          "other_groups_text",
           "pause",
           "impact",
           "lessons",
@@ -3808,6 +3905,19 @@
       },
       "PauseVoided": {
         "properties": {
+          "advance_drops": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Advance Drops",
+            "type": "array"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
           "impact": {
             "anyOf": [
               {
@@ -3817,6 +3927,33 @@
                 "type": "null"
               }
             ]
+          },
+          "new_debts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "New Debts",
+            "type": "array"
+          },
+          "other_gains": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Other Gains",
+            "type": "array"
+          },
+          "other_groups_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Groups Text"
           },
           "pause": {
             "$ref": "#/components/schemas/PauseOut"
@@ -3833,9 +3970,14 @@
           }
         },
         "required": [
+          "new_debts",
+          "advance_drops",
+          "other_gains",
+          "other_groups_text",
           "pause",
           "impact",
-          "row"
+          "row",
+          "dry_run"
         ],
         "title": "PauseVoided",
         "type": "object"
@@ -4107,6 +4249,14 @@
             "title": "New Debts",
             "type": "array"
           },
+          "other_gains": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Other Gains",
+            "type": "array"
+          },
           "payment": {
             "$ref": "#/components/schemas/PaymentOut"
           },
@@ -4345,6 +4495,17 @@
             ],
             "title": "Receipt No"
           },
+          "replaced_by_receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced By Receipt No"
+          },
           "replaces_payment_id": {
             "anyOf": [
               {
@@ -4355,6 +4516,22 @@
               }
             ],
             "title": "Replaces Payment Id"
+          },
+          "restorable": {
+            "default": false,
+            "title": "Restorable",
+            "type": "boolean"
+          },
+          "restored_from_receipt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restored From Receipt No"
           },
           "valid_from": {
             "anyOf": [
@@ -10627,6 +10804,16 @@
               "format": "uuid",
               "title": "Pause Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Dry Run",
+              "type": "boolean"
             }
           }
         ],
