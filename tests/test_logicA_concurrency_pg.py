@@ -68,7 +68,7 @@ def test_a_pause_void_and_a_refund_never_leave_a_refund_without_money(world, eng
     m = prepared(world)
     org, actor = str(world.org.id), str(world.owner.id)
     today = ps.business_today()
-    pause = PauseService(world.db).create(org, m.id, actor, PauseCreate(first_day=today - timedelta(days=20), last_day=today - timedelta(days=1))).pause
+    pause = PauseService(world.db).create(org, m.id, actor, PauseCreate(first_day=today - timedelta(days=20), last_day=today - timedelta(days=1)), actor_role="owner").pause      # R3b В4: a pause 20 days back is the owner's
     PaymentService(world.db).create_payment(org, m.id, actor, PaymentCreate(amount=5_000_000, paid_on=today, method="cash"), actor_role="owner")
     refundable = PaymentService(world.db)._row(org, m.id).refundable
     t1 = run_in_thread(engine, lambda s: PaymentService(s).create_refund(org, m.id, actor, amount=refundable, method="cash", reason=None, note=None, actor_role="owner"))

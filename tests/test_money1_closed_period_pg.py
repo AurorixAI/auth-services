@@ -185,9 +185,9 @@ def test_a_pause_over_a_closed_month_is_refused_and_one_older_than_30_days_in_an
     service = PauseService(world.db)
     sheet(world, world.teacher, date(2026, 9, 1), tashkent(2026, 10, 3))            # September is CLOSED
     with pytest.raises(PauseLocked) as e:
-        service.create(str(world.org.id), membership.id, str(world.admin.id), PauseCreate(first_day=date(2026, 9, 24), last_day=date(2026, 9, 30), reason="Болезнь"))
+        service.create(str(world.org.id), membership.id, str(world.admin.id), PauseCreate(first_day=date(2026, 9, 24), last_day=date(2026, 9, 30), reason="Болезнь"), actor_role="owner")
     assert e.value.extra["month"] == "2026-09"
-    ok = service.create(str(world.org.id), membership.id, str(world.admin.id), PauseCreate(first_day=date(2026, 10, 1), last_day=date(2026, 10, 3), reason="Болезнь"))
+    ok = service.create(str(world.org.id), membership.id, str(world.admin.id), PauseCreate(first_day=date(2026, 10, 1), last_day=date(2026, 10, 3), reason="Болезнь"), actor_role="owner")      # R3b В4: the owner (an administrator has 7 days)
     assert ok.pause.first_day == date(2026, 10, 1)                                  # 34 days back, October is open: allowed
 
 
