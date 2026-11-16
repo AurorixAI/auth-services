@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from src.models.auth import (
-    GroupAudit, MembershipPause, MembershipPriceOverride, MembershipTransfer, OrganizationMember, StudentGroup, StudentPayment,
+    GroupAudit, MembershipPause, MembershipPriceOverride, MembershipTransfer, OrganizationMember, StudentGroup, StudentPayment, StudentPaymentFile,
 )
 
 from src.auth import payments_texts as tx
@@ -627,3 +627,50 @@ def test_t7_the_journal_of_decisions_names_the_restoration_apart_from_a_correcti
     world.db.commit()
     r = owner(world).post(f"{API}/org/payments/{carry.id}/restore", json={"reason": "по ошибке"})
     assert r.status_code == 409 and "перешедшие из другой группы" in str(r.json()).lower()
+
+
+def test_t7_an_admin_without_the_right_is_refused_a_dry_run_writes_nothing_and_the_cheque_goes_with_the_restoration(world, fixed_today):
+    from tests.pg_world import make_client
+
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    p = pay(world, s0, a, amount=100_000)
+    world.db.add(StudentPaymentFile(org_id=world.org.id, payment_id=p["payment"]["id"], filename="cheque.png", content_type="image/png", size_bytes=3, data=b"abc", uploaded_by=world.owner.id, uploaded_at=datetime(2026, 11, 22, 8)))
+    world.db.commit()
+    void(world, p)
+    admin = make_client(world, user=world.admin, org_role="admin")                # an administrator without the right to money
+    for params in ({}, {"dry_run": "true"}):
+        assert admin.post(f"{API}/org/payments/{p['payment']['id']}/restore", params=params, json={"reason": "Отменили по ошибке"}).status_code == 403
+    payments_before, lines_before = world.db.query(StudentPayment).count(), world.db.query(GroupAudit).count()
+    window = restore(world, p, dry_run=True)
+    assert window["dry_run"] is True and "money_effects" in window                # «Что изменится»: the same block as the cancellation has
+    world.db.expire_all()
+    assert (world.db.query(StudentPayment).count(), world.db.query(GroupAudit).count()) == (payments_before, lines_before)
+    new = restore(world, p)["payment"]
+    # the cheque (3 bytes) is copied to the new payment; the cancelled one keeps its own as the trace
+    assert [(f.filename, f.size_bytes) for f in world.db.query(StudentPaymentFile).filter_by(payment_id=new["id"])] == [("cheque.png", 3)]
+    assert world.db.query(StudentPaymentFile).filter_by(payment_id=p["payment"]["id"]).count() == 1
+
+
+def test_t7_the_list_of_payments_says_which_cancelled_payment_can_be_restored_and_by_what_it_was_replaced(world, fixed_today):
+    # three payments of A: p cancelled (restorable), q cancelled and restored (no more: replaced by the restoration), r alive (nothing to restore); the list is what the button of the statement reads
+    a, b, c = groups3(world, fixed_today, date(2026, 11, 22))
+    s0 = world.students[0]
+    joined(world, s0, a, date(2026, 11, 2))
+    p, q, r = (pay(world, s0, a, amount=n) for n in (100_000, 50_000, 20_000))
+    void(world, p)
+    void(world, q)
+    new_q = restore(world, q)["payment"]
+
+    def listed():
+        rows = owner(world).get(f"{API}/org/memberships/{membership(world, s0, a).id}/payments").json()
+        return {row["id"]: (row["restorable"], row["replaced_by_receipt_no"]) for row in rows}
+
+    got = listed()
+    assert got[p["payment"]["id"]] == (True, None)
+    assert got[q["payment"]["id"]] == (False, new_q["receipt_no"])
+    assert got[new_q["id"]] == (False, None) and got[r["payment"]["id"]] == (False, None)
+    void(world, {"payment": new_q})                                              # the restored payment is cancelled again: it can be restored (the first one stays replaced by it)
+    got = listed()
+    assert got[new_q["id"]] == (True, None) and got[q["payment"]["id"]][0] is False

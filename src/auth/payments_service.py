@@ -438,6 +438,7 @@ class _Links:
     sources: Dict[UUID, CarriedFromOut]  # original id -> {payment_id, group_name}
     targets: Dict[UUID, Optional[str]]  # stamped original id -> group its live carry-over lives in
     restored: Dict[UUID, int] = field(default_factory=dict)  # Money-2 T7: restored payment id -> the receipt number of the cancelled payment it brought back
+    replaced_by: Dict[UUID, Optional[int]] = field(default_factory=dict)  # Money-2 T7: cancelled payment id -> the receipt number of the payment that stands in its place (a correction or a restoration)
 
 
 @dataclass(frozen=True)
@@ -877,6 +878,11 @@ class PaymentService:
     def _links(self, payments: Iterable[StudentPayment]) -> _Links:
         """Where the carry-overs among ``payments`` come from and where the stamped ones went (LEGACY rows only); which of them are RESTORATIONS of a cancelled payment (Money-2 T7)."""
         payments = list(payments)
+        replaced_by: Dict[UUID, Optional[int]] = {}
+        voided = [p.id for p in payments if p.voided_at is not None]
+        if voided:
+            for old_id, receipt_no in self.db.query(StudentPayment.replaces_payment_id, StudentPayment.receipt_no).filter(StudentPayment.replaces_payment_id.in_(voided)).order_by(StudentPayment.created_at).all():
+                replaced_by.setdefault(old_id, receipt_no)
         restored: Dict[UUID, int] = {}
         replacing = [p.id for p in payments if p.replaces_payment_id]
         if replacing:
@@ -909,7 +915,7 @@ class PaymentService:
                 .all()
             ):
                 targets[source_id] = name
-        return _Links(sources, targets, restored)
+        return _Links(sources, targets, restored, replaced_by)
 
     def _payment_out(
         self,
@@ -942,6 +948,8 @@ class PaymentService:
             note=payment.note,
             replaces_payment_id=str(payment.replaces_payment_id) if payment.replaces_payment_id else None,
             restored_from_receipt_no=links.restored.get(payment.id) if links else None,
+            restorable=bool(links) and self._restore_blocker(payment, payment.id in links.replaced_by) is None,
+            replaced_by_receipt_no=links.replaced_by.get(payment.id) if links else None,
             receipt_no=payment.receipt_no,
             partial_period=bool(payment.partial_period),
             files=list(files.get(payment.id, ())) if files else [],
@@ -1570,6 +1578,17 @@ class PaymentService:
                    StudentPaymentFile.size_bytes, StudentPaymentFile.data, StudentPaymentFile.uploaded_by, StudentPaymentFile.uploaded_at).where(StudentPaymentFile.payment_id == old.id)))
         return int(copied.rowcount or 0)
 
+    @staticmethod
+    def _restore_blocker(payment: StudentPayment, replaced: bool, successor_receipt_no: Optional[int] = None, successor_id: Optional[UUID] = None) -> Optional[PaymentConflict]:
+        """Money-2 T7: THE one rule of «can this payment be restored»: ``None`` when it can, else the refusal - used by the write and by the flag ``restorable`` of the list (the button of the statement)."""
+        if payment.kind == "legacy_carry" or payment.carried_from_payment_id is not None:
+            return PaymentConflict("Деньги, перешедшие из другой группы, не восстанавливаются сами — восстановите исходную оплату в той группе, где её приняли")
+        if payment.voided_at is None:
+            return NotVoided("Оплата не отменена: восстанавливать нечего")
+        if replaced:
+            return AlreadyRestored(f"Эта оплата уже заменена оплатой № {successor_receipt_no}: восстановить её второй раз нельзя", receipt_no=successor_receipt_no, payment_id=str(successor_id) if successor_id else None)
+        return None
+
     @deadlock_guard
     def restore_payment(
         self, org_id: str, payment_id: UUID, actor_id: str, reason: Optional[str], actor_role: str = "admin", consequence: Optional[Dict[str, str]] = None,
@@ -1582,18 +1601,15 @@ class PaymentService:
         try:
             reason = self._check_reason(reason)
             probe = self._probe_payment(org_id, payment_id)
-            if probe.kind == "legacy_carry" or probe.carried_from_payment_id is not None:
-                raise PaymentConflict("Деньги, перешедшие из другой группы, не восстанавливаются сами — восстановите исходную оплату в той группе, где её внесли")
             family = self._lock_family(org_id, probe.student_id)
             membership = self._membership(org_id, probe.membership_id)
             old = (self.db.query(StudentPayment).filter(StudentPayment.id == payment_id, StudentPayment.org_id == org_id).populate_existing().with_for_update().first())
             if old is None:
                 raise PaymentNotFound("Оплата не найдена")
-            if old.voided_at is None:
-                raise NotVoided("Оплата не отменена: восстанавливать нечего")
             successor = self.db.query(StudentPayment).filter(StudentPayment.replaces_payment_id == old.id).order_by(StudentPayment.created_at).first()
-            if successor is not None:
-                raise AlreadyRestored(f"Эта оплата уже заменена оплатой № {successor.receipt_no}: восстановить её второй раз нельзя", receipt_no=successor.receipt_no, payment_id=str(successor.id))
+            blocker = self._restore_blocker(old, successor is not None, successor.receipt_no if successor is not None else None, successor.id if successor is not None else None)
+            if blocker is not None:
+                raise blocker
             was = self._accounts(org_id, family)
             before = was[membership.id].ledger
             data = PaymentCreate(amount=int(old.amount), paid_on=old.paid_on, note=old.note)

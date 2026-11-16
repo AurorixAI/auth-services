@@ -267,6 +267,8 @@ class PaymentOut(BaseModel):
     note: Optional[str] = None
     replaces_payment_id: Optional[str] = None
     restored_from_receipt_no: Optional[int] = None   # Money-2 T7: the payment is the RESTORATION of the cancelled payment with this receipt number (``replaces_payment_id`` names it); null = an ordinary payment or correction
+    restorable: bool = False                         # Money-2 T7: a CANCELLED payment of this centre that nothing replaced yet - the button «Восстановить оплату» of the statement reads it (the write refuses with the same rule)
+    replaced_by_receipt_no: Optional[int] = None     # Money-2 T7: a cancelled payment: the receipt number of the payment that stands in its place (a correction or a restoration)
     # N13 P2.2: the receipt number (None on a carry-over: it is not money); the payment did not cover
     # whole periods of the centre; the attached cheques (without their bytes).
     receipt_no: Optional[int] = None
