@@ -1,6 +1,7 @@
 {
   "accounting_start": "2026-11-01",
   "as_of": "2026-10-22",
+  "can_set_opening": false,
   "groups": [
     {
       "id": "00000000-0000-4000-8000-0000000000a2",

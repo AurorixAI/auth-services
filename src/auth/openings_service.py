@@ -530,7 +530,8 @@ class OpeningsService(_Base):
             ok=not any(p.status == "error" for p in plan.items), digest=plan.digest, accounting_start=plan.accounting_start,
             summary=plan.summary, impact=plan.impact, needs_reason=[str(p.mid) for p in plan.items if p.needs_reason], items=results)
 
-    def preview(self, org_id: str, request: OpeningBatchPreviewRequest) -> OpeningBatchPreview:
+    def preview(self, org_id: str, request: OpeningBatchPreviewRequest, actor_role: str) -> OpeningBatchPreview:
+        self.check_opening_allowed(org_id, actor_role)      # R3c Г1: the preview refuses as the write does
         today = ps.business_today()
         plan = self._plan(org_id, request.items, today)
         return self._preview_of(plan)
@@ -566,6 +567,8 @@ class OpeningsService(_Base):
                 raise PaymentNotFound("Организация не найдена")
             body_hash = self._body_hash(request)
             block = dict((org.settings or {}).get("payments") or {})
+            state_now = _state_of(block)
+            self.check_opening_allowed(org_id, actor_role, state_now)      # R3c Г1: under the lock of the centre, the same state «Готово» writes
             for old in block.get(BATCHES_KEY) or []:
                 if old.get("key") == key:
                     if old.get("body") != body_hash:
@@ -601,7 +604,7 @@ class OpeningsService(_Base):
                                        debt_on=p.target[2] if p.target else None)
                 cancelled: List[UUID] = []
                 row, changed = service.apply(org_id, p.membership, actor_id, actor_role, body, source="manual", today=today, reason=reason,
-                                             facts=facts, flush=False, voided=cancelled)
+                                             facts=facts, flush=False, voided=cancelled, opening_state=state_now)
                 if not changed:  # cannot happen: the plan said it changes
                     raise ConcurrentEdit("Данные изменились во время записи — повторите")
                 written.append((p, row, cancelled[0] if cancelled else None))
@@ -651,9 +654,10 @@ class OpeningsService(_Base):
 
         return build_export(self, org_id, **filters)
 
-    def import_preview(self, org_id: str, data: bytes):
+    def import_preview(self, org_id: str, data: bytes, actor_role: str):
         from .openings_excel import import_preview
 
+        self.check_opening_allowed(org_id, actor_role)      # R3c Г1: the file is read as a proposal of writes - the same rule as the table
         return import_preview(self, org_id, data)
 
 

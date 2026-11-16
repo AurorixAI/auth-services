@@ -358,6 +358,12 @@ class RestoreOwnerOnly(PaymentForbidden):
     code = "RESTORE_OWNER_ONLY"
 
 
+class OpeningOwnerOnly(PaymentForbidden):
+    """R3c Г1: after the launch of the accounting (``openings_state`` done / skipped) the opening balance is put, changed and cancelled by the owner only."""
+
+    code = "OPENING_OWNER_ONLY"
+
+
 class PaymentFileTooLarge(PaymentError):
     status_code = 413
 

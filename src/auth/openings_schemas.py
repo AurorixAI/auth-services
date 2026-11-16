@@ -99,6 +99,7 @@ class OpeningsSummary(PayModel):
 
     accounting_start: date_type
     state: OpeningsState = "none"
+    can_set_opening: bool = False      # R3c Г1: may the ASKING user put / change / cancel an opening balance (the owner always; an administrator with the right to money until the launch is finished)
     totals: OpeningTotals
 
 
@@ -106,6 +107,7 @@ class OpeningsList(PayModel):
     as_of: date_type
     accounting_start: date_type
     state: OpeningsState = "none"
+    can_set_opening: bool = False      # R3c Г1: as in the summary
     period_mode: PeriodMode = "calendar"
     paid_until_max: date_type
     totals: OpeningTotals

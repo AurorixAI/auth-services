@@ -23,6 +23,7 @@ from src.models.auth import (
     MembershipOpeningBalance,
     MembershipPause,
     MembershipTransfer,
+    Organization,
     PayrollSheet,
     StudentGroup,
     StudentPayment,
@@ -55,6 +56,7 @@ from .payments_schemas import (
 from .payments_service import (
     AlreadyVoided,
     AmountRange,
+    OpeningOwnerOnly,
     PaymentConflict,
     PaymentError,
     PaymentInvalid,
@@ -129,10 +131,26 @@ def impact_of(before: bl.Ledger, after: bl.Ledger) -> ImpactMoney:
     )
 
 
+def opening_allowed(state: str, actor_role: str) -> bool:
+    """R3c Г1: THE one rule of the opening balance - the owner always; any other role (an administrator with the right to money: the routes check it) only while the launch of the accounting is not
+    finished (``none`` / ``pending``).  Every road of the opening balance and the field ``can_set_opening`` of the screens ask this function."""
+    return actor_role == "owner" or state not in ("done", "skipped")
+
+
 class _Base:
     def __init__(self, db) -> None:
         self.db = db
         self.pay = PaymentService(db)
+
+    def opening_state(self, org_id: str) -> str:
+        """``payments.openings_state`` of the centre (``none`` when it was never set or holds an unknown word)."""
+        settings = self.db.query(Organization.settings).filter(Organization.id == org_id).scalar() or {}
+        value = (settings.get("payments") or {}).get("openings_state")
+        return value if value in ("none", "pending", "done", "skipped") else "none"
+
+    def check_opening_allowed(self, org_id: str, actor_role: str, state: Optional[str] = None) -> None:
+        if not opening_allowed(state if state is not None else self.opening_state(org_id), actor_role):
+            raise OpeningOwnerOnly("Учёт запущен — остаток на начало вносит и меняет владелец")
 
     def _first_stay_day(self, membership: StudentGroup) -> date:
         periods = membership_periods.periods_by_membership(self.db, [membership.id]).get(membership.id, [])
@@ -242,7 +260,7 @@ class OpeningService(_Base):
     def apply(
         self, org_id: str, membership: StudentGroup, actor_id: str, actor_role: str, body, *, source: str, today: date,
         reason: Optional[str] = None, note: Optional[str] = None, require_reason_when_money: bool = True,
-        facts: Optional["OpeningFacts"] = None, flush: bool = True, voided: Optional[List[UUID]] = None,
+        facts: Optional["OpeningFacts"] = None, flush: bool = True, voided: Optional[List[UUID]] = None, opening_state: Optional[str] = None,
     ) -> Tuple[Optional[MembershipOpeningBalance], bool]:
         """The write inside the caller's transaction (no commit).  Returns ``(live row or None, changed)``; the id of the row it cancelled is appended to ``voided`` (the journal of the caller names it:
         the reconciliation looks for a line of the journal with the id of every cancelled row).
@@ -251,6 +269,7 @@ class OpeningService(_Base):
         accounting start ("nothing is owed at the start", a reviewed row) is a REAL opening: the ledger gives the same debt and charges with or without it.
         ``facts`` (the bulk write): what the single call would read itself - read ONCE for all the rows, so the query count of a batch does
         not depend on its size; ``flush=False``: the caller flushes once (the rows get their ids here)."""
+        self.check_opening_allowed(org_id, actor_role, opening_state)      # R3c Г1: ONE rule for every road (the card, the table, the window of adding); the batch passes the state it has already read
         accounting_start = facts.accounting_start if facts else self.pay._loader(org_id, today).settings.accounting_start
         first_day = facts.first_day if facts else self._first_stay_day(membership)
         paid_until, debt_amount, debt_on = body.paid_until, body.debt_amount, body.debt_on
@@ -298,10 +317,6 @@ class OpeningService(_Base):
             StudentPayment.org_id == org_id, StudentPayment.membership_id == membership_id, StudentPayment.kind == "payment", StudentPayment.voided_at.is_(None)).scalar()
         return over_payments_warning(int(paid or 0), self.pay._entry_of(org_id, membership_id, today).ledger.status.paid_until)
 
-    def _days_of_live(self, membership_id: UUID) -> List[Optional[date]]:
-        live = self.live(membership_id)
-        return [live.paid_until, live.debt_on] if live is not None else []
-
     @deadlock_guard
     def put(
         self, org_id: str, membership_id: UUID, actor_id: str, body: OpeningPut, *, dry_run: bool = False, actor_role: str = "admin",
@@ -310,7 +325,7 @@ class OpeningService(_Base):
         try:
             membership = self.pay._membership(org_id, membership_id, lock=True, writable=True)
             self.pay._lock_family(org_id, membership.student_id)
-            self.pay._check_backdate_days([body.paid_until, body.debt_on, *self._days_of_live(membership_id)], today, actor_role, changing=True)      # R3b В4: the days of the new opening AND of the one it replaces / cancels
+            self.check_opening_allowed(org_id, actor_role)      # R3c Г1: the state of the launch, not the age of the days
             before = self.pay._entry_of(org_id, membership_id, today).ledger
             cancelled: List[UUID] = []
             row, changed = self.apply(org_id, membership, actor_id, actor_role, body, source="manual", today=today,
@@ -356,7 +371,7 @@ class OpeningService(_Base):
                    .populate_existing().with_for_update().first())
             if row.voided_at is not None:
                 raise AlreadyVoided("Остаток на начало уже отменён")
-            self.pay._check_backdate_days([row.paid_until, row.debt_on], today, actor_role, changing=True)      # R3b В4
+            self.check_opening_allowed(org_id, actor_role)      # R3c Г1
             membership = self.pay._membership(org_id, row.membership_id)
             before = self.pay._entry_of(org_id, row.membership_id, today).ledger
             row.voided_at, row.voided_by, row.void_reason = _utcnow(), UUID(str(actor_id)), reason

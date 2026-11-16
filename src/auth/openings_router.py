@@ -29,6 +29,7 @@ from .openings_schemas import (
     OpeningsStateIn,
     OpeningsSummary,
 )
+from .logica_service import opening_allowed
 from .openings_service import MAX_IMPORT_BYTES, OpeningsService
 from .payments_service import PaymentError
 
@@ -46,6 +47,11 @@ def _role(user: dict) -> str:
     return user["org_role"]                       # W1 S15: the role of the live membership, never a default (these routes are behind the manager dependency)
 
 
+def _can_set(result, user: dict):
+    """R3c Г1: ``can_set_opening`` of the ASKING user (the cached summary is shared by the centre, so the field is set on a copy)."""
+    return result.model_copy(update={"can_set_opening": opening_allowed(result.state, _role(user))})
+
+
 @router.get("/org/opening-balances", response_model=OpeningsList, responses=_ERRORS)
 def list_openings(
     group_id: Optional[UUID] = None,
@@ -57,7 +63,7 @@ def list_openings(
 ):
     """Все активные членства центра по группам: что внесено, версия строки, можно ли править. Без пересчёта долгов."""
     try:
-        return OpeningsService(db).list(user["org_id"], group_id=group_id, missing_only=missing_only, q=q, include_left=include_left)
+        return _can_set(OpeningsService(db).list(user["org_id"], group_id=group_id, missing_only=missing_only, q=q, include_left=include_left), user)
     except PaymentError as exc:
         raise _http(exc)
 
@@ -66,7 +72,7 @@ def list_openings(
 def openings_summary(user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
     """Состояние запуска и счётчики без строк (баннер «Должников», чек-лист настроек)."""
     try:
-        return OpeningsService(db).summary(user["org_id"])
+        return _can_set(OpeningsService(db).summary(user["org_id"]), user)
     except PaymentError as exc:
         raise _http(exc)
 
@@ -75,7 +81,7 @@ def openings_summary(user: dict = Depends(require_payments_access), db: Session 
 def preview_batch(request: OpeningBatchPreviewRequest, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
     """Сухой прогон пакета: ошибки по строкам, сводка по видам, эффект на долги, digest. Ничего не пишется."""
     try:
-        return OpeningsService(db).preview(user["org_id"], request)
+        return OpeningsService(db).preview(user["org_id"], request, _role(user))
     except PaymentError as exc:
         raise _http(exc)
 
@@ -93,7 +99,7 @@ def apply_batch(request: OpeningBatchRequest, user: dict = Depends(require_payme
 def set_openings_state(request: OpeningsStateIn, user: dict = Depends(require_payments_access), db: Session = Depends(get_db)):
     """«Готово» / «Не нужно»: состояние запуска остатков (``pending`` ставит только скрипт релиза)."""
     try:
-        return OpeningsService(db).set_state(user["org_id"], user["user_id"], request.state)
+        return _can_set(OpeningsService(db).set_state(user["org_id"], user["user_id"], request.state), user)
     except PaymentError as exc:
         raise _http(exc)
 
@@ -123,6 +129,6 @@ async def import_preview(file: UploadFile = File(...), user: dict = Depends(requ
     """Разобрать файл остатков (.xlsx, ≤ 5 МБ, ≤ 5 000 строк): что будет изменено, ошибки строк, готовые items для POST /batch. Ничего не пишется."""
     data = await file.read(MAX_IMPORT_BYTES + 1)
     try:
-        return await run_in_threadpool(OpeningsService(db).import_preview, user["org_id"], data)
+        return await run_in_threadpool(OpeningsService(db).import_preview, user["org_id"], data, _role(user))
     except PaymentError as exc:
         raise _http(exc)

@@ -1411,6 +1411,11 @@
             "title": "As Of",
             "type": "string"
           },
+          "can_set_opening": {
+            "default": false,
+            "title": "Can Set Opening",
+            "type": "boolean"
+          },
           "groups": {
             "items": {
               "$ref": "#/components/schemas/OpeningGroupBlock"
@@ -1451,6 +1456,7 @@
           "as_of",
           "accounting_start",
           "state",
+          "can_set_opening",
           "period_mode",
           "paid_until_max",
           "totals",
@@ -1485,6 +1491,11 @@
             "title": "Accounting Start",
             "type": "string"
           },
+          "can_set_opening": {
+            "default": false,
+            "title": "Can Set Opening",
+            "type": "boolean"
+          },
           "state": {
             "default": "none",
             "enum": [
@@ -1503,6 +1514,7 @@
         "required": [
           "accounting_start",
           "state",
+          "can_set_opening",
           "totals"
         ],
         "title": "OpeningsSummary",

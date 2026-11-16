@@ -283,24 +283,18 @@ def test_v4_prices_an_administrator_does_not_set_a_group_or_an_individual_price_
         assert r.status_code != 403
 
 
-def test_v4_the_opening_balance_an_administrator_does_not_put_or_cancel_one_with_a_day_older_than_seven_days(world, fixed_today):
+def test_v4_the_opening_balance_has_no_age_check_any_more_the_state_of_the_launch_decides_r3c(world, fixed_today):
+    # R3c Г1 replaced the 7 days of the opening balance: an administrator puts, replaces and cancels an opening balance of ANY age while the launch is not finished (none / pending), and not at all after it (done / skipped):
+    # the whole matrix is in tests/test_money2_fix_r3c_pg.py; here the old border days only prove the age is not looked at
     from tests.test_pay2_api_pg import stay
 
     a, s0, admin = world_v4(world, fixed_today)
-    stay(world, membership(world, s0, a), date(2026, 11, 15))          # an opening debt is dated NOT LATER than the first day of the stay, so a student who joined on 15.11 can have one on 13.11
+    stay(world, membership(world, s0, a), date(2026, 11, 15))
     url = f"{API}/org/memberships/{membership(world, s0, a).id}/opening-balance"
-    forbid(admin.put(url, json={"debt_amount": 50_000, "debt_on": "2026-11-12"}))
-    forbid(admin.put(url, params={"dry_run": "true"}, json={"debt_amount": 50_000, "debt_on": "2026-11-12"}))
-    ok = admin.put(url, json={"debt_amount": 50_000, "debt_on": "2026-11-13"})
-    assert ok.status_code == 200, ok.text
-    # replacing or cancelling a live opening touches ITS days too: the live one is from 13.11 (allowed); the owner puts one from 06.11, and the administrator can neither replace nor void it
-    r = owner(world).put(url, json={"debt_amount": 60_000, "debt_on": "2026-11-06", "reason": "Уточнение"})
+    assert admin.put(url, json={"debt_amount": 50_000, "debt_on": "2026-11-12"}).status_code == 200          # 8 days back: was 403
+    r = admin.put(url, json={"debt_amount": 60_000, "debt_on": "2026-11-06", "reason": "Уточнение"})          # 14 days back: was 403
     assert r.status_code == 200, r.text
-    opening_id = r.json()["opening"]["id"]
-    forbid(admin.put(url, json={"debt_amount": 60_000, "debt_on": "2026-11-14", "reason": "Уточнение"}))
-    forbid(admin.put(url, json={"reason": "Снять"}))
-    forbid(admin.post(f"{API}/org/opening-balances/{opening_id}/void", json={"reason": "Ошибка"}))
-    assert owner(world).post(f"{API}/org/opening-balances/{opening_id}/void", json={"reason": "Ошибка"}).status_code == 200
+    assert admin.post(f"{API}/org/opening-balances/{r.json()['opening']['id']}/void", json={"reason": "Ошибка"}).status_code == 200
 
 
 # ============================================================================================================ small things
