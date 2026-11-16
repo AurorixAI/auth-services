@@ -73,3 +73,20 @@ def test_up_down_up_the_baseline_the_counters_the_wider_checks_and_the_cascade(e
     command.upgrade(cfg, REVISION)
     command.upgrade(cfg, REVISION)                                # repeating is harmless
     assert version(engine) == REVISION and "money_row_baseline" in inspect(engine).get_table_names()
+
+
+def test_down_up_makes_the_first_night_the_first_night_again(engine):
+    """After «down» the baseline table is gone; ``rows_checked = true`` left behind would make every row NEW (a finding) on the first night after «up»."""
+    cfg = config()
+    command.upgrade(cfg, REVISION)
+    with engine.begin() as c:
+        c.execute(text(f"INSERT INTO organizations (id, name, org_type, status) VALUES ('{ORG}', 'M2', 'center', 'active')"))
+        c.execute(text(f"INSERT INTO money_reconcile_runs (id, status) VALUES ('{RUN}', 'clean')"))
+        c.execute(text(f"INSERT INTO money_reconcile_centres (run_id, org_id, status, rows_checked) VALUES ('{RUN}', '{ORG}', 'ok', true)"))
+    command.downgrade(cfg, BEFORE)
+    with engine.connect() as c:
+        assert c.execute(text("SELECT rows_checked FROM money_reconcile_centres")).scalar() is False
+    command.upgrade(cfg, REVISION)
+    with engine.connect() as c:
+        assert c.execute(text("SELECT count(*) FROM money_reconcile_centres WHERE rows_checked")).scalar() == 0
+        assert c.execute(text("SELECT count(*) FROM money_row_baseline")).scalar() == 0
